@@ -38,8 +38,6 @@ def build_background(output_path: Path) -> None:
 
     title_font = _load_font(28)
     subtitle_font = _load_font(18)
-    caption_font = _load_font(16)
-
     draw.rounded_rectangle((48, 96, 208, 256), radius=28, fill="#fff9f2", outline="#d7c6af", width=3)
     draw.rounded_rectangle((432, 96, 592, 256), radius=28, fill="#fff9f2", outline="#d7c6af", width=3)
     draw.text((60, 36), "Install MuFinder", fill="#2c2418", font=title_font)
@@ -55,9 +53,6 @@ def build_background(output_path: Path) -> None:
         (248, 204),
     ]
     draw.polygon(arrow_points, fill="#e02020")
-
-    draw.text((78, 272), "MuFinder.app", fill="#2c2418", font=caption_font)
-    draw.text((452, 272), "Applications", fill="#2c2418", font=caption_font)
 
     image.save(output_path, format="PNG")
 

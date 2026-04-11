@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -34,7 +34,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install pyinstaller
+          python -m pip install pyinstaller Pillow
 
       - name: Install NSIS
         run: choco install nsis --no-progress -y
@@ -58,11 +58,12 @@ jobs:
         shell: pwsh
         run: |
           $installer = Join-Path $PWD "dist\MuFinder-$env:RELEASE_TAG-windows-x64.exe"
-          makensis /DAPP_NAME="$env:APP_NAME" /DAPP_VERSION="$env:RELEASE_TAG" /DAPP_DIR="$PWD\dist\MuFinder" /DOUTPUT_FILE="$installer" /DEXECUTABLE_NAME="MuFinder.exe" packaging\windows\mufinder.nsi
+          $iconFile = Join-Path $PWD "packaging\build\mufinder.ico"
+          makensis /DAPP_NAME="$env:APP_NAME" /DAPP_VERSION="$env:RELEASE_TAG" /DAPP_DIR="$PWD\dist\MuFinder" /DOUTPUT_FILE="$installer" /DEXECUTABLE_NAME="MuFinder.exe" /DICON_FILE="$iconFile" packaging\windows\mufinder.nsi
           "WINDOWS_INSTALLER=$installer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-installer
           path: ${{ env.WINDOWS_INSTALLER }}
@@ -74,7 +75,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -99,7 +100,7 @@ jobs:
           dmgbuild -s packaging/macos/dmg_settings.py "$APP_NAME" "dist/MuFinder-$RELEASE_TAG-macos.dmg"
 
       - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-dmg
           path: dist/MuFinder-${{ env.RELEASE_TAG }}-macos.dmg
@@ -111,7 +112,7 @@ jobs:
       - build-macos
     steps:
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: release-assets
 
