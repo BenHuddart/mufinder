@@ -28,4 +28,10 @@ napoleon_numpy_docstring = False
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 templates_path = ["_templates"]
+html_static_path = ["_static"]
 html_theme = "sphinx_rtd_theme"
+html_logo = "branding/mufinder_logo.png"
+html_css_files = ["mufinder-docs.css"]
+html_theme_options = {
+    "style_nav_header_background": "#2C2418",
+}

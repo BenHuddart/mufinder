@@ -37,6 +37,9 @@ exe_icon = _build_icon(".ico") if sys.platform.startswith("win") else None
 bundle_icon = _build_icon(".icns") if sys.platform == "darwin" else None
 
 datas = collect_data_files("mufinder.assets")
+# ASE's CIF reader resolves symmetry data relative to ase.spacegroup.__file__.
+# Bundle ASE package data so frozen macOS apps can load spacegroup.dat.
+datas += collect_data_files("ase")
 hiddenimports = [
     "mufinder.app.main_window",
     "mufinder.app.splash_screen",
