@@ -160,7 +160,7 @@ keywords:
       label: Generate Symmetry
       category: structure
       widget_hint: flag
-      default_value: false
+      default_value: true
       basic_workflows: [convergence_cutoff, convergence_kpoint]
       advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
 
@@ -182,6 +182,18 @@ keywords:
       default_value: false
       basic_workflows: [pristine_relaxation]
 
+  - name: UNIT_CELL
+    canonical_name: unit_cell
+    file: cell
+    kind: scalar
+    value_type: text
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: UNIT_CELL 0.0 0.0 0.0
+    notes: Opaque text-valued cell keyword retained for parser compatibility.
+
   - name: WRITE_CELL_STRUCTURE
     canonical_name: write_cell_structure
     file: param
@@ -199,6 +211,18 @@ keywords:
       widget_hint: checkbox
       default_value: false
       advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, muon_relaxation]
+
+  - name: CALCULATE_POLARIZATION
+    canonical_name: calculate_polarization
+    file: param
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: [CALCULATE_POLARISATION]
+    requires: []
+    example: CALCULATE_POLARIZATION : TRUE
+    notes: American spelling for the polarization toggle.
 
   - name: TASK
     canonical_name: task
@@ -399,7 +423,7 @@ keywords:
       label: Max SCF Cycles
       category: scf
       widget_hint: spinbox_int
-      default_value: 60
+      default_value: 100
       basic_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
 
   - name: ELEC_ENERGY_TOL
