@@ -120,8 +120,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          shopt -s globstar nullglob
-          files=(release-assets/**/*)
+          mapfile -d '' files < <(find release-assets -type f -print0)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release artifacts were produced."
             exit 1
