@@ -160,7 +160,7 @@ keywords:
       label: Generate Symmetry
       category: structure
       widget_hint: flag
-      default_value: false
+      default_value: true
       basic_workflows: [convergence_cutoff, convergence_kpoint]
       advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
 
@@ -423,7 +423,7 @@ keywords:
       label: Max SCF Cycles
       category: scf
       widget_hint: spinbox_int
-      default_value: 60
+      default_value: 100
       basic_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
 
   - name: ELEC_ENERGY_TOL
