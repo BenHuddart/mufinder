@@ -1,0 +1,547 @@
+version: 0.1
+notes:
+  - This is a conservative starter catalog for the keywords implemented in `mufinder.castep_io`.
+  - Local CASTEP evidence came primarily from `Doc/cell.tex` and a locally installed `Test/Utilities/ReadTS/castep_keywords.json` in the CASTEP source tree.
+  - Do not vendor or commit `castep_keywords.json` or generated copies of it into this repository.
+  - If support is unclear, extend this catalog conservatively and avoid inventing syntax.
+  - Optional `gui` metadata is used to drive workflow-aware parameter presentation in the PySide UI.
+
+keywords:
+  - name: LATTICE_CART
+    canonical_name: lattice_cart
+    file: cell
+    kind: block
+    value_type: lattice_cart_block
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: [LATTICE_ABC]
+    requires: []
+    example: |
+      %BLOCK LATTICE_CART
+      ang
+      5.43 0 0
+      0 5.43 0
+      0 0 5.43
+      %ENDBLOCK LATTICE_CART
+    notes: Optional first line stores the lattice unit. Implemented as a typed block with three 3-vectors, but MuFinder treats this as structure-controlled and does not expose it in parameter dialogs.
+
+  - name: LATTICE_ABC
+    canonical_name: lattice_abc
+    file: cell
+    kind: block
+    value_type: lattice_abc_block
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: [LATTICE_CART]
+    requires: []
+    example: |
+      %BLOCK LATTICE_ABC
+      ang
+      5.43 5.43 5.43
+      90 90 90
+      %ENDBLOCK LATTICE_ABC
+    notes: Angles are expressed in degrees. MuFinder treats this as structure-controlled and does not expose it in parameter dialogs.
+
+  - name: POSITIONS_FRAC
+    canonical_name: positions_frac
+    file: cell
+    kind: block
+    value_type: positions_block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: [POSITIONS_ABS]
+    requires: [LATTICE_CART or LATTICE_ABC]
+    example: |
+      %BLOCK POSITIONS_FRAC
+      Fe 0 0 0 SPIN=2
+      Fe 0.5 0.5 0.5 SPIN=-2
+      %ENDBLOCK POSITIONS_FRAC
+    notes: Species may be labels or atomic numbers according to CASTEP docs, but MuFinder stores them as strings. For spin-polarized jobs, MuFinder can append inline `SPIN=<value>` tokens on `POSITIONS_FRAC` rows using per-atom spins in units of hbar/2. MuFinder treats this as structure-controlled and does not expose it in parameter dialogs.
+
+  - name: POSITIONS_ABS
+    canonical_name: positions_abs
+    file: cell
+    kind: block
+    value_type: positions_block
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: [POSITIONS_FRAC]
+    requires: [LATTICE_CART or LATTICE_ABC]
+    example: |
+      %BLOCK POSITIONS_ABS
+      ang
+      Si 0 0 0
+      %ENDBLOCK POSITIONS_ABS
+    notes: Optional first line stores the Cartesian unit. MuFinder treats this as structure-controlled and does not expose it in parameter dialogs.
+
+  - name: SPECIES_POT
+    canonical_name: species_pot
+    file: cell
+    kind: block
+    value_type: species_pot_block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK SPECIES_POT
+      Si Si_00.recpot
+      %ENDBLOCK SPECIES_POT
+    notes: Starter implementation handles one species/pseudopotential pair per row.
+
+  - name: KPOINTS_LIST
+    canonical_name: kpoints_list
+    file: cell
+    kind: block
+    value_type: kpoints_list_block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: [KPOINT_MP_GRID, KPOINT_MP_SPACING]
+    requires: []
+    example: |
+      %BLOCK KPOINTS_LIST
+      0.25 0.25 0.25 0.25
+      0.25 -0.25 0.25 0.25
+      0.25 0.25 -0.25 0.25
+      0.25 -0.25 -0.25 0.25
+      %ENDBLOCK KPOINTS_LIST
+    notes: Weights must sum to 1.0.
+
+  - name: KPOINT_MP_GRID
+    canonical_name: kpoint_mp_grid
+    file: cell
+    kind: scalar
+    value_type: int_triplet
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: [KPOINTS_LIST, KPOINT_MP_SPACING]
+    locked_in_workflows: [convergence_kpoint]
+    requires: []
+    example: KPOINT_MP_GRID 4 4 4
+    notes: Alias forms like `KPOINTS_MP_GRID` are normalized internally.
+    gui:
+      label: K-Point MP Grid
+      category: kpoints
+      widget_hint: int_triplet
+      default_value: [4, 4, 4]
+      basic_workflows: [convergence_kpoint]
+      advanced_workflows: [convergence_cutoff, muon_relaxation]
+
+  - name: KPOINT_MP_SPACING
+    canonical_name: kpoint_mp_spacing
+    file: cell
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: 1/ang
+    allowed_values: []
+    mutually_exclusive_with: [KPOINTS_LIST, KPOINT_MP_GRID]
+    requires: []
+    example: KPOINT_MP_SPACING 0.05 1/ang
+    notes: The serializer preserves an explicit unit when one is supplied.
+    gui:
+      label: K-Point MP Spacing
+      category: kpoints
+      widget_hint: unit_float
+      default_value: 0.05
+      advanced_workflows: [convergence_cutoff, muon_relaxation]
+
+  - name: SYMMETRY_GENERATE
+    canonical_name: symmetry_generate
+    file: cell
+    kind: scalar
+    value_type: flag
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: SYMMETRY_GENERATE
+    notes: Presence-only keyword.
+    gui:
+      label: Generate Symmetry
+      category: structure
+      widget_hint: flag
+      default_value: false
+      basic_workflows: [convergence_cutoff, convergence_kpoint]
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+
+  - name: FIX_ALL_CELL
+    canonical_name: fix_all_cell
+    file: cell
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: []
+    requires: []
+    example: FIX_ALL_CELL : TRUE
+    notes: Keep unit-cell vectors fixed during geometry optimization when TRUE.
+    gui:
+      label: Fix All Cell
+      category: constraints
+      widget_hint: checkbox
+      default_value: false
+      basic_workflows: [pristine_relaxation]
+
+  - name: WRITE_CELL_STRUCTURE
+    canonical_name: write_cell_structure
+    file: param
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: []
+    requires: []
+    example: WRITE_CELL_STRUCTURE : TRUE
+    notes: Must be TRUE for pristine relaxed-cell workflows to guarantee CASTEP writes `-out.cell`.
+    gui:
+      label: Write Cell Structure
+      category: io
+      widget_hint: checkbox
+      default_value: false
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, muon_relaxation]
+
+  - name: TASK
+    canonical_name: task
+    file: param
+    kind: scalar
+    value_type: enum
+    unit:
+    allowed_values:
+      - SINGLEPOINT
+      - BANDSTRUCTURE
+      - GEOMETRYOPTIMIZATION
+      - MOLECULARDYNAMICS
+      - OPTICS
+      - TRANSITIONSTATESEARCH
+      - PHONON
+      - EFIELD
+      - PHONON+EFIELD
+      - THERMODYNAMICS
+      - WANNIER
+      - MAGRES
+      - ELNES
+      - SPECTRAL
+      - EPCOUPLING
+      - GENETICALGOR
+    mutually_exclusive_with: []
+    requires: []
+    example: TASK : SINGLEPOINT
+    notes: Allowed values were verified against local CASTEP metadata during development; do not vendor the upstream JSON into MuFinder.
+    gui:
+      label: Task
+      category: workflow
+      widget_hint: dropdown
+      default_value: SINGLEPOINT
+      basic_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+
+  - name: XC_FUNCTIONAL
+    canonical_name: xc_functional
+    file: param
+    kind: scalar
+    value_type: enum
+    unit:
+    allowed_values:
+      - LDA
+      - PW91
+      - PBE
+      - B86BPBE
+      - PBESOL
+      - RPBE
+      - WC
+      - BLYP
+      - LDA-C
+      - LDA-X
+      - ZERO
+      - HF
+      - PBE0
+      - B3LYP
+      - HSE03
+      - HSE06
+      - EXX-X
+      - HF-LDA
+      - EXX
+      - EXX-LDA
+      - SHF
+      - SX
+      - SHF-LDA
+      - SX-LDA
+      - WDA
+      - SEX
+      - SEX-LDA
+      - RSCAN
+    mutually_exclusive_with: []
+    requires: []
+    example: XC_FUNCTIONAL : PBE
+    notes: CASTEP also supports libXC-backed values; this starter validator only accepts the explicitly catalogued set.
+    gui:
+      label: XC Functional
+      category: electronic
+      widget_hint: dropdown
+      default_value: LDA
+      basic_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+
+  - name: BASIS_PRECISION
+    canonical_name: basis_precision
+    file: param
+    kind: scalar
+    value_type: enum
+    unit:
+    allowed_values: [NULL, COARSE, MEDIUM, FINE, PRECISE, EXTREME]
+    mutually_exclusive_with: [CUT_OFF_ENERGY]
+    requires: []
+    example: BASIS_PRECISION : FINE
+    notes: `CUT_OFF_ENERGY` may still be supplied and overrides it.
+    gui:
+      label: Basis Precision
+      category: electronic
+      widget_hint: dropdown
+      default_value: FINE
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+
+  - name: CUT_OFF_ENERGY
+    canonical_name: cut_off_energy
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: [BASIS_PRECISION]
+    locked_in_workflows: [convergence_cutoff]
+    requires: []
+    example: CUT_OFF_ENERGY : 340 eV
+    notes: Direct CASTEP docs say this overrides `BASIS_PRECISION`.
+    gui:
+      label: Cutoff Energy
+      category: electronic
+      widget_hint: unit_float
+      default_value: 340.0
+      basic_workflows: [convergence_cutoff]
+      advanced_workflows: [convergence_kpoint, muon_relaxation]
+
+  - name: SPIN_POLARIZED
+    canonical_name: spin_polarized
+    file: param
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: [SPIN_POLARISED]
+    requires: []
+    example: SPIN_POLARIZED : TRUE
+    notes: American spelling.
+    gui:
+      label: Spin Polarized
+      category: electronic
+      widget_hint: checkbox
+      default_value: false
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+
+  - name: SPIN_POLARISED
+    canonical_name: spin_polarised
+    file: param
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: [SPIN_POLARIZED]
+    requires: []
+    example: SPIN_POLARISED : TRUE
+    notes: English spelling.
+
+  - name: SPIN
+    canonical_name: spin
+    file: param
+    kind: scalar
+    value_type: number
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: SPIN : 2
+    notes: Stored as a numeric scalar.
+    gui:
+      label: Initial Spin
+      category: electronic
+      widget_hint: spinbox_float
+      default_value: 0.0
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+
+  - name: SMEARING_WIDTH
+    canonical_name: smearing_width
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: SMEARING_WIDTH : 0.1 eV
+    notes: Starter implementation validates only the scalar shape and positivity.
+    gui:
+      label: Smearing Width
+      category: scf
+      widget_hint: unit_float
+      default_value: 0.1
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+
+  - name: MAX_SCF_CYCLES
+    canonical_name: max_scf_cycles
+    file: param
+    kind: scalar
+    value_type: positive_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: MAX_SCF_CYCLES : 60
+    notes: Integer greater than zero.
+    gui:
+      label: Max SCF Cycles
+      category: scf
+      widget_hint: spinbox_int
+      default_value: 60
+      basic_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+
+  - name: ELEC_ENERGY_TOL
+    canonical_name: elec_energy_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: ELEC_ENERGY_TOL : 1e-6 eV
+    notes: Rendered with explicit units when supplied.
+    gui:
+      label: SCF Energy Tolerance
+      category: scf
+      widget_hint: unit_float
+      default_value: 1.0e-6
+      basic_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+
+  - name: GEOM_ENERGY_TOL
+    canonical_name: geom_energy_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK=GEOMETRYOPTIMIZATION]
+    example: GEOM_ENERGY_TOL : 2e-5 eV
+    notes: Task-specific validation is intentionally conservative.
+    gui:
+      label: Geometry Energy Tolerance
+      category: geometry
+      widget_hint: unit_float
+      default_value: 2.0e-5
+      advanced_workflows: [muon_relaxation]
+
+  - name: GEOM_FORCE_TOL
+    canonical_name: geom_force_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV/ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK=GEOMETRYOPTIMIZATION]
+    example: GEOM_FORCE_TOL : 0.05 eV/ang
+    notes: Starter task rule only allows this under `GEOMETRYOPTIMIZATION`.
+    gui:
+      label: Geometry Force Tolerance
+      category: geometry
+      widget_hint: unit_float
+      default_value: 0.05
+      advanced_workflows: [muon_relaxation]
+
+  - name: GEOM_STRESS_TOL
+    canonical_name: geom_stress_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: GPa
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK=GEOMETRYOPTIMIZATION]
+    example: GEOM_STRESS_TOL : 0.1 GPa
+    notes: Unit is optional in the Python object and preserved when explicit.
+    gui:
+      label: Geometry Stress Tolerance
+      category: geometry
+      widget_hint: unit_float
+      default_value: 0.1
+      advanced_workflows: [muon_relaxation]
+
+  - name: GEOM_MAX_ITER
+    canonical_name: geom_max_iter
+    file: param
+    kind: scalar
+    value_type: non_negative_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK=GEOMETRYOPTIMIZATION]
+    example: GEOM_MAX_ITER : 30
+    notes: Stored as a simple integer control.
+    gui:
+      label: Geometry Max Iterations
+      category: geometry
+      widget_hint: spinbox_int
+      default_value: 30
+      advanced_workflows: [muon_relaxation]
+
+  - name: MD_DELTA_T
+    canonical_name: md_delta_t
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: fs
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK=MOLECULARDYNAMICS]
+    example: MD_DELTA_T : 1 fs
+    notes: Task-specific validation is conservative and only permits this in `MOLECULARDYNAMICS`.
+    gui:
+      label: MD Time Step
+      category: molecular_dynamics
+      widget_hint: unit_float
+      default_value: 1.0
+      advanced_workflows: [muon_relaxation]
+
+  - name: MD_NUM_ITER
+    canonical_name: md_num_iter
+    file: param
+    kind: scalar
+    value_type: positive_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK=MOLECULARDYNAMICS]
+    example: MD_NUM_ITER : 100
+    notes: Integer greater than zero.
+    gui:
+      label: MD Steps
+      category: molecular_dynamics
+      widget_hint: spinbox_int
+      default_value: 100
+      advanced_workflows: [muon_relaxation]
+
+  - name: MD_TEMPERATURE
+    canonical_name: md_temperature
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: K
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK=MOLECULARDYNAMICS]
+    example: MD_TEMPERATURE : 300 K
+    notes: This is a starter subset, not a complete MD schema.
+    gui:
+      label: MD Temperature
+      category: molecular_dynamics
+      widget_hint: unit_float
+      default_value: 300.0
+      advanced_workflows: [muon_relaxation]

@@ -1,0 +1,34 @@
+ CASTEP run header
+ SCF iteration 1
+ SCF iteration 2
+ SCF iteration 12
+ Final energy, E = -1234.56789 eV
+ NB est. 0K energy (E-0.5TS) = -1234.76543 eV
+ Final enthalpy, H = -1234.12000 eV
+
+ ************************** Forces **************************
+ *                                                          *
+ *               Cartesian components (eV/A)                *
+ * -------------------------------------------------------- *
+ *                         x            y            z      *
+ *                                                          *
+ * Si              1     -0.02211     -0.02210     -0.02210 *
+ * Si              2      0.02211      0.02210      0.02210 *
+ *                                                          *
+ ************************************************************
+
+ ***************** Stress Tensor *****************
+ *                                               *
+ *          Cartesian components (GPa)           *
+ * --------------------------------------------- *
+ *             x             y             z     *
+ *                                               *
+ *  x      1.000         0.100         0.000     *
+ *  y      0.100         2.000         0.000     *
+ *  z      0.000         0.000         3.000     *
+ *                                               *
+ *************************************************
+
+ WARNING: Pulay stress may be non-negligible
+ Geometry optimization completed successfully
+ Total time = 12.5 s

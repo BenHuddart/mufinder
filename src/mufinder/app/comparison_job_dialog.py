@@ -1,0 +1,170 @@
+"""Dialog for selecting completed pristine-relaxation jobs for comparison."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from uuid import UUID
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CompletedPristineJob:
+    """Display row describing one completed pristine-relaxation job."""
+
+    job_id: UUID
+    job_label: str
+    structure_id: UUID
+    supercell_label: str
+    status: str
+    total_energy: float | None
+    lattice_a: float | None
+    lattice_b: float | None
+    lattice_c: float | None
+    parameter_values: dict[str, object]
+
+
+class ComparisonJobDialog(QDialog):
+    """Allow users to select one or more completed pristine jobs for comparison."""
+
+    _CHECK_COLUMN = 0
+    _LABEL_COLUMN = 1
+    _SUPERCELL_COLUMN = 2
+    _STATUS_COLUMN = 3
+    _ENERGY_COLUMN = 4
+    _A_COLUMN = 5
+    _B_COLUMN = 6
+    _C_COLUMN = 7
+
+    def __init__(
+        self,
+        *,
+        jobs: list[CompletedPristineJob],
+        default_label: str,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Generate Comparison Table")
+        self.resize(980, 460)
+
+        self._jobs = list(jobs)
+        self._label_input = QLineEdit(default_label)
+        self._table = QTableWidget(0, 8, self)
+        self._table.setHorizontalHeaderLabels(
+            [
+                "Include",
+                "Label",
+                "Supercell",
+                "Status",
+                "Total Energy (eV)",
+                "a (Ang)",
+                "b (Ang)",
+                "c (Ang)",
+            ]
+        )
+
+        self._build_layout()
+        self._populate_rows()
+
+    def _build_layout(self) -> None:
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            "Select completed pristine-relaxation jobs to compare against the experimental host structure."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        label_row = QHBoxLayout()
+        label_row.addWidget(QLabel("Comparison table label"))
+        label_row.addWidget(self._label_input, 1)
+        layout.addLayout(label_row)
+
+        layout.addWidget(self._table, 1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self._accept_if_valid)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _populate_rows(self) -> None:
+        self._table.setRowCount(0)
+        for job in self._jobs:
+            row = self._table.rowCount()
+            self._table.insertRow(row)
+
+            include = QTableWidgetItem("")
+            include.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsSelectable
+            )
+            include.setCheckState(Qt.CheckState.Unchecked)
+            include.setData(Qt.ItemDataRole.UserRole, str(job.job_id))
+            self._table.setItem(row, self._CHECK_COLUMN, include)
+
+            self._table.setItem(row, self._LABEL_COLUMN, QTableWidgetItem(job.job_label))
+            self._table.setItem(row, self._SUPERCELL_COLUMN, QTableWidgetItem(job.supercell_label))
+            self._table.setItem(row, self._STATUS_COLUMN, QTableWidgetItem(job.status))
+            self._table.setItem(
+                row,
+                self._ENERGY_COLUMN,
+                QTableWidgetItem("" if job.total_energy is None else f"{float(job.total_energy):.8g}"),
+            )
+            self._table.setItem(
+                row,
+                self._A_COLUMN,
+                QTableWidgetItem("" if job.lattice_a is None else f"{float(job.lattice_a):.8g}"),
+            )
+            self._table.setItem(
+                row,
+                self._B_COLUMN,
+                QTableWidgetItem("" if job.lattice_b is None else f"{float(job.lattice_b):.8g}"),
+            )
+            self._table.setItem(
+                row,
+                self._C_COLUMN,
+                QTableWidgetItem("" if job.lattice_c is None else f"{float(job.lattice_c):.8g}"),
+            )
+
+        self._table.resizeColumnsToContents()
+
+    def _accept_if_valid(self) -> None:
+        if not self.selected_job_ids():
+            QMessageBox.warning(self, "No jobs selected", "Select at least one completed job.")
+            return
+        if not self.table_label():
+            QMessageBox.warning(self, "Missing label", "Provide a non-empty comparison table label.")
+            return
+        self.accept()
+
+    def table_label(self) -> str:
+        return self._label_input.text().strip()
+
+    def selected_job_ids(self) -> list[UUID]:
+        selected: list[UUID] = []
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, self._CHECK_COLUMN)
+            if item is None or item.checkState() != Qt.CheckState.Checked:
+                continue
+            raw_job_id = item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(raw_job_id, str):
+                continue
+            try:
+                selected.append(UUID(raw_job_id))
+            except ValueError:
+                continue
+        return selected

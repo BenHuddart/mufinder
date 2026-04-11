@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to publish, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: MuFinder
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pyinstaller
+
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
+
+      - name: Build PyInstaller bundle
+        run: pyinstaller --noconfirm packaging/pyinstaller/mufinder.spec
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $installer = Join-Path $PWD "dist\MuFinder-$env:RELEASE_TAG-windows-x64.exe"
+          makensis /DAPP_NAME="$env:APP_NAME" /DAPP_VERSION="$env:RELEASE_TAG" /DAPP_DIR="$PWD\dist\MuFinder" /DOUTPUT_FILE="$installer" /DEXECUTABLE_NAME="MuFinder.exe" packaging\windows\mufinder.nsi
+          "WINDOWS_INSTALLER=$installer" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: ${{ env.WINDOWS_INSTALLER }}
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pyinstaller dmgbuild Pillow
+
+      - name: Build PyInstaller app bundle
+        run: pyinstaller --noconfirm packaging/pyinstaller/mufinder.spec
+
+      - name: Generate DMG background
+        run: python scripts/build_dmg_background.py --output packaging/build/dmg-background.png
+
+      - name: Build DMG
+        env:
+          MUFINDER_APP_BUNDLE: ${{ github.workspace }}/dist/MuFinder.app
+          MUFINDER_DMG_BACKGROUND: ${{ github.workspace }}/packaging/build/dmg-background.png
+        run: |
+          mkdir -p dist
+          dmgbuild -s packaging/macos/dmg_settings.py "$APP_NAME" "dist/MuFinder-$RELEASE_TAG-macos.dmg"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/MuFinder-${{ env.RELEASE_TAG }}-macos.dmg
+
+  publish:
+    runs-on: ubuntu-latest
+    needs:
+      - build-windows
+      - build-macos
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s globstar nullglob
+          files=(release-assets/**/*)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No release artifacts were produced."
+            exit 1
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${files[@]}" --generate-notes --title "$APP_NAME $RELEASE_TAG" --target "$GITHUB_SHA"
+          fi

@@ -1,0 +1,5 @@
+ CASTEP run header
+ SCF cycle 1
+ SCF cycle 2
+ ERROR: SCF did not converge after 120 cycles
+ Total time = 8.0 s
