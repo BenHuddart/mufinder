@@ -5,11 +5,36 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files
+from PIL import Image
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 
 project_root = Path.cwd()
 src_root = project_root / "src"
+build_root = project_root / "packaging" / "build"
+logo_source = src_root / "mufinder" / "assets" / "mufinder_logo.png"
+
+
+def _build_icon(extension: str) -> str:
+    build_root.mkdir(parents=True, exist_ok=True)
+    output = build_root / f"mufinder{extension}"
+    with Image.open(logo_source) as image:
+        icon = image.convert("RGBA")
+        if extension == ".ico":
+            icon.save(
+                output,
+                format="ICO",
+                sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+            )
+        elif extension == ".icns":
+            icon.save(output, format="ICNS")
+        else:
+            raise ValueError(f"Unsupported icon extension: {extension}")
+    return str(output)
+
+
+exe_icon = _build_icon(".ico") if sys.platform.startswith("win") else None
+bundle_icon = _build_icon(".icns") if sys.platform == "darwin" else None
 
 datas = collect_data_files("mufinder.assets")
 hiddenimports = [
@@ -18,7 +43,7 @@ hiddenimports = [
     "mufinder.app.theme",
     "mufinder.branding",
     "mufinder.castep_setup",
-]
+] + collect_submodules("ase.io") + collect_submodules("mufinder.app") + collect_submodules("paramiko")
 
 a = Analysis(
     [str(src_root / "mufinder" / "main.py")],
@@ -47,6 +72,7 @@ exe = EXE(
     upx=False,
     console=False,
     argv_emulation=False,
+    icon=exe_icon,
 )
 
 coll = COLLECT(
@@ -64,6 +90,6 @@ if sys.platform == "darwin":
     app = BUNDLE(
         coll,
         name="MuFinder.app",
-        icon=None,
+        icon=bundle_icon,
         bundle_identifier="io.github.benhuddart.mufinder",
     )

@@ -31,6 +31,6 @@ grid_spacing = 100
 label_pos = "bottom"
 
 icon_locations = {
-    application.name: (170, 190),
-    "Applications": (470, 190),
+    application.name: (128, 176),
+    "Applications": (512, 176),
 }
