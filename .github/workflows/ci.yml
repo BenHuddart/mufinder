@@ -3,14 +3,11 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   tests:
     runs-on: ubuntu-latest
-    env:
-      QT_QPA_PLATFORM: offscreen
-      MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-      XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -19,6 +16,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Prepare runtime directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/matplotlib" "$RUNNER_TEMP/xdg-cache"
+          {
+            echo "QT_QPA_PLATFORM=offscreen"
+            echo "MPLCONFIGDIR=$RUNNER_TEMP/matplotlib"
+            echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache"
+          } >> "$GITHUB_ENV"
 
       - name: Install system libraries
         run: |
@@ -35,10 +41,6 @@ jobs:
 
   docs:
     runs-on: ubuntu-latest
-    env:
-      QT_QPA_PLATFORM: offscreen
-      MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-      XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -47,6 +49,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Prepare runtime directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/matplotlib" "$RUNNER_TEMP/xdg-cache"
+          {
+            echo "QT_QPA_PLATFORM=offscreen"
+            echo "MPLCONFIGDIR=$RUNNER_TEMP/matplotlib"
+            echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache"
+          } >> "$GITHUB_ENV"
 
       - name: Install system libraries
         run: |
