@@ -82,7 +82,7 @@ def test_refresh_keyword_catalog_uses_updated_env_json(
         monkeypatch.delenv("CASTEP_KEYWORDS_JSON", raising=False)
     else:
         monkeypatch.setenv("CASTEP_KEYWORDS_JSON", original_castep_env)
-    refresh_keyword_catalog()
+    refresh_keyword_catalog(allow_fallback=True)
 
 
 def test_refresh_keyword_catalog_falls_back_to_bundled_starter_catalog_when_missing(
