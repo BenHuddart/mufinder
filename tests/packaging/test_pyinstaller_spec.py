@@ -27,6 +27,8 @@ def test_windows_installer_uses_application_icon() -> None:
     nsi_path = Path(__file__).resolve().parents[2] / "packaging" / "windows" / "mufinder.nsi"
     nsi_text = nsi_path.read_text(encoding="utf-8")
 
+    assert "!ifdef ICON_FILE" in nsi_text
+    assert '!define APP_ICON "${ICON_FILE}"' in nsi_text
     assert '!define APP_ICON "packaging\\build\\mufinder.ico"' in nsi_text
     assert 'Icon "${APP_ICON}"' in nsi_text
     assert '!define MUI_ICON "${APP_ICON}"' in nsi_text
