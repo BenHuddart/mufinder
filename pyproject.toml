@@ -42,7 +42,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"mufinder.assets" = ["*.png", "*.yaml"]
+"mufinder.assets" = ["*.png", "*.ico", "*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

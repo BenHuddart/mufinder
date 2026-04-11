@@ -1,0 +1,265 @@
+:root {
+  --mf-bg-primary: #f5ede0;
+  --mf-bg-surface: #fdf6ec;
+  --mf-bg-surface-alt: #ede0ce;
+  --mf-border: #c4ad8f;
+  --mf-text-primary: #2c2418;
+  --mf-text-muted: #7a6b59;
+  --mf-accent: #e02020;
+  --mf-accent-hover: #c61d1d;
+  --mf-accent-pressed: #a71919;
+  --mf-seal-gold: #b8860b;
+  --mf-success: #146c43;
+  --mf-warning: #a16207;
+  --mf-danger: #b91c1c;
+  --mf-heading-font: "Playfair Display", "Libre Baskerville", Georgia, serif;
+  --mf-body-font: Inter, "Helvetica Neue", Arial, sans-serif;
+  --mf-code-font: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+body {
+  background: linear-gradient(180deg, #efe3d0 0%, var(--mf-bg-primary) 240px);
+  color: var(--mf-text-primary);
+  font-family: var(--mf-body-font);
+}
+
+.wy-body-for-nav {
+  background: var(--mf-bg-primary);
+}
+
+.wy-nav-side {
+  background: linear-gradient(180deg, #20170f 0%, #2c2418 48%, #3a2f21 100%);
+  box-shadow: inset -1px 0 0 rgba(196, 173, 143, 0.22);
+}
+
+.wy-side-nav-search {
+  background: transparent;
+  border-bottom: 1px solid rgba(196, 173, 143, 0.22);
+}
+
+.wy-side-nav-search > a,
+.wy-side-nav-search .wy-dropdown > a {
+  color: #f5ede0;
+  font-family: var(--mf-heading-font);
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.wy-side-nav-search input[type="text"] {
+  border: 1px solid rgba(196, 173, 143, 0.5);
+  border-radius: 999px;
+  background: rgba(253, 246, 236, 0.12);
+  color: #f5ede0;
+}
+
+.wy-side-nav-search input[type="text"]::placeholder {
+  color: rgba(245, 237, 224, 0.7);
+}
+
+.wy-menu-vertical a {
+  color: rgba(245, 237, 224, 0.88);
+}
+
+.wy-menu-vertical a:hover,
+.wy-menu-vertical a:focus {
+  background: rgba(224, 32, 32, 0.18);
+  color: #fff7ec;
+}
+
+.wy-menu-vertical li.current > a,
+.wy-menu-vertical li.current > a:hover {
+  border-top: 0;
+  background: rgba(232, 168, 56, 0.18);
+  color: #fff7ec;
+}
+
+.wy-menu-vertical li.toctree-l1.current > a {
+  border-left: 3px solid var(--mf-accent);
+}
+
+.wy-nav-content-wrap {
+  background: transparent;
+}
+
+.wy-nav-content {
+  max-width: 1100px;
+  background: var(--mf-bg-surface);
+  border-left: 1px solid var(--mf-border);
+  box-shadow: 0 18px 48px rgba(44, 36, 24, 0.08);
+}
+
+.rst-content {
+  color: var(--mf-text-primary);
+}
+
+.rst-content h1,
+.rst-content h2,
+.rst-content h3,
+.rst-content h4,
+.rst-content h5,
+.rst-content h6 {
+  color: var(--mf-text-primary);
+  font-family: var(--mf-heading-font);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.rst-content h1 {
+  border-bottom: 2px solid var(--mf-border);
+  padding-bottom: 0.35rem;
+}
+
+.rst-content a,
+a {
+  color: var(--mf-accent);
+}
+
+.rst-content a:hover,
+a:hover {
+  color: var(--mf-accent-hover);
+}
+
+.rst-content code.literal,
+.rst-content tt.literal,
+code,
+pre {
+  font-family: var(--mf-code-font);
+}
+
+.rst-content code.literal,
+.rst-content tt.literal,
+code.literal {
+  color: var(--mf-accent-pressed);
+  background: #f3e4d3;
+  border: 1px solid #e2ccb1;
+  border-radius: 4px;
+}
+
+.rst-content pre,
+.rst-content div[class^="highlight"],
+.rst-content div[class*=" highlight"] {
+  border: 1px solid var(--mf-border);
+  border-radius: 10px;
+  background: #2b241a;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.rst-content pre {
+  color: #f5ede0;
+}
+
+.rst-content .admonition,
+.rst-content .note,
+.rst-content .warning,
+.rst-content .important {
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(44, 36, 24, 0.06);
+}
+
+.rst-content .admonition-title,
+.rst-content .note .admonition-title,
+.rst-content .warning .admonition-title,
+.rst-content .important .admonition-title {
+  font-family: var(--mf-heading-font);
+}
+
+.rst-content table.docutils,
+.rst-content table.field-list,
+.wy-table-responsive table td,
+.wy-table-responsive table th {
+  border-color: var(--mf-border);
+}
+
+.rst-content table.docutils thead th,
+.wy-table-responsive table thead th {
+  background: var(--mf-bg-surface-alt);
+  color: var(--mf-text-primary);
+}
+
+.rst-content table.docutils tbody tr:nth-child(2n),
+.wy-table-responsive table tbody tr:nth-child(2n) {
+  background: #fbf2e6;
+}
+
+.rst-content blockquote {
+  border-left: 4px solid var(--mf-seal-gold);
+  color: var(--mf-text-muted);
+}
+
+.rst-content img {
+  border-radius: 12px;
+}
+
+.rst-content .toctree-wrapper > p.caption {
+  color: var(--mf-text-muted);
+  font-family: var(--mf-heading-font);
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mf-bg-primary: #0d1b2a;
+    --mf-bg-surface: #1b2838;
+    --mf-bg-surface-alt: #243447;
+    --mf-border: #3d5068;
+    --mf-text-primary: #f0e6d3;
+    --mf-text-muted: #a09484;
+    --mf-accent: #e8a838;
+    --mf-accent-hover: #d49530;
+    --mf-accent-pressed: #c08528;
+    --mf-seal-gold: #d4a853;
+    --mf-success: #34d399;
+    --mf-warning: #f59e0b;
+    --mf-danger: #f87171;
+  }
+
+  body {
+    background: linear-gradient(180deg, #09131d 0%, var(--mf-bg-primary) 240px);
+  }
+
+  .wy-nav-side {
+    background: linear-gradient(180deg, #09131d 0%, #102033 48%, #18293e 100%);
+    box-shadow: inset -1px 0 0 rgba(61, 80, 104, 0.34);
+  }
+
+  .wy-side-nav-search > a,
+  .wy-side-nav-search .wy-dropdown > a,
+  .wy-menu-vertical a,
+  .wy-side-nav-search input[type="text"] {
+    color: var(--mf-text-primary);
+  }
+
+  .wy-side-nav-search input[type="text"] {
+    background: rgba(27, 40, 56, 0.7);
+    border-color: rgba(61, 80, 104, 0.85);
+  }
+
+  .wy-nav-content {
+    background: var(--mf-bg-surface);
+    border-left-color: var(--mf-border);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  }
+
+  .rst-content code.literal,
+  .rst-content tt.literal,
+  code.literal {
+    color: #ffcf70;
+    background: #203042;
+    border-color: #31475f;
+  }
+
+  .rst-content pre,
+  .rst-content div[class^="highlight"],
+  .rst-content div[class*=" highlight"] {
+    background: #101b28;
+    border-color: #2a3f57;
+  }
+
+  .rst-content table.docutils tbody tr:nth-child(2n),
+  .wy-table-responsive table tbody tr:nth-child(2n) {
+    background: rgba(36, 52, 71, 0.65);
+  }
+}
