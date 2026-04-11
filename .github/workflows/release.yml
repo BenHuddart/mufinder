@@ -118,6 +118,7 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           shopt -s globstar nullglob
           files=(release-assets/**/*)
