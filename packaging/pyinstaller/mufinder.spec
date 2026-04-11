@@ -43,7 +43,7 @@ hiddenimports = [
     "mufinder.app.theme",
     "mufinder.branding",
     "mufinder.castep_setup",
-] + collect_submodules("ase.io")
+] + collect_submodules("ase.io") + collect_submodules("mufinder.app") + collect_submodules("paramiko")
 
 a = Analysis(
     [str(src_root / "mufinder" / "main.py")],
