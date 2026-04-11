@@ -22,6 +22,9 @@ Unicode True
 !define EXECUTABLE_NAME "MuFinder.exe"
 !endif
 
+!ifdef ICON_FILE
+!define APP_ICON "${ICON_FILE}"
+!endif
 !ifndef APP_ICON
 !define APP_ICON "packaging\build\mufinder.ico"
 !endif
