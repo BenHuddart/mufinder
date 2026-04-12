@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from mufinder._version import current_version
 from mufinder.domain.enums import JobStatus, WorkflowStage
 
 
@@ -149,7 +150,7 @@ class Project:
     id: UUID = field(default_factory=uuid4)
     name: str = "Untitled Project"
     schema_version: int = 1
-    app_version: str = "0.1.0"
+    app_version: str = field(default_factory=current_version)
     created_at: datetime = field(default_factory=utc_now)
     modified_at: datetime = field(default_factory=utc_now)
     host_structure_id: UUID | None = None

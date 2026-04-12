@@ -30,6 +30,9 @@ def test_windows_installer_uses_application_icon() -> None:
     assert "!ifdef ICON_FILE" in nsi_text
     assert '!define APP_ICON "${ICON_FILE}"' in nsi_text
     assert '!define APP_ICON "packaging\\build\\mufinder.ico"' in nsi_text
+    assert '!define INSTALLED_ICON_NAME "mufinder.ico"' in nsi_text
     assert 'Icon "${APP_ICON}"' in nsi_text
     assert '!define MUI_ICON "${APP_ICON}"' in nsi_text
-    assert '"$INSTDIR\\${EXECUTABLE_NAME}" "" "$INSTDIR\\${EXECUTABLE_NAME}" 0' in nsi_text
+    assert 'File /oname=${INSTALLED_ICON_NAME} "${APP_ICON}"' in nsi_text
+    assert '"$INSTDIR\\${EXECUTABLE_NAME}" "" "$INSTDIR\\${INSTALLED_ICON_NAME}" 0' in nsi_text
+    assert 'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${APP_NAME}" "DisplayIcon" "$INSTDIR\\${INSTALLED_ICON_NAME}"' in nsi_text

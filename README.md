@@ -57,7 +57,9 @@ python -m mufinder.main
 
 ## Development Checks
 
-Run the full test suite:
+Daily work is expected to land on `develop`. Full quality gates are reserved for the final release PR into `main`.
+
+Run the full test suite manually when needed:
 
 ```bash
 python -m pytest
@@ -69,6 +71,16 @@ Build the Sphinx documentation:
 python -m sphinx -W -b html docs docs/_build/html
 ```
 
+Prepare a release branch once `develop` is stable:
+
+```bash
+git checkout develop
+git pull
+```
+
+Then use the `Prepare Release` GitHub Actions workflow to create `release/vX.Y.Z`, stamp the version, and open the PR to `main`.
+That workflow expects a repository variable named `RELEASE_APP_ID` and a repository secret named `RELEASE_APP_PRIVATE_KEY`.
+
 ## Binary Distributions
 
 GitHub Releases will publish:
@@ -77,3 +89,5 @@ GitHub Releases will publish:
 - macOS `.app` bundles packaged into drag-to-Applications DMGs
 
 These binaries ship MuFinder itself, but CASTEP and MPI remain external user-supplied dependencies.
+
+For ad hoc validation on `develop` or a release branch, use the `Preview Build` workflow to produce downloadable artifacts without publishing a release.

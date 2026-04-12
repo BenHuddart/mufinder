@@ -9,6 +9,7 @@ import shutil
 from typing import Any
 from uuid import UUID
 
+from mufinder._version import current_version
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
@@ -1555,7 +1556,7 @@ class ProjectService:
             id=UUID(payload["id"]),
             name=payload["name"],
             schema_version=payload["schema_version"],
-            app_version=payload.get("app_version", "0.1.0"),
+            app_version=payload.get("app_version", current_version()),
             created_at=parse_datetime(payload["created_at"]) or utc_now(),
             modified_at=parse_datetime(payload["modified_at"]) or utc_now(),
             host_structure_id=parse_uuid(payload.get("host_structure_id")),

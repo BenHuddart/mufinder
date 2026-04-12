@@ -77,12 +77,41 @@ Then run the full coverage-enabled suite before merge:
 Automation policy
 -----------------
 
-The repository includes CI automation to run both quality gates for every
-push and pull request:
+The repository automation is split across development, release preparation,
+and final publishing:
 
-- ``pytest`` with coverage threshold enforcement.
-- ``sphinx`` HTML build with ``-W`` enabled.
-- GitHub Pages deployment from ``main``.
-- Tagged release builds for Windows and macOS artifacts.
+- Pull requests into ``main`` run the full quality gates:
+
+  - ``pytest`` with coverage threshold enforcement
+  - ``sphinx`` HTML build with ``-W`` enabled
+
+- ``Preview Build`` is a manual GitHub Actions workflow that builds Windows
+  and macOS artifacts from ``develop`` or a ``release/*`` branch without
+  publishing a release and without running the full suite.
+
+- ``Prepare Release`` is a manual workflow that cuts ``release/vX.Y.Z`` from
+  ``develop``, applies the semantic version bump, updates ``CHANGELOG.md``,
+  and opens the pull request to ``main``. It expects a repository variable
+  named ``RELEASE_APP_ID`` and a repository secret named
+  ``RELEASE_APP_PRIVATE_KEY`` so the workflow can mint a short-lived GitHub App
+  installation token.
+
+- Pushes to ``main`` publish releases only when ``pyproject.toml`` contains a
+  version newer than the latest ``v*`` tag. The publish flow creates the tag,
+  uploads Windows and macOS binaries, and then merges ``main`` back into
+  ``develop`` to keep version metadata aligned between the two branches.
 
 Merges should be blocked when either gate fails.
+
+Branch workflow
+---------------
+
+The expected branch lifecycle is:
+
+1. Day-to-day development on ``develop``.
+2. Manual preview builds from ``develop`` whenever distributable artifacts are
+   needed for validation.
+3. Cut ``release/vX.Y.Z`` from ``develop`` once the branch is stable.
+4. Run the release PR into ``main`` and require the full tests plus docs build.
+5. Let the publish workflow tag and release from ``main``.
+6. Merge ``main`` back into ``develop`` immediately after publish.
