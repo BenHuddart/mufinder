@@ -9,9 +9,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_ROOT))
 
+from mufinder._version import current_version
+
 project = "MuFinder"
 author = "MuFinder Developers"
-release = "0.1.0"
+release = current_version()
 
 extensions = [
     "sphinx.ext.autodoc",

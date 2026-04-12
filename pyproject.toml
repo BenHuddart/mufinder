@@ -24,6 +24,7 @@ dev = [
   "pytest-cov>=5.0",
   "Sphinx>=8.0",
   "sphinx-rtd-theme>=2.0",
+  "python-semantic-release>=10.5,<11",
 ]
 
 [project.urls]
@@ -54,3 +55,32 @@ source = ["mufinder"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+
+[tool.semantic_release]
+allow_zero_version = true
+commit_parser = "conventional"
+tag_format = "v{version}"
+version_toml = ["pyproject.toml:project.version"]
+
+[tool.semantic_release.commit_parser_options]
+ignore_merge_commits = true
+minor_tags = ["feat"]
+parse_squash_commits = true
+patch_tags = ["fix", "perf"]
+
+[tool.semantic_release.changelog]
+exclude_commit_patterns = [
+  '''chore(?:\([^)]*?\))?: .+''',
+  '''ci(?:\([^)]*?\))?: .+''',
+  '''refactor(?:\([^)]*?\))?: .+''',
+  '''style(?:\([^)]*?\))?: .+''',
+  '''test(?:\([^)]*?\))?: .+''',
+  '''build\((?!deps\): .+)''',
+  '''Initial [Cc]ommit.*''',
+]
+insertion_flag = "<!-- version list -->"
+mode = "update"
+
+[tool.semantic_release.changelog.default_templates]
+changelog_file = "CHANGELOG.md"
+output_format = "md"
