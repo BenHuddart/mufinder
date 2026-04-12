@@ -28,6 +28,7 @@ Unicode True
 !ifndef APP_ICON
 !define APP_ICON "packaging\build\mufinder.ico"
 !endif
+!define INSTALLED_ICON_NAME "mufinder.ico"
 
 Name "${APP_NAME} ${APP_VERSION}"
 OutFile "${OUTPUT_FILE}"
@@ -51,18 +52,19 @@ UninstallIcon "${APP_ICON}"
 Section "Install"
   SetOutPath "$INSTDIR"
   File /r "${APP_DIR}\*.*"
+  File /oname=${INSTALLED_ICON_NAME} "${APP_ICON}"
 
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
-  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${EXECUTABLE_NAME}" "" "$INSTDIR\${EXECUTABLE_NAME}" 0
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${EXECUTABLE_NAME}" "" "$INSTDIR\${INSTALLED_ICON_NAME}" 0
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\Uninstall ${APP_NAME}.lnk" "$INSTDIR\Uninstall.exe"
-  CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${EXECUTABLE_NAME}" "" "$INSTDIR\${EXECUTABLE_NAME}" 0
+  CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${EXECUTABLE_NAME}" "" "$INSTDIR\${INSTALLED_ICON_NAME}" 0
 
   WriteRegStr HKCU "Software\${APP_NAME}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayVersion" "${APP_VERSION}"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayIcon" "$INSTDIR\${EXECUTABLE_NAME}"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayIcon" "$INSTDIR\${INSTALLED_ICON_NAME}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "NoRepair" 1
@@ -78,5 +80,6 @@ Section "Uninstall"
   DeleteRegKey HKCU "Software\${APP_NAME}"
 
   Delete "$INSTDIR\Uninstall.exe"
+  Delete "$INSTDIR\${INSTALLED_ICON_NAME}"
   RMDir /r "$INSTDIR"
 SectionEnd
