@@ -276,3 +276,65 @@ jobs:
 
           git merge --no-ff --no-edit origin/main
           git push origin HEAD:develop
+
+  delete-release-branch:
+    runs-on: ubuntu-latest
+    needs:
+      - publish
+      - sync-develop
+    if: github.event_name == 'push' && needs.publish.result == 'success' && needs.sync-develop.result == 'success'
+    steps:
+      - name: Ensure release app credentials are configured
+        env:
+          RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$RELEASE_APP_ID" ] || [ -z "$RELEASE_APP_PRIVATE_KEY" ]; then
+            echo "RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY are required to delete merged release branches."
+            exit 1
+          fi
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: read
+
+      - name: Find merged release branch
+        id: release-branch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
+        run: |
+          branch_name="$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == "main" and (.head.ref | startswith("release/")))] | first | .head.ref // ""')"
+
+          if [ -z "$branch_name" ]; then
+            echo "No merged release branch is associated with $GITHUB_SHA."
+            exit 0
+          fi
+
+          echo "branch_name=$branch_name" >> "$GITHUB_OUTPUT"
+
+      - name: Delete merged release branch
+        if: steps.release-branch.outputs.branch_name != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH_NAME: ${{ steps.release-branch.outputs.branch_name }}
+        shell: bash
+        run: |
+          encoded_branch="${BRANCH_NAME//\//%2F}"
+
+          if gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/${encoded_branch}" >/dev/null 2>&1; then
+            gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/git/refs/heads/${encoded_branch}"
+            echo "Deleted merged release branch ${BRANCH_NAME}."
+          else
+            echo "Release branch ${BRANCH_NAME} was already deleted."
+          fi

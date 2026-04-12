@@ -91,15 +91,18 @@ and final publishing:
 
 - ``Prepare Release`` is a manual workflow that cuts ``release/vX.Y.Z`` from
   ``develop``, applies the semantic version bump, updates ``CHANGELOG.md``,
-  and opens the pull request to ``main``. It expects a repository variable
-  named ``RELEASE_APP_ID`` and a repository secret named
+  opens the pull request to ``main``, and enables auto-merge with a merge
+  commit so the release lands as soon as the required checks pass. It expects a
+  repository variable named ``RELEASE_APP_ID`` and a repository secret named
   ``RELEASE_APP_PRIVATE_KEY`` so the workflow can mint a short-lived GitHub App
   installation token.
 
 - Pushes to ``main`` publish releases only when ``pyproject.toml`` contains a
   version newer than the latest ``v*`` tag. The publish flow creates the tag,
   uploads Windows and macOS binaries, and then merges ``main`` back into
-  ``develop`` to keep version metadata aligned between the two branches.
+  ``develop`` to keep version metadata aligned between the two branches. Once
+  that sync succeeds, the merged ``release/vX.Y.Z`` branch is deleted
+  automatically.
 
 Merges should be blocked when either gate fails.
 
@@ -112,6 +115,8 @@ The expected branch lifecycle is:
 2. Manual preview builds from ``develop`` whenever distributable artifacts are
    needed for validation.
 3. Cut ``release/vX.Y.Z`` from ``develop`` once the branch is stable.
-4. Run the release PR into ``main`` and require the full tests plus docs build.
+4. Let the release PR auto-merge into ``main`` once the full tests plus docs
+   build pass.
 5. Let the publish workflow tag and release from ``main``.
 6. Merge ``main`` back into ``develop`` immediately after publish.
+7. Let the publish workflow delete the merged ``release/vX.Y.Z`` branch.

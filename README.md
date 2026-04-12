@@ -78,8 +78,9 @@ git checkout develop
 git pull
 ```
 
-Then use the `Prepare Release` GitHub Actions workflow to create `release/vX.Y.Z`, stamp the version, and open the PR to `main`.
+Then use the `Prepare Release` GitHub Actions workflow to create `release/vX.Y.Z`, stamp the version, open the PR to `main`, and enable auto-merge once the required checks pass.
 That workflow expects a repository variable named `RELEASE_APP_ID` and a repository secret named `RELEASE_APP_PRIVATE_KEY`.
+Once the release PR merges, the publish workflow tags and publishes from `main`, merges `main` back into `develop`, and deletes the merged `release/vX.Y.Z` branch automatically.
 
 ## Binary Distributions
 

@@ -115,6 +115,7 @@ jobs:
         run: git push --set-upstream origin "${{ steps.version.outputs.release_branch }}"
 
       - name: Open or update release PR
+        id: release-pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         shell: bash
@@ -127,3 +128,11 @@ jobs:
           else
             gh pr create --base main --head "${{ steps.version.outputs.release_branch }}" --title "$title" --body "$body"
           fi
+
+          echo "pr_number=$(gh pr view "${{ steps.version.outputs.release_branch }}" --json number --jq .number)" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge for release PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
+        run: gh pr merge "${{ steps.release-pr.outputs.pr_number }}" --auto --merge --match-head-commit "$(git rev-parse HEAD)"
