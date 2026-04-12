@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import sys
 
 from PySide6.QtCore import QEventLoop, QElapsedTimer, QSettings, QThread
@@ -30,6 +31,18 @@ def _app_icon():
     from mufinder.branding import app_icon
 
     return app_icon()
+
+
+def _set_windows_app_id() -> None:
+    """Set a stable Windows application ID for taskbar icon grouping."""
+
+    if not sys.platform.startswith("win"):
+        return
+
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("io.github.benhuddart.mufinder")
+    except (AttributeError, OSError):
+        return
 
 
 def _apply_saved_castep_environment(settings: QSettings) -> None:
@@ -83,6 +96,7 @@ def run() -> int:
     """Start the Qt application."""
     minimum_splash_ms = 1600
 
+    _set_windows_app_id()
     app = QApplication(sys.argv)
     app.setApplicationName("MuFinder")
     app.setOrganizationName("MuFinder")

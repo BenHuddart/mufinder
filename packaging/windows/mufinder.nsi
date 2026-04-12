@@ -22,8 +22,11 @@ Unicode True
 !define EXECUTABLE_NAME "MuFinder.exe"
 !endif
 
-!ifndef ICON_FILE
-!define ICON_FILE "packaging\build\mufinder.ico"
+!ifdef ICON_FILE
+!define APP_ICON "${ICON_FILE}"
+!endif
+!ifndef APP_ICON
+!define APP_ICON "packaging\build\mufinder.ico"
 !endif
 
 Name "${APP_NAME} ${APP_VERSION}"
@@ -31,10 +34,12 @@ OutFile "${OUTPUT_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\${APP_NAME}"
 InstallDirRegKey HKCU "Software\${APP_NAME}" "InstallDir"
 RequestExecutionLevel user
+Icon "${APP_ICON}"
+UninstallIcon "${APP_ICON}"
 
 !define MUI_ABORTWARNING
-!define MUI_ICON "${ICON_FILE}"
-!define MUI_UNICON "${ICON_FILE}"
+!define MUI_ICON "${APP_ICON}"
+!define MUI_UNICON "${APP_ICON}"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
