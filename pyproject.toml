@@ -62,6 +62,14 @@ commit_parser = "conventional"
 tag_format = "v{version}"
 version_toml = ["pyproject.toml:project.version"]
 
+[tool.semantic_release.branches.main]
+match = "^main$"
+prerelease = false
+
+[tool.semantic_release.branches.develop]
+match = "^develop$"
+prerelease = false
+
 [tool.semantic_release.commit_parser_options]
 ignore_merge_commits = true
 minor_tags = ["feat"]
