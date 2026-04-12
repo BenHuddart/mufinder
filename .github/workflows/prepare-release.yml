@@ -1,0 +1,129 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_branch:
+        description: "Branch to cut the release from"
+        required: true
+        default: "develop"
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure release app credentials are configured
+        env:
+          RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$RELEASE_APP_ID" ] || [ -z "$RELEASE_APP_PRIVATE_KEY" ]; then
+            echo "RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY are required to create release branches and pull requests."
+            exit 1
+          fi
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Get GitHub App bot user ID
+        id: app-user
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: echo "user-id=$(gh api "/users/${{ steps.app-token.outputs.app-slug }}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout base branch
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.base_branch }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install release tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "python-semantic-release>=10.5,<11"
+
+      - name: Compute next version
+        id: version
+        shell: bash
+        run: |
+          next_version="$(semantic-release --noop version --print)"
+          last_version="$(semantic-release version --print-last-released)"
+          if [ "$next_version" = "$last_version" ]; then
+            echo "No releasable commits were found on ${{ inputs.base_branch }}."
+            exit 1
+          fi
+
+          release_branch="release/v$next_version"
+          if git ls-remote --heads origin "$release_branch" | grep -q "$release_branch"; then
+            echo "Release branch $release_branch already exists on origin."
+            exit 1
+          fi
+
+          {
+            echo "next_version=$next_version"
+            echo "release_branch=$release_branch"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release branch
+        run: |
+          git checkout -b "${{ steps.version.outputs.release_branch }}"
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-user.outputs.user-id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+
+      - name: Stamp version and changelog
+        run: semantic-release version --no-tag --no-push --no-vcs-release --skip-build
+
+      - name: Verify stamped version
+        shell: bash
+        run: |
+          stamped_version="$(python - <<'PY'
+          from pathlib import Path
+          import re
+
+          text = Path("pyproject.toml").read_text(encoding="utf-8")
+          match = re.search(r'^version = "([^"]+)"$', text, re.MULTILINE)
+          if not match:
+              raise SystemExit("Could not find project.version in pyproject.toml")
+          print(match.group(1))
+          PY
+          )"
+          if [ "$stamped_version" != "${{ steps.version.outputs.next_version }}" ]; then
+            echo "Stamped version $stamped_version did not match expected version ${{ steps.version.outputs.next_version }}."
+            exit 1
+          fi
+
+      - name: Push release branch
+        run: git push --set-upstream origin "${{ steps.version.outputs.release_branch }}"
+
+      - name: Open or update release PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
+        run: |
+          title="chore(release): v${{ steps.version.outputs.next_version }}"
+          body=$'## Release preparation\n\n- semantic version bump prepared from `${{ inputs.base_branch }}`\n- changelog updated\n- ready for full tests, docs, and publish-on-merge'
+
+          if gh pr view "${{ steps.version.outputs.release_branch }}" --json number >/dev/null 2>&1; then
+            gh pr edit "${{ steps.version.outputs.release_branch }}" --base main --title "$title" --body "$body"
+          else
+            gh pr create --base main --head "${{ steps.version.outputs.release_branch }}" --title "$title" --body "$body"
+          fi
