@@ -69,6 +69,7 @@ def test_default_assignments_include_declared_defaults() -> None:
 def test_infer_task_from_workflow_stage() -> None:
     assert infer_task("convergence_cutoff") == "SINGLEPOINT"
     assert infer_task("convergence_kpoint") == "SINGLEPOINT"
+    assert infer_task("uep") == "SINGLEPOINT"
     assert infer_task("pristine_relaxation") == "GEOMETRYOPTIMIZATION"
     assert infer_task("muon_relaxation") == "GEOMETRYOPTIMIZATION"
 
@@ -78,6 +79,10 @@ def test_keyword_locked_in_workflow() -> None:
     assert cut_off is not None
     assert keyword_locked_in_workflow(cut_off, workflow_stage="convergence_cutoff") is True
     assert keyword_locked_in_workflow(cut_off, workflow_stage="convergence_kpoint") is False
+
+    formatted_density = get_keyword_spec("param", "write_formatted_density")
+    assert formatted_density is not None
+    assert keyword_locked_in_workflow(formatted_density, workflow_stage="uep") is True
 
 
 def test_keyword_visible_for_task_filters_task_specific_keywords() -> None:

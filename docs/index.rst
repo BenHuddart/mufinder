@@ -15,6 +15,7 @@ features, and quality standards that must be maintained as development expands.
    :caption: Contents
 
    implemented_functionality
+   uep_workflow
    comparison_table
    quality_and_automation
    project_specification

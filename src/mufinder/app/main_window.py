@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime
 from math import isnan
 from pathlib import Path
 import re
 import shutil
 from uuid import UUID
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QSettings, QTimer, Qt
 from PySide6.QtGui import QActionGroup, QColor, QFont, QGuiApplication, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -44,7 +45,7 @@ from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_clus
 from mufinder.castep_io.gui_metadata import normalize_gui_value
 from mufinder.castep_io.schema import get_keyword_spec
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, ComparisonTable, Job, Result, Structure, utc_now
+from mufinder.domain.models import CalculationRun, ComparisonTable, Job, MuonSite, ProvenanceRecord, Result, Structure, utc_now
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig, ClusterSubmissionDialog
 from mufinder.app.comparison_job_dialog import ComparisonJobDialog, CompletedPristineJob
@@ -70,6 +71,10 @@ from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
 from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow, RelaxationRunState
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
+from mufinder.app.uep_adapter import expand_uep_jobs
+from mufinder.app.uep_types import UepConfig, UepRunState, UepSourceRow
+from mufinder.app.uep_wizard import UepAnalysisDialog
+from mufinder.app.uep_widget import UEPWidget
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.icons import icon, workflow_stage_icon
 from mufinder.app.muon_generation_widget import MuonGenerationWidget
@@ -97,6 +102,7 @@ from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.services.ssh_client import SSHUnknownHostKeyError, save_trusted_host_key
 from mufinder.science.kpoint_grids import lattice_parameters
 from mufinder.science.site_generation import SiteGenerationError
+from mufinder.science.uep import UepError, UepPotentialGrid, deserialize_potential_grid, serialize_potential_grid
 from mufinder.science.structure_comparison import DftComparisonInput, compare_structures
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
@@ -261,8 +267,11 @@ class MainWindow(QMainWindow):
     _ACTIVE_CONVERGENCE_DEFINITION_KEY = "active_convergence_cutoff_definition_id"
     _ACTIVE_KPOINT_DEFINITION_KEY = "active_convergence_kpoint_definition_id"
     _ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY = "active_pristine_relaxation_definition_id"
+    _ACTIVE_UEP_DEFINITION_KEY = "active_uep_definition_id"
     _CONVERGENCE_EXAMINER_STATE_KEY = "convergence_examiner_state"
     _KPOINT_EXAMINER_STATE_KEY = "kpoint_examiner_state"
+    _UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
+    _UEP_POTENTIAL_GRID_RESULT_TYPE = "uep_potential_grid"
     _CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY = "convergence_overview_snapshots"
     _LAST_CLUSTER_SUBMISSION_CONFIG_KEY = "last_cluster_submission_config"
     _COMPARISON_ROUTE_PREFIX = "pristine_relaxation/comparison/"
@@ -278,6 +287,11 @@ class MainWindow(QMainWindow):
         self._local_runner = LocalJobRunner(self)
         self._cluster_runner = ClusterJobRunner(self, settings=self._settings)
         self._active_run_by_job: dict[UUID, UUID] = {}
+        self._job_runtime_timer = QTimer(self)
+        self._job_runtime_timer.setInterval(1000)
+        self._job_runtime_timer.timeout.connect(self._refresh_active_job_runtime_cells)
+        self._cluster_elapsed_seconds_by_job: dict[UUID, int] = {}
+        self._cluster_elapsed_checked_at: datetime | None = None
         self._recent_projects_menu: QMenu | None = None
         self._home_recent_projects_layout: QVBoxLayout | None = None
         self._expedition_trail: ExpeditionTrailWidget | None = None
@@ -389,6 +403,19 @@ class MainWindow(QMainWindow):
         self._pristine_relaxation_view.generate_comparison_requested.connect(
             self._on_generate_comparison_table_requested
         )
+        self._uep_view = UEPWidget()
+        self._uep_view.configure_requested.connect(self._on_uep_configured)
+        self._uep_view.form_state_changed.connect(self._on_uep_form_state_changed)
+        self._uep_view.row_supercell_edit_requested.connect(self._on_uep_supercell_edit_requested)
+        self._uep_view.source_structure_selection_requested.connect(
+            self._on_uep_source_structure_selection_requested
+        )
+        self._uep_view.wizard_requested.connect(self._on_open_uep_analysis_requested)
+        self._uep_view.submit_local_requested.connect(self._on_submit_local_from_uep)
+        self._uep_view.submit_cluster_requested.connect(self._on_submit_cluster_from_uep)
+        self._uep_view.cancel_requested.connect(self._on_cancel_from_uep)
+        self._uep_view.inspect_failed_requested.connect(self._on_inspect_failed_from_uep)
+        self._uep_view.reset_failed_requested.connect(self._on_reset_failed_from_uep)
         self._muon_generation_view = MuonGenerationWidget()
         self._muon_generation_view.generate_requested.connect(self._on_generate_requested)
         self._muon_generation_view.form_state_changed.connect(self._on_muon_form_state_changed)
@@ -398,6 +425,7 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._convergence_view)
         self._main_stack.addWidget(self._kpoint_convergence_view)
         self._main_stack.addWidget(self._pristine_relaxation_view)
+        self._main_stack.addWidget(self._uep_view)
         self._main_stack.addWidget(self._muon_generation_view)
 
         self._jobs_table = QTableWidget(0, 12)
@@ -1051,6 +1079,7 @@ class MainWindow(QMainWindow):
         self._pristine_relaxation_view.set_form_state(
             self._document.ui_state.get("pristine_relaxation_form", {})
         )
+        self._uep_view.set_form_state(self._document.ui_state.get("uep_form", {}))
         self._muon_generation_view.set_form_state(
             self._document.ui_state.get("muon_generation_form", {})
         )
@@ -1071,6 +1100,10 @@ class MainWindow(QMainWindow):
         )
         self._refresh_pristine_relaxation_defaults()
         self._refresh_pristine_relaxation_rows()
+        self._refresh_uep_defaults()
+        self._refresh_uep_source_structures()
+        self._refresh_uep_supercell_options()
+        self._refresh_uep_rows()
         self._refresh_convergence_overview()
         self._main_stack.setCurrentWidget(self._home_page)
         self._sync_expedition_trail()
@@ -1295,6 +1328,13 @@ class MainWindow(QMainWindow):
     def _workflow_pristine_relaxation_complete(document: ProjectDocument) -> bool:
         return bool(document.comparison_tables)
 
+    @staticmethod
+    def _workflow_uep_complete(document: ProjectDocument) -> bool:
+        return any(
+            job.workflow_stage == WorkflowStage.UEP and job.status == JobStatus.COMPLETED
+            for job in document.jobs.values()
+        )
+
     def _workflow_definitions(self) -> tuple[WorkflowDefinition, ...]:
         cutoff = WorkflowDefinition(
             key="convergence_cutoff",
@@ -1338,6 +1378,14 @@ class MainWindow(QMainWindow):
                 route="pristine_relaxation",
                 completion_goal="Generate at least one comparison table.",
                 completion_check=self._workflow_pristine_relaxation_complete,
+            ),
+            WorkflowDefinition(
+                key="uep",
+                title="UEP",
+                subtitle="Electrostatic screening",
+                route="uep",
+                completion_goal="Complete at least one UEP source job.",
+                completion_check=self._workflow_uep_complete,
             ),
             WorkflowDefinition(
                 key="muon_sites",
@@ -1469,9 +1517,13 @@ class MainWindow(QMainWindow):
     def _refresh_jobs_table(self) -> None:
         self._jobs_table.setRowCount(0)
         if self._document is None:
+            self._job_runtime_timer.stop()
+            self._cluster_elapsed_seconds_by_job = {}
+            self._cluster_elapsed_checked_at = None
             self._convergence_view.set_cutoff_runtime_states({})
             self._kpoint_convergence_view.set_runtime_states({})
             self._pristine_relaxation_view.set_runtime_states({})
+            self._uep_view.set_runtime_states({})
             return
 
         for job in self._document.jobs.values():
@@ -1546,11 +1598,64 @@ class MainWindow(QMainWindow):
             )
 
         self._configure_jobs_table_columns()
+        self._sync_job_runtime_timer()
 
         self._refresh_convergence_cutoff_rows()
         self._refresh_kpoint_convergence_rows()
         self._refresh_pristine_relaxation_rows()
+        self._refresh_uep_rows()
         self._sync_expedition_trail()
+
+    def _refresh_active_job_runtime_cells(self) -> None:
+        if self._document is None:
+            self._job_runtime_timer.stop()
+            return
+
+        has_live_runtime = False
+        for row in range(self._jobs_table.rowCount()):
+            label_item = self._jobs_table.item(row, self._JOB_LABEL_COLUMN)
+            runtime_item = self._jobs_table.item(row, self._JOB_RUNTIME_COLUMN)
+            if label_item is None or runtime_item is None:
+                continue
+            raw_job_id = label_item.data(Qt.ItemDataRole.UserRole)
+            try:
+                job_id = UUID(str(raw_job_id))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            job = self._document.jobs.get(job_id)
+            if job is None:
+                continue
+            if (
+                job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}
+                and (
+                    job.started_at is not None
+                    or (job.execution_target != "local" and job.id in self._cluster_elapsed_seconds_by_job)
+                )
+            ):
+                has_live_runtime = True
+            runtime_item.setText(self._job_runtime_text(job))
+
+        if not has_live_runtime:
+            self._job_runtime_timer.stop()
+
+    def _sync_job_runtime_timer(self) -> None:
+        if self._document is None:
+            self._job_runtime_timer.stop()
+            return
+        has_live_runtime = any(
+            job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}
+            and (
+                job.started_at is not None
+                or (job.execution_target != "local" and job.id in self._cluster_elapsed_seconds_by_job)
+            )
+            for job in self._document.jobs.values()
+            if job.status in _VISIBLE_DASHBOARD_STATES
+        )
+        if has_live_runtime:
+            if not self._job_runtime_timer.isActive():
+                self._job_runtime_timer.start()
+        else:
+            self._job_runtime_timer.stop()
 
     def _configure_jobs_table_columns(self) -> None:
         """Stretch primary dashboard columns while keeping action columns compact."""
@@ -1592,17 +1697,57 @@ class MainWindow(QMainWindow):
         return status_brush(status_value)
 
     @staticmethod
-    def _job_runtime_text(job: Job) -> str:
-        if job.started_at is None:
-            return ""
-
-        end_time = job.completed_at or utc_now()
-        elapsed_seconds = max(0, int((end_time - job.started_at).total_seconds()))
+    def _format_runtime_seconds(elapsed_seconds: int) -> str:
+        elapsed_seconds = max(0, int(elapsed_seconds))
         hours, remainder = divmod(elapsed_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         if hours:
             return f"{hours:d}:{minutes:02d}:{seconds:02d}"
         return f"{minutes:02d}:{seconds:02d}"
+
+    @staticmethod
+    def _parse_scheduler_elapsed_seconds(value: str) -> int | None:
+        text = str(value).strip()
+        if not text:
+            return None
+        day_count = 0
+        if "-" in text:
+            day_text, remainder = text.split("-", 1)
+            try:
+                day_count = int(day_text)
+            except ValueError:
+                return None
+            text = remainder
+        parts = text.split(":")
+        try:
+            numbers = [int(part) for part in parts]
+        except ValueError:
+            return None
+        if len(numbers) == 2:
+            hours = 0
+            minutes, seconds = numbers
+        elif len(numbers) == 3:
+            hours, minutes, seconds = numbers
+        else:
+            return None
+        return day_count * 86400 + hours * 3600 + minutes * 60 + seconds
+
+    def _job_runtime_text(self, job: Job) -> str:
+        if (
+            job.execution_target != "local"
+            and job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}
+            and (base_elapsed := self._cluster_elapsed_seconds_by_job.get(job.id)) is not None
+        ):
+            checked_at = self._cluster_elapsed_checked_at
+            if checked_at is None:
+                return self._format_runtime_seconds(base_elapsed)
+            delta_seconds = max(0, int((utc_now() - checked_at).total_seconds()))
+            return self._format_runtime_seconds(base_elapsed + delta_seconds)
+        if job.started_at is None:
+            return ""
+        end_time = job.completed_at or utc_now()
+        elapsed_seconds = max(0, int((end_time - job.started_at).total_seconds()))
+        return self._format_runtime_seconds(elapsed_seconds)
 
     def _add_demo_job(self) -> None:
         if self._document is None:
@@ -1724,6 +1869,8 @@ class MainWindow(QMainWindow):
             target = self._kpoint_convergence_view
         elif route == "pristine_relaxation":
             target = self._pristine_relaxation_view
+        elif route == "uep":
+            target = self._uep_view
         elif route == "muon_candidates":
             target = self._muon_generation_view
         elif isinstance(route, str):
@@ -2596,11 +2743,16 @@ class MainWindow(QMainWindow):
             return
 
         run_ids = [run.id for run in self._document.runs.values() if run.job_id == job_id]
-        result_ids = [
+        result_ids = {
+            result.id
+            for result in self._document.results.values()
+            if result.calculation_run_id in run_ids
+        }
+        result_ids.update(
             run.result_id
             for run in self._document.runs.values()
             if run.job_id == job_id and run.result_id is not None
-        ]
+        )
 
         for result_id in result_ids:
             self._document.results.pop(result_id, None)
@@ -2873,6 +3025,8 @@ class MainWindow(QMainWindow):
                     queue_name=getattr(submission, "queue_name", ""),
                     comment=getattr(submission, "comment", ""),
                     castep_executable=selected_cluster.castep_executable,
+                    retrieve_den_fmt=job.calc_type == "castep_uep_source",
+                    retrieve_out_cell=job.calc_type == "castep_pristine_relaxation",
                 )
                 job.remote_job_id = remote_job_id
                 job.remote_directory = remote_target
@@ -3308,6 +3462,26 @@ class MainWindow(QMainWindow):
             return None
         return max(runs, key=lambda run: run.run_index)
 
+    def _results_for_run(self, run_id: UUID) -> list[Result]:
+        if self._document is None:
+            return []
+        return [result for result in self._document.results.values() if result.calculation_run_id == run_id]
+
+    def _uep_potential_grid_result_for_job(self, job_id: UUID) -> Result | None:
+        run = self._run_for_job(job_id)
+        if run is None:
+            return None
+        for result in self._results_for_run(run.id):
+            if result.result_type == self._UEP_POTENTIAL_GRID_RESULT_TYPE:
+                return result
+        return None
+
+    def _load_uep_potential_grid_for_job(self, job_id: UUID) -> UepPotentialGrid | None:
+        result = self._uep_potential_grid_result_for_job(job_id)
+        if result is None:
+            return None
+        return deserialize_potential_grid(result.data)
+
     def _job_output_directory(self, job: Job) -> Path | None:
         if self._document is None:
             return None
@@ -3317,6 +3491,14 @@ class MainWindow(QMainWindow):
             job_ids_by_cutoff = params.get("job_ids_by_cutoff", {})
             if isinstance(job_ids_by_cutoff, dict) and str(job.id) in {
                 str(value) for value in job_ids_by_cutoff.values()
+            }:
+                base = self._definition_output_directory(definition)
+                if base is not None:
+                    return base / job.label
+
+            job_ids_by_label = params.get("job_ids_by_label", {})
+            if isinstance(job_ids_by_label, dict) and str(job.id) in {
+                str(value) for value in job_ids_by_label.values()
             }:
                 base = self._definition_output_directory(definition)
                 if base is not None:
@@ -3357,6 +3539,7 @@ class MainWindow(QMainWindow):
             output_dir / f"{job.label}.cell",
             output_dir / f"{job.label}.param",
             output_dir / f"{job.label}.castep",
+            output_dir / f"{job.label}.den_fmt",
             output_dir / f"{job.label}-out.cell",
         ]
         files: list[str] = []
@@ -3445,6 +3628,17 @@ class MainWindow(QMainWindow):
             "warnings": list(parsed.warnings),
             "geom_converged": parsed.geom_converged,
         }
+
+        if job.calc_type == "castep_uep_source":
+            output_dir = self._job_output_directory(job)
+            density_path = None if output_dir is None else output_dir / f"{job.label}.den_fmt"
+            if density_path is None or not density_path.exists():
+                self._on_local_job_failed(
+                    job_id,
+                    f"Expected formatted density output was not found: {job.label}.den_fmt",
+                )
+                return
+            result_payload["density_available"] = True
 
         derived_structure_ids: list[UUID] = []
         if job.calc_type == "castep_pristine_relaxation":
@@ -3661,6 +3855,8 @@ class MainWindow(QMainWindow):
             self._cluster_refresh_button.setEnabled(True)
             return
 
+        self._cluster_elapsed_seconds_by_job = {}
+        self._cluster_elapsed_checked_at = None
         self._cluster_connection_label.setText("Cluster: disconnected")
         self._refresh_cluster_connection_label_colour()
         self._cluster_queue_checked_label.setText("Queue last checked: disconnected")
@@ -3672,17 +3868,35 @@ class MainWindow(QMainWindow):
         self._cluster_connection_label.setStyleSheet(f"color: {colour};")
 
     def _on_cluster_queue_checked(self, checked_at) -> None:
-        if hasattr(checked_at, "strftime"):
-            localized = checked_at
-            if getattr(checked_at, "tzinfo", None) is not None and hasattr(checked_at, "astimezone"):
+        elapsed_by_job_id = getattr(checked_at, "elapsed_by_job_id", None)
+        if isinstance(elapsed_by_job_id, Mapping):
+            parsed: dict[UUID, int] = {}
+            for job_id, elapsed in elapsed_by_job_id.items():
                 try:
-                    localized = checked_at.astimezone()
+                    normalized_job_id = job_id if isinstance(job_id, UUID) else UUID(str(job_id))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                seconds = self._parse_scheduler_elapsed_seconds(str(elapsed))
+                if seconds is not None:
+                    parsed[normalized_job_id] = seconds
+            self._cluster_elapsed_seconds_by_job = parsed
+        stamp_source = getattr(checked_at, "checked_at", checked_at)
+        self._cluster_elapsed_checked_at = stamp_source if isinstance(stamp_source, datetime) else None
+        if hasattr(stamp_source, "strftime"):
+            localized = stamp_source
+            if getattr(stamp_source, "tzinfo", None) is not None and hasattr(stamp_source, "astimezone"):
+                try:
+                    localized = stamp_source.astimezone()
                 except Exception:
-                    localized = checked_at
+                    localized = stamp_source
             stamp = localized.strftime("%H:%M:%S")
+        elif isinstance(stamp_source, str):
+            stamp = stamp_source.strip() or "unknown"
         else:
-            stamp = str(checked_at)
+            stamp = "unknown"
         self._cluster_queue_checked_label.setText(f"Queue last checked: {stamp}")
+        self._sync_job_runtime_timer()
+        self._refresh_active_job_runtime_cells()
 
     def _on_cluster_poll_failed(self, message: str) -> None:
         show_detailed_warning(
@@ -3844,6 +4058,8 @@ class MainWindow(QMainWindow):
                 local_output_dir=output_dir,
                 cluster_name=target,
                 status=job.status,
+                retrieve_den_fmt=job.calc_type == "castep_uep_source",
+                retrieve_out_cell=job.calc_type == "castep_pristine_relaxation",
             )
 
     def _infer_remote_job_directory(self, job: Job, cluster_name: str) -> str:
@@ -4876,6 +5092,270 @@ class MainWindow(QMainWindow):
             return
         self._document.ui_state["pristine_relaxation_form"] = state
 
+    def _refresh_uep_defaults(self) -> None:
+        if self._document is None:
+            self._uep_view.set_project_defaults(
+                cutoff_energy=None,
+                kpoint_grid=None,
+                kpoint_reference_lattice=None,
+            )
+            self._uep_view.set_host_lattice(None)
+            return
+
+        source_structure = self._selected_uep_source_structure()
+        self._uep_view.set_project_defaults(
+            cutoff_energy=self._document.project.recommended_cutoff_energy,
+            kpoint_grid=self._document.project.recommended_kpoint_grid,
+            kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+        )
+        self._uep_view.set_host_lattice(
+            None if source_structure is None else [list(row) for row in source_structure.lattice_vectors]
+        )
+
+    def _available_uep_source_structures(self) -> list[Structure]:
+        if self._document is None:
+            return []
+        host = self._project_service.active_host_structure(self._document)
+        if host is None:
+            return []
+        derived = [
+            structure
+            for structure in self._document.structures.values()
+            if structure.origin == "pristine_relaxation" and structure.parent_structure_id == host.id
+        ]
+        derived.sort(key=lambda structure: (structure.label.casefold(), str(structure.id)))
+        return [host, *derived]
+
+    def _selected_uep_source_structure(self) -> Structure | None:
+        if self._document is None:
+            return None
+        selected_id = None
+        raw_state = self._document.ui_state.get("uep_form", {})
+        if isinstance(raw_state, dict):
+            raw_id = raw_state.get("selected_source_structure_id")
+            if isinstance(raw_id, str):
+                try:
+                    selected_id = UUID(raw_id)
+                except ValueError:
+                    selected_id = None
+        available = self._available_uep_source_structures()
+        if selected_id is not None:
+            structure = self._document.structures.get(selected_id)
+            if structure is not None:
+                return structure
+        return available[0] if available else None
+
+    def _refresh_uep_source_structures(self) -> None:
+        if self._document is None:
+            self._uep_view.set_source_structure_options([], selected_id=None, summary="Create or open a project first.")
+            return
+
+        structures = self._available_uep_source_structures()
+        selected = self._selected_uep_source_structure()
+        selected_id = str(selected.id) if selected is not None else None
+        if not structures:
+            self._uep_view.set_source_structure_options(
+                [],
+                selected_id=None,
+                summary="Load a host structure before configuring the UEP workflow.",
+            )
+            return
+
+        summary = (
+            f"Using source structure: {selected.label}"
+            if selected is not None
+            else "Choose the host structure or a completed pristine-relaxed structure as the UEP source."
+        )
+        self._uep_view.set_source_structure_options(
+            [{"id": str(structure.id), "label": structure.label} for structure in structures],
+            selected_id=selected_id,
+            summary=summary,
+        )
+
+    def _refresh_uep_supercell_options(self) -> None:
+        if self._document is None:
+            self._uep_view.set_supercell_options([])
+            return
+        source_structure = self._selected_uep_source_structure()
+        if source_structure is None:
+            self._uep_view.set_supercell_options([])
+            return
+        assets = self._project_service.list_workflow_supercell_assets(
+            self._document,
+            host_structure_id=source_structure.id,
+        )
+        self._uep_view.set_supercell_options(
+            [
+                {
+                    "label": asset.label,
+                    "matrix": [list(row) for row in asset.matrix],
+                }
+                for asset in assets
+            ]
+        )
+
+    def _on_uep_form_state_changed(self, state: dict) -> None:
+        if self._document is None:
+            return
+        self._document.ui_state["uep_form"] = state
+        if getattr(self, "_handling_uep_form_state", False):
+            return
+        self._handling_uep_form_state = True
+        try:
+            self._refresh_uep_defaults()
+            self._refresh_uep_supercell_options()
+        finally:
+            self._handling_uep_form_state = False
+
+    def _serialize_uep_config(self, config: UepConfig) -> dict[str, object]:
+        return {
+            "name_prefix": "uep" if config.name_prefix == "uep_source" else config.name_prefix,
+            "rows": [
+                {
+                    "label": row.label,
+                    "supercell_matrix": (
+                        [list(line) for line in row.supercell_matrix]
+                        if row.supercell_matrix is not None
+                        else None
+                    ),
+                    "parameter_values": dict(row.parameter_values),
+                    "added_advanced": list(row.added_advanced),
+                }
+                for row in config.rows
+            ],
+        }
+
+    def _deserialize_uep_config(self, payload: object) -> UepConfig | None:
+        if not isinstance(payload, dict):
+            return None
+        rows_payload = payload.get("rows", [])
+        if not isinstance(rows_payload, list):
+            return None
+
+        rows: list[UepSourceRow] = []
+        for entry in rows_payload:
+            if not isinstance(entry, dict):
+                continue
+            label = str(entry.get("label", "")).strip()
+            if not label:
+                continue
+            matrix_payload = entry.get("supercell_matrix")
+            matrix: tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None = None
+            if isinstance(matrix_payload, list) and len(matrix_payload) == 3:
+                try:
+                    matrix = (
+                        (int(matrix_payload[0][0]), int(matrix_payload[0][1]), int(matrix_payload[0][2])),
+                        (int(matrix_payload[1][0]), int(matrix_payload[1][1]), int(matrix_payload[1][2])),
+                        (int(matrix_payload[2][0]), int(matrix_payload[2][1]), int(matrix_payload[2][2])),
+                    )
+                except (TypeError, ValueError, IndexError):
+                    matrix = None
+            raw_params = entry.get("parameter_values", {})
+            params = raw_params if isinstance(raw_params, dict) else {}
+            restored_params = {
+                str(name): self._restore_castep_param_value(str(name), raw_value)
+                for name, raw_value in params.items()
+            }
+            raw_advanced = entry.get("added_advanced", [])
+            added_advanced = (
+                tuple(str(name) for name in raw_advanced if isinstance(name, str))
+                if isinstance(raw_advanced, list)
+                else ()
+            )
+            rows.append(
+                UepSourceRow(
+                    label=label,
+                    supercell_matrix=matrix,
+                    parameter_values=restored_params,
+                    added_advanced=added_advanced,
+                )
+            )
+
+        return UepConfig(
+            name_prefix=(
+                "uep"
+                if str(payload.get("name_prefix", "uep")).strip() == "uep_source"
+                else str(payload.get("name_prefix", "uep")).strip() or "uep"
+            ),
+            rows=tuple(rows),
+        )
+
+    def _uep_definitions(self) -> list:
+        if self._document is None:
+            return []
+        definitions = [
+            definition
+            for definition in self._document.calculations.values()
+            if definition.workflow_stage == WorkflowStage.UEP
+        ]
+        definitions.sort(key=lambda definition: definition.created_at, reverse=True)
+        return definitions
+
+    def _active_uep_definition(self):
+        if self._document is None:
+            return None
+        raw_definition_id = self._document.ui_state.get(self._ACTIVE_UEP_DEFINITION_KEY)
+        if isinstance(raw_definition_id, str):
+            try:
+                definition_id = UUID(raw_definition_id)
+            except ValueError:
+                definition_id = None
+            if definition_id is not None:
+                definition = self._document.calculations.get(definition_id)
+                if definition is not None and definition.workflow_stage == WorkflowStage.UEP:
+                    return definition
+        definitions = self._uep_definitions()
+        return definitions[0] if definitions else None
+
+    def _job_for_uep_label(self, definition, label: str) -> Job | None:
+        if self._document is None:
+            return None
+        mapping = definition.parameters.get("job_ids_by_label", {})
+        if isinstance(mapping, dict):
+            raw_job_id = mapping.get(label)
+            if isinstance(raw_job_id, str):
+                try:
+                    job_id = UUID(raw_job_id)
+                except ValueError:
+                    job_id = None
+                if job_id is not None:
+                    return self._document.jobs.get(job_id)
+        return None
+
+    def _build_uep_states(self) -> dict[str, UepRunState]:
+        states: dict[str, UepRunState] = {}
+        if self._document is None:
+            return states
+        definition = self._active_uep_definition()
+        if definition is None:
+            return states
+        config = self._deserialize_uep_config(definition.parameters.get("configuration", {}))
+        if config is None:
+            return states
+
+        for row in config.rows:
+            job = self._job_for_uep_label(definition, row.label)
+            if job is None:
+                states[row.label] = UepRunState(status="ready")
+                continue
+            run = self._run_for_job(job.id)
+            result = self._document.results.get(run.result_id) if run is not None and run.result_id is not None else None
+            data = result.data if result is not None and isinstance(result.data, dict) else {}
+            potential_grid_available = self._uep_potential_grid_result_for_job(job.id) is not None
+            states[row.label] = UepRunState(
+                status=("ready" if job.status == JobStatus.DEFINED else job.status.value),
+                total_energy=float(data["total_energy"]) if isinstance(data.get("total_energy"), (int, float)) else None,
+                potential_grid_available=potential_grid_available,
+                job_id=job.id,
+                job_label=job.label,
+                error_message=job.error_message,
+                density_available=bool(data.get("density_available")) if data.get("density_available") is not None else None,
+            )
+        return states
+
+    def _refresh_uep_rows(self) -> None:
+        self._uep_view.set_runtime_states(self._build_uep_states())
+
     def _serialize_pristine_relaxation_config(self, config: PristineRelaxationConfig) -> dict[str, object]:
         return {
             "name_prefix": config.name_prefix,
@@ -5546,6 +6026,396 @@ class MainWindow(QMainWindow):
             )
             return
         self._submit_jobs_on_cluster(jobs)
+
+    def _on_uep_source_structure_selection_requested(self, payload: object) -> None:
+        if self._document is None:
+            return
+        state = dict(self._document.ui_state.get("uep_form", {}))
+        structure_id = str(payload).strip()
+        if structure_id:
+            state["selected_source_structure_id"] = structure_id
+        else:
+            state.pop("selected_source_structure_id", None)
+        self._document.ui_state["uep_form"] = state
+        self._refresh_uep_source_structures()
+        self._refresh_uep_defaults()
+        self._refresh_uep_supercell_options()
+
+    def _on_uep_supercell_edit_requested(self, payload: object) -> None:
+        if self._document is None:
+            return
+        try:
+            row_id = int(payload)
+        except (TypeError, ValueError):
+            return
+
+        source_structure = self._selected_uep_source_structure()
+        if source_structure is None:
+            QMessageBox.warning(
+                self,
+                "No source structure",
+                "Select or generate a source structure before configuring UEP supercells.",
+            )
+            return
+
+        existing = self._uep_view.row_supercell_matrix(row_id)
+        initial_matrix = (
+            [list(line) for line in existing]
+            if existing is not None
+            else [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        )
+        dialog = SupercellPreviewDialog(
+            structure=source_structure,
+            atomic_spins=self._project_service.structure_atomic_spins(source_structure),
+            propagation_vector=self._project_service.structure_propagation_vector(source_structure),
+            initial_matrix=initial_matrix,
+            accept_button_text="Use Supercell",
+            show_unit_cell_button=True,
+            parent=self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        if dialog.result_mode() == "unit_cell":
+            self._uep_view.set_row_supercell(row_id, None)
+            return
+
+        matrix_values = [[int(row[0]), int(row[1]), int(row[2])] for row in dialog.matrix()]
+        saved = self._project_service.create_workflow_supercell_asset(
+            self._document,
+            workflow_stage=WorkflowStage.UEP,
+            host_structure_id=source_structure.id,
+            matrix=matrix_values,
+            reuse_existing=True,
+        )
+        matrix = (
+            (matrix_values[0][0], matrix_values[0][1], matrix_values[0][2]),
+            (matrix_values[1][0], matrix_values[1][1], matrix_values[1][2]),
+            (matrix_values[2][0], matrix_values[2][1], matrix_values[2][2]),
+        )
+        self._refresh_uep_supercell_options()
+        self._uep_view.set_row_supercell(row_id, matrix)
+        self.statusBar().showMessage(f"Saved UEP simulation cell '{saved.label}'")
+
+    def _on_uep_configured(self, config: UepConfig) -> None:
+        if self._document is None:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+        source_structure = self._selected_uep_source_structure()
+        if source_structure is None:
+            QMessageBox.warning(
+                self,
+                "No source structure",
+                "Load a host structure or select a pristine-relaxed structure first.",
+            )
+            return
+        try:
+            expand_uep_jobs(
+                host_structure=source_structure,
+                config=config,
+                project_cutoff_energy=self._document.project.recommended_cutoff_energy,
+                project_kpoint_grid=self._document.project.recommended_kpoint_grid,
+                project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+            )
+        except (ValueError, StructureBridgeError) as exc:
+            QMessageBox.warning(self, "UEP setup invalid", str(exc))
+            return
+
+        output_root = self._document.project_root / "files" / "uep"
+        definition = self._project_service.register_uep_definition(
+            self._document,
+            input_structure_id=source_structure.id,
+            parameters=self._serialize_uep_config(config),
+            output_directory=output_root,
+        )
+        self._document.ui_state[self._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
+        self._refresh_uep_rows()
+        self.statusBar().showMessage(
+            f"Configured {len(config.rows)} UEP source job(s); input files will be generated on submission"
+        )
+
+    def _jobs_for_uep_labels(self, labels: list[str]) -> list[Job]:
+        if self._document is None:
+            return []
+        definition = self._active_uep_definition()
+        if definition is None:
+            return []
+        selected: list[Job] = []
+        seen: set[UUID] = set()
+        for label in labels:
+            job = self._job_for_uep_label(definition, label)
+            if job is None or job.id in seen:
+                continue
+            selected.append(job)
+            seen.add(job.id)
+        return selected
+
+    def _materialize_uep_jobs(self, labels: list[str]) -> list[Job]:
+        if self._document is None:
+            return []
+        definition = self._active_uep_definition()
+        if definition is None or not definition.input_structure_ids:
+            return []
+        config = self._deserialize_uep_config(definition.parameters.get("configuration", {}))
+        if config is None:
+            return []
+        source_structure = self._document.structures.get(definition.input_structure_ids[0])
+        output_root = self._definition_output_directory(definition)
+        if source_structure is None or output_root is None:
+            return []
+
+        try:
+            expansion = expand_uep_jobs(
+                host_structure=source_structure,
+                config=config,
+                project_cutoff_energy=self._document.project.recommended_cutoff_energy,
+                project_kpoint_grid=self._document.project.recommended_kpoint_grid,
+                project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+            )
+        except (ValueError, StructureBridgeError):
+            return []
+
+        mapping = definition.parameters.setdefault("job_ids_by_label", {})
+        if not isinstance(mapping, dict):
+            mapping = {}
+            definition.parameters["job_ids_by_label"] = mapping
+
+        spec_by_label = {str(spec.provenance.get("label", "")): spec for spec in expansion.jobs}
+        created: list[Job] = []
+        for label in labels:
+            existing = self._job_for_uep_label(definition, label)
+            if existing is not None:
+                created.append(existing)
+                continue
+            spec = spec_by_label.get(label)
+            if spec is None:
+                continue
+            write_job_directory(spec, output_root)
+            job = self._project_service.add_job(
+                self._document,
+                label=spec.name,
+                workflow_stage=spec.workflow_stage,
+                calc_type="castep_uep_source",
+            )
+            mapping[label] = str(job.id)
+            created.append(job)
+        return self._dedupe_jobs(created)
+
+    def _on_submit_local_from_uep(self, labels: list[str]) -> None:
+        states = self._build_uep_states()
+        ready_labels = [
+            label
+            for label in labels
+            if (states.get(label) or UepRunState()).status in {"ready", "defined", "not generated"}
+        ]
+        jobs = self._jobs_for_uep_labels(labels)
+        jobs.extend(self._materialize_uep_jobs(ready_labels))
+        jobs = self._dedupe_jobs(jobs)
+        if not jobs:
+            QMessageBox.information(
+                self,
+                "No ready jobs",
+                "Only configured UEP rows in the 'ready' state can be submitted.",
+            )
+            return
+        self._submit_jobs_locally(jobs)
+
+    def _on_submit_cluster_from_uep(self, labels: list[str]) -> None:
+        states = self._build_uep_states()
+        ready_labels = [
+            label
+            for label in labels
+            if (states.get(label) or UepRunState()).status in {"ready", "defined", "not generated"}
+        ]
+        jobs = self._jobs_for_uep_labels(labels)
+        jobs.extend(self._materialize_uep_jobs(ready_labels))
+        jobs = self._dedupe_jobs(jobs)
+        if not jobs:
+            QMessageBox.information(
+                self,
+                "No ready jobs",
+                "Only configured UEP rows in the 'ready' state can be submitted.",
+            )
+            return
+        self._submit_jobs_on_cluster(jobs)
+
+    def _on_cancel_from_uep(self, labels: list[str]) -> None:
+        self._cancel_jobs(self._jobs_for_uep_labels(labels))
+
+    def _on_inspect_failed_from_uep(self, labels: list[str]) -> None:
+        self._inspect_failed_jobs(self._jobs_for_uep_labels(labels))
+
+    def _on_reset_failed_from_uep(self, labels: list[str]) -> None:
+        self._reset_failed_jobs(self._jobs_for_uep_labels(labels))
+
+    def _on_open_uep_analysis_requested(self, label: object) -> None:
+        if self._document is None:
+            return
+        row_label = str(label).strip()
+        if not row_label:
+            return
+
+        definition = self._active_uep_definition()
+        if definition is None:
+            QMessageBox.information(self, "No UEP workflow", "Configure and complete a UEP source job first.")
+            return
+
+        job = self._job_for_uep_label(definition, row_label)
+        if job is None or job.status != JobStatus.COMPLETED:
+            QMessageBox.information(
+                self,
+                "UEP source incomplete",
+                "Only completed UEP source jobs can be analysed.",
+            )
+            return
+
+        output_dir = self._job_output_directory(job)
+        if output_dir is None:
+            QMessageBox.warning(self, "UEP files unavailable", "Could not locate the UEP job output directory.")
+            return
+
+        den_fmt_path = output_dir / f"{job.label}.den_fmt"
+        castep_path = output_dir / f"{job.label}.castep"
+        cell_path = output_dir / f"{job.label}.cell"
+        if not den_fmt_path.exists() or not castep_path.exists():
+            QMessageBox.warning(
+                self,
+                "UEP files unavailable",
+                "UEP analysis requires both `.den_fmt` and `.castep` files from the completed source job.",
+            )
+            return
+
+        source_structure_id = definition.input_structure_ids[0] if definition.input_structure_ids else None
+        if source_structure_id is None:
+            QMessageBox.warning(self, "UEP source unavailable", "The source structure reference is missing.")
+            return
+
+        try:
+            persisted_states = self._document.ui_state.get(self._UEP_ANALYSIS_STATES_KEY, {})
+            if not isinstance(persisted_states, dict):
+                persisted_states = {}
+            initial_state = persisted_states.get(str(job.id), {})
+            if not isinstance(initial_state, dict):
+                initial_state = {}
+            dialog = UepAnalysisDialog(
+                source_job_label=job.label,
+                source_structure_id=source_structure_id,
+                source_structure=self._document.structures.get(source_structure_id),
+                den_fmt_path=den_fmt_path,
+                castep_path=castep_path,
+                cell_path=cell_path if cell_path.exists() else None,
+                initial_potential_grid=self._load_uep_potential_grid_for_job(job.id),
+                initial_state=initial_state,
+                parent=self,
+            )
+        except (UepError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "UEP analysis unavailable", str(exc))
+            return
+
+        dialog.promote_requested.connect(self._on_promote_uep_candidate_requested)
+        dialog.state_changed.connect(lambda state, job_id=job.id: self._on_uep_analysis_state_changed(job_id, state))
+        dialog.potential_grid_ready.connect(
+            lambda payload, job_id=job.id: self._on_uep_potential_grid_ready(job_id, payload)
+        )
+        dialog.exec()
+        self._on_uep_analysis_state_changed(job.id, dialog.state_snapshot())
+
+    def _on_uep_potential_grid_ready(self, job_id: UUID, payload: object) -> None:
+        if self._document is None:
+            return
+        grid = deserialize_potential_grid(payload)
+        if grid is None:
+            return
+        run = self._run_for_job(job_id)
+        if run is None:
+            return
+
+        serialized = serialize_potential_grid(grid)
+        existing = self._uep_potential_grid_result_for_job(job_id)
+        if existing is None:
+            existing = Result(
+                calculation_run_id=run.id,
+                result_type=self._UEP_POTENTIAL_GRID_RESULT_TYPE,
+                data=serialized,
+            )
+        else:
+            existing.data = serialized
+        self._document.results[existing.id] = existing
+        self._refresh_uep_rows()
+        self._persist_document_ui_state(
+            failure_message="Could not persist UEP potential grid to disk"
+        )
+
+    def _on_uep_analysis_state_changed(self, job_id: UUID, state: dict) -> None:
+        if self._document is None:
+            return
+
+        serialized_state = to_jsonable(state)
+        if not isinstance(serialized_state, dict):
+            return
+
+        states = self._document.ui_state.get(self._UEP_ANALYSIS_STATES_KEY, {})
+        if not isinstance(states, dict):
+            states = {}
+        updated = dict(states)
+        updated[str(job_id)] = serialized_state
+        self._document.ui_state[self._UEP_ANALYSIS_STATES_KEY] = updated
+        self._persist_document_ui_state(
+            failure_message="Could not persist UEP analysis state to disk"
+        )
+
+    def _on_promote_uep_candidate_requested(self, payload: object) -> None:
+        if self._document is None or not isinstance(payload, dict):
+            return
+
+        try:
+            source_structure_id = UUID(str(payload.get("source_structure_id", "")).strip())
+        except ValueError:
+            QMessageBox.warning(self, "Promotion failed", "The promoted UEP site is missing its source structure.")
+            return
+
+        label_hint = str(payload.get("label_hint", "UEP Site")).strip() or "UEP Site"
+        fractional = payload.get("fractional_position", [])
+        cartesian = payload.get("cartesian_position", [])
+        properties = payload.get("properties", {})
+        if (
+            not isinstance(fractional, list)
+            or len(fractional) != 3
+            or not isinstance(cartesian, list)
+            or len(cartesian) != 3
+        ):
+            QMessageBox.warning(self, "Promotion failed", "The promoted UEP site does not contain valid coordinates.")
+            return
+
+        next_index = len(self._document.sites) + 1
+        site = MuonSite(
+            label=f"{label_hint} {next_index}",
+            status="candidate",
+            fractional_position=[float(value) for value in fractional],
+            cartesian_position=[float(value) for value in cartesian],
+            generation_method=str(payload.get("generation_method", "uep")).strip() or "uep",
+            source_structure_id=source_structure_id,
+            properties=dict(properties) if isinstance(properties, dict) else {},
+        )
+        self._document.sites[site.id] = site
+        self._project_service.append_provenance(
+            self._document,
+            ProvenanceRecord(
+                action="promote_uep_candidate",
+                workflow_stage=WorkflowStage.UEP,
+                actor="user",
+                description=f"Promoted UEP analysis point '{site.label}' into candidate muon sites",
+                parameters={
+                    "source_job_label": str(payload.get("source_job_label", "")),
+                    "generation_method": site.generation_method,
+                    "fractional_position": list(site.fractional_position),
+                    "cartesian_position": list(site.cartesian_position),
+                },
+                output_entity_ids=[site.id],
+                input_entity_ids=[source_structure_id],
+            ),
+        )
+        self._refresh_muon_generation_table()
+        self.statusBar().showMessage(f"Promoted UEP site '{site.label}' into candidate muon sites")
 
     @staticmethod
     def _serialize_convergence_config(config: ConvergenceConfig) -> dict:

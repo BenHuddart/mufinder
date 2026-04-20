@@ -212,6 +212,26 @@ keywords:
       default_value: false
       advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, muon_relaxation]
 
+  - name: WRITE_FORMATTED_DENSITY
+    canonical_name: write_formatted_density
+    file: param
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: []
+    requires: []
+    example: WRITE_FORMATTED_DENSITY : TRUE
+    notes: Must be TRUE for UEP source jobs so CASTEP writes the `.den_fmt` density required for analysis.
+    gui:
+      label: Write Formatted Density
+      category: io
+      widget_hint: checkbox
+      default_value: false
+      basic_workflows: [uep]
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, uep, muon_relaxation]
+      locked_in_workflows: [uep]
+
   - name: CALCULATE_POLARIZATION
     canonical_name: calculate_polarization
     file: param

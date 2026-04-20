@@ -582,6 +582,54 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         width: 12px;
         height: 12px;
     }}
+    QSlider#uepIsosurfaceSlider {{
+        min-height: 34px;
+    }}
+    QSlider#uepIsosurfaceSlider::groove:horizontal {{
+        height: 14px;
+        border: 1px solid {p.border};
+        border-radius: 7px;
+        background: qlineargradient(
+            x1: 0, y1: 0, x2: 1, y2: 0,
+            stop: 0 {p.bg_surface_alt},
+            stop: 1 {p.bg_primary}
+        );
+    }}
+    QSlider#uepIsosurfaceSlider::sub-page:horizontal {{
+        border-radius: 7px;
+        background: qlineargradient(
+            x1: 0, y1: 0, x2: 1, y2: 0,
+            stop: 0 {p.accent},
+            stop: 1 {p.seal_gold}
+        );
+    }}
+    QSlider#uepIsosurfaceSlider::add-page:horizontal {{
+        border-radius: 7px;
+        background: {p.bg_surface_alt};
+    }}
+    QSlider#uepIsosurfaceSlider::handle:horizontal {{
+        width: 26px;
+        margin: -9px 0;
+        border: 2px solid {p.bg_surface};
+        border-radius: 13px;
+        background: {p.seal_gold};
+    }}
+    QSlider#uepIsosurfaceSlider::handle:horizontal:hover {{
+        background: {p.accent};
+    }}
+    QSlider#uepIsosurfaceSlider::handle:horizontal:pressed {{
+        background: {p.accent_hover};
+    }}
+    QSlider#uepIsosurfaceSlider:disabled::groove:horizontal {{
+        background: {p.bg_surface_alt};
+    }}
+    QSlider#uepIsosurfaceSlider:disabled::sub-page:horizontal {{
+        background: {p.border};
+    }}
+    QSlider#uepIsosurfaceSlider:disabled::handle:horizontal {{
+        background: {p.bg_surface};
+        border-color: {p.border};
+    }}
     """
 
 
@@ -907,6 +955,45 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         color: {p.text_muted};
         font-size: 12px;
     }}
+    QLabel#uepIsosurfacePanelTitle {{
+        color: {p.text_primary};
+        font-size: 14px;
+        font-weight: 700;
+        font-family: "{heading_font}";
+    }}
+    QLabel#uepIsosurfaceMinorLabel {{
+        color: {p.text_muted};
+        font-size: 11px;
+        font-weight: 600;
+    }}
+    QLabel#uepIsosurfaceRangeValue {{
+        color: {p.text_primary};
+        font-size: 13px;
+        font-weight: 500;
+    }}
+    QLabel#uepIsosurfaceBound {{
+        color: {p.text_muted};
+        font-size: 11px;
+        font-weight: 600;
+    }}
+    QLabel#uepIsosurfaceStatusLabel {{
+        color: {p.text_muted};
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 1.35em;
+    }}
+    QLabel#uepIsosurfaceStatusLabel[statusKind="busy"] {{
+        color: {p.status_running};
+    }}
+    QLabel#uepIsosurfaceStatusLabel[statusKind="success"] {{
+        color: {p.status_completed};
+    }}
+    QLabel#uepIsosurfaceStatusLabel[statusKind="exported"] {{
+        color: {p.status_ready};
+    }}
+    QLabel#uepIsosurfaceStatusLabel[statusKind="error"] {{
+        color: {p.status_failed};
+    }}
     QLabel#expeditionTrailTitle {{
         font-size: 15px;
         font-weight: 700;
@@ -951,6 +1038,29 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
         border: 2px dashed {p.border};
         border-radius: 12px;
         background: {p.bg_surface_alt};
+    }}
+    QFrame#uepIsosurfaceSliderPanel,
+    QFrame#uepIsosurfaceInfoCard {{
+        border: 1px solid {p.border};
+        border-radius: 12px;
+        background: {p.bg_surface};
+    }}
+    QFrame#uepIsosurfaceStatusCard {{
+        border: 1px solid {p.border};
+        border-radius: 12px;
+        background: {p.bg_surface};
+    }}
+    QFrame#uepIsosurfaceStatusCard[statusKind="busy"] {{
+        border-color: {p.status_running};
+    }}
+    QFrame#uepIsosurfaceStatusCard[statusKind="success"] {{
+        border-color: {p.status_completed};
+    }}
+    QFrame#uepIsosurfaceStatusCard[statusKind="exported"] {{
+        border-color: {p.status_ready};
+    }}
+    QFrame#uepIsosurfaceStatusCard[statusKind="error"] {{
+        border-color: {p.status_failed};
     }}
     QMenu::item:selected {{
         background: {p.accent};

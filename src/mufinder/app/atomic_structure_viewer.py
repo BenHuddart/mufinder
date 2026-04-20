@@ -11,6 +11,7 @@ from ase.neighborlist import NeighborList
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.projections import register_projection
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 from PySide6.QtCore import Qt, Signal
@@ -387,6 +388,10 @@ class AtomicStructureViewer(QWidget):
         self._sphere_artists: list[object] = []
         self._selected_index: int | None = None
         self._spins: np.ndarray | None = None
+        self._isosurface_vertices: np.ndarray | None = None
+        self._isosurface_faces: np.ndarray | None = None
+        self._isosurface_color = "#3b82f6"
+        self._isosurface_alpha = 0.24
         self._view = _DEFAULT_VIEW
         self._view_roll = 0.0
         self._limits: tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None = None
@@ -493,6 +498,8 @@ class AtomicStructureViewer(QWidget):
         self._structure = structure
         self._atoms = self._to_atoms(structure) if structure is not None else None
         self._spins = self._extract_spins(structure)
+        self._isosurface_vertices = None
+        self._isosurface_faces = None
         self._set_spin_visibility_default_from_data()
         self._selected_index = None
         self._view = _DEFAULT_VIEW
@@ -513,6 +520,33 @@ class AtomicStructureViewer(QWidget):
                 self._spins = spin_array.copy()
         if self._spins is not None and np.any(np.abs(self._spins) > 1e-10):
             self._show_spins.setChecked(True)
+        self._store_view()
+        self._render()
+
+    def set_isosurface(
+        self,
+        vertices: list[list[float]] | tuple[tuple[float, float, float], ...] | np.ndarray | None,
+        faces: list[list[int]] | tuple[tuple[int, int, int], ...] | np.ndarray | None,
+        *,
+        color: str = "#3b82f6",
+        alpha: float = 0.24,
+    ) -> None:
+        """Attach or clear an isosurface triangle mesh overlay."""
+
+        if vertices is None or faces is None:
+            self._isosurface_vertices = None
+            self._isosurface_faces = None
+        else:
+            vertices_array = np.asarray(vertices, dtype=float)
+            faces_array = np.asarray(faces, dtype=int)
+            if vertices_array.ndim != 2 or vertices_array.shape[1] != 3 or faces_array.ndim != 2 or faces_array.shape[1] != 3:
+                self._isosurface_vertices = None
+                self._isosurface_faces = None
+            else:
+                self._isosurface_vertices = vertices_array
+                self._isosurface_faces = faces_array
+        self._isosurface_color = str(color)
+        self._isosurface_alpha = float(alpha)
         self._store_view()
         self._render()
 
@@ -754,6 +788,13 @@ class AtomicStructureViewer(QWidget):
         extra_points = None
         if self._show_cell.isChecked():
             extra_points = self._draw_unit_cell(axis)
+        if self._isosurface_vertices is not None and self._isosurface_faces is not None and len(self._isosurface_faces):
+            self._draw_isosurface(axis)
+            extra_points = (
+                self._isosurface_vertices
+                if extra_points is None
+                else np.vstack([extra_points, self._isosurface_vertices])
+            )
         if len(spin_tips):
             extra_points = spin_tips if extra_points is None else np.vstack([extra_points, spin_tips])
 
@@ -780,6 +821,21 @@ class AtomicStructureViewer(QWidget):
             coord_axis.pane.set_alpha(0.0)
 
         self._canvas.draw_idle()
+
+    def _draw_isosurface(self, axis) -> None:
+        assert self._isosurface_vertices is not None
+        assert self._isosurface_faces is not None
+        if len(self._isosurface_faces) == 0:
+            return
+        triangles = self._isosurface_vertices[self._isosurface_faces]
+        collection = Poly3DCollection(
+            triangles,
+            facecolors=self._isosurface_color,
+            edgecolors=self._isosurface_color,
+            linewidths=0.15,
+            alpha=self._isosurface_alpha,
+        )
+        axis.add_collection3d(collection)
 
     def _draw_unit_cell(self, axis) -> np.ndarray:
         assert self._atoms is not None

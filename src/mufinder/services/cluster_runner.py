@@ -32,6 +32,8 @@ class _TrackedClusterJob:
     cluster_name: str = ""
     status: JobStatus = JobStatus.QUEUED
     terminal: bool = False
+    retrieve_den_fmt: bool = False
+    retrieve_out_cell: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +148,8 @@ class ClusterJobRunner(QObject):
         queue_name: str = "",
         comment: str = "",
         castep_executable: str = "",
+        retrieve_den_fmt: bool = False,
+        retrieve_out_cell: bool = False,
     ) -> str:
         """Upload files, submit scheduler script, and start tracking the remote job."""
 
@@ -244,6 +248,8 @@ class ClusterJobRunner(QObject):
             cluster_name=self._config.name if self._config is not None else "",
             status=JobStatus.QUEUED,
             terminal=False,
+            retrieve_den_fmt=bool(retrieve_den_fmt),
+            retrieve_out_cell=bool(retrieve_out_cell),
         )
 
         self.status_changed.emit(job_id, JobStatus.QUEUED.value)
@@ -293,6 +299,8 @@ class ClusterJobRunner(QObject):
         local_output_dir: Path,
         cluster_name: str,
         status: JobStatus,
+        retrieve_den_fmt: bool = False,
+        retrieve_out_cell: bool = False,
     ) -> None:
         """Register a persisted cluster job for queue polling and retrieval."""
 
@@ -310,6 +318,8 @@ class ClusterJobRunner(QObject):
             cluster_name=cluster_name.strip(),
             status=status,
             terminal=status not in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING},
+            retrieve_den_fmt=bool(retrieve_den_fmt),
+            retrieve_out_cell=bool(retrieve_out_cell),
         )
         self._tracked_jobs[job_id] = tracked
         if (
@@ -451,13 +461,17 @@ class ClusterJobRunner(QObject):
 
         self.status_changed.emit(entry.job_id, JobStatus.RETRIEVING.value)
         remote_castep = posixpath.join(entry.remote_dir, f"{entry.seed_name}.castep")
+        remote_den_fmt = posixpath.join(entry.remote_dir, f"{entry.seed_name}.den_fmt")
         remote_out_cell = posixpath.join(entry.remote_dir, f"{entry.seed_name}-out.cell")
         local_castep = entry.local_output_dir / f"{entry.seed_name}.castep"
+        local_den_fmt = entry.local_output_dir / f"{entry.seed_name}.den_fmt"
         local_out_cell = entry.local_output_dir / f"{entry.seed_name}-out.cell"
 
         try:
             ssh.get(remote_castep, local_castep)
-            if ssh.exists(remote_out_cell):
+            if entry.retrieve_den_fmt and ssh.exists(remote_den_fmt):
+                ssh.get(remote_den_fmt, local_den_fmt)
+            if entry.retrieve_out_cell and ssh.exists(remote_out_cell):
                 ssh.get(remote_out_cell, local_out_cell)
             parsed = parse_castep_output(local_castep)
         except Exception as exc:  # noqa: BLE001

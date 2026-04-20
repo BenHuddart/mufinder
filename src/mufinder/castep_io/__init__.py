@@ -14,7 +14,7 @@ from .gui_metadata import (
     make_keyword_assignment,
     normalize_gui_value,
 )
-from .output_parser import CastepResult, parse_castep_output
+from .output_parser import CastepResult, parse_castep_mulliken_atomic_spins, parse_castep_output
 from .param_writer import write_param
 from .presets import geometry_optimization, molecular_dynamics, single_point
 from .types import (
@@ -67,6 +67,7 @@ __all__ = [
     "validate_cell_file",
     "validate_param_file",
     "parse_castep_output",
+    "parse_castep_mulliken_atomic_spins",
     "parse_cell_file",
     "parse_cell_text",
     "write_cell",

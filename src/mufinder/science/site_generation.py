@@ -178,6 +178,67 @@ def generate_random_sites(
             )
         )
 
+    if len(accepted_points) < count:
+        generated = len(accepted_points)
+        if generated == 0:
+            raise SiteGenerationError(
+                "Could not generate any candidate sites with current constraints. "
+                "Relax distance limits or increase supercell size."
+            )
+        raise SiteGenerationError(
+            f"Could only generate {generated} of {count} candidate sites after {attempts} attempts. "
+            "Increase max_attempts, relax distance limits, or increase supercell size."
+        )
+
+    return accepted_points, attempts
+
+
+def generate_random_sites_by_distance(
+    *,
+    lattice_vectors: Sequence[Sequence[float]] | None,
+    host_positions_frac: Sequence[Sequence[float]],
+    min_muon_muon: float,
+    min_muon_atom: float,
+    max_attempts: int = 20000,
+    seed: int | None = None,
+) -> tuple[list[GeneratedPoint], int]:
+    """Generate as many randomly placed candidate sites as constraints allow.
+
+    Returns a tuple: (sites, attempts_used).
+    """
+    if min_muon_muon <= 0.0:
+        raise SiteGenerationError("Muon-muon spacing must be greater than zero.")
+    if min_muon_atom < 0.0:
+        raise SiteGenerationError("Distance constraints must be non-negative.")
+
+    lattice = _validate_lattice(lattice_vectors) if lattice_vectors else _identity_lattice()
+    rng = random.Random(seed)
+
+    accepted_frac: list[list[float]] = []
+    accepted_points: list[GeneratedPoint] = []
+
+    attempts = 0
+    while attempts < max_attempts:
+        attempts += 1
+        candidate_frac = [rng.random(), rng.random(), rng.random()]
+        if not _is_valid_candidate(
+            candidate_frac,
+            host_positions_frac,
+            accepted_frac,
+            lattice,
+            min_muon_atom=min_muon_atom,
+            min_muon_muon=min_muon_muon,
+        ):
+            continue
+
+        accepted_frac.append(candidate_frac)
+        accepted_points.append(
+            GeneratedPoint(
+                fractional=_wrap_fractional(candidate_frac),
+                cartesian=lattice_frac_to_cart(candidate_frac, lattice),
+            )
+        )
+
     if not accepted_points:
         raise SiteGenerationError(
             "Could not generate any candidate sites with current constraints. "
@@ -261,9 +322,15 @@ def generate_near_element_sites(
             )
         )
 
-    if not accepted_points:
+    if len(accepted_points) < count:
+        generated = len(accepted_points)
+        if generated == 0:
+            raise SiteGenerationError(
+                "Could not place any near-element candidate sites with current constraints."
+            )
         raise SiteGenerationError(
-            "Could not place any near-element candidate sites with current constraints."
+            f"Could only generate {generated} of {count} near-element candidate sites after {attempts} attempts. "
+            "Increase max_attempts, relax distance limits, or increase supercell size."
         )
 
     return accepted_points, attempts

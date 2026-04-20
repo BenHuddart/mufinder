@@ -320,6 +320,29 @@ def test_atomic_structure_viewer_blank_click_clears_selection(qapp) -> None:
     widget.close()
 
 
+def test_atomic_structure_viewer_renders_isosurface_overlay(qapp) -> None:
+    widget = HostStructureWidget()
+    widget.set_structure(_sample_structure())
+
+    viewer = widget._viewer
+    viewer.set_isosurface(
+        vertices=[
+            [0.5, 0.5, 0.5],
+            [1.5, 0.5, 0.5],
+            [0.5, 1.5, 0.5],
+        ],
+        faces=[[0, 1, 2]],
+    )
+
+    assert viewer._isosurface_vertices is not None
+    assert viewer._isosurface_faces is not None
+    assert viewer._isosurface_faces.shape == (1, 3)
+    viewer.set_isosurface(None, None)
+    assert viewer._isosurface_vertices is None
+    assert viewer._isosurface_faces is None
+    widget.close()
+
+
 def test_atomic_structure_viewer_mouse_move_redraws_triad_canvas(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:

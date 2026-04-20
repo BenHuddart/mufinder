@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mufinder.castep_io.output_parser import parse_castep_output
+from mufinder.castep_io.output_parser import parse_castep_mulliken_atomic_spins, parse_castep_output
 
 
 GOLDEN_DIR = Path("tests/golden")
@@ -65,3 +65,30 @@ def test_parse_castep_output_reads_max_force_line_without_force_block(tmp_path: 
 
     assert parsed.total_energy == -4.2
     assert parsed.max_force == 0.1234
+
+
+def test_parse_castep_output_extracts_mulliken_spins_when_present(tmp_path: Path) -> None:
+    output = tmp_path / "mulliken_spin.castep"
+    output.write_text(
+        "\n".join(
+            [
+                "     Atomic Populations (Mulliken)",
+                "     -----------------------------",
+                "Species          Ion Spin      s       p       d       f      Total   Charge(e)   Spin(hbar/2)",
+                "==============================================================================================",
+                "  Fe              1   up:     0.340   0.263   4.512   0.000   5.115     0.000        2.230",
+                "                  1   dn:     0.359   0.400   2.126   0.000   2.885",
+                "  Fe              2   up:     0.340   0.263   4.512   0.000   5.115     0.000       -2.230",
+                "                  2   dn:     0.359   0.400   2.126   0.000   2.885",
+                "==============================================================================================",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert parse_castep_mulliken_atomic_spins(output) == pytest.approx((2.23, -2.23))
+
+    parsed = parse_castep_output(output)
+
+    assert parsed.mulliken_atomic_spins == pytest.approx((2.23, -2.23))

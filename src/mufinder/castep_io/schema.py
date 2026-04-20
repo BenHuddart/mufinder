@@ -52,6 +52,7 @@ _STARTER_SOURCE_ORDER_OVERRIDES: dict[FileKind, tuple[str, ...]] = {
     ),
     "param": (
         "task",
+        "write_formatted_density",
         "calculate_polarization",
         "write_cell_structure",
         "continuation",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -2322,6 +2323,116 @@ def test_main_window_cluster_queue_checked_formats_timezone_aware_times_locally(
     window._on_cluster_queue_checked(_AwareTime())
 
     assert "12:34:56" in window._cluster_queue_checked_label.text()
+    window.close()
+
+
+def test_main_window_cluster_queue_checked_uses_snapshot_timestamp(qapp) -> None:
+    window = MainWindow()
+
+    snapshot = SimpleNamespace(
+        checked_at=datetime(2026, 4, 16, 12, 34, 56, tzinfo=UTC),
+        elapsed_by_job_id={},
+    )
+
+    window._on_cluster_queue_checked(snapshot)
+
+    expected = snapshot.checked_at.astimezone().strftime("%H:%M:%S")
+    assert window._cluster_queue_checked_label.text() == f"Queue last checked: {expected}"
+    window.close()
+
+
+def test_main_window_cluster_queue_checked_unknown_object_stays_compact(qapp) -> None:
+    window = MainWindow()
+
+    window._on_cluster_queue_checked(SimpleNamespace(checked_at=object(), elapsed_by_job_id={}))
+
+    assert window._cluster_queue_checked_label.text() == "Queue last checked: unknown"
+    window.close()
+
+
+def test_main_window_runtime_column_updates_for_running_jobs(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "runtime_tick.mufinder", "RuntimeTick")
+
+    job = service.add_job(
+        doc,
+        label="uep_runtime_job",
+        workflow_stage=main_window_module.WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    job.status = JobStatus.RUNNING
+    job.started_at = datetime(2026, 4, 20, 16, 0, 0, tzinfo=UTC)
+
+    monkeypatch.setattr(
+        main_window_module,
+        "utc_now",
+        lambda: datetime(2026, 4, 20, 16, 0, 0, tzinfo=UTC),
+    )
+    window._document = doc
+    window._refresh_jobs_table()
+
+    assert window._job_runtime_timer.isActive() is True
+    assert window._jobs_table.item(0, window._JOB_RUNTIME_COLUMN).text() == "00:00"
+
+    monkeypatch.setattr(
+        main_window_module,
+        "utc_now",
+        lambda: datetime(2026, 4, 20, 16, 1, 5, tzinfo=UTC),
+    )
+    window._refresh_active_job_runtime_cells()
+
+    assert window._jobs_table.item(0, window._JOB_RUNTIME_COLUMN).text() == "01:05"
+
+    job.status = JobStatus.COMPLETED
+    job.completed_at = datetime(2026, 4, 20, 16, 1, 5, tzinfo=UTC)
+    window._refresh_active_job_runtime_cells()
+
+    assert window._job_runtime_timer.isActive() is False
+    window.close()
+
+
+def test_main_window_cluster_runtime_uses_queue_elapsed_and_ticks_between_polls(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_runtime_tick.mufinder", "ClusterRuntimeTick")
+
+    job = service.add_job(
+        doc,
+        label="uep_cluster_runtime_job",
+        workflow_stage=main_window_module.WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    job.status = JobStatus.RUNNING
+    job.execution_target = "redwood"
+
+    window._document = doc
+    window._refresh_jobs_table()
+
+    snapshot_time = datetime(2026, 4, 20, 16, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(main_window_module, "utc_now", lambda: snapshot_time)
+    window._on_cluster_queue_checked(
+        SimpleNamespace(
+            checked_at=snapshot_time,
+            elapsed_by_job_id={job.id: "00:12:34"},
+        )
+    )
+
+    assert window._jobs_table.item(0, window._JOB_RUNTIME_COLUMN).text() == "12:34"
+    assert window._job_runtime_timer.isActive() is True
+
+    monkeypatch.setattr(
+        main_window_module,
+        "utc_now",
+        lambda: datetime(2026, 4, 20, 16, 1, 4, tzinfo=UTC),
+    )
+    window._refresh_active_job_runtime_cells()
+
+    assert window._jobs_table.item(0, window._JOB_RUNTIME_COLUMN).text() == "13:38"
     window.close()
 
 

@@ -10,6 +10,7 @@ from mufinder.science.site_generation import (
     SiteGenerationError,
     generate_near_element_sites,
     generate_random_sites,
+    generate_random_sites_by_distance,
     lattice_cart_to_frac,
     lattice_frac_to_cart,
 )
@@ -113,4 +114,65 @@ def test_invalid_generation_arguments_raise() -> None:
             shell_max=1.0,
             min_muon_muon=0.5,
             min_muon_atom=0.5,
+        )
+
+
+def test_generate_random_sites_raises_when_requested_count_cannot_be_met() -> None:
+    lattice = [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]
+
+    with pytest.raises(SiteGenerationError, match="Could only generate"):
+        generate_random_sites(
+            lattice_vectors=lattice,
+            host_positions_frac=[],
+            count=200,
+            min_muon_muon=0.8,
+            min_muon_atom=0.0,
+            max_attempts=5000,
+            seed=7,
+        )
+
+
+def test_generate_random_sites_by_distance_fills_until_attempt_limit() -> None:
+    lattice = [[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]]
+    host_positions = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]
+    min_muon_atom = 0.8
+    min_muon_muon = 1.2
+
+    points, attempts = generate_random_sites_by_distance(
+        lattice_vectors=lattice,
+        host_positions_frac=host_positions,
+        min_muon_muon=min_muon_muon,
+        min_muon_atom=min_muon_atom,
+        max_attempts=5000,
+        seed=7,
+    )
+
+    assert len(points) > 1
+    assert attempts == 5000
+
+    for idx, point in enumerate(points):
+        for host in host_positions:
+            assert _pbc_distance(point.fractional, host, lattice) >= min_muon_atom
+        for other in points[idx + 1 :]:
+            assert _pbc_distance(point.fractional, other.fractional, lattice) >= min_muon_muon
+
+
+def test_generate_near_element_sites_raises_when_requested_count_cannot_be_met() -> None:
+    lattice = [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]
+    host_species = ["O"]
+    host_positions = [[0.0, 0.0, 0.0]]
+
+    with pytest.raises(SiteGenerationError, match="Could only generate"):
+        generate_near_element_sites(
+            lattice_vectors=lattice,
+            host_species=host_species,
+            host_positions_frac=host_positions,
+            target_element="O",
+            count=100,
+            shell_min=0.9,
+            shell_max=1.2,
+            min_muon_muon=0.8,
+            min_muon_atom=0.8,
+            max_attempts=5000,
+            seed=3,
         )

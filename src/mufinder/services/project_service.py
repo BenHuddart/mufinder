@@ -1001,6 +1001,66 @@ class ProjectService:
 
         return definition
 
+    def register_uep_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_id: UUID | None = None,
+        host_structure_id: UUID | None = None,
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one UEP source-job configuration as a reusable definition."""
+
+        if input_structure_id is None:
+            input_structure_id = host_structure_id
+
+        if input_structure_id is None or input_structure_id not in document.structures:
+            raise ValueError("input_structure_id must reference a known structure.")
+
+        relative_output = str(output_directory)
+        try:
+            relative_output = str(output_directory.relative_to(document.project_root))
+        except ValueError:
+            relative_output = str(output_directory)
+
+        snapshot = to_jsonable(parameters)
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.UEP,
+            calc_type="castep_uep_source",
+            parameters={
+                "configuration": snapshot,
+                "output_directory": relative_output,
+                "job_ids_by_label": dict(job_ids_by_label or {}),
+            },
+            input_structure_ids=[input_structure_id],
+        )
+        document.calculations[definition.id] = definition
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="configure_uep",
+                workflow_stage=WorkflowStage.UEP,
+                actor="user",
+                description=(
+                    "Configured UEP source workflow with "
+                    f"{len(snapshot.get('rows', []))} job row(s)"
+                ),
+                parameters={
+                    "calculation_definition_id": str(definition.id),
+                    "configuration": snapshot,
+                    "output_directory": relative_output,
+                    "job_ids_by_label": dict(job_ids_by_label or {}),
+                },
+                input_entity_ids=[input_structure_id],
+                output_entity_ids=[definition.id],
+            ),
+        )
+
+        return definition
+
     def set_recommended_cutoff(
         self,
         document: ProjectDocument,

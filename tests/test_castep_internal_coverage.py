@@ -191,6 +191,7 @@ def test_starter_helper_functions_cover_requirements_defaults_and_orders() -> No
     assert _starter_default_value("positive_float_with_optional_unit", 0.1) == pytest.approx(0.1)
     assert _starter_default_value("text", "value") == "value"
     assert _starter_source_order("param", "task", 100) == 0
+    assert _starter_source_order("param", "write_formatted_density", 100) == 1
     assert _starter_source_order("param", "non_special_name", 5) > 5
 
 

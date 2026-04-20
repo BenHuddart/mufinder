@@ -386,6 +386,67 @@ def test_cluster_runner_retrieve_incomplete_output_marks_failed(
     assert statuses[-1] == JobStatus.FAILED.value
 
 
+def test_cluster_runner_retrieve_downloads_optional_formatted_density(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="125",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+        retrieve_den_fmt=True,
+    )
+    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
+    runner._ssh.remote_files["/remote/job/seed.den_fmt"] = b"density output"
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+
+    runner._retrieve_results(entry)
+
+    assert (tmp_path / "seed.den_fmt").read_bytes() == b"density output"
+
+
+def test_cluster_runner_retrieve_skips_optional_files_when_not_requested(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="126",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+        retrieve_den_fmt=False,
+        retrieve_out_cell=False,
+    )
+    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
+    runner._ssh.remote_files["/remote/job/seed.den_fmt"] = b"density output"
+    runner._ssh.remote_files["/remote/job/seed-out.cell"] = b"relaxed cell"
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+
+    runner._retrieve_results(entry)
+
+    assert not (tmp_path / "seed.den_fmt").exists()
+    assert not (tmp_path / "seed-out.cell").exists()
+
+
 def test_cluster_runner_retrieve_incomplete_walltime_marks_stopped(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
