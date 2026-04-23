@@ -140,6 +140,7 @@ def generate_random_sites(
     min_muon_atom: float,
     max_attempts: int = 20000,
     seed: int | None = None,
+    allow_partial: bool = False,
 ) -> tuple[list[GeneratedPoint], int]:
     """Generate candidate sites by random filling with distance constraints.
 
@@ -185,6 +186,8 @@ def generate_random_sites(
                 "Could not generate any candidate sites with current constraints. "
                 "Relax distance limits or increase supercell size."
             )
+        if allow_partial:
+            return accepted_points, attempts
         raise SiteGenerationError(
             f"Could only generate {generated} of {count} candidate sites after {attempts} attempts. "
             "Increase max_attempts, relax distance limits, or increase supercell size."

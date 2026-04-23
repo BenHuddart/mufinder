@@ -15,6 +15,7 @@ MuFinder is a PySide6 desktop application for muon stopping-site workflows, CAST
 - CASTEP parameter and cell editing for the supported MuFinder subset
 - Local and remote CASTEP job orchestration
 - Pristine-relaxation comparison tables and CSV export
+- Responsive 3D structure viewing and UEP isosurface rendering via the PyVista/VTK backend
 
 ## CASTEP Metadata Contract
 
@@ -48,6 +49,9 @@ Install with development tooling:
 ```bash
 python -m pip install -e ".[dev]"
 ```
+
+The structure viewer uses the PyVista/VTK + `pyvistaqt` stack. The legacy
+Matplotlib atom-viewer backend has been removed.
 
 Run the app:
 

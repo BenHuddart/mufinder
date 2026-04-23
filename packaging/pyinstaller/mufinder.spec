@@ -40,13 +40,22 @@ datas = collect_data_files("mufinder.assets")
 # ASE's CIF reader resolves symmetry data relative to ase.spacegroup.__file__.
 # Bundle ASE package data so frozen macOS apps can load spacegroup.dat.
 datas += collect_data_files("ase")
+datas += collect_data_files("pyvista")
+datas += collect_data_files("vtkmodules")
 hiddenimports = [
     "mufinder.app.main_window",
     "mufinder.app.splash_screen",
     "mufinder.app.theme",
     "mufinder.branding",
     "mufinder.castep_setup",
-] + collect_submodules("ase.io") + collect_submodules("mufinder.app") + collect_submodules("paramiko")
+] + (
+    collect_submodules("ase.io")
+    + collect_submodules("mufinder.app")
+    + collect_submodules("paramiko")
+    + collect_submodules("pyvista")
+    + collect_submodules("pyvistaqt")
+    + collect_submodules("vtkmodules")
+)
 
 a = Analysis(
     [str(src_root / "mufinder" / "main.py")],

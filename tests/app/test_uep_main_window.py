@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from PySide6.QtWidgets import QDialog, QMessageBox
 
 import mufinder.app.main_window as main_window_module
 from mufinder.app.main_window import MainWindow
@@ -175,10 +176,24 @@ def test_main_window_open_uep_analysis_launches_dialog(qapp, tmp_path: Path, mon
             self.promote_requested = _SignalStub()
             self.state_changed = _SignalStub()
             self.potential_grid_ready = _SignalStub()
+            self.destroyed = _SignalStub()
+            captured["instance"] = self
 
-        def exec(self) -> int:
-            captured["executed"] = True
-            return 1
+        def setModal(self, modal: bool) -> None:
+            captured["modal"] = modal
+
+        def show(self) -> None:
+            captured["shown"] = True
+
+        def raise_(self) -> None:
+            captured["raised"] = True
+
+        def activateWindow(self) -> None:
+            captured["activated"] = True
+
+        def close(self) -> bool:
+            captured["closed"] = True
+            return True
 
         def state_snapshot(self) -> dict[str, object]:
             return {"current_tab": 2}
@@ -191,7 +206,11 @@ def test_main_window_open_uep_analysis_launches_dialog(qapp, tmp_path: Path, mon
     assert captured["source_structure"] is host
     assert captured["initial_state"] == {"current_tab": 2}
     assert captured["initial_potential_grid"] is None
-    assert captured["executed"] is True
+    assert captured["modal"] is False
+    assert captured["shown"] is True
+    assert captured["raised"] is True
+    assert captured["activated"] is True
+    assert window._uep_analysis_dialogs[job.id] is captured["instance"]
     window.close()
 
 
@@ -253,9 +272,22 @@ def test_main_window_open_uep_analysis_loads_persisted_potential_grid(qapp, tmp_
             self.promote_requested = _SignalStub()
             self.state_changed = _SignalStub()
             self.potential_grid_ready = _SignalStub()
+            self.destroyed = _SignalStub()
 
-        def exec(self) -> int:
-            return 1
+        def setModal(self, _modal: bool) -> None:
+            return None
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+        def close(self) -> bool:
+            return True
 
         def state_snapshot(self) -> dict[str, object]:
             return {}
@@ -267,22 +299,220 @@ def test_main_window_open_uep_analysis_loads_persisted_potential_grid(qapp, tmp_
     window.close()
 
 
-def test_main_window_uep_analysis_state_changed_persists_by_job_id(qapp, tmp_path: Path) -> None:
+def test_main_window_open_uep_analysis_does_not_request_snapshot_after_dialog_show(
+    qapp,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_no_post_exec_snapshot.mufinder", "UEPNoPostExecSnapshot")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        output_directory=doc.project_root / "files" / "uep",
+    )
+    doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
+
+    job = service.add_job(
+        doc,
+        label="uep_row_1",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    job.status = JobStatus.COMPLETED
+    definition.parameters["job_ids_by_label"] = {"row_1": str(job.id)}
+    window._document = doc
+
+    output_dir = doc.project_root / "files" / "uep" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / f"{job.label}.castep").write_text(_fixture_text("Si2.castep"), encoding="utf-8")
+    (output_dir / f"{job.label}.den_fmt").write_text(_fixture_text("Si2.den_fmt"), encoding="utf-8")
+    (output_dir / f"{job.label}.cell").write_text(_fixture_text("Si2.cell"), encoding="utf-8")
+
+    class _FakeDialog:
+        def __init__(self, **_kwargs) -> None:
+            self.promote_requested = _SignalStub()
+            self.state_changed = _SignalStub()
+            self.potential_grid_ready = _SignalStub()
+            self.destroyed = _SignalStub()
+
+        def setModal(self, _modal: bool) -> None:
+            return None
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+        def close(self) -> bool:
+            return True
+
+        def state_snapshot(self) -> dict[str, object]:
+            raise AssertionError("state_snapshot should not be requested after show() returns")
+
+    monkeypatch.setattr(main_window_module, "UepAnalysisDialog", _FakeDialog)
+
+    window._on_open_uep_analysis_requested("row_1")
+
+    window.close()
+
+
+def test_main_window_open_uep_analysis_reuses_existing_window(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_reuse_window.mufinder", "UEPReuseWindow")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        output_directory=doc.project_root / "files" / "uep",
+    )
+    doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
+
+    job = service.add_job(
+        doc,
+        label="uep_row_1",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    job.status = JobStatus.COMPLETED
+    definition.parameters["job_ids_by_label"] = {"row_1": str(job.id)}
+    window._document = doc
+
+    output_dir = doc.project_root / "files" / "uep" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / f"{job.label}.castep").write_text(_fixture_text("Si2.castep"), encoding="utf-8")
+    (output_dir / f"{job.label}.den_fmt").write_text(_fixture_text("Si2.den_fmt"), encoding="utf-8")
+    (output_dir / f"{job.label}.cell").write_text(_fixture_text("Si2.cell"), encoding="utf-8")
+
+    captured = {"constructed": 0, "shown": 0, "raised": 0, "activated": 0}
+
+    class _FakeDialog:
+        def __init__(self, **_kwargs) -> None:
+            captured["constructed"] += 1
+            self.promote_requested = _SignalStub()
+            self.state_changed = _SignalStub()
+            self.potential_grid_ready = _SignalStub()
+            self.destroyed = _SignalStub()
+
+        def setModal(self, _modal: bool) -> None:
+            return None
+
+        def show(self) -> None:
+            captured["shown"] += 1
+
+        def raise_(self) -> None:
+            captured["raised"] += 1
+
+        def activateWindow(self) -> None:
+            captured["activated"] += 1
+
+        def close(self) -> bool:
+            return True
+
+    monkeypatch.setattr(main_window_module, "UepAnalysisDialog", _FakeDialog)
+
+    window._on_open_uep_analysis_requested("row_1")
+    window._on_open_uep_analysis_requested("row_1")
+
+    assert captured["constructed"] == 1
+    assert captured["shown"] == 2
+    assert captured["raised"] == 2
+    assert captured["activated"] == 2
+    window.close()
+
+
+def test_main_window_close_closes_open_uep_dialogs_before_saving(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_close_before_save.mufinder", "UEPCloseBeforeSave")
+    window._document = doc
+    window.show()
+
+    events: list[str] = []
+
+    class _FakeUepDialog(QDialog):
+        def close(self) -> bool:  # type: ignore[override]
+            events.append("dialog.close")
+            return super().close()
+
+    monkeypatch.setattr(main_window_module, "UepAnalysisDialog", _FakeUepDialog)
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    original_save = window._project_service.save_project
+
+    def _save_project(document) -> None:
+        events.append("save_project")
+        original_save(document)
+
+    monkeypatch.setattr(window._project_service, "save_project", _save_project)
+
+    dialog = _FakeUepDialog(window)
+    dialog.show()
+    qapp.processEvents()
+
+    window.close()
+
+    assert events[:2] == ["dialog.close", "save_project"]
+
+
+def test_main_window_uep_analysis_state_changed_updates_document_but_not_disk_until_save(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_state.mufinder", "UEPState")
     window._document = doc
 
     job_id = UUID("11111111-1111-1111-1111-111111111111")
-    window._on_uep_analysis_state_changed(job_id, {"current_tab": 3, "probe_output": "saved"})
+    initial_state_text = doc.project_root.joinpath("state.json").read_text(encoding="utf-8")
+    window._on_uep_analysis_state_changed(
+        job_id,
+        {
+            "current_tab": 3,
+            "probe_output": "saved",
+            "clustering_window_state": {
+                "is_open": True,
+                "method": "kmeans",
+                "kmeans_k": 2,
+                "viewer_state": {"show_bonds": True},
+            },
+        },
+    )
 
     stored = doc.ui_state[window._UEP_ANALYSIS_STATES_KEY]
     assert stored[str(job_id)]["current_tab"] == 3
     assert stored[str(job_id)]["probe_output"] == "saved"
+    assert stored[str(job_id)]["clustering_window_state"]["viewer_state"]["show_bonds"] is True
+    assert doc.project_root.joinpath("state.json").read_text(encoding="utf-8") == initial_state_text
+
+    service.save_project(doc)
+
+    reloaded = service.load_project(doc.project_root)
+    persisted = reloaded.ui_state[window._UEP_ANALYSIS_STATES_KEY]
+    assert persisted[str(job_id)]["current_tab"] == 3
+    assert persisted[str(job_id)]["probe_output"] == "saved"
+    assert persisted[str(job_id)]["clustering_window_state"]["method"] == "kmeans"
     window.close()
 
 
-def test_main_window_uep_potential_grid_ready_persists_result(qapp, tmp_path: Path) -> None:
+def test_main_window_uep_potential_grid_ready_updates_document_but_not_disk_until_save(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_grid_state.mufinder", "UEPGridState")
@@ -316,12 +546,24 @@ def test_main_window_uep_potential_grid_ready_persists_result(qapp, tmp_path: Pa
         )
     )
 
+    initial_results = sorted((doc.project_root / "entities" / "results").glob("*.json"))
     window._on_uep_potential_grid_ready(job.id, main_window_module.serialize_potential_grid(grid))
 
     persisted = window._uep_potential_grid_result_for_job(job.id)
     assert persisted is not None
     assert persisted.result_type == window._UEP_POTENTIAL_GRID_RESULT_TYPE
     assert window._load_uep_potential_grid_for_job(job.id) is not None
+    assert sorted((doc.project_root / "entities" / "results").glob("*.json")) == initial_results
+
+    service.save_project(doc)
+
+    reloaded = service.load_project(doc.project_root)
+    reloaded_window = MainWindow()
+    reloaded_window._document = reloaded
+    reloaded_persisted = reloaded_window._uep_potential_grid_result_for_job(job.id)
+    assert reloaded_persisted is not None
+    assert reloaded_persisted.result_type == window._UEP_POTENTIAL_GRID_RESULT_TYPE
+    reloaded_window.close()
     window.close()
 
 

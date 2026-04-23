@@ -37,6 +37,8 @@ def test_project_store_entity_and_provenance_io(tmp_path: Path) -> None:
     store = ProjectStore(root)
     store.initialize_layout()
 
+    assert not (root / ".autosave").exists()
+
     store.write_json(store.project_manifest_path, {"id": "abc"})
     assert store.read_json(store.project_manifest_path)["id"] == "abc"
 

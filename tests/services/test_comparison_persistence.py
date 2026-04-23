@@ -83,3 +83,32 @@ def test_deleted_comparison_table_stays_deleted_after_save_reload(tmp_path: Path
     loaded = service.load_project(root)
 
     assert table.id not in loaded.comparison_tables
+
+
+def test_record_comparison_table_created_appends_provenance(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "comparison_log.mufinder"
+    doc = service.create_project(root, "ComparisonLog")
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    table = ComparisonTable(
+        label="Comparison B",
+        experimental_structure_id=host.id,
+        dft_structure_ids=[host.id],
+        dft_labels=["DFT-1"],
+        result_data={},
+    )
+
+    service.add_comparison_table(doc, table)
+    service.record_comparison_table_created(doc, table=table)
+
+    assert doc.provenance[-1].action == "create_comparison_table"
+    assert doc.provenance[-1].parameters["table_label"] == "Comparison B"

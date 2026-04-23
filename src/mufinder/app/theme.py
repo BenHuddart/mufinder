@@ -8,7 +8,7 @@ import tempfile
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt
 from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QPalette
-from PySide6.QtWidgets import QApplication, QLabel, QScrollBar, QTableWidget, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QScrollBar, QTableWidget, QTreeWidget, QWidget
 
 THEME_LIGHT = "light"
 THEME_DARK = "dark"
@@ -196,7 +196,14 @@ class _TableCornerStyler(QObject):
     }
     def __init__(self, app: QApplication) -> None:
         super().__init__(app)
-        self._bar_owner: dict[QScrollBar, QTableWidget] = {}
+        self._bar_owner: dict[QScrollBar, QWidget] = {}
+
+    @staticmethod
+    def _is_supported_item_view(widget: object) -> bool:
+        try:
+            return isinstance(widget, (QTableWidget, QTreeWidget))
+        except (RuntimeError, SystemError):
+            return False
 
     @staticmethod
     def _is_scrollbar(widget: object) -> bool:
@@ -210,14 +217,10 @@ class _TableCornerStyler(QObject):
         if app is None:
             return
         for widget in app.allWidgets():
-            try:
-                supported = isinstance(widget, QTableWidget)
-            except (RuntimeError, SystemError):
-                supported = False
-            if supported:
+            if self._is_supported_item_view(widget):
                 self._attach_table(widget)
 
-    def _attach_table(self, table: QTableWidget) -> None:
+    def _attach_table(self, table: QWidget) -> None:
         if bool(table.property("_cornerStylerAttached")):
             return
 
@@ -245,7 +248,7 @@ class _TableCornerStyler(QObject):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         try:
-            if isinstance(watched, QTableWidget):
+            if self._is_supported_item_view(watched):
                 self._attach_table(watched)
                 if event.type() in self._TABLE_WATCH_EVENTS:
                     self._sync_table_corner_property(watched)
@@ -257,22 +260,25 @@ class _TableCornerStyler(QObject):
             return False
         return False
 
-    def _sync_table_corner_property(self, table: QTableWidget) -> None:
+    def _sync_table_corner_property(self, table: QWidget) -> None:
         has_scrollbar = self._has_vertical_scrollbar(table)
         scrollbar_value = "true" if has_scrollbar else "false"
-        has_visible_vertical_header = table.verticalHeader().isVisible()
+        has_visible_vertical_header = self._has_visible_vertical_header(table)
         vertical_header_value = "true" if has_visible_vertical_header else "false"
+        header = self._horizontal_header(table)
 
         if table.property("hasVerticalScrollbar") != scrollbar_value:
             table.setProperty("hasVerticalScrollbar", scrollbar_value)
             _repolish_widget(table)
-            _repolish_widget(table.horizontalHeader())
+            if header is not None:
+                _repolish_widget(header)
             _repolish_widget(table.verticalScrollBar())
 
         if table.property("hasVisibleVerticalHeader") != vertical_header_value:
             table.setProperty("hasVisibleVerticalHeader", vertical_header_value)
             _repolish_widget(table)
-            _repolish_widget(table.horizontalHeader())
+            if header is not None:
+                _repolish_widget(header)
             _repolish_widget(table.verticalScrollBar())
 
     def shutdown(self) -> None:
@@ -294,20 +300,15 @@ class _TableCornerStyler(QObject):
             return
 
         for widget in app.allWidgets():
-            try:
-                supported = isinstance(widget, QTableWidget)
-            except (RuntimeError, SystemError):
-                supported = False
-            if not supported:
+            if not self._is_supported_item_view(widget):
                 continue
             try:
                 widget.removeEventFilter(self)
             except (RuntimeError, SystemError):
                 pass
 
-
     @staticmethod
-    def _has_vertical_scrollbar(table: QTableWidget) -> bool:
+    def _has_vertical_scrollbar(table: QWidget) -> bool:
         policy = table.verticalScrollBarPolicy()
         if policy == Qt.ScrollBarPolicy.ScrollBarAlwaysOff:
             return False
@@ -316,6 +317,20 @@ class _TableCornerStyler(QObject):
 
         bar = table.verticalScrollBar()
         return bar.isVisible() or bar.maximum() > bar.minimum()
+
+    @staticmethod
+    def _has_visible_vertical_header(table: QWidget) -> bool:
+        if isinstance(table, QTableWidget):
+            return table.verticalHeader().isVisible()
+        return False
+
+    @staticmethod
+    def _horizontal_header(table: QWidget):
+        if isinstance(table, QTableWidget):
+            return table.horizontalHeader()
+        if isinstance(table, QTreeWidget):
+            return table.header()
+        return None
 
 def _ensure_table_corner_styler(app: QApplication) -> None:
     global _TABLE_CORNER_STYLER
@@ -460,12 +475,15 @@ def style_warning_text(label: QLabel) -> None:
     label.setObjectName("warningText")
 
 
-def use_square_top_table_corners(table: QTableWidget) -> None:
-    """Opt a table into square top corners for titled container layouts."""
+def use_square_top_table_corners(table: QTableWidget | QTreeWidget) -> None:
+    """Opt a table/tree item view into square top corners for titled container layouts."""
 
     table.setProperty("squareTopCorners", "true")
     _repolish_widget(table)
-    _repolish_widget(table.horizontalHeader())
+    if isinstance(table, QTableWidget):
+        _repolish_widget(table.horizontalHeader())
+    elif isinstance(table, QTreeWidget):
+        _repolish_widget(table.header())
     _repolish_widget(table.verticalScrollBar())
 
 
@@ -653,7 +671,15 @@ def _item_view_styles(p: MuFinderPalette) -> str:
         border-top-left-radius: 0px;
         border-top-right-radius: 0px;
     }}
+    QTreeWidget[squareTopCorners="true"] {{
+        border-top-left-radius: 0px;
+        border-top-right-radius: 0px;
+    }}
     QTableWidget[hasVerticalScrollbar="true"] {{
+        border-top-right-radius: 0px;
+        border-bottom-right-radius: 0px;
+    }}
+    QTreeWidget[hasVerticalScrollbar="true"] {{
         border-top-right-radius: 0px;
         border-bottom-right-radius: 0px;
     }}
@@ -841,19 +867,34 @@ def _header_styles(p: MuFinderPalette) -> str:
     QTableWidget[hasVisibleVerticalHeader="false"] QHeaderView::section:horizontal:first {{
         border-top-left-radius: 8px;
     }}
+    QTreeWidget QHeaderView::section:horizontal:first {{
+        border-top-left-radius: 8px;
+    }}
     QTableWidget[hasVisibleVerticalHeader="true"] QHeaderView::section:horizontal:first {{
         border-top-left-radius: 0px;
     }}
     QTableWidget[squareTopCorners="true"] QHeaderView::section:horizontal:first {{
         border-top-left-radius: 0px;
     }}
+    QTreeWidget[squareTopCorners="true"] QHeaderView::section:horizontal:first {{
+        border-top-left-radius: 0px;
+    }}
     QTableWidget QHeaderView::section:horizontal:last {{
+        border-top-right-radius: 8px;
+    }}
+    QTreeWidget QHeaderView::section:horizontal:last {{
         border-top-right-radius: 8px;
     }}
     QTableWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last {{
         border-top-right-radius: 0px;
     }}
+    QTreeWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last {{
+        border-top-right-radius: 0px;
+    }}
     QTableWidget[squareTopCorners="true"] QHeaderView::section:horizontal:last {{
+        border-top-right-radius: 0px;
+    }}
+    QTreeWidget[squareTopCorners="true"] QHeaderView::section:horizontal:last {{
         border-top-right-radius: 0px;
     }}
     """
@@ -966,6 +1007,12 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         font-size: 11px;
         font-weight: 600;
     }}
+    QLabel#uepIsosurfaceLegendTitle {{
+        color: {p.text_primary};
+        font-size: 14px;
+        font-weight: 700;
+        font-family: "{heading_font}";
+    }}
     QLabel#uepIsosurfaceRangeValue {{
         color: {p.text_primary};
         font-size: 13px;
@@ -1016,6 +1063,54 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         color: {p.text_muted};
         font-weight: 600;
     }}
+    QLabel#journalDayHeader {{
+        font-size: 17px;
+        font-weight: 700;
+        font-family: "{heading_font}";
+        color: {p.text_primary};
+        padding-top: 6px;
+    }}
+    QLabel#journalEntryTitle {{
+        font-size: 15px;
+        font-weight: 700;
+        font-family: "{heading_font}";
+        color: {p.text_primary};
+    }}
+    QLabel#journalWorkflowLabel {{
+        font-size: 11px;
+        font-weight: 600;
+        color: {p.text_muted};
+        text-transform: uppercase;
+    }}
+    QLabel#journalEntryBody {{
+        font-size: 12px;
+        color: {p.text_primary};
+    }}
+    QLabel#journalEmptyState {{
+        font-size: 13px;
+        color: {p.text_muted};
+        padding: 18px;
+    }}
+    QLabel#journalStamp {{
+        border-radius: 9px;
+        padding: 2px 8px;
+        font-size: 10px;
+        font-weight: 700;
+        color: #FFFFFF;
+        background: {p.border};
+    }}
+    QLabel#journalStamp[stampKind="milestone"] {{
+        background: {p.accent};
+    }}
+    QLabel#journalStamp[stampKind="success"] {{
+        background: {p.seal_gold};
+    }}
+    QLabel#journalStamp[stampKind="warning"] {{
+        background: {p.warning};
+    }}
+    QLabel#journalStamp[stampKind="danger"] {{
+        background: {p.danger};
+    }}
     """
 
 
@@ -1061,6 +1156,24 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     }}
     QFrame#uepIsosurfaceStatusCard[statusKind="error"] {{
         border-color: {p.status_failed};
+    }}
+    QFrame#journalEntryCard {{
+        border: 1px solid {p.border};
+        border-left: 4px solid {p.border};
+        border-radius: 12px;
+        background: {p.bg_surface};
+    }}
+    QFrame#journalEntryCard[stampKind="milestone"] {{
+        border-left-color: {p.accent};
+    }}
+    QFrame#journalEntryCard[stampKind="success"] {{
+        border-left-color: {p.seal_gold};
+    }}
+    QFrame#journalEntryCard[stampKind="warning"] {{
+        border-left-color: {p.warning};
+    }}
+    QFrame#journalEntryCard[stampKind="danger"] {{
+        border-left-color: {p.danger};
     }}
     QMenu::item:selected {{
         background: {p.accent};

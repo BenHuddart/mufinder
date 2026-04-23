@@ -2,72 +2,200 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+import math
 
 from ase import Atoms
 from ase.data import covalent_radii
 from ase.data.colors import jmol_colors
 from ase.neighborlist import NeighborList
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
-from matplotlib.projections import register_projection
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen, QPolygonF, QRadialGradient
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
-from mufinder.app.theme import style_hint_text
+from mufinder.app.theme import body_font_family, current_palette, style_hint_text
 from mufinder.domain.models import Structure
 
 _DEFAULT_VIEW = (20.0, 45.0)
+_DEFAULT_VIEW_ROLL = 0.0
+_DEFAULT_PYVISTA_LIGHT_DIRECTION = np.array([0.28, 0.36, 1.0], dtype=float) / math.sqrt(0.28**2 + 0.36**2 + 1.0**2)
+MUON_VIEWER_RADIUS_ANG = 0.2
 
 
-def _view_init_with_roll(axis, *, elev: float, azim: float, roll: float) -> None:
-    """Apply camera orientation while remaining compatible with older Matplotlib versions."""
-
-    try:
-        axis.view_init(elev=elev, azim=azim, roll=roll)
-    except TypeError:
-        axis.view_init(elev=elev, azim=azim)
+@dataclass(slots=True)
+class _CameraState:
+    elev: float
+    azim: float
+    roll: float = 0.0
 
 
-class _WideViewportAxes3D(Axes3D):
-    """Axes3D variant that preserves the requested rectangular viewport."""
-
-    name = "mufinder3d"
-
-    def apply_aspect(self, position=None):
-        if position is None:
-            position = self.get_position(original=True)
-        self._set_position(position, which="active")
-
-    def get_proj(self):
-        projection = super().get_proj()
-        fig_w, fig_h = self.figure.get_size_inches()
-        position = self.get_position()
-        viewport_w = float(fig_w * position.width)
-        viewport_h = float(fig_h * position.height)
-        if viewport_w <= 1e-12 or viewport_h <= 1e-12:
-            return projection
-
-        if viewport_w > viewport_h:
-            scale = viewport_h / viewport_w
-            correction = np.array(
-                [[scale, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
-                dtype=float,
-            )
-        else:
-            scale = viewport_w / viewport_h
-            correction = np.array(
-                [[1.0, 0.0, 0.0, 0.0], [0.0, scale, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
-                dtype=float,
-            )
-        return correction @ projection
+@dataclass(frozen=True, slots=True)
+class _ViewerStyle:
+    background: str
+    surface: str
+    surface_alt: str
+    border: str
+    text_primary: str
+    text_muted: str
+    accent: str
+    accent_hover: str
+    accent_pressed: str
+    seal_gold: str
+    success: str
+    info: str
+    triad_axis_colors: tuple[str, str, str]
+    triad_hub_inner: str
+    triad_hub_mid: str
+    triad_hub_outer: str
+    unit_cell: str
+    isosurface: str
+    selection_fill: str
+    selection_stroke: str
+    triad_label_font_family: str
 
 
-register_projection(_WideViewportAxes3D)
+@dataclass(frozen=True, slots=True)
+class _ViewerIsosurfaceSpec:
+    vertices: np.ndarray
+    faces: np.ndarray
+    color: str
+    alpha: float
 
+
+@dataclass(frozen=True, slots=True)
+class _ViewerSliceSpec:
+    x_coordinates: np.ndarray
+    y_coordinates: np.ndarray
+    z_coordinates: np.ndarray
+    values: np.ndarray
+    anchor: np.ndarray
+    normal: np.ndarray
+    color_limits: tuple[float, float]
+    cmap: str
+    alpha: float
+
+
+@dataclass(frozen=True, slots=True)
+class _ViewerPointOverlaySpec:
+    positions: np.ndarray
+    colors: np.ndarray
+    radii: np.ndarray
+    alpha: float
+
+
+class _AxesProxy:
+    """Renderer-neutral camera proxy used by tests and viewer state."""
+
+    def __init__(self, state: _CameraState | None = None) -> None:
+        initial = _CameraState(*_DEFAULT_VIEW, _DEFAULT_VIEW_ROLL) if state is None else state
+        self.elev = float(initial.elev)
+        self.azim = float(initial.azim)
+        self.roll = float(initial.roll)
+        self._dirty = False
+
+    def view_init(self, *, elev: float, azim: float, roll: float | None = None) -> None:
+        self.elev = float(elev)
+        self.azim = float(azim)
+        if roll is not None:
+            self.roll = float(roll)
+        self._dirty = True
+
+    def set_from_state(self, state: _CameraState) -> None:
+        self.elev = float(state.elev)
+        self.azim = float(state.azim)
+        self.roll = float(state.roll)
+        self._dirty = False
+
+    def state(self) -> _CameraState:
+        return _CameraState(self.elev, self.azim, self.roll)
+
+    def consume_dirty(self) -> bool:
+        dirty = self._dirty
+        self._dirty = False
+        return dirty
+
+
+class _WrappingHintLabel(QLabel):
+    """Word-wrapped label that reports a stable height-for-width during initial layout."""
+
+    def _target_wrap_width(self) -> int:
+        width = self.width()
+        if width > 0:
+            return width
+        parent = self.parentWidget()
+        if parent is not None and parent.width() > 0:
+            return parent.width()
+        return super().sizeHint().width()
+
+    def _sync_minimum_height(self) -> None:
+        if not self.wordWrap():
+            return
+        target_height = self.heightForWidth(self._target_wrap_width())
+        if self.minimumHeight() != target_height:
+            self.setMinimumHeight(target_height)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt API naming.
+        return self.wordWrap()
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt API naming.
+        if not self.wordWrap() or width <= 0:
+            return super().sizeHint().height()
+
+        margins = self.contentsMargins()
+        content_width = max(1, width - margins.left() - margins.right())
+        bounds = self.fontMetrics().boundingRect(
+            QRect(0, 0, content_width, 10_000),
+            int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop),
+            self.text(),
+        )
+        return bounds.height() + margins.top() + margins.bottom() + 4
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        if not self.wordWrap():
+            return hint
+
+        target_width = self._target_wrap_width()
+        return QSize(hint.width(), max(hint.height(), self.heightForWidth(target_width)))
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        if not self.wordWrap():
+            return hint
+        width = max(self._target_wrap_width(), hint.width())
+        return QSize(0, self.heightForWidth(width))
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().showEvent(event)
+        self._sync_minimum_height()
+        self.updateGeometry()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().resizeEvent(event)
+        self._sync_minimum_height()
+        self.updateGeometry()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().changeEvent(event)
+        if event.type() in {
+            QEvent.Type.FontChange,
+            QEvent.Type.StyleChange,
+            QEvent.Type.PaletteChange,
+            QEvent.Type.ApplicationPaletteChange,
+        }:
+            self._sync_minimum_height()
+            self.updateGeometry()
 
 def _set_axis_box_aspect_from_spans(axis, spans: np.ndarray) -> None:
     span_x, span_y, span_z = np.maximum(np.asarray(spans, dtype=float), 1e-6)
@@ -112,18 +240,17 @@ def _get_atom_style(numbers: np.ndarray, symbols: np.ndarray) -> tuple[np.ndarra
         colors[muon_mask] = np.array([1.0, 0.08, 0.58])
     radii = np.clip(0.9 * covalent_radii[numbers], 0.2, 1.15)
     if np.any(muon_mask):
-        radii[muon_mask] = np.maximum(radii[muon_mask], 0.26)
+        radii[muon_mask] = np.maximum(radii[muon_mask], MUON_VIEWER_RADIUS_ANG)
     return colors, radii
 
 
-def _set_equal_limits(
-    axis,
+def _compute_limits(
     positions: np.ndarray,
     *,
     atom_radii: np.ndarray | None = None,
     extra_points: np.ndarray | None = None,
     margin: float = 0.12,
-) -> None:
+) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
     points = np.asarray(positions, dtype=float)
     if atom_radii is not None and len(atom_radii) == len(points):
         radii = np.asarray(atom_radii, dtype=float).reshape(-1, 1)
@@ -140,12 +267,27 @@ def _set_equal_limits(
 
     span = np.maximum(maxs - mins, 1e-6)
     padding = span * float(margin)
+    return (
+        (float(mins[0] - padding[0]), float(maxs[0] + padding[0])),
+        (float(mins[1] - padding[1]), float(maxs[1] + padding[1])),
+        (float(mins[2] - padding[2]), float(maxs[2] + padding[2])),
+    )
 
-    axis.set_xlim(mins[0] - padding[0], maxs[0] + padding[0])
-    axis.set_ylim(mins[1] - padding[1], maxs[1] + padding[1])
-    axis.set_zlim(mins[2] - padding[2], maxs[2] + padding[2])
-    axis_spans = np.maximum((maxs + padding) - (mins - padding), 1e-6)
-    _set_axis_box_aspect_from_spans(axis, axis_spans)
+
+def _set_equal_limits(
+    axis,
+    positions: np.ndarray,
+    *,
+    atom_radii: np.ndarray | None = None,
+    extra_points: np.ndarray | None = None,
+    margin: float = 0.12,
+) -> None:
+    limits = _compute_limits(positions, atom_radii=atom_radii, extra_points=extra_points, margin=margin)
+    axis.set_xlim(*limits[0])
+    axis.set_ylim(*limits[1])
+    axis.set_zlim(*limits[2])
+    spans = np.array([limits[0][1] - limits[0][0], limits[1][1] - limits[1][0], limits[2][1] - limits[2][0]])
+    _set_axis_box_aspect_from_spans(axis, spans)
 
 
 def _draw_atom_spheres(
@@ -181,6 +323,94 @@ def _draw_atom_spheres(
         )
         artists.append(surface)
     return artists
+
+
+def _normalized_vector(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
+    norm = float(np.linalg.norm(vector))
+    if norm <= 1e-12:
+        return np.asarray(fallback, dtype=float)
+    return np.asarray(vector, dtype=float) / norm
+
+
+def _blend_hex_colors(color_a: str, color_b: str, ratio: float) -> str:
+    clamped = float(np.clip(ratio, 0.0, 1.0))
+    qcolor_a = QColor(color_a)
+    qcolor_b = QColor(color_b)
+    red = round((1.0 - clamped) * qcolor_a.red() + clamped * qcolor_b.red())
+    green = round((1.0 - clamped) * qcolor_a.green() + clamped * qcolor_b.green())
+    blue = round((1.0 - clamped) * qcolor_a.blue() + clamped * qcolor_b.blue())
+    return QColor(red, green, blue).name()
+
+
+def _viewer_style() -> _ViewerStyle:
+    palette = current_palette()
+    triad_axis_colors = (
+        palette.accent,
+        palette.success,
+        palette.status_submitting,
+    )
+    return _ViewerStyle(
+        background=palette.bg_primary,
+        surface=palette.bg_surface,
+        surface_alt=palette.bg_surface_alt,
+        border=palette.border,
+        text_primary=palette.text_primary,
+        text_muted=palette.text_muted,
+        accent=palette.accent,
+        accent_hover=palette.accent_hover,
+        accent_pressed=palette.accent_pressed,
+        seal_gold=palette.seal_gold,
+        success=palette.success,
+        info=palette.status_submitting,
+        triad_axis_colors=triad_axis_colors,
+        triad_hub_inner=_blend_hex_colors(palette.bg_surface, "#ffffff", 0.24),
+        triad_hub_mid=_blend_hex_colors(palette.bg_surface_alt, palette.bg_surface, 0.5),
+        triad_hub_outer=_blend_hex_colors(palette.border, palette.text_muted, 0.35),
+        unit_cell=_blend_hex_colors(palette.text_muted, palette.border, 0.45),
+        isosurface=palette.status_submitting,
+        selection_fill=_blend_hex_colors(palette.accent, palette.bg_surface, 0.58),
+        selection_stroke=palette.accent_pressed,
+        triad_label_font_family=body_font_family(),
+    )
+
+
+def _configure_transparent_pyvista_background(plotter) -> None:
+    """Match the VTK scene background to the app theme for reliable blending."""
+
+    try:
+        plotter.set_background(_viewer_background_color())
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _viewer_background_color() -> str:
+    """Return the app-level viewer background color for backends that cannot alpha composite."""
+
+    return _viewer_style().background
+
+
+def _shutdown_pyvista_widget(widget: object | None) -> None:
+    """Close a PyVista Qt interactor safely, stopping its internal timers first."""
+
+    if widget is None:
+        return
+
+    plotter = getattr(widget, "plotter", None)
+    if plotter is None:
+        plotter = getattr(widget, "_plotter", None)
+    if plotter is not None:
+        render_timer = getattr(plotter, "render_timer", None)
+        if render_timer is not None:
+            try:
+                render_timer.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        close = getattr(plotter, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def _plot_cylinder_segment(
@@ -319,7 +549,6 @@ def _draw_spin_arrows(
 
         color = "#1f78b4" if direction > 0 else "#d7301f"
 
-        # Shaft
         z_line = np.linspace(tail_z, shaft_end_z, 2)
         shaft_x = position[0] + shaft_radius * np.outer(cos_t, np.ones_like(z_line))
         shaft_y = position[1] + shaft_radius * np.outer(sin_t, np.ones_like(z_line))
@@ -336,7 +565,6 @@ def _draw_spin_arrows(
             zorder=18,
         )
 
-        # Head (cone)
         cone_z = np.linspace(shaft_end_z, tip_z, 12)
         if abs(tip_z - shaft_end_z) > 1e-12:
             taper = np.abs((tip_z - cone_z) / (tip_z - shaft_end_z))
@@ -365,49 +593,728 @@ def _draw_spin_arrows(
     return np.vstack(extent_points)
 
 
-def _normalized_vector(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
-    norm = float(np.linalg.norm(vector))
-    if norm <= 1e-12:
-        return np.asarray(fallback, dtype=float)
-    return np.asarray(vector, dtype=float) / norm
+def _rotation_matrix_z(angle_deg: float) -> np.ndarray:
+    angle = math.radians(float(angle_deg))
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    return np.array([[cos_a, -sin_a, 0.0], [sin_a, cos_a, 0.0], [0.0, 0.0, 1.0]], dtype=float)
+
+
+def _rotation_matrix_x(angle_deg: float) -> np.ndarray:
+    angle = math.radians(float(angle_deg))
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    return np.array([[1.0, 0.0, 0.0], [0.0, cos_a, -sin_a], [0.0, sin_a, cos_a]], dtype=float)
+
+
+def _camera_rotation_matrix(state: _CameraState) -> np.ndarray:
+    return _rotation_matrix_z(state.roll) @ _rotation_matrix_x(state.elev) @ _rotation_matrix_z(state.azim)
+
+
+def _camera_state_from_vectors(
+    position: np.ndarray | tuple[float, float, float],
+    focal_point: np.ndarray | tuple[float, float, float],
+    view_up: np.ndarray | tuple[float, float, float],
+) -> _CameraState:
+    camera = np.asarray(position, dtype=float)
+    focal = np.asarray(focal_point, dtype=float)
+    up_vector = _normalized_vector(np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float))
+    direction = _normalized_vector(camera - focal, np.array([1.0, 0.0, 0.0], dtype=float))
+    elev = math.degrees(math.asin(float(np.clip(direction[2], -1.0, 1.0))))
+    azim = math.degrees(math.atan2(float(direction[1]), float(direction[0])))
+
+    reference_up = np.array([0.0, 0.0, 1.0], dtype=float)
+    if abs(float(np.dot(direction, reference_up))) > 0.96:
+        reference_up = np.array([0.0, 1.0, 0.0], dtype=float)
+    right = _normalized_vector(np.cross(direction, reference_up), np.array([1.0, 0.0, 0.0], dtype=float))
+    default_up = _normalized_vector(np.cross(right, direction), np.array([0.0, 0.0, 1.0], dtype=float))
+    sin_roll = float(np.dot(np.cross(default_up, up_vector), direction))
+    cos_roll = float(np.clip(np.dot(default_up, up_vector), -1.0, 1.0))
+    roll = math.degrees(math.atan2(sin_roll, cos_roll))
+    return _CameraState(elev=float(elev), azim=float(azim), roll=float(roll))
+
+
+def _camera_vectors_from_state(state: _CameraState) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    elev = math.radians(float(state.elev))
+    azim = math.radians(float(state.azim))
+    direction = np.array(
+        [
+            math.cos(elev) * math.cos(azim),
+            math.cos(elev) * math.sin(azim),
+            math.sin(elev),
+        ],
+        dtype=float,
+    )
+    position = 4.0 * direction
+    focal_point = np.zeros(3, dtype=float)
+    reference_up = np.array([0.0, 0.0, 1.0], dtype=float)
+    if abs(float(np.dot(direction, reference_up))) > 0.96:
+        reference_up = np.array([0.0, 1.0, 0.0], dtype=float)
+    right = _normalized_vector(np.cross(focal_point - position, reference_up), np.array([1.0, 0.0, 0.0], dtype=float))
+    up = _normalized_vector(np.cross(right, focal_point - position), np.array([0.0, 0.0, 1.0], dtype=float))
+    if abs(float(state.roll)) > 1e-12:
+        angle = math.radians(float(state.roll))
+        view_direction = _normalized_vector(focal_point - position, np.array([0.0, 0.0, -1.0], dtype=float))
+        up = (
+            up * math.cos(angle)
+            + np.cross(view_direction, up) * math.sin(angle)
+            + view_direction * np.dot(view_direction, up) * (1.0 - math.cos(angle))
+        )
+    return position, focal_point, up
+
+
+def _camera_screen_basis(
+    camera_position: np.ndarray | tuple[float, float, float],
+    focal_point: np.ndarray | tuple[float, float, float],
+    view_up: np.ndarray | tuple[float, float, float],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    position = np.asarray(camera_position, dtype=float)
+    focal = np.asarray(focal_point, dtype=float)
+    up_hint = _normalized_vector(np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float))
+    view = _normalized_vector(focal - position, np.array([0.0, 0.0, -1.0], dtype=float))
+    right = _normalized_vector(np.cross(view, up_hint), np.array([1.0, 0.0, 0.0], dtype=float))
+    up = _normalized_vector(np.cross(right, view), np.array([0.0, 0.0, 1.0], dtype=float))
+    return view, right, up
+
+
+class _CrystallographicTriadCanvas(QWidget):
+    """Small renderer-neutral crystallographic axis triad."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._cell = np.eye(3, dtype=float)
+        self._camera_position = np.array([0.0, 0.0, 4.0], dtype=float)
+        self._camera_focal_point = np.zeros(3, dtype=float)
+        self._camera_up = np.array([0.0, 0.0, 1.0], dtype=float)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent;")
+        self.setFixedWidth(132)
+        self.setFixedHeight(130)
+
+    def set_scene(
+        self,
+        *,
+        cell: np.ndarray | None,
+        camera_position: np.ndarray | tuple[float, float, float],
+        focal_point: np.ndarray | tuple[float, float, float],
+        view_up: np.ndarray | tuple[float, float, float],
+    ) -> None:
+        if cell is not None and np.asarray(cell).shape == (3, 3):
+            self._cell = np.asarray(cell, dtype=float)
+        self._camera_position = np.asarray(camera_position, dtype=float)
+        self._camera_focal_point = np.asarray(focal_point, dtype=float)
+        self._camera_up = _normalized_vector(np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float))
+        self.update()
+
+    def draw_idle(self) -> None:
+        self.update()
+
+    def _project_axis(self, direction: np.ndarray) -> tuple[float, float, float]:
+        view = _normalized_vector(self._camera_focal_point - self._camera_position, np.array([0.0, 0.0, -1.0], dtype=float))
+        right = _normalized_vector(np.cross(view, self._camera_up), np.array([1.0, 0.0, 0.0], dtype=float))
+        up = _normalized_vector(np.cross(right, view), np.array([0.0, 0.0, 1.0], dtype=float))
+        return (
+            float(np.dot(direction, right)),
+            float(np.dot(direction, up)),
+            float(np.dot(direction, -view)),
+        )
+
+    @staticmethod
+    def _darken(color: QColor, factor: float) -> QColor:
+        return color.darker(int(max(100.0, factor * 100.0)))
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt API.
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        style = _viewer_style()
+
+        extent = np.linalg.norm(self._cell, axis=1)
+        if float(np.max(extent)) <= 1e-12:
+            painter.end()
+            return
+
+        rect = self.rect().adjusted(10, 8, -10, -10)
+        origin = QPointF(rect.left() + 46.0, rect.bottom() - 28.0)
+        scale = min(float(rect.width()), float(rect.height())) * 0.36
+        directions = (
+            _normalized_vector(self._cell[0], np.array([1.0, 0.0, 0.0], dtype=float)),
+            _normalized_vector(self._cell[1], np.array([0.0, 1.0, 0.0], dtype=float)),
+            _normalized_vector(self._cell[2], np.array([0.0, 0.0, 1.0], dtype=float)),
+        )
+        payloads: list[tuple[float, tuple[float, float, float], str, QColor]] = []
+        for direction, label, color in zip(directions, ("a", "b", "c"), style.triad_axis_colors):
+            projected = self._project_axis(direction)
+            payloads.append((projected[2], projected, label, QColor(color)))
+
+        shaft_radius = 4.8
+        cone_length = 15.0
+        cone_half_width = 7.8
+
+        for _depth, projected, label, color in sorted(payloads, key=lambda item: item[0], reverse=True):
+            vector_2d = QPointF(float(projected[0] * scale), float(-projected[1] * scale))
+            length = math.hypot(vector_2d.x(), vector_2d.y())
+            if length <= 1e-6:
+                continue
+            direction_2d = QPointF(vector_2d.x() / length, vector_2d.y() / length)
+            perpendicular = QPointF(-direction_2d.y(), direction_2d.x())
+            shaft_end = QPointF(
+                origin.x() + direction_2d.x() * max(length - cone_length, length * 0.68),
+                origin.y() + direction_2d.y() * max(length - cone_length, length * 0.68),
+            )
+            tip = QPointF(origin.x() + vector_2d.x(), origin.y() + vector_2d.y())
+
+            shaft_gradient = QLinearGradient(origin, shaft_end)
+            shaft_gradient.setColorAt(0.0, self._darken(color, 170.0))
+            shaft_gradient.setColorAt(0.5, color)
+            shaft_gradient.setColorAt(1.0, color.lighter(125))
+            pen = QPen()
+            pen.setBrush(shaft_gradient)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setWidthF(shaft_radius)
+            painter.setPen(pen)
+            painter.drawLine(origin, shaft_end)
+
+            base = shaft_end
+            left = QPointF(
+                base.x() + perpendicular.x() * cone_half_width,
+                base.y() + perpendicular.y() * cone_half_width,
+            )
+            right = QPointF(
+                base.x() - perpendicular.x() * cone_half_width,
+                base.y() - perpendicular.y() * cone_half_width,
+            )
+            cone = QPolygonF([tip, left, right])
+            cone_gradient = QLinearGradient(base, tip)
+            cone_gradient.setColorAt(0.0, color)
+            cone_gradient.setColorAt(1.0, color.lighter(145))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(cone_gradient)
+            painter.drawPolygon(cone)
+
+            label_pos = QPointF(
+                tip.x() + direction_2d.x() * 12.0 + perpendicular.x() * 3.0,
+                tip.y() + direction_2d.y() * 12.0 + perpendicular.y() * 3.0,
+            )
+            label_rect = QRectF(label_pos.x() - 12.0, label_pos.y() - 12.0, 24.0, 24.0)
+            painter.setPen(QColor(style.text_primary))
+            font = painter.font()
+            font.setFamily(style.triad_label_font_family)
+            font.setBold(True)
+            font.setPointSizeF(11.5)
+            painter.setFont(font)
+            painter.drawText(label_rect, int(Qt.AlignmentFlag.AlignCenter), label)
+
+        sphere_radius = 7.0
+        sphere_gradient = QRadialGradient(origin.x() - 3.0, origin.y() - 3.0, sphere_radius)
+        sphere_gradient.setColorAt(0.0, QColor(style.triad_hub_inner))
+        sphere_gradient.setColorAt(0.45, QColor(style.triad_hub_mid))
+        sphere_gradient.setColorAt(1.0, QColor(style.triad_hub_outer))
+        painter.setPen(QPen(QColor(style.border), 0.8))
+        painter.setBrush(sphere_gradient)
+        painter.drawEllipse(origin, sphere_radius, sphere_radius)
+
+        painter.end()
+
+
+def _pyvista_modules():
+    try:
+        import pyvista as pv
+        from pyvistaqt import QtInteractor
+    except ImportError:
+        return None, None
+    return pv, QtInteractor
+
+
+def _build_pyvista_sphere_mesh(
+    pv,
+    *,
+    radius: float,
+    center: np.ndarray | tuple[float, float, float],
+    subdivisions: int = 4,
+):
+    resolution = max(32, 10 * int(subdivisions))
+    sphere = pv.Sphere(
+        radius=float(radius),
+        center=tuple(float(value) for value in np.asarray(center, dtype=float)),
+        theta_resolution=resolution,
+        phi_resolution=resolution,
+    )
+    return sphere
+
+
+def _build_pyvista_atom_glyph_mesh(
+    pv,
+    *,
+    positions: np.ndarray,
+    radii: np.ndarray,
+    colors: np.ndarray,
+    subdivisions: int,
+):
+    points = pv.PolyData(np.asarray(positions, dtype=float))
+    points["glyph_radius"] = np.asarray(radii, dtype=float)
+    points["atom_rgb"] = np.asarray(np.clip(np.asarray(colors, dtype=float), 0.0, 1.0) * 255.0, dtype=np.uint8)
+    unit_sphere = _build_pyvista_sphere_mesh(
+        pv,
+        radius=1.0,
+        center=(0.0, 0.0, 0.0),
+        subdivisions=int(subdivisions),
+    )
+    return points.glyph(scale="glyph_radius", orient=False, geom=unit_sphere, factor=1.0)
+
+
+def _build_pyvista_bond_tube_mesh(
+    pv,
+    *,
+    segments: list[tuple[np.ndarray, np.ndarray, np.ndarray, float]],
+):
+    if not segments:
+        return None
+
+    points: list[np.ndarray] = []
+    lines: list[int] = []
+    colors: list[np.ndarray] = []
+    radii: list[float] = []
+    for start, end, color, radius in segments:
+        start_point = np.asarray(start, dtype=float)
+        end_point = np.asarray(end, dtype=float)
+        base_index = len(points)
+        points.extend([start_point, end_point])
+        lines.extend([2, base_index, base_index + 1])
+        colors.append(np.asarray(np.clip(color, 0.0, 1.0) * 255.0, dtype=np.uint8))
+        radii.append(float(radius))
+
+    poly = pv.PolyData()
+    poly.points = np.asarray(points, dtype=float)
+    poly.lines = np.asarray(lines, dtype=np.int64)
+    poly.cell_data["rgb"] = np.asarray(colors, dtype=np.uint8)
+    tube_radius = max(float(np.median(np.asarray(radii, dtype=float))), 1e-4)
+    return poly.tube(
+        radius=tube_radius,
+        n_sides=18,
+    )
+
+
+def _trim_bond_segment_to_surfaces(
+    start: np.ndarray,
+    end: np.ndarray,
+    *,
+    start_radius: float,
+    end_radius: float,
+    margin: float = 0.06,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    start_point = np.asarray(start, dtype=float)
+    end_point = np.asarray(end, dtype=float)
+    direction = end_point - start_point
+    length = float(np.linalg.norm(direction))
+    if length <= 1e-12:
+        return None
+
+    axis_dir = direction / length
+    trimmed_start = start_point + axis_dir * min(float(start_radius) * (1.0 - margin), 0.45 * length)
+    trimmed_end = end_point - axis_dir * min(float(end_radius) * (1.0 - margin), 0.45 * length)
+    if float(np.linalg.norm(trimmed_end - trimmed_start)) <= 1e-8:
+        return None
+    return trimmed_start, trimmed_end
+
+
+def _build_pyvista_bond_line_mesh(
+    pv,
+    *,
+    segments: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+):
+    if not segments:
+        return None
+
+    points: list[np.ndarray] = []
+    lines: list[int] = []
+    colors: list[np.ndarray] = []
+    for start, end, color in segments:
+        start_point = np.asarray(start, dtype=float)
+        end_point = np.asarray(end, dtype=float)
+        base_index = len(points)
+        points.extend([start_point, end_point])
+        lines.extend([2, base_index, base_index + 1])
+        colors.append(np.asarray(np.clip(color, 0.0, 1.0) * 255.0, dtype=np.uint8))
+
+    poly = pv.PolyData()
+    poly.points = np.asarray(points, dtype=float)
+    poly.lines = np.asarray(lines, dtype=np.int64)
+    poly.cell_data["rgb"] = np.asarray(colors, dtype=np.uint8)
+    return poly
+
+
+def _atom_pyvista_sphere_subdivisions(atom_count: int) -> int:
+    if atom_count <= 24:
+        return 6
+    if atom_count <= 96:
+        return 5
+    return 4
+
+
+def _should_use_fast_pyvista_bond_lines(atom_count: int, bond_count: int) -> bool:
+    return atom_count >= 192 or bond_count >= 360
+
+
+def _should_use_fast_pyvista_bond_cylinders(atom_count: int, bond_count: int) -> bool:
+    return atom_count >= 96 or bond_count >= 180
+
+
+def _require_pyvista_backend() -> str:
+    pv, qt_interactor = _pyvista_modules()
+    if pv is None or qt_interactor is None:
+        raise RuntimeError("AtomicStructureViewer requires PyVista and pyvistaqt.")
+    return "pyvista"
+
+
+def _coerce_light_direction(
+    direction: np.ndarray | tuple[float, float, float] | list[float] | None,
+) -> np.ndarray:
+    if direction is None:
+        return _DEFAULT_PYVISTA_LIGHT_DIRECTION.copy()
+    values = np.asarray(direction, dtype=float).reshape(-1)
+    if values.size != 3:
+        return _DEFAULT_PYVISTA_LIGHT_DIRECTION.copy()
+    return _normalized_vector(values, _DEFAULT_PYVISTA_LIGHT_DIRECTION)
+
+
+def _configure_pyvista_vesta_style(
+    plotter,
+    pv,
+    *,
+    light_direction: np.ndarray | tuple[float, float, float] | list[float] | None = None,
+    focal_point: np.ndarray | tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> None:
+    if pv is None:
+        return
+
+    try:
+        plotter.enable_parallel_projection()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        plotter.disable_shadows()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        plotter.disable_eye_dome_lighting()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        plotter.remove_environment_texture()
+    except Exception:  # noqa: BLE001
+        pass
+
+    renderer = getattr(plotter, "renderer", None)
+    if renderer is not None:
+        for method_name in (
+            "AutomaticLightCreationOff",
+            "UseImageBasedLightingOff",
+            "UseSphericalHarmonicsOff",
+        ):
+            method = getattr(renderer, method_name, None)
+            if method is None:
+                continue
+            try:
+                method()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            renderer.SetEnvironmentTexture(None)
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        plotter.remove_all_lights()
+    except Exception:  # noqa: BLE001
+        pass
+
+    direction = _coerce_light_direction(light_direction)
+    focus = np.asarray(focal_point, dtype=float)
+    light = pv.Light()
+    light.set_camera_light()
+    light.positional = False
+    # Keep the light in camera coordinates so the atoms retain a stable,
+    # simple 3D cue while rotating.
+    light.position = tuple(float(value) for value in direction)
+    light.focal_point = (0.0, 0.0, 0.0)
+    light.intensity = 0.62
+    light.ambient_color = (1.0, 1.0, 1.0)
+    light.diffuse_color = (1.0, 1.0, 1.0)
+    light.specular_color = (1.0, 1.0, 1.0)
+    plotter.add_light(light)
+
+
+class _PyVistaCanvas(QWidget):
+    """Small Qt wrapper that gives ``QtInteractor`` a ``draw_idle`` API."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        pv, qt_interactor = _pyvista_modules()
+        if pv is None or qt_interactor is None:
+            raise RuntimeError("PyVista backend requested but PyVista is not installed.")
+
+        self._plotter = qt_interactor(self)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent;")
+        self._plotter.setPalette(self.palette())
+        _configure_transparent_pyvista_background(self._plotter)
+        self._plotter.enable_parallel_projection()
+        try:
+            self._plotter.enable_anti_aliasing("ssaa")
+        except Exception:  # noqa: BLE001
+            pass
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._plotter)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    @property
+    def plotter(self):
+        return self._plotter
+
+    def draw_idle(self) -> None:
+        self._plotter.render()
+
+
+class _PyVistaTriadCanvas(QWidget):
+    """Mini PyVista scene that mirrors the main camera orientation."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        pv, qt_interactor = _pyvista_modules()
+        if pv is None or qt_interactor is None:
+            raise RuntimeError("PyVista triad requested but PyVista is not installed.")
+
+        self._pv = pv
+        self._plotter = qt_interactor(self)
+        self._plotter.enable_parallel_projection()
+        try:
+            self._plotter.enable_anti_aliasing("ssaa")
+        except Exception:  # noqa: BLE001
+            pass
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._plotter.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setFixedWidth(132)
+        self.setFixedHeight(130)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._plotter)
+
+        self._cell = np.eye(3, dtype=float)
+        self._camera_position = np.array([0.0, 0.0, 4.0], dtype=float)
+        self._camera_focal_point = np.zeros(3, dtype=float)
+        self._camera_up = np.array([0.0, 0.0, 1.0], dtype=float)
+        self._light_direction = _DEFAULT_PYVISTA_LIGHT_DIRECTION.copy()
+
+        self._configure_background()
+        self._build_axes_scene()
+
+    def _configure_background(self) -> None:
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent;")
+        self._plotter.setPalette(self.palette())
+        _configure_transparent_pyvista_background(self._plotter)
+
+    def _configure_lighting(self) -> None:
+        _configure_pyvista_vesta_style(
+            self._plotter,
+            self._pv,
+            light_direction=self._light_direction,
+            focal_point=(0.0, 0.0, 0.0),
+        )
+
+    def _build_axes_scene(self) -> None:
+        self._plotter.clear()
+        self._configure_background()
+        self._configure_lighting()
+        style = _viewer_style()
+
+        if float(np.max(np.linalg.norm(self._cell, axis=1))) <= 1e-12:
+            self._apply_camera()
+            return
+
+        directions = (
+            _normalized_vector(self._cell[0], np.array([1.0, 0.0, 0.0], dtype=float)),
+            _normalized_vector(self._cell[1], np.array([0.0, 1.0, 0.0], dtype=float)),
+            _normalized_vector(self._cell[2], np.array([0.0, 0.0, 1.0], dtype=float)),
+        )
+        colors = style.triad_axis_colors
+        labels = ("a", "b", "c")
+        shaft_radius = 0.06
+        shaft_length = 0.72
+        cone_radius = 0.13
+        cone_length = 0.24
+        hub_radius = 0.11
+        label_offset = 0.08
+        label_points: list[np.ndarray] = []
+
+        hub = _build_pyvista_sphere_mesh(self._pv, radius=hub_radius, center=(0.0, 0.0, 0.0), subdivisions=3)
+        self._plotter.add_mesh(
+            hub,
+            color=style.triad_hub_mid,
+            smooth_shading=True,
+            ambient=0.52,
+            diffuse=0.34,
+            specular=0.0,
+            specular_power=1.0,
+            pbr=False,
+            pickable=False,
+        )
+
+        for direction, color in zip(directions, colors):
+            shaft_start = direction * (hub_radius * 0.55)
+            shaft_end = direction * shaft_length
+            shaft_center = 0.5 * (shaft_start + shaft_end)
+            shaft_height = float(np.linalg.norm(shaft_end - shaft_start))
+            shaft = self._pv.Cylinder(
+                center=tuple(float(value) for value in shaft_center),
+                direction=tuple(float(value) for value in direction),
+                radius=shaft_radius,
+                height=shaft_height,
+                resolution=28,
+            )
+            cone_center = direction * (shaft_length + 0.5 * cone_length)
+            cone = self._pv.Cone(
+                center=tuple(float(value) for value in cone_center),
+                direction=tuple(float(value) for value in direction),
+                height=cone_length,
+                radius=cone_radius,
+                resolution=36,
+            )
+            for mesh in (shaft, cone):
+                self._plotter.add_mesh(
+                    mesh,
+                    color=color,
+                    smooth_shading=True,
+                    ambient=0.46,
+                    diffuse=0.36,
+                    specular=0.0,
+                    specular_power=1.0,
+                    pbr=False,
+                    pickable=False,
+                )
+            label_points.append(direction * (shaft_length + cone_length + label_offset))
+
+        self._plotter.add_point_labels(
+            np.asarray(label_points, dtype=float),
+            list(labels),
+            font_size=15,
+            text_color=style.text_primary,
+            font_family="arial",
+            shape=None,
+            show_points=False,
+            always_visible=True,
+            pickable=False,
+            render=False,
+        )
+        self._apply_camera()
+
+    def _apply_camera(self) -> None:
+        direction = _normalized_vector(
+            self._camera_position - self._camera_focal_point,
+            np.array([1.0, 0.0, 0.0], dtype=float),
+        )
+        position = 3.8 * direction
+        self._plotter.camera.position = tuple(float(value) for value in position)
+        self._plotter.camera.focal_point = (0.0, 0.0, 0.0)
+        self._plotter.camera.up = tuple(float(value) for value in self._camera_up)
+        self._plotter.camera.parallel_scale = 1.32
+        self._plotter.reset_camera_clipping_range()
+
+    def set_scene(
+        self,
+        *,
+        cell: np.ndarray | None,
+        camera_position: np.ndarray | tuple[float, float, float],
+        focal_point: np.ndarray | tuple[float, float, float],
+        view_up: np.ndarray | tuple[float, float, float],
+    ) -> None:
+        if cell is not None and np.asarray(cell).shape == (3, 3):
+            cell_array = np.asarray(cell, dtype=float)
+            if not np.allclose(cell_array, self._cell):
+                self._cell = cell_array
+                self._build_axes_scene()
+        self._camera_position = np.asarray(camera_position, dtype=float)
+        self._camera_focal_point = np.asarray(focal_point, dtype=float)
+        self._camera_up = _normalized_vector(np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float))
+        self._configure_background()
+        self._apply_camera()
+
+    def set_light_direction(self, direction: np.ndarray | tuple[float, float, float] | list[float]) -> None:
+        self._light_direction = _coerce_light_direction(direction)
+        self._build_axes_scene()
+
+    def draw_idle(self) -> None:
+        self._plotter.render()
 
 
 class AtomicStructureViewer(QWidget):
     """Render a contained, ASE-style 3D view of a structure."""
 
     atom_selected = Signal(int)
+    selected_atoms_changed = Signal(object)
+    view_state_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
         self._structure: Structure | None = None
         self._atoms: Atoms | None = None
-        self._axis = None
-        self._triad_axis = None
-        self._pick_artist = None
-        self._sphere_artists: list[object] = []
         self._selected_index: int | None = None
+        self._selected_indexes: list[int] = []
         self._spins: np.ndarray | None = None
         self._isosurface_vertices: np.ndarray | None = None
         self._isosurface_faces: np.ndarray | None = None
-        self._isosurface_color = "#3b82f6"
+        self._isosurface_color = _viewer_style().isosurface
         self._isosurface_alpha = 0.24
+        self._isosurface_specs: list[_ViewerIsosurfaceSpec] = []
+        self._slice_specs: list[_ViewerSliceSpec] = []
+        self._point_overlay_specs: list[_ViewerPointOverlaySpec] = []
+        self._hide_atoms_in_front_of_planes = False
+        self._camera_state = _CameraState(*_DEFAULT_VIEW, _DEFAULT_VIEW_ROLL)
         self._view = _DEFAULT_VIEW
-        self._view_roll = 0.0
+        self._view_roll = _DEFAULT_VIEW_ROLL
         self._limits: tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None = None
+        self._axis = _AxesProxy(self._camera_state)
+        self._triad_axis: _AxesProxy | None = None
+        self._latched_selection_modifier = False
+        self._native_selection_modifier = False
+        self._pyvista_left_press_position: tuple[int, int] | None = None
+        self._pyvista_left_press_modifier = False
+        self._pyvista_left_press_camera_signature: tuple[float, ...] | None = None
+        self._pyvista_atom_positions = np.empty((0, 3), dtype=float)
+        self._pyvista_atom_radii = np.empty((0,), dtype=float)
+        self._pyvista_atom_colors = np.empty((0, 3), dtype=float)
+        self._pyvista_all_atom_positions = np.empty((0, 3), dtype=float)
+        self._pyvista_all_atom_radii = np.empty((0,), dtype=float)
+        self._pyvista_all_atom_colors = np.empty((0, 3), dtype=float)
+        self._pyvista_atom_lookup_indices = np.empty((0,), dtype=int)
+        self._pyvista_atom_actor = None
+        self._pyvista_isosurface_actor = None
+        self._pyvista_isosurface_actors: list[object] = []
+        self._pyvista_slice_actors: list[object] = []
+        self._pyvista_point_overlay_actors: list[object] = []
+        self._pyvista_selection_actor = None
+        self._pyvista_bond_actors: list[object] = []
+        self._pyvista_spin_actors: list[object] = []
+        self._pyvista_last_camera_signature: tuple[float, ...] | None = None
+        self._pyvista_camera_snapshot: tuple[np.ndarray, np.ndarray, np.ndarray, float] | None = None
+        self._pyvista_light_direction = _DEFAULT_PYVISTA_LIGHT_DIRECTION.copy()
+        self._shutting_down = False
 
-        self._figure = Figure(figsize=(6.0, 5.0), facecolor="white")
-        self._canvas = FigureCanvasQTAgg(self._figure)
-        self._triad_figure = Figure(figsize=(2.2, 1.35), facecolor="white")
-        self._triad_canvas = FigureCanvasQTAgg(self._triad_figure)
-        self._figure.patch.set_alpha(0.0)
-        self._triad_figure.patch.set_alpha(0.0)
-        self._canvas.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self._triad_canvas.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self._canvas.setStyleSheet("background: transparent;")
-        self._triad_canvas.setStyleSheet("background: transparent;")
-        self._triad_canvas.setFixedWidth(132)
-        self._triad_canvas.setFixedHeight(130)
+        self._backend_name = _require_pyvista_backend()
+        self._canvas = _PyVistaCanvas(self)
+        self._canvas.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._canvas.installEventFilter(self)
+        try:
+            self._triad_canvas = _PyVistaTriadCanvas(self)
+            self._triad_canvas.set_light_direction(self._pyvista_light_direction)
+        except RuntimeError:
+            self._triad_canvas = _CrystallographicTriadCanvas(self)
 
         self._show_cell = QCheckBox("Cell")
         self._show_cell.setChecked(True)
@@ -417,43 +1324,104 @@ class AtomicStructureViewer(QWidget):
         self._show_spins.setChecked(False)
         self._show_bonds.setToolTip("Show or hide nearest-neighbor bonds.")
         self._show_spins.setToolTip("Show magnetic spin arrows.")
-        self._view_x_button = QPushButton("X")
-        self._view_y_button = QPushButton("Y")
-        self._view_z_button = QPushButton("Z")
+        self._view_x_button = QPushButton("a")
+        self._view_y_button = QPushButton("b")
+        self._view_z_button = QPushButton("c")
+        self._view_x_button.setToolTip("Look along the a lattice vector.")
+        self._view_y_button.setToolTip("Look along the b lattice vector.")
+        self._view_z_button.setToolTip("Look along the c lattice vector.")
         self._reset_view_button = QPushButton("Reset View")
         self._reset_view_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._reset_view_button.setMinimumWidth(self._reset_view_button.sizeHint().width() + 8)
         self._reset_view_button.setToolTip("Reset orientation and zoom to defaults.")
-        self._interaction_hint = QLabel(
-            "Left click atom: select | Left click empty: clear | Right drag: rotate | "
-            "Middle drag: pan | Scroll: zoom"
+        self._interaction_hint = _WrappingHintLabel(
+            "Left click atom: select | Shift+click atom: add/remove | Left click empty: clear | Right drag: rotate | "
+            "Middle drag: pan | Wheel: zoom"
         )
         self._interaction_hint.setWordWrap(True)
+        self._interaction_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         style_hint_text(self._interaction_hint)
         self._selection_label = QLabel("Selected atom: -")
-        self._selection_label.setWordWrap(True)
+        self._selection_label.setWordWrap(False)
+        self._selection_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        selection_height = self._selection_label.sizeHint().height()
+        self._selection_label.setFixedHeight(selection_height)
+        self._selection_label.setToolTip("")
 
         self._build_layout()
 
         self._show_cell.toggled.connect(self._redraw_preserving_view)
         self._show_bonds.toggled.connect(self._redraw_preserving_view)
         self._show_spins.toggled.connect(self._redraw_preserving_view)
-        self._view_x_button.clicked.connect(lambda: self._set_named_view("x"))
-        self._view_y_button.clicked.connect(lambda: self._set_named_view("y"))
-        self._view_z_button.clicked.connect(lambda: self._set_named_view("z"))
+        self._view_x_button.clicked.connect(lambda: self._set_named_view("a"))
+        self._view_y_button.clicked.connect(lambda: self._set_named_view("b"))
+        self._view_z_button.clicked.connect(lambda: self._set_named_view("c"))
         self._reset_view_button.clicked.connect(self._reset_view)
-        self._canvas.mpl_connect("pick_event", self._on_pick)
-        self._canvas.mpl_connect("button_press_event", self._on_mouse_press)
-        self._canvas.mpl_connect("button_release_event", self._on_mouse_release)
-        self._canvas.mpl_connect("motion_notify_event", self._on_mouse_move)
-        self._canvas.mpl_connect("scroll_event", self._on_scroll)
-        self._canvas.mpl_connect("button_release_event", self._store_view)
-        self._canvas.mpl_connect("resize_event", self._on_canvas_resize)
+
+        self._configure_pyvista_interaction()
+        self._canvas.plotter.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._canvas.plotter.installEventFilter(self)
+        self._pyvista_camera_timer = QTimer(self)
+        self._pyvista_camera_timer.setInterval(40)
+        self._pyvista_camera_timer.timeout.connect(self._poll_pyvista_camera)
+        self._pyvista_camera_timer.start()
 
         self._render()
 
+    @property
+    def backend_name(self) -> str:
+        return self._backend_name
+
+    def _refresh_interaction_hint_layout(self) -> None:
+        self._interaction_hint._sync_minimum_height()
+        self._interaction_hint.updateGeometry()
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().showEvent(event)
+        QTimer.singleShot(0, self._refresh_interaction_hint_layout)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().resizeEvent(event)
+        self._refresh_interaction_hint_layout()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
+        canvas = getattr(self, "_canvas", None)
+        plotter = getattr(canvas, "plotter", None)
+        if watched is canvas or watched is plotter:
+            event_type = event.type()
+            if event_type == QEvent.Type.MouseButtonPress and getattr(event, "button", lambda: Qt.MouseButton.NoButton)() == Qt.MouseButton.LeftButton:
+                modifiers = getattr(event, "modifiers", lambda: Qt.KeyboardModifier.NoModifier)()
+                self._native_selection_modifier = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+                self._latched_selection_modifier = self._native_selection_modifier
+                focus_target = watched if isinstance(watched, QWidget) else self._canvas
+                if isinstance(focus_target, QWidget):
+                    focus_target.setFocus(Qt.FocusReason.MouseFocusReason)
+            elif event_type in {QEvent.Type.KeyPress, QEvent.Type.KeyRelease}:
+                modifiers = getattr(event, "modifiers", lambda: Qt.KeyboardModifier.NoModifier)()
+                self._native_selection_modifier = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        return super().eventFilter(watched, event)
+
+    def shutdown(self) -> None:
+        """Release backend resources explicitly before parent dialogs tear down."""
+
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+
+        timer = getattr(self, "_pyvista_camera_timer", None)
+        if timer is not None:
+            timer.stop()
+
+        _shutdown_pyvista_widget(self._triad_canvas)
+        _shutdown_pyvista_widget(self._canvas)
+
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 4)
+        layout.setSpacing(6)
 
         controls = QHBoxLayout()
         controls.setContentsMargins(0, 0, 0, 0)
@@ -464,7 +1432,7 @@ class AtomicStructureViewer(QWidget):
         controls.addSpacing(4)
         controls.addWidget(self._show_spins)
         controls.addSpacing(8)
-        controls.addWidget(QLabel("View:"))
+        controls.addWidget(QLabel("Along:"))
         controls.addWidget(self._view_x_button)
         controls.addWidget(self._view_y_button)
         controls.addWidget(self._view_z_button)
@@ -476,7 +1444,7 @@ class AtomicStructureViewer(QWidget):
 
         viewer_row = QHBoxLayout()
         viewer_row.setContentsMargins(0, 0, 0, 0)
-        viewer_row.setSpacing(0)
+        viewer_row.setSpacing(8)
 
         triad_column = QVBoxLayout()
         triad_column.setContentsMargins(0, 0, 0, 0)
@@ -493,6 +1461,13 @@ class AtomicStructureViewer(QWidget):
         layout.addLayout(viewer_row, stretch=1)
         layout.addWidget(self._selection_label)
 
+    def _configure_pyvista_interaction(self) -> None:
+        plotter = self._canvas.plotter
+        plotter.enable_custom_trackball_style(right="rotate", middle="pan")
+        plotter.iren.picker = "point"
+        plotter.iren.add_observer("LeftButtonPressEvent", self._on_pyvista_left_button_press)
+        plotter.iren.add_observer("LeftButtonReleaseEvent", self._on_pyvista_left_button_release)
+
     def set_structure(self, structure: Structure | None) -> None:
         """Load a new structure into the viewer."""
         self._structure = structure
@@ -500,11 +1475,40 @@ class AtomicStructureViewer(QWidget):
         self._spins = self._extract_spins(structure)
         self._isosurface_vertices = None
         self._isosurface_faces = None
+        self._isosurface_specs = []
+        self._slice_specs = []
+        self._point_overlay_specs = []
+        self._hide_atoms_in_front_of_planes = False
         self._set_spin_visibility_default_from_data()
         self._selected_index = None
+        self._selected_indexes = []
+        self._latched_selection_modifier = False
+        self._native_selection_modifier = False
+        self._pyvista_left_press_position = None
+        self._pyvista_left_press_modifier = False
+        self._pyvista_left_press_camera_signature = None
+        self._camera_state = _CameraState(*_DEFAULT_VIEW, _DEFAULT_VIEW_ROLL)
+        self._axis.set_from_state(self._camera_state)
+        self._triad_axis = None
+        self._pyvista_atom_positions = np.empty((0, 3), dtype=float)
+        self._pyvista_atom_radii = np.empty((0,), dtype=float)
+        self._pyvista_atom_colors = np.empty((0, 3), dtype=float)
+        self._pyvista_all_atom_positions = np.empty((0, 3), dtype=float)
+        self._pyvista_all_atom_radii = np.empty((0,), dtype=float)
+        self._pyvista_all_atom_colors = np.empty((0, 3), dtype=float)
+        self._pyvista_atom_lookup_indices = np.empty((0,), dtype=int)
+        self._pyvista_atom_actor = None
+        self._pyvista_isosurface_actor = None
+        self._pyvista_isosurface_actors = []
+        self._pyvista_slice_actors = []
+        self._pyvista_point_overlay_actors = []
         self._view = _DEFAULT_VIEW
-        self._view_roll = 0.0
+        self._view_roll = _DEFAULT_VIEW_ROLL
         self._limits = None
+        self._pyvista_camera_snapshot = None
+        self._pyvista_selection_actor = None
+        self._pyvista_bond_actors = []
+        self._pyvista_spin_actors = []
         self._selection_label.setText("Selected atom: -")
         self._render()
 
@@ -514,10 +1518,7 @@ class AtomicStructureViewer(QWidget):
             self._spins = None
         else:
             spin_array = np.asarray(spins, dtype=float)
-            if len(spin_array) != len(self._atoms):
-                self._spins = None
-            else:
-                self._spins = spin_array.copy()
+            self._spins = spin_array.copy() if len(spin_array) == len(self._atoms) else None
         if self._spins is not None and np.any(np.abs(self._spins) > 1e-10):
             self._show_spins.setChecked(True)
         self._store_view()
@@ -528,25 +1529,206 @@ class AtomicStructureViewer(QWidget):
         vertices: list[list[float]] | tuple[tuple[float, float, float], ...] | np.ndarray | None,
         faces: list[list[int]] | tuple[tuple[int, int, int], ...] | np.ndarray | None,
         *,
-        color: str = "#3b82f6",
+        color: str | None = None,
         alpha: float = 0.24,
     ) -> None:
         """Attach or clear an isosurface triangle mesh overlay."""
 
         if vertices is None or faces is None:
+            self.set_isosurfaces([])
+            return
+        self.set_isosurfaces(
+            [
+                {
+                    "vertices": vertices,
+                    "faces": faces,
+                    "color": _viewer_style().isosurface if color is None else str(color),
+                    "alpha": float(alpha),
+                }
+            ]
+        )
+
+    def set_isosurfaces(self, surfaces: Iterable[Mapping[str, object]] | None) -> None:
+        """Attach zero or more isosurface triangle mesh overlays."""
+
+        specs: list[_ViewerIsosurfaceSpec] = []
+        if surfaces is not None:
+            for surface in surfaces:
+                if not isinstance(surface, Mapping):
+                    continue
+                vertices = surface.get("vertices")
+                faces = surface.get("faces")
+                if vertices is None or faces is None:
+                    continue
+                vertices_array = np.asarray(vertices, dtype=float)
+                faces_array = np.asarray(faces, dtype=int)
+                if (
+                    vertices_array.ndim != 2
+                    or vertices_array.shape[1] != 3
+                    or faces_array.ndim != 2
+                    or faces_array.shape[1] != 3
+                ):
+                    continue
+                color = surface.get("color")
+                alpha = surface.get("alpha", 0.24)
+                specs.append(
+                    _ViewerIsosurfaceSpec(
+                        vertices=vertices_array,
+                        faces=faces_array,
+                        color=_viewer_style().isosurface if color is None else str(color),
+                        alpha=float(alpha),
+                    )
+                )
+
+        self._isosurface_specs = specs
+        if specs:
+            primary = specs[0]
+            self._isosurface_vertices = primary.vertices
+            self._isosurface_faces = primary.faces
+            self._isosurface_color = primary.color
+            self._isosurface_alpha = float(primary.alpha)
+        else:
             self._isosurface_vertices = None
             self._isosurface_faces = None
-        else:
-            vertices_array = np.asarray(vertices, dtype=float)
-            faces_array = np.asarray(faces, dtype=int)
-            if vertices_array.ndim != 2 or vertices_array.shape[1] != 3 or faces_array.ndim != 2 or faces_array.shape[1] != 3:
-                self._isosurface_vertices = None
-                self._isosurface_faces = None
-            else:
-                self._isosurface_vertices = vertices_array
-                self._isosurface_faces = faces_array
-        self._isosurface_color = str(color)
-        self._isosurface_alpha = float(alpha)
+            self._isosurface_color = _viewer_style().isosurface
+            self._isosurface_alpha = 0.24
+        self._store_view()
+        if self._try_update_pyvista_isosurface_overlay():
+            return
+        self._render()
+
+    def set_slice_planes(self, slices: Iterable[Mapping[str, object]] | None) -> None:
+        """Attach zero or more slice overlays."""
+
+        specs: list[_ViewerSliceSpec] = []
+        if slices is not None:
+            for entry in slices:
+                if not isinstance(entry, Mapping):
+                    continue
+                x_coordinates = np.asarray(entry.get("x_coordinates"), dtype=float)
+                y_coordinates = np.asarray(entry.get("y_coordinates"), dtype=float)
+                z_coordinates = np.asarray(entry.get("z_coordinates"), dtype=float)
+                values = np.asarray(entry.get("values"), dtype=float)
+                anchor = np.asarray(entry.get("anchor"), dtype=float)
+                normal = np.asarray(entry.get("normal"), dtype=float)
+                if (
+                    x_coordinates.ndim != 2
+                    or y_coordinates.shape != x_coordinates.shape
+                    or z_coordinates.shape != x_coordinates.shape
+                    or values.shape != x_coordinates.shape
+                    or anchor.shape != (3,)
+                    or normal.shape != (3,)
+                ):
+                    continue
+                try:
+                    minimum = float(entry.get("minimum"))
+                    maximum = float(entry.get("maximum"))
+                except (TypeError, ValueError):
+                    continue
+                specs.append(
+                    _ViewerSliceSpec(
+                        x_coordinates=x_coordinates,
+                        y_coordinates=y_coordinates,
+                        z_coordinates=z_coordinates,
+                        values=values,
+                        anchor=anchor,
+                        normal=_normalized_vector(normal, np.array([0.0, 0.0, 1.0], dtype=float)),
+                        color_limits=(minimum, maximum),
+                        cmap=str(entry.get("cmap", "viridis")),
+                        alpha=float(entry.get("alpha", 1.0)),
+                    )
+                )
+        self._slice_specs = specs
+        self._store_view()
+        if self._try_update_pyvista_slice_overlay():
+            return
+        self._render()
+
+    def set_point_overlays(self, overlays: Iterable[Mapping[str, object]] | None) -> None:
+        """Attach zero or more free-position point overlays."""
+
+        specs: list[_ViewerPointOverlaySpec] = []
+        if overlays is not None:
+            for entry in overlays:
+                if not isinstance(entry, Mapping):
+                    continue
+                positions = np.asarray(entry.get("positions"), dtype=float)
+                if positions.ndim != 2 or positions.shape[1] != 3 or len(positions) == 0:
+                    continue
+                alpha_raw = entry.get("alpha", 0.92)
+                try:
+                    alpha = float(alpha_raw)
+                except (TypeError, ValueError):
+                    alpha = 0.92
+
+                colors_raw = entry.get("colors")
+                colors: np.ndarray
+                if isinstance(colors_raw, str):
+                    qcolor = QColor(colors_raw)
+                    if not qcolor.isValid():
+                        continue
+                    colors = np.tile(np.asarray(qcolor.getRgbF()[:3], dtype=float), (len(positions), 1))
+                elif isinstance(colors_raw, (list, tuple)) and colors_raw and isinstance(colors_raw[0], str):
+                    color_rows: list[np.ndarray] = []
+                    if len(colors_raw) != len(positions):
+                        continue
+                    for raw_color in colors_raw:
+                        qcolor = QColor(str(raw_color))
+                        if not qcolor.isValid():
+                            color_rows = []
+                            break
+                        color_rows.append(np.asarray(qcolor.getRgbF()[:3], dtype=float))
+                    if len(color_rows) != len(positions):
+                        continue
+                    colors = np.asarray(color_rows, dtype=float)
+                else:
+                    colors = np.asarray(colors_raw, dtype=float)
+                    if colors.ndim == 1 and colors.shape == (3,):
+                        colors = np.tile(colors.reshape(1, 3), (len(positions), 1))
+                    if colors.ndim != 2 or colors.shape != (len(positions), 3):
+                        continue
+
+                radii_raw = entry.get("radii", entry.get("sizes", 0.22))
+                radii: np.ndarray
+                if isinstance(radii_raw, (int, float)):
+                    radii = np.full((len(positions),), float(radii_raw), dtype=float)
+                else:
+                    radii = np.asarray(radii_raw, dtype=float).reshape(-1)
+                    if len(radii) != len(positions):
+                        continue
+                radii = np.clip(radii, 0.05, None)
+                specs.append(
+                    _ViewerPointOverlaySpec(
+                        positions=np.asarray(positions, dtype=float),
+                        colors=np.asarray(np.clip(colors, 0.0, 1.0), dtype=float),
+                        radii=np.asarray(radii, dtype=float),
+                        alpha=float(np.clip(alpha, 0.0, 1.0)),
+                    )
+                )
+
+        self._point_overlay_specs = specs
+        self._store_view()
+        if self._try_update_pyvista_point_overlay():
+            return
+        self._render()
+
+    def set_hide_atoms_in_front_of_planes(self, hide: bool) -> None:
+        """Hide atoms on the camera-facing side of all active slice planes."""
+
+        normalized = bool(hide)
+        if normalized == self._hide_atoms_in_front_of_planes:
+            return
+        self._hide_atoms_in_front_of_planes = normalized
+        self._store_view()
+        self._render()
+
+    def set_pyvista_light_direction(
+        self,
+        direction: np.ndarray | tuple[float, float, float] | list[float],
+    ) -> None:
+        self._pyvista_light_direction = _coerce_light_direction(direction)
+        if hasattr(self._triad_canvas, "set_light_direction"):
+            self._triad_canvas.set_light_direction(self._pyvista_light_direction)
         self._store_view()
         self._render()
 
@@ -558,21 +1740,59 @@ class AtomicStructureViewer(QWidget):
 
     def select_atom(self, atom_index: int | None) -> None:
         """Highlight an atom without emitting a new selection signal."""
-        self._set_selected_atom(atom_index, emit_signal=False)
+        self._set_selected_atoms([] if atom_index is None else [int(atom_index)], emit_signal=False)
+
+    def select_atoms(self, atom_indexes: Iterable[int] | None) -> None:
+        """Highlight zero or more atoms without emitting a new selection signal."""
+        indexes = [] if atom_indexes is None else [int(value) for value in atom_indexes]
+        self._set_selected_atoms(indexes, emit_signal=False)
 
     def _set_selected_atom(self, atom_index: int | None, *, emit_signal: bool) -> None:
-        if self._atoms is None or atom_index is None or atom_index < 0 or atom_index >= len(self._atoms):
-            self._selected_index = None
-            self._selection_label.setText("Selected atom: -")
-        else:
-            self._selected_index = int(atom_index)
-            self._selection_label.setText(self._format_selection_text(self._selected_index))
+        self._set_selected_atoms([] if atom_index is None else [int(atom_index)], emit_signal=emit_signal)
+
+    def _set_selected_atoms(self, atom_indexes: Iterable[int], *, emit_signal: bool) -> None:
+        normalized: list[int] = []
+        seen: set[int] = set()
+        if self._atoms is not None:
+            for raw_index in atom_indexes:
+                index = int(raw_index)
+                if index < 0 or index >= len(self._atoms) or index in seen:
+                    continue
+                seen.add(index)
+                normalized.append(index)
+        self._selected_indexes = normalized
+        self._selected_index = None if not normalized else int(normalized[-1])
+        self._update_selection_label()
 
         self._store_view()
+        if self._try_update_pyvista_selection_overlay():
+            if emit_signal:
+                self.selected_atoms_changed.emit(list(self._selected_indexes))
+                if self._selected_index is not None:
+                    self.atom_selected.emit(self._selected_index)
+            return
         self._render()
 
-        if emit_signal and self._selected_index is not None:
-            self.atom_selected.emit(self._selected_index)
+        if emit_signal:
+            self.selected_atoms_changed.emit(list(self._selected_indexes))
+            if self._selected_index is not None:
+                self.atom_selected.emit(self._selected_index)
+
+    def _update_selection_label(self) -> None:
+        if self._atoms is None or not self._selected_indexes:
+            self._selection_label.setText("Selected atom: -")
+            self._selection_label.setToolTip("")
+            return
+        if len(self._selected_indexes) == 1:
+            selection_text = self._format_selection_text(self._selected_indexes[0])
+            self._selection_label.setText(selection_text)
+            self._selection_label.setToolTip(selection_text)
+            return
+        entries = [f"#{index + 1} {self._atoms[index].symbol}" for index in self._selected_indexes[:4]]
+        suffix = "" if len(self._selected_indexes) <= 4 else f" +{len(self._selected_indexes) - 4} more"
+        text = f"Selected atoms: {len(self._selected_indexes)} | " + ", ".join(entries) + suffix
+        self._selection_label.setText(text)
+        self._selection_label.setToolTip(text)
 
     def _format_selection_text(self, atom_index: int) -> str:
         assert self._atoms is not None
@@ -623,386 +1843,1283 @@ class AtomicStructureViewer(QWidget):
 
     def _redraw_preserving_view(self) -> None:
         self._store_view()
+        if self._try_update_pyvista_visibility_overlay():
+            self.view_state_changed.emit()
+            return
         self._render()
+        self.view_state_changed.emit()
 
     def _reset_view(self) -> None:
+        self._camera_state = _CameraState(*_DEFAULT_VIEW, _DEFAULT_VIEW_ROLL)
+        self._axis.set_from_state(self._camera_state)
+        if self._triad_axis is not None:
+            self._triad_axis.set_from_state(self._camera_state)
         self._view = _DEFAULT_VIEW
-        self._view_roll = 0.0
+        self._view_roll = _DEFAULT_VIEW_ROLL
         self._limits = None
+        self._pyvista_camera_snapshot = None
         self._render()
+        self.view_state_changed.emit()
 
     def _set_named_view(self, axis_name: str) -> None:
-        if axis_name == "x":
-            self._view = (0.0, 0.0)
-        elif axis_name == "y":
-            self._view = (0.0, 90.0)
+        normalized_name = str(axis_name).strip().lower()
+        if normalized_name == "x":
+            normalized_name = "a"
+        elif normalized_name == "y":
+            normalized_name = "b"
+        elif normalized_name == "z":
+            normalized_name = "c"
+
+        if self._atoms is None:
+            if normalized_name == "a":
+                self._camera_state = _CameraState(0.0, 0.0, 0.0)
+            elif normalized_name == "b":
+                self._camera_state = _CameraState(0.0, 90.0, 0.0)
+            else:
+                self._camera_state = _CameraState(90.0, -90.0, 0.0)
         else:
-            self._view = (90.0, -90.0)
-        self._view_roll = 0.0
+            cell = np.asarray(self._atoms.cell, dtype=float)
+            if cell.shape != (3, 3):
+                cell = np.eye(3, dtype=float)
+            direction_map = {
+                "a": cell[0],
+                "b": cell[1],
+                "c": cell[2],
+            }
+            fallback_up_map = {
+                "a": (cell[2], cell[1], np.array([0.0, 0.0, 1.0], dtype=float)),
+                "b": (cell[2], cell[0], np.array([0.0, 0.0, 1.0], dtype=float)),
+                "c": (cell[0], cell[1], np.array([0.0, 1.0, 0.0], dtype=float)),
+            }
+            direction = np.asarray(direction_map.get(normalized_name, cell[2]), dtype=float)
+            if float(np.linalg.norm(direction)) <= 1e-12:
+                direction = np.array([0.0, 0.0, 1.0], dtype=float)
+            up_hint = np.array([0.0, 0.0, 1.0], dtype=float)
+            for candidate in fallback_up_map.get(normalized_name, ()):
+                candidate_array = _normalized_vector(np.asarray(candidate, dtype=float), up_hint)
+                if abs(float(np.dot(_normalized_vector(direction, direction), candidate_array))) < 0.96:
+                    up_hint = candidate_array
+                    break
+            camera_direction = _normalized_vector(direction, np.array([0.0, 0.0, 1.0], dtype=float))
+            self._camera_state = _camera_state_from_vectors(
+                position=4.0 * camera_direction,
+                focal_point=(0.0, 0.0, 0.0),
+                view_up=up_hint,
+            )
+        self._axis.set_from_state(self._camera_state)
+        if self._triad_axis is not None:
+            self._triad_axis.set_from_state(self._camera_state)
+        self._view = (self._camera_state.elev, self._camera_state.azim)
+        self._view_roll = self._camera_state.roll
+        self._pyvista_camera_snapshot = None
         self._render()
+        self.view_state_changed.emit()
+
+    def current_view_direction(self) -> tuple[float, float, float]:
+        """Return the current camera viewing direction in Cartesian coordinates."""
+
+        camera_position, focal_point, _view_up = _camera_vectors_from_state(self._camera_state)
+        direction = np.asarray(focal_point, dtype=float) - np.asarray(camera_position, dtype=float)
+        norm = float(np.linalg.norm(direction))
+        if norm <= 1e-12:
+            return (0.0, 0.0, 1.0)
+        normalized = direction / norm
+        return (float(normalized[0]), float(normalized[1]), float(normalized[2]))
+
+    def _apply_camera_state(self) -> None:
+        self._view = (self._camera_state.elev, self._camera_state.azim)
+        self._view_roll = self._camera_state.roll
+        self._axis.set_from_state(self._camera_state)
+        if self._triad_axis is not None:
+            self._triad_axis.set_from_state(self._camera_state)
+        self._draw_crystallographic_axes()
 
     def _store_view(self, *_args) -> None:
-        if self._axis is not None:
-            self._view = (float(self._axis.elev), float(self._axis.azim))
-            self._view_roll = float(getattr(self._axis, "roll", 0.0))
-            self._limits = (
-                tuple(float(value) for value in self._axis.get_xlim()),
-                tuple(float(value) for value in self._axis.get_ylim()),
-                tuple(float(value) for value in self._axis.get_zlim()),
-            )
-            if self._triad_axis is not None:
-                _view_init_with_roll(
-                    self._triad_axis,
-                    elev=self._view[0],
-                    azim=self._view[1],
-                    roll=self._view_roll,
-                )
-                self._triad_canvas.draw_idle()
+        previous_state = self._camera_state
+        previous_limits = self._limits
+        if self._axis.consume_dirty():
+            self._camera_state = self._axis.state()
+            self._view = (self._camera_state.elev, self._camera_state.azim)
+            self._view_roll = self._camera_state.roll
+            self._pyvista_camera_snapshot = None
+            self._apply_pyvista_camera()
+        else:
+            self._capture_pyvista_camera_snapshot()
+        self._apply_camera_state()
+        if self._camera_state != previous_state or self._limits != previous_limits:
+            self.view_state_changed.emit()
 
-    def _sync_triad_to_main_view(self) -> None:
-        if self._axis is None or self._triad_axis is None:
-            return
-        _view_init_with_roll(
-            self._triad_axis,
-            elev=float(self._axis.elev),
-            azim=float(self._axis.azim),
-            roll=float(getattr(self._axis, "roll", 0.0)),
-        )
-
-    def _on_pick(self, event) -> None:
-        if self._pick_artist is None or event.artist is not self._pick_artist:
-            return
-        indices = getattr(event, "ind", None)
-        if indices is None or len(indices) == 0:
-            return
-        self._set_selected_atom(int(indices[0]), emit_signal=True)
-
-    def _on_mouse_press(self, event) -> None:
-        if self._axis is None or event.inaxes != self._axis:
-            return
-        if event.button == 1 and self._selected_index is not None:
-            # Blank-space clicks should clear selection; atom picks are restored via pick_event.
-            self._set_selected_atom(None, emit_signal=False)
-        # Matplotlib mouse_init handles rotate/pan; this callback remains for extensibility.
-        return
-
-    def _on_mouse_release(self, _event) -> None:
-        self._sync_triad_to_main_view()
-        self._store_view()
-
-    def _on_mouse_move(self, event) -> None:
-        if self._axis is None or event.inaxes != self._axis:
-            return
-        self._sync_triad_to_main_view()
-        self._canvas.draw_idle()
-        self._triad_canvas.draw_idle()
-
-    def _on_scroll(self, event) -> None:
-        if self._axis is None or event.inaxes != self._axis:
-            return
-        zoom = 0.9 if event.button == "up" else 1.1
-        xlim = self._axis.get_xlim()
-        ylim = self._axis.get_ylim()
-        zlim = self._axis.get_zlim()
-
-        x_center = 0.5 * (xlim[0] + xlim[1])
-        y_center = 0.5 * (ylim[0] + ylim[1])
-        z_center = 0.5 * (zlim[0] + zlim[1])
-        x_half = 0.5 * (xlim[1] - xlim[0]) * zoom
-        y_half = 0.5 * (ylim[1] - ylim[0]) * zoom
-        z_half = 0.5 * (zlim[1] - zlim[0]) * zoom
-
-        self._axis.set_xlim(x_center - x_half, x_center + x_half)
-        self._axis.set_ylim(y_center - y_half, y_center + y_half)
-        self._axis.set_zlim(z_center - z_half, z_center + z_half)
-        self._store_view()
-        self._canvas.draw_idle()
-
-    def _on_canvas_resize(self, _event) -> None:
-        if self._axis is None:
-            return
-        x_span = max(self._axis.get_xlim()[1] - self._axis.get_xlim()[0], 1e-6)
-        y_span = max(self._axis.get_ylim()[1] - self._axis.get_ylim()[0], 1e-6)
-        z_span = max(self._axis.get_zlim()[1] - self._axis.get_zlim()[0], 1e-6)
-        _set_axis_box_aspect_from_spans(self._axis, np.array([x_span, y_span, z_span], dtype=float))
-        self._canvas.draw_idle()
-
-    def _render(self) -> None:
-        self._figure.clear()
-        axis = self._figure.add_axes([0.0, 0.02, 1.0, 0.96], projection="mufinder3d")
-        self._axis = axis
-        self._pick_artist = None
-        self._sphere_artists = []
-        axis.set_facecolor("none")
-        axis.patch.set_alpha(0.0)
-        axis.set_proj_type("ortho")
-        # ASE-like interaction mapping: right drag rotates, middle drag pans.
-        axis.mouse_init(rotate_btn=3, pan_btn=2)
-
-        if self._atoms is None or len(self._atoms) == 0:
-            self._triad_figure.clear()
-            self._triad_axis = None
-            self._triad_canvas.draw_idle()
-            axis.set_axis_off()
-            axis.text2D(0.5, 0.5, "Load a host structure to inspect it here.", ha="center", va="center")
-            self._canvas.draw_idle()
-            return
-
+    def _scene_geometry(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        assert self._atoms is not None
         positions = np.asarray(self._atoms.get_positions(), dtype=float)
         numbers = np.asarray(self._atoms.get_atomic_numbers(), dtype=int)
         symbols = np.asarray(self._atoms.get_chemical_symbols())
         colors, radii = _get_atom_style(numbers, symbols)
-        pick_sizes = np.clip((17.0 * radii) ** 2, 80.0, 2600.0)
-
-        sphere_resolution = 12 if len(positions) <= 80 else 9
-        atom_alpha = 0.95
-        if self._show_spins.isChecked() and self._spins is not None:
-            atom_alpha = 0.5
-        if self._show_bonds.isChecked():
-            bond_alpha = float(np.clip(0.84 * atom_alpha, 0.2, 0.8))
-            self._draw_bonds(axis, positions, colors, radii, alpha=bond_alpha)
-        self._sphere_artists = _draw_atom_spheres(
-            axis,
-            positions,
-            radii,
-            colors,
-            alpha=atom_alpha,
-            resolution=sphere_resolution,
-        )
-
         spin_tips = np.empty((0, 3), dtype=float)
         if self._show_spins.isChecked() and self._spins is not None and len(self._spins) == len(positions):
-            spin_tips = _draw_spin_arrows(axis, positions, radii, self._spins)
-
-        self._pick_artist = axis.scatter(
-            positions[:, 0],
-            positions[:, 1],
-            positions[:, 2],
-            s=pick_sizes,
-            c="black",
-            alpha=0.01,
-            edgecolors="none",
-            picker=True,
-        )
-
+            spin_tips = self._spin_extent_points(positions, radii, self._spins)
         extra_points = None
         if self._show_cell.isChecked():
-            extra_points = self._draw_unit_cell(axis)
-        if self._isosurface_vertices is not None and self._isosurface_faces is not None and len(self._isosurface_faces):
-            self._draw_isosurface(axis)
-            extra_points = (
-                self._isosurface_vertices
-                if extra_points is None
-                else np.vstack([extra_points, self._isosurface_vertices])
+            corners, _edges = _unit_cell_geometry(np.asarray(self._atoms.cell, dtype=float))
+            extra_points = corners
+        isosurface_vertices = [spec.vertices for spec in self._isosurface_specs if len(spec.faces)]
+        if isosurface_vertices:
+            isosurface_points = np.vstack(isosurface_vertices)
+            extra_points = isosurface_points if extra_points is None else np.vstack([extra_points, isosurface_points])
+        slice_points: list[np.ndarray] = []
+        for spec in self._slice_specs:
+            slice_points.append(
+                np.column_stack(
+                    [
+                        spec.x_coordinates.reshape(-1),
+                        spec.y_coordinates.reshape(-1),
+                        spec.z_coordinates.reshape(-1),
+                    ]
+                )
             )
+        if slice_points:
+            overlay_points = np.vstack(slice_points)
+            extra_points = overlay_points if extra_points is None else np.vstack([extra_points, overlay_points])
         if len(spin_tips):
             extra_points = spin_tips if extra_points is None else np.vstack([extra_points, spin_tips])
+        if self._point_overlay_specs:
+            overlay_points = np.vstack([spec.positions for spec in self._point_overlay_specs if len(spec.positions)])
+            if len(overlay_points):
+                extra_points = overlay_points if extra_points is None else np.vstack([extra_points, overlay_points])
+        if extra_points is None:
+            extra_points = np.empty((0, 3), dtype=float)
+        return positions, numbers, symbols, colors, radii, extra_points
 
-        if self._selected_index is not None:
-            self._highlight_selected_atom(axis, positions, radii)
+    def _camera_view_direction(self) -> np.ndarray:
+        elev = math.radians(float(self._camera_state.elev))
+        azim = math.radians(float(self._camera_state.azim))
+        direction = np.array(
+            [
+                math.cos(elev) * math.cos(azim),
+                math.cos(elev) * math.sin(azim),
+                math.sin(elev),
+            ],
+            dtype=float,
+        )
+        return _normalized_vector(direction, np.array([1.0, 1.0, 0.6], dtype=float))
+
+    def _hidden_atom_indexes_for_slices(self, positions: np.ndarray) -> np.ndarray:
+        if not self._hide_atoms_in_front_of_planes or not self._slice_specs or len(positions) == 0:
+            return np.zeros((len(positions),), dtype=bool)
+        view_direction = self._camera_view_direction()
+        hidden_mask = np.ones((len(positions),), dtype=bool)
+        for spec in self._slice_specs:
+            camera_sign = float(np.dot(view_direction, spec.normal))
+            if abs(camera_sign) <= 1e-12:
+                hidden_mask &= False
+                continue
+            distances = np.asarray((positions - spec.anchor.reshape(1, 3)) @ spec.normal.reshape(3, 1), dtype=float).reshape(-1)
+            hidden_mask &= (distances * camera_sign) > 1e-6
+        return hidden_mask
+
+    def _visible_atom_indices(self, positions: np.ndarray) -> np.ndarray:
+        if len(positions) == 0:
+            return np.empty((0,), dtype=int)
+        return np.flatnonzero(~self._hidden_atom_indexes_for_slices(positions))
+
+    def _visible_atom_mask(self, positions: np.ndarray) -> np.ndarray:
+        if len(positions) == 0:
+            return np.zeros((0,), dtype=bool)
+        return ~self._hidden_atom_indexes_for_slices(positions)
+
+    def _filtered_spin_values(self, spins: np.ndarray | None, visible_mask: np.ndarray) -> np.ndarray | None:
+        if spins is None:
+            return None
+        spin_values = np.asarray(spins, dtype=float)
+        if len(spin_values) != len(visible_mask):
+            return None
+        return spin_values[visible_mask]
+
+    def _selection_modifier_active(self, event=None) -> bool:
+        key = ""
+        if event is not None:
+            key = str(getattr(event, "key", "") or "")
+            mouse_event = getattr(event, "mouseevent", None)
+            if mouse_event is not None:
+                key = str(getattr(mouse_event, "key", "") or key)
+        modifiers = QApplication.keyboardModifiers()
+        return (
+            ("shift" in key.lower())
+            or self._native_selection_modifier
+            or bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        )
+
+    def _pyvista_selection_modifier_active(self) -> bool:
+        if self._native_selection_modifier:
+            return True
+        if bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier):
+            return True
+        plotter = getattr(getattr(self, "_canvas", None), "plotter", None)
+        iren = getattr(plotter, "iren", None)
+        interactor = getattr(iren, "interactor", None)
+        if interactor is None:
+            return False
+        try:
+            return bool(interactor.GetShiftKey())
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _apply_pick_selection(self, atom_index: int, *, event=None) -> None:
+        additive = self._selection_modifier_active(event) or self._latched_selection_modifier
+        if additive and atom_index in self._selected_indexes:
+            self._set_selected_atoms([index for index in self._selected_indexes if index != atom_index], emit_signal=True)
+            return
+        if additive:
+            self._set_selected_atoms(list(self._selected_indexes) + [int(atom_index)], emit_signal=True)
+            return
+        self._set_selected_atoms([int(atom_index)], emit_signal=True)
+
+    def _spin_extent_points(self, positions: np.ndarray, radii: np.ndarray, spins: np.ndarray) -> np.ndarray:
+        tips: list[np.ndarray] = []
+        for position, radius, spin in zip(positions, radii, spins):
+            magnitude = float(abs(spin))
+            if magnitude <= 1e-10:
+                continue
+            direction = 1.0 if spin >= 0.0 else -1.0
+            arrow_length = max(0.3, magnitude * 0.85) + 0.4 * float(radius)
+            half_length = 0.5 * arrow_length
+            tips.append(np.array([position[0], position[1], position[2] + direction * half_length], dtype=float))
+            tips.append(np.array([position[0], position[1], position[2] - direction * half_length], dtype=float))
+        if not tips:
+            return np.empty((0, 3), dtype=float)
+        return np.vstack(tips)
+
+    def _render(self) -> None:
+        if self._shutting_down:
+            return
+        self._render_pyvista()
+        self._draw_crystallographic_axes()
+
+    def _render_pyvista(self) -> None:
+        if self._shutting_down:
+            return
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None or any(
+            not callable(getattr(plotter, attribute, None))
+            for attribute in ("clear", "enable_parallel_projection", "add_mesh")
+        ):
+            return
+        pv, _qt_interactor = _pyvista_modules()
+        assert pv is not None
+        self._pyvista_atom_actor = None
+        self._pyvista_isosurface_actor = None
+        self._pyvista_isosurface_actors = []
+        self._pyvista_slice_actors = []
+        self._pyvista_point_overlay_actors = []
+        self._pyvista_selection_actor = None
+        self._pyvista_bond_actors = []
+        self._pyvista_spin_actors = []
+        plotter.clear()
+        _configure_transparent_pyvista_background(plotter)
+        plotter.enable_parallel_projection()
+
+        if self._atoms is None or len(self._atoms) == 0:
+            self._configure_pyvista_lighting(plotter, pv)
+            plotter.add_text("Load a host structure to inspect it here.", position="upper_left", font_size=12)
+            self._pyvista_last_camera_signature = None
+            self._canvas.draw_idle()
+            return
+
+        positions, _numbers, _symbols, colors, radii, extra_points = self._scene_geometry()
+        scene_center = np.mean(positions, axis=0) if len(positions) else np.zeros(3, dtype=float)
+        self._configure_pyvista_lighting(plotter, pv, focal_point=scene_center)
+        self._pyvista_all_atom_positions = positions.copy()
+        self._pyvista_all_atom_radii = radii.copy()
+        self._pyvista_all_atom_colors = colors.copy()
+        visible_mask = self._visible_atom_mask(positions)
+        visible_indices = np.flatnonzero(visible_mask)
+        visible_spins = self._filtered_spin_values(self._spins, visible_mask)
+        self._pyvista_atom_lookup_indices = visible_indices.copy()
+        draw_positions = positions[visible_indices]
+        draw_radii = radii[visible_indices]
+        draw_colors = colors[visible_indices]
+        self._pyvista_atom_positions = draw_positions.copy()
+        self._pyvista_atom_radii = draw_radii.copy()
+        self._pyvista_atom_colors = draw_colors.copy()
+        if len(draw_positions) == 0:
+            if self._show_cell.isChecked():
+                self._draw_pyvista_unit_cell(plotter, pv)
+            if self._slice_specs:
+                self._draw_pyvista_slices(plotter, pv)
+            if self._limits is None:
+                self._limits = _compute_limits(positions, atom_radii=radii, extra_points=extra_points, margin=0.1)
+            self._apply_pyvista_camera()
+            self._canvas.draw_idle()
+            return
+        atom_alpha = 0.5 if self._show_spins.isChecked() and self._spins is not None else 1.0
+        atom_subdivisions = _atom_pyvista_sphere_subdivisions(len(draw_positions))
+        atom_glyphs = _build_pyvista_atom_glyph_mesh(
+            pv,
+            positions=draw_positions,
+            radii=draw_radii,
+            colors=draw_colors,
+            subdivisions=atom_subdivisions,
+        )
+        self._pyvista_atom_actor = plotter.add_mesh(
+            atom_glyphs,
+            scalars="atom_rgb",
+            rgb=True,
+            opacity=float(atom_alpha),
+            smooth_shading=True,
+            ambient=0.74,
+            diffuse=0.22,
+            specular=0.0,
+            specular_power=1.0,
+            pbr=False,
+        )
+
+        pick_points = pv.PolyData(draw_positions)
+        pick_points["pick_radius"] = np.maximum(1.8 * draw_radii, 0.45)
+        plotter.add_mesh(
+            pick_points,
+            color="#000000",
+            opacity=0.01,
+            point_size=float(max(16.0, np.max(np.maximum(32.0 * draw_radii, 18.0)))),
+            render_points_as_spheres=True,
+            pickable=True,
+            name="atom-pick-points",
+        )
+
+        if self._show_bonds.isChecked():
+            bond_alpha = float(np.clip(0.84 * atom_alpha, 0.2, 0.8))
+            self._pyvista_bond_actors = self._draw_pyvista_bonds(
+                plotter,
+                pv,
+                positions,
+                colors,
+                radii,
+                visible_mask=visible_mask,
+                alpha=bond_alpha,
+            )
+
+        if self._show_spins.isChecked() and visible_spins is not None:
+            self._pyvista_spin_actors = self._draw_pyvista_spins(plotter, pv, draw_positions, draw_radii, visible_spins)
+
+        if self._show_cell.isChecked():
+            self._draw_pyvista_unit_cell(plotter, pv)
+        if self._isosurface_specs:
+            self._draw_pyvista_isosurfaces(plotter, pv)
+        if self._slice_specs:
+            self._draw_pyvista_slices(plotter, pv)
+        if self._point_overlay_specs:
+            self._draw_pyvista_point_overlays(plotter, pv)
+        if self._selected_indexes:
+            self._draw_pyvista_selection(plotter, pv, positions, radii)
 
         if self._limits is None:
-            _set_equal_limits(axis, positions, atom_radii=radii, extra_points=extra_points, margin=0.1)
-        else:
-            axis.set_xlim(*self._limits[0])
-            axis.set_ylim(*self._limits[1])
-            axis.set_zlim(*self._limits[2])
-            x_span = max(self._limits[0][1] - self._limits[0][0], 1e-6)
-            y_span = max(self._limits[1][1] - self._limits[1][0], 1e-6)
-            z_span = max(self._limits[2][1] - self._limits[2][0], 1e-6)
-            _set_axis_box_aspect_from_spans(axis, np.array([x_span, y_span, z_span], dtype=float))
-
-        _view_init_with_roll(axis, elev=self._view[0], azim=self._view[1], roll=self._view_roll)
-        self._draw_crystallographic_axes()
-        axis.set_axis_off()
-        axis.grid(False)
-
-        for coord_axis in (axis.xaxis, axis.yaxis, axis.zaxis):
-            coord_axis.pane.set_alpha(0.0)
-
+            self._limits = _compute_limits(positions, atom_radii=radii, extra_points=extra_points, margin=0.1)
+        self._apply_pyvista_camera()
         self._canvas.draw_idle()
 
-    def _draw_isosurface(self, axis) -> None:
-        assert self._isosurface_vertices is not None
-        assert self._isosurface_faces is not None
-        if len(self._isosurface_faces) == 0:
-            return
-        triangles = self._isosurface_vertices[self._isosurface_faces]
-        collection = Poly3DCollection(
-            triangles,
-            facecolors=self._isosurface_color,
-            edgecolors=self._isosurface_color,
-            linewidths=0.15,
-            alpha=self._isosurface_alpha,
+    def _current_pyvista_camera_snapshot(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, float] | None:
+        if self._backend_name != "pyvista" or self._shutting_down:
+            return None
+        camera = getattr(getattr(self._canvas, "plotter", None), "camera", None)
+        if camera is None:
+            return None
+        return (
+            np.asarray(camera.position, dtype=float),
+            np.asarray(camera.focal_point, dtype=float),
+            np.asarray(camera.up, dtype=float),
+            float(camera.parallel_scale),
         )
-        axis.add_collection3d(collection)
 
-    def _draw_unit_cell(self, axis) -> np.ndarray:
+    def _capture_pyvista_camera_snapshot(self) -> None:
+        if self._backend_name != "pyvista" or self._shutting_down:
+            return
+        snapshot = self._current_pyvista_camera_snapshot()
+        if snapshot is None:
+            return
+        self._pyvista_camera_snapshot = snapshot
+
+    def _apply_pyvista_camera(self) -> None:
+        if self._backend_name != "pyvista" or self._limits is None or self._shutting_down:
+            return
+        plotter = self._canvas.plotter
+        if self._pyvista_camera_snapshot is not None:
+            position, focal_point, up, parallel_scale = self._pyvista_camera_snapshot
+            plotter.camera.position = tuple(float(value) for value in position)
+            plotter.camera.focal_point = tuple(float(value) for value in focal_point)
+            plotter.camera.up = tuple(float(value) for value in up)
+            plotter.camera.parallel_scale = float(parallel_scale)
+            plotter.reset_camera_clipping_range()
+            self._configure_pyvista_lighting(plotter, _pyvista_modules()[0], focal_point=focal_point)
+            self._pyvista_last_camera_signature = self._pyvista_camera_signature()
+            self._axis.set_from_state(self._camera_state)
+            return
+        xlim, ylim, zlim = self._limits
+        center = np.array(
+            [0.5 * (xlim[0] + xlim[1]), 0.5 * (ylim[0] + ylim[1]), 0.5 * (zlim[0] + zlim[1])],
+            dtype=float,
+        )
+        spans = np.array([xlim[1] - xlim[0], ylim[1] - ylim[0], zlim[1] - zlim[0]], dtype=float)
+        distance = float(max(np.max(spans) * 2.6, 1.0))
+        elev = math.radians(float(self._camera_state.elev))
+        azim = math.radians(float(self._camera_state.azim))
+        view_direction = np.array(
+            [
+                math.cos(elev) * math.cos(azim),
+                math.cos(elev) * math.sin(azim),
+                math.sin(elev),
+            ],
+            dtype=float,
+        )
+        position = center + distance * view_direction
+        reference_up = np.array([0.0, 0.0, 1.0], dtype=float)
+        if abs(float(np.dot(view_direction, reference_up))) > 0.96:
+            reference_up = np.array([0.0, 1.0, 0.0], dtype=float)
+        right = _normalized_vector(np.cross(view_direction, reference_up), np.array([1.0, 0.0, 0.0], dtype=float))
+        up = _normalized_vector(np.cross(right, view_direction), np.array([0.0, 0.0, 1.0], dtype=float))
+        if abs(float(self._camera_state.roll)) > 1e-12:
+            angle = math.radians(float(self._camera_state.roll))
+            up = (
+                up * math.cos(angle)
+                + np.cross(view_direction, up) * math.sin(angle)
+                + view_direction * np.dot(view_direction, up) * (1.0 - math.cos(angle))
+            )
+        plotter.camera.position = tuple(float(value) for value in position)
+        plotter.camera.focal_point = tuple(float(value) for value in center)
+        plotter.camera.up = tuple(float(value) for value in up)
+        plotter.camera.parallel_scale = float(0.58 * max(np.max(spans), 1.0))
+        plotter.reset_camera_clipping_range()
+        self._configure_pyvista_lighting(plotter, _pyvista_modules()[0], focal_point=center)
+        self._capture_pyvista_camera_snapshot()
+        self._pyvista_last_camera_signature = self._pyvista_camera_signature()
+        self._axis.set_from_state(self._camera_state)
+
+    def _configure_pyvista_lighting(
+        self,
+        plotter,
+        pv,
+        *,
+        focal_point: np.ndarray | tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> None:
+        _configure_pyvista_vesta_style(
+            plotter,
+            pv,
+            light_direction=self._pyvista_light_direction,
+            focal_point=focal_point,
+        )
+
+    def _pyvista_camera_signature(self) -> tuple[float, ...] | None:
+        if self._backend_name != "pyvista":
+            return None
+        camera = getattr(getattr(self._canvas, "plotter", None), "camera", None)
+        if camera is None:
+            return None
+        values = (
+            *[float(value) for value in camera.position],
+            *[float(value) for value in camera.focal_point],
+            *[float(value) for value in camera.up],
+            float(camera.parallel_scale),
+        )
+        return tuple(round(value, 6) for value in values)
+
+    def _poll_pyvista_camera(self) -> None:
+        if self._backend_name != "pyvista" or self._atoms is None or self._shutting_down:
+            return
+        signature = self._pyvista_camera_signature()
+        if signature is None or signature == self._pyvista_last_camera_signature:
+            return
+        camera = self._canvas.plotter.camera
+        self._camera_state = _camera_state_from_vectors(camera.position, camera.focal_point, camera.up)
+        self._capture_pyvista_camera_snapshot()
+        self._pyvista_last_camera_signature = signature
+        self._view = (self._camera_state.elev, self._camera_state.azim)
+        self._view_roll = self._camera_state.roll
+        self._axis.set_from_state(self._camera_state)
+        self._draw_crystallographic_axes()
+        self.view_state_changed.emit()
+
+    def _pyvista_event_position(self) -> tuple[int, int] | None:
+        plotter = getattr(getattr(self, "_canvas", None), "plotter", None)
+        iren = getattr(plotter, "iren", None)
+        if iren is None:
+            return None
+        get_event_position = getattr(iren, "get_event_position", None)
+        if callable(get_event_position):
+            try:
+                position = get_event_position()
+            except Exception:  # noqa: BLE001
+                position = None
+        else:
+            interactor = getattr(iren, "interactor", None)
+            if interactor is None:
+                return None
+            try:
+                position = interactor.GetEventPosition()
+            except Exception:  # noqa: BLE001
+                position = None
+        if not isinstance(position, tuple) or len(position) != 2:
+            return None
+        return (int(position[0]), int(position[1]))
+
+    def _pyvista_pick_point_at_event_position(self) -> np.ndarray | None:
+        plotter = getattr(getattr(self, "_canvas", None), "plotter", None)
+        iren = getattr(plotter, "iren", None)
+        position = self._pyvista_event_position()
+        if plotter is None or iren is None or position is None:
+            return None
+        get_poked_renderer = getattr(iren, "get_poked_renderer", None)
+        if not callable(get_poked_renderer):
+            return None
+        try:
+            renderer = get_poked_renderer()
+        except Exception:  # noqa: BLE001
+            return None
+        picker = getattr(iren, "picker", None)
+        if renderer is None or picker is None:
+            return None
+        try:
+            picked = picker.Pick(position[0], position[1], 0, renderer)
+        except Exception:  # noqa: BLE001
+            return None
+        if int(picked) == 0:
+            return None
+        try:
+            coordinates = np.asarray(picker.GetPickPosition(), dtype=float)
+        except Exception:  # noqa: BLE001
+            return None
+        if coordinates.shape != (3,) or np.any(np.isnan(coordinates)):
+            return None
+        return coordinates
+
+    def _on_pyvista_left_button_press(self, _obj=None, _event=None) -> None:
+        if self._shutting_down:
+            return
+        self._pyvista_left_press_position = self._pyvista_event_position()
+        self._pyvista_left_press_modifier = self._pyvista_selection_modifier_active()
+        self._pyvista_left_press_camera_signature = self._pyvista_camera_signature()
+        self._latched_selection_modifier = self._pyvista_left_press_modifier
+
+    def _on_pyvista_left_button_release(self, _obj=None, _event=None) -> None:
+        if self._shutting_down:
+            return
+        press_position = self._pyvista_left_press_position
+        press_modifier = bool(self._pyvista_left_press_modifier)
+        press_signature = self._pyvista_left_press_camera_signature
+        release_position = self._pyvista_event_position()
+        release_signature = self._pyvista_camera_signature()
+
+        self._pyvista_left_press_position = None
+        self._pyvista_left_press_modifier = False
+        self._pyvista_left_press_camera_signature = None
+
+        if press_position is None or release_position is None:
+            return
+        delta_x = release_position[0] - press_position[0]
+        delta_y = release_position[1] - press_position[1]
+        moved_too_far = (delta_x * delta_x + delta_y * delta_y) > 25
+        camera_changed = (
+            press_signature is not None
+            and release_signature is not None
+            and release_signature != press_signature
+        )
+        if moved_too_far or camera_changed:
+            return
+
+        self._latched_selection_modifier = press_modifier
+        picked_point = self._pyvista_pick_point_at_event_position()
+        if self._on_pyvista_point_picked(picked_point, additive=press_modifier):
+            return
+        if self._selected_indexes and not press_modifier:
+            self._set_selected_atoms([], emit_signal=True)
+
+    def _on_pyvista_point_picked(self, point, *, additive: bool | None = None) -> bool:
+        if self._shutting_down:
+            return False
+        if point is None:
+            return False
+        coordinates = np.asarray(point, dtype=float)
+        if coordinates.shape != (3,) or self._pyvista_atom_positions.size == 0 or np.any(np.isnan(coordinates)):
+            return False
+        distances = np.linalg.norm(self._pyvista_atom_positions - coordinates.reshape(1, 3), axis=1)
+        index = int(np.argmin(distances))
+        tolerance = max(0.45, 1.35 * float(self._pyvista_atom_radii[index]))
+        if float(distances[index]) <= tolerance:
+            self._latched_selection_modifier = self._pyvista_selection_modifier_active() if additive is None else bool(additive)
+            mapped_index = index
+            if 0 <= index < len(self._pyvista_atom_lookup_indices):
+                mapped_index = int(self._pyvista_atom_lookup_indices[index])
+            self._apply_pick_selection(mapped_index)
+            return True
+        return False
+
+    def _draw_pyvista_unit_cell(self, plotter, pv) -> None:
         assert self._atoms is not None
+        style = _viewer_style()
         corners, edges = _unit_cell_geometry(np.asarray(self._atoms.cell, dtype=float))
         for start, end in edges:
-            p0 = corners[start]
-            p1 = corners[end]
-            axis.plot(
-                [p0[0], p1[0]],
-                [p0[1], p1[1]],
-                [p0[2], p1[2]],
-                color="0.25",
-                linewidth=1.1,
-                alpha=0.62,
-            )
-        return corners
+            line = pv.Line(corners[start], corners[end])
+            plotter.add_mesh(line, color=style.unit_cell, line_width=2.0, opacity=0.62)
 
-    def _draw_bonds(
+    def _draw_pyvista_isosurfaces(self, plotter, pv) -> None:
+        self._pyvista_isosurface_actors = []
+        self._pyvista_isosurface_actor = None
+        for index, spec in enumerate(self._isosurface_specs):
+            if len(spec.faces) == 0:
+                continue
+            mesh = self._build_pyvista_isosurface_mesh(pv, vertices=spec.vertices, faces=spec.faces)
+            actor = plotter.add_mesh(
+                mesh,
+                color=spec.color,
+                opacity=float(spec.alpha),
+                smooth_shading=False,
+                name=f"isosurface-overlay-{index}",
+            )
+            self._pyvista_isosurface_actors.append(actor)
+            if self._pyvista_isosurface_actor is None:
+                self._pyvista_isosurface_actor = actor
+
+    def _draw_pyvista_slices(self, plotter, pv) -> None:
+        self._pyvista_slice_actors = []
+        for index, spec in enumerate(self._slice_specs):
+            mesh = pv.StructuredGrid(spec.x_coordinates, spec.y_coordinates, spec.z_coordinates)
+            mesh["slice_value"] = np.asarray(spec.values, dtype=float).reshape(-1, order="F")
+            actor = plotter.add_mesh(
+                mesh,
+                scalars="slice_value",
+                cmap=spec.cmap,
+                clim=spec.color_limits,
+                opacity=float(spec.alpha),
+                lighting=False,
+                show_scalar_bar=False,
+                name=f"slice-overlay-{index}",
+                render=False,
+            )
+            self._pyvista_slice_actors.append(actor)
+
+    def _draw_pyvista_point_overlays(self, plotter, pv) -> None:
+        self._pyvista_point_overlay_actors = []
+        for index, spec in enumerate(self._point_overlay_specs):
+            if len(spec.positions) == 0:
+                continue
+            glyphs = _build_pyvista_atom_glyph_mesh(
+                pv,
+                positions=spec.positions,
+                radii=spec.radii,
+                colors=spec.colors,
+                subdivisions=3,
+            )
+            actor = plotter.add_mesh(
+                glyphs,
+                scalars="atom_rgb",
+                rgb=True,
+                opacity=float(spec.alpha),
+                smooth_shading=True,
+                ambient=0.72,
+                diffuse=0.2,
+                specular=0.0,
+                specular_power=1.0,
+                pbr=False,
+                render=False,
+                name=f"point-overlay-{index}",
+            )
+            self._pyvista_point_overlay_actors.append(actor)
+
+    def _build_pyvista_isosurface_mesh(self, pv, *, vertices: np.ndarray, faces: np.ndarray):
+        faces = np.hstack(
+            [
+                np.full((len(faces), 1), 3, dtype=np.int64),
+                np.asarray(faces, dtype=np.int64),
+            ]
+        ).ravel()
+        return pv.PolyData(np.asarray(vertices, dtype=float), faces)
+
+    def _remove_pyvista_isosurface_overlay(self) -> bool:
+        if self._backend_name != "pyvista":
+            return False
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None:
+            return False
+
+        removed = False
+        actors = list(self._pyvista_isosurface_actors)
+        if self._pyvista_isosurface_actor is not None and self._pyvista_isosurface_actor not in actors:
+            actors.append(self._pyvista_isosurface_actor)
+        for actor in actors:
+            try:
+                plotter.remove_actor(actor, render=False)
+                removed = True
+            except Exception:  # noqa: BLE001
+                continue
+        self._pyvista_isosurface_actors = []
+        self._pyvista_isosurface_actor = None
+        return removed
+
+    def _try_update_pyvista_isosurface_overlay(self) -> bool:
+        if self._backend_name != "pyvista" or self._shutting_down or self._atoms is None or len(self._atoms) == 0:
+            return False
+
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None:
+            return False
+
+        pv, _qt_interactor = _pyvista_modules()
+        if pv is None:
+            return False
+
+        has_overlay = any(len(spec.faces) > 0 for spec in self._isosurface_specs)
+        if not has_overlay:
+            if not self._remove_pyvista_isosurface_overlay():
+                return False
+            self._canvas.draw_idle()
+            return True
+
+        self._remove_pyvista_isosurface_overlay()
+        self._pyvista_isosurface_actors = []
+        self._pyvista_isosurface_actor = None
+        for index, spec in enumerate(self._isosurface_specs):
+            if len(spec.faces) == 0:
+                continue
+            mesh = self._build_pyvista_isosurface_mesh(pv, vertices=spec.vertices, faces=spec.faces)
+            actor = plotter.add_mesh(
+                mesh,
+                color=spec.color,
+                opacity=float(spec.alpha),
+                smooth_shading=False,
+                name=f"isosurface-overlay-{index}",
+                render=False,
+            )
+            self._pyvista_isosurface_actors.append(actor)
+            if self._pyvista_isosurface_actor is None:
+                self._pyvista_isosurface_actor = actor
+        self._canvas.draw_idle()
+        return True
+
+    def _remove_pyvista_slice_overlay(self) -> bool:
+        removed = self._remove_pyvista_actor_group(self._pyvista_slice_actors)
+        self._pyvista_slice_actors = []
+        return removed
+
+    def _try_update_pyvista_slice_overlay(self) -> bool:
+        if self._backend_name != "pyvista" or self._shutting_down or self._hide_atoms_in_front_of_planes:
+            return False
+
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None:
+            return False
+
+        has_overlay = bool(self._slice_specs)
+        if not has_overlay:
+            removed = self._remove_pyvista_slice_overlay()
+            if removed or not self._slice_specs:
+                self._canvas.draw_idle()
+                return True
+            return False
+
+        pv, _qt_interactor = _pyvista_modules()
+        if pv is None:
+            return False
+
+        self._remove_pyvista_slice_overlay()
+        self._draw_pyvista_slices(plotter, pv)
+        self._canvas.draw_idle()
+        return True
+
+    def _remove_pyvista_point_overlay(self) -> bool:
+        removed = self._remove_pyvista_actor_group(self._pyvista_point_overlay_actors)
+        self._pyvista_point_overlay_actors = []
+        return removed
+
+    def _try_update_pyvista_point_overlay(self) -> bool:
+        if self._backend_name != "pyvista" or self._shutting_down or self._atoms is None or len(self._atoms) == 0:
+            return False
+
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None:
+            return False
+
+        if not self._point_overlay_specs:
+            if not self._remove_pyvista_point_overlay():
+                return False
+            self._canvas.draw_idle()
+            return True
+
+        pv, _qt_interactor = _pyvista_modules()
+        if pv is None:
+            return False
+
+        self._remove_pyvista_point_overlay()
+        self._draw_pyvista_point_overlays(plotter, pv)
+        self._canvas.draw_idle()
+        return True
+
+    def _remove_pyvista_selection_overlay(self) -> bool:
+        if self._backend_name != "pyvista":
+            return False
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None:
+            return False
+
+        actor = self._pyvista_selection_actor
+        if actor is None:
+            return False
+        removed = False
+        try:
+            plotter.remove_actor(actor, render=False)
+            removed = True
+        except Exception:  # noqa: BLE001
+            removed = False
+        self._pyvista_selection_actor = None
+        return removed
+
+    def _try_update_pyvista_selection_overlay(self) -> bool:
+        if self._backend_name != "pyvista" or self._shutting_down:
+            return False
+
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None or not callable(getattr(plotter, "add_mesh", None)):
+            return False
+
+        has_selection = (
+            bool(self._selected_indexes)
+            and self._pyvista_all_atom_positions.size != 0
+            and self._pyvista_all_atom_radii.size != 0
+        )
+        if not has_selection:
+            if not self._remove_pyvista_selection_overlay():
+                return False
+            self._canvas.draw_idle()
+            return True
+
+        pv, _qt_interactor = _pyvista_modules()
+        if pv is None:
+            return False
+
+        self._remove_pyvista_selection_overlay()
+        self._draw_pyvista_selection(plotter, pv, self._pyvista_all_atom_positions, self._pyvista_all_atom_radii)
+        self._canvas.draw_idle()
+        return True
+
+    def _remove_pyvista_actor_group(self, actors: list[object]) -> bool:
+        if self._backend_name != "pyvista":
+            return False
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None or not actors:
+            return False
+
+        removed = False
+        for actor in actors:
+            try:
+                plotter.remove_actor(actor, render=False)
+                removed = True
+            except Exception:  # noqa: BLE001
+                continue
+        return removed
+
+    @staticmethod
+    def _set_pyvista_actor_opacity(actor: object | None, opacity: float) -> bool:
+        if actor is None:
+            return False
+        property_getter = getattr(actor, "GetProperty", None)
+        if not callable(property_getter):
+            return False
+        try:
+            vtk_property = property_getter()
+            vtk_property.SetOpacity(float(opacity))
+        except Exception:  # noqa: BLE001
+            return False
+        return True
+
+    def _try_update_pyvista_bond_overlay(self) -> bool:
+        if self._backend_name != "pyvista" or self._shutting_down:
+            return False
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None:
+            return False
+
+        removed = self._remove_pyvista_actor_group(self._pyvista_bond_actors)
+        self._pyvista_bond_actors = []
+        if not self._show_bonds.isChecked():
+            if removed:
+                self._canvas.draw_idle()
+            return removed
+
+        if (
+            self._atoms is None
+            or (
+                self._pyvista_all_atom_positions.size == 0
+                and self._pyvista_atom_positions.size == 0
+            )
+            or (
+                self._pyvista_all_atom_radii.size == 0
+                and self._pyvista_atom_radii.size == 0
+            )
+            or (
+                self._pyvista_all_atom_colors.size == 0
+                and self._pyvista_atom_colors.size == 0
+            )
+        ):
+            return False
+
+        pv, _qt_interactor = _pyvista_modules()
+        if pv is None:
+            return False
+
+        atom_alpha = 0.5 if self._show_spins.isChecked() and self._spins is not None else 1.0
+        bond_alpha = float(np.clip(0.84 * atom_alpha, 0.2, 0.8))
+        positions = self._pyvista_all_atom_positions if self._pyvista_all_atom_positions.size != 0 else self._pyvista_atom_positions
+        colors = self._pyvista_all_atom_colors if self._pyvista_all_atom_colors.size != 0 else self._pyvista_atom_colors
+        radii = self._pyvista_all_atom_radii if self._pyvista_all_atom_radii.size != 0 else self._pyvista_atom_radii
+        visible_mask = self._visible_atom_mask(positions)
+        self._pyvista_bond_actors = self._draw_pyvista_bonds(
+            plotter,
+            pv,
+            positions,
+            colors,
+            radii,
+            visible_mask=visible_mask,
+            alpha=bond_alpha,
+        )
+        self._canvas.draw_idle()
+        return True
+
+    def _try_update_pyvista_spin_overlay(self) -> bool:
+        if self._backend_name != "pyvista" or self._shutting_down:
+            return False
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None:
+            return False
+
+        atom_alpha = 0.5 if self._show_spins.isChecked() and self._spins is not None else 1.0
+        updated_atoms = self._set_pyvista_actor_opacity(self._pyvista_atom_actor, atom_alpha)
+
+        removed = self._remove_pyvista_actor_group(self._pyvista_spin_actors)
+        self._pyvista_spin_actors = []
+        has_spins = (
+            self._show_spins.isChecked()
+            and self._spins is not None
+            and (
+                self._pyvista_all_atom_positions.size != 0
+                or self._pyvista_atom_positions.size != 0
+            )
+            and (
+                self._pyvista_all_atom_radii.size != 0
+                or self._pyvista_atom_radii.size != 0
+            )
+        )
+        if not has_spins:
+            if self._show_bonds.isChecked():
+                self._try_update_pyvista_bond_overlay()
+            if removed or updated_atoms:
+                self._canvas.draw_idle()
+            return removed or updated_atoms
+
+        pv, _qt_interactor = _pyvista_modules()
+        if pv is None:
+            return False
+
+        positions = self._pyvista_all_atom_positions if self._pyvista_all_atom_positions.size != 0 else self._pyvista_atom_positions
+        radii = self._pyvista_all_atom_radii if self._pyvista_all_atom_radii.size != 0 else self._pyvista_atom_radii
+        visible_mask = self._visible_atom_mask(positions)
+        visible_spins = self._filtered_spin_values(self._spins, visible_mask)
+        if visible_spins is None:
+            return removed or updated_atoms
+        draw_positions = positions[visible_mask]
+        draw_radii = radii[visible_mask]
+        self._pyvista_spin_actors = self._draw_pyvista_spins(
+            plotter,
+            pv,
+            draw_positions,
+            draw_radii,
+            visible_spins,
+        )
+        if self._show_bonds.isChecked():
+            self._try_update_pyvista_bond_overlay()
+        self._canvas.draw_idle()
+        return True
+
+    def _try_update_pyvista_visibility_overlay(self) -> bool:
+        if self._backend_name != "pyvista" or self._shutting_down:
+            return False
+        source = self.sender()
+        if source is self._show_bonds:
+            return self._try_update_pyvista_bond_overlay()
+        if source is self._show_spins:
+            return self._try_update_pyvista_spin_overlay()
+        return False
+
+    def _draw_pyvista_selection(self, plotter, pv, positions: np.ndarray, radii: np.ndarray) -> None:
+        if not self._selected_indexes:
+            return
+        style = _viewer_style()
+        highlight = None
+        for atom_index in self._selected_indexes:
+            if atom_index < 0 or atom_index >= len(positions):
+                continue
+            point = positions[atom_index]
+            radius = float(radii[atom_index])
+            sphere = _build_pyvista_sphere_mesh(
+                pv,
+                radius=1.18 * radius,
+                center=point,
+                subdivisions=4,
+            )
+            if highlight is None:
+                highlight = sphere
+                continue
+            try:
+                highlight = highlight.merge(sphere, inplace=False)
+            except Exception:  # noqa: BLE001
+                continue
+        if highlight is None:
+            return
+        self._pyvista_selection_actor = plotter.add_mesh(
+            highlight,
+            color=style.selection_fill,
+            opacity=0.34,
+            smooth_shading=True,
+            ambient=0.98,
+            diffuse=0.04,
+            specular=0.0,
+            specular_power=1.0,
+            pbr=False,
+        )
+
+    def _draw_pyvista_bonds(
         self,
-        axis,
+        plotter,
+        pv,
         positions: np.ndarray,
         colors: np.ndarray,
         radii: np.ndarray,
         *,
+        visible_mask: np.ndarray | None = None,
         alpha: float,
-    ) -> None:
+    ) -> list[object]:
         assert self._atoms is not None
+        actors: list[object] = []
+        if visible_mask is None or len(visible_mask) != len(positions):
+            visible_mask = np.ones((len(positions),), dtype=bool)
+            if len(positions) == len(self._atoms):
+                visible_mask = self._visible_atom_mask(positions)
         cutoffs = 1.15 * covalent_radii[self._atoms.get_atomic_numbers()]
         neighbour_list = NeighborList(cutoffs, self_interaction=False, bothways=True, skin=0.0)
         neighbour_list.update(self._atoms)
-
         cell = np.asarray(self._atoms.cell, dtype=float)
-        cylinder_resolution = 14 if len(positions) <= 120 else 10
+        bond_pairs: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float, float]] = []
         for atom_index in range(len(self._atoms)):
+            if atom_index >= len(positions) or not visible_mask[atom_index]:
+                continue
             neighbours, offsets = neighbour_list.get_neighbors(atom_index)
             start = positions[atom_index]
             for neighbour_index, offset in zip(neighbours, offsets):
-                if neighbour_index <= atom_index:
+                if neighbour_index <= atom_index or np.any(np.asarray(offset, dtype=int) != 0):
                     continue
-                if np.any(np.asarray(offset, dtype=int) != 0):
+                if neighbour_index >= len(positions) or not visible_mask[neighbour_index]:
                     continue
                 end = positions[neighbour_index] + np.dot(offset, cell)
                 bond_radius = float(np.clip(0.18 * min(radii[atom_index], radii[neighbour_index]), 0.06, 0.16))
-                _draw_split_bond_cylinder(
-                    axis,
-                    start,
-                    end,
-                    colors[atom_index],
-                    colors[neighbour_index],
-                    radius=bond_radius,
-                    alpha=alpha,
-                    resolution=cylinder_resolution,
+                bond_pairs.append(
+                    (
+                        start,
+                        end,
+                        colors[atom_index],
+                        colors[neighbour_index],
+                        bond_radius,
+                        float(radii[atom_index]),
+                        float(radii[neighbour_index]),
+                    )
                 )
 
+        if _should_use_fast_pyvista_bond_cylinders(len(self._atoms), len(bond_pairs)):
+            tube_segments: list[tuple[np.ndarray, np.ndarray, np.ndarray, float]] = []
+            for start, end, start_color, end_color, bond_radius, start_radius, end_radius in bond_pairs:
+                visible_segment = _trim_bond_segment_to_surfaces(
+                    start,
+                    end,
+                    start_radius=start_radius,
+                    end_radius=end_radius,
+                )
+                if visible_segment is None:
+                    continue
+                bond_color = 0.5 * (np.asarray(start_color, dtype=float) + np.asarray(end_color, dtype=float))
+                tube_segments.append((visible_segment[0], visible_segment[1], bond_color, bond_radius))
+            bond_tubes = _build_pyvista_bond_tube_mesh(pv, segments=tube_segments)
+            if bond_tubes is not None:
+                actors.append(plotter.add_mesh(
+                    bond_tubes,
+                    scalars="rgb",
+                    rgb=True,
+                    opacity=float(alpha),
+                    smooth_shading=True,
+                    ambient=0.58,
+                    diffuse=0.28,
+                    specular=0.0,
+                    specular_power=1.0,
+                    pbr=False,
+                    render=False,
+                ))
+                return actors
+
+        if _should_use_fast_pyvista_bond_lines(len(self._atoms), len(bond_pairs)):
+            line_segments: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+            for start, end, start_color, end_color, _bond_radius, _start_radius, _end_radius in bond_pairs:
+                midpoint = 0.5 * (start + end)
+                line_segments.append((start, midpoint, start_color))
+                line_segments.append((midpoint, end, end_color))
+            line_mesh = _build_pyvista_bond_line_mesh(pv, segments=line_segments)
+            if line_mesh is not None:
+                actors.append(plotter.add_mesh(
+                    line_mesh,
+                    scalars="rgb",
+                    rgb=True,
+                    opacity=float(alpha),
+                    line_width=2.2,
+                    lighting=False,
+                    pbr=False,
+                    render=False,
+                ))
+                return actors
+
+        for start, end, start_color, end_color, bond_radius, _start_radius, _end_radius in bond_pairs:
+            midpoint = 0.5 * (start + end)
+            actor = self._add_pyvista_cylinder(
+                plotter,
+                pv,
+                start,
+                midpoint,
+                radius=bond_radius,
+                color=start_color,
+                alpha=alpha,
+            )
+            if actor is not None:
+                actors.append(actor)
+            actor = self._add_pyvista_cylinder(
+                plotter,
+                pv,
+                midpoint,
+                end,
+                radius=bond_radius,
+                color=end_color,
+                alpha=alpha,
+            )
+            if actor is not None:
+                actors.append(actor)
+        return actors
+
+    def _add_pyvista_cylinder(self, plotter, pv, start: np.ndarray, end: np.ndarray, *, radius: float, color: np.ndarray, alpha: float):
+        direction = np.asarray(end, dtype=float) - np.asarray(start, dtype=float)
+        height = float(np.linalg.norm(direction))
+        if height <= 1e-12:
+            return None
+        center = 0.5 * (np.asarray(start, dtype=float) + np.asarray(end, dtype=float))
+        cylinder = pv.Cylinder(
+            center=tuple(float(value) for value in center),
+            direction=tuple(float(value) for value in direction / height),
+            radius=float(radius),
+            height=float(height),
+            resolution=18,
+        )
+        return plotter.add_mesh(
+            cylinder,
+            color=tuple(float(component) for component in color),
+            opacity=float(alpha),
+            smooth_shading=True,
+            ambient=0.58,
+            diffuse=0.28,
+            specular=0.0,
+            specular_power=1.0,
+            pbr=False,
+            render=False,
+        )
+
+    def _draw_pyvista_spins(self, plotter, pv, positions: np.ndarray, radii: np.ndarray, spins: np.ndarray) -> list[object]:
+        actors: list[object] = []
+        for position, radius, spin in zip(positions, radii, spins):
+            magnitude = float(abs(spin))
+            if magnitude <= 1e-10:
+                continue
+            direction = 1.0 if spin >= 0.0 else -1.0
+            sphere_radius = float(radius)
+            arrow_length = max(0.3, magnitude * 0.85) + 0.4 * sphere_radius
+            half_length = 0.5 * arrow_length
+            head_length = min(max(0.12, arrow_length * 0.38), half_length * 0.9)
+            shaft_tip_offset = max(half_length - head_length, 0.05)
+            shaft_radius = max(0.055, 0.12 * sphere_radius)
+            head_radius = max(0.12, 0.2 * sphere_radius)
+            tail = np.array([position[0], position[1], position[2] - direction * half_length], dtype=float)
+            shaft_end = np.array([position[0], position[1], position[2] + direction * shaft_tip_offset], dtype=float)
+            tip = np.array([position[0], position[1], position[2] + direction * half_length], dtype=float)
+            color = "#1f78b4" if direction > 0 else "#d7301f"
+            actor = self._add_pyvista_cylinder(
+                plotter,
+                pv,
+                tail,
+                shaft_end,
+                radius=shaft_radius,
+                color=np.array(QColor(color).getRgbF()[:3]),
+                alpha=0.88,
+            )
+            if actor is not None:
+                actors.append(actor)
+            cone = pv.Cone(
+                center=tuple(float(value) for value in 0.5 * (shaft_end + tip)),
+                direction=(0.0, 0.0, float(direction)),
+                height=float(np.linalg.norm(tip - shaft_end)),
+                radius=float(head_radius),
+                resolution=18,
+            )
+            actors.append(plotter.add_mesh(
+                cone,
+                color=color,
+                opacity=0.9,
+                smooth_shading=True,
+                ambient=0.58,
+                diffuse=0.28,
+                specular=0.0,
+                specular_power=1.0,
+                pbr=False,
+                render=False,
+            ))
+        return actors
+
     def _draw_crystallographic_axes(self) -> None:
-        assert self._atoms is not None
-        if self._triad_axis is None:
-            self._triad_figure.clear()
-            self._triad_axis = self._triad_figure.add_axes([0.02, 0.06, 0.96, 0.9], projection="3d")
-
-        triad_axis = self._triad_axis
-        triad_axis.cla()
-        triad_axis.set_facecolor((1.0, 1.0, 1.0, 0.0))
-        triad_axis.patch.set_alpha(0.0)
-        triad_axis.set_proj_type("ortho")
-        triad_axis.mouse_init(rotate_btn=[], pan_btn=[])
-        triad_axis.set_axis_off()
-        triad_axis.grid(False)
-
-        extent = np.linalg.norm(np.asarray(self._atoms.cell, dtype=float), axis=1)
-        if np.max(extent) <= 1e-12:
+        if self._shutting_down:
             return
-        axis_length = 0.95
-
-        cell = np.asarray(self._atoms.cell, dtype=float)
-        directions = (
-            _normalized_vector(cell[0], np.array([1.0, 0.0, 0.0])),
-            _normalized_vector(cell[1], np.array([0.0, 1.0, 0.0])),
-            _normalized_vector(cell[2], np.array([0.0, 0.0, 1.0])),
-        )
-        labels = ("a", "b", "c")
-        colors = ("#d73027", "#1a9850", "#4575b4")
-
-        for direction, label, color in zip(directions, labels, colors):
-            triad_axis.quiver(
-                0.0,
-                0.0,
-                0.0,
-                direction[0],
-                direction[1],
-                direction[2],
-                length=axis_length,
-                normalize=False,
-                color=color,
-                linewidth=2.0,
-                arrow_length_ratio=0.22,
+        cell = None if self._atoms is None else np.asarray(self._atoms.cell, dtype=float)
+        plotter = getattr(self._canvas, "plotter", None)
+        camera = getattr(plotter, "camera", None)
+        if camera is None:
+            return
+        camera_position_raw = getattr(camera, "position", None)
+        focal_point_raw = getattr(camera, "focal_point", None)
+        view_up_raw = getattr(camera, "up", None)
+        if camera_position_raw is None or focal_point_raw is None or view_up_raw is None:
+            return
+        camera_position = np.asarray(camera_position_raw, dtype=float)
+        focal_point = np.asarray(focal_point_raw, dtype=float)
+        view_up = np.asarray(view_up_raw, dtype=float)
+        if cell is None:
+            self._triad_axis = None
+            self._triad_canvas.set_scene(
+                cell=np.zeros((3, 3), dtype=float),
+                camera_position=camera_position,
+                focal_point=focal_point,
+                view_up=view_up,
             )
-            tip = direction * axis_length
-            triad_axis.text(
-                tip[0] + direction[0] * 0.14,
-                tip[1] + direction[1] * 0.14,
-                tip[2] + direction[2] * 0.14,
-                label,
-                color=color,
-                fontsize=10,
-                fontweight="bold",
-                ha="center",
-                va="center",
-            )
-
-        triad_axis.set_xlim(-1.05, 1.05)
-        triad_axis.set_ylim(-1.05, 1.05)
-        triad_axis.set_zlim(-1.05, 1.05)
-        triad_axis.set_box_aspect((1.0, 1.0, 1.0))
-        _view_init_with_roll(
-            triad_axis,
-            elev=self._view[0],
-            azim=self._view[1],
-            roll=self._view_roll,
+            self._triad_canvas.draw_idle()
+            return
+        if self._triad_axis is None:
+            self._triad_axis = _AxesProxy(self._camera_state)
+        else:
+            self._triad_axis.set_from_state(self._camera_state)
+        self._triad_canvas.set_scene(
+            cell=cell,
+            camera_position=camera_position,
+            focal_point=focal_point,
+            view_up=view_up,
         )
-
-        for coord_axis in (triad_axis.xaxis, triad_axis.yaxis, triad_axis.zaxis):
-            coord_axis.pane.set_alpha(0.0)
-
         self._triad_canvas.draw_idle()
 
-    def _highlight_selected_atom(self, axis, positions: np.ndarray, radii: np.ndarray) -> None:
-        assert self._selected_index is not None
-        point = positions[self._selected_index]
-
-        radius = float(radii[self._selected_index])
-        halo_radius = 1.16 * radius
-        shell_radius = 1.24 * radius
-
-        u = np.linspace(0.0, 2.0 * np.pi, 16)
-        v = np.linspace(0.0, np.pi, 16)
-        cos_u = np.cos(u)
-        sin_u = np.sin(u)
-        sin_v = np.sin(v)
-        cos_v = np.cos(v)
-
-        halo_x = point[0] + halo_radius * np.outer(cos_u, sin_v)
-        halo_y = point[1] + halo_radius * np.outer(sin_u, sin_v)
-        halo_z = point[2] + halo_radius * np.outer(np.ones_like(u), cos_v)
-        axis.plot_surface(
-            halo_x,
-            halo_y,
-            halo_z,
-            color="#ffcc33",
-            linewidth=0.0,
-            antialiased=True,
-            shade=False,
-            alpha=0.22,
-            zorder=20,
-        )
-
-        shell_x = point[0] + shell_radius * np.outer(cos_u, sin_v)
-        shell_y = point[1] + shell_radius * np.outer(sin_u, sin_v)
-        shell_z = point[2] + shell_radius * np.outer(np.ones_like(u), cos_v)
-        axis.plot_wireframe(
-            shell_x,
-            shell_y,
-            shell_z,
-            rstride=2,
-            cstride=2,
-            color="#f2a900",
-            linewidth=0.6,
-            alpha=0.9,
-            zorder=21,
-        )
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        self.shutdown()
+        super().closeEvent(event)

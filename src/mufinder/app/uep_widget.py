@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.convergence_display import format_cutoff_energy
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_adapter import suggested_grid_for_row
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
@@ -315,7 +316,7 @@ class UEPWidget(QWidget):
         with self._suspend_state_emission():
             self._reference_grid = kpoint_grid
             self._reference_lattice = [list(row) for row in kpoint_reference_lattice] if kpoint_reference_lattice else None
-            self._project_default_cutoff.setText(f"{cutoff_energy:.3f} eV" if cutoff_energy is not None else "Not set")
+            self._project_default_cutoff.setText(format_cutoff_energy(cutoff_energy))
             self._project_default_kpoint.setText(
                 " x ".join(str(int(value)) for value in kpoint_grid) if kpoint_grid is not None else "Not set"
             )

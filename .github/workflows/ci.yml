@@ -23,6 +23,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/matplotlib" "$RUNNER_TEMP/xdg-cache"
           {
             echo "QT_QPA_PLATFORM=offscreen"
+            echo "PYVISTA_OFF_SCREEN=true"
+            echo "VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=1"
+            echo "LIBGL_ALWAYS_SOFTWARE=1"
             echo "MPLCONFIGDIR=$RUNNER_TEMP/matplotlib"
             echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache"
           } >> "$GITHUB_ENV"
@@ -56,6 +59,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/matplotlib" "$RUNNER_TEMP/xdg-cache"
           {
             echo "QT_QPA_PLATFORM=offscreen"
+            echo "PYVISTA_OFF_SCREEN=true"
+            echo "VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=1"
+            echo "LIBGL_ALWAYS_SOFTWARE=1"
             echo "MPLCONFIGDIR=$RUNNER_TEMP/matplotlib"
             echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache"
           } >> "$GITHUB_ENV"

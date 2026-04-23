@@ -26,6 +26,62 @@ Persistence includes:
 - Project manifest, state snapshot, and provenance JSONL stream.
 - Validation of cross-entity references before save.
 
+User-facing save behavior is intentionally split between autosave and manual
+save:
+
+- Durable project state such as imported structures, saved workflow assets,
+  calculation definitions, run tracking, and results is autosaved so active
+  work is not lost if MuFinder needs to rebuild the project view.
+- Analysis-session state stays in session memory until the user explicitly
+  chooses ``Save Project`` (or accepts the save prompt when closing a modified
+  project).
+- This manual-save bucket includes exploratory UI state such as UEP wizard tab
+  choices, clustering-window state, viewer camera/orientation, bond and spin
+  visibility, and slice/isosurface display settings.
+- In practice, users should treat ``Save Project`` as the action that commits
+  their current analysis layout and visualization choices to disk for the next
+  session, while autosave mainly protects durable project and job state.
+
+Journal view
+------------
+
+The project navigator now includes a ``Journal`` page on the existing
+``provenance_log`` route.
+
+Current Journal behavior includes:
+
+- Day-grouped rendering of persisted provenance with headers such as
+  ``Tuesday 21 April 2026``.
+- A curated notebook-style narrative focused on major workflow milestones
+  rather than a raw event ledger.
+- Milestone stamps for notable states such as defaults adopted, calculations
+  completed, warnings, and failures.
+- Export controls for:
+
+  - plain text ``.txt`` output
+  - Markdown ``.md`` output
+
+- Export output that mirrors the curated Journal content.
+
+Current Journal coverage includes:
+
+- structure import
+- convergence / pristine-relaxation / UEP configuration snapshots
+- adopted project defaults
+- candidate-site generation and UEP promotion
+- calculation submission milestones
+- terminal calculation outcomes (completed, failed, stopped, cancelled, reset)
+- comparison-table creation
+
+Current Journal limitations:
+
+- It is strictly provenance-driven and does not backfill missing older history
+  from saved job metadata.
+- Intermediate runtime states such as ``queued``, ``running``, and
+  ``retrieving`` are intentionally omitted to avoid noisy logs.
+- Some analysis-only artifacts are still not represented as first-class
+  Journal milestones.
+
 Structure import
 ----------------
 
@@ -63,6 +119,7 @@ The host-structure panel now includes:
 - Crystallographic axis triad rendered below the main viewer to maximize primary structure viewport area.
 - Left-clicking empty space in the viewer clears the current atom selection.
 - A supercell-preview dialog with simple diagonal controls and optional advanced full 3x3 matrix entry.
+- A PyVista/VTK structure-viewer backend with camera-preserving overlay updates for bonds, spins, slice planes, point markers, and UEP isosurfaces.
 
 Workflow-scoped simulation-cell selection
 -----------------------------------------
@@ -160,6 +217,29 @@ Error handling currently includes:
 - Explicit exceptions for unknown target elements.
 - UI surfacing of generation failures.
 - UI surfacing of structure import failures.
+
+UEP clustering analysis
+-----------------------
+
+The UEP analysis dialog now separates relaxed-site generation from clustering.
+
+Current clustering behavior includes:
+
+- Random-start batch searches that stop after generating and relaxing candidate
+  muon sites.
+- A separate ``Calculate ZPE`` action that evaluates and stores harmonic
+  zero-point energies for the successfully optimized sites in eV.
+- A separate non-modal clustering window launched from the batch-search log.
+- Hierarchical clustering exploration through a dendrogram with a live
+  tolerance control.
+- K-means clustering exploration through a PCA projection of the normalized
+  Soprano-backed feature vectors.
+- A shared structure view that colors every relaxed muon position by its active
+  cluster assignment.
+- A shared cluster-summary bubble plot showing energy spread against average
+  cluster energy relative to the global minimum.
+- Batch-tab cluster tables that reflect the most recent separate clustering run
+  while preserving cluster-representative promotion.
 
 Calculation job framework
 -------------------------

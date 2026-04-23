@@ -14,6 +14,11 @@ The UEP workflow in MuFinder is based on the method described in:
   stopping sites: A novel take on the unperturbed electrostatic potential
   method``, *Journal of Chemical Physics* **153**, 044111 (2020).
   DOI: ``10.1063/5.0012381``.
+- Simone Sturniolo, Zainab Salman, Tim Lancaster, Alex Morelock,
+  R. De Renzi, Sean R. Giblin, G. B. G. Stenning, R. F. Kiefl, Simon J. Blundell,
+  and John S. Lord, ``Computational prediction of muon stopping sites using ab
+  initio random structure searching (AIRSS)``, *Journal of Chemical Physics*
+  **148**, 134114 (2018). DOI: ``10.1063/1.5024450``.
 
 MuFinder implements this workflow in its own codebase rather than wrapping
 ``pymuonsuite``, but the same core physical picture is used:
@@ -34,6 +39,37 @@ MuFinder implements this workflow in its own codebase rather than wrapping
   electrostatic potential.
 - The Hessian eigenvalues distinguish minima from saddles and maxima and are
   also used when estimating a zero-point contribution for locally stable minima.
+- MuFinder evaluates that harmonic zero-point term separately from the random
+  search itself when the user clicks ``Calculate ZPE`` in the search controls,
+  so the optimized sites can be inspected first and quantum corrections can be
+  added afterwards.
+
+The AIRSS paper and the ``pymuonsuite`` supplementary clustering material are
+also helpful context for how to interpret repeated random starts after
+relaxation. MuFinder does not embed the full AIRSS DFT-relaxation workflow
+inside the UEP clustering window, but it uses the same broad post-processing
+ideas: repeated random starts, clustering of relaxed endpoints, and selection
+of representative low-energy sites for follow-up work.
+
+Zero-Point Energy Model
+-----------------------
+
+For a locally stable optimized muon site, MuFinder estimates the muon
+zero-point energy with the same harmonic expression used in the
+``pymuon-suite`` UEP implementation:
+
+.. math::
+
+   E_{\mathrm{zp}} = \frac{1}{2}\sum_i \hbar \omega_i,
+   \qquad
+   \omega_i = \sqrt{\lambda_i / m_\mu}.
+
+Here :math:`\lambda_i` are the eigenvalues of the total-potential Hessian at the
+optimized site after converting from eV/Å² into SI units, and :math:`m_\mu` is
+the muon mass. This is only reported for stable minima. If any Hessian
+eigenvalue is negative, the optimized point is a saddle or otherwise unstable
+extremum, so MuFinder stores the classical energy and reports the ZPE as
+unavailable.
 
 Symmetry and Wyckoff Positions
 ------------------------------
@@ -110,10 +146,44 @@ MuFinder implementation includes:
   contributions together with gradients, Hessians, and stationary-point
   classification;
 - line and plane sampling for electrostatic-potential analysis;
-- full-cell 3D potential grids, isosurface visualization, and XSF export;
-- random-start batch searches with clustering of optimized endpoints;
+- full-cell 3D potential grids shared between the isosurface and slice views,
+  including zero-minimum shifting and XSF export;
+- responsive isosurface visualization from the cached full-cell potential grid;
+- interactive 2D slice planes defined from one selected atom plus a normal,
+  three selected atoms, or a best-fit plane through four or more selected
+  atoms;
+- multi-atom selection in the structure viewer using ``Shift``-click so slice
+  planes can be defined directly from the host structure;
+- slice saturation controls and a colorbar that marks when clipped display
+  limits exclude lower or higher physical potentials from the visible range;
+- random-start batch searches that generate and relax candidate starts first,
+  followed by an optional ``Calculate ZPE`` pass for the optimized sites and a
+  separate clustering window for exploring the relaxed sites;
+- a separate clustering window with hierarchical dendrogram exploration of the
+  Soprano-backed feature space and a k-means PCA view with live cluster-count
+  updates;
 - promotion of selected probe points or cluster representatives into the
   candidate muon-site workflow.
+
+Saving Analysis Sessions
+------------------------
+
+The UEP workflow mixes durable project data with transient exploratory state, so
+MuFinder documents the save boundary explicitly:
+
+- completed source jobs, saved outputs, and job-tracking information remain part
+  of the durable project record and are protected by the normal autosave path;
+- UEP analysis-session state remains in memory until the user explicitly chooses
+  ``Save Project`` (or confirms the save prompt when closing a modified
+  project);
+- this manual-save state includes the current wizard tab, cached analysis UI
+  choices, clustering-window state, selected viewer orientation/zoom, bond and
+  spin visibility, and slice/isosurface presentation settings.
+
+Users can therefore explore candidate sites, refresh overlays, or compare
+clustering views without immediately rewriting the project on disk. To restore
+that exact UEP analysis layout in a future session, they should use
+``Save Project`` before closing the project.
 
 Interpreting Batch Searches
 ---------------------------
@@ -124,7 +194,29 @@ basins. MuFinder follows the same high-level idea:
 
 - a batch of initial muon positions is generated inside the chosen source cell;
 - each start is optimized under the UEP approximation;
-- optimized endpoints are clustered in Cartesian space;
+- the resulting optimized sites can then be post-processed with a separate
+  ``Calculate ZPE`` action, which evaluates the harmonic quantum correction in
+  eV for each successfully optimized site and stores it with the relaxed-site
+  data;
+- clustering is then applied separately to the relaxed sites using the same
+  Soprano-backed asymmetric-position and energy features used by
+  ``pymuonsuite``;
+- hierarchical clustering can be explored through a dendrogram and tolerance
+  cut, while k-means can be explored through a PCA projection of the normalized
+  feature vectors;
+- in the hierarchical view, the tolerance ``t`` controls where the dendrogram
+  is cut: smaller values split nearby minima into finer groups, while larger
+  values merge nearby relaxed sites into broader candidate basins;
+- in the k-means view, the user chooses a fixed ``k`` explicitly, so it is best
+  treated as an exploratory comparison against the hierarchical picture rather
+  than as a proof of the physically correct site count;
+- each cluster is summarized by its size, a representative relaxed site, and
+  cluster energy statistics; the representative is the minimum-energy member of
+  that cluster, matching the style used in the ``pymuonsuite`` cluster reports;
+- the clustering window bubble plot shows average energy relative to the global
+  minimum on the horizontal axis and the cluster energy standard deviation on
+  the vertical axis, so broad/high-energy clusters can be distinguished from
+  compact low-energy families at a glance;
 - larger clusters usually indicate minima with larger attraction basins and are
   often the most physically relevant first-pass candidates.
 
@@ -135,3 +227,8 @@ References
   stopping sites: A novel take on the unperturbed electrostatic potential
   method``, *J. Chem. Phys.* **153**, 044111 (2020),
   DOI ``10.1063/5.0012381``.
+- Simone Sturniolo, Zainab Salman, Tim Lancaster, Alex Morelock,
+  R. De Renzi, Sean R. Giblin, G. B. G. Stenning, R. F. Kiefl, Simon J. Blundell,
+  and John S. Lord, ``Computational prediction of muon stopping sites using ab
+  initio random structure searching (AIRSS)``, *J. Chem. Phys.* **148**, 134114
+  (2018), DOI ``10.1063/1.5024450``.

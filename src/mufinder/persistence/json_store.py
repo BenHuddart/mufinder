@@ -46,7 +46,6 @@ class ProjectStore:
         (self.project_root / "imports").mkdir(exist_ok=True)
         (self.project_root / "files").mkdir(exist_ok=True)
         (self.project_root / "exports").mkdir(exist_ok=True)
-        (self.project_root / ".autosave").mkdir(exist_ok=True)
         self.entities_root.mkdir(exist_ok=True)
 
         for entity_dir in self.ENTITY_DIRS:

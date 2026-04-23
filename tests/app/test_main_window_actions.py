@@ -1361,7 +1361,121 @@ def test_main_window_submit_jobs_locally_creates_run_and_calls_runner(
     assert job.num_processes == 1
     runs = [run for run in doc.runs.values() if run.job_id == job.id]
     assert len(runs) == 1
+    assert doc.provenance[-1].action == "submit_jobs"
+    assert doc.provenance[-1].parameters["job_labels"] == [job.label]
 
+    window.close()
+
+
+def test_journal_write_does_not_change_active_workflow_view_on_submission(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "journal_route_preserved.mufinder", "JournalRoutePreserved")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    output_dir = doc.project_root / "files" / "convergence_cutoff"
+    (output_dir / job.label).mkdir(parents=True, exist_ok=True)
+    service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=output_dir,
+        job_ids_by_cutoff={main_window_module.MainWindow._cutoff_key(300.0): str(job.id)},
+    )
+    window._document = doc
+    window._refresh_ui_after_project_change()
+
+    monkeypatch.setattr(
+        main_window_module,
+        "load_castep_setup",
+        lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path=""),
+    )
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 1
+
+        def config(self):
+            return SimpleNamespace(num_cores=1, parallel=False, max_concurrent=1)
+
+    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(window._local_runner, "submit", lambda **kwargs: None)
+
+    _select_route(window, "host_structure")
+    assert window._main_stack.currentWidget() is window._host_structure_view
+
+    window._submit_jobs_locally([job])
+
+    assert window._main_stack.currentWidget() is window._host_structure_view
+    assert window._active_route() == "host_structure"
+    window.close()
+
+
+def test_main_window_project_tree_uses_journal_route_and_view(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    doc = ProjectService().create_project(tmp_path / "journal_route.mufinder", "JournalRoute")
+    window._document = doc
+    window._refresh_ui_after_project_change()
+
+    root = window._project_tree.topLevelItem(0)
+    assert root is not None
+    journal_item = _find_item_by_route(root, "provenance_log")
+    assert journal_item is not None
+    assert journal_item.text(0) == "Journal"
+
+    _select_route(window, "provenance_log")
+
+    assert window._main_stack.currentWidget() is window._journal_view
+    window.close()
+
+
+def test_main_window_journal_populates_from_imported_provenance(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "journal_populated.mufinder", "JournalPopulated")
+    window._document = doc
+
+    source = tmp_path / "host.cif"
+    atoms = Atoms(
+        "Si",
+        scaled_positions=[[0.0, 0.0, 0.0]],
+        cell=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        pbc=True,
+    )
+    ase_write(source, atoms)
+    service.import_structure_file(doc, source, make_active=True)
+
+    window._refresh_ui_after_project_change()
+    _select_route(window, "provenance_log")
+
+    texts = [label.text() for label in window._journal_view.findChildren(main_window_module.QLabel)]
+    expected_day = doc.provenance[-1].timestamp.astimezone().strftime("%A %d %B %Y")
+    assert expected_day in texts
+    assert "Host structure imported" in texts
     window.close()
 
 
@@ -2271,6 +2385,7 @@ def test_main_window_cluster_status_handlers_update_job_and_run(
     assert job.status == JobStatus.STOPPED
     assert run.status == JobStatus.STOPPED
     assert run.completed_at is not None
+    assert doc.provenance[-1].action == "job_stopped"
 
     window.close()
 
@@ -3078,12 +3193,14 @@ def test_main_window_local_status_handlers_update_job_and_run(
     window._on_local_job_failed(job.id, "boom")
     assert job.status == JobStatus.FAILED
     assert run.status == JobStatus.FAILED
+    assert doc.provenance[-1].action == "job_failed"
 
     job.status = JobStatus.RUNNING
     run.status = JobStatus.RUNNING
     window._on_local_job_cancelled(job.id)
     assert job.status == JobStatus.CANCELLED
     assert run.status == JobStatus.CANCELLED
+    assert doc.provenance[-1].action == "job_cancelled"
     window.close()
 
 
@@ -3126,6 +3243,7 @@ def test_main_window_local_finish_creates_result_and_completes_job(
     assert result.data["total_energy"] == -10.5
     assert any(path.endswith(f"{job.label}.castep") for path in result.output_files)
     assert window._jobs_table.rowCount() == 0
+    assert doc.provenance[-1].action == "job_completed"
     window.close()
 
 
@@ -3541,6 +3659,7 @@ def test_main_window_reset_failed_jobs_can_clean_output_directory(
 
     assert job.status == JobStatus.DEFINED
     assert sorted(path.name for path in output_dir.iterdir()) == [f"{job.label}.cell", f"{job.label}.param"]
+    assert doc.provenance[-1].action == "job_reset"
     window.close()
 
 
@@ -4786,13 +4905,14 @@ def test_main_window_on_cutoff_adopted_sets_project_default(qapp, tmp_path: Path
     window.close()
 
 
-def test_main_window_convergence_examiner_state_changed_updates_ui_state(
+def test_main_window_convergence_examiner_state_changed_updates_ui_state_without_saving_project(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "conv_examiner_state_update.mufinder", "ConvExaminerStateUpdate")
     window._document = doc
+    initial_state_text = doc.project_root.joinpath("state.json").read_text(encoding="utf-8")
 
     saves: list[bool] = []
     monkeypatch.setattr(window._project_service, "save_project", lambda _doc: saves.append(True))
@@ -4800,11 +4920,12 @@ def test_main_window_convergence_examiner_state_changed_updates_ui_state(
     window._on_convergence_examiner_state_changed({"results_text": "cached"})
 
     assert doc.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY] == {"results_text": "cached"}
-    assert saves == [True]
+    assert doc.project_root.joinpath("state.json").read_text(encoding="utf-8") == initial_state_text
+    assert saves == []
     window.close()
 
 
-def test_main_window_convergence_examiner_state_persists_across_project_reload(
+def test_main_window_convergence_examiner_state_persists_across_project_reload_after_explicit_save(
     qapp, tmp_path: Path
 ) -> None:
     window = MainWindow()
@@ -4812,6 +4933,7 @@ def test_main_window_convergence_examiner_state_persists_across_project_reload(
     root = tmp_path / "conv_examiner_state_reload.mufinder"
     doc = service.create_project(root, "ConvExaminerStateReload")
     window._document = doc
+    initial_state_text = doc.project_root.joinpath("state.json").read_text(encoding="utf-8")
 
     window._on_convergence_examiner_state_changed(
         {
@@ -4826,10 +4948,66 @@ def test_main_window_convergence_examiner_state_persists_across_project_reload(
         }
     )
 
+    assert doc.project_root.joinpath("state.json").read_text(encoding="utf-8") == initial_state_text
+
+    service.save_project(doc)
     loaded = service.load_project(root)
 
     assert loaded.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY]["results_text"] == "Recommended cutoff: 500 eV"
     assert loaded.ui_state[window._CONVERGENCE_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [300.0, 400.0, 500.0]
+    window.close()
+
+
+def test_main_window_kpoint_examiner_state_changed_updates_ui_state_without_saving_project(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "kpoint_examiner_state_update.mufinder", "KPointExaminerStateUpdate")
+    window._document = doc
+    initial_state_text = doc.project_root.joinpath("state.json").read_text(encoding="utf-8")
+
+    saves: list[bool] = []
+    monkeypatch.setattr(window._project_service, "save_project", lambda _doc: saves.append(True))
+
+    window._on_kpoint_examiner_state_changed({"results_text": "cached"})
+
+    assert doc.ui_state[window._KPOINT_EXAMINER_STATE_KEY] == {"results_text": "cached"}
+    assert doc.project_root.joinpath("state.json").read_text(encoding="utf-8") == initial_state_text
+    assert saves == []
+    window.close()
+
+
+def test_main_window_kpoint_examiner_state_persists_across_project_reload_after_explicit_save(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    root = tmp_path / "kpoint_examiner_state_reload.mufinder"
+    doc = service.create_project(root, "KPointExaminerStateReload")
+    window._document = doc
+    initial_state_text = doc.project_root.joinpath("state.json").read_text(encoding="utf-8")
+
+    window._on_kpoint_examiner_state_changed(
+        {
+            "results_text": "Recommended grid: 2 x 2 x 2",
+            "plot_data": {
+                "cutoffs": [8.0, 27.0],
+                "energies": [-10.0, -10.01],
+                "forces": [0.10, 0.04],
+                "energy_threshold": 0.001,
+                "force_threshold": 0.05,
+            },
+        }
+    )
+
+    assert doc.project_root.joinpath("state.json").read_text(encoding="utf-8") == initial_state_text
+
+    service.save_project(doc)
+    loaded = service.load_project(root)
+
+    assert loaded.ui_state[window._KPOINT_EXAMINER_STATE_KEY]["results_text"] == "Recommended grid: 2 x 2 x 2"
+    assert loaded.ui_state[window._KPOINT_EXAMINER_STATE_KEY]["plot_data"]["cutoffs"] == [8.0, 27.0]
     window.close()
 
 
@@ -4979,6 +5157,98 @@ def test_main_window_submit_from_kpoint_materializes_job_inputs(
     assert (doc.project_root / "files" / "convergence_kpoint" / job.label / f"{job.label}.param").exists()
     definition = next(iter(doc.calculations.values()))
     assert definition.parameters["job_ids_by_grid"][main_window_module.MainWindow._grid_key((2, 2, 2))] == str(job.id)
+    window.close()
+
+
+def test_materialize_pristine_relaxation_rewrites_defined_job_inputs_when_project_defaults_change(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "pristine_rewrite.mufinder", "PristineRewrite")
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    window._on_pristine_relaxation_configured(
+        main_window_module.PristineRelaxationConfig(
+            name_prefix="pristine_relax",
+            rows=(main_window_module.PristineRelaxationRow(label="row_1", parameter_values={}),),
+        )
+    )
+
+    jobs = window._materialize_pristine_relaxation_jobs(["row_1"])
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.status == JobStatus.DEFINED
+
+    cell_path = doc.project_root / "files" / "pristine_relaxation" / job.label / f"{job.label}.cell"
+    initial_cell = cell_path.read_text(encoding="utf-8")
+    assert "KPOINT_MP_GRID" not in initial_cell
+
+    doc.project.recommended_kpoint_grid = (4, 4, 4)
+    doc.project.recommended_kpoint_lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+
+    jobs = window._materialize_pristine_relaxation_jobs(["row_1"])
+    assert len(jobs) == 1
+    assert jobs[0].id == job.id
+
+    refreshed_cell = cell_path.read_text(encoding="utf-8")
+    assert "KPOINT_MP_GRID 4 4 4" in refreshed_cell
+    window.close()
+
+
+def test_materialize_uep_rewrites_defined_job_inputs_when_project_defaults_change(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_rewrite.mufinder", "UepRewrite")
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    doc.project.recommended_kpoint_grid = (4, 4, 4)
+    doc.project.recommended_kpoint_lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    doc.ui_state["uep_form"] = {"selected_source_structure_id": str(host.id)}
+    window._document = doc
+
+    window._on_uep_configured(
+        main_window_module.UepConfig(
+            name_prefix="uep",
+            rows=(main_window_module.UepSourceRow(label="row_1", parameter_values={}),),
+        )
+    )
+
+    jobs = window._materialize_uep_jobs(["row_1"])
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.status == JobStatus.DEFINED
+
+    cell_path = doc.project_root / "files" / "uep" / job.label / f"{job.label}.cell"
+    initial_cell = cell_path.read_text(encoding="utf-8")
+    assert "KPOINT_MP_GRID 4 4 4" in initial_cell
+
+    doc.project.recommended_kpoint_grid = (5, 5, 5)
+
+    jobs = window._materialize_uep_jobs(["row_1"])
+    assert len(jobs) == 1
+    assert jobs[0].id == job.id
+
+    refreshed_cell = cell_path.read_text(encoding="utf-8")
+    assert "KPOINT_MP_GRID 5 5 5" in refreshed_cell
     window.close()
 
 

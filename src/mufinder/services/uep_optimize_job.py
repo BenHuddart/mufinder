@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from mufinder.science.uep import (
+    UepClusteringConfig,
     UepError,
     UepField,
     UepOptimizationResult,
     UepProbeResult,
     UepBatchSummary,
+    cluster_uep_optimizations,
     cluster_optimized_positions,
     load_uep_source,
     optimize_muon_position,
@@ -156,7 +158,7 @@ def run_manifest_file(path: str | Path) -> Path:
             field,
             start_position_ang=tuple(float(value) for value in payload.get("start_position_ang", (0.0, 0.0, 0.0))),
             particle_mass_kg=particle_mass_kg,
-            tolerance_ev=float(payload.get("tolerance_ev", 0.05)),
+            tolerance_ev=float(payload.get("tolerance_ev", 1e-5)),
             max_steps=int(payload.get("max_steps", 300)),
             method=str(payload.get("method", "trust-exact")),
         )
@@ -180,8 +182,26 @@ def run_manifest_file(path: str | Path) -> Path:
     return target
 
 
-def summarize_batch_results(optimizations: list[UepOptimizationResult], *, threshold_ang: float) -> dict[str, Any]:
+def summarize_batch_results(
+    optimizations: list[UepOptimizationResult],
+    *,
+    threshold_ang: float | None = None,
+    source_structure: object | None = None,
+    clustering_config: UepClusteringConfig | None = None,
+) -> dict[str, Any]:
     """Return a JSON-friendly cluster summary for a finished batch."""
 
-    summary: UepBatchSummary = cluster_optimized_positions(optimizations, threshold_ang=threshold_ang)
+    if clustering_config is not None or source_structure is not None:
+        if source_structure is None:
+            raise UepError("source_structure is required when using soprano-backed clustering.")
+        summary = cluster_uep_optimizations(
+            optimizations,
+            source_structure=source_structure,
+            config=clustering_config,
+        ).summary
+    else:
+        summary = cluster_optimized_positions(
+            optimizations,
+            threshold_ang=float(0.2 if threshold_ang is None else threshold_ang),
+        )
     return asdict(summary)

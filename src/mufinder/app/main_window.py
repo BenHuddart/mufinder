@@ -77,6 +77,7 @@ from mufinder.app.uep_wizard import UepAnalysisDialog
 from mufinder.app.uep_widget import UEPWidget
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.icons import icon, workflow_stage_icon
+from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.muon_generation_widget import MuonGenerationWidget
 from mufinder.app.supercell_dialog import SupercellPreviewDialog
 from mufinder.app.submission_dialog import LocalSubmissionDialog
@@ -292,11 +293,13 @@ class MainWindow(QMainWindow):
         self._job_runtime_timer.timeout.connect(self._refresh_active_job_runtime_cells)
         self._cluster_elapsed_seconds_by_job: dict[UUID, int] = {}
         self._cluster_elapsed_checked_at: datetime | None = None
+        self._shutting_down = False
         self._recent_projects_menu: QMenu | None = None
         self._home_recent_projects_layout: QVBoxLayout | None = None
         self._expedition_trail: ExpeditionTrailWidget | None = None
         self._cluster_connected = False
         self._comparison_widgets: dict[UUID, ComparisonTableWidget] = {}
+        self._uep_analysis_dialogs: dict[UUID, UepAnalysisDialog] = {}
 
         app = QApplication.instance()
         if app is not None:
@@ -419,6 +422,7 @@ class MainWindow(QMainWindow):
         self._muon_generation_view = MuonGenerationWidget()
         self._muon_generation_view.generate_requested.connect(self._on_generate_requested)
         self._muon_generation_view.form_state_changed.connect(self._on_muon_form_state_changed)
+        self._journal_view = JournalWidget()
         self._main_stack.addWidget(self._home_page)
         self._main_stack.addWidget(self._host_structure_view)
         self._main_stack.addWidget(self._convergence_overview_view)
@@ -427,6 +431,7 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._pristine_relaxation_view)
         self._main_stack.addWidget(self._uep_view)
         self._main_stack.addWidget(self._muon_generation_view)
+        self._main_stack.addWidget(self._journal_view)
 
         self._jobs_table = QTableWidget(0, 12)
         self._jobs_table.setHorizontalHeaderLabels(
@@ -518,6 +523,10 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, jobs_dock)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        if self._shutting_down:
+            super().closeEvent(event)
+            return
+        self._job_runtime_timer.stop()
         if self._document is not None and self.isVisible():
             answer = QMessageBox.question(
                 self,
@@ -529,18 +538,51 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes,
             )
             if answer == QMessageBox.StandardButton.Cancel:
+                self._sync_job_runtime_timer()
                 event.ignore()
                 return
+            self._shutting_down = True
+            self._close_open_uep_analysis_dialogs()
             if answer == QMessageBox.StandardButton.Yes:
                 try:
                     self._project_service.save_project(self._document)
                 except ValueError as exc:
+                    self._shutting_down = False
                     QMessageBox.critical(self, "Save blocked", str(exc))
+                    self._sync_job_runtime_timer()
                     event.ignore()
                     return
+        else:
+            self._shutting_down = True
         self._local_runner.shutdown()
         self._cluster_runner.shutdown()
         super().closeEvent(event)
+
+    def _close_open_uep_analysis_dialogs(self) -> None:
+        dialogs: list[QDialog] = []
+        seen: set[int] = set()
+        for dialog in tuple(self._uep_analysis_dialogs.values()):
+            dialog_id = id(dialog)
+            if dialog_id in seen:
+                continue
+            seen.add(dialog_id)
+            dialogs.append(dialog)
+        for dialog in self.findChildren(UepAnalysisDialog):
+            dialog_id = id(dialog)
+            if dialog_id in seen:
+                continue
+            seen.add(dialog_id)
+            dialogs.append(dialog)
+
+        for dialog in dialogs:
+            try:
+                dialog.close()
+            except RuntimeError:
+                continue
+        self._uep_analysis_dialogs.clear()
+
+    def _drop_uep_analysis_dialog(self, job_id: UUID) -> None:
+        self._uep_analysis_dialogs.pop(job_id, None)
 
     def _make_home_card(self, title: str, body: str) -> tuple[QFrame, QVBoxLayout]:
         card = QFrame(self)
@@ -1101,12 +1143,17 @@ class MainWindow(QMainWindow):
         self._refresh_pristine_relaxation_defaults()
         self._refresh_pristine_relaxation_rows()
         self._refresh_uep_defaults()
+        self._refresh_uep_rows()
         self._refresh_uep_source_structures()
         self._refresh_uep_supercell_options()
-        self._refresh_uep_rows()
         self._refresh_convergence_overview()
-        self._main_stack.setCurrentWidget(self._home_page)
-        self._sync_expedition_trail()
+        self._refresh_journal_view()
+
+    def _refresh_journal_view(self) -> None:
+        if self._document is None:
+            self._journal_view.set_records("", [])
+            return
+        self._journal_view.set_records(self._document.project.name, self._document.provenance)
 
     @staticmethod
     def _overview_placeholder_message(title: str) -> str:
@@ -1424,7 +1471,7 @@ class MainWindow(QMainWindow):
             WorkflowDefinition(key="magnetic_fields", title="Magnetic Fields"),
             WorkflowDefinition(key="quantum_corrections", title="Quantum Corrections"),
             WorkflowDefinition(key="energy_barriers", title="Energy Barriers"),
-            WorkflowDefinition(key="provenance_log", title="Provenance Log"),
+            WorkflowDefinition(key="provenance_log", title="Journal", route="provenance_log"),
         )
 
     def _workflow_label(self, definition: WorkflowDefinition) -> str:
@@ -1873,6 +1920,8 @@ class MainWindow(QMainWindow):
             target = self._uep_view
         elif route == "muon_candidates":
             target = self._muon_generation_view
+        elif route == "provenance_log":
+            target = self._journal_view
         elif isinstance(route, str):
             table_id = self._comparison_table_id_from_route(route)
             if table_id is not None:
@@ -2439,10 +2488,6 @@ class MainWindow(QMainWindow):
             return
 
         self._document.ui_state[self._CONVERGENCE_EXAMINER_STATE_KEY] = serialized_state
-        try:
-            self._project_service.save_project(self._document)
-        except ValueError:
-            self.statusBar().showMessage("Could not persist convergence examiner state to disk")
 
     def _on_cutoff_adopted(
         self,
@@ -2491,6 +2536,7 @@ class MainWindow(QMainWindow):
         )
         self._kpoint_convergence_view.set_cutoff_default(float(cutoff_energy))
         self._refresh_convergence_overview()
+        self._refresh_journal_view()
         self._persist_document_ui_state(
             failure_message="Could not persist convergence overview snapshot to disk"
         )
@@ -2797,6 +2843,7 @@ class MainWindow(QMainWindow):
 
         missing_paths: list[str] = []
         submitted = 0
+        submitted_jobs: list[Job] = []
         for job in defined_jobs:
             output_dir = self._job_output_directory(job)
             if output_dir is None:
@@ -2826,6 +2873,7 @@ class MainWindow(QMainWindow):
                 mpirun_path=setup.mpirun_path,
                 num_cores=config.num_cores,
             )
+            submitted_jobs.append(job)
 
         self._refresh_jobs_table()
 
@@ -2838,6 +2886,7 @@ class MainWindow(QMainWindow):
             )
 
         if submitted:
+            self._record_job_submission(submitted_jobs, "local")
             self.statusBar().showMessage(f"Submitted {submitted} local job(s)")
 
     def _submit_jobs_on_cluster(
@@ -2941,6 +2990,7 @@ class MainWindow(QMainWindow):
 
         missing_paths: list[str] = []
         submitted = 0
+        submitted_jobs: list[Job] = []
         failed_submit: list[str] = []
         remote_target_by_job: dict[UUID, str] = {}
         existing_remote_targets: list[str] = []
@@ -3034,6 +3084,7 @@ class MainWindow(QMainWindow):
                     self._project_service.mark_job_queued(job, remote_job_id=remote_job_id)
                 run.status = job.status
                 submitted += 1
+                submitted_jobs.append(job)
             except Exception as exc:  # noqa: BLE001
                 failed_submit.append(f"- {job.label}: {exc}")
                 try:
@@ -3042,6 +3093,11 @@ class MainWindow(QMainWindow):
                     pass
                 run.status = JobStatus.FAILED
                 run.completed_at = utc_now()
+                self._record_job_terminal_event(
+                    action="job_failed",
+                    job=job,
+                    error_message=str(exc),
+                )
             self._refresh_jobs_table()
             QApplication.processEvents()
 
@@ -3064,6 +3120,7 @@ class MainWindow(QMainWindow):
             )
 
         if submitted:
+            self._record_job_submission(submitted_jobs, selected_cluster.name)
             self.statusBar().showMessage(
                 f"Submitted {submitted} cluster job(s) on {selected_cluster.name}"
             )
@@ -3271,11 +3328,13 @@ class MainWindow(QMainWindow):
         cleanup_errors: list[str] = []
         reset_count = 0
         for job in resettable_jobs:
+            cleaned_output_directory = False
             if cleanup_choice:
                 output_dir = self._job_output_directory(job)
                 if output_dir is not None and output_dir.exists() and output_dir.is_dir():
                     try:
                         self._clear_directory_contents(output_dir)
+                        cleaned_output_directory = True
                     except OSError as exc:
                         cleanup_errors.append(f"- {job.label}: {exc}")
 
@@ -3288,6 +3347,7 @@ class MainWindow(QMainWindow):
                 self._detach_convergence_job(job.id)
 
             self._active_run_by_job.pop(job.id, None)
+            self._record_job_reset(job=job, cleaned_output_directory=cleaned_output_directory)
             reset_count += 1
 
         self._refresh_jobs_table()
@@ -3552,6 +3612,45 @@ class MainWindow(QMainWindow):
                 files.append(str(path))
         return files
 
+    def _record_job_submission(self, jobs: list[Job], execution_target: str) -> None:
+        if self._document is None or not jobs:
+            return
+        self._project_service.record_job_submission(
+            self._document,
+            jobs=jobs,
+            execution_target=execution_target,
+        )
+        self._refresh_journal_view()
+
+    def _record_job_terminal_event(
+        self,
+        *,
+        action: str,
+        job: Job,
+        result: Result | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        if self._document is None:
+            return
+        self._project_service.record_job_terminal_event(
+            self._document,
+            action=action,
+            job=job,
+            result=result,
+            error_message=error_message,
+        )
+        self._refresh_journal_view()
+
+    def _record_job_reset(self, *, job: Job, cleaned_output_directory: bool) -> None:
+        if self._document is None:
+            return
+        self._project_service.record_job_reset(
+            self._document,
+            job=job,
+            cleaned_output_directory=cleaned_output_directory,
+        )
+        self._refresh_journal_view()
+
     def _on_local_job_status_changed(self, job_id: UUID, status_value: str) -> None:
         if self._document is None:
             return
@@ -3712,6 +3811,7 @@ class MainWindow(QMainWindow):
                 pass
 
         self._active_run_by_job.pop(job_id, None)
+        self._record_job_terminal_event(action="job_completed", job=job, result=result)
         self._refresh_jobs_table()
         self.statusBar().showMessage(f"Completed local job {job.label}")
 
@@ -3737,6 +3837,7 @@ class MainWindow(QMainWindow):
             run.warnings = [message]
 
         self._active_run_by_job.pop(job_id, None)
+        self._record_job_terminal_event(action="job_failed", job=job, error_message=message)
         self._refresh_jobs_table()
         self.statusBar().showMessage(f"Local job failed: {job.label}")
 
@@ -3759,6 +3860,7 @@ class MainWindow(QMainWindow):
             run.status = JobStatus.CANCELLED
 
         self._active_run_by_job.pop(job_id, None)
+        self._record_job_terminal_event(action="job_cancelled", job=job)
         self._refresh_jobs_table()
         self.statusBar().showMessage(f"Cancelled local job {job.label}")
 
@@ -3799,6 +3901,12 @@ class MainWindow(QMainWindow):
             if mapped == JobStatus.STOPPED:
                 run.completed_at = utc_now()
 
+        if mapped == JobStatus.STOPPED:
+            self._record_job_terminal_event(
+                action="job_stopped",
+                job=job,
+                error_message=job.error_message,
+            )
         self._refresh_jobs_table()
 
     def _on_cluster_job_started(self, job_id: UUID) -> None:
@@ -4131,6 +4239,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_jobs_table()
         self._refresh_convergence_cutoff_rows()
+        self._refresh_journal_view()
         self.statusBar().showMessage(
             f"Configured {len(config.cutoff_energies)} cutoff jobs; input files will be generated on submission"
         )
@@ -4165,6 +4274,8 @@ class MainWindow(QMainWindow):
         self._refresh_pristine_relaxation_rows()
         self._refresh_convergence_overview()
         self._populate_project_tree()
+        self._refresh_journal_view()
+        self._set_active_route("host_structure")
         self.statusBar().showMessage(
             f"Loaded host structure '{structure.label}' ({len(structure.species)} atoms)"
         )
@@ -4185,6 +4296,7 @@ class MainWindow(QMainWindow):
             return
 
         self._refresh_muon_generation_table()
+        self._refresh_journal_view()
         requested = int(parameters.get("count", 1)) if method != "manual" else 1
         suffix = ""
         if len(created) < requested:
@@ -4192,12 +4304,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Generated {len(created)} candidate muon site(s){suffix}")
 
     def _on_muon_form_state_changed(self, state: dict) -> None:
-        if self._document is None:
+        if self._document is None or self._shutting_down:
             return
         self._document.ui_state["muon_generation_form"] = state
 
     def _on_convergence_form_state_changed(self, state: dict) -> None:
-        if self._document is None:
+        if self._document is None or self._shutting_down:
             return
         self._document.ui_state["convergence_form"] = state
         self._refresh_convergence_cutoff_rows()
@@ -4657,12 +4769,13 @@ class MainWindow(QMainWindow):
 
         self._refresh_jobs_table()
         self._refresh_kpoint_convergence_rows()
+        self._refresh_journal_view()
         self.statusBar().showMessage(
             f"Configured {len(config.sweep_values)} k-point jobs; input files will be generated on submission"
         )
 
     def _on_kpoint_form_state_changed(self, state: dict) -> None:
-        if self._document is None:
+        if self._document is None or self._shutting_down:
             return
         self._document.ui_state["kpoint_convergence_form"] = state
         self._refresh_kpoint_convergence_rows()
@@ -4968,10 +5081,6 @@ class MainWindow(QMainWindow):
             return
 
         self._document.ui_state[self._KPOINT_EXAMINER_STATE_KEY] = serialized_state
-        try:
-            self._project_service.save_project(self._document)
-        except ValueError:
-            self.statusBar().showMessage("Could not persist k-point examiner state to disk")
 
     def _on_kpoint_default_adopted(
         self,
@@ -5033,6 +5142,7 @@ class MainWindow(QMainWindow):
             ),
         )
         self._refresh_convergence_overview()
+        self._refresh_journal_view()
         self._persist_document_ui_state(
             failure_message="Could not persist k-point convergence overview snapshot to disk"
         )
@@ -5088,7 +5198,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_pristine_relaxation_form_state_changed(self, state: dict) -> None:
-        if self._document is None:
+        if self._document is None or self._shutting_down:
             return
         self._document.ui_state["pristine_relaxation_form"] = state
 
@@ -5195,7 +5305,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_uep_form_state_changed(self, state: dict) -> None:
-        if self._document is None:
+        if self._document is None or self._shutting_down:
             return
         self._document.ui_state["uep_form"] = state
         if getattr(self, "_handling_uep_form_state", False):
@@ -5664,6 +5774,7 @@ class MainWindow(QMainWindow):
         self._document.ui_state[self._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(latest_definition.id)
 
         self._refresh_pristine_relaxation_rows()
+        self._refresh_journal_view()
         self.statusBar().showMessage(
             f"Configured {len(config.rows)} pristine-relaxation jobs; input files will be generated on submission"
         )
@@ -5903,10 +6014,12 @@ class MainWindow(QMainWindow):
             ),
         )
         self._project_service.add_comparison_table(self._document, table)
+        self._project_service.record_comparison_table_created(self._document, table=table)
 
         self._sync_comparison_table_views()
         self._populate_project_tree()
         self._set_active_route(self._comparison_route(table.id))
+        self._refresh_journal_view()
         self.statusBar().showMessage(f"Generated comparison table '{table.label}'")
 
     def _jobs_for_pristine_relaxation_labels(self, labels: list[str]) -> list[Job]:
@@ -5968,12 +6081,14 @@ class MainWindow(QMainWindow):
 
         created: list[Job] = []
         for label in labels:
+            spec = spec_by_label.get(label)
             existing_job = self._job_for_pristine_relaxation_label(definition, label)
             if existing_job is not None:
+                if existing_job.status == JobStatus.DEFINED and spec is not None:
+                    write_job_directory(spec, output_root)
                 created.append(existing_job)
                 continue
 
-            spec = spec_by_label.get(label)
             if spec is None:
                 continue
 
@@ -6129,6 +6244,7 @@ class MainWindow(QMainWindow):
         )
         self._document.ui_state[self._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
         self._refresh_uep_rows()
+        self._refresh_journal_view()
         self.statusBar().showMessage(
             f"Configured {len(config.rows)} UEP source job(s); input files will be generated on submission"
         )
@@ -6182,11 +6298,13 @@ class MainWindow(QMainWindow):
         spec_by_label = {str(spec.provenance.get("label", "")): spec for spec in expansion.jobs}
         created: list[Job] = []
         for label in labels:
+            spec = spec_by_label.get(label)
             existing = self._job_for_uep_label(definition, label)
             if existing is not None:
+                if existing.status == JobStatus.DEFINED and spec is not None:
+                    write_job_directory(spec, output_root)
                 created.append(existing)
                 continue
-            spec = spec_by_label.get(label)
             if spec is None:
                 continue
             write_job_directory(spec, output_root)
@@ -6289,6 +6407,16 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "UEP source unavailable", "The source structure reference is missing.")
             return
 
+        existing_dialog = self._uep_analysis_dialogs.get(job.id)
+        if existing_dialog is not None:
+            try:
+                existing_dialog.show()
+                existing_dialog.raise_()
+                existing_dialog.activateWindow()
+                return
+            except RuntimeError:
+                self._drop_uep_analysis_dialog(job.id)
+
         try:
             persisted_states = self._document.ui_state.get(self._UEP_ANALYSIS_STATES_KEY, {})
             if not isinstance(persisted_states, dict):
@@ -6316,8 +6444,12 @@ class MainWindow(QMainWindow):
         dialog.potential_grid_ready.connect(
             lambda payload, job_id=job.id: self._on_uep_potential_grid_ready(job_id, payload)
         )
-        dialog.exec()
-        self._on_uep_analysis_state_changed(job.id, dialog.state_snapshot())
+        dialog.setModal(False)
+        dialog.destroyed.connect(lambda *_args, job_id=job.id: self._drop_uep_analysis_dialog(job_id))
+        self._uep_analysis_dialogs[job.id] = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _on_uep_potential_grid_ready(self, job_id: UUID, payload: object) -> None:
         if self._document is None:
@@ -6341,12 +6473,9 @@ class MainWindow(QMainWindow):
             existing.data = serialized
         self._document.results[existing.id] = existing
         self._refresh_uep_rows()
-        self._persist_document_ui_state(
-            failure_message="Could not persist UEP potential grid to disk"
-        )
 
     def _on_uep_analysis_state_changed(self, job_id: UUID, state: dict) -> None:
-        if self._document is None:
+        if self._document is None or self._shutting_down:
             return
 
         serialized_state = to_jsonable(state)
@@ -6359,9 +6488,6 @@ class MainWindow(QMainWindow):
         updated = dict(states)
         updated[str(job_id)] = serialized_state
         self._document.ui_state[self._UEP_ANALYSIS_STATES_KEY] = updated
-        self._persist_document_ui_state(
-            failure_message="Could not persist UEP analysis state to disk"
-        )
 
     def _on_promote_uep_candidate_requested(self, payload: object) -> None:
         if self._document is None or not isinstance(payload, dict):
@@ -6415,6 +6541,7 @@ class MainWindow(QMainWindow):
             ),
         )
         self._refresh_muon_generation_table()
+        self._refresh_journal_view()
         self.statusBar().showMessage(f"Promoted UEP site '{site.label}' into candidate muon sites")
 
     @staticmethod

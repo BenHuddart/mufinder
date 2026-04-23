@@ -12,6 +12,19 @@ def test_pyinstaller_spec_bundles_ase_spacegroup_data() -> None:
     assert 'collect_data_files("ase")' in spec_text
 
 
+def test_pyinstaller_spec_bundles_pyvista_and_vtk_runtime_assets() -> None:
+    spec_path = (
+        Path(__file__).resolve().parents[2] / "packaging" / "pyinstaller" / "mufinder.spec"
+    )
+    spec_text = spec_path.read_text(encoding="utf-8")
+
+    assert 'collect_data_files("pyvista")' in spec_text
+    assert 'collect_data_files("vtkmodules")' in spec_text
+    assert 'collect_submodules("pyvista")' in spec_text
+    assert 'collect_submodules("pyvistaqt")' in spec_text
+    assert 'collect_submodules("vtkmodules")' in spec_text
+
+
 def test_pyinstaller_spec_builds_windows_icon() -> None:
     spec_path = (
         Path(__file__).resolve().parents[2] / "packaging" / "pyinstaller" / "mufinder.spec"

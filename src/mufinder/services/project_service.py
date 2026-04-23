@@ -211,6 +211,142 @@ class ProjectService:
         """Delete one persisted comparison table from the current document."""
         document.comparison_tables.pop(table_id, None)
 
+    def record_job_submission(
+        self,
+        document: ProjectDocument,
+        *,
+        jobs: Sequence[Job],
+        execution_target: str,
+    ) -> None:
+        """Append one provenance milestone for a user submission action."""
+
+        submitted_jobs = [job for job in jobs if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}]
+        if not submitted_jobs:
+            return
+
+        workflow_stage = submitted_jobs[0].workflow_stage if len({job.workflow_stage for job in submitted_jobs}) == 1 else None
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="submit_jobs",
+                workflow_stage=workflow_stage,
+                actor="user",
+                description=f"Submitted {len(submitted_jobs)} job(s) to {execution_target}",
+                parameters={
+                    "execution_target": execution_target,
+                    "job_count": len(submitted_jobs),
+                    "job_labels": [job.label for job in submitted_jobs],
+                },
+                output_entity_ids=[job.id for job in submitted_jobs],
+            ),
+        )
+
+    def record_job_terminal_event(
+        self,
+        document: ProjectDocument,
+        *,
+        action: str,
+        job: Job,
+        result: Result | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Append one provenance milestone for a terminal job outcome."""
+
+        parameters: dict[str, Any] = {
+            "job_label": job.label,
+            "calc_type": job.calc_type,
+            "execution_target": job.execution_target,
+        }
+        if result is not None:
+            data = result.data if isinstance(result.data, dict) else {}
+            total_energy = data.get("total_energy")
+            max_force = data.get("max_force")
+            warnings = data.get("warnings", [])
+            if total_energy is not None:
+                parameters["result_total_energy"] = total_energy
+            if max_force is not None:
+                parameters["result_max_force"] = max_force
+            if isinstance(warnings, list):
+                parameters["warnings_count"] = len(warnings)
+            if result.derived_structure_ids:
+                parameters["derived_structure_count"] = len(result.derived_structure_ids)
+        if error_message:
+            parameters["error_message"] = error_message
+
+        output_entity_ids: list[UUID] = [job.id]
+        if result is not None:
+            output_entity_ids.append(result.id)
+            output_entity_ids.extend(result.derived_structure_ids)
+
+        descriptions = {
+            "job_completed": f"Completed calculation {job.label}",
+            "job_failed": f"Calculation {job.label} failed",
+            "job_stopped": f"Calculation {job.label} stopped",
+            "job_cancelled": f"Cancelled calculation {job.label}",
+        }
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action=action,
+                workflow_stage=job.workflow_stage,
+                actor="system",
+                description=descriptions.get(action, job.label),
+                parameters=parameters,
+                output_entity_ids=output_entity_ids,
+                job_id=job.id,
+            ),
+        )
+
+    def record_job_reset(
+        self,
+        document: ProjectDocument,
+        *,
+        job: Job,
+        cleaned_output_directory: bool,
+    ) -> None:
+        """Append one provenance milestone when a job is reset for resubmission."""
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="job_reset",
+                workflow_stage=job.workflow_stage,
+                actor="user",
+                description=f"Reset calculation {job.label} for resubmission",
+                parameters={
+                    "job_label": job.label,
+                    "calc_type": job.calc_type,
+                    "execution_target": job.execution_target,
+                    "cleaned_output_directory": cleaned_output_directory,
+                },
+                output_entity_ids=[job.id],
+                job_id=job.id,
+            ),
+        )
+
+    def record_comparison_table_created(
+        self,
+        document: ProjectDocument,
+        *,
+        table: ComparisonTable,
+    ) -> None:
+        """Append one provenance milestone when a comparison table is created."""
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="create_comparison_table",
+                actor="user",
+                description=f"Created comparison table '{table.label}'",
+                parameters={
+                    "table_label": table.label,
+                    "dft_structure_count": len(table.dft_structure_ids),
+                },
+                input_entity_ids=[table.experimental_structure_id] if table.experimental_structure_id is not None else [],
+                output_entity_ids=[table.id, *table.dft_structure_ids],
+            ),
+        )
+
     @staticmethod
     def _identity_supercell_matrix() -> list[list[int]]:
         return [[int(value) for value in row] for row in _IDENTITY_SUPERCELL_MATRIX]

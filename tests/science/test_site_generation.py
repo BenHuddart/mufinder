@@ -132,6 +132,24 @@ def test_generate_random_sites_raises_when_requested_count_cannot_be_met() -> No
         )
 
 
+def test_generate_random_sites_can_return_partial_results_when_enabled() -> None:
+    lattice = [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]
+
+    points, attempts = generate_random_sites(
+        lattice_vectors=lattice,
+        host_positions_frac=[],
+        count=200,
+        min_muon_muon=0.8,
+        min_muon_atom=0.0,
+        max_attempts=5000,
+        seed=7,
+        allow_partial=True,
+    )
+
+    assert 0 < len(points) < 200
+    assert attempts == 5000
+
+
 def test_generate_random_sites_by_distance_fills_until_attempt_limit() -> None:
     lattice = [[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]]
     host_positions = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]

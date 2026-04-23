@@ -213,6 +213,68 @@ def test_reset_failed_job_allows_stopped_jobs(tmp_path: Path) -> None:
     assert job.num_processes is None
 
 
+def test_record_job_submission_appends_one_provenance_milestone(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "job_submission_log.mufinder", "JobSubmissionLog")
+    job = service.add_job(
+        doc,
+        label="Conv300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+
+    service.submit_job(job)
+    service.record_job_submission(doc, jobs=[job], execution_target="local")
+
+    assert doc.provenance[-1].action == "submit_jobs"
+    assert doc.provenance[-1].parameters["job_labels"] == ["Conv300"]
+    assert doc.provenance[-1].parameters["execution_target"] == "local"
+
+
+def test_record_job_terminal_events_and_reset_append_provenance(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "job_terminal_log.mufinder", "JobTerminalLog")
+    job = service.add_job(
+        doc,
+        label="Relax1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    result = Result(
+        result_type=job.calc_type,
+        data={"total_energy": -500.0, "max_force": 0.03, "warnings": ["minor"]},
+        derived_structure_ids=[uuid4()],
+    )
+
+    service.record_job_terminal_event(doc, action="job_completed", job=job, result=result)
+    service.record_job_terminal_event(doc, action="job_failed", job=job, error_message="Submission failed")
+    service.record_job_reset(doc, job=job, cleaned_output_directory=True)
+
+    assert [record.action for record in doc.provenance[-3:]] == ["job_completed", "job_failed", "job_reset"]
+    assert doc.provenance[-3].parameters["result_total_energy"] == -500.0
+    assert doc.provenance[-3].parameters["derived_structure_count"] == 1
+    assert doc.provenance[-2].parameters["error_message"] == "Submission failed"
+    assert doc.provenance[-1].parameters["cleaned_output_directory"] is True
+
+
+def test_lifecycle_transitions_do_not_append_intermediate_provenance(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "job_transition_no_log.mufinder", "JobTransitionNoLog")
+    job = service.add_job(
+        doc,
+        label="NoJournalNoise",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+
+    service.submit_job(job)
+    service.mark_job_queued(job, remote_job_id="123")
+    service.start_job(job)
+    service.mark_job_retrieving(job)
+
+    assert doc.provenance == []
+
+
 def test_job_num_processes_roundtrip(tmp_path: Path) -> None:
     service = ProjectService()
     root = tmp_path / "job_processes_roundtrip.mufinder"

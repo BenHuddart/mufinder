@@ -51,6 +51,7 @@ def test_uep_widget_programmatic_defaults_and_source_updates_do_not_emit_form_st
 
     assert emitted == []
     assert widget.selected_source_structure_id() == "relaxed"
+    assert widget._project_default_cutoff.text() == "500 eV"
 
 
 def test_uep_widget_supercell_dropdown_lists_project_cells(qapp) -> None:

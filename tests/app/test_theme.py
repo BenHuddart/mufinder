@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QTableWidget
+from PySide6.QtWidgets import QTableWidget, QTreeWidget, QTreeWidgetItem
 
 from mufinder.app import theme as theme_module
 
@@ -44,6 +44,8 @@ def test_apply_theme_sets_active_palette(qapp) -> None:
     assert "QToolButton#sectionToggleButton" in stylesheet
     assert 'QTableWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last' in stylesheet
     assert 'QTableWidget[hasVisibleVerticalHeader="true"] QHeaderView::section:horizontal:first' in stylesheet
+    assert 'QTreeWidget[squareTopCorners="true"]' in stylesheet
+    assert 'QTreeWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last' in stylesheet
     assert "QComboBox::drop-down" in stylesheet
     assert "QComboBox::down-arrow" in stylesheet
     assert "QSpinBox::up-button" in stylesheet
@@ -115,3 +117,33 @@ def test_use_square_top_table_corners_sets_property(qapp) -> None:
     theme_module.use_square_top_table_corners(table)
 
     assert table.property("squareTopCorners") == "true"
+
+
+def test_tree_corner_property_tracks_vertical_scrollbar(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    tree = QTreeWidget()
+    tree.setColumnCount(1)
+    tree.setHeaderLabels(["Name"])
+    tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    tree.resize(320, 140)
+    tree.show()
+    qapp.processEvents()
+
+    assert tree.property("hasVerticalScrollbar") == "false"
+    assert tree.property("hasVisibleVerticalHeader") == "false"
+
+    for index in range(80):
+        tree.addTopLevelItem(QTreeWidgetItem([f"Row {index}"]))
+    qapp.processEvents()
+    assert tree.property("hasVerticalScrollbar") == "true"
+
+
+def test_use_square_top_table_corners_supports_tree_widgets(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    tree = QTreeWidget()
+    tree.setColumnCount(1)
+    theme_module.use_square_top_table_corners(tree)
+
+    assert tree.property("squareTopCorners") == "true"

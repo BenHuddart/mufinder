@@ -211,6 +211,19 @@ Each significant action records:
 
 Provenance must support reconstruction of what was run, with which inputs and options.
 
+Journal presentation requirements:
+
+- the `provenance_log` workflow route must surface as a user-facing `Journal` page
+- the Journal must be derived from persisted `provenance.jsonl` records rather than inferred job history
+- Journal entries must be grouped by local calendar day with human-readable date headers and no precise times
+- the default presentation must be curated and narrative-focused rather than exposing a raw append-only ledger
+- the curated Journal must include major workflow actions, calculation submission milestones, comparison-table creation, and terminal calculation outcomes
+- intermediate runtime states such as queued, running, and retrieving must not be journalized by default
+- the Journal UI must follow MuFinder branding as a notebook-style expedition record, using existing palette and typography tokens
+- completion and warning/failure milestones may use stamp-style affordances to reinforce workflow progress
+- Journal export must support plain text by default and Markdown as a secondary format
+- export output must mirror the curated Journal rather than dumping raw JSON or JSONL provenance rows
+
 ## 11. UI Architecture
 
 Recommended architecture:
@@ -377,7 +390,6 @@ Canonical structure (abridged):
 - `imports/`
 - `files/`
 - `exports/`
-- `.autosave/`
 
 ## 14. Migration Strategy
 
