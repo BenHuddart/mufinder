@@ -2851,6 +2851,7 @@ class MainWindow(QMainWindow):
                 continue
 
             try:
+                job.execution_target = "local"
                 self._project_service.submit_job(job)
             except ValueError:
                 continue
@@ -2992,6 +2993,7 @@ class MainWindow(QMainWindow):
         submitted = 0
         submitted_jobs: list[Job] = []
         failed_submit: list[str] = []
+        skipped_submit: list[str] = []
         remote_target_by_job: dict[UUID, str] = {}
         existing_remote_targets: list[str] = []
         for index, job in enumerate(defined_jobs, start=1):
@@ -3043,6 +3045,13 @@ class MainWindow(QMainWindow):
                         self._refresh_jobs_table()
                         QApplication.processEvents()
                         continue
+                elif choice in {"no", "no_to_all"}:
+                    skipped_submit.append(
+                        f"- {job.label}: Submission skipped because remote directory already exists ({remote_target})"
+                    )
+                    self._refresh_jobs_table()
+                    QApplication.processEvents()
+                    continue
 
             try:
                 self._project_service.submit_job(job)
@@ -3117,6 +3126,14 @@ class MainWindow(QMainWindow):
                 "Cluster submission failed",
                 "Some jobs failed to submit:\n" + "\n".join(failed_submit),
                 informative_text="Open Details to inspect the full submission failures.",
+            )
+
+        if skipped_submit:
+            QMessageBox.information(
+                self,
+                "Cluster submission skipped",
+                "Some jobs were not submitted because their remote directories already exist:\n"
+                + "\n".join(skipped_submit),
             )
 
         if submitted:

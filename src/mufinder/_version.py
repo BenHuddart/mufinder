@@ -12,15 +12,25 @@ _ROOT = Path(__file__).resolve().parents[2]
 _PYPROJECT = _ROOT / "pyproject.toml"
 
 
+def _read_pyproject_version() -> str | None:
+    """Return the source-tree version when running from a checkout."""
+
+    if not _PYPROJECT.is_file():
+        return None
+    match = _VERSION_RE.search(_PYPROJECT.read_text(encoding="utf-8"))
+    if match:
+        return match.group(1)
+    return None
+
+
 @lru_cache(maxsize=1)
 def current_version() -> str:
     """Return the installed package version, falling back to pyproject metadata."""
 
+    if (source_version := _read_pyproject_version()) is not None:
+        return source_version
+
     try:
         return installed_version("mufinder")
     except PackageNotFoundError:
-        if _PYPROJECT.is_file():
-            match = _VERSION_RE.search(_PYPROJECT.read_text(encoding="utf-8"))
-            if match:
-                return match.group(1)
         return "0.0.0"

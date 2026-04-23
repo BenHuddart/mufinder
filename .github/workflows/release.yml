@@ -227,7 +227,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - publish
-    if: github.event_name == 'push' && always() && needs.publish.result != 'failure'
+    if: github.event_name == 'push' && needs.publish.result == 'success'
     steps:
       - name: Ensure release app credentials are configured
         env:

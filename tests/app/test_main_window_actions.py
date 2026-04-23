@@ -1547,6 +1547,56 @@ def test_main_window_submit_jobs_locally_uses_definition_output_for_non_converge
     window.close()
 
 
+def test_main_window_submit_jobs_locally_resets_execution_target_after_cluster_reset(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "local_submit_resets_target.mufinder", "LocalSubmitResetsTarget")
+
+    job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+        execution_target="my-cluster",
+    )
+    output_dir = doc.project_root / "files" / "convergence_cutoff" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+    job.status = JobStatus.FAILED
+    job.remote_job_id = "12345"
+    job.remote_directory = "/remote/conv_ecut_300"
+    service.reset_failed_job(job)
+    window._document = doc
+
+    monkeypatch.setattr(
+        main_window_module,
+        "load_castep_setup",
+        lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path=""),
+    )
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return self.DialogCode.Accepted
+
+        def config(self):
+            return SimpleNamespace(parallel=False, max_concurrent=1, num_cores=1)
+
+    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(window._local_runner, "submit", lambda **kwargs: None)
+
+    window._submit_jobs_locally([job])
+
+    assert job.execution_target == "local"
+    assert doc.provenance[-1].parameters["execution_target"] == "local"
+    window.close()
+
+
 def test_main_window_submit_jobs_locally_warns_if_castep_unconfigured(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2905,7 +2955,106 @@ def test_main_window_submit_jobs_on_cluster_no_to_all_skips_deletion(
     window._submit_jobs_on_cluster([job])
 
     assert deleted == []
-    assert len(submitted) == 1
+    assert len(submitted) == 0
+    assert job.status == JobStatus.DEFINED
+    window.close()
+
+
+def test_main_window_submit_jobs_on_cluster_no_skips_submission(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_no_skip.mufinder", "ClusterNo")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    output_dir = doc.project_root / "files" / "convergence_cutoff"
+    (output_dir / job.label).mkdir(parents=True, exist_ok=True)
+    service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=output_dir,
+        job_ids_by_cutoff={main_window_module.MainWindow._cutoff_key(300.0): str(job.id)},
+    )
+    window._document = doc
+
+    cluster = ClusterConfig(
+        name="alpha",
+        hostname="alpha.example",
+        username="alice",
+        auth_method="key",
+        key_path="/tmp/key",
+        default_working_directory="/remote/work",
+        queue_system="slurm",
+        cores_per_node=64,
+        default_walltime="01:00:00",
+        template_script_path="/templates/slurm.sh",
+    )
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 1
+
+        def config(self):
+            return SimpleNamespace(
+                cluster_name="alpha",
+                working_directory="/remote/work",
+                username="alice",
+                job_name_prefix="conv",
+                num_processes=16,
+                walltime="01:00:00",
+            )
+
+        def password(self) -> str:
+            return ""
+
+    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
+
+    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "remote_job_directory",
+        lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
+    )
+    monkeypatch.setattr(window._cluster_runner, "remote_directory_exists", lambda _path: True)
+    deleted: list[str] = []
+    monkeypatch.setattr(window._cluster_runner, "remove_remote_directory", lambda path: deleted.append(path))
+    submitted: list[dict[str, object]] = []
+    monkeypatch.setattr(window._cluster_runner, "submit", lambda **kwargs: submitted.append(kwargs) or "99123")
+    monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "no")
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+
+    window._submit_jobs_on_cluster([job])
+
+    assert deleted == []
+    assert len(submitted) == 0
+    assert job.status == JobStatus.DEFINED
     window.close()
 
 
