@@ -93,7 +93,7 @@ class MuonSite:
 
     id: UUID = field(default_factory=uuid4)
     label: str = ""
-    status: str = "candidate"
+    status: str = "generated"
     fractional_position: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     cartesian_position: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     generation_method: str | None = None

@@ -394,6 +394,13 @@ def _shutdown_pyvista_widget(widget: object | None) -> None:
 
     if widget is None:
         return
+    shutdown = getattr(widget, "shutdown", None)
+    if callable(shutdown):
+        try:
+            shutdown()
+            return
+        except Exception:  # noqa: BLE001
+            pass
 
     plotter = getattr(widget, "plotter", None)
     if plotter is None:
@@ -1050,6 +1057,7 @@ class _PyVistaCanvas(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._closed = False
         pv, qt_interactor = _pyvista_modules()
         if pv is None or qt_interactor is None:
             raise RuntimeError("PyVista backend requested but PyVista is not installed.")
@@ -1074,7 +1082,56 @@ class _PyVistaCanvas(QWidget):
         return self._plotter
 
     def draw_idle(self) -> None:
+        if self._closed or self._plotter is None:
+            return
         self._plotter.render()
+
+    def shutdown(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        plotter = self._plotter
+        self._plotter = None
+        self.blockSignals(True)
+        self.setUpdatesEnabled(False)
+        if plotter is None:
+            return
+        try:
+            plotter.blockSignals(True)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            plotter.setUpdatesEnabled(False)
+            plotter.hide()
+        except Exception:  # noqa: BLE001
+            pass
+        render_timer = getattr(plotter, "render_timer", None)
+        if render_timer is not None:
+            try:
+                render_timer.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        render_window = getattr(plotter, "ren_win", None)
+        if render_window is not None:
+            try:
+                render_window.SetAbortRender(1)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                render_window.Finalize()
+            except Exception:  # noqa: BLE001
+                pass
+        close = getattr(plotter, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            plotter.setParent(None)
+            plotter.deleteLater()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 class _PyVistaTriadCanvas(QWidget):
@@ -1082,6 +1139,7 @@ class _PyVistaTriadCanvas(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._closed = False
         pv, qt_interactor = _pyvista_modules()
         if pv is None or qt_interactor is None:
             raise RuntimeError("PyVista triad requested but PyVista is not installed.")
@@ -1249,7 +1307,56 @@ class _PyVistaTriadCanvas(QWidget):
         self._build_axes_scene()
 
     def draw_idle(self) -> None:
+        if self._closed or self._plotter is None:
+            return
         self._plotter.render()
+
+    def shutdown(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        plotter = self._plotter
+        self._plotter = None
+        self.blockSignals(True)
+        self.setUpdatesEnabled(False)
+        if plotter is None:
+            return
+        try:
+            plotter.blockSignals(True)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            plotter.setUpdatesEnabled(False)
+            plotter.hide()
+        except Exception:  # noqa: BLE001
+            pass
+        render_timer = getattr(plotter, "render_timer", None)
+        if render_timer is not None:
+            try:
+                render_timer.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        render_window = getattr(plotter, "ren_win", None)
+        if render_window is not None:
+            try:
+                render_window.SetAbortRender(1)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                render_window.Finalize()
+            except Exception:  # noqa: BLE001
+                pass
+        close = getattr(plotter, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            plotter.setParent(None)
+            plotter.deleteLater()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 class AtomicStructureViewer(QWidget):
@@ -1410,10 +1517,35 @@ class AtomicStructureViewer(QWidget):
         if self._shutting_down:
             return
         self._shutting_down = True
+        self.blockSignals(True)
+        self.setUpdatesEnabled(False)
 
         timer = getattr(self, "_pyvista_camera_timer", None)
         if timer is not None:
             timer.stop()
+            timeout = getattr(timer, "timeout", None)
+            try:
+                if timeout is not None:
+                    timeout.disconnect(self._poll_pyvista_camera)
+            except (RuntimeError, TypeError):
+                pass
+
+        canvas = getattr(self, "_canvas", None)
+        if canvas is not None:
+            remove_filter = getattr(canvas, "removeEventFilter", None)
+            try:
+                if callable(remove_filter):
+                    remove_filter(self)
+            except RuntimeError:
+                pass
+            plotter = getattr(canvas, "plotter", None)
+            if plotter is not None:
+                remove_filter = getattr(plotter, "removeEventFilter", None)
+                try:
+                    if callable(remove_filter):
+                        remove_filter(self)
+                except RuntimeError:
+                    pass
 
         _shutdown_pyvista_widget(self._triad_canvas)
         _shutdown_pyvista_widget(self._canvas)

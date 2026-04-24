@@ -307,16 +307,19 @@ Startup responsiveness requirements:
 
 Generation methods:
 
-- random constrained filling
+- random constrained filling, either by direct muon-muon separation or by a
+  target number of initial positions with automatic spacing estimation
 - near-element placement
 - manual site entry (fractional or Cartesian)
+- UEP cluster source rows from saved UEP analysis state
 
 Current implemented generation constraints:
 
 - periodic minimum-image muon-muon distance
 - periodic minimum-image muon-atom distance
 - attempt-cap controlled sampling
-- optional deterministic seed
+- symmetry-equivalent random-position reservation
+- internal deterministic seed support for regression tests
 
 ### 12.4 Site Analysis and Clustering
 

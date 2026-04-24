@@ -356,6 +356,16 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
             "locked_in_workflows": ("uep",),
             "default_value": False,
         },
+        "charge": {
+            "label": "Charge",
+            "description": "Total system charge.",
+            "category": "electronic",
+            "widget_hint": "spinbox_int",
+            "advanced_workflows": ("muon_relaxation",),
+            "default_value": 0,
+            "value_type": "int",
+            "step": 1,
+        },
         "continuation": {
             "label": "Continuation",
             "description": "Continuation source for restarting from an earlier CASTEP run.",

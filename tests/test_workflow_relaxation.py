@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from mufinder.domain.models import Structure
+from mufinder.castep_io import write_cell
 from mufinder.workflow.bridge import structure_to_spec
 from mufinder.workflow.relaxation import RelaxationJobConfig, expand_relaxation_jobs
 
@@ -41,6 +42,7 @@ def test_expand_relaxation_jobs_sets_geometry_task_and_row_controls() -> None:
 
     scalar_map = {keyword.name: keyword.value for keyword in job.cell_file.scalars}
     assert scalar_map["fix_all_cell"] is False
+    assert "FIX_ALL_CELL : FALSE" in write_cell(job.cell_file)
     assert job.cell_file.kpoint_mp_grid == (2, 2, 2)
     assert job.provenance["label"] == "row1"
 

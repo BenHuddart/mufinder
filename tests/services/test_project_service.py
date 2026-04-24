@@ -12,6 +12,7 @@ from ase.io import write as ase_write
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, MuonSite, Result, Structure
 from mufinder.castep_io.types import ValueWithUnit
+from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.project_service import ProjectService
 
 
@@ -46,6 +47,7 @@ def test_create_save_and_load_roundtrip(tmp_path: Path) -> None:
         },
     )
     assert len(generated) == 5
+    assert {site.status for site in generated} == {"generated"}
 
     service.save_project(doc)
 
@@ -69,8 +71,355 @@ def test_manual_generation_cartesian_conversion(tmp_path: Path) -> None:
         parameters={"coord_system": "cartesian", "x": 2.0, "y": 3.0, "z": 4.0},
     )
     site = sites[0]
+    assert site.status == "generated"
     assert site.fractional_position == pytest.approx([0.2, 0.3, 0.4])
     assert site.cartesian_position == pytest.approx([2.0, 3.0, 4.0])
+
+
+def test_random_generation_by_target_count_estimates_spacing(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "random_count.mufinder", "RandomCount")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={
+            "selection_mode": "count",
+            "count": 3,
+            "min_muon_atom": 0.8,
+            "max_attempts": 50000,
+            "seed": "7",
+            "include_symmetry_equivalents": False,
+        },
+    )
+
+    assert len(sites) == 3
+    assert sites[0].properties["selection_mode"] == "count"
+    assert sites[0].properties["target_count"] == 3
+    assert sites[0].properties["estimated_min_muon_muon"] > 0.0
+    assert sites[0].properties["min_muon_muon"] > 0.0
+
+
+def test_candidate_numbering_is_scoped_to_label_prefix(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "prefix_numbering.mufinder", "PrefixNumbering")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    for index in range(1, 5):
+        doc.sites[uuid4()] = MuonSite(
+            label=f"UEP Cluster {index}",
+            status="generated",
+            generation_method="uep_cluster",
+        )
+
+    random_sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={
+            "selection_mode": "count",
+            "count": 2,
+            "min_muon_atom": 0.8,
+            "max_attempts": 50000,
+            "seed": "7",
+            "include_symmetry_equivalents": False,
+        },
+    )
+
+    assert [site.label for site in random_sites] == ["Random Site 1", "Random Site 2"]
+
+    more_random_sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={
+            "selection_mode": "count",
+            "count": 1,
+            "min_muon_atom": 0.8,
+            "max_attempts": 50000,
+            "seed": "11",
+            "include_symmetry_equivalents": False,
+        },
+    )
+
+    assert [site.label for site in more_random_sites] == ["Random Site 3"]
+
+
+def test_random_generation_reports_project_service_progress(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "random_progress.mufinder", "RandomProgress")
+    service.add_structure(doc, _host_structure())
+    updates: list[tuple[int, int]] = []
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={
+            "selection_mode": "count",
+            "count": 2,
+            "min_muon_atom": 0.8,
+            "max_attempts": 50000,
+            "seed": "7",
+            "include_symmetry_equivalents": False,
+        },
+        progress_callback=lambda completed, total: updates.append((completed, total)),
+    )
+
+    assert len(sites) == 2
+    assert updates[0] == (0, 2)
+    assert updates[-1] == (2, 2)
+
+
+def test_random_generation_by_separation_fills_until_attempt_limit(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "random_spacing.mufinder", "RandomSpacing")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={
+            "selection_mode": "separation",
+            "min_muon_muon": 2.0,
+            "min_muon_atom": 0.8,
+            "max_attempts": 1000,
+            "seed": "11",
+            "include_symmetry_equivalents": False,
+        },
+    )
+
+    assert len(sites) > 0
+    assert all(site.properties["selection_mode"] == "separation" for site in sites)
+    assert all(site.properties["min_muon_muon"] == pytest.approx(2.0) for site in sites)
+
+
+def test_attached_element_generation_uses_muons_per_atom(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "attached_element.mufinder", "AttachedElement")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="near_element",
+        parameters={
+            "element": "O",
+            "muons_per_atom": 2,
+            "bond_distance": 1.0,
+            "min_muon_atom": 0.6,
+        },
+    )
+
+    assert len(sites) == 4
+    assert all(site.generation_method == "near_element" for site in sites)
+    assert all(site.properties["strategy"] == "attached" for site in sites)
+    assert all(site.properties["muons_per_atom"] == 2 for site in sites)
+    assert all("min_muon_muon" not in site.properties for site in sites)
+
+
+def test_uep_cluster_generation_creates_sites_and_rejects_duplicates(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_cluster_generation.mufinder", "UEPClusterGeneration")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    selection = {
+        "source_key": "job-1:cluster:1:cluster:0",
+        "label": "UEP Cluster 1",
+        "generation_method": "uep_cluster",
+        "source_structure_id": str(host.id),
+        "fractional_position": [0.1, 0.2, 0.3],
+        "cartesian_position": [1.0, 2.0, 3.0],
+        "properties": {
+            "source_job_label": "uep_row_1",
+            "source_job_id": "job-1",
+            "cluster_index": 1,
+            "cluster_size": 2,
+            "representative_index": 0,
+            "member_index": 0,
+            "selection_kind": "cluster",
+            "classification": "minimum",
+            "classical_energy_ev": -0.7,
+            "zero_point_energy_ev": 0.2,
+            "total_energy_ev": -0.5,
+            "clustering_method": "hier",
+        },
+    }
+
+    sites = service.generate_candidate_sites(doc, method="uep_clusters", parameters={"selections": [selection]})
+
+    assert len(sites) == 1
+    site = sites[0]
+    assert site.generation_method == "uep_cluster"
+    assert site.source_structure_id == host.id
+    assert site.fractional_position == pytest.approx([0.1, 0.2, 0.3])
+    assert site.properties["uep_source_key"] == "job-1:cluster:1:cluster:0"
+    assert site.properties["classification"] == "minimum"
+
+    with pytest.raises(SiteGenerationError, match="already present"):
+        service.generate_candidate_sites(doc, method="uep_clusters", parameters={"selections": [selection]})
+
+
+def test_uep_cluster_generation_creates_one_site_per_selection(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_cluster_multi_generation.mufinder", "UEPClusterMultiGeneration")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    selections = [
+        {
+            "source_key": f"job-1:cluster:{index}:cluster:{index - 1}",
+            "label": f"UEP Cluster {index}",
+            "generation_method": "uep_cluster",
+            "source_structure_id": str(host.id),
+            "fractional_position": [0.1 * index, 0.2, 0.3],
+            "cartesian_position": [float(index), 2.0, 3.0],
+            "properties": {
+                "source_job_label": "uep_row_1",
+                "source_job_id": "job-1",
+                "cluster_index": index,
+                "cluster_size": index + 1,
+                "representative_index": index - 1,
+                "member_index": index - 1,
+                "selection_kind": "cluster",
+                "classification": "minimum",
+                "classical_energy_ev": -0.7 - index,
+                "clustering_method": "hier",
+            },
+        }
+        for index in (1, 2, 3)
+    ]
+
+    sites = service.generate_candidate_sites(doc, method="uep_clusters", parameters={"selections": selections})
+
+    assert len(sites) == 3
+    assert len(doc.sites) == 3
+    assert [site.properties["uep_source_key"] for site in sites] == [
+        "job-1:cluster:1:cluster:0",
+        "job-1:cluster:2:cluster:1",
+        "job-1:cluster:3:cluster:2",
+    ]
+    assert [site.label for site in sites] == ["UEP Cluster 1", "UEP Cluster 2", "UEP Cluster 3"]
+    assert [site.fractional_position[0] for site in sites] == pytest.approx([0.1, 0.2, 0.3])
+
+
+def test_remove_candidate_sites_only_deletes_generated_sites(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "remove_candidates.mufinder", "RemoveCandidates")
+    candidate = MuonSite(label="Candidate", status="generated")
+    relaxed = MuonSite(label="Relaxed", status="relaxed")
+    doc.sites[candidate.id] = candidate
+    doc.sites[relaxed.id] = relaxed
+
+    removed = service.remove_candidate_sites(doc, [candidate.id, relaxed.id, uuid4()])
+
+    assert [site.id for site in removed] == [candidate.id]
+    assert candidate.id not in doc.sites
+    assert relaxed.id in doc.sites
+    assert doc.provenance[-1].action == "delete_candidates"
+    assert doc.provenance[-1].input_entity_ids == [candidate.id]
+
+
+def test_cluster_candidate_positions_updates_selected_sites_to_anchor_orbit(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_candidates.mufinder", "ClusterCandidates")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    site = MuonSite(
+        label="Candidate",
+        status="generated",
+        fractional_position=[0.1, 0.2, 0.3],
+        cartesian_position=[0.5, 1.0, 1.5],
+    )
+    doc.sites[site.id] = site
+
+    updated = service.cluster_candidate_positions(
+        doc,
+        [site.id],
+        anchor_fractional=[0.9, 0.8, 0.7],
+    )
+
+    assert updated == [site]
+    assert site.fractional_position == pytest.approx([0.9, 0.8, 0.7])
+    assert site.cartesian_position == pytest.approx([4.5, 4.0, 3.5])
+    assert doc.provenance[-1].action == "cluster_candidate_positions"
+    assert doc.provenance[-1].parameters["anchor_fractional"] == pytest.approx([0.9, 0.8, 0.7])
+
+
+def test_cluster_candidate_positions_does_not_rewrite_staged_sites(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_staged_candidates.mufinder", "ClusterStagedCandidates")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    generated = MuonSite(
+        label="Generated",
+        status="generated",
+        fractional_position=[0.1, 0.2, 0.3],
+    )
+    staged = MuonSite(
+        label="Staged",
+        status="staged",
+        fractional_position=[0.2, 0.3, 0.4],
+    )
+    doc.sites[generated.id] = generated
+    doc.sites[staged.id] = staged
+
+    updated = service.cluster_candidate_positions(
+        doc,
+        [generated.id, staged.id],
+        anchor_fractional=[0.9, 0.8, 0.7],
+    )
+
+    assert updated == [generated]
+    assert generated.fractional_position == pytest.approx([0.9, 0.8, 0.7])
+    assert staged.fractional_position == pytest.approx([0.2, 0.3, 0.4])
+    assert doc.provenance[-1].parameters["site_labels"] == ["Generated"]
+
+
+def test_stage_generated_sites_allows_already_staged_sites(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "stage_sites.mufinder", "StageSites")
+    generated = MuonSite(label="Generated", status="generated")
+    staged = MuonSite(label="Staged", status="staged")
+    relaxed = MuonSite(label="Relaxed", status="relaxed")
+    doc.sites[generated.id] = generated
+    doc.sites[staged.id] = staged
+    doc.sites[relaxed.id] = relaxed
+
+    staged_sites = service.stage_generated_sites(doc, [generated.id, staged.id, relaxed.id])
+
+    assert [site.id for site in staged_sites] == [generated.id, staged.id]
+    assert generated.status == "staged"
+    assert staged.status == "staged"
+    assert relaxed.status == "relaxed"
+
+
+def test_load_project_normalizes_legacy_candidate_status(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "legacy_candidate_status.mufinder"
+    doc = service.create_project(root, "LegacyCandidateStatus")
+    site = MuonSite(label="Legacy", status="candidate")
+    doc.sites[site.id] = site
+    service.save_project(doc)
+
+    site_file = root / "entities" / "sites" / f"{site.id}.json"
+    text = site_file.read_text(encoding="utf-8")
+    site_file.write_text(text.replace('"status": "generated"', '"status": "candidate"'), encoding="utf-8")
+
+    loaded = service.load_project(root)
+
+    assert loaded.sites[site.id].status == "generated"
 
 
 def test_integrity_validation_detects_missing_references(tmp_path: Path) -> None:

@@ -290,8 +290,8 @@ def _generate_candidates_entry(record: ProvenanceRecord) -> JournalEntry:
     return _entry(
         record,
         stamp_kind="milestone",
-        title="Muon candidates generated",
-        body=f"Generated {count} candidate muon site(s) using {method}.",
+        title="Muon sites generated",
+        body=f"Generated {count} muon site(s) using {method}.",
     )
 
 
@@ -301,8 +301,8 @@ def _generation_partial_entry(record: ProvenanceRecord) -> JournalEntry:
     return _entry(
         record,
         stamp_kind="warning",
-        title="Candidate generation stopped short",
-        body=f"Requested {requested} candidate site(s) but only generated {generated}.",
+        title="Site generation stopped short",
+        body=f"Requested {requested} site(s) but only generated {generated}.",
     )
 
 

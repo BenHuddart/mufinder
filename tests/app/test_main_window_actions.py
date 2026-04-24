@@ -21,7 +21,7 @@ from mufinder.castep_setup import CastepSetup
 from mufinder.cluster_setup import ClusterConfig
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result, Structure
+from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result, Structure
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.services.project_service import ProjectService
@@ -263,9 +263,143 @@ def test_generate_requested_handles_errors(qapp, tmp_path: Path, monkeypatch: py
         raise SiteGenerationError("boom")
 
     monkeypatch.setattr(window._project_service, "generate_candidate_sites", boom)
-    window._on_generate_requested("random", {"count": 2})
+    window._on_generate_requested("manual", {"coord_system": "fractional", "x": 0.0, "y": 0.0, "z": 0.0})
 
     assert warnings == ["warning"]
+    window.close()
+
+
+def test_delete_muon_candidates_requested_removes_selected_rows(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    window._document = service.create_project(tmp_path / "delete_candidate_ui.mufinder", "DeleteCandidateUI")
+    candidate = MuonSite(label="Candidate", status="generated", generation_method="manual")
+    relaxed = MuonSite(label="Relaxed", status="relaxed", generation_method="manual")
+    window._document.sites[candidate.id] = candidate
+    window._document.sites[relaxed.id] = relaxed
+
+    window._on_delete_muon_candidates_requested([str(candidate.id), str(relaxed.id), "not-a-uuid"])
+
+    assert candidate.id not in window._document.sites
+    assert relaxed.id in window._document.sites
+    assert window._muon_generation_view._site_table.rowCount() == 0
+    window.close()
+
+
+def test_cluster_muon_positions_requested_updates_rows(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    window._document = service.create_project(tmp_path / "cluster_candidate_ui.mufinder", "ClusterCandidateUI")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(window._document, host)
+    site = MuonSite(
+        label="Candidate",
+        status="generated",
+        generation_method="manual",
+        fractional_position=[0.1, 0.2, 0.3],
+        cartesian_position=[0.5, 1.0, 1.5],
+    )
+    window._document.sites[site.id] = site
+
+    window._on_cluster_muon_positions_requested(
+        {
+            "site_ids": [str(site.id)],
+            "anchor_fractional": [0.9, 0.8, 0.7],
+        }
+    )
+
+    assert site.fractional_position == pytest.approx([0.9, 0.8, 0.7])
+    assert window._muon_generation_view._site_table.item(0, 3).text() == "0.9000"
+    assert window._muon_generation_view._selected_site_ids() == [str(site.id)]
+    window.close()
+
+
+def test_muon_generation_table_uses_natural_candidate_label_order(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    window._document = service.create_project(tmp_path / "candidate_order_ui.mufinder", "CandidateOrderUI")
+    for label in ("Random Site 1", "Random Site 10", "Random Site 2"):
+        site = MuonSite(label=label, status="generated", generation_method="random")
+        window._document.sites[site.id] = site
+
+    window._refresh_muon_generation_table()
+
+    table = window._muon_generation_view._site_table
+    assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
+        "Random Site 1",
+        "Random Site 2",
+        "Random Site 10",
+    ]
+    window.close()
+
+
+def test_random_generation_runs_in_worker_and_updates_estimated_distance(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    window._document = service.create_project(tmp_path / "async_random_ui.mufinder", "AsyncRandomUI")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(window._document, host)
+    window._muon_generation_view._random_by_count.setChecked(True)
+    window._muon_generation_view._random_count.setValue(1)
+
+    window._on_generate_requested(
+        "random",
+        {
+            "selection_mode": "count",
+            "count": 1,
+            "min_muon_atom": 0.8,
+            "max_attempts": 5000,
+            "seed": "3",
+            "include_symmetry_equivalents": False,
+        },
+    )
+
+    assert window._muon_generation_thread is not None
+    assert window._muon_generation_view._generation_progress.maximum() == 0
+
+    for _ in range(2000):
+        qapp.processEvents()
+        if window._muon_generation_thread is None:
+            break
+
+    assert window._muon_generation_thread is None
+    assert len(window._document.sites) == 1
+    site = next(iter(window._document.sites.values()))
+    assert site.properties["estimated_min_muon_muon"] > 0.0
+    assert window._muon_generation_view._random_min_muon_muon.value() == pytest.approx(
+        site.properties["estimated_min_muon_muon"]
+    )
+    assert window._muon_generation_view._generation_progress.value() == 1
+    assert window._muon_generation_view._generation_progress.maximum() == 1
+    assert window._muon_generation_view._generation_progress.format() == "Generated 1 site(s)"
+    assert window._muon_generation_view._generate_btn.isEnabled()
+    window.close()
+
+
+def test_random_generation_progress_text_omits_predicted_total_for_separation_mode(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    window._document = service.create_project(tmp_path / "random_progress_text.mufinder", "RandomProgressText")
+
+    window._on_generation_progress_changed("random", 6, 13, "separation")
+
+    assert window._muon_generation_view._generation_progress.value() == 6
+    assert window._muon_generation_view._generation_progress.maximum() == 13
+    assert window._muon_generation_view._generation_progress.format() == "Generated %v sites"
+
+    window._on_generation_progress_changed("random", 6, 13, "count")
+
+    assert window._muon_generation_view._generation_progress.format() == "Generated %v/%m sites"
     window.close()
 
 
@@ -3483,6 +3617,414 @@ def test_main_window_job_output_directory_fallback_by_stage(qapp, tmp_path: Path
     window.close()
 
 
+def test_main_window_muon_job_uses_row_label_and_charge_seed_directory(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_seed_dir.mufinder", "MuonSeedDir")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    job = service.add_job(
+        doc,
+        label="Random Site 1",
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+    )
+    definition = CalculationDefinition(
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muon_relaxation",
+        parameters={
+            "output_directory": "files/muon_relaxation",
+            "job_ids_by_label": {"positivemuon:Random Site 1": str(job.id)},
+            "job_seed_names_by_label": {"positivemuon:Random Site 1": "positivemuon_Random_Site_1"},
+        },
+        input_structure_ids=[host.id],
+    )
+    doc.calculations[definition.id] = definition
+    window._document = doc
+
+    output_dir = doc.project_root / "files" / "muon_relaxation" / "positivemuon" / "positivemuon_Random_Site_1"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    assert job.label == "Random Site 1"
+    assert window._job_output_directory(job) == output_dir
+    assert window._job_seed_name(job) == "positivemuon_Random_Site_1"
+    assert window._cluster_workflow_directory_fragment([job]) == "muon_relaxation/positivemuon"
+    window.close()
+
+
+def test_materialize_muon_relaxation_filters_charge_qualified_selection(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_charge_selection.mufinder", "MuonChargeSelection")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    site_id = uuid4()
+    definition = CalculationDefinition(
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muon_relaxation",
+        parameters={
+            "configuration": {
+                "rows": [
+                    {
+                        "site_id": str(site_id),
+                        "label": "Shared Site",
+                        "initial_fractional_position": [0.1, 0.2, 0.3],
+                        "charge_state": "positive_muon",
+                    },
+                    {
+                        "site_id": str(site_id),
+                        "label": "Shared Site",
+                        "initial_fractional_position": [0.1, 0.2, 0.3],
+                        "charge_state": "muonium",
+                    },
+                ]
+            },
+            "output_directory": "files/muon_relaxation",
+            "job_ids_by_label": {},
+        },
+        input_structure_ids=[host.id],
+    )
+    doc.calculations[definition.id] = definition
+    doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    window._document = doc
+    save_calls: list[str] = []
+    original_save = window._project_service.save_project
+
+    def _save_project(document) -> None:
+        save_calls.append("save")
+        original_save(document)
+
+    window._project_service.save_project = _save_project
+
+    jobs = window._materialize_muon_relaxation_jobs(["muonium:Shared Site"])
+
+    assert len(jobs) == 1
+    assert save_calls == ["save"]
+    assert jobs[0].calc_type == "castep_muonium_relaxation"
+    assert definition.parameters["job_ids_by_label"] == {"muonium:Shared Site": str(jobs[0].id)}
+    assert "positivemuon:Shared Site" not in definition.parameters["job_ids_by_label"]
+    assert (
+        doc.project_root / "files" / "muon_relaxation" / "muonium" / "muonium_Shared_Site" / "muonium_Shared_Site.cell"
+    ).exists()
+    assert not (doc.project_root / "files" / "muon_relaxation" / "positivemuon").exists()
+    window.close()
+
+
+def test_muon_relaxation_staging_updates_memory_without_autosave(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_stage_autosave.mufinder", "MuonStageAutosave")
+    site = MuonSite(
+        label="Random Site 1",
+        status="generated",
+        fractional_position=[0.1, 0.2, 0.3],
+        generation_method="random",
+    )
+    doc.sites[site.id] = site
+    service.save_project(doc)
+    window._document = doc
+    save_calls: list[str] = []
+    original_save = window._project_service.save_project
+
+    def _save_project(document) -> None:
+        save_calls.append("save")
+        original_save(document)
+
+    window._project_service.save_project = _save_project
+
+    window._on_create_muon_relaxation_jobs_requested(str(site.id))
+
+    assert save_calls == []
+    assert site.status == "staged"
+    reloaded = service.load_project(doc.project_root)
+    assert reloaded.sites[site.id].status == "generated"
+    assert "muon_relaxation_form" not in reloaded.ui_state
+    window.close()
+
+
+def test_muon_relaxation_configuration_updates_memory_without_autosave(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_config_autosave.mufinder", "MuonConfigAutosave")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+    save_calls: list[str] = []
+    original_save = window._project_service.save_project
+
+    def _save_project(document) -> None:
+        save_calls.append("save")
+        original_save(document)
+
+    window._project_service.save_project = _save_project
+
+    window._on_muon_relaxation_configured(
+        main_window_module.MuonRelaxationConfig(
+            rows=(
+                main_window_module.MuonRelaxationRow(
+                    site_id=uuid4(),
+                    label="Random Site 1",
+                    initial_fractional_position=(0.1, 0.2, 0.3),
+                    charge_state="positive_muon",
+                ),
+            )
+        )
+    )
+
+    assert save_calls == []
+    definition_id = UUID(doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY])
+    assert definition_id in doc.calculations
+    reloaded = service.load_project(doc.project_root)
+    assert definition_id not in reloaded.calculations
+    assert window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY not in reloaded.ui_state
+    window.close()
+
+
+def test_muon_relaxation_form_state_change_remains_manual_save_state(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_form_manual_save.mufinder", "MuonFormManualSave")
+    window._document = doc
+    save_calls: list[str] = []
+
+    def _save_project(document) -> None:
+        save_calls.append("save")
+
+    window._project_service.save_project = _save_project
+
+    window._on_muon_relaxation_form_state_changed({"rows": [{"label": "Unsaved UI row"}]})
+
+    assert save_calls == []
+    assert doc.ui_state["muon_relaxation_form"]["rows"][0]["label"] == "Unsaved UI row"
+    reloaded = service.load_project(doc.project_root)
+    assert "muon_relaxation_form" not in reloaded.ui_state
+    window.close()
+
+
+def test_main_window_jobs_table_refresh_syncs_muon_relaxation_status(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_status_sync.mufinder", "MuonStatusSync")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    site = MuonSite(
+        label="Shared Site",
+        status="staged",
+        fractional_position=[0.1, 0.2, 0.3],
+        source_structure_id=host.id,
+    )
+    doc.sites[site.id] = site
+    job = service.add_job(
+        doc,
+        label="Shared Site",
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+    )
+    job.status = JobStatus.QUEUED
+    definition = CalculationDefinition(
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muon_relaxation",
+        parameters={
+            "configuration": {
+                "rows": [
+                    {
+                        "site_id": str(site.id),
+                        "label": "Shared Site",
+                        "initial_fractional_position": [0.1, 0.2, 0.3],
+                        "charge_state": "positive_muon",
+                    }
+                ]
+            },
+            "output_directory": "files/muon_relaxation",
+            "job_ids_by_label": {"positivemuon:Shared Site": str(job.id)},
+        },
+        input_structure_ids=[host.id],
+    )
+    doc.calculations[definition.id] = definition
+    doc.ui_state[main_window_module.MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    window._document = doc
+    window._muon_relaxation_view.set_form_state(
+        {
+            "rows": [
+                {
+                    "site_id": str(site.id),
+                    "label": "Shared Site",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "positive_muon",
+                }
+            ]
+        }
+    )
+
+    window._refresh_jobs_table()
+
+    status_item = window._muon_relaxation_view._table.item(
+        0,
+        window._muon_relaxation_view._STATUS_COLUMN,
+    )
+    assert status_item.text() == "queued"
+    window.close()
+
+
+def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_position(
+    qapp,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_final_position.mufinder", "MuonFinalPosition")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    site = MuonSite(
+        label="Shared Site",
+        status="staged",
+        fractional_position=[0.1, 0.2, 0.3],
+        source_structure_id=host.id,
+    )
+    doc.sites[site.id] = site
+    job = service.add_job(
+        doc,
+        label="Shared Site",
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muonium_relaxation",
+    )
+    job.status = JobStatus.RUNNING
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.RUNNING)
+    doc.runs[run.id] = run
+    definition = CalculationDefinition(
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muon_relaxation",
+        parameters={
+            "configuration": {
+                "rows": [
+                    {
+                        "site_id": str(site.id),
+                        "label": "Shared Site",
+                        "initial_fractional_position": [0.1, 0.2, 0.3],
+                        "charge_state": "muonium",
+                        "supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+                    }
+                ]
+            },
+            "output_directory": "files/muon_relaxation",
+            "job_ids_by_label": {"muonium:Shared Site": str(job.id)},
+            "job_seed_names_by_label": {"muonium:Shared Site": "muonium_Shared_Site"},
+        },
+        input_structure_ids=[host.id],
+    )
+    doc.calculations[definition.id] = definition
+    newer_definition = CalculationDefinition(
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muon_relaxation",
+        parameters={
+            "configuration": {
+                "rows": [
+                    {
+                        "site_id": str(site.id),
+                        "label": "Newer Site",
+                        "initial_fractional_position": [0.1, 0.2, 0.3],
+                        "charge_state": "muonium",
+                    }
+                ]
+            },
+            "output_directory": "files/muon_relaxation",
+            "job_ids_by_label": {},
+        },
+        input_structure_ids=[host.id],
+    )
+    doc.calculations[newer_definition.id] = newer_definition
+    doc.ui_state[main_window_module.MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(newer_definition.id)
+    window._document = doc
+    window._active_run_by_job[job.id] = run.id
+    window._muon_relaxation_view.set_form_state(
+        {
+            "rows": [
+                {
+                    "site_id": str(site.id),
+                    "label": "Shared Site",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "muonium",
+                    "supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+                }
+            ]
+        }
+    )
+
+    output_dir = doc.project_root / "files" / "muon_relaxation" / "muonium" / "muonium_Shared_Site"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "muonium_Shared_Site-out.cell").write_text("dummy", encoding="utf-8")
+    monkeypatch.setattr(
+        main_window_module,
+        "parse_cell_file",
+        lambda _path: SimpleNamespace(
+            lattice_vectors=((8.0, 0.0, 0.0), (0.0, 8.0, 0.0), (0.0, 0.0, 4.0)),
+            species=("Si", "H:mu"),
+            fractional_positions=((0.0, 0.0, 0.0), (0.3, 0.4, 0.5)),
+        ),
+    )
+    monkeypatch.setattr(
+        main_window_module,
+        "lattice_parameters",
+        lambda _vectors: (8.0, 8.0, 4.0, 90.0, 90.0, 90.0),
+    )
+
+    parsed = CastepResult(
+        completed=True,
+        total_energy=-12.0,
+        warnings=(),
+        geom_converged=True,
+    )
+    assert window._active_muon_relaxation_definition().id == newer_definition.id
+
+    window._on_local_job_finished(job.id, parsed)
+
+    assert run.result_id is not None
+    result = doc.results[run.result_id]
+    assert result.data["muon_final_fractional_position_supercell"] == pytest.approx([0.3, 0.4, 0.5])
+    assert result.data["muon_final_fractional_position_host"] == pytest.approx([0.6, 0.8, 0.5])
+    doc.ui_state[main_window_module.MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    states = window._build_muon_relaxation_states()
+    assert states["muonium:Shared Site"].final_fractional_position == pytest.approx((0.6, 0.8, 0.5))
+    window._refresh_muon_relaxation_rows()
+    assert window._muon_relaxation_view._table.item(
+        0,
+        window._muon_relaxation_view._FINAL_FX_COLUMN,
+    ).text() == "0.600"
+    assert window._muon_relaxation_view._table.item(
+        0,
+        window._muon_relaxation_view._TOTAL_ENERGY_COLUMN,
+    ).text() == "-12"
+    window.close()
+
+
 def test_convergence_configured_without_project_shows_info(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3597,7 +4139,7 @@ def test_main_window_dashboard_uses_row_buttons_and_no_context_menu(
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "jobs_buttons.mufinder", "JobsButtons")
-    defined_job = service.add_job(
+    service.add_job(
         doc,
         label="job_defined",
         workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,

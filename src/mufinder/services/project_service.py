@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 import shutil
 from typing import Any
 from uuid import UUID
@@ -27,8 +28,12 @@ from mufinder.persistence.codec import parse_datetime, parse_uuid, to_jsonable
 from mufinder.persistence.json_store import ProjectStore
 from mufinder.science.site_generation import (
     SiteGenerationError,
-    generate_near_element_sites,
+    closest_symmetry_equivalent_position,
+    estimate_random_site_count_from_separation,
+    estimate_muon_muon_separation_for_count,
+    generate_attached_element_sites,
     generate_random_sites,
+    generate_random_sites_by_distance,
     lattice_cart_to_frac,
     lattice_frac_to_cart,
 )
@@ -39,6 +44,9 @@ _WORKFLOW_SUPERCELLS_STATE_KEY = "workflow_supercells"
 _WORKFLOW_SUPERCELL_UNIT_CELL = "unit_cell"
 _WORKFLOW_SUPERCELL_SAVED = "saved_supercell"
 _IDENTITY_SUPERCELL_MATRIX = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+_GENERATED_SITE_STATUS = "generated"
+_LEGACY_GENERATED_SITE_STATUSES = {_GENERATED_SITE_STATUS, "candidate"}
+_STAGEABLE_SITE_STATUSES = {*_LEGACY_GENERATED_SITE_STATUSES, "staged"}
 
 
 @dataclass(slots=True)
@@ -210,6 +218,114 @@ class ProjectService:
     def remove_comparison_table(self, document: ProjectDocument, table_id: UUID) -> None:
         """Delete one persisted comparison table from the current document."""
         document.comparison_tables.pop(table_id, None)
+
+    def remove_candidate_sites(self, document: ProjectDocument, site_ids: Sequence[UUID]) -> list[MuonSite]:
+        """Remove generated muon sites by id and record the edit in provenance."""
+        removed: list[MuonSite] = []
+        for site_id in site_ids:
+            site = document.sites.get(site_id)
+            if site is None or site.status not in _LEGACY_GENERATED_SITE_STATUSES:
+                continue
+            removed.append(document.sites.pop(site_id))
+
+        if removed:
+            self.append_provenance(
+                document,
+                ProvenanceRecord(
+                    action="delete_candidates",
+                    workflow_stage=WorkflowStage.MUON_GENERATION,
+                    actor="user",
+                    description=f"Deleted {len(removed)} generated muon site(s)",
+                    parameters={"site_labels": [site.label for site in removed]},
+                    input_entity_ids=[site.id for site in removed],
+                ),
+            )
+        return removed
+
+    def cluster_candidate_positions(
+        self,
+        document: ProjectDocument,
+        site_ids: Sequence[UUID],
+        *,
+        anchor_fractional: Sequence[float],
+    ) -> list[MuonSite]:
+        """Move selected generated muon sites to symmetry representatives near an anchor."""
+
+        host = self._active_host_structure(document)
+        if host is None:
+            raise SiteGenerationError("Select a host structure before clustering generated muon positions.")
+        if not site_ids:
+            raise SiteGenerationError("Select one or more generated muon positions to cluster.")
+        if len(anchor_fractional) != 3:
+            raise SiteGenerationError("Enter a three-component fractional anchor position.")
+
+        lattice = host.lattice_vectors
+        host_species = host.species
+        host_positions = host.fractional_positions
+        anchor = [float(value) % 1.0 for value in anchor_fractional]
+        updated: list[MuonSite] = []
+        for site_id in site_ids:
+            site = document.sites.get(site_id)
+            if site is None or site.status not in _LEGACY_GENERATED_SITE_STATUSES:
+                continue
+            if len(site.fractional_position) != 3:
+                raise SiteGenerationError(f"Muon site '{site.label}' is missing a valid fractional position.")
+            clustered = closest_symmetry_equivalent_position(
+                site.fractional_position,
+                anchor_frac=anchor,
+                lattice_vectors=lattice,
+                host_species=host_species,
+                host_positions_frac=host_positions,
+            )
+            site.fractional_position = clustered
+            site.cartesian_position = lattice_frac_to_cart(clustered, lattice)
+            updated.append(site)
+
+        if not updated:
+            raise SiteGenerationError("Selected rows did not contain any generated muon positions.")
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="cluster_candidate_positions",
+                workflow_stage=WorkflowStage.MUON_GENERATION,
+                actor="user",
+                description=f"Clustered {len(updated)} generated muon site(s) near an anchor position",
+                parameters={
+                    "anchor_fractional": anchor,
+                    "site_labels": [site.label for site in updated],
+                },
+                input_entity_ids=[site.id for site in updated],
+                output_entity_ids=[site.id for site in updated],
+            ),
+        )
+        return updated
+
+    def stage_generated_sites(self, document: ProjectDocument, site_ids: Sequence[UUID]) -> list[MuonSite]:
+        """Mark generated muon sites as staged for structural relaxation."""
+
+        staged: list[MuonSite] = []
+        for site_id in site_ids:
+            site = document.sites.get(site_id)
+            if site is None or site.status not in _STAGEABLE_SITE_STATUSES:
+                continue
+            site.status = "staged"
+            staged.append(site)
+
+        if staged:
+            self.append_provenance(
+                document,
+                ProvenanceRecord(
+                    action="stage_muon_relaxation_sites",
+                    workflow_stage=WorkflowStage.MUON_RELAXATION,
+                    actor="user",
+                    description=f"Staged {len(staged)} generated muon site(s) for relaxation",
+                    parameters={"site_labels": [site.label for site in staged]},
+                    input_entity_ids=[site.id for site in staged],
+                    output_entity_ids=[site.id for site in staged],
+                ),
+            )
+        return staged
 
     def record_job_submission(
         self,
@@ -1137,6 +1253,73 @@ class ProjectService:
 
         return definition
 
+    def register_muon_relaxation_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_id: UUID | None = None,
+        host_structure_id: UUID | None = None,
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one muon-relaxation configuration."""
+
+        if input_structure_id is None:
+            input_structure_id = host_structure_id
+
+        if input_structure_id is None or input_structure_id not in document.structures:
+            raise ValueError("input_structure_id must reference a known structure.")
+
+        relative_output = str(output_directory)
+        try:
+            relative_output = str(output_directory.relative_to(document.project_root))
+        except ValueError:
+            relative_output = str(output_directory)
+
+        snapshot = to_jsonable(parameters)
+        input_site_ids: list[UUID] = []
+        for row in snapshot.get("rows", []):
+            if not isinstance(row, dict) or not row.get("site_id"):
+                continue
+            try:
+                input_site_ids.append(UUID(str(row["site_id"])))
+            except ValueError:
+                continue
+
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_muon_relaxation",
+            parameters={
+                "configuration": snapshot,
+                "output_directory": relative_output,
+                "job_ids_by_label": dict(job_ids_by_label or {}),
+            },
+            input_structure_ids=[input_structure_id],
+            input_site_ids=input_site_ids,
+        )
+        document.calculations[definition.id] = definition
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="configure_muon_relaxation",
+                workflow_stage=WorkflowStage.MUON_RELAXATION,
+                actor="user",
+                description=f"Configured muon relaxation with {len(snapshot.get('rows', []))} job row(s)",
+                parameters={
+                    "calculation_definition_id": str(definition.id),
+                    "configuration": snapshot,
+                    "output_directory": relative_output,
+                    "job_ids_by_label": dict(job_ids_by_label or {}),
+                },
+                input_entity_ids=[input_structure_id, *definition.input_site_ids],
+                output_entity_ids=[definition.id],
+            ),
+        )
+
+        return definition
+
     def register_uep_definition(
         self,
         document: ProjectDocument,
@@ -1376,11 +1559,13 @@ class ProjectService:
         *,
         method: str,
         parameters: dict[str, Any],
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[MuonSite]:
-        """Create candidate muon sites from a generation request.
+        """Create generated muon sites from a generation request.
 
-        Random and near-element strategies enforce periodic distance constraints
-        against host atoms and already-accepted candidate points.
+        Random strategies enforce periodic muon-muon and muon-atom distance
+        constraints. Element-attached generation ranks alternative starts for
+        each selected host atom by local clearance from the surrounding host.
         """
         host = self._active_host_structure(document)
         host_positions = host.fractional_positions if host else []
@@ -1388,7 +1573,28 @@ class ProjectService:
         lattice = host.lattice_vectors if host and host.lattice_vectors else None
 
         created_sites: list[MuonSite] = []
-        requested_count = int(parameters.get("count", 1)) if method != "manual" else 1
+        random_selection_mode = self._random_selection_mode(parameters) if method == "random" else ""
+        if method == "manual":
+            requested_count: int | None = 1
+        elif method == "random" and random_selection_mode == "separation":
+            requested_count = None
+        elif method == "uep_clusters" and isinstance(parameters.get("selections"), list):
+            requested_count = len(parameters.get("selections", []))
+        elif method == "near_element":
+            target = str(parameters.get("element", "")).strip().lower()
+            muons_per_atom_for_count = max(
+                1,
+                int(
+                    parameters.get(
+                        "muons_per_atom",
+                        parameters.get("max_candidates_per_atom", parameters.get("count", 1)),
+                    )
+                ),
+            )
+            matching_atoms = sum(1 for species in host_species if str(species).strip().lower() == target)
+            requested_count = matching_atoms * muons_per_atom_for_count if target and matching_atoms else None
+        else:
+            requested_count = int(parameters.get("count", 1))
         attempts_used = 1
 
         if method == "manual":
@@ -1408,9 +1614,10 @@ class ProjectService:
                     lattice or [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
                 )
 
+            label_prefix = "Manual Site"
             site = MuonSite(
-                label=f"Manual Site {len(document.sites) + 1}",
-                status="candidate",
+                label=f"{label_prefix} {self._next_site_label_number(document, label_prefix)}",
+                status=_GENERATED_SITE_STATUS,
                 fractional_position=fractional,
                 cartesian_position=cartesian,
                 generation_method=method,
@@ -1420,61 +1627,202 @@ class ProjectService:
             created_sites.append(site)
         elif method == "random":
             seed = self._parse_optional_int(parameters.get("seed"), field_name="seed")
-            points, attempts_used = generate_random_sites(
-                lattice_vectors=lattice,
-                host_positions_frac=host_positions,
-                count=max(1, requested_count),
-                min_muon_muon=float(parameters.get("min_muon_muon", 0.8)),
-                min_muon_atom=float(parameters.get("min_muon_atom", 1.0)),
-                max_attempts=int(parameters.get("max_attempts", 20000)),
-                seed=seed,
-            )
+            min_muon_atom = float(parameters.get("min_muon_atom", 1.0))
+            include_symmetry_equivalents = bool(parameters.get("include_symmetry_equivalents", True))
+            estimated_min_muon_muon: float | None = None
+            if random_selection_mode == "separation":
+                min_muon_muon = float(parameters.get("min_muon_muon", 0.8))
+                predicted_count = max(
+                    1,
+                    int(
+                        estimate_random_site_count_from_separation(
+                            lattice_vectors=lattice,
+                            host_positions_frac=host_positions,
+                            host_species=host_species,
+                            min_muon_muon=min_muon_muon,
+                            min_muon_atom=min_muon_atom,
+                            include_symmetry_equivalents=include_symmetry_equivalents,
+                        )
+                        + 0.999
+                    ),
+                )
+                points, attempts_used = generate_random_sites_by_distance(
+                    lattice_vectors=lattice,
+                    host_positions_frac=host_positions,
+                    host_species=host_species,
+                    min_muon_muon=min_muon_muon,
+                    min_muon_atom=min_muon_atom,
+                    max_attempts=int(parameters.get("max_attempts", 20000)),
+                    seed=seed,
+                    include_symmetry_equivalents=include_symmetry_equivalents,
+                    expected_count=predicted_count,
+                    progress_callback=progress_callback,
+                )
+            else:
+                target_count = max(1, int(requested_count or parameters.get("count", 1)))
+                estimated_min_muon_muon = estimate_muon_muon_separation_for_count(
+                    lattice_vectors=lattice,
+                    host_positions_frac=host_positions,
+                    host_species=host_species,
+                    target_count=target_count,
+                    min_muon_atom=min_muon_atom,
+                    include_symmetry_equivalents=include_symmetry_equivalents,
+                )
+                min_muon_muon = estimated_min_muon_muon
+                last_error: SiteGenerationError | None = None
+                for _attempt in range(6):
+                    try:
+                        points, attempts_used = generate_random_sites(
+                            lattice_vectors=lattice,
+                            host_positions_frac=host_positions,
+                            host_species=host_species,
+                            count=target_count,
+                            min_muon_muon=min_muon_muon,
+                            min_muon_atom=min_muon_atom,
+                            max_attempts=int(parameters.get("max_attempts", 20000)),
+                            seed=seed,
+                            include_symmetry_equivalents=include_symmetry_equivalents,
+                            progress_callback=progress_callback,
+                        )
+                        break
+                    except SiteGenerationError as exc:
+                        last_error = exc
+                        min_muon_muon *= 0.9
+                else:
+                    assert last_error is not None
+                    raise last_error
+            label_prefix = "Random Site"
+            start_index = self._next_site_label_number(document, label_prefix)
             for idx, point in enumerate(points, start=1):
                 site = MuonSite(
-                    label=f"Random Site {len(document.sites) + idx}",
-                    status="candidate",
+                    label=f"{label_prefix} {start_index + idx - 1}",
+                    status=_GENERATED_SITE_STATUS,
                     fractional_position=point.fractional,
                     cartesian_position=point.cartesian,
                     generation_method=method,
                     source_structure_id=host.id if host else None,
                     properties={
-                        "min_muon_muon": float(parameters.get("min_muon_muon", 0.8)),
-                        "min_muon_atom": float(parameters.get("min_muon_atom", 1.0)),
+                        "selection_mode": random_selection_mode,
+                        "min_muon_muon": min_muon_muon,
+                        "min_muon_atom": min_muon_atom,
+                        "include_symmetry_equivalents": include_symmetry_equivalents,
+                        **({"target_count": int(requested_count or 0)} if random_selection_mode == "count" else {}),
+                        **(
+                            {"estimated_min_muon_muon": estimated_min_muon_muon}
+                            if estimated_min_muon_muon is not None
+                            else {}
+                        ),
                     },
                 )
                 created_sites.append(site)
         elif method == "near_element":
-            seed = self._parse_optional_int(parameters.get("seed"), field_name="seed")
-            points, attempts_used = generate_near_element_sites(
+            muons_per_atom = max(
+                1,
+                int(
+                    parameters.get(
+                        "muons_per_atom",
+                        parameters.get("max_candidates_per_atom", parameters.get("count", 1)),
+                    )
+                ),
+            )
+            points, attempts_used = generate_attached_element_sites(
                 lattice_vectors=lattice,
                 host_species=host_species,
                 host_positions_frac=host_positions,
                 target_element=str(parameters.get("element", "")).strip(),
-                count=max(1, requested_count),
-                shell_min=float(parameters.get("shell_min", 0.9)),
-                shell_max=float(parameters.get("shell_max", 1.4)),
-                min_muon_muon=float(parameters.get("min_muon_muon", 0.8)),
-                min_muon_atom=float(parameters.get("min_muon_atom", 1.0)),
-                max_attempts=int(parameters.get("max_attempts", 30000)),
-                seed=seed,
+                muons_per_atom=muons_per_atom,
+                bond_distance=float(parameters.get("bond_distance", 1.0)),
+                min_muon_atom=float(parameters.get("min_muon_atom", 0.8)),
+                progress_callback=progress_callback,
             )
+            label_prefix = f"Attached-{parameters.get('element', '').strip() or 'Element'} Site"
+            start_index = self._next_site_label_number(document, label_prefix)
             for idx, point in enumerate(points, start=1):
                 site = MuonSite(
-                    label=f"Near-{parameters.get('element', '').strip() or 'Element'} Site {len(document.sites) + idx}",
-                    status="candidate",
+                    label=f"{label_prefix} {start_index + idx - 1}",
+                    status=_GENERATED_SITE_STATUS,
                     fractional_position=point.fractional,
                     cartesian_position=point.cartesian,
                     generation_method=method,
                     source_structure_id=host.id if host else None,
                     properties={
                         "target_element": str(parameters.get("element", "")).strip(),
-                        "shell_min": float(parameters.get("shell_min", 0.9)),
-                        "shell_max": float(parameters.get("shell_max", 1.4)),
-                        "min_muon_muon": float(parameters.get("min_muon_muon", 0.8)),
-                        "min_muon_atom": float(parameters.get("min_muon_atom", 1.0)),
+                        "strategy": "attached",
+                        "muons_per_atom": muons_per_atom,
+                        "bond_distance": float(parameters.get("bond_distance", 1.0)),
+                        "min_muon_atom": float(parameters.get("min_muon_atom", 0.8)),
                     },
                 )
                 created_sites.append(site)
+        elif method == "uep_clusters":
+            selections = parameters.get("selections", [])
+            if not isinstance(selections, list) or not selections:
+                raise SiteGenerationError("Select one or more UEP cluster rows to add as generated sites.")
+
+            skipped_duplicates = 0
+            for selection in selections:
+                if not isinstance(selection, dict):
+                    continue
+                fractional_raw = selection.get("fractional_position", selection.get("fractional", []))
+                cartesian_raw = selection.get("cartesian_position", selection.get("cartesian", []))
+                if (
+                    not isinstance(fractional_raw, (list, tuple))
+                    or len(fractional_raw) != 3
+                    or not isinstance(cartesian_raw, (list, tuple))
+                    or len(cartesian_raw) != 3
+                ):
+                    raise SiteGenerationError("Selected UEP cluster row is missing valid coordinates.")
+
+                fractional = [float(value) % 1.0 for value in fractional_raw]
+                cartesian = [float(value) for value in cartesian_raw]
+                source_key = str(selection.get("source_key", "")).strip()
+                if source_key and self._has_duplicate_uep_cluster_site(document, source_key, fractional):
+                    skipped_duplicates += 1
+                    continue
+
+                properties = selection.get("properties", {})
+                if not isinstance(properties, dict):
+                    properties = {}
+                method_name = str(selection.get("generation_method", "")).strip()
+                if method_name not in {"uep_cluster", "uep_cluster_member"}:
+                    method_name = "uep_cluster_member" if properties.get("selection_kind") == "member" else "uep_cluster"
+                merged_properties = dict(properties)
+                if source_key:
+                    merged_properties["uep_source_key"] = source_key
+
+                source_structure_id = None
+                raw_source_structure_id = selection.get("source_structure_id")
+                if raw_source_structure_id:
+                    try:
+                        source_structure_id = UUID(str(raw_source_structure_id))
+                    except ValueError:
+                        source_structure_id = host.id if host else None
+                elif host is not None:
+                    source_structure_id = host.id
+
+                label_hint = str(selection.get("label", "")).strip()
+                if not label_hint:
+                    label_hint = "UEP Cluster Site" if method_name == "uep_cluster" else "UEP Cluster Member"
+                label = (
+                    label_hint
+                    if str(selection.get("label", "")).strip()
+                    else f"{label_hint} {len(document.sites) + len(created_sites) + 1}"
+                )
+                site = MuonSite(
+                    label=label,
+                    status=_GENERATED_SITE_STATUS,
+                    fractional_position=fractional,
+                    cartesian_position=cartesian,
+                    generation_method=method_name,
+                    source_structure_id=source_structure_id,
+                    properties=merged_properties,
+                )
+                created_sites.append(site)
+
+            if not created_sites and skipped_duplicates:
+                raise SiteGenerationError("Selected UEP cluster rows are already present in the generated-site list.")
+            if not created_sites:
+                raise SiteGenerationError("Selected UEP cluster rows did not contain any usable generated sites.")
         else:
             raise SiteGenerationError(f"Unknown generation method '{method}'.")
 
@@ -1482,17 +1830,19 @@ class ProjectService:
             document.sites[site.id] = site
 
         warning: str | None = None
-        if method != "manual" and len(created_sites) < requested_count:
-            warning = (
-                f"Requested {requested_count} sites but generated {len(created_sites)}. "
-                "Increase max attempts, reduce distance limits, or use a larger supercell."
+        if requested_count is not None and method != "manual" and len(created_sites) < requested_count:
+            reason = (
+                "Some selected UEP rows were already present."
+                if method == "uep_clusters"
+                else "Increase max attempts, reduce distance limits, or use a larger supercell."
             )
+            warning = f"Requested {requested_count} sites but generated {len(created_sites)}. {reason}"
 
         record = ProvenanceRecord(
             action="generate_candidates",
             workflow_stage=WorkflowStage.MUON_GENERATION,
             actor="user",
-            description=f"Generated {len(created_sites)} candidate site(s) via {method}",
+            description=f"Generated {len(created_sites)} site(s) via {method}",
             parameters={"method": method, **parameters},
             output_entity_ids=[site.id for site in created_sites],
         )
@@ -1511,6 +1861,38 @@ class ProjectService:
                 ),
             )
         return created_sites
+
+    @staticmethod
+    def _has_duplicate_uep_cluster_site(document: ProjectDocument, source_key: str, fractional: Sequence[float]) -> bool:
+        for site in document.sites.values():
+            if site.properties.get("uep_source_key") == source_key:
+                return True
+            if site.generation_method not in {"uep_cluster", "uep_cluster_member", "uep_batch_cluster"}:
+                continue
+            if not site.fractional_position or len(site.fractional_position) != 3:
+                continue
+            if all(abs((float(a) - float(b) + 0.5) % 1.0 - 0.5) <= 1e-6 for a, b in zip(site.fractional_position, fractional)):
+                return True
+        return False
+
+    @staticmethod
+    def _next_site_label_number(document: ProjectDocument, prefix: str) -> int:
+        pattern = re.compile(rf"^{re.escape(prefix.strip())}\s+(\d+)$")
+        used_numbers: list[int] = []
+        for site in document.sites.values():
+            match = pattern.match(str(site.label).strip())
+            if match is not None:
+                used_numbers.append(int(match.group(1)))
+        return max(used_numbers, default=0) + 1
+
+    @staticmethod
+    def _random_selection_mode(parameters: dict[str, Any]) -> str:
+        mode = str(parameters.get("selection_mode", parameters.get("mode", ""))).strip().lower()
+        if mode in {"separation", "distance", "spacing"}:
+            return "separation"
+        if mode in {"count", "number", "target_count"}:
+            return "count"
+        return "count" if "count" in parameters else "separation"
 
     def _active_host_structure(self, document: ProjectDocument) -> Structure | None:
         """Return the currently selected host structure if available."""
@@ -1864,7 +2246,7 @@ class ProjectService:
         return MuonSite(
             id=UUID(payload["id"]),
             label=payload.get("label", ""),
-            status=payload.get("status", "candidate"),
+            status=self._site_status_from_payload(payload),
             fractional_position=payload.get("fractional_position", [0.0, 0.0, 0.0]),
             cartesian_position=payload.get("cartesian_position", [0.0, 0.0, 0.0]),
             generation_method=payload.get("generation_method"),
@@ -1877,6 +2259,13 @@ class ProjectService:
             symmetry_label=payload.get("symmetry_label"),
             properties=payload.get("properties", {}),
         )
+
+    @staticmethod
+    def _site_status_from_payload(payload: dict[str, Any]) -> str:
+        status = str(payload.get("status", _GENERATED_SITE_STATUS) or _GENERATED_SITE_STATUS)
+        if status == "candidate":
+            return _GENERATED_SITE_STATUS
+        return status
 
     def _provenance_from_dict(self, payload: dict[str, Any]) -> ProvenanceRecord:
         workflow_stage = payload.get("workflow_stage")

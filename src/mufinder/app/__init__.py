@@ -16,6 +16,8 @@ __all__ = [
     "CutoffConvergenceWidget",
     "PristineRelaxationConfig",
     "PristineRelaxationWidget",
+    "MuonRelaxationConfig",
+    "MuonRelaxationWidget",
     "KPointConvergenceWidget",
     "MathLabel",
     "ParameterDialog",
@@ -25,6 +27,7 @@ __all__ = [
     "build_convergence_workflow",
     "expand_convergence_jobs",
     "expand_pristine_relaxation_jobs",
+    "expand_muon_relaxation_jobs",
 ]
 
 _EXPORTS: dict[str, tuple[str, str]] = {
@@ -38,6 +41,8 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "CutoffConvergenceWidget": ("mufinder.app.convergence_widget", "CutoffConvergenceWidget"),
     "PristineRelaxationConfig": ("mufinder.app.relaxation_types", "PristineRelaxationConfig"),
     "PristineRelaxationWidget": ("mufinder.app.relaxation_widget", "PristineRelaxationWidget"),
+    "MuonRelaxationConfig": ("mufinder.app.relaxation_types", "MuonRelaxationConfig"),
+    "MuonRelaxationWidget": ("mufinder.app.muon_relaxation_widget", "MuonRelaxationWidget"),
     "KPointConvergenceWidget": ("mufinder.app.kpoint_convergence_widget", "KPointConvergenceWidget"),
     "MathLabel": ("mufinder.app.math_label", "MathLabel"),
     "ParameterDialog": ("mufinder.app.param_dialog", "ParameterDialog"),
@@ -47,6 +52,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "build_convergence_workflow": ("mufinder.app.convergence_adapter", "build_convergence_workflow"),
     "expand_convergence_jobs": ("mufinder.app.convergence_adapter", "expand_convergence_jobs"),
     "expand_pristine_relaxation_jobs": ("mufinder.app.relaxation_adapter", "expand_pristine_relaxation_jobs"),
+    "expand_muon_relaxation_jobs": ("mufinder.app.relaxation_adapter", "expand_muon_relaxation_jobs"),
 }
 
 

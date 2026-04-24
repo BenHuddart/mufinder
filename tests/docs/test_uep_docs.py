@@ -60,8 +60,21 @@ def test_uep_workflow_doc_explains_cluster_statistics_and_representatives() -> N
 
     assert "representative" in normalized
     assert "minimum-energy member" in normalized or "minimum energy member" in normalized
+    assert "not the mean position" in normalized
+    assert "centroid" in normalized
     assert "standard deviation" in normalized
     assert "average energy relative to the global minimum" in normalized
+
+
+def test_uep_workflow_doc_mentions_generation_cluster_positions_anchor() -> None:
+    doc_path = Path(__file__).resolve().parents[2] / "docs" / "uep_workflow.rst"
+    text = doc_path.read_text(encoding="utf-8")
+    normalized = " ".join(text.lower().split())
+
+    assert "cluster positions" in normalized
+    assert "fractional anchor" in normalized
+    assert "symmetry-equivalent representatives closest to a chosen fractional anchor" in normalized
+    assert "different realizations of the same symmetry-equivalent site" in normalized
 
 
 def test_user_docs_explain_autosave_vs_manual_save_boundary() -> None:

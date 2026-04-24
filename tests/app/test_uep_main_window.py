@@ -173,7 +173,6 @@ def test_main_window_open_uep_analysis_launches_dialog(qapp, tmp_path: Path, mon
     class _FakeDialog:
         def __init__(self, **kwargs) -> None:
             captured.update(kwargs)
-            self.promote_requested = _SignalStub()
             self.state_changed = _SignalStub()
             self.potential_grid_ready = _SignalStub()
             self.destroyed = _SignalStub()
@@ -269,7 +268,6 @@ def test_main_window_open_uep_analysis_loads_persisted_potential_grid(qapp, tmp_
     class _FakeDialog:
         def __init__(self, **kwargs) -> None:
             captured.update(kwargs)
-            self.promote_requested = _SignalStub()
             self.state_changed = _SignalStub()
             self.potential_grid_ready = _SignalStub()
             self.destroyed = _SignalStub()
@@ -337,7 +335,6 @@ def test_main_window_open_uep_analysis_does_not_request_snapshot_after_dialog_sh
 
     class _FakeDialog:
         def __init__(self, **_kwargs) -> None:
-            self.promote_requested = _SignalStub()
             self.state_changed = _SignalStub()
             self.potential_grid_ready = _SignalStub()
             self.destroyed = _SignalStub()
@@ -404,7 +401,6 @@ def test_main_window_open_uep_analysis_reuses_existing_window(qapp, tmp_path: Pa
     class _FakeDialog:
         def __init__(self, **_kwargs) -> None:
             captured["constructed"] += 1
-            self.promote_requested = _SignalStub()
             self.state_changed = _SignalStub()
             self.potential_grid_ready = _SignalStub()
             self.destroyed = _SignalStub()
@@ -567,32 +563,171 @@ def test_main_window_uep_potential_grid_ready_updates_document_but_not_disk_unti
     window.close()
 
 
-def test_main_window_promote_uep_candidate_creates_site(qapp, tmp_path: Path) -> None:
+def test_main_window_exposes_uep_cluster_rows_for_generation(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
-    doc = service.create_project(tmp_path / "uep_promote.mufinder", "UEPPromote")
+    doc = service.create_project(tmp_path / "uep_cluster_generation.mufinder", "UEPClusterGeneration")
     host = _host_structure()
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
+    definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        output_directory=doc.project_root / "files" / "uep",
+    )
+    job = service.add_job(
+        doc,
+        label="uep_row_1",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    definition.parameters["job_ids_by_label"] = {"row_1": str(job.id)}
+    run = CalculationRun(definition_id=definition.id, job_id=job.id, run_index=1, status=JobStatus.COMPLETED)
+    doc.runs[run.id] = run
+    doc.ui_state[window._UEP_ANALYSIS_STATES_KEY] = {
+        str(job.id): {
+            "batch_results": [
+                {
+                    "start_position_ang": [0.0, 0.0, 0.0],
+                    "optimized_position_ang": [0.5, 1.0, 1.5],
+                    "optimized_fractional_position": [0.1, 0.2, 0.3],
+                    "classical_energy_ev": -0.7,
+                    "zero_point_energy_ev": 0.2,
+                    "total_energy_ev": -0.5,
+                    "success": True,
+                    "message": "ok",
+                    "iterations": 3,
+                    "classification": {"label": "minimum"},
+                }
+            ],
+            "batch_summary_data": {
+                "threshold_ang": 0.3,
+                "clustering_method": "hier",
+                "clustering_hier_t": 0.3,
+                "clustering_kmeans_k": None,
+                "clustering_linkage_method": "single",
+                "feature_mode": "pymuon",
+                "clusters": [
+                    {
+                        "cluster_index": 1,
+                        "size": 1,
+                        "representative_index": 0,
+                        "representative_position_ang": [0.5, 1.0, 1.5],
+                        "representative_fractional_position": [0.1, 0.2, 0.3],
+                        "minimum_energy_ev": -0.5,
+                        "average_energy_ev": -0.5,
+                        "standard_deviation_ev": 0.0,
+                        "member_indexes": [0],
+                    }
+                ],
+            },
+        }
+    }
     window._document = doc
 
-    window._on_promote_uep_candidate_requested(
-        {
-            "label_hint": "UEP Cluster 1",
-            "fractional_position": [0.1, 0.2, 0.3],
-            "cartesian_position": [0.5, 1.0, 1.5],
-            "generation_method": "uep_batch_cluster",
-            "source_structure_id": str(host.id),
-            "source_job_label": "uep_row1",
-            "properties": {"classification": "minimum", "total_energy_ev": -0.5},
-        }
-    )
+    rows = window._uep_cluster_source_rows()
+
+    assert len(rows) == 1
+    representative = rows[0]
+    assert representative["generation_method"] == "uep_cluster"
+    assert representative["selection_kind"] == "cluster"
+    assert representative["source_structure_id"] == str(host.id)
+    assert representative["properties"]["classification"] == "minimum"
+
+    window._on_generate_requested("uep_clusters", {"selections": [representative]})
 
     assert len(doc.sites) == 1
     site = next(iter(doc.sites.values()))
-    assert site.generation_method == "uep_batch_cluster"
+    assert site.generation_method == "uep_cluster"
     assert site.source_structure_id == host.id
     assert site.properties["classification"] == "minimum"
+
+    window.close()
+
+
+def test_main_window_ignores_stale_uep_cluster_states_for_generation(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_stale_cluster_generation.mufinder", "UEPStaleClusterGeneration")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    stale_definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        output_directory=doc.project_root / "files" / "uep_old",
+    )
+    stale_job = service.add_job(
+        doc,
+        label="uep_old_row_1",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    stale_definition.parameters["job_ids_by_label"] = {"row_1": str(stale_job.id)}
+    stale_run = CalculationRun(
+        definition_id=stale_definition.id,
+        job_id=stale_job.id,
+        run_index=1,
+        status=JobStatus.COMPLETED,
+    )
+    doc.runs[stale_run.id] = stale_run
+
+    active_definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        output_directory=doc.project_root / "files" / "uep",
+    )
+    active_job = service.add_job(
+        doc,
+        label="uep_row_1",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    active_definition.parameters["job_ids_by_label"] = {"row_1": str(active_job.id)}
+    active_run = CalculationRun(definition_id=active_definition.id, job_id=active_job.id, run_index=1, status=JobStatus.COMPLETED)
+    doc.runs[active_run.id] = active_run
+    doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(active_definition.id)
+
+    def cluster_state(cluster_index: int, fractional_x: float) -> dict:
+        return {
+            "batch_results": [
+                {
+                    "optimized_position_ang": [fractional_x, 1.0, 1.5],
+                    "optimized_fractional_position": [fractional_x, 0.2, 0.3],
+                    "classical_energy_ev": -0.7,
+                    "classification": {"label": "minimum"},
+                }
+            ],
+            "batch_summary_data": {
+                "threshold_ang": 0.3,
+                "clustering_method": "hier",
+                "clusters": [
+                    {
+                        "cluster_index": cluster_index,
+                        "size": 1,
+                        "representative_index": 0,
+                        "member_indexes": [0],
+                    }
+                ],
+            },
+        }
+
+    doc.ui_state[window._UEP_ANALYSIS_STATES_KEY] = {
+        str(stale_job.id): cluster_state(99, 0.9),
+        str(active_job.id): cluster_state(1, 0.1),
+    }
+    window._document = doc
+
+    rows = window._uep_cluster_source_rows()
+
+    assert rows
+    assert {row["source_job_id"] for row in rows} == {str(active_job.id)}
+    assert {row["cluster_index"] for row in rows} == {1}
+
     window.close()
 
 

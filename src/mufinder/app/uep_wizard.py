@@ -1513,9 +1513,8 @@ class _BatchZpeThread(QThread):
 
 
 class UepAnalysisDialog(QDialog):
-    """Wizard-like dialog for UEP probing, plotting, batch search, and promotion."""
+    """Wizard-like dialog for UEP probing, plotting, batch search, and clustering."""
 
-    promote_requested = Signal(object)
     state_changed = Signal(dict)
     potential_grid_ready = Signal(object)
 
@@ -1771,13 +1770,9 @@ class UepAnalysisDialog(QDialog):
         self._probe_point = _TripleInput(parent=controls)
         self._probe_point.set_values((0.25, 0.25, 0.25))
         self._probe_run = QPushButton("Evaluate Point", controls)
-        self._probe_promote = QPushButton("Promote Current Point", controls)
-        self._probe_promote.setEnabled(False)
         self._probe_run.clicked.connect(self._run_probe)
-        self._probe_promote.clicked.connect(self._promote_current_probe)
         actions = QHBoxLayout()
         actions.addWidget(self._probe_run)
-        actions.addWidget(self._probe_promote)
         actions.addStretch(1)
         form.addRow("Fractional position", self._probe_point)
         form.addRow("", actions)
@@ -4511,7 +4506,6 @@ class UepAnalysisDialog(QDialog):
     def _clear_probe_line_plane_outputs(self) -> None:
         self._latest_probe = None
         self._probe_output.clear()
-        self._probe_promote.setEnabled(False)
 
         self._latest_line_sample = None
         self._line_data.clear()
@@ -4968,7 +4962,6 @@ class UepAnalysisDialog(QDialog):
 
     def _render_probe_result(self, probe: UepProbeResult) -> None:
         self._latest_probe = probe
-        self._probe_promote.setEnabled(True)
         self._probe_output.setPlainText(
             "\n".join(
                 [
@@ -5936,80 +5929,3 @@ class UepAnalysisDialog(QDialog):
             return None
         payload = item.data(0, Qt.ItemDataRole.UserRole)
         return payload if isinstance(payload, dict) else None
-
-    def _emit_promote_payload(
-        self,
-        *,
-        label_hint: str,
-        fractional_position: tuple[float, float, float],
-        cartesian_position: tuple[float, float, float],
-        generation_method: str,
-        properties: dict[str, Any],
-    ) -> None:
-        self.promote_requested.emit(
-            {
-                "label_hint": label_hint,
-                "fractional_position": list(fractional_position),
-                "cartesian_position": list(cartesian_position),
-                "generation_method": generation_method,
-                "source_structure_id": str(self._source_structure_id),
-                "source_job_label": self._source_job_label,
-                "properties": properties,
-            }
-        )
-
-    def _promote_current_probe(self) -> None:
-        if self._latest_probe is None:
-            return
-        self._emit_promote_payload(
-            label_hint=f"UEP Probe {self._source_job_label}",
-            fractional_position=self._latest_probe.fractional_position,
-            cartesian_position=self._latest_probe.position_ang,
-            generation_method="uep_probe",
-            properties={
-                "classification": self._latest_probe.classification.label,
-                "total_potential_ev": self._latest_probe.potential_total_ev,
-                "zero_point_energy_ev": self._latest_probe.zero_point_energy_ev,
-                "total_quantum_energy_ev": self._latest_probe.total_quantum_energy_ev,
-            },
-        )
-
-    def _promote_selected_cluster(self) -> None:
-        payload = self._selected_batch_payload()
-        if payload is None:
-            return
-        kind = str(payload.get("kind", "cluster"))
-        representative = payload.get("site", {}) if kind == "site" else payload.get("representative", {})
-        try:
-            fractional = tuple(float(value) for value in representative["optimized_fractional_position"])
-            cartesian = tuple(float(value) for value in representative["optimized_position_ang"])
-        except Exception:  # noqa: BLE001
-            QMessageBox.warning(self, "Promotion failed", "Selected batch-search data is incomplete.")
-            return
-
-        cluster_payload = payload.get("cluster", {})
-        cluster_index = cluster_payload.get("cluster_index", "?")
-        label_hint = f"UEP Cluster {cluster_index}"
-        properties = {
-            "cluster_index": cluster_index,
-            "cluster_size": cluster_payload.get("size"),
-            "classification": representative.get("classification", {}).get("label"),
-            "classical_energy_ev": representative.get("classical_energy_ev"),
-            "zero_point_energy_ev": representative.get("zero_point_energy_ev"),
-            "total_energy_ev": representative.get("total_energy_ev"),
-        }
-        if kind == "site":
-            site_number = payload.get("site_number")
-            label_hint = f"UEP Cluster {cluster_index} Site {site_number}"
-            properties["site_number"] = site_number
-            properties["selection_kind"] = "site"
-        else:
-            properties["selection_kind"] = "cluster"
-
-        self._emit_promote_payload(
-            label_hint=label_hint,
-            fractional_position=fractional,
-            cartesian_position=cartesian,
-            generation_method="uep_batch_cluster",
-            properties=properties,
-        )

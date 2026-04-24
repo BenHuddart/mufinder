@@ -181,7 +181,7 @@ def test_edit_slice_plane_dialog_uses_fractional_anchor_and_lattice_plane_compon
     dialog.close()
 
 
-def test_uep_wizard_probe_and_promote_emits_payload(qapp) -> None:
+def test_uep_wizard_probe_has_no_direct_promotion_workflow(qapp) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -190,16 +190,13 @@ def test_uep_wizard_probe_and_promote_emits_payload(qapp) -> None:
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
-    promoted: list[dict] = []
-    dialog.promote_requested.connect(lambda payload: promoted.append(payload))
 
     dialog._probe_point.set_values((0.25, 0.25, 0.25))
     dialog._run_probe()
     assert "Total potential" in dialog._probe_output.toPlainText()
-
-    dialog._promote_current_probe()
-    assert promoted
-    assert promoted[0]["generation_method"] == "uep_probe"
+    assert not hasattr(dialog, "promote_requested")
+    assert not hasattr(dialog, "_probe_promote")
+    assert not any(button.text().startswith("Promote") for button in dialog.findChildren(QPushButton))
     dialog.close()
 
 
@@ -325,7 +322,7 @@ def test_uep_wizard_pressing_enter_on_gw_factor_rebuilds_field_and_recalculates_
     assert dialog._slice_gw_factor_input.value() == pytest.approx(7.0)
     assert dialog._batch_gw_factor_input.value() == pytest.approx(7.0)
     assert dialog._probe_output.toPlainText() == ""
-    assert dialog._probe_promote.isEnabled() is False
+    assert not hasattr(dialog, "_probe_promote")
     assert dialog._potential_grid_raw_cache is None
     assert dialog._potential_grid_cache is None
     assert started == [True]
@@ -396,7 +393,7 @@ def test_uep_wizard_pressing_enter_on_batch_gw_factor_rebuilds_and_syncs_all_tab
     dialog.close()
 
 
-def test_uep_wizard_clustering_window_populates_cluster_table_and_promotes(qapp, monkeypatch) -> None:
+def test_uep_wizard_clustering_window_populates_cluster_table_without_direct_promotion(qapp, monkeypatch) -> None:
     _run_batch_search_inline(monkeypatch)
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
@@ -406,8 +403,6 @@ def test_uep_wizard_clustering_window_populates_cluster_table_and_promotes(qapp,
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
-    promoted: list[dict] = []
-    dialog.promote_requested.connect(lambda payload: promoted.append(payload))
 
     dialog._batch_count.setValue(12)
     dialog._batch_max_steps.setValue(5)
@@ -442,11 +437,8 @@ def test_uep_wizard_clustering_window_populates_cluster_table_and_promotes(qapp,
         for index in range(item.childCount())
     ]
     assert sorted(int(label.removeprefix("Site ")) for label in all_site_labels) == list(range(1, len(all_site_labels) + 1))
-    dialog._promote_selected_cluster()
-
-    assert promoted
-    assert promoted[0]["generation_method"] == "uep_batch_cluster"
-    assert promoted[0]["properties"]["selection_kind"] == "cluster"
+    assert not hasattr(dialog, "promote_requested")
+    assert not hasattr(dialog, "_promote_selected_cluster")
     dialog.close()
 
 
@@ -479,7 +471,7 @@ def test_uep_wizard_clustering_window_close_clears_reference_and_allows_reopen(q
     dialog.close()
 
 
-def test_uep_wizard_site_selection_promotes_individual_site(qapp, monkeypatch) -> None:
+def test_uep_wizard_site_selection_updates_viewer_without_direct_promotion(qapp, monkeypatch) -> None:
     _run_batch_search_inline(monkeypatch)
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",
@@ -489,8 +481,6 @@ def test_uep_wizard_site_selection_promotes_individual_site(qapp, monkeypatch) -
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
-    promoted: list[dict] = []
-    dialog.promote_requested.connect(lambda payload: promoted.append(payload))
 
     dialog._batch_count.setValue(2)
     dialog._batch_max_steps.setValue(5)
@@ -501,17 +491,13 @@ def test_uep_wizard_site_selection_promotes_individual_site(qapp, monkeypatch) -
     assert cluster_item is not None
     site_item = cluster_item.child(0)
     assert site_item is not None
-    expected_site_number = int(site_item.text(0).removeprefix("Site "))
     site_item.setSelected(True)
     dialog._batch_table.setCurrentItem(site_item)
     qapp.processEvents()
 
     assert "selected optimized muon positions" in dialog._batch_viewer_summary.text()
-    dialog._promote_selected_cluster()
-
-    assert promoted
-    assert promoted[0]["properties"]["selection_kind"] == "site"
-    assert promoted[0]["properties"]["site_number"] == expected_site_number
+    assert dialog._batch_viewer._point_overlay_specs
+    assert not hasattr(dialog, "_promote_selected_cluster")
     dialog.close()
 
 

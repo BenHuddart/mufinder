@@ -21,8 +21,12 @@ from mufinder.science.kpoint_grids import (
 )
 from mufinder.science.site_generation import (
     SiteGenerationError,
-    generate_near_element_sites,
+    closest_symmetry_equivalent_position,
+    estimate_muon_muon_separation_for_count,
+    estimate_random_site_count_from_separation,
+    generate_attached_element_sites,
     generate_random_sites,
+    generate_random_sites_by_distance,
     lattice_cart_to_frac,
     lattice_frac_to_cart,
 )
@@ -53,8 +57,12 @@ __all__ = [
     "lattice_matches",
     "reciprocal_lattice_vectors",
     "SiteGenerationError",
-    "generate_near_element_sites",
+    "closest_symmetry_equivalent_position",
+    "estimate_muon_muon_separation_for_count",
+    "estimate_random_site_count_from_separation",
+    "generate_attached_element_sites",
     "generate_random_sites",
+    "generate_random_sites_by_distance",
     "lattice_cart_to_frac",
     "lattice_frac_to_cart",
     "LoadedStructure",

@@ -201,22 +201,68 @@ Muon candidate-site generation
 
 Generation methods currently implemented:
 
-- Random constrained filling in periodic cells.
-- Near-element constrained placement around host atoms.
-- Manual entry in fractional or Cartesian coordinates.
+- Random constrained filling in periodic cells. Random generation now evaluates
+  the full symmetry-equivalent orbit of each proposed position before
+  accepting it, following the MuFinder CPC initial-position algorithm. Users
+  can generate by specifying a muon-muon separation, or by specifying a target
+  number of initial positions and allowing MuFinder to estimate the spacing
+  from the free cell volume, symmetry multiplicity, and the historical
+  ``0.350`` random-filling factor.
+- Element-attached constrained placement around host atoms selected from a
+  dropdown populated by the active host structure. For every atom of the
+  selected element, the requested number of muons per atom is chosen
+  deterministically from local neighbour geometry and ranked by host-atom
+  clearance.
+- Manual entry in fractional or Cartesian coordinates, with fractional
+  coordinates as the canonical stored representation and a live viewer preview.
+- Clustered UEP batch-search results selected from saved UEP analysis state.
+- Selected generated rows can be clustered around a fractional anchor before
+  staging. MuFinder replaces each selected initial position by the
+  symmetry-equivalent representative closest to that anchor, helping users
+  avoid launching relaxations from different realizations of the same
+  symmetry-equivalent site.
+- Selected generated rows can be deleted from the generation table before
+  relaxation jobs are configured.
 
 Constraint handling currently includes:
 
-- Minimum muon-muon distance under periodic minimum-image convention.
-- Minimum muon-host distance under periodic minimum-image convention.
-- Attempt caps and optional deterministic random seed.
+- Minimum muon-muon distance under periodic minimum-image convention for
+  random filling. This is a candidate-start diversity filter: every relaxation
+  input still contains only one muon, and the spacing prevents redundant starts
+  that are likely to relax to the same final site.
+- Minimum muon-host distance under periodic minimum-image convention for
+  random and element-attached generation.
+- Attempt caps for random placement. The generation UI no longer exposes a
+  random seed, but internal seed parameters remain available for regression
+  tests.
 
 Error handling currently includes:
 
 - Explicit exceptions for unsatisfiable constraints.
 - Explicit exceptions for unknown target elements.
+- Duplicate protection for UEP cluster rows that have already been added as generated sites.
 - UI surfacing of generation failures.
 - UI surfacing of structure import failures.
+
+UEP cluster candidates are added from the muon-generation workflow rather than
+directly from the UEP wizard. The UEP stage remains responsible for probing,
+batch optimization, zero-point estimates, clustering, and visualization; the
+generation stage is where selected cluster representatives become initial
+positions for full structural relaxation.
+Cluster representatives use the optimized position of the lowest-energy member
+chosen by the clustering summary, not an averaged cluster position or centroid.
+
+The symmetry-aware random method follows the initial-position generation
+algorithm described by Huddart *et al.*, ``MuFinder: A program to determine and
+analyse muon stopping sites``, *Computer Physics Communications* **280**,
+108488 (2022), DOI: ``10.1016/j.cpc.2022.108488``. The element-attached method
+is a deterministic seeding heuristic intended to provide chemically sensible
+starts near selected species; final site assignment still requires subsequent
+structural relaxation and clustering. For broader context on interstitial-site
+generation and defect-style candidate enumeration, see the
+``pymatgen-analysis-defects`` interstitial-generator documentation and the
+``pymuon-suite`` AIRSS/UEP workflow material referenced in the UEP workflow
+documentation.
 
 UEP clustering analysis
 -----------------------

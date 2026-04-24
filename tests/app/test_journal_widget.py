@@ -37,7 +37,7 @@ def test_journal_widget_renders_day_headers_and_entries(qapp) -> None:
 
     texts = [label.text() for label in widget.findChildren(type(widget._empty_label))]
     assert "Tuesday 21 April 2026" in texts
-    assert "Muon candidates generated" in texts
+    assert "Muon sites generated" in texts
     assert "Muon Sites" in texts
     widget.close()
 

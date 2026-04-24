@@ -11,7 +11,8 @@ from PySide6.QtWidgets import QDockWidget, QHeaderView, QLabel, QFrame, QTreeWid
 import mufinder.app.main_window as main_window_module
 import mufinder.castep_io.schema as schema_module
 from mufinder.app.main_window import MainWindow
-from mufinder.domain.models import ComparisonTable
+from mufinder.domain.enums import JobStatus
+from mufinder.domain.models import CalculationDefinition, ComparisonTable
 from mufinder.services.project_service import ProjectService
 
 
@@ -147,6 +148,25 @@ def test_main_window_routes_to_pristine_relaxation_panel(qapp, tmp_path: Path) -
     window.close()
 
 
+def test_main_window_routes_to_muon_relaxation_panel(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "ui_muon_relax_doc.mufinder", "UI Muon Relax")
+    window._document = doc
+    window._refresh_ui_after_project_change()
+
+    item = QTreeWidgetItem(["Relaxations"])
+    item.setData(0, 0x0100, "muon_relaxations")  # Qt.UserRole
+    window._project_tree.clearSelection()
+    window._project_tree.addTopLevelItem(item)
+    window._project_tree.setCurrentItem(item)
+    window._on_tree_selection_changed()
+
+    assert window._main_stack.currentWidget() is window._muon_relaxation_view
+    window.close()
+
+
 def test_main_window_jobs_table_includes_cluster_columns(qapp) -> None:
     window = MainWindow()
 
@@ -250,6 +270,86 @@ def test_main_window_workflow_completion_roles_track_project_defaults(
     assert "project default cutoff" in str(cutoff_item.data(0, window._WORKFLOW_GOAL_ROLE)).lower()
     assert "project default k-point" in str(kpoint_item.data(0, window._WORKFLOW_GOAL_ROLE)).lower()
     assert "comparison table" in str(pristine_item.data(0, window._WORKFLOW_GOAL_ROLE)).lower()
+
+    window.close()
+
+
+def test_main_window_muon_relaxation_workflow_complete_when_table_jobs_done(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "ui_muon_relax_progress.mufinder", "Muon Relax Progress")
+
+    first_job = service.add_job(
+        doc,
+        label="Relax A",
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type=main_window_module.MUON_RELAXATION_CALC_TYPES["positive_muon"],
+    )
+    first_job.status = JobStatus.COMPLETED
+    second_job = service.add_job(
+        doc,
+        label="Relax B",
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type=main_window_module.MUON_RELAXATION_CALC_TYPES["positive_muon"],
+    )
+    second_job.status = JobStatus.QUEUED
+    extra_job = service.add_job(
+        doc,
+        label="Historical Relax",
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type=main_window_module.MUON_RELAXATION_CALC_TYPES["positive_muon"],
+    )
+    extra_job.status = JobStatus.RUNNING
+    definition = CalculationDefinition(
+        workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muon_relaxation",
+        parameters={
+            "configuration": {
+                "rows": [
+                    {
+                        "site_id": str(uuid4()),
+                        "label": "Relax A",
+                        "initial_fractional_position": [0.1, 0.2, 0.3],
+                        "charge_state": "positive_muon",
+                    },
+                    {
+                        "site_id": str(uuid4()),
+                        "label": "Relax B",
+                        "initial_fractional_position": [0.4, 0.5, 0.6],
+                        "charge_state": "positive_muon",
+                    },
+                ]
+            },
+            "job_ids_by_label": {
+                "positivemuon:Relax A": str(first_job.id),
+                "positivemuon:Relax B": str(second_job.id),
+            },
+        },
+    )
+    doc.calculations[definition.id] = definition
+    doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    window._document = doc
+    window._refresh_ui_after_project_change()
+
+    root = window._project_tree.topLevelItem(0)
+    assert root is not None
+    relaxation_item = _find_item_by_route(root, "muon_relaxations")
+
+    assert relaxation_item is not None
+    assert relaxation_item.toolTip(0) == "Complete when: All structural relaxations completed."
+    assert relaxation_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is False
+
+    second_job.status = JobStatus.COMPLETED
+    window._populate_project_tree()
+
+    root = window._project_tree.topLevelItem(0)
+    assert root is not None
+    relaxation_item = _find_item_by_route(root, "muon_relaxations")
+    assert relaxation_item is not None
+    assert relaxation_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is True
 
     window.close()
 

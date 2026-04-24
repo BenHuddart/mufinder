@@ -162,8 +162,9 @@ MuFinder implementation includes:
 - a separate clustering window with hierarchical dendrogram exploration of the
   Soprano-backed feature space and a k-means PCA view with live cluster-count
   updates;
-- promotion of selected probe points or cluster representatives into the
-  candidate muon-site workflow.
+- exposure of clustered batch-search results to the separate ``Muon Site
+  Generation`` tab, where selected UEP rows can be committed as candidate
+  muon-site inputs for structural relaxation.
 
 Saving Analysis Sessions
 ------------------------
@@ -184,6 +185,42 @@ Users can therefore explore candidate sites, refresh overlays, or compare
 clustering views without immediately rewriting the project on disk. To restore
 that exact UEP analysis layout in a future session, they should use
 ``Save Project`` before closing the project.
+
+Using UEP Clusters for Relaxation Starts
+----------------------------------------
+
+UEP analysis no longer writes generated muon sites directly from the wizard.
+After running a batch search and clustering the optimized points, users should
+return to ``Generation`` and choose the ``UEP clusters`` method. That
+table lists one saved representative per cluster from the UEP analysis state,
+including source job, cluster size, stationary classification, classical energy
+``E (eV)``, and fractional coordinates.
+
+A cluster-row position is the optimized position of the representative member
+recorded in the UEP cluster summary. It is not the mean position, centroid, or
+PCA/k-means centre of the cluster. MuFinder chooses that representative as the
+lowest-energy optimized member of the cluster, using ZPE-corrected total energy
+when those totals are available and falling back to the classical UEP energy
+otherwise. Individual non-representative members remain available in the UEP
+analysis state but are intentionally hidden from this version of the generation
+table to keep the relaxation-start list compact.
+
+Selecting rows in the generation tab previews the corresponding muon positions
+over the host structure. Clicking ``Generate Sites`` then records the
+selected UEP rows as normal generated ``MuonSite`` entries for the full
+structural-relaxation workflow. MuFinder stores the source job, cluster index,
+representative member index, clustering method, energies, and classification
+with each created site, and protects against adding the same UEP cluster row
+twice.
+
+Before staging the generated sites for CASTEP relaxation, users can also use
+``Cluster Positions`` in the ``Generation`` tab to rewrite selected generated
+rows to the symmetry-equivalent representatives closest to a chosen fractional
+anchor. This is useful when several generated starts correspond to the same
+physical UEP site but sit in different symmetry-equivalent parts of the unit
+cell. Choosing a common representative avoids launching relaxations from
+different realizations of the same symmetry-equivalent site merely because the
+initial coordinates used different members of the symmetry orbit.
 
 Interpreting Batch Searches
 ---------------------------
@@ -212,7 +249,8 @@ basins. MuFinder follows the same high-level idea:
   than as a proof of the physically correct site count;
 - each cluster is summarized by its size, a representative relaxed site, and
   cluster energy statistics; the representative is the minimum-energy member of
-  that cluster, matching the style used in the ``pymuonsuite`` cluster reports;
+  that cluster rather than an averaged coordinate or centroid, matching the
+  style used in the ``pymuonsuite`` cluster reports;
 - the clustering window bubble plot shows average energy relative to the global
   minimum on the horizontal axis and the cluster energy standard deviation on
   the vertical axis, so broad/high-energy clusters can be distinguished from

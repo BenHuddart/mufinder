@@ -11,11 +11,12 @@ import re
 import shutil
 from uuid import UUID
 
-from PySide6.QtCore import QSettings, QTimer, Qt
+from PySide6.QtCore import QSettings, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QActionGroup, QColor, QFont, QGuiApplication, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QDialog,
     QFrame,
     QFileDialog,
     QDockWidget,
@@ -45,8 +46,9 @@ from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_clus
 from mufinder.castep_io.gui_metadata import normalize_gui_value
 from mufinder.castep_io.schema import get_keyword_spec
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, ComparisonTable, Job, MuonSite, ProvenanceRecord, Result, Structure, utc_now
+from mufinder.domain.models import CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure, utc_now
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
+from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig, ClusterSubmissionDialog
 from mufinder.app.comparison_job_dialog import ComparisonJobDialog, CompletedPristineJob
 from mufinder.app.comparison_table_widget import ComparisonTableWidget
@@ -68,9 +70,24 @@ from mufinder.app.convergence_overview_widget import ConvergenceOverviewWidget
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.convergence_widget import ConvergenceWidget
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
-from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
-from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow, RelaxationRunState
+from mufinder.app.relaxation_adapter import (
+    MUON_RELAXATION_CALC_TYPES,
+    expand_muon_relaxation_jobs,
+    expand_pristine_relaxation_jobs,
+    is_muon_relaxation_calc_type,
+    muon_charge_state_prefix,
+    muon_relaxation_calc_type,
+)
+from mufinder.app.relaxation_types import (
+    MuonRelaxationConfig,
+    MuonRelaxationRow,
+    PristineRelaxationConfig,
+    PristineRelaxationRow,
+    RelaxationRunState,
+    SupercellMatrix,
+)
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
+from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.uep_adapter import expand_uep_jobs
 from mufinder.app.uep_types import UepConfig, UepRunState, UepSourceRow
 from mufinder.app.uep_wizard import UepAnalysisDialog
@@ -132,6 +149,50 @@ class WorkflowDefinition:
     completion_goal: str | None = None
     completion_check: Callable[[ProjectDocument], bool] | None = None
     children: tuple["WorkflowDefinition", ...] = ()
+
+
+class _MuonGenerationThread(QThread):
+    """Run site generation away from the Qt main thread."""
+
+    generated = Signal(object)
+    failed = Signal(str)
+    progress_changed = Signal(int, int)
+
+    def __init__(
+        self,
+        service: ProjectService,
+        document: ProjectDocument,
+        *,
+        method: str,
+        parameters: dict,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._service = service
+        self._document = document
+        self._method = method
+        self._parameters = dict(parameters)
+
+    @property
+    def method(self) -> str:
+        return self._method
+
+    @property
+    def parameters(self) -> dict:
+        return dict(self._parameters)
+
+    def run(self) -> None:
+        try:
+            created = self._service.generate_candidate_sites(
+                self._document,
+                method=self._method,
+                parameters=self._parameters,
+                progress_callback=self.progress_changed.emit,
+            )
+        except (SiteGenerationError, ValueError) as exc:
+            self.failed.emit(str(exc))
+            return
+        self.generated.emit(created)
 
 
 class ExpeditionTrailWidget(QWidget):
@@ -268,6 +329,7 @@ class MainWindow(QMainWindow):
     _ACTIVE_CONVERGENCE_DEFINITION_KEY = "active_convergence_cutoff_definition_id"
     _ACTIVE_KPOINT_DEFINITION_KEY = "active_convergence_kpoint_definition_id"
     _ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY = "active_pristine_relaxation_definition_id"
+    _ACTIVE_MUON_RELAXATION_DEFINITION_KEY = "active_muon_relaxation_definition_id"
     _ACTIVE_UEP_DEFINITION_KEY = "active_uep_definition_id"
     _CONVERGENCE_EXAMINER_STATE_KEY = "convergence_examiner_state"
     _KPOINT_EXAMINER_STATE_KEY = "kpoint_examiner_state"
@@ -300,6 +362,8 @@ class MainWindow(QMainWindow):
         self._cluster_connected = False
         self._comparison_widgets: dict[UUID, ComparisonTableWidget] = {}
         self._uep_analysis_dialogs: dict[UUID, UepAnalysisDialog] = {}
+        self._muon_generation_thread: _MuonGenerationThread | None = None
+        self._muon_generation_failed = False
 
         app = QApplication.instance()
         if app is not None:
@@ -421,7 +485,18 @@ class MainWindow(QMainWindow):
         self._uep_view.reset_failed_requested.connect(self._on_reset_failed_from_uep)
         self._muon_generation_view = MuonGenerationWidget()
         self._muon_generation_view.generate_requested.connect(self._on_generate_requested)
+        self._muon_generation_view.cluster_positions_requested.connect(self._on_cluster_muon_positions_requested)
+        self._muon_generation_view.delete_candidates_requested.connect(self._on_delete_muon_candidates_requested)
+        self._muon_generation_view.create_jobs_requested.connect(self._on_create_muon_relaxation_jobs_requested)
         self._muon_generation_view.form_state_changed.connect(self._on_muon_form_state_changed)
+        self._muon_relaxation_view = MuonRelaxationWidget()
+        self._muon_relaxation_view.configure_requested.connect(self._on_muon_relaxation_configured)
+        self._muon_relaxation_view.form_state_changed.connect(self._on_muon_relaxation_form_state_changed)
+        self._muon_relaxation_view.row_supercell_edit_requested.connect(
+            self._on_muon_relaxation_supercell_edit_requested
+        )
+        self._muon_relaxation_view.submit_local_requested.connect(self._on_submit_local_from_muon_relaxation)
+        self._muon_relaxation_view.submit_cluster_requested.connect(self._on_submit_cluster_from_muon_relaxation)
         self._journal_view = JournalWidget()
         self._main_stack.addWidget(self._home_page)
         self._main_stack.addWidget(self._host_structure_view)
@@ -431,6 +506,7 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._pristine_relaxation_view)
         self._main_stack.addWidget(self._uep_view)
         self._main_stack.addWidget(self._muon_generation_view)
+        self._main_stack.addWidget(self._muon_relaxation_view)
         self._main_stack.addWidget(self._journal_view)
 
         self._jobs_table = QTableWidget(0, 12)
@@ -554,9 +630,26 @@ class MainWindow(QMainWindow):
                     return
         else:
             self._shutting_down = True
+        if self._muon_generation_thread is not None:
+            self._muon_generation_thread.wait()
+            self._muon_generation_thread = None
+        self._shutdown_embedded_structure_viewers()
         self._local_runner.shutdown()
         self._cluster_runner.shutdown()
         super().closeEvent(event)
+
+    def _shutdown_embedded_structure_viewers(self) -> None:
+        viewers = self.findChildren(AtomicStructureViewer)
+        seen: set[int] = set()
+        for viewer in viewers:
+            viewer_id = id(viewer)
+            if viewer_id in seen:
+                continue
+            seen.add(viewer_id)
+            try:
+                viewer.shutdown()
+            except RuntimeError:
+                continue
 
     def _close_open_uep_analysis_dialogs(self) -> None:
         dialogs: list[QDialog] = []
@@ -1125,6 +1218,9 @@ class MainWindow(QMainWindow):
         self._muon_generation_view.set_form_state(
             self._document.ui_state.get("muon_generation_form", {})
         )
+        self._muon_relaxation_view.set_form_state(
+            self._document.ui_state.get("muon_relaxation_form", {})
+        )
         self._convergence_view.set_project_defaults(
             cutoff_energy=self._document.project.recommended_cutoff_energy,
             cutoff_method=self._document.project.recommended_cutoff_method,
@@ -1142,6 +1238,8 @@ class MainWindow(QMainWindow):
         )
         self._refresh_pristine_relaxation_defaults()
         self._refresh_pristine_relaxation_rows()
+        self._refresh_muon_relaxation_defaults()
+        self._refresh_muon_relaxation_rows()
         self._refresh_uep_defaults()
         self._refresh_uep_rows()
         self._refresh_uep_source_structures()
@@ -1382,6 +1480,94 @@ class MainWindow(QMainWindow):
             for job in document.jobs.values()
         )
 
+    @staticmethod
+    def _active_muon_relaxation_definition_for_document(document: ProjectDocument):
+        raw_definition_id = document.ui_state.get(MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY)
+        if isinstance(raw_definition_id, str):
+            try:
+                definition_id = UUID(raw_definition_id)
+            except ValueError:
+                definition_id = None
+            if definition_id is not None:
+                definition = document.calculations.get(definition_id)
+                if (
+                    definition is not None
+                    and definition.workflow_stage == WorkflowStage.MUON_RELAXATION
+                    and definition.calc_type == "castep_muon_relaxation"
+                ):
+                    return definition
+
+        definitions = [
+            definition
+            for definition in document.calculations.values()
+            if definition.workflow_stage == WorkflowStage.MUON_RELAXATION
+            and definition.calc_type == "castep_muon_relaxation"
+        ]
+        definitions.sort(key=lambda definition: definition.created_at, reverse=True)
+        return definitions[0] if definitions else None
+
+    @staticmethod
+    def _muon_relaxation_job_for_table_row(
+        document: ProjectDocument,
+        definition,
+        label: str,
+        charge_state: str,
+    ) -> Job | None:
+        keys = (f"{muon_charge_state_prefix(charge_state)}:{label}", label)
+        mapping = definition.parameters.get("job_ids_by_label", {})
+        if not isinstance(mapping, dict):
+            return None
+        for key in keys:
+            raw_job_id = mapping.get(key)
+            if not isinstance(raw_job_id, str):
+                continue
+            try:
+                job_id = UUID(raw_job_id)
+            except ValueError:
+                continue
+            job = document.jobs.get(job_id)
+            if job is not None:
+                return job
+        return None
+
+    @staticmethod
+    def _latest_run_for_document_job(document: ProjectDocument, job_id: UUID) -> CalculationRun | None:
+        runs = [run for run in document.runs.values() if run.job_id == job_id]
+        return max(runs, key=lambda run: run.run_index) if runs else None
+
+    @staticmethod
+    def _workflow_muon_relaxations_complete(document: ProjectDocument) -> bool:
+        definition = MainWindow._active_muon_relaxation_definition_for_document(document)
+        if definition is None:
+            return False
+        configuration = definition.parameters.get("configuration", {})
+        rows = configuration.get("rows", []) if isinstance(configuration, dict) else []
+        if not isinstance(rows, list):
+            return False
+
+        saw_row = False
+        for entry in rows:
+            if not isinstance(entry, dict):
+                continue
+            label = str(entry.get("label", "")).strip()
+            if not label:
+                continue
+            saw_row = True
+            charge_state = str(entry.get("charge_state", "positive_muon"))
+            job = MainWindow._muon_relaxation_job_for_table_row(
+                document,
+                definition,
+                label,
+                charge_state,
+            )
+            if job is None or job.status != JobStatus.COMPLETED:
+                return False
+            latest_run = MainWindow._latest_run_for_document_job(document, job.id)
+            if latest_run is not None and latest_run.convergence_achieved is False:
+                return False
+
+        return saw_row
+
     def _workflow_definitions(self) -> tuple[WorkflowDefinition, ...]:
         cutoff = WorkflowDefinition(
             key="convergence_cutoff",
@@ -1438,20 +1624,22 @@ class MainWindow(QMainWindow):
                 key="muon_sites",
                 title="Muon Sites",
                 subtitle="Place and refine muons",
-                completion_goal="Generate at least one candidate muon site.",
+                completion_goal="Generate at least one muon site.",
                 completion_check=self._workflow_muon_candidates_complete,
                 children=(
                     WorkflowDefinition(
                         key="muon_candidates",
-                        title="Candidates",
+                        title="Generation",
                         route="muon_candidates",
-                        completion_goal="Generate at least one candidate muon site.",
+                        completion_goal="Generate at least one muon site.",
                         completion_check=self._workflow_muon_candidates_complete,
                     ),
                     WorkflowDefinition(
                         key="muon_relaxations",
                         title="Relaxations",
                         route="muon_relaxations",
+                        completion_goal="All structural relaxations completed.",
+                        completion_check=self._workflow_muon_relaxations_complete,
                     ),
                     WorkflowDefinition(
                         key="muon_confirmed",
@@ -1570,6 +1758,7 @@ class MainWindow(QMainWindow):
             self._convergence_view.set_cutoff_runtime_states({})
             self._kpoint_convergence_view.set_runtime_states({})
             self._pristine_relaxation_view.set_runtime_states({})
+            self._muon_relaxation_view.set_runtime_states({})
             self._uep_view.set_runtime_states({})
             return
 
@@ -1650,6 +1839,7 @@ class MainWindow(QMainWindow):
         self._refresh_convergence_cutoff_rows()
         self._refresh_kpoint_convergence_rows()
         self._refresh_pristine_relaxation_rows()
+        self._refresh_muon_relaxation_rows()
         self._refresh_uep_rows()
         self._sync_expedition_trail()
 
@@ -1920,6 +2110,8 @@ class MainWindow(QMainWindow):
             target = self._uep_view
         elif route == "muon_candidates":
             target = self._muon_generation_view
+        elif route == "muon_relaxations":
+            target = self._muon_relaxation_view
         elif route == "provenance_log":
             target = self._journal_view
         elif isinstance(route, str):
@@ -2849,6 +3041,7 @@ class MainWindow(QMainWindow):
             if output_dir is None:
                 missing_paths.append(job.label)
                 continue
+            seed_name = self._job_seed_name(job)
 
             try:
                 job.execution_target = "local"
@@ -2869,7 +3062,7 @@ class MainWindow(QMainWindow):
             self._local_runner.submit(
                 job_id=job.id,
                 job_dir=output_dir,
-                seed_name=job.label,
+                seed_name=seed_name,
                 castep_executable=setup.executable_path,
                 mpirun_path=setup.mpirun_path,
                 num_cores=config.num_cores,
@@ -2949,7 +3142,8 @@ class MainWindow(QMainWindow):
         if runtime_username and runtime_username != selected_cluster.username:
             selected_cluster = replace(selected_cluster, username=runtime_username)
 
-        invalid_labels = self._cluster_runner.invalid_remote_job_labels([job.label for job in defined_jobs])
+        seed_name_by_job = {job.id: self._job_seed_name(job) for job in defined_jobs}
+        invalid_labels = self._cluster_runner.invalid_remote_job_labels(list(seed_name_by_job.values()))
         if invalid_labels:
             show_detailed_warning(
                 self,
@@ -3003,7 +3197,7 @@ class MainWindow(QMainWindow):
             QApplication.processEvents()
             remote_target = self._cluster_runner.remote_job_directory(
                 working_directory=submission.working_directory,
-                seed_name=job.label,
+                seed_name=seed_name_by_job.get(job.id, job.label),
             )
             remote_target_by_job[job.id] = remote_target
             try:
@@ -3023,6 +3217,7 @@ class MainWindow(QMainWindow):
             if output_dir is None:
                 missing_paths.append(job.label)
                 continue
+            seed_name = seed_name_by_job.get(job.id, self._job_seed_name(job))
 
             remote_target = remote_target_by_job.get(job.id)
             if remote_target and remote_target in existing_remote_targets:
@@ -3074,7 +3269,7 @@ class MainWindow(QMainWindow):
                 remote_job_id = self._cluster_runner.submit(
                     job_id=job.id,
                     local_job_dir=output_dir,
-                    seed_name=job.label,
+                    seed_name=seed_name,
                     num_processes=submission.num_processes,
                     walltime=submission.walltime,
                     working_directory=submission.working_directory,
@@ -3085,7 +3280,8 @@ class MainWindow(QMainWindow):
                     comment=getattr(submission, "comment", ""),
                     castep_executable=selected_cluster.castep_executable,
                     retrieve_den_fmt=job.calc_type == "castep_uep_source",
-                    retrieve_out_cell=job.calc_type == "castep_pristine_relaxation",
+                    retrieve_out_cell=job.calc_type == "castep_pristine_relaxation"
+                    or is_muon_relaxation_calc_type(job.calc_type),
                 )
                 job.remote_job_id = remote_job_id
                 job.remote_directory = remote_target
@@ -3176,15 +3372,18 @@ class MainWindow(QMainWindow):
             or not persisted_workflow_type
             or workflow_type == persisted_workflow_type
         )
+        default_job_name_prefix = self._default_cluster_job_name_prefix(workflow_type)
 
         return ClusterSubmissionConfig(
             cluster_name=cluster_name,
             working_directory=str(payload.get("working_directory", "")).strip() if same_workflow else "",
             username=str(payload.get("username", "")).strip(),
             job_name_prefix=(
-                str(payload.get("job_name_prefix", "convergence")).strip() if same_workflow else "convergence"
+                str(payload.get("job_name_prefix", default_job_name_prefix)).strip()
+                if same_workflow
+                else default_job_name_prefix
             )
-            or "convergence",
+            or default_job_name_prefix,
             num_processes=num_processes,
             walltime=str(payload.get("walltime", "")).strip(),
             queue_name=str(payload.get("queue_name", "")).strip(),
@@ -3262,7 +3461,35 @@ class MainWindow(QMainWindow):
         cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", cleaned)
         return cleaned.strip("_") or "workflow"
 
+    @classmethod
+    def _sanitize_remote_path_fragment(cls, value: str) -> str:
+        parts = [
+            cls._sanitize_remote_path_component(part)
+            for part in value.strip().split("/")
+            if part.strip()
+        ]
+        return "/".join(parts) or "workflow"
+
+    @staticmethod
+    def _default_cluster_job_name_prefix(workflow_type: str | None) -> str:
+        normalized = (workflow_type or "").strip().strip("/")
+        last_component = normalized.rsplit("/", 1)[-1]
+        if last_component in {"positivemuon", "muonium"}:
+            return last_component
+        return "convergence"
+
     def _cluster_workflow_directory_fragment(self, jobs: list[Job]) -> str:
+        muon_calc_types = {job.calc_type for job in jobs if is_muon_relaxation_calc_type(job.calc_type)}
+        if muon_calc_types and len(muon_calc_types) == len({job.calc_type for job in jobs}):
+            if len(muon_calc_types) == 1:
+                calc_type = next(iter(muon_calc_types))
+                prefix = (
+                    "positivemuon"
+                    if calc_type == MUON_RELAXATION_CALC_TYPES["positive_muon"]
+                    else "muonium"
+                )
+                return self._sanitize_remote_path_fragment(f"muon_relaxation/{prefix}")
+            return "muon_relaxation_mixed_charge_states"
         workflow_values = {job.workflow_stage.value for job in jobs}
         if len(workflow_values) == 1:
             return self._sanitize_remote_path_component(next(iter(workflow_values)))
@@ -3579,6 +3806,27 @@ class MainWindow(QMainWindow):
             }:
                 base = self._definition_output_directory(definition)
                 if base is not None:
+                    if definition.workflow_stage == WorkflowStage.MUON_RELAXATION and is_muon_relaxation_calc_type(job.calc_type):
+                        matching_key = next(
+                            (
+                                str(key)
+                                for key, value in job_ids_by_label.items()
+                                if str(value) == str(job.id)
+                            ),
+                            "",
+                        )
+                        prefix = (
+                            "positivemuon"
+                            if job.calc_type == MUON_RELAXATION_CALC_TYPES["positive_muon"]
+                            else "muonium"
+                        )
+                        seed_mapping = params.get("job_seed_names_by_label", {})
+                        seed_name = job.label
+                        if isinstance(seed_mapping, dict):
+                            raw_seed = seed_mapping.get(matching_key)
+                            if isinstance(raw_seed, str) and raw_seed.strip():
+                                seed_name = raw_seed.strip()
+                        return base / prefix / seed_name
                     return base / job.label
 
             labels = params.get("job_labels", [])
@@ -3605,19 +3853,26 @@ class MainWindow(QMainWindow):
                 return fallback
         return None
 
+    def _job_seed_name(self, job: Job) -> str:
+        output_dir = self._job_output_directory(job)
+        if output_dir is not None:
+            return output_dir.name
+        return job.label
+
     def _output_files_for_job(self, job: Job) -> list[str]:
         if self._document is None:
             return []
         output_dir = self._job_output_directory(job)
         if output_dir is None:
             return []
+        seed_name = self._job_seed_name(job)
 
         paths = [
-            output_dir / f"{job.label}.cell",
-            output_dir / f"{job.label}.param",
-            output_dir / f"{job.label}.castep",
-            output_dir / f"{job.label}.den_fmt",
-            output_dir / f"{job.label}-out.cell",
+            output_dir / f"{seed_name}.cell",
+            output_dir / f"{seed_name}.param",
+            output_dir / f"{seed_name}.castep",
+            output_dir / f"{seed_name}.den_fmt",
+            output_dir / f"{seed_name}-out.cell",
         ]
         files: list[str] = []
         for path in paths:
@@ -3713,7 +3968,10 @@ class MainWindow(QMainWindow):
         if job is None:
             return
 
-        if job.calc_type == "castep_pristine_relaxation" and parsed.geom_converged is False:
+        if (
+            job.calc_type == "castep_pristine_relaxation"
+            or is_muon_relaxation_calc_type(job.calc_type)
+        ) and parsed.geom_converged is False:
             self._on_local_job_failed(
                 job_id,
                 parsed.error_message
@@ -3747,23 +4005,25 @@ class MainWindow(QMainWindow):
 
         if job.calc_type == "castep_uep_source":
             output_dir = self._job_output_directory(job)
-            density_path = None if output_dir is None else output_dir / f"{job.label}.den_fmt"
+            seed_name = self._job_seed_name(job)
+            density_path = None if output_dir is None else output_dir / f"{seed_name}.den_fmt"
             if density_path is None or not density_path.exists():
                 self._on_local_job_failed(
                     job_id,
-                    f"Expected formatted density output was not found: {job.label}.den_fmt",
+                    f"Expected formatted density output was not found: {seed_name}.den_fmt",
                 )
                 return
             result_payload["density_available"] = True
 
         derived_structure_ids: list[UUID] = []
-        if job.calc_type == "castep_pristine_relaxation":
+        if job.calc_type == "castep_pristine_relaxation" or is_muon_relaxation_calc_type(job.calc_type):
             output_dir = self._job_output_directory(job)
-            out_cell_path = None if output_dir is None else output_dir / f"{job.label}-out.cell"
+            seed_name = self._job_seed_name(job)
+            out_cell_path = None if output_dir is None else output_dir / f"{seed_name}-out.cell"
             if out_cell_path is None or not out_cell_path.exists():
                 self._on_local_job_failed(
                     job_id,
-                    f"Expected relaxed structure output was not found: {job.label}-out.cell",
+                    f"Expected relaxed structure output was not found: {seed_name}-out.cell",
                 )
                 return
 
@@ -3778,26 +4038,50 @@ class MainWindow(QMainWindow):
             result_payload["lattice_b"] = lattice_b
             result_payload["lattice_c"] = lattice_c
 
-            definition = self._active_pristine_relaxation_definition()
-            parent_structure_id = (
-                definition.input_structure_ids[0]
-                if definition is not None and definition.input_structure_ids
-                else None
-            )
+            if job.calc_type == "castep_pristine_relaxation":
+                definition = self._active_pristine_relaxation_definition()
+                origin = "pristine_relaxation"
+                stage = WorkflowStage.PRISTINE_RELAXATION
+            else:
+                definition, row = self._muon_relaxation_definition_and_row_for_job(job)
+                if definition is None:
+                    definition = self._active_muon_relaxation_definition()
+                origin = "muon_relaxation"
+                stage = WorkflowStage.MUON_RELAXATION
+                final_supercell_position = self._muon_fractional_position_from_cell(relaxed)
+                if final_supercell_position is None:
+                    self._on_local_job_failed(
+                        job_id,
+                        f"Expected H:mu muon position was not found in {seed_name}-out.cell.",
+                    )
+                    return
+                final_host_position = self._fold_supercell_fractional_to_host(
+                    final_supercell_position,
+                    row.supercell_matrix if row is not None else None,
+                )
+                result_payload["muon_final_fractional_position_supercell"] = list(final_supercell_position)
+                result_payload["muon_final_fractional_position_host"] = list(final_host_position)
+            parent_structure_id = definition.input_structure_ids[0] if definition is not None and definition.input_structure_ids else None
             relaxed_structure = Structure(
                 label=f"{job.label} relaxed",
-                origin="pristine_relaxation",
+                origin=origin,
                 lattice_vectors=[list(row) for row in relaxed.lattice_vectors],
                 species=list(relaxed.species),
                 fractional_positions=[list(row) for row in relaxed.fractional_positions],
                 parent_structure_id=parent_structure_id,
                 properties={
                     "source_job_id": str(job.id),
-                    "source_workflow_stage": WorkflowStage.PRISTINE_RELAXATION.value,
+                    "source_workflow_stage": stage.value,
                 },
             )
             self._project_service.add_structure(self._document, relaxed_structure)
             derived_structure_ids.append(relaxed_structure.id)
+            if is_muon_relaxation_calc_type(job.calc_type):
+                site = self._site_for_muon_relaxation_job(job)
+                if site is not None:
+                    site.status = "relaxed"
+                    site.relaxation_run_id = run.id
+                    site.relative_energy_eV = parsed.total_energy
 
         result = Result(
             calculation_run_id=run.id,
@@ -3830,6 +4114,9 @@ class MainWindow(QMainWindow):
         self._active_run_by_job.pop(job_id, None)
         self._record_job_terminal_event(action="job_completed", job=job, result=result)
         self._refresh_jobs_table()
+        self._refresh_pristine_relaxation_rows()
+        self._refresh_muon_relaxation_rows()
+        self._refresh_muon_generation_table()
         self.statusBar().showMessage(f"Completed local job {job.label}")
 
     def _on_local_job_failed(self, job_id: UUID, message: str) -> None:
@@ -4179,12 +4466,13 @@ class MainWindow(QMainWindow):
                 job_id=job.id,
                 remote_job_id=remote_job_id,
                 remote_dir=remote_dir,
-                seed_name=job.label,
+                seed_name=self._job_seed_name(job),
                 local_output_dir=output_dir,
                 cluster_name=target,
                 status=job.status,
                 retrieve_den_fmt=job.calc_type == "castep_uep_source",
-                retrieve_out_cell=job.calc_type == "castep_pristine_relaxation",
+                retrieve_out_cell=job.calc_type == "castep_pristine_relaxation"
+                or is_muon_relaxation_calc_type(job.calc_type),
             )
 
     def _infer_remote_job_directory(self, job: Job, cluster_name: str) -> str:
@@ -4199,7 +4487,7 @@ class MainWindow(QMainWindow):
         try:
             return self._cluster_runner.remote_job_directory(
                 working_directory=working_directory,
-                seed_name=job.label,
+                seed_name=self._job_seed_name(job),
             )
         except Exception:
             return ""
@@ -4301,6 +4589,13 @@ class MainWindow(QMainWindow):
         if self._document is None:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
+        if self._muon_generation_thread is not None:
+            QMessageBox.information(self, "Generation in progress", "Wait for the current generation task to finish.")
+            return
+
+        if method in {"random", "near_element"}:
+            self._start_muon_generation_thread(method, parameters)
+            return
 
         try:
             created = self._project_service.generate_candidate_sites(
@@ -4314,16 +4609,217 @@ class MainWindow(QMainWindow):
 
         self._refresh_muon_generation_table()
         self._refresh_journal_view()
-        requested = int(parameters.get("count", 1)) if method != "manual" else 1
+        self._finish_generation_status(method, parameters, created)
+
+    def _start_muon_generation_thread(self, method: str, parameters: dict) -> None:
+        if self._document is None:
+            return
+        thread = _MuonGenerationThread(
+            self._project_service,
+            self._document,
+            method=method,
+            parameters=parameters,
+            parent=self,
+        )
+        self._muon_generation_thread = thread
+        self._muon_generation_failed = False
+        thread.generated.connect(
+            lambda created, current_method=method, params=dict(parameters): self._on_threaded_generation_finished(
+                current_method,
+                params,
+                created,
+            )
+        )
+        thread.failed.connect(lambda message, current_method=method: self._on_threaded_generation_failed(current_method, message))
+        random_mode = str(parameters.get("selection_mode", parameters.get("mode", ""))).strip().lower()
+        thread.progress_changed.connect(
+            lambda generated, expected, current_method=method, mode=random_mode: self._on_generation_progress_changed(
+                current_method,
+                generated,
+                expected,
+                mode,
+            )
+        )
+        thread.finished.connect(self._on_muon_generation_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        method_label = "random" if method == "random" else "near-element"
+        self._muon_generation_view.set_generation_busy(True, f"Preparing {method_label} generation...")
+        self.statusBar().showMessage(f"Generating {method_label} muon sites...")
+        thread.start()
+
+    def _on_generation_progress_changed(self, method: str, generated: int, expected: int, mode: str) -> None:
+        if method == "random" and mode in {"separation", "distance", "spacing"}:
+            message = "Generated %v sites"
+        else:
+            message = "Generated %v/%m sites"
+        self._muon_generation_view.set_generation_progress(
+            generated,
+            expected,
+            message,
+        )
+
+    def _on_threaded_generation_finished(self, method: str, parameters: dict, created: object) -> None:
+        sites = list(created) if isinstance(created, list) else []
+        used_spacing: object | None = None
+        if method == "random" and sites:
+            used_spacing = sites[0].properties.get(
+                "min_muon_muon",
+                sites[0].properties.get("estimated_min_muon_muon"),
+            )
+        self._muon_generation_view.set_generation_progress(
+            len(sites),
+            max(len(sites), 1),
+            f"Generated {len(sites)} site(s)",
+        )
+        self._refresh_muon_generation_table()
+        if used_spacing is not None:
+            self._muon_generation_view.set_random_muon_muon_distance(float(used_spacing))
+        self._refresh_journal_view()
+        self._finish_generation_status(method, parameters, sites)
+
+    def _on_threaded_generation_failed(self, method: str, message: str) -> None:
+        self._muon_generation_failed = True
+        self._muon_generation_view.set_generation_busy(False, "Generation failed")
+        QMessageBox.warning(self, "Generation blocked", message)
+        method_label = "Random" if method == "random" else "Near-element"
+        self.statusBar().showMessage(f"{method_label} site generation failed")
+
+    def _on_muon_generation_thread_finished(self) -> None:
+        self._muon_generation_thread = None
+        if not self._muon_generation_failed:
+            self._muon_generation_view.set_generation_controls_enabled(True)
+
+    def _finish_generation_status(self, method: str, parameters: dict, created: list[MuonSite]) -> None:
+        random_mode = str(parameters.get("selection_mode", parameters.get("mode", ""))).strip().lower()
+        if method == "random" and random_mode in {"separation", "distance", "spacing"}:
+            requested = None
+        elif method == "uep_clusters" and isinstance(parameters.get("selections"), list):
+            requested = len(parameters.get("selections", []))
+        elif method == "near_element" and self._document is not None:
+            host = self._project_service.active_host_structure(self._document)
+            target = str(parameters.get("element", "")).strip().lower()
+            matching_atoms = (
+                sum(1 for species in host.species if str(species).strip().lower() == target)
+                if host is not None and target
+                else 0
+            )
+            requested = matching_atoms * max(1, int(parameters.get("muons_per_atom", parameters.get("count", 1))))
+        elif method != "manual":
+            requested = int(parameters.get("count", 1))
+        else:
+            requested = 1
         suffix = ""
-        if len(created) < requested:
+        if requested is not None and len(created) < requested:
             suffix = f" (requested {requested}; constraints prevented full count)"
-        self.statusBar().showMessage(f"Generated {len(created)} candidate muon site(s){suffix}")
+        if method == "random" and created and created[0].properties.get("estimated_min_muon_muon") is not None:
+            estimated = float(created[0].properties["estimated_min_muon_muon"])
+            used = float(created[0].properties.get("min_muon_muon", estimated))
+            if abs(used - estimated) > 1e-9:
+                suffix += f" (estimated spacing {estimated:.2f} A; used {used:.2f} A)"
+            else:
+                suffix += f" (estimated spacing {estimated:.2f} A)"
+        self.statusBar().showMessage(f"Generated {len(created)} muon site(s){suffix}")
+
+    def _on_delete_muon_candidates_requested(self, raw_site_ids: object) -> None:
+        if self._document is None:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+
+        site_ids: list[UUID] = []
+        raw_values = raw_site_ids if isinstance(raw_site_ids, list) else [raw_site_ids]
+        for raw_value in raw_values:
+            try:
+                site_ids.append(UUID(str(raw_value)))
+            except (TypeError, ValueError):
+                continue
+        if not site_ids:
+            return
+
+        removed = self._project_service.remove_candidate_sites(self._document, site_ids)
+        self._refresh_muon_generation_table()
+        self._refresh_journal_view()
+        self.statusBar().showMessage(f"Deleted {len(removed)} generated muon site(s)")
+
+    def _on_cluster_muon_positions_requested(self, payload: object) -> None:
+        if self._document is None:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+        if not isinstance(payload, dict):
+            return
+
+        raw_site_ids = payload.get("site_ids", [])
+        raw_values = raw_site_ids if isinstance(raw_site_ids, list) else [raw_site_ids]
+        site_ids: list[UUID] = []
+        for raw_value in raw_values:
+            try:
+                site_ids.append(UUID(str(raw_value)))
+            except (TypeError, ValueError):
+                continue
+        anchor = payload.get("anchor_fractional", [])
+
+        try:
+            clustered = self._project_service.cluster_candidate_positions(
+                self._document,
+                site_ids,
+                anchor_fractional=anchor,
+            )
+        except (SiteGenerationError, ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Clustering blocked", str(exc))
+            return
+
+        clustered_ids = [str(site.id) for site in clustered]
+        self._refresh_muon_generation_table()
+        self._muon_generation_view.select_site_ids(clustered_ids)
+        self._refresh_journal_view()
+        self.statusBar().showMessage(f"Clustered {len(clustered)} muon position(s)")
+
+    def _on_create_muon_relaxation_jobs_requested(self, raw_site_ids: object) -> None:
+        if self._document is None:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+        site_ids: list[UUID] = []
+        raw_values = raw_site_ids if isinstance(raw_site_ids, list) else [raw_site_ids]
+        for raw_value in raw_values:
+            try:
+                site_ids.append(UUID(str(raw_value)))
+            except (TypeError, ValueError):
+                continue
+        if not site_ids:
+            return
+        staged = self._project_service.stage_generated_sites(self._document, site_ids)
+        if not staged:
+            QMessageBox.information(
+                self,
+                "No generated sites",
+                "Select one or more generated muon sites that have not already been staged.",
+            )
+            return
+        rows = [
+            {
+                "id": str(site.id),
+                "label": site.label,
+                "fractional_position": list(site.fractional_position),
+                "method": site.generation_method or "",
+            }
+            for site in staged
+        ]
+        self._muon_relaxation_view.add_staged_sites(rows)
+        self._refresh_muon_generation_table()
+        self._refresh_muon_relaxation_defaults()
+        self._refresh_muon_relaxation_rows()
+        self._refresh_journal_view()
+        self._set_active_route("muon_relaxations")
+        self.statusBar().showMessage(f"Staged {len(staged)} muon relaxation job(s)")
 
     def _on_muon_form_state_changed(self, state: dict) -> None:
         if self._document is None or self._shutting_down:
             return
         self._document.ui_state["muon_generation_form"] = state
+
+    def _on_muon_relaxation_form_state_changed(self, state: dict) -> None:
+        if self._document is None or self._shutting_down:
+            return
+        self._document.ui_state["muon_relaxation_form"] = state
 
     def _on_convergence_form_state_changed(self, state: dict) -> None:
         if self._document is None or self._shutting_down:
@@ -5219,6 +5715,47 @@ class MainWindow(QMainWindow):
             return
         self._document.ui_state["pristine_relaxation_form"] = state
 
+    def _refresh_muon_relaxation_defaults(self) -> None:
+        if self._document is None:
+            self._muon_relaxation_view.set_host_lattice(None)
+            self._muon_relaxation_view.set_project_defaults(
+                cutoff_energy=None,
+                kpoint_grid=None,
+                kpoint_reference_lattice=None,
+            )
+            self._muon_relaxation_view.set_supercell_options([])
+            return
+
+        host = self._project_service.active_host_structure(self._document)
+        self._muon_relaxation_view.set_host_lattice(
+            host.lattice_vectors if host is not None else None
+        )
+        self._muon_relaxation_view.set_project_defaults(
+            cutoff_energy=self._document.project.recommended_cutoff_energy,
+            kpoint_grid=self._document.project.recommended_kpoint_grid,
+            kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+        )
+        self._refresh_muon_relaxation_supercell_options()
+
+    def _refresh_muon_relaxation_supercell_options(self) -> None:
+        if self._document is None:
+            self._muon_relaxation_view.set_supercell_options([])
+            return
+        host = self._project_service.active_host_structure(self._document)
+        if host is None:
+            self._muon_relaxation_view.set_supercell_options([])
+            return
+        assets = self._project_service.list_workflow_supercell_assets(
+            self._document,
+            host_structure_id=host.id,
+        )
+        self._muon_relaxation_view.set_supercell_options(
+            [
+                {"label": asset.label, "matrix": [list(row) for row in asset.matrix]}
+                for asset in assets
+            ]
+        )
+
     def _refresh_uep_defaults(self) -> None:
         if self._document is None:
             self._uep_view.set_project_defaults(
@@ -5449,6 +5986,154 @@ class MainWindow(QMainWindow):
                     return self._document.jobs.get(job_id)
         return None
 
+    def _uep_source_structure_id_for_job(self, job_id: UUID) -> UUID | None:
+        if self._document is None:
+            return None
+        for run in self._document.runs.values():
+            if run.job_id != job_id or run.definition_id is None:
+                continue
+            definition = self._document.calculations.get(run.definition_id)
+            if definition is not None and definition.input_structure_ids:
+                return definition.input_structure_ids[0]
+        for definition in self._uep_definitions():
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict):
+                continue
+            if str(job_id) in {str(value) for value in mapping.values()} and definition.input_structure_ids:
+                return definition.input_structure_ids[0]
+        return None
+
+    def _active_uep_job_ids(self) -> set[UUID]:
+        definition = self._active_uep_definition()
+        if definition is None:
+            return set()
+        mapping = definition.parameters.get("job_ids_by_label", {})
+        if not isinstance(mapping, dict):
+            return set()
+        job_ids: set[UUID] = set()
+        for raw_job_id in mapping.values():
+            try:
+                job_ids.add(UUID(str(raw_job_id)))
+            except ValueError:
+                continue
+        return job_ids
+
+    @staticmethod
+    def _uep_classification_label(result: dict) -> str:
+        classification = result.get("classification")
+        if isinstance(classification, dict):
+            return str(classification.get("label", ""))
+        return str(classification or "")
+
+    def _uep_cluster_source_rows(self) -> list[dict[str, object]]:
+        if self._document is None:
+            return []
+        states = self._document.ui_state.get(self._UEP_ANALYSIS_STATES_KEY, {})
+        if not isinstance(states, dict):
+            return []
+
+        active_job_ids = self._active_uep_job_ids()
+        if not active_job_ids:
+            return []
+
+        rows: list[dict[str, object]] = []
+        for raw_job_id, state in states.items():
+            if not isinstance(state, dict):
+                continue
+            try:
+                job_id = UUID(str(raw_job_id))
+            except ValueError:
+                continue
+            if job_id not in active_job_ids:
+                continue
+            job = self._document.jobs.get(job_id)
+            if job is None:
+                continue
+            source_job_label = job.label
+            source_structure_id = self._uep_source_structure_id_for_job(job_id)
+            batch_results = state.get("batch_results")
+            batch_summary = state.get("batch_summary_data")
+            if not isinstance(batch_results, list) or not isinstance(batch_summary, dict):
+                continue
+            clusters = batch_summary.get("clusters")
+            if not isinstance(clusters, (list, tuple)):
+                continue
+            clustering_properties = {
+                "clustering_method": batch_summary.get("clustering_method"),
+                "clustering_hier_t": batch_summary.get("clustering_hier_t"),
+                "clustering_kmeans_k": batch_summary.get("clustering_kmeans_k"),
+                "clustering_linkage_method": batch_summary.get("clustering_linkage_method"),
+                "feature_mode": batch_summary.get("feature_mode"),
+                "threshold_ang": batch_summary.get("threshold_ang"),
+            }
+            for cluster in clusters:
+                if not isinstance(cluster, dict):
+                    continue
+                try:
+                    cluster_index = int(cluster.get("cluster_index"))
+                    cluster_size = int(cluster.get("size", 0))
+                    representative_index = int(cluster.get("representative_index"))
+                except (TypeError, ValueError):
+                    continue
+                def _representative_row(result_index: int) -> dict[str, object] | None:
+                    if not (0 <= result_index < len(batch_results)):
+                        return None
+                    result = batch_results[result_index]
+                    if not isinstance(result, dict):
+                        return None
+                    fractional = result.get("optimized_fractional_position")
+                    cartesian = result.get("optimized_position_ang")
+                    if not isinstance(fractional, (list, tuple)) or len(fractional) != 3:
+                        return None
+                    if not isinstance(cartesian, (list, tuple)) or len(cartesian) != 3:
+                        return None
+                    classification = self._uep_classification_label(result)
+                    properties = {
+                        **clustering_properties,
+                        "source_job_label": source_job_label,
+                        "source_job_id": str(job_id),
+                        "cluster_index": cluster_index,
+                        "cluster_size": cluster_size,
+                        "representative_index": representative_index,
+                        "member_index": result_index,
+                        "selection_kind": "cluster",
+                        "classification": classification,
+                        "classical_energy_ev": result.get("classical_energy_ev"),
+                        "zero_point_energy_ev": result.get("zero_point_energy_ev"),
+                        "total_energy_ev": result.get("total_energy_ev"),
+                    }
+                    return {
+                        "source_key": f"{job_id}:cluster:{cluster_index}:cluster:{result_index}",
+                        "source_job_id": str(job_id),
+                        "source_job_label": source_job_label,
+                        "source_structure_id": "" if source_structure_id is None else str(source_structure_id),
+                        "cluster_index": cluster_index,
+                        "cluster_size": cluster_size,
+                        "selection_kind": "cluster",
+                        "classification": classification,
+                        "classical_energy_ev": result.get("classical_energy_ev"),
+                        "zero_point_energy_ev": result.get("zero_point_energy_ev"),
+                        "total_energy_ev": result.get("total_energy_ev"),
+                        "fractional_position": [float(value) for value in fractional],
+                        "cartesian_position": [float(value) for value in cartesian],
+                        "generation_method": "uep_cluster",
+                        "label": f"UEP Cluster {cluster_index}",
+                        "properties": properties,
+                    }
+
+                representative_row = _representative_row(representative_index)
+                if representative_row is not None:
+                    rows.append(representative_row)
+
+        rows.sort(
+            key=lambda row: (
+                str(row.get("source_job_label", "")),
+                int(row.get("cluster_index", 0)),
+                str(row.get("source_key", "")),
+            )
+        )
+        return rows
+
     def _build_uep_states(self) -> dict[str, UepRunState]:
         states: dict[str, UepRunState] = {}
         if self._document is None:
@@ -5574,6 +6259,86 @@ class MainWindow(QMainWindow):
             rows=tuple(rows),
         )
 
+    def _serialize_muon_relaxation_config(self, config: MuonRelaxationConfig) -> dict[str, object]:
+        return {
+            "rows": [
+                {
+                    "site_id": str(row.site_id),
+                    "label": row.label,
+                    "initial_fractional_position": list(row.initial_fractional_position),
+                    "charge_state": row.charge_state,
+                    "supercell_matrix": (
+                        [list(line) for line in row.supercell_matrix]
+                        if row.supercell_matrix is not None
+                        else None
+                    ),
+                    "parameter_values": dict(row.parameter_values),
+                    "added_advanced": list(row.added_advanced),
+                }
+                for row in config.rows
+            ]
+        }
+
+    def _deserialize_muon_relaxation_config(self, payload: object) -> MuonRelaxationConfig | None:
+        if not isinstance(payload, dict):
+            return None
+        rows_payload = payload.get("rows", [])
+        if not isinstance(rows_payload, list):
+            return None
+        rows: list[MuonRelaxationRow] = []
+        for entry in rows_payload:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                site_id = UUID(str(entry.get("site_id")))
+            except (TypeError, ValueError):
+                continue
+            label = str(entry.get("label", "")).strip()
+            if not label:
+                continue
+            raw_position = entry.get("initial_fractional_position", entry.get("fractional_position", []))
+            if not isinstance(raw_position, (list, tuple)) or len(raw_position) != 3:
+                continue
+            matrix_payload = entry.get("supercell_matrix")
+            matrix: tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None = None
+            if isinstance(matrix_payload, list) and len(matrix_payload) == 3:
+                try:
+                    matrix = (
+                        (int(matrix_payload[0][0]), int(matrix_payload[0][1]), int(matrix_payload[0][2])),
+                        (int(matrix_payload[1][0]), int(matrix_payload[1][1]), int(matrix_payload[1][2])),
+                        (int(matrix_payload[2][0]), int(matrix_payload[2][1]), int(matrix_payload[2][2])),
+                    )
+                except (TypeError, ValueError, IndexError):
+                    matrix = None
+            raw_params = entry.get("parameter_values", {})
+            params = raw_params if isinstance(raw_params, dict) else {}
+            restored_params = {
+                str(name): self._restore_castep_param_value(str(name), raw_value)
+                for name, raw_value in params.items()
+            }
+            raw_advanced = entry.get("added_advanced", [])
+            added_advanced = (
+                tuple(str(name) for name in raw_advanced if isinstance(name, str))
+                if isinstance(raw_advanced, list)
+                else ()
+            )
+            rows.append(
+                MuonRelaxationRow(
+                    site_id=site_id,
+                    label=label,
+                    initial_fractional_position=(
+                        float(raw_position[0]),
+                        float(raw_position[1]),
+                        float(raw_position[2]),
+                    ),
+                    charge_state=str(entry.get("charge_state", "positive_muon")),
+                    supercell_matrix=matrix,
+                    parameter_values=restored_params,
+                    added_advanced=added_advanced,
+                )
+            )
+        return MuonRelaxationConfig(rows=tuple(rows))
+
     def _pristine_relaxation_definitions(self) -> list:
         if self._document is None:
             return []
@@ -5685,6 +6450,172 @@ class MainWindow(QMainWindow):
     def _refresh_pristine_relaxation_rows(self) -> None:
         self._pristine_relaxation_view.set_runtime_states(self._build_pristine_relaxation_states())
 
+    def _muon_relaxation_definitions(self) -> list:
+        if self._document is None:
+            return []
+        definitions = [
+            definition
+            for definition in self._document.calculations.values()
+            if definition.workflow_stage == WorkflowStage.MUON_RELAXATION
+            and definition.calc_type == "castep_muon_relaxation"
+        ]
+        definitions.sort(key=lambda definition: definition.created_at, reverse=True)
+        return definitions
+
+    def _active_muon_relaxation_definition(self):
+        if self._document is None:
+            return None
+        raw_definition_id = self._document.ui_state.get(self._ACTIVE_MUON_RELAXATION_DEFINITION_KEY)
+        if isinstance(raw_definition_id, str):
+            try:
+                definition_id = UUID(raw_definition_id)
+            except ValueError:
+                definition_id = None
+            if definition_id is not None:
+                definition = self._document.calculations.get(definition_id)
+                if definition is not None and definition.workflow_stage == WorkflowStage.MUON_RELAXATION:
+                    return definition
+        definitions = self._muon_relaxation_definitions()
+        return definitions[0] if definitions else None
+
+    def _job_for_muon_relaxation_label(self, definition, label: str, charge_state: str | None = None) -> Job | None:
+        if self._document is None:
+            return None
+        keys = [label]
+        if charge_state:
+            keys.insert(0, f"{muon_charge_state_prefix(charge_state)}:{label}")
+        mapping = definition.parameters.get("job_ids_by_label", {})
+        if isinstance(mapping, dict):
+            for key in keys:
+                raw_job_id = mapping.get(key)
+                if isinstance(raw_job_id, str):
+                    try:
+                        job_id = UUID(raw_job_id)
+                    except ValueError:
+                        continue
+                    job = self._document.jobs.get(job_id)
+                    if job is not None:
+                        return job
+        return None
+
+    @staticmethod
+    def _muon_relaxation_selection_matches(row: MuonRelaxationRow, selection: str) -> bool:
+        selection = str(selection)
+        prefix, separator, label = selection.partition(":")
+        if separator:
+            return prefix == muon_charge_state_prefix(row.charge_state) and label == row.label
+        return selection == row.label
+
+    def _muon_relaxation_row_for_job(self, job: Job) -> MuonRelaxationRow | None:
+        _definition, row = self._muon_relaxation_definition_and_row_for_job(job)
+        return row
+
+    def _muon_relaxation_definition_and_row_for_job(self, job: Job):
+        if self._document is None:
+            return None, None
+        for definition in self._muon_relaxation_definitions():
+            config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+            if config is None:
+                continue
+            for row in config.rows:
+                candidate = self._job_for_muon_relaxation_label(definition, row.label, row.charge_state)
+                if candidate is not None and candidate.id == job.id:
+                    return definition, row
+        return None, None
+
+    def _site_for_muon_relaxation_job(self, job: Job) -> MuonSite | None:
+        if self._document is None:
+            return None
+        row = self._muon_relaxation_row_for_job(job)
+        if row is None:
+            return None
+        return self._document.sites.get(row.site_id)
+
+    @staticmethod
+    def _muon_fractional_position_from_cell(cell: object) -> tuple[float, float, float] | None:
+        species = getattr(cell, "species", ())
+        positions = getattr(cell, "fractional_positions", ())
+        for atom_species, position in reversed(list(zip(species, positions, strict=False))):
+            if str(atom_species).strip().casefold() != "h:mu":
+                continue
+            if not isinstance(position, (list, tuple)) or len(position) != 3:
+                return None
+            return (float(position[0]), float(position[1]), float(position[2]))
+        return None
+
+    @staticmethod
+    def _fold_supercell_fractional_to_host(
+        position: tuple[float, float, float],
+        matrix: SupercellMatrix | None,
+    ) -> tuple[float, float, float]:
+        if matrix is None:
+            return tuple(float(component) % 1.0 for component in position)
+        x, y, z = position
+        host_position = (
+            x * matrix[0][0] + y * matrix[1][0] + z * matrix[2][0],
+            x * matrix[0][1] + y * matrix[1][1] + z * matrix[2][1],
+            x * matrix[0][2] + y * matrix[1][2] + z * matrix[2][2],
+        )
+        return tuple(float(component) % 1.0 for component in host_position)
+
+    @staticmethod
+    def _coerce_fractional_triplet(value: object) -> tuple[float, float, float] | None:
+        if not isinstance(value, (list, tuple)) or len(value) != 3:
+            return None
+        try:
+            return (float(value[0]), float(value[1]), float(value[2]))
+        except (TypeError, ValueError):
+            return None
+
+    def _build_muon_relaxation_states(self) -> dict[str, RelaxationRunState]:
+        states: dict[str, RelaxationRunState] = {}
+        if self._document is None:
+            return states
+        definition = self._active_muon_relaxation_definition()
+        if definition is None:
+            return states
+        config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+        if config is None:
+            return states
+        for row in config.rows:
+            state_key = f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
+            job = self._job_for_muon_relaxation_label(definition, row.label, row.charge_state)
+            if job is None:
+                states[state_key] = RelaxationRunState(status="ready")
+                continue
+            status_value = "ready" if job.status == JobStatus.DEFINED else job.status.value
+            run = self._run_for_job(job.id)
+            if status_value == JobStatus.COMPLETED.value and run is not None and run.convergence_achieved is False:
+                status_value = "not converged"
+            lattice_a = lattice_b = lattice_c = None
+            final_fractional_position = None
+            if run is not None and run.result_id is not None:
+                result = self._document.results.get(run.result_id)
+                if result is not None and isinstance(result.data, dict):
+                    lattice_a = result.data.get("lattice_a")
+                    lattice_b = result.data.get("lattice_b")
+                    lattice_c = result.data.get("lattice_c")
+                    final_fractional_position = self._coerce_fractional_triplet(
+                        result.data.get("muon_final_fractional_position_host")
+                    )
+            states[state_key] = RelaxationRunState(
+                status=status_value,
+                total_energy=self._total_energy_for_job(job.id),
+                max_force=self._max_force_for_job(job.id),
+                lattice_a=float(lattice_a) if isinstance(lattice_a, (int, float)) else None,
+                lattice_b=float(lattice_b) if isinstance(lattice_b, (int, float)) else None,
+                lattice_c=float(lattice_c) if isinstance(lattice_c, (int, float)) else None,
+                final_fractional_position=final_fractional_position,
+                job_id=job.id,
+                job_label=job.label,
+                geom_converged=(run.convergence_achieved if run is not None else None),
+                error_message=job.error_message,
+            )
+        return states
+
+    def _refresh_muon_relaxation_rows(self) -> None:
+        self._muon_relaxation_view.set_runtime_states(self._build_muon_relaxation_states())
+
     def _on_pristine_relaxation_supercell_edit_requested(self, payload: object) -> None:
         if self._document is None:
             return
@@ -5747,6 +6678,58 @@ class MainWindow(QMainWindow):
         self._pristine_relaxation_view.set_row_supercell(row_id, matrix)
         self.statusBar().showMessage(f"Saved pristine-relaxation simulation cell '{saved.label}'")
 
+    def _on_muon_relaxation_supercell_edit_requested(self, payload: object) -> None:
+        if self._document is None:
+            return
+        try:
+            row_id = int(payload)
+        except (TypeError, ValueError):
+            return
+        host = self._project_service.active_host_structure(self._document)
+        if host is None:
+            QMessageBox.warning(
+                self,
+                "No host structure",
+                "Load a host structure before configuring muon-relaxation supercells.",
+            )
+            return
+        existing = self._muon_relaxation_view.row_supercell_matrix(row_id)
+        initial_matrix = (
+            [list(line) for line in existing]
+            if existing is not None
+            else [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        )
+        dialog = SupercellPreviewDialog(
+            structure=host,
+            atomic_spins=self._project_service.structure_atomic_spins(host),
+            propagation_vector=self._project_service.structure_propagation_vector(host),
+            initial_matrix=initial_matrix,
+            accept_button_text="Use Supercell",
+            show_unit_cell_button=True,
+            parent=self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        if dialog.result_mode() == "unit_cell":
+            self._muon_relaxation_view.set_row_supercell(row_id, None)
+            return
+        matrix_values = [[int(row[0]), int(row[1]), int(row[2])] for row in dialog.matrix()]
+        saved = self._project_service.create_workflow_supercell_asset(
+            self._document,
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            host_structure_id=host.id,
+            matrix=matrix_values,
+            reuse_existing=True,
+        )
+        matrix = (
+            (matrix_values[0][0], matrix_values[0][1], matrix_values[0][2]),
+            (matrix_values[1][0], matrix_values[1][1], matrix_values[1][2]),
+            (matrix_values[2][0], matrix_values[2][1], matrix_values[2][2]),
+        )
+        self._refresh_muon_relaxation_supercell_options()
+        self._muon_relaxation_view.set_row_supercell(row_id, matrix)
+        self.statusBar().showMessage(f"Saved muon-relaxation simulation cell '{saved.label}'")
+
     def _on_pristine_relaxation_configured(self, config: PristineRelaxationConfig) -> None:
         if self._document is None:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -5794,6 +6777,43 @@ class MainWindow(QMainWindow):
         self._refresh_journal_view()
         self.statusBar().showMessage(
             f"Configured {len(config.rows)} pristine-relaxation jobs; input files will be generated on submission"
+        )
+
+    def _on_muon_relaxation_configured(self, config: MuonRelaxationConfig) -> None:
+        if self._document is None:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+        host = self._project_service.active_host_structure(self._document)
+        if host is None:
+            QMessageBox.warning(
+                self,
+                "No host structure",
+                "Load a host structure before generating muon-relaxation jobs.",
+            )
+            return
+        try:
+            expand_muon_relaxation_jobs(
+                host_structure=host,
+                config=config,
+                project_cutoff_energy=self._document.project.recommended_cutoff_energy,
+                project_kpoint_grid=self._document.project.recommended_kpoint_grid,
+                project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+            )
+        except (ValueError, StructureBridgeError) as exc:
+            QMessageBox.warning(self, "Muon relaxation setup invalid", str(exc))
+            return
+        output_root = self._document.project_root / "files" / "muon_relaxation"
+        definition = self._project_service.register_muon_relaxation_definition(
+            self._document,
+            input_structure_id=host.id,
+            parameters=self._serialize_muon_relaxation_config(config),
+            output_directory=output_root,
+        )
+        self._document.ui_state[self._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+        self._refresh_muon_relaxation_rows()
+        self._refresh_journal_view()
+        self.statusBar().showMessage(
+            f"Configured {len(config.rows)} muon-relaxation jobs; input files will be generated on submission"
         )
 
     def _completed_pristine_relaxation_jobs(self) -> list[CompletedPristineJob]:
@@ -6121,6 +7141,100 @@ class MainWindow(QMainWindow):
 
         return self._dedupe_jobs(created)
 
+    def _jobs_for_muon_relaxation_labels(self, labels: list[str]) -> list[Job]:
+        if self._document is None:
+            return []
+        definition = self._active_muon_relaxation_definition()
+        if definition is None:
+            return []
+        config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+        if config is None:
+            return []
+        selected: list[Job] = []
+        seen: set[UUID] = set()
+        wanted = {str(label) for label in labels}
+        for row in config.rows:
+            if not any(self._muon_relaxation_selection_matches(row, selection) for selection in wanted):
+                continue
+            job = self._job_for_muon_relaxation_label(definition, row.label, row.charge_state)
+            if job is None or job.id in seen:
+                continue
+            selected.append(job)
+            seen.add(job.id)
+        return selected
+
+    def _materialize_muon_relaxation_jobs(self, labels: list[str]) -> list[Job]:
+        if self._document is None:
+            return []
+        definition = self._active_muon_relaxation_definition()
+        if definition is None:
+            return []
+        config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+        if config is None or not definition.input_structure_ids:
+            return []
+        host = self._document.structures.get(definition.input_structure_ids[0])
+        output_root = self._definition_output_directory(definition)
+        if host is None or output_root is None:
+            return []
+        try:
+            expansion = expand_muon_relaxation_jobs(
+                host_structure=host,
+                config=config,
+                project_cutoff_energy=self._document.project.recommended_cutoff_energy,
+                project_kpoint_grid=self._document.project.recommended_kpoint_grid,
+                project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+            )
+        except (ValueError, StructureBridgeError):
+            return []
+        mapping = definition.parameters.setdefault("job_ids_by_label", {})
+        if not isinstance(mapping, dict):
+            mapping = {}
+            definition.parameters["job_ids_by_label"] = mapping
+        seed_mapping = definition.parameters.setdefault("job_seed_names_by_label", {})
+        if not isinstance(seed_mapping, dict):
+            seed_mapping = {}
+            definition.parameters["job_seed_names_by_label"] = seed_mapping
+        spec_by_key = {
+            f"{muon_charge_state_prefix(str(spec.provenance.get('charge_state', '')))}:{spec.provenance.get('label', '')}": spec
+            for spec in expansion.jobs
+        }
+        wanted = {str(label) for label in labels}
+        rows_by_label = [
+            row
+            for row in config.rows
+            if any(self._muon_relaxation_selection_matches(row, selection) for selection in wanted)
+        ]
+        created: list[Job] = []
+        for row in rows_by_label:
+            key = f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
+            spec = spec_by_key.get(key)
+            existing_job = self._job_for_muon_relaxation_label(definition, row.label, row.charge_state)
+            if existing_job is not None:
+                if existing_job.status == JobStatus.DEFINED and spec is not None:
+                    seed_mapping[key] = spec.name
+                    write_job_directory(spec, output_root / muon_charge_state_prefix(row.charge_state))
+                created.append(existing_job)
+                continue
+            if spec is None:
+                continue
+            charge_root = output_root / muon_charge_state_prefix(row.charge_state)
+            write_job_directory(spec, charge_root)
+            job = self._project_service.add_job(
+                self._document,
+                label=row.label,
+                workflow_stage=spec.workflow_stage,
+                calc_type=muon_relaxation_calc_type(row.charge_state),
+            )
+            mapping[key] = str(job.id)
+            seed_mapping[key] = spec.name
+            created.append(job)
+        jobs = self._dedupe_jobs(created)
+        if jobs:
+            self._persist_document_ui_state(
+                failure_message="Muon relaxation jobs were generated, but autosave failed."
+            )
+        return jobs
+
     def _on_submit_local_from_pristine_relaxation(self, labels: list[str]) -> None:
         states = self._build_pristine_relaxation_states()
         ready_labels = [
@@ -6158,6 +7272,75 @@ class MainWindow(QMainWindow):
             )
             return
         self._submit_jobs_on_cluster(jobs)
+
+    @staticmethod
+    def _muon_relaxation_label_is_ready(states: dict[str, RelaxationRunState], label: str) -> bool:
+        ready_statuses = {"ready", "defined", "not generated"}
+        state = states.get(label)
+        if state is not None and state.status in ready_statuses:
+            return True
+        if ":" in str(label):
+            return False
+        suffix = f":{label}"
+        return any(
+            candidate.status in ready_statuses
+            for key, candidate in states.items()
+            if key.endswith(suffix)
+        )
+
+    def _on_submit_local_from_muon_relaxation(self, labels: list[str]) -> None:
+        states = self._build_muon_relaxation_states()
+        ready_labels = [
+            label
+            for label in labels
+            if self._muon_relaxation_label_is_ready(states, label)
+        ]
+        jobs = self._jobs_for_muon_relaxation_labels(labels)
+        jobs.extend(self._materialize_muon_relaxation_jobs(ready_labels))
+        jobs = self._dedupe_jobs(jobs)
+        if not jobs:
+            QMessageBox.information(
+                self,
+                "No ready jobs",
+                "Only configured muon-relaxation rows in the 'ready' state can be submitted.",
+            )
+            return
+        self._submit_muon_relaxation_jobs_grouped(jobs, target="local")
+
+    def _on_submit_cluster_from_muon_relaxation(self, labels: list[str]) -> None:
+        states = self._build_muon_relaxation_states()
+        ready_labels = [
+            label
+            for label in labels
+            if self._muon_relaxation_label_is_ready(states, label)
+        ]
+        jobs = self._jobs_for_muon_relaxation_labels(labels)
+        jobs.extend(self._materialize_muon_relaxation_jobs(ready_labels))
+        jobs = self._dedupe_jobs(jobs)
+        if not jobs:
+            QMessageBox.information(
+                self,
+                "No ready jobs",
+                "Only configured muon-relaxation rows in the 'ready' state can be submitted.",
+            )
+            return
+        self._submit_muon_relaxation_jobs_grouped(jobs, target="cluster")
+
+    def _submit_muon_relaxation_jobs_grouped(self, jobs: list[Job], *, target: str) -> None:
+        grouped: dict[str, list[Job]] = {}
+        for job in self._dedupe_jobs(jobs):
+            grouped.setdefault(job.calc_type, []).append(job)
+        for calc_type in (
+            MUON_RELAXATION_CALC_TYPES["positive_muon"],
+            MUON_RELAXATION_CALC_TYPES["muonium"],
+        ):
+            group = grouped.get(calc_type, [])
+            if not group:
+                continue
+            if target == "local":
+                self._submit_jobs_locally(group)
+            else:
+                self._submit_jobs_on_cluster(group)
 
     def _on_uep_source_structure_selection_requested(self, payload: object) -> None:
         if self._document is None:
@@ -6408,9 +7591,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "UEP files unavailable", "Could not locate the UEP job output directory.")
             return
 
-        den_fmt_path = output_dir / f"{job.label}.den_fmt"
-        castep_path = output_dir / f"{job.label}.castep"
-        cell_path = output_dir / f"{job.label}.cell"
+        seed_name = self._job_seed_name(job)
+        den_fmt_path = output_dir / f"{seed_name}.den_fmt"
+        castep_path = output_dir / f"{seed_name}.castep"
+        cell_path = output_dir / f"{seed_name}.cell"
         if not den_fmt_path.exists() or not castep_path.exists():
             QMessageBox.warning(
                 self,
@@ -6456,7 +7640,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "UEP analysis unavailable", str(exc))
             return
 
-        dialog.promote_requested.connect(self._on_promote_uep_candidate_requested)
         dialog.state_changed.connect(lambda state, job_id=job.id: self._on_uep_analysis_state_changed(job_id, state))
         dialog.potential_grid_ready.connect(
             lambda payload, job_id=job.id: self._on_uep_potential_grid_ready(job_id, payload)
@@ -6505,61 +7688,7 @@ class MainWindow(QMainWindow):
         updated = dict(states)
         updated[str(job_id)] = serialized_state
         self._document.ui_state[self._UEP_ANALYSIS_STATES_KEY] = updated
-
-    def _on_promote_uep_candidate_requested(self, payload: object) -> None:
-        if self._document is None or not isinstance(payload, dict):
-            return
-
-        try:
-            source_structure_id = UUID(str(payload.get("source_structure_id", "")).strip())
-        except ValueError:
-            QMessageBox.warning(self, "Promotion failed", "The promoted UEP site is missing its source structure.")
-            return
-
-        label_hint = str(payload.get("label_hint", "UEP Site")).strip() or "UEP Site"
-        fractional = payload.get("fractional_position", [])
-        cartesian = payload.get("cartesian_position", [])
-        properties = payload.get("properties", {})
-        if (
-            not isinstance(fractional, list)
-            or len(fractional) != 3
-            or not isinstance(cartesian, list)
-            or len(cartesian) != 3
-        ):
-            QMessageBox.warning(self, "Promotion failed", "The promoted UEP site does not contain valid coordinates.")
-            return
-
-        next_index = len(self._document.sites) + 1
-        site = MuonSite(
-            label=f"{label_hint} {next_index}",
-            status="candidate",
-            fractional_position=[float(value) for value in fractional],
-            cartesian_position=[float(value) for value in cartesian],
-            generation_method=str(payload.get("generation_method", "uep")).strip() or "uep",
-            source_structure_id=source_structure_id,
-            properties=dict(properties) if isinstance(properties, dict) else {},
-        )
-        self._document.sites[site.id] = site
-        self._project_service.append_provenance(
-            self._document,
-            ProvenanceRecord(
-                action="promote_uep_candidate",
-                workflow_stage=WorkflowStage.UEP,
-                actor="user",
-                description=f"Promoted UEP analysis point '{site.label}' into candidate muon sites",
-                parameters={
-                    "source_job_label": str(payload.get("source_job_label", "")),
-                    "generation_method": site.generation_method,
-                    "fractional_position": list(site.fractional_position),
-                    "cartesian_position": list(site.cartesian_position),
-                },
-                output_entity_ids=[site.id],
-                input_entity_ids=[source_structure_id],
-            ),
-        )
         self._refresh_muon_generation_table()
-        self._refresh_journal_view()
-        self.statusBar().showMessage(f"Promoted UEP site '{site.label}' into candidate muon sites")
 
     @staticmethod
     def _serialize_convergence_config(config: ConvergenceConfig) -> dict:
@@ -6585,20 +7714,45 @@ class MainWindow(QMainWindow):
     def _refresh_muon_generation_table(self) -> None:
         if self._document is None:
             self._muon_generation_view.set_sites([])
+            self._muon_generation_view.set_host_structure(None)
+            self._muon_generation_view.set_uep_cluster_sources([])
             return
 
-        candidates = [site for site in self._document.sites.values() if site.status == "candidate"]
-        candidates.sort(key=lambda item: item.label)
+        host = (
+            self._document.structures.get(self._document.project.host_structure_id)
+            if self._document.project.host_structure_id is not None
+            else None
+        )
+        self._muon_generation_view.set_host_structure(host)
+        candidates = [
+            site for site in self._document.sites.values() if site.status in {"generated", "candidate", "staged"}
+        ]
+        candidates.sort(key=lambda item: self._natural_label_sort_key(item.label))
         rows = [
             {
+                "id": str(site.id),
                 "label": site.label,
                 "method": site.generation_method or "",
                 "status": site.status,
                 "fractional": site.fractional_position,
+                "cartesian": site.cartesian_position,
             }
             for site in candidates
         ]
         self._muon_generation_view.set_sites(rows)
+        self._muon_generation_view.set_uep_cluster_sources(self._uep_cluster_source_rows())
+
+    @staticmethod
+    def _natural_label_sort_key(label: str) -> tuple[tuple[int, object], ...]:
+        parts: list[tuple[int, object]] = []
+        for part in re.split(r"(\d+)", str(label)):
+            if not part:
+                continue
+            if part.isdigit():
+                parts.append((0, int(part)))
+            else:
+                parts.append((1, part.casefold()))
+        return tuple(parts)
 
     def _refresh_host_structure_view(self) -> None:
         if self._document is None:

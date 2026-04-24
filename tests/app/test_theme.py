@@ -50,6 +50,12 @@ def test_apply_theme_sets_active_palette(qapp) -> None:
     assert "QComboBox::down-arrow" in stylesheet
     assert "QSpinBox::up-button" in stylesheet
     assert "QSpinBox::up-arrow" in stylesheet
+    assert "QGroupBox#muonGenerationSetupCard" in stylesheet
+    assert 'QWidget#randomSeparationChoice[active="true"]' in stylesheet
+    assert "QDialog#clusterPositionsDialog" in stylesheet
+    assert "QWidget#clusterPositionsCard" in stylesheet
+    assert "QProgressBar#muonGenerationProgress" in stylesheet
+    assert 'QProgressBar#muonGenerationProgress[generationState="complete"]::chunk' in stylesheet
     assert qapp.font().family() == theme_module.body_font_family()
 
 

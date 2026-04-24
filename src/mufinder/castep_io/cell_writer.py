@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .schema import CELL_SERIALIZATION_ORDER, canonical_keyword_name
+from .schema import CELL_SERIALIZATION_ORDER, canonical_keyword_name, get_keyword_spec
 from .types import BlockSection, CellFile, KeywordAssignment, ValueWithUnit
 from .validators import validate_cell_file
 
@@ -72,9 +72,15 @@ def _render_extra_scalars(assignments: tuple[KeywordAssignment, ...]) -> list[st
 
 
 def _render_scalar(assignment: KeywordAssignment) -> str:
-    name = canonical_keyword_name("cell", assignment.name).upper()
-    if assignment.value in (None, True):
+    canonical_name = canonical_keyword_name("cell", assignment.name)
+    name = canonical_name.upper()
+    spec = get_keyword_spec("cell", canonical_name)
+    if assignment.value is None:
         return name
+    if spec is not None and spec.kind == "flag" and assignment.value is True:
+        return name
+    if isinstance(assignment.value, bool):
+        return f"{name} : {_render_value(assignment.value)}"
     return f"{name} {_render_value(assignment.value)}"
 
 
@@ -109,4 +115,3 @@ def _format_atom(value: object) -> str:
     if isinstance(value, float):
         return f"{value:.12g}"
     return str(value)
-

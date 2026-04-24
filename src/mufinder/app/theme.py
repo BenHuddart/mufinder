@@ -180,6 +180,12 @@ def _repolish_widget(widget: QWidget) -> None:
     widget.update()
 
 
+def refresh_widget_style(widget: QWidget) -> None:
+    """Refresh stylesheet-dependent state after dynamic properties change."""
+
+    _repolish_widget(widget)
+
+
 class _TableCornerStyler(QObject):
     """Toggle item-view corner styling based on scrollbar/header visibility."""
 
@@ -729,6 +735,80 @@ def _panel_container_styles(p: MuFinderPalette) -> str:
     """
 
 
+def _muon_generation_styles(p: MuFinderPalette) -> str:
+    return f"""
+    QGroupBox#muonGenerationSetupCard {{
+        background: {p.bg_surface};
+    }}
+    QStackedWidget#muonGenerationParamStack {{
+        background: {p.bg_surface};
+        border: 0px;
+    }}
+    QWidget#muonGenerationRandomPage,
+    QWidget#muonGenerationNearPage,
+    QWidget#muonGenerationManualPage,
+    QWidget#muonGenerationUepPage {{
+        background: {p.bg_surface};
+    }}
+    QWidget#randomSeparationChoice,
+    QWidget#randomCountChoice {{
+        background: {p.bg_surface};
+        border: 1px solid {p.border};
+        border-radius: 6px;
+    }}
+    QWidget#randomSeparationChoice QRadioButton,
+    QWidget#randomCountChoice QRadioButton {{
+        color: {p.text_muted};
+        background: transparent;
+    }}
+    QWidget#randomSeparationChoice[active="true"],
+    QWidget#randomCountChoice[active="true"] {{
+        background: {p.bg_surface_alt};
+        border: 1px solid {p.accent};
+        border-radius: 6px;
+    }}
+    QWidget#randomSeparationChoice[active="true"] QRadioButton,
+    QWidget#randomCountChoice[active="true"] QRadioButton {{
+        color: {p.text_primary};
+        background: transparent;
+    }}
+    QWidget#randomSeparationChoice[active="true"] QLineEdit,
+    QWidget#randomCountChoice[active="true"] QSpinBox {{
+        border-color: {p.accent};
+    }}
+    QDialog#clusterPositionsDialog {{
+        background: {p.bg_primary};
+    }}
+    QWidget#clusterPositionsCard {{
+        background: {p.bg_surface};
+        border: 1px solid {p.border};
+        border-radius: 8px;
+    }}
+    QWidget#clusterPositionsCard QLabel {{
+        background: transparent;
+    }}
+    QProgressBar#muonGenerationProgress {{
+        border: 1px solid {p.border};
+        border-radius: 7px;
+        background: {p.bg_surface_alt};
+        color: {p.text_primary};
+        text-align: center;
+        min-height: 22px;
+    }}
+    QProgressBar#muonGenerationProgress::chunk {{
+        background: {p.accent};
+        border-radius: 6px;
+        margin: 1px;
+    }}
+    QProgressBar#muonGenerationProgress[generationState="complete"] {{
+        color: #FFFFFF;
+    }}
+    QProgressBar#muonGenerationProgress[generationState="complete"]::chunk {{
+        background: {p.success};
+    }}
+    """
+
+
 def _workflow_tree_styles(
     p: MuFinderPalette,
     branch_right: str,
@@ -1194,6 +1274,7 @@ def _build_stylesheet(p: MuFinderPalette) -> str:
         _input_control_styles(p, arrow_up, arrow_down),
         _item_view_styles(p),
         _panel_container_styles(p),
+        _muon_generation_styles(p),
         _workflow_tree_styles(
             p,
             branch_right=arrow_right,

@@ -176,6 +176,21 @@ def test_cluster_submission_dialog_builds_project_workflow_workdir(qapp) -> None
     dialog.close()
 
 
+def test_cluster_submission_dialog_preserves_nested_muon_workdir_and_prefix(qapp) -> None:
+    dialog = ClusterSubmissionDialog(
+        job_labels=["Random Site 1"],
+        cluster_configs=_configs(),
+        project_name="My Project",
+        workflow_type="muon_relaxation/positivemuon",
+    )
+
+    config = dialog.config()
+
+    assert config.working_directory == "/work/alice/My_Project/muon_relaxation/positivemuon"
+    assert config.job_name_prefix == "positivemuon"
+    dialog.close()
+
+
 def test_cluster_submission_dialog_key_auth_allows_blank_passphrase(
     qapp,
     monkeypatch: pytest.MonkeyPatch,

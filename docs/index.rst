@@ -16,6 +16,7 @@ features, and quality standards that must be maintained as development expands.
 
    implemented_functionality
    journal
+   site_generation
    uep_workflow
    comparison_table
    quality_and_automation

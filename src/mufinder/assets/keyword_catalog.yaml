@@ -244,6 +244,24 @@ keywords:
     example: CALCULATE_POLARIZATION : TRUE
     notes: American spelling for the polarization toggle.
 
+  - name: CHARGE
+    canonical_name: charge
+    file: param
+    kind: scalar
+    value_type: int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: CHARGE : +1
+    notes: Total system charge. Muon relaxation locks this to +1 for positive muon and 0 for muonium.
+    gui:
+      label: Charge
+      category: electronic
+      widget_hint: spinbox_int
+      default_value: 0
+      advanced_workflows: [muon_relaxation]
+
   - name: TASK
     canonical_name: task
     file: param
