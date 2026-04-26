@@ -47,6 +47,31 @@ def test_expand_uep_jobs_applies_project_defaults() -> None:
     assert job.cell_file.kpoint_mp_grid == (4, 4, 4)
 
 
+def test_expand_uep_jobs_uses_exact_project_grid_for_unit_cell_with_reference_lattice() -> None:
+    config = UepConfig(
+        name_prefix="uep",
+        rows=(
+            UepSourceRow(
+                label="row_unit",
+                parameter_values={},
+            ),
+        ),
+    )
+    host = _host_structure()
+    host.lattice_vectors = [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]]
+
+    expansion = expand_uep_jobs(
+        host_structure=host,
+        config=config,
+        project_cutoff_energy=650.0,
+        project_kpoint_grid=(3, 3, 3),
+        project_kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]],
+    )
+
+    assert expansion.jobs[0].cell_file.kpoint_mp_grid == (3, 3, 3)
+    assert expansion.kpoint_messages == ()
+
+
 def test_expand_uep_jobs_forces_formatted_density_even_when_disabled_in_row() -> None:
     config = UepConfig(
         name_prefix="uep",

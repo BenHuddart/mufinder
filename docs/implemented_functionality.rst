@@ -118,8 +118,32 @@ The host-structure panel now includes:
 - Viewer fitting accounts for full atom sphere extents (not just atom centers), preventing unnecessary clipping at left/right boundaries.
 - Crystallographic axis triad rendered below the main viewer to maximize primary structure viewport area.
 - Left-clicking empty space in the viewer clears the current atom selection.
-- A supercell-preview dialog with simple diagonal controls and optional advanced full 3x3 matrix entry.
+- A project-level supercell editor with simple diagonal controls, optional
+  advanced full 3x3 matrix entry, naming, preview, save, edit, delete, and
+  workflow selection support.
 - A PyVista/VTK structure-viewer backend with camera-preserving overlay updates for bonds, spins, slice planes, point markers, and UEP isosurfaces.
+
+Supercell editor
+----------------
+
+The project navigator and workflow tabs expose a reusable ``Supercell Editor``.
+
+Current behavior includes:
+
+- listing saved supercells for the active source structure,
+- naming saved supercells,
+- generating previews before save,
+- saving new supercells and saving copies,
+- renaming and regenerating unused saved supercells,
+- preventing deletion of supercells already frozen into configured calculations,
+- creating a new future-use copy when matrix edits are made to a frozen saved
+  supercell,
+- returning a selected saved supercell to workflow tabs opened in
+  ``Manage Supercells...`` mode.
+
+Existing configured calculations remain reproducible because their
+``CalculationDefinition.input_structure_ids`` continue to point at the original
+frozen structure snapshot.
 
 Workflow-scoped simulation-cell selection
 -----------------------------------------
@@ -135,7 +159,8 @@ Current UI support (convergence workflow) includes:
 	- ``Single unit cell``
 	- saved supercell assets derived from the currently active host structure
 
-- ``Create From Preview...`` action to open supercell preview and save a structure snapshot.
+- ``Manage Supercells...`` action to open the project supercell editor and
+  select or create a saved structure snapshot.
 - ``Use Unit Cell`` action that returns the current workflow selection to host unit-cell mode without deleting saved assets.
 
 Cross-workflow reuse behavior includes:
@@ -251,6 +276,11 @@ generation stage is where selected cluster representatives become initial
 positions for full structural relaxation.
 Cluster representatives use the optimized position of the lowest-energy member
 chosen by the clustering summary, not an averaged cluster position or centroid.
+
+When generated positions are turned into relaxation jobs, MuFinder asks whether
+to create positive-muon jobs, muonium jobs, or both. The structural-relaxation
+view separates those rows into ``Positive muon`` and ``Muonium`` tabs, while the
+CASTEP total charge remains locked by MuFinder for each tab.
 
 The symmetry-aware random method follows the initial-position generation
 algorithm described by Huddart *et al.*, ``MuFinder: A program to determine and

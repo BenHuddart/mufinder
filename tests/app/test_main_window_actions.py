@@ -25,6 +25,7 @@ from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, M
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.services.project_service import ProjectService
+from mufinder.services.ssh_client import SSHAuthenticationError
 
 
 def _find_item_by_route(parent: QTreeWidgetItem, route: str) -> QTreeWidgetItem | None:
@@ -678,9 +679,7 @@ def test_convergence_simulation_cell_create_requested_handles_missing_context(
     window.close()
 
 
-def test_convergence_simulation_cell_create_requested_can_reset_to_unit_cell(
-    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_convergence_simulation_cell_use_unit_cell_requested_resets_selection(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "conv_supercell_unit_reset.mufinder", "ConvSupercellUnitReset")
@@ -706,24 +705,7 @@ def test_convergence_simulation_cell_create_requested_can_reset_to_unit_cell(
     )
     window._document = doc
 
-    class _FakeDialog:
-        DialogCode = SimpleNamespace(Accepted=1)
-
-        def __init__(self, **_kwargs) -> None:
-            pass
-
-        def exec(self) -> int:
-            return 1
-
-        def result_mode(self) -> str:
-            return "unit_cell"
-
-        def matrix(self) -> list[list[int]]:
-            return [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-
-    monkeypatch.setattr(main_window_module, "SupercellPreviewDialog", _FakeDialog)
-
-    window._on_convergence_simulation_cell_create_requested()
+    window._on_convergence_simulation_cell_use_unit_cell_requested()
 
     assert doc.ui_state["workflow_supercells"]["convergence_cutoff"]["mode"] == "unit_cell"
     window.close()
@@ -756,6 +738,55 @@ def test_convergence_supercell_initial_matrix_prefers_selected_asset(qapp, tmp_p
     window._document = doc
 
     assert window._convergence_supercell_initial_matrix() == [[3, 0, 0], [0, 1, 0], [0, 0, 1]]
+    window.close()
+
+
+def test_convergence_manage_supercells_selects_returned_asset(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "conv_supercell_editor_select.mufinder", "ConvEditorSelect")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    asset = service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+        label="Shared 2x2x1",
+        reuse_existing=False,
+    )
+    window._document = doc
+
+    class _FakeDialog:
+        def selected_structure_id(self):
+            return asset.id
+
+    monkeypatch.setattr(window, "_open_supercell_editor", lambda **_kwargs: _FakeDialog())
+
+    window._on_convergence_simulation_cell_create_requested()
+
+    assert doc.ui_state["workflow_supercells"]["convergence_cutoff"]["structure_id"] == str(asset.id)
+    window.close()
+
+
+def test_supercell_editor_route_uses_project_page(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "supercell_route.mufinder", "SupercellRoute")
+    window._document = doc
+    window._populate_project_tree()
+
+    window._set_active_route("supercell_editor")
+
+    assert window._main_stack.currentWidget() == window._supercell_editor_page
     window.close()
 
 
@@ -837,6 +868,50 @@ def test_convergence_configured_uses_selected_saved_supercell(qapp, tmp_path: Pa
     window.close()
 
 
+def test_convergence_configured_reuses_matching_definition(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "conv_reuse_definition.mufinder", "ConvReuseDefinition")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    config = ConvergenceConfig(
+        cutoff_energies=(300.0, 400.0),
+        shared_params={"task": "SINGLEPOINT"},
+        overrides={},
+        name_prefix="conv",
+    )
+
+    window._on_convergence_configured(config)
+    definition = next(iter(doc.calculations.values()))
+    job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    definition.parameters["job_ids_by_cutoff"]["300"] = str(job.id)
+
+    window._on_convergence_configured(config)
+
+    definitions = [
+        candidate
+        for candidate in doc.calculations.values()
+        if candidate.workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF
+    ]
+    assert definitions == [definition]
+    assert doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] == str(definition.id)
+    assert definition.parameters["job_ids_by_cutoff"] == {"300": str(job.id)}
+    window.close()
+
+
 def test_materialize_convergence_jobs_writes_saved_supercell_structure(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
@@ -879,6 +954,151 @@ def test_materialize_convergence_jobs_writes_saved_supercell_structure(qapp, tmp
     cell_text = cell_path.read_text(encoding="utf-8")
     assert "10 0 0" in cell_text
     assert cell_text.count("Si ") >= 2
+    window.close()
+
+
+def test_submit_convergence_ignores_stale_same_label_jobs_for_ready_cutoffs(
+    qapp,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "conv_stale_same_label.mufinder", "ConvStaleSameLabel")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    definition = service.register_convergence_cutoff_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={
+            "cutoff_energies": [300.0, 1300.0, 1400.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+            "name_prefix": "cutoff_convergence",
+        },
+        output_directory=doc.project_root / "files" / "convergence_cutoff",
+    )
+    doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(definition.id)
+    window._document = doc
+
+    stale_300 = service.add_job(
+        doc,
+        label="cutoff_convergence_ecut_300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    stale_1400 = service.add_job(
+        doc,
+        label="cutoff_convergence_ecut_1400",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+
+    submitted: list[list[Job]] = []
+    monkeypatch.setattr(window, "_submit_jobs_on_cluster", lambda jobs: submitted.append(jobs))
+
+    window._on_submit_cluster_from_convergence([300.0, 1300.0, 1400.0])
+
+    assert len(submitted) == 1
+    assert [job.label for job in submitted[0]] == [
+        "cutoff_convergence_ecut_300",
+        "cutoff_convergence_ecut_1300",
+        "cutoff_convergence_ecut_1400",
+    ]
+    assert stale_300 not in submitted[0]
+    assert stale_1400 not in submitted[0]
+    assert len(doc.jobs) == 5
+    window.close()
+
+
+def test_convergence_states_merge_equivalent_definition_mappings(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "conv_merge_equivalent.mufinder", "ConvMergeEquivalent")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    parameters = {
+        "cutoff_energies": [300.0, 400.0, 1400.0],
+        "shared_params": {"task": "SINGLEPOINT"},
+        "overrides": [],
+        "name_prefix": "cutoff_convergence",
+    }
+    output_directory = doc.project_root / "files" / "convergence_cutoff"
+    older = service.register_convergence_cutoff_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=parameters,
+        output_directory=output_directory,
+    )
+    active = service.register_convergence_cutoff_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=parameters,
+        output_directory=output_directory,
+    )
+
+    running_300 = service.add_job(
+        doc,
+        label="cutoff_convergence_ecut_300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    running_300.status = JobStatus.RUNNING
+    completed_400 = service.add_job(
+        doc,
+        label="cutoff_convergence_ecut_400",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    completed_400.status = JobStatus.COMPLETED
+    failed_1400 = service.add_job(
+        doc,
+        label="cutoff_convergence_ecut_1400",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    failed_1400.status = JobStatus.FAILED
+    stale_300 = service.add_job(
+        doc,
+        label="cutoff_convergence_ecut_300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+
+    older.parameters["job_ids_by_cutoff"] = {
+        "300": str(running_300.id),
+        "400": str(completed_400.id),
+        "1400": str(failed_1400.id),
+    }
+    active.parameters["job_ids_by_cutoff"] = {"300": str(stale_300.id)}
+    doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(active.id)
+    window._document = doc
+
+    states = window._build_convergence_cutoff_states()
+
+    assert states[300.0].status == "running"
+    assert states[300.0].job_id == running_300.id
+    assert states[400.0].status == "completed"
+    assert states[1400.0].status == "failed"
+    assert active.parameters["job_ids_by_cutoff"]["300"] == str(running_300.id)
+    assert active.parameters["job_ids_by_cutoff"]["400"] == str(completed_400.id)
+    assert active.parameters["job_ids_by_cutoff"]["1400"] == str(failed_1400.id)
     window.close()
 
 
@@ -1219,6 +1439,7 @@ def test_main_window_convergence_definition_helpers_support_legacy_labels(qapp, 
         output_directory=doc.project_root / "files" / "convergence_cutoff",
     )
     definition.parameters["job_labels"] = [job.label]
+    definition.parameters.pop("job_ids_by_cutoff", None)
     window._document = doc
 
     resolved_job = window._job_for_definition_cutoff(definition, 300.0)
@@ -1266,7 +1487,10 @@ def test_main_window_detach_convergence_job_clears_job_id_mapping(qapp, tmp_path
     window.close()
 
 
-def test_main_window_build_states_uses_active_convergence_definition_only(qapp, tmp_path: Path) -> None:
+def test_main_window_build_states_merges_equivalent_convergence_definition_jobs(
+    qapp,
+    tmp_path: Path,
+) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "conv_active_definition.mufinder", "ConvActiveDefinition")
@@ -1321,8 +1545,80 @@ def test_main_window_build_states_uses_active_convergence_definition_only(qapp, 
     states = window._build_convergence_cutoff_states()
 
     assert old_definition.id != new_definition.id
+    assert states[300.0].status == "completed"
+    assert states[300.0].total_energy == -9.99
+    window.close()
+
+
+def test_convergence_states_merge_matching_cutoffs_from_reshaped_configuration(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "conv_merge_reshaped.mufinder", "ConvMergeReshaped")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    old_completed_300 = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    old_completed_300.status = JobStatus.COMPLETED
+    completed_400 = service.add_job(
+        doc,
+        label="conv_ecut_400",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    completed_400.status = JobStatus.COMPLETED
+
+    old_definition = service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0, 400.0],
+            "shared_params": {"task": "SINGLEPOINT", "max_scf_cycles": 100},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_cutoff",
+        job_ids_by_cutoff={
+            main_window_module.MainWindow._cutoff_key(300.0): str(old_completed_300.id),
+            main_window_module.MainWindow._cutoff_key(400.0): str(completed_400.id),
+        },
+    )
+    active_definition = service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0, 400.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [
+                {"cutoffs": [300.0], "params": {"max_scf_cycles": 200}},
+                {"cutoffs": [400.0], "params": {"max_scf_cycles": 100}},
+            ],
+        },
+        output_directory=doc.project_root / "files" / "convergence_cutoff",
+    )
+    doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(active_definition.id)
+    window._document = doc
+
+    states = window._build_convergence_cutoff_states()
+
+    assert old_definition.id != active_definition.id
     assert states[300.0].status == "ready"
-    assert states[300.0].total_energy is None
+    assert states[400.0].status == "completed"
+    assert active_definition.parameters["job_ids_by_cutoff"] == {"400": str(completed_400.id)}
     window.close()
 
 
@@ -2933,6 +3229,70 @@ def test_main_window_disconnected_refresh_prompts_password_for_password_cluster(
     window.close()
 
 
+def test_main_window_disconnected_refresh_prompts_passphrase_for_key_cluster(
+    qapp,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_refresh_key_prompt.mufinder", "ClusterRefreshKey")
+
+    redwood_job = service.add_job(
+        doc,
+        label="redwood_job",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+        execution_target="Redwood",
+    )
+    redwood_job.status = JobStatus.QUEUED
+    window._document = doc
+
+    redwood = ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        username="alice",
+        auth_method="key",
+        key_path="/Users/alice/.ssh/id_ed25519",
+        default_working_directory="/mnt/redwoodfs/alice",
+        queue_system="ADDQUEUE",
+        cores_per_node=32,
+        default_walltime="",
+        template_script_path="",
+    )
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [redwood])
+
+    connect_calls: list[tuple[str, str | None]] = []
+
+    def _connect(config, password=None):
+        connect_calls.append((config.name, password))
+        if password is None:
+            raise SSHAuthenticationError("SSH key authentication failed: private key is encrypted")
+
+    refresh_calls: list[str] = []
+    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", _connect)
+    monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: refresh_calls.append("refresh"))
+    monkeypatch.setattr(
+        main_window_module.QInputDialog,
+        "getText",
+        lambda *_args, **_kwargs: ("secret-passphrase", True),
+    )
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, title, _message: warnings.append(title),
+    )
+
+    window._on_refresh_cluster_queue()
+
+    assert connect_calls == [("Redwood", None), ("Redwood", "secret-passphrase")]
+    assert refresh_calls == ["refresh"]
+    assert warnings == []
+    window.close()
+
+
 def test_main_window_cluster_poll_failed_shows_detailed_warning(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3742,6 +4102,19 @@ def test_muon_relaxation_staging_updates_memory_without_autosave(qapp, tmp_path:
 
     window._project_service.save_project = _save_project
 
+    class _AcceptedChargeDialog:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def exec(self):
+            return main_window_module.QDialog.DialogCode.Accepted
+
+        def selected_charge_states(self):
+            return ("positive_muon",)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(main_window_module, "MuonChargeStateDialog", _AcceptedChargeDialog)
+
     window._on_create_muon_relaxation_jobs_requested(str(site.id))
 
     assert save_calls == []
@@ -3749,7 +4122,89 @@ def test_muon_relaxation_staging_updates_memory_without_autosave(qapp, tmp_path:
     reloaded = service.load_project(doc.project_root)
     assert reloaded.sites[site.id].status == "generated"
     assert "muon_relaxation_form" not in reloaded.ui_state
+    monkeypatch.undo()
     window.close()
+
+
+def test_muon_relaxation_staging_rejected_charge_dialog_leaves_site_generated(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_stage_rejected.mufinder", "MuonStageRejected")
+    site = MuonSite(
+        label="Random Site 1",
+        status="generated",
+        fractional_position=[0.1, 0.2, 0.3],
+        generation_method="random",
+    )
+    doc.sites[site.id] = site
+    window._document = doc
+
+    class _RejectedChargeDialog:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def exec(self):
+            return main_window_module.QDialog.DialogCode.Rejected
+
+    patch = pytest.MonkeyPatch()
+    patch.setattr(main_window_module, "MuonChargeStateDialog", _RejectedChargeDialog)
+
+    window._on_create_muon_relaxation_jobs_requested(str(site.id))
+
+    assert site.status == "generated"
+    assert "muon_relaxation_form" not in doc.ui_state
+    patch.undo()
+    window.close()
+
+
+def test_muon_relaxation_staging_can_create_both_charge_state_tabs(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_stage_both.mufinder", "MuonStageBoth")
+    site = MuonSite(
+        label="Random Site 1",
+        status="generated",
+        fractional_position=[0.1, 0.2, 0.3],
+        generation_method="random",
+    )
+    doc.sites[site.id] = site
+    window._document = doc
+
+    class _BothChargeDialog:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def exec(self):
+            return main_window_module.QDialog.DialogCode.Accepted
+
+        def selected_charge_states(self):
+            return ("positive_muon", "muonium")
+
+    patch = pytest.MonkeyPatch()
+    patch.setattr(main_window_module, "MuonChargeStateDialog", _BothChargeDialog)
+
+    window._on_create_muon_relaxation_jobs_requested(str(site.id))
+
+    rows = window._document.ui_state["muon_relaxation_form"]["rows"]
+    assert [row["charge_state"] for row in rows] == ["positive_muon", "muonium"]
+    assert rows[0]["label"] == "Random Site 1"
+    assert rows[1]["label"] == "Random Site 1"
+    assert window._muon_relaxation_view._tables_by_charge_state["positive_muon"].rowCount() == 1
+    assert window._muon_relaxation_view._tables_by_charge_state["muonium"].rowCount() == 1
+    patch.undo()
+    window.close()
+
+
+def test_muon_charge_state_dialog_defaults_and_returns_both_states(qapp) -> None:
+    dialog = main_window_module.MuonChargeStateDialog(site_count=2)
+
+    assert dialog.objectName() == "muonChargeStateDialog"
+    assert dialog.windowTitle() == "Create Muon Relaxation Jobs"
+    assert dialog.selected_charge_states() == ("positive_muon",)
+
+    dialog._both.setChecked(True)
+
+    assert dialog.selected_charge_states() == ("positive_muon", "muonium")
 
 
 def test_muon_relaxation_configuration_updates_memory_without_autosave(qapp, tmp_path: Path) -> None:
@@ -4014,11 +4469,12 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
     states = window._build_muon_relaxation_states()
     assert states["muonium:Shared Site"].final_fractional_position == pytest.approx((0.6, 0.8, 0.5))
     window._refresh_muon_relaxation_rows()
-    assert window._muon_relaxation_view._table.item(
+    muonium_table = window._muon_relaxation_view._tables_by_charge_state["muonium"]
+    assert muonium_table.item(
         0,
         window._muon_relaxation_view._FINAL_FX_COLUMN,
     ).text() == "0.600"
-    assert window._muon_relaxation_view._table.item(
+    assert muonium_table.item(
         0,
         window._muon_relaxation_view._TOTAL_ENERGY_COLUMN,
     ).text() == "-12"
@@ -4554,6 +5010,70 @@ def test_main_window_failure_diagnostics_and_inspect_dialog(
     assert len(captured_details) == 1
     assert "job_failed.err" in captured_details[0]
     assert "2: fatal error" in captured_details[0]
+    window.close()
+
+
+def test_main_window_failure_diagnostics_prefers_numbered_error_files(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "inspect_numbered_err.mufinder", "InspectNumberedErr")
+    job = service.add_job(
+        doc,
+        label="job_failed",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job.status = JobStatus.FAILED
+    window._document = doc
+
+    output_dir = doc.project_root / "files" / "convergence_cutoff" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "job_failed.0001.err").write_text("rank 1 error\n", encoding="utf-8")
+    (output_dir / "job_failed.0002.err").write_text("rank 2 error\n", encoding="utf-8")
+    (output_dir / "unrelated.err").write_text("other error\n", encoding="utf-8")
+
+    candidates = window._error_file_candidates(job, output_dir)
+    diagnostics = window._failure_diagnostics_for_job(job)
+
+    assert [path.name for path in candidates] == ["job_failed.0001.err", "job_failed.0002.err"]
+    assert "[job_failed.0001.err]" in diagnostics
+    assert "[job_failed.0002.err]" in diagnostics
+    assert "unrelated.err" not in diagnostics
+    window.close()
+
+
+def test_main_window_failure_diagnostics_includes_slurm_output(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "inspect_slurm_out.mufinder", "InspectSlurmOut")
+    job = service.add_job(
+        doc,
+        label="job_failed",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job.status = JobStatus.FAILED
+    job.remote_job_id = "771300"
+    window._document = doc
+
+    output_dir = doc.project_root / "files" / "convergence_cutoff" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "slurm-771300.out").write_text(
+        "running job\nslurm error: out of memory\n",
+        encoding="utf-8",
+    )
+
+    candidates = window._error_file_candidates(job, output_dir)
+    diagnostics = window._failure_diagnostics_for_job(job)
+
+    assert [path.name for path in candidates] == ["slurm-771300.out"]
+    assert "[slurm-771300.out]" in diagnostics
+    assert "2: slurm error: out of memory" in diagnostics
     window.close()
 
 
@@ -5345,6 +5865,126 @@ def test_main_window_remove_cutoff_from_definition_updates_lists_and_labels(qapp
     window.close()
 
 
+def test_main_window_remove_convergence_cutoff_clears_equivalent_definition_mappings(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "conv_deleted_stale.mufinder", "ConvDeletedStale")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    old_definition = service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_cutoff",
+    )
+    running_job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    running_job.status = JobStatus.RUNNING
+    old_definition.parameters["job_ids_by_cutoff"] = {"300": str(running_job.id)}
+
+    active_definition = service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_cutoff",
+    )
+    doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(active_definition.id)
+
+    window._on_remove_cutoffs_from_convergence([300.0])
+
+    new_definition = service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_cutoff",
+    )
+    doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(new_definition.id)
+
+    states = window._build_convergence_cutoff_states()
+
+    assert states[300.0].status == "ready"
+    assert new_definition.parameters.get("job_ids_by_cutoff", {}) == {}
+    assert old_definition.id not in doc.calculations
+    window.close()
+
+
+def test_main_window_remove_convergence_cutoff_preserves_other_contexts(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "conv_preserve_other.mufinder", "ConvPreserveOther")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    active_definition = service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_cutoff",
+    )
+    other_definition = service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "other_convergence_cutoff",
+    )
+    doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(active_definition.id)
+
+    window._on_remove_cutoffs_from_convergence([300.0])
+
+    assert active_definition.id not in doc.calculations
+    assert other_definition.id in doc.calculations
+    assert other_definition.parameters["configuration"]["cutoff_energies"] == [300.0]
+    window.close()
+
+
 def test_main_window_file_helpers_cover_file_prompt_and_unique_archive(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class _FakeMessageBox:
         Icon = SimpleNamespace(Warning=1)
@@ -5408,6 +6048,21 @@ def test_main_window_file_helpers_cover_file_prompt_and_unique_archive(qapp, tmp
     assert archived.name == "job_a_1"
     assert archived.exists()
     assert not source.exists()
+    window.close()
+
+
+def test_main_window_error_file_candidates_handles_missing_directory(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "missing_errors.mufinder", "MissingErrors")
+    job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+
+    assert window._error_file_candidates(job, tmp_path / "does_not_exist") == []
     window.close()
 
 
@@ -5896,6 +6551,77 @@ def test_materialize_pristine_relaxation_rewrites_defined_job_inputs_when_projec
     window.close()
 
 
+def test_main_window_form_pristine_relaxation_shows_ready_before_submission(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "pristine_form_ready.mufinder", "PristineFormReady")
+
+    doc.ui_state["pristine_relaxation_form"] = {
+        "name_prefix": "pristine_relax",
+        "rows": [
+            {"label": "row_1", "fix_all_cell": False, "params": {}, "added_advanced": []},
+            {"label": "row_2", "fix_all_cell": True, "params": {}, "added_advanced": []},
+        ],
+    }
+
+    window._document = doc
+    window._refresh_ui_after_project_change()
+
+    assert window._jobs_table.rowCount() == 0
+    assert window._pristine_relaxation_view._table.item(0, window._pristine_relaxation_view._STATUS_COLUMN).text() == "ready"
+    assert window._pristine_relaxation_view._table.item(1, window._pristine_relaxation_view._STATUS_COLUMN).text() == "ready"
+    window.close()
+
+
+def test_main_window_pristine_form_edit_hides_stale_definition_status(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "pristine_form_stale.mufinder", "PristineFormStale")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
+    definition = service.register_pristine_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_pristine_relaxation_config(
+            main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
+        ),
+        output_directory=doc.project_root / "files" / "pristine_relaxation",
+    )
+    running_job = service.add_job(
+        doc,
+        label="pristine_relax_row_1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    running_job.status = JobStatus.RUNNING
+    definition.parameters["job_ids_by_label"] = {"row_1": str(running_job.id)}
+    doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    doc.ui_state["pristine_relaxation_form"] = {
+        "name_prefix": "pristine_relax",
+        "rows": [
+            {"label": "row_1", "fix_all_cell": True, "params": {}, "added_advanced": []},
+        ],
+    }
+
+    window._refresh_ui_after_project_change()
+
+    assert window._pristine_relaxation_view._table.item(0, window._pristine_relaxation_view._STATUS_COLUMN).text() == "ready"
+    window.close()
+
+
 def test_materialize_uep_rewrites_defined_job_inputs_when_project_defaults_change(
     qapp, tmp_path: Path
 ) -> None:
@@ -5940,6 +6666,447 @@ def test_materialize_uep_rewrites_defined_job_inputs_when_project_defaults_chang
 
     refreshed_cell = cell_path.read_text(encoding="utf-8")
     assert "KPOINT_MP_GRID 5 5 5" in refreshed_cell
+    window.close()
+
+
+def test_pristine_relaxation_preserves_running_row_when_adding_job(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "pristine_running.mufinder", "PristineRunning")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    row_1 = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
+    row_2 = main_window_module.PristineRelaxationRow(label="row_2", parameter_values={})
+    old_config = main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row_1,))
+    old_definition = service.register_pristine_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_pristine_relaxation_config(old_config),
+        output_directory=doc.project_root / "files" / "pristine_relaxation",
+    )
+    running_job = service.add_job(
+        doc,
+        label="pristine_relax_row_1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    running_job.status = JobStatus.RUNNING
+    old_definition.parameters["job_ids_by_label"] = {"row_1": str(running_job.id)}
+
+    new_config = main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row_1, row_2))
+    new_definition = service.register_pristine_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_pristine_relaxation_config(new_config),
+        output_directory=doc.project_root / "files" / "pristine_relaxation",
+    )
+    doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
+
+    submitted: list[Job] = []
+    monkeypatch.setattr(window, "_submit_jobs_on_cluster", lambda jobs: submitted.extend(jobs))
+
+    window._on_submit_cluster_from_pristine_relaxation(["row_2"])
+
+    states = window._build_pristine_relaxation_states()
+    assert states["row_1"].status == JobStatus.RUNNING.value
+    assert states["row_1"].job_id == running_job.id
+    assert len(submitted) == 1
+    assert submitted[0].label == "pristine_relax_row_2"
+    assert new_definition.parameters["job_ids_by_label"]["row_1"] == str(running_job.id)
+    window.close()
+
+
+def test_muon_relaxation_preserves_running_row_across_reconfiguration(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_running.mufinder", "MuonRunning")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    doc.sites[site.id] = site
+    window._document = doc
+
+    row = main_window_module.MuonRelaxationRow(
+        site_id=site.id,
+        label="Site 1",
+        initial_fractional_position=(0.25, 0.25, 0.25),
+        charge_state="positive_muon",
+    )
+    old_definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        output_directory=doc.project_root / "files" / "muon_relaxation",
+    )
+    running_job = service.add_job(
+        doc,
+        label="Site 1",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
+    )
+    running_job.status = JobStatus.RUNNING
+    old_definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(running_job.id)}
+
+    new_definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        output_directory=doc.project_root / "files" / "muon_relaxation",
+    )
+    doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
+
+    states = window._build_muon_relaxation_states()
+
+    assert states["positivemuon:Site 1"].status == JobStatus.RUNNING.value
+    assert states["positivemuon:Site 1"].job_id == running_job.id
+    assert new_definition.parameters["job_ids_by_label"]["positivemuon:Site 1"] == str(running_job.id)
+    window.close()
+
+
+def test_uep_preserves_running_row_across_reconfiguration(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_running.mufinder", "UepRunning")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    window._document = doc
+
+    row = main_window_module.UepSourceRow(label="row_1", parameter_values={})
+    old_definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        output_directory=doc.project_root / "files" / "uep",
+    )
+    running_job = service.add_job(
+        doc,
+        label="uep_row_1",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    running_job.status = JobStatus.RUNNING
+    old_definition.parameters["job_ids_by_label"] = {"row_1": str(running_job.id)}
+
+    new_definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        output_directory=doc.project_root / "files" / "uep",
+    )
+    doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(new_definition.id)
+
+    states = window._build_uep_states()
+
+    assert states["row_1"].status == JobStatus.RUNNING.value
+    assert states["row_1"].job_id == running_job.id
+    assert new_definition.parameters["job_ids_by_label"]["row_1"] == str(running_job.id)
+    window.close()
+
+
+def test_pristine_relaxation_deleted_row_does_not_reinherit_stale_status(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "pristine_deleted_stale.mufinder", "PristineDeletedStale")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
+    old_definition = service.register_pristine_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_pristine_relaxation_config(
+            main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
+        ),
+        output_directory=doc.project_root / "files" / "pristine_relaxation",
+    )
+    running_job = service.add_job(
+        doc,
+        label="pristine_relax_row_1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    running_job.status = JobStatus.RUNNING
+    old_definition.parameters["job_ids_by_label"] = {"row_1": str(running_job.id)}
+
+    window._on_remove_pristine_relaxation_rows(["row_1"])
+
+    new_definition = service.register_pristine_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_pristine_relaxation_config(
+            main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
+        ),
+        output_directory=doc.project_root / "files" / "pristine_relaxation",
+    )
+    doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
+
+    states = window._build_pristine_relaxation_states()
+
+    assert states["row_1"].status == "ready"
+    assert new_definition.parameters.get("job_ids_by_label", {}) == {}
+    assert old_definition.id not in doc.calculations
+    window.close()
+
+
+def test_muon_relaxation_deleted_row_does_not_reinherit_stale_status(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_deleted_stale.mufinder", "MuonDeletedStale")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    doc.sites[site.id] = site
+    window._document = doc
+
+    row = main_window_module.MuonRelaxationRow(
+        site_id=site.id,
+        label="Site 1",
+        initial_fractional_position=(0.25, 0.25, 0.25),
+        charge_state="positive_muon",
+    )
+    old_definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        output_directory=doc.project_root / "files" / "muon_relaxation",
+    )
+    running_job = service.add_job(
+        doc,
+        label="Site 1",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
+    )
+    running_job.status = JobStatus.RUNNING
+    old_definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(running_job.id)}
+
+    window._on_remove_muon_relaxation_rows(["positivemuon:Site 1"])
+
+    new_definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        output_directory=doc.project_root / "files" / "muon_relaxation",
+    )
+    doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
+
+    states = window._build_muon_relaxation_states()
+
+    assert states["positivemuon:Site 1"].status == "ready"
+    assert new_definition.parameters.get("job_ids_by_label", {}) == {}
+    assert old_definition.id not in doc.calculations
+    window.close()
+
+
+def test_uep_deleted_row_does_not_reinherit_stale_status(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_deleted_stale.mufinder", "UepDeletedStale")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    window._document = doc
+
+    row = main_window_module.UepSourceRow(label="row_1", parameter_values={})
+    old_definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        output_directory=doc.project_root / "files" / "uep",
+    )
+    running_job = service.add_job(
+        doc,
+        label="uep_row_1",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    running_job.status = JobStatus.RUNNING
+    old_definition.parameters["job_ids_by_label"] = {"row_1": str(running_job.id)}
+
+    window._on_remove_uep_rows(["row_1"])
+
+    new_definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        output_directory=doc.project_root / "files" / "uep",
+    )
+    doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(new_definition.id)
+
+    states = window._build_uep_states()
+
+    assert states["row_1"].status == "ready"
+    assert new_definition.parameters.get("job_ids_by_label", {}) == {}
+    assert old_definition.id not in doc.calculations
+    window.close()
+
+
+def test_kpoint_convergence_preserves_running_grid_across_reconfiguration(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "kpoint_running.mufinder", "KPointRunning")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    window._document = doc
+
+    old_definition = service.register_convergence_kpoint_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={
+            "name_prefix": "kconv",
+            "sweep_parameter": "kpoint_mp_grid",
+            "sweep_values": [[2, 2, 2]],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_kpoint",
+    )
+    running_job = service.add_job(
+        doc,
+        label="kconv_kgrid_2x2x2",
+        workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+        calc_type="castep_convergence_kpoint",
+    )
+    running_job.status = JobStatus.RUNNING
+    old_definition.parameters["job_ids_by_grid"] = {
+        main_window_module.MainWindow._grid_key((2, 2, 2)): str(running_job.id)
+    }
+
+    new_definition = service.register_convergence_kpoint_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={
+            "name_prefix": "kconv",
+            "sweep_parameter": "kpoint_mp_grid",
+            "sweep_values": [[2, 2, 2], [3, 3, 3]],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_kpoint",
+    )
+    doc.ui_state[window._ACTIVE_KPOINT_DEFINITION_KEY] = str(new_definition.id)
+
+    states = window._build_convergence_kpoint_states()
+
+    assert states[(2, 2, 2)].status == JobStatus.RUNNING.value
+    assert states[(2, 2, 2)].job_id == running_job.id
+    assert new_definition.parameters["job_ids_by_grid"]["2x2x2"] == str(running_job.id)
+    window.close()
+
+
+def test_kpoint_deleted_grid_does_not_reinherit_stale_status(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "kpoint_deleted_stale.mufinder", "KPointDeletedStale")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    window._document = doc
+
+    old_definition = service.register_convergence_kpoint_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={
+            "name_prefix": "kconv",
+            "sweep_parameter": "kpoint_mp_grid",
+            "sweep_values": [[2, 2, 2]],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_kpoint",
+    )
+    running_job = service.add_job(
+        doc,
+        label="kconv_kgrid_2x2x2",
+        workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+        calc_type="castep_convergence_kpoint",
+    )
+    running_job.status = JobStatus.RUNNING
+    old_definition.parameters["job_ids_by_grid"] = {"2x2x2": str(running_job.id)}
+
+    active_definition = service.register_convergence_kpoint_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={
+            "name_prefix": "kconv",
+            "sweep_parameter": "kpoint_mp_grid",
+            "sweep_values": [[2, 2, 2]],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_kpoint",
+    )
+    doc.ui_state[window._ACTIVE_KPOINT_DEFINITION_KEY] = str(active_definition.id)
+
+    window._on_remove_grids_from_kpoint_convergence([(2, 2, 2)])
+
+    new_definition = service.register_convergence_kpoint_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={
+            "name_prefix": "kconv",
+            "sweep_parameter": "kpoint_mp_grid",
+            "sweep_values": [[2, 2, 2]],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_kpoint",
+    )
+    doc.ui_state[window._ACTIVE_KPOINT_DEFINITION_KEY] = str(new_definition.id)
+
+    states = window._build_convergence_kpoint_states()
+
+    assert states[(2, 2, 2)].status == "ready"
+    assert new_definition.parameters.get("job_ids_by_grid", {}) == {}
+    assert old_definition.parameters.get("job_ids_by_grid", {}) == {}
     window.close()
 
 
@@ -6194,6 +7361,8 @@ def test_main_window_on_kpoint_default_adopted_sets_project_default(qapp, tmp_pa
     assert doc.project.recommended_kpoint_energy_threshold == pytest.approx(0.001)
     assert doc.project.recommended_kpoint_force_threshold == pytest.approx(0.05)
     assert doc.project.recommended_kpoint_cell_id == str(host.id)
+    assert window._pristine_relaxation_view._project_default_kpoint.text() == "2 x 2 x 2"
+    assert window._uep_view._project_default_kpoint.text() == "2 x 2 x 2"
     snapshot = doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]["kpoint"]
     assert snapshot["host_structure_id"] == str(host.id)
     assert snapshot["simulation_cell_structure_id"] == str(host.id)

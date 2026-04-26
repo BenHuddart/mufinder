@@ -16,7 +16,9 @@ from PySide6.QtGui import QActionGroup, QColor, QFont, QGuiApplication, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QButtonGroup,
     QDialog,
+    QDialogButtonBox,
     QFrame,
     QFileDialog,
     QDockWidget,
@@ -30,6 +32,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QStackedWidget,
     QStatusBar,
     QTableWidget,
@@ -72,9 +75,12 @@ from mufinder.app.convergence_widget import ConvergenceWidget
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
 from mufinder.app.relaxation_adapter import (
     MUON_RELAXATION_CALC_TYPES,
+    MUONIUM_CHARGE_STATE,
+    POSITIVE_MUON_CHARGE_STATE,
     expand_muon_relaxation_jobs,
     expand_pristine_relaxation_jobs,
     is_muon_relaxation_calc_type,
+    muon_charge_state_label,
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
@@ -96,7 +102,7 @@ from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.icons import icon, workflow_stage_icon
 from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.muon_generation_widget import MuonGenerationWidget
-from mufinder.app.supercell_dialog import SupercellPreviewDialog
+from mufinder.app.supercell_dialog import SupercellEditorDialog
 from mufinder.app.submission_dialog import LocalSubmissionDialog
 from mufinder.app.theme import (
     THEME_DARK,
@@ -107,6 +113,8 @@ from mufinder.app.theme import (
     current_palette,
     load_theme_mode,
     save_theme_mode,
+    style_section_subtitle,
+    style_section_title,
     status_brush,
     use_square_top_table_corners,
 )
@@ -117,7 +125,11 @@ from mufinder.persistence.codec import to_jsonable
 from mufinder.services.cluster_runner import ClusterJobRunner
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.services.project_service import ProjectDocument, ProjectService
-from mufinder.services.ssh_client import SSHUnknownHostKeyError, save_trusted_host_key
+from mufinder.services.ssh_client import (
+    SSHAuthenticationError,
+    SSHUnknownHostKeyError,
+    save_trusted_host_key,
+)
 from mufinder.science.kpoint_grids import lattice_parameters
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.uep import UepError, UepPotentialGrid, deserialize_potential_grid, serialize_potential_grid
@@ -149,6 +161,75 @@ class WorkflowDefinition:
     completion_goal: str | None = None
     completion_check: Callable[[ProjectDocument], bool] | None = None
     children: tuple["WorkflowDefinition", ...] = ()
+
+
+class MuonChargeStateDialog(QDialog):
+    """Choose which muon charge state tabs receive generated positions."""
+
+    POSITIVE_ONLY = "positive"
+    MUONIUM_ONLY = "muonium"
+    BOTH = "both"
+
+    def __init__(self, *, site_count: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("muonChargeStateDialog")
+        self.setWindowTitle("Create Muon Relaxation Jobs")
+        self.resize(480, 280)
+
+        self._button_group = QButtonGroup(self)
+        self._button_group.setExclusive(True)
+        self._positive = QRadioButton("Positive muon", self)
+        self._positive.setProperty("chargeStateOption", "true")
+        self._positive.setChecked(True)
+        self._muonium = QRadioButton("Muonium", self)
+        self._muonium.setProperty("chargeStateOption", "true")
+        self._both = QRadioButton("Both charge states", self)
+        self._both.setProperty("chargeStateOption", "true")
+        for index, button in enumerate((self._positive, self._muonium, self._both)):
+            self._button_group.addButton(button, index)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 14)
+        layout.setSpacing(10)
+
+        title = QLabel("Choose Charge State", self)
+        style_section_title(title)
+        layout.addWidget(title)
+
+        noun = "position" if site_count == 1 else "positions"
+        subtitle = QLabel(
+            f"Create relaxation jobs for {site_count} selected initial muon {noun}.",
+            self,
+        )
+        subtitle.setWordWrap(True)
+        style_section_subtitle(subtitle)
+        layout.addWidget(subtitle)
+
+        card = QWidget(self)
+        card.setObjectName("muonChargeStateCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 12, 12, 12)
+        card_layout.setSpacing(8)
+        card_layout.addWidget(self._positive)
+        card_layout.addWidget(self._muonium)
+        card_layout.addWidget(self._both)
+        layout.addWidget(card)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Create Jobs")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected_charge_states(self) -> tuple[str, ...]:
+        if self._both.isChecked():
+            return (POSITIVE_MUON_CHARGE_STATE, MUONIUM_CHARGE_STATE)
+        if self._muonium.isChecked():
+            return (MUONIUM_CHARGE_STATE,)
+        return (POSITIVE_MUON_CHARGE_STATE,)
 
 
 class _MuonGenerationThread(QThread):
@@ -396,6 +477,8 @@ class MainWindow(QMainWindow):
         self._host_structure_view.magnetic_configuration_changed.connect(
             self._on_host_magnetic_configuration_changed
         )
+        self._host_structure_view.supercell_editor_requested.connect(self._on_host_supercell_editor_requested)
+        self._supercell_editor_page = self._build_supercell_editor_page()
         self._convergence_overview_view = ConvergenceOverviewWidget()
         self._convergence_overview_view.open_cutoff_requested.connect(
             lambda: self._set_active_route("convergence_cutoff")
@@ -470,6 +553,9 @@ class MainWindow(QMainWindow):
         self._pristine_relaxation_view.generate_comparison_requested.connect(
             self._on_generate_comparison_table_requested
         )
+        self._pristine_relaxation_view.remove_requested.connect(
+            self._on_remove_pristine_relaxation_rows
+        )
         self._uep_view = UEPWidget()
         self._uep_view.configure_requested.connect(self._on_uep_configured)
         self._uep_view.form_state_changed.connect(self._on_uep_form_state_changed)
@@ -483,6 +569,7 @@ class MainWindow(QMainWindow):
         self._uep_view.cancel_requested.connect(self._on_cancel_from_uep)
         self._uep_view.inspect_failed_requested.connect(self._on_inspect_failed_from_uep)
         self._uep_view.reset_failed_requested.connect(self._on_reset_failed_from_uep)
+        self._uep_view.remove_requested.connect(self._on_remove_uep_rows)
         self._muon_generation_view = MuonGenerationWidget()
         self._muon_generation_view.generate_requested.connect(self._on_generate_requested)
         self._muon_generation_view.cluster_positions_requested.connect(self._on_cluster_muon_positions_requested)
@@ -497,9 +584,11 @@ class MainWindow(QMainWindow):
         )
         self._muon_relaxation_view.submit_local_requested.connect(self._on_submit_local_from_muon_relaxation)
         self._muon_relaxation_view.submit_cluster_requested.connect(self._on_submit_cluster_from_muon_relaxation)
+        self._muon_relaxation_view.remove_requested.connect(self._on_remove_muon_relaxation_rows)
         self._journal_view = JournalWidget()
         self._main_stack.addWidget(self._home_page)
         self._main_stack.addWidget(self._host_structure_view)
+        self._main_stack.addWidget(self._supercell_editor_page)
         self._main_stack.addWidget(self._convergence_overview_view)
         self._main_stack.addWidget(self._convergence_view)
         self._main_stack.addWidget(self._kpoint_convergence_view)
@@ -828,6 +917,27 @@ class MainWindow(QMainWindow):
         layout.addLayout(lower_grid)
         self._refresh_home_recent_projects()
         self._sync_expedition_trail()
+        layout.addStretch(1)
+        return page
+
+    def _build_supercell_editor_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        title = QLabel("Supercell Editor")
+        style_section_title(title)
+        layout.addWidget(title)
+
+        subtitle = QLabel("Manage reusable saved supercells for the active host structure.")
+        subtitle.setWordWrap(True)
+        style_section_subtitle(subtitle)
+        layout.addWidget(subtitle)
+
+        open_button = QPushButton("Open Supercell Editor")
+        open_button.clicked.connect(self._on_host_supercell_editor_requested)
+        layout.addWidget(open_button)
         layout.addStretch(1)
         return page
 
@@ -1603,6 +1713,13 @@ class MainWindow(QMainWindow):
                 completion_goal="Load a host structure.",
                 completion_check=self._workflow_host_complete,
             ),
+            WorkflowDefinition(
+                key="supercell_editor",
+                title="Supercell Editor",
+                subtitle="Reusable cells",
+                route="supercell_editor",
+                completion_goal="Save reusable supercells for workflow setup.",
+            ),
             convergence,
             WorkflowDefinition(
                 key="pristine_relaxation",
@@ -2098,6 +2215,8 @@ class MainWindow(QMainWindow):
         target = self._home_page
         if route == "host_structure":
             target = self._host_structure_view
+        elif route == "supercell_editor":
+            target = self._supercell_editor_page
         elif route == "convergence":
             target = self._convergence_overview_view
         elif route == "convergence_cutoff":
@@ -2318,7 +2437,6 @@ class MainWindow(QMainWindow):
             return []
 
         states = self._build_convergence_cutoff_states()
-        jobs_by_label = {job.label: job for job in self._document.jobs.values()}
         selected: list[Job] = []
         seen: set[UUID] = set()
         for cutoff in cutoff_values:
@@ -2326,8 +2444,6 @@ class MainWindow(QMainWindow):
             if state is None:
                 continue
             job = self._document.jobs.get(state.job_id) if state.job_id is not None else None
-            if job is None and state.job_label is not None:
-                job = jobs_by_label.get(state.job_label)
             if job is None or job.id in seen:
                 continue
             selected.append(job)
@@ -2462,6 +2578,7 @@ class MainWindow(QMainWindow):
         if active_definition is None:
             return None, None
 
+        self._sync_equivalent_convergence_cutoff_mappings(active_definition)
         config = self._deserialize_convergence_config(active_definition.parameters.get("configuration", {}))
         if config is not None and cutoff_value in config.cutoff_energies:
             return active_definition, config
@@ -2471,7 +2588,7 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return None
 
-        mapping = definition.parameters.get("job_ids_by_cutoff", {})
+        mapping = definition.parameters.get("job_ids_by_cutoff")
         if isinstance(mapping, dict):
             raw_job_id = mapping.get(self._cutoff_key(cutoff))
             if isinstance(raw_job_id, str):
@@ -2483,6 +2600,7 @@ class MainWindow(QMainWindow):
                     job = self._document.jobs.get(job_id)
                     if job is not None:
                         return job
+            return None
 
         labels = definition.parameters.get("job_labels", [])
         configuration = self._deserialize_convergence_config(definition.parameters.get("configuration", {}))
@@ -2509,6 +2627,308 @@ class MainWindow(QMainWindow):
         if not base.is_absolute():
             base = self._document.project_root / base
         return base
+
+    def _convergence_cutoff_definition_matches(
+        self,
+        definition,
+        *,
+        input_structure_id: UUID,
+        parameters: dict[str, object],
+        output_directory: Path,
+        simulation_cell_mode: str,
+        supercell_source_workflow: str | None,
+    ) -> bool:
+        return (
+            definition.input_structure_ids == [input_structure_id]
+            and definition.parameters.get("configuration") == parameters
+            and self._definition_output_directory(definition) == output_directory
+            and str(definition.parameters.get("simulation_cell_mode", "unit_cell")) == simulation_cell_mode
+            and definition.parameters.get("supercell_source_workflow") == supercell_source_workflow
+        )
+
+    def _convergence_cutoff_definition_context_matches(
+        self,
+        definition,
+        *,
+        input_structure_id: UUID,
+        output_directory: Path,
+        simulation_cell_mode: str,
+        supercell_source_workflow: str | None,
+    ) -> bool:
+        return (
+            definition.input_structure_ids == [input_structure_id]
+            and self._definition_output_directory(definition) == output_directory
+            and str(definition.parameters.get("simulation_cell_mode", "unit_cell")) == simulation_cell_mode
+            and definition.parameters.get("supercell_source_workflow") == supercell_source_workflow
+        )
+
+    @staticmethod
+    def _convergence_effective_params_for_cutoff(
+        config: ConvergenceConfig,
+        cutoff: float,
+    ) -> dict[str, object] | None:
+        cutoff_value = float(cutoff)
+        if cutoff_value not in tuple(float(value) for value in config.cutoff_energies):
+            return None
+
+        params = dict(config.shared_params)
+        for members, override in config.overrides.items():
+            if cutoff_value in {float(value) for value in members}:
+                params.update(override)
+        return params
+
+    def _convergence_cutoff_configs_match_for_value(
+        self,
+        target: ConvergenceConfig,
+        source: ConvergenceConfig,
+        cutoff: float,
+    ) -> bool:
+        if target.sweep_parameter != "cut_off_energy" or source.sweep_parameter != "cut_off_energy":
+            return False
+        if target.name_prefix != source.name_prefix:
+            return False
+        target_params = self._convergence_effective_params_for_cutoff(target, cutoff)
+        source_params = self._convergence_effective_params_for_cutoff(source, cutoff)
+        return target_params is not None and source_params is not None and target_params == source_params
+
+    @staticmethod
+    def _convergence_effective_params_for_grid(
+        config: ConvergenceConfig,
+        grid: tuple[int, int, int],
+    ) -> dict[str, object] | None:
+        normalized_grid = tuple(int(value) for value in grid)
+        normalized_values = {
+            tuple(int(component) for component in value)
+            for value in config.sweep_values
+            if isinstance(value, tuple) and len(value) == 3
+        }
+        if normalized_grid not in normalized_values:
+            return None
+
+        params = dict(config.shared_params)
+        for members, override in config.overrides.items():
+            normalized_members = {
+                tuple(int(component) for component in value)
+                for value in members
+                if isinstance(value, tuple) and len(value) == 3
+            }
+            if normalized_grid in normalized_members:
+                params.update(override)
+        return params
+
+    def _convergence_kpoint_configs_match_for_grid(
+        self,
+        target: ConvergenceConfig,
+        source: ConvergenceConfig,
+        grid: tuple[int, int, int],
+    ) -> bool:
+        if target.sweep_parameter != "kpoint_mp_grid" or source.sweep_parameter != "kpoint_mp_grid":
+            return False
+        if target.name_prefix != source.name_prefix:
+            return False
+        target_params = self._convergence_effective_params_for_grid(target, grid)
+        source_params = self._convergence_effective_params_for_grid(source, grid)
+        return target_params is not None and source_params is not None and target_params == source_params
+
+    def _matching_convergence_cutoff_definition(
+        self,
+        *,
+        input_structure_id: UUID,
+        parameters: dict[str, object],
+        output_directory: Path,
+        simulation_cell_mode: str,
+        supercell_source_workflow: str | None,
+    ):
+        if self._document is None:
+            return None
+
+        active = self._active_convergence_definition()
+        definitions = self._convergence_definitions()
+        ordered = [definition for definition in (active, *definitions) if definition is not None]
+        seen: set[UUID] = set()
+        for definition in ordered:
+            if definition.id in seen:
+                continue
+            seen.add(definition.id)
+            if self._convergence_cutoff_definition_matches(
+                definition,
+                input_structure_id=input_structure_id,
+                parameters=parameters,
+                output_directory=output_directory,
+                simulation_cell_mode=simulation_cell_mode,
+                supercell_source_workflow=supercell_source_workflow,
+            ):
+                return definition
+        return None
+
+    def _sync_equivalent_convergence_kpoint_mappings(self, target_definition) -> None:
+        if self._document is None:
+            return
+
+        target_config = self._deserialize_convergence_config(target_definition.parameters.get("configuration", {}))
+        if (
+            target_config is None
+            or target_config.sweep_parameter != "kpoint_mp_grid"
+            or not target_definition.input_structure_ids
+        ):
+            return
+
+        input_structure_id = target_definition.input_structure_ids[0]
+        output_directory = self._definition_output_directory(target_definition)
+        if output_directory is None:
+            return
+
+        simulation_cell_mode = str(target_definition.parameters.get("simulation_cell_mode", "unit_cell"))
+        supercell_source_workflow = target_definition.parameters.get("supercell_source_workflow")
+
+        candidates: dict[str, str] = {}
+        for definition in self._kpoint_definitions():
+            if not self._convergence_cutoff_definition_context_matches(
+                definition,
+                input_structure_id=input_structure_id,
+                output_directory=output_directory,
+                simulation_cell_mode=simulation_cell_mode,
+                supercell_source_workflow=supercell_source_workflow,
+            ):
+                continue
+            source_config = self._deserialize_convergence_config(definition.parameters.get("configuration", {}))
+            if source_config is None or source_config.sweep_parameter != "kpoint_mp_grid":
+                continue
+            mapping = definition.parameters.get("job_ids_by_grid", {})
+            if not isinstance(mapping, dict):
+                continue
+            for key, raw_job_id in mapping.items():
+                if not isinstance(key, str) or not isinstance(raw_job_id, str):
+                    continue
+                grid = self._parse_grid_key(key)
+                if grid is None:
+                    continue
+                if not self._convergence_kpoint_configs_match_for_grid(
+                    target_config,
+                    source_config,
+                    grid,
+                ):
+                    continue
+                normalized_key = self._grid_key(grid)
+                existing = candidates.get(normalized_key)
+                if (
+                    existing is None
+                    or self._convergence_mapping_job_priority(raw_job_id)
+                    > self._convergence_mapping_job_priority(existing)
+                ):
+                    candidates[normalized_key] = raw_job_id
+
+        if not candidates:
+            return
+
+        target_mapping = target_definition.parameters.setdefault("job_ids_by_grid", {})
+        if not isinstance(target_mapping, dict):
+            target_mapping = {}
+            target_definition.parameters["job_ids_by_grid"] = target_mapping
+
+        for key, raw_job_id in candidates.items():
+            existing = target_mapping.get(key)
+            if (
+                not isinstance(existing, str)
+                or self._convergence_mapping_job_priority(raw_job_id)
+                > self._convergence_mapping_job_priority(existing)
+            ):
+                target_mapping[key] = raw_job_id
+
+    def _sync_equivalent_convergence_cutoff_mappings(self, target_definition) -> None:
+        """Merge mappings from duplicate cutoff definitions into the active one."""
+        if self._document is None:
+            return
+
+        target_config = self._deserialize_convergence_config(target_definition.parameters.get("configuration", {}))
+        if target_config is None or not target_definition.input_structure_ids:
+            return
+
+        input_structure_id = target_definition.input_structure_ids[0]
+        output_directory = self._definition_output_directory(target_definition)
+        if output_directory is None:
+            return
+
+        simulation_cell_mode = str(target_definition.parameters.get("simulation_cell_mode", "unit_cell"))
+        supercell_source_workflow = target_definition.parameters.get("supercell_source_workflow")
+        parameters = target_definition.parameters.get("configuration")
+        if not isinstance(parameters, dict):
+            return
+
+        candidates: dict[str, str] = {}
+        for definition in self._convergence_definitions():
+            if not self._convergence_cutoff_definition_context_matches(
+                definition,
+                input_structure_id=input_structure_id,
+                output_directory=output_directory,
+                simulation_cell_mode=simulation_cell_mode,
+                supercell_source_workflow=supercell_source_workflow,
+            ):
+                continue
+            source_config = self._deserialize_convergence_config(definition.parameters.get("configuration", {}))
+            if source_config is None:
+                continue
+            mapping = definition.parameters.get("job_ids_by_cutoff", {})
+            if not isinstance(mapping, dict):
+                continue
+            for key, raw_job_id in mapping.items():
+                if not isinstance(raw_job_id, str):
+                    continue
+                try:
+                    cutoff = float(key)
+                except (TypeError, ValueError):
+                    continue
+                if not self._convergence_cutoff_configs_match_for_value(
+                    target_config,
+                    source_config,
+                    cutoff,
+                ):
+                    continue
+                normalized_key = self._cutoff_key(cutoff)
+                existing = candidates.get(normalized_key)
+                if (
+                    existing is None
+                    or self._convergence_mapping_job_priority(raw_job_id)
+                    > self._convergence_mapping_job_priority(existing)
+                ):
+                    candidates[normalized_key] = raw_job_id
+
+        if not candidates:
+            return
+
+        target_mapping = target_definition.parameters.setdefault("job_ids_by_cutoff", {})
+        if not isinstance(target_mapping, dict):
+            target_mapping = {}
+            target_definition.parameters["job_ids_by_cutoff"] = target_mapping
+
+        for key, raw_job_id in candidates.items():
+            existing = target_mapping.get(key)
+            if (
+                not isinstance(existing, str)
+                or self._convergence_mapping_job_priority(raw_job_id)
+                > self._convergence_mapping_job_priority(existing)
+            ):
+                target_mapping[key] = raw_job_id
+
+    def _convergence_mapping_job_priority(self, raw_job_id: str) -> int:
+        if self._document is None:
+            return 0
+        try:
+            job_id = UUID(str(raw_job_id))
+        except ValueError:
+            return 0
+        job = self._document.jobs.get(job_id)
+        if job is None:
+            return 0
+        if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING}:
+            return 50
+        if job.status == JobStatus.COMPLETED:
+            return 40
+        if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}:
+            return 30
+        if job.status == JobStatus.DEFINED:
+            return 10
+        return 0
 
     def _materialize_convergence_jobs(self, cutoff_values: list[float]) -> list[Job]:
         if self._document is None:
@@ -2833,9 +3253,36 @@ class MainWindow(QMainWindow):
             self._delete_job_records(job.id)
 
         if definition is not None:
-            self._remove_cutoff_from_definition(definition, cutoff)
+            self._remove_cutoff_from_equivalent_definitions(definition, cutoff)
 
         return True, shared_file_disposition, False
+
+    def _remove_cutoff_from_equivalent_definitions(self, source_definition, cutoff: float) -> None:
+        if self._document is None:
+            return
+
+        if not source_definition.input_structure_ids:
+            self._remove_cutoff_from_definition(source_definition, cutoff)
+            return
+
+        input_structure_id = source_definition.input_structure_ids[0]
+        output_directory = self._definition_output_directory(source_definition)
+        if output_directory is None:
+            self._remove_cutoff_from_definition(source_definition, cutoff)
+            return
+
+        simulation_cell_mode = str(source_definition.parameters.get("simulation_cell_mode", "unit_cell"))
+        supercell_source_workflow = source_definition.parameters.get("supercell_source_workflow")
+        for definition in self._convergence_definitions():
+            if not self._convergence_cutoff_definition_context_matches(
+                definition,
+                input_structure_id=input_structure_id,
+                output_directory=output_directory,
+                simulation_cell_mode=simulation_cell_mode,
+                supercell_source_workflow=supercell_source_workflow,
+            ):
+                continue
+            self._remove_cutoff_from_definition(definition, cutoff)
 
     def _remove_cutoff_from_definition(self, definition, cutoff: float) -> None:
         if self._document is None:
@@ -2845,35 +3292,35 @@ class MainWindow(QMainWindow):
         if not isinstance(configuration, dict):
             return
 
-        cutoffs = configuration.get("cutoff_energies")
-        if not isinstance(cutoffs, list):
-            return
-
-        remove_index: int | None = None
-        updated_cutoffs: list[float] = []
         cutoff_to_remove = float(cutoff)
-        for index, raw_value in enumerate(cutoffs):
-            try:
-                value = float(raw_value)
-            except (TypeError, ValueError):
-                updated_cutoffs.append(raw_value)
-                continue
-            if remove_index is None and value == cutoff_to_remove:
-                remove_index = index
-                continue
-            updated_cutoffs.append(value)
-        configuration["cutoff_energies"] = updated_cutoffs
+        remove_index: int | None = None
+        cutoffs = configuration.get("cutoff_energies")
+        if isinstance(cutoffs, list):
+            updated_cutoffs: list[object] = []
+            for index, raw_value in enumerate(cutoffs):
+                try:
+                    value = float(raw_value)
+                except (TypeError, ValueError):
+                    updated_cutoffs.append(raw_value)
+                    continue
+                if remove_index is None and value == cutoff_to_remove:
+                    remove_index = index
+                    continue
+                updated_cutoffs.append(value)
+            configuration["cutoff_energies"] = updated_cutoffs
 
         raw_sweep_values = configuration.get("sweep_values")
         if isinstance(raw_sweep_values, list):
             updated_sweep_values: list[object] = []
-            for raw_value in raw_sweep_values:
+            for index, raw_value in enumerate(raw_sweep_values):
                 try:
                     value = float(raw_value)
                 except (TypeError, ValueError):
                     updated_sweep_values.append(raw_value)
                     continue
                 if value == cutoff_to_remove:
+                    if remove_index is None:
+                        remove_index = index
                     continue
                 updated_sweep_values.append(value)
             configuration["sweep_values"] = updated_sweep_values
@@ -2912,7 +3359,8 @@ class MainWindow(QMainWindow):
         if isinstance(labels, list) and remove_index is not None and remove_index < len(labels):
             labels.pop(remove_index)
 
-        if not configuration.get("cutoff_energies"):
+        remaining_cutoffs = configuration.get("cutoff_energies", configuration.get("sweep_values"))
+        if not remaining_cutoffs:
             self._document.calculations.pop(definition.id, None)
             if self._document.ui_state.get(self._ACTIVE_CONVERGENCE_DEFINITION_KEY) == str(definition.id):
                 self._document.ui_state.pop(self._ACTIVE_CONVERGENCE_DEFINITION_KEY, None)
@@ -2998,7 +3446,21 @@ class MainWindow(QMainWindow):
             self._document.runs.pop(run_id, None)
 
         self._active_run_by_job.pop(job_id, None)
+        self._detach_job_references(job_id)
         self._document.jobs.pop(job_id, None)
+
+    def _detach_job_references(self, job_id: UUID) -> None:
+        if self._document is None:
+            return
+        target = str(job_id)
+        for definition in self._document.calculations.values():
+            for mapping_name in ("job_ids_by_cutoff", "job_ids_by_grid", "job_ids_by_label"):
+                mapping = definition.parameters.get(mapping_name, {})
+                if not isinstance(mapping, dict):
+                    continue
+                stale_keys = [key for key, value in mapping.items() if str(value) == target]
+                for key in stale_keys:
+                    mapping.pop(key, None)
 
     def _submit_jobs_locally(self, jobs: list[Job]) -> None:
         if self._document is None or not jobs:
@@ -3070,6 +3532,8 @@ class MainWindow(QMainWindow):
             submitted_jobs.append(job)
 
         self._refresh_jobs_table()
+        self._refresh_convergence_cutoff_rows()
+        self._refresh_kpoint_convergence_rows()
 
         if missing_paths:
             QMessageBox.warning(
@@ -3307,6 +3771,8 @@ class MainWindow(QMainWindow):
             QApplication.processEvents()
 
         self._refresh_jobs_table()
+        self._refresh_convergence_cutoff_rows()
+        self._refresh_kpoint_convergence_rows()
 
         if missing_paths:
             QMessageBox.warning(
@@ -3595,6 +4061,8 @@ class MainWindow(QMainWindow):
             reset_count += 1
 
         self._refresh_jobs_table()
+        self._refresh_convergence_cutoff_rows()
+        self._refresh_kpoint_convergence_rows()
 
         if cleanup_errors:
             QMessageBox.warning(
@@ -3639,7 +4107,7 @@ class MainWindow(QMainWindow):
 
         candidates = self._error_file_candidates(job, output_dir)
         if not candidates:
-            lines.append("No .err files were found in the output directory.")
+            lines.append("No .err or SLURM output files were found in the output directory.")
             return "\n".join(lines)
 
         for path in candidates:
@@ -3650,22 +4118,32 @@ class MainWindow(QMainWindow):
         return "\n".join(lines)
 
     def _error_file_candidates(self, job: Job, output_dir: Path) -> list[Path]:
-        ordered_names = (f"{job.label}.err",)
-
         discovered: list[Path] = []
-        for name in ordered_names:
-            candidate = output_dir / name
-            if candidate.exists() and candidate.is_file():
+        preferred = output_dir / f"{job.label}.err"
+        if preferred.exists() and preferred.is_file():
+            discovered.append(preferred)
+
+        remote_job_id = (job.remote_job_id or "").strip()
+        if remote_job_id and re.fullmatch(r"[A-Za-z0-9_.-]+", remote_job_id):
+            slurm_output = output_dir / f"slurm-{remote_job_id}.out"
+            if slurm_output.exists() and slurm_output.is_file():
+                discovered.append(slurm_output)
+
+        numbered_pattern = re.compile(rf"{re.escape(job.label)}\.\d+\.err$")
+        if not output_dir.exists() or not output_dir.is_dir():
+            return list(dict.fromkeys(discovered))
+        for candidate in sorted(output_dir.iterdir()):
+            if candidate.is_file() and numbered_pattern.fullmatch(candidate.name):
                 discovered.append(candidate)
 
         if discovered:
-            return discovered
+            return list(dict.fromkeys(discovered))
 
-        fallback_patterns = ("*.err",)
+        fallback_patterns = ("*.err", "slurm-*.out")
         fallback: list[Path] = []
         for pattern in fallback_patterns:
             fallback.extend(sorted(path for path in output_dir.glob(pattern) if path.is_file()))
-        return fallback
+        return list(dict.fromkeys(fallback))
 
     @staticmethod
     def _read_error_contexts(path: Path, *, context_lines: int = 2, max_matches: int = 8) -> str:
@@ -3939,6 +4417,8 @@ class MainWindow(QMainWindow):
             if run is not None:
                 run.status = JobStatus.QUEUED
             self._refresh_jobs_table()
+            self._refresh_convergence_cutoff_rows()
+            self._refresh_kpoint_convergence_rows()
 
     def _on_local_job_started(self, job_id: UUID) -> None:
         if self._document is None:
@@ -4212,6 +4692,8 @@ class MainWindow(QMainWindow):
                 error_message=job.error_message,
             )
         self._refresh_jobs_table()
+        self._refresh_convergence_cutoff_rows()
+        self._refresh_kpoint_convergence_rows()
 
     def _on_cluster_job_started(self, job_id: UUID) -> None:
         if self._document is None:
@@ -4378,20 +4860,24 @@ class MainWindow(QMainWindow):
                 self._cluster_runner.refresh_queue()
                 refreshed.append(config.name)
             except Exception as exc:  # noqa: BLE001
-                if config.auth_method == "password":
-                    raw_password, accepted = QInputDialog.getText(
+                auth_method = config.auth_method.strip().lower()
+                if auth_method == "password" or (
+                    auth_method == "key" and isinstance(exc, SSHAuthenticationError)
+                ):
+                    secret_label = "password" if auth_method == "password" else "key passphrase"
+                    raw_secret, accepted = QInputDialog.getText(
                         self,
                         f"Reconnect to {config.name}",
-                        f"Enter password for {config.username}@{config.hostname}:",
+                        f"Enter {secret_label} for {config.username}@{config.hostname}:",
                         QLineEdit.EchoMode.Password,
                     )
-                    if not accepted or not raw_password.strip():
+                    if not accepted or not raw_secret.strip():
                         failures.append(
-                            f"- {config.name}: Password required for reconnect. Enter it when prompted."
+                            f"- {config.name}: {secret_label.capitalize()} required for reconnect. Enter it when prompted."
                         )
                         continue
                     try:
-                        self._connect_to_cluster_with_trust(config, password=raw_password.strip())
+                        self._connect_to_cluster_with_trust(config, password=raw_secret.strip())
                         self._cluster_runner.refresh_queue()
                         refreshed.append(config.name)
                         continue
@@ -4519,18 +5005,39 @@ class MainWindow(QMainWindow):
             return
 
         output_root = self._document.project_root / "files" / "convergence_cutoff"
+        serialized_config = self._serialize_convergence_config(config)
+        simulation_cell_mode = resolution.normalized_selection.mode
+        supercell_source_workflow = (
+            resolution.source_workflow_stage.value
+            if resolution.source_workflow_stage is not None
+            else None
+        )
+
+        matching_definition = self._matching_convergence_cutoff_definition(
+            input_structure_id=structure.id,
+            parameters=serialized_config,
+            output_directory=output_root,
+            simulation_cell_mode=simulation_cell_mode,
+            supercell_source_workflow=supercell_source_workflow,
+        )
+        if matching_definition is not None:
+            self._sync_equivalent_convergence_cutoff_mappings(matching_definition)
+            self._document.ui_state[self._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(matching_definition.id)
+            self._refresh_jobs_table()
+            self._refresh_convergence_cutoff_rows()
+            self._refresh_journal_view()
+            self.statusBar().showMessage(
+                f"Using existing cutoff setup with {len(config.cutoff_energies)} cutoff job(s)"
+            )
+            return
 
         self._project_service.register_convergence_cutoff_definition(
             self._document,
             input_structure_id=structure.id,
-            parameters=self._serialize_convergence_config(config),
+            parameters=serialized_config,
             output_directory=output_root,
-            simulation_cell_mode=resolution.normalized_selection.mode,
-            supercell_source_workflow=(
-                resolution.source_workflow_stage.value
-                if resolution.source_workflow_stage is not None
-                else None
-            ),
+            simulation_cell_mode=simulation_cell_mode,
+            supercell_source_workflow=supercell_source_workflow,
         )
         latest_definition = max(
             (
@@ -4786,6 +5293,10 @@ class MainWindow(QMainWindow):
                 continue
         if not site_ids:
             return
+        dialog = MuonChargeStateDialog(site_count=len(site_ids), parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        charge_states = dialog.selected_charge_states()
         staged = self._project_service.stage_generated_sites(self._document, site_ids)
         if not staged:
             QMessageBox.information(
@@ -4803,13 +5314,14 @@ class MainWindow(QMainWindow):
             }
             for site in staged
         ]
-        self._muon_relaxation_view.add_staged_sites(rows)
+        self._muon_relaxation_view.add_staged_sites(rows, charge_states=charge_states)
         self._refresh_muon_generation_table()
         self._refresh_muon_relaxation_defaults()
         self._refresh_muon_relaxation_rows()
         self._refresh_journal_view()
         self._set_active_route("muon_relaxations")
-        self.statusBar().showMessage(f"Staged {len(staged)} muon relaxation job(s)")
+        charge_label = " and ".join(muon_charge_state_label(charge_state) for charge_state in charge_states)
+        self.statusBar().showMessage(f"Staged {len(staged)} muon relaxation position(s) for {charge_label}")
 
     def _on_muon_form_state_changed(self, state: dict) -> None:
         if self._document is None or self._shutting_down:
@@ -4874,6 +5386,57 @@ class MainWindow(QMainWindow):
             return [list(row) for row in resolution.selected_asset.matrix]
         return [list(row) for row in self._document.project.supercell_matrix]
 
+    def _refresh_all_supercell_options(self) -> None:
+        self._refresh_convergence_simulation_cell()
+        self._refresh_kpoint_convergence_simulation_cell()
+        self._refresh_pristine_relaxation_supercell_options()
+        self._refresh_muon_relaxation_supercell_options()
+        self._refresh_uep_supercell_options()
+
+    def _open_supercell_editor(
+        self,
+        *,
+        source_structure: Structure,
+        workflow_stage: WorkflowStage,
+        initial_matrix: list[list[int]] | None = None,
+        select_mode: bool = False,
+    ) -> SupercellEditorDialog | None:
+        if self._document is None:
+            return None
+        dialog = SupercellEditorDialog(
+            document=self._document,
+            project_service=self._project_service,
+            source_structure=source_structure,
+            workflow_stage=workflow_stage,
+            initial_matrix=initial_matrix,
+            select_mode=select_mode,
+            parent=self,
+        )
+        result = dialog.exec()
+        self._refresh_all_supercell_options()
+        self._populate_project_tree()
+        self._persist_document_ui_state(failure_message="Supercells were updated, but autosave failed.")
+        if select_mode and result != dialog.DialogCode.Accepted:
+            return None
+        return dialog
+
+    def _on_host_supercell_editor_requested(self) -> None:
+        if self._document is None:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+        host = self._project_service.active_host_structure(self._document)
+        if host is None:
+            QMessageBox.warning(self, "No host structure", "Load a host structure before editing supercells.")
+            return
+        dialog = self._open_supercell_editor(
+            source_structure=host,
+            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+            initial_matrix=self._document.project.supercell_matrix,
+            select_mode=False,
+        )
+        if dialog is not None:
+            self._host_structure_view.set_project_supercell_matrix(dialog.matrix())
+
     def _on_convergence_simulation_cell_create_requested(self) -> None:
         if self._document is None:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -4888,41 +5451,22 @@ class MainWindow(QMainWindow):
             )
             return
 
-        dialog = SupercellPreviewDialog(
-            structure=host,
-            atomic_spins=self._project_service.structure_atomic_spins(host),
-            propagation_vector=self._project_service.structure_propagation_vector(host),
+        dialog = self._open_supercell_editor(
+            source_structure=host,
+            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
             initial_matrix=self._convergence_supercell_initial_matrix(),
-            accept_button_text="Save Supercell",
-            show_unit_cell_button=True,
-            parent=self,
+            select_mode=True,
         )
-        if dialog.exec() != dialog.DialogCode.Accepted:
+        if dialog is None or dialog.selected_structure_id() is None:
             return
 
-        if dialog.result_mode() == "unit_cell":
-            self._project_service.clear_workflow_supercell_selection(
-                self._document,
-                WorkflowStage.CONVERGENCE_CUTOFF,
-            )
-            self._refresh_convergence_simulation_cell()
-            self.statusBar().showMessage("Convergence workflow reset to the single unit cell")
-            return
-
-        saved = self._project_service.create_workflow_supercell_asset(
+        selected = self._project_service.use_workflow_supercell_asset(
             self._document,
             workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-            host_structure_id=host.id,
-            matrix=dialog.matrix(),
-            reuse_existing=False,
-        )
-        self._project_service.use_workflow_supercell_asset(
-            self._document,
-            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-            asset_structure_id=saved.id,
+            asset_structure_id=dialog.selected_structure_id(),
         )
         self._refresh_convergence_simulation_cell()
-        self.statusBar().showMessage(f"Saved convergence supercell '{saved.label}'")
+        self.statusBar().showMessage(f"Selected convergence simulation cell '{selected.label}'")
 
     def _on_convergence_simulation_cell_selection_requested(self, payload: object) -> None:
         if self._document is None:
@@ -5017,6 +5561,7 @@ class MainWindow(QMainWindow):
         if active_definition is None:
             return None, None
 
+        self._sync_equivalent_convergence_kpoint_mappings(active_definition)
         config = self._deserialize_convergence_config(active_definition.parameters.get("configuration", {}))
         if config is None or config.sweep_parameter != "kpoint_mp_grid":
             return None, None
@@ -5029,7 +5574,7 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return None
 
-        mapping = definition.parameters.get("job_ids_by_grid", {})
+        mapping = definition.parameters.get("job_ids_by_grid")
         if isinstance(mapping, dict):
             raw_job_id = mapping.get(self._grid_key(grid))
             if isinstance(raw_job_id, str):
@@ -5041,6 +5586,7 @@ class MainWindow(QMainWindow):
                     job = self._document.jobs.get(job_id)
                     if job is not None:
                         return job
+            return None
 
         label = convergence_job_name(
             definition.parameters.get("configuration", {}).get("name_prefix", "kpoint_convergence"),
@@ -5100,6 +5646,7 @@ class MainWindow(QMainWindow):
         if definition is None:
             return states
 
+        self._sync_equivalent_convergence_kpoint_mappings(definition)
         config = self._deserialize_convergence_config(definition.parameters.get("configuration", {}))
         if config is None or config.sweep_parameter != "kpoint_mp_grid":
             return states
@@ -5140,7 +5687,6 @@ class MainWindow(QMainWindow):
             return []
 
         states = self._build_convergence_kpoint_states()
-        jobs_by_label = {job.label: job for job in self._document.jobs.values()}
         selected: list[Job] = []
         seen: set[UUID] = set()
         for grid in grids:
@@ -5148,8 +5694,6 @@ class MainWindow(QMainWindow):
             if state is None:
                 continue
             job = self._document.jobs.get(state.job_id) if state.job_id is not None else None
-            if job is None and state.job_label is not None:
-                job = jobs_by_label.get(state.job_label)
             if job is None or job.id in seen:
                 continue
             selected.append(job)
@@ -5258,7 +5802,7 @@ class MainWindow(QMainWindow):
 
         output_root = self._document.project_root / "files" / "convergence_kpoint"
 
-        self._project_service.register_convergence_kpoint_definition(
+        definition = self._project_service.register_convergence_kpoint_definition(
             self._document,
             input_structure_id=structure.id,
             parameters=self._serialize_convergence_config(config),
@@ -5270,15 +5814,8 @@ class MainWindow(QMainWindow):
                 else None
             ),
         )
-        latest_definition = max(
-            (
-                definition
-                for definition in self._document.calculations.values()
-                if definition.workflow_stage == WorkflowStage.CONVERGENCE_KPOINT
-            ),
-            key=lambda definition: definition.created_at,
-        )
-        self._document.ui_state[self._ACTIVE_KPOINT_DEFINITION_KEY] = str(latest_definition.id)
+        self._sync_equivalent_convergence_kpoint_mappings(definition)
+        self._document.ui_state[self._ACTIVE_KPOINT_DEFINITION_KEY] = str(definition.id)
 
         self._refresh_jobs_table()
         self._refresh_kpoint_convergence_rows()
@@ -5359,41 +5896,22 @@ class MainWindow(QMainWindow):
             )
             return
 
-        dialog = SupercellPreviewDialog(
-            structure=host,
-            atomic_spins=self._project_service.structure_atomic_spins(host),
-            propagation_vector=self._project_service.structure_propagation_vector(host),
+        dialog = self._open_supercell_editor(
+            source_structure=host,
+            workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
             initial_matrix=self._kpoint_supercell_initial_matrix(),
-            accept_button_text="Save Supercell",
-            show_unit_cell_button=True,
-            parent=self,
+            select_mode=True,
         )
-        if dialog.exec() != dialog.DialogCode.Accepted:
+        if dialog is None or dialog.selected_structure_id() is None:
             return
 
-        if dialog.result_mode() == "unit_cell":
-            self._project_service.clear_workflow_supercell_selection(
-                self._document,
-                WorkflowStage.CONVERGENCE_KPOINT,
-            )
-            self._refresh_kpoint_convergence_simulation_cell()
-            self.statusBar().showMessage("K-point workflow reset to the single unit cell")
-            return
-
-        saved = self._project_service.create_workflow_supercell_asset(
+        selected = self._project_service.use_workflow_supercell_asset(
             self._document,
             workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
-            host_structure_id=host.id,
-            matrix=dialog.matrix(),
-            reuse_existing=False,
-        )
-        self._project_service.use_workflow_supercell_asset(
-            self._document,
-            workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
-            asset_structure_id=saved.id,
+            asset_structure_id=dialog.selected_structure_id(),
         )
         self._refresh_kpoint_convergence_simulation_cell()
-        self.statusBar().showMessage(f"Saved k-point convergence supercell '{saved.label}'")
+        self.statusBar().showMessage(f"Selected k-point simulation cell '{selected.label}'")
 
     def _on_kpoint_simulation_cell_selection_requested(self, payload: object) -> None:
         if self._document is None:
@@ -5516,13 +6034,21 @@ class MainWindow(QMainWindow):
             self._kpoint_convergence_view.remove_grids(grids)
             return
 
-        definition = self._active_kpoint_definition()
-        if definition is not None:
-            configuration = definition.parameters.get("configuration")
-            if isinstance(configuration, dict):
-                raw_values = configuration.get("sweep_values", [])
-                updated_values: list[object] = []
-                target_keys = {self._grid_key(grid) for grid in grids}
+        target_keys = {self._grid_key(grid) for grid in grids}
+        for definition in self._kpoint_definitions():
+            self._remove_kpoint_grids_from_definition(definition, target_keys)
+
+        self._kpoint_convergence_view.remove_grids(grids)
+        self._refresh_kpoint_convergence_rows()
+
+    def _remove_kpoint_grids_from_definition(self, definition, target_keys: set[str]) -> None:
+        if self._document is None or not target_keys:
+            return
+        configuration = definition.parameters.get("configuration")
+        if isinstance(configuration, dict):
+            raw_values = configuration.get("sweep_values", [])
+            updated_values: list[object] = []
+            if isinstance(raw_values, list):
                 for raw_value in raw_values:
                     if not isinstance(raw_value, list) or len(raw_value) != 3:
                         updated_values.append(raw_value)
@@ -5537,13 +6063,10 @@ class MainWindow(QMainWindow):
                     updated_values.append(raw_value)
                 configuration["sweep_values"] = updated_values
 
-                mapping = definition.parameters.get("job_ids_by_grid", {})
-                if isinstance(mapping, dict):
-                    for key in target_keys:
-                        mapping.pop(key, None)
-
-        self._kpoint_convergence_view.remove_grids(grids)
-        self._refresh_kpoint_convergence_rows()
+        mapping = definition.parameters.get("job_ids_by_grid", {})
+        if isinstance(mapping, dict):
+            for key in target_keys:
+                mapping.pop(key, None)
 
     def _on_examine_kpoint_convergence(self) -> None:
         if self._document is None:
@@ -5643,6 +6166,9 @@ class MainWindow(QMainWindow):
             energy_threshold=energy_threshold,
             force_threshold=force_threshold,
         )
+        self._refresh_pristine_relaxation_defaults()
+        self._refresh_muon_relaxation_defaults()
+        self._refresh_uep_defaults()
         self._store_convergence_overview_snapshot(
             "kpoint",
             self._build_kpoint_overview_snapshot(
@@ -5714,6 +6240,7 @@ class MainWindow(QMainWindow):
         if self._document is None or self._shutting_down:
             return
         self._document.ui_state["pristine_relaxation_form"] = state
+        self._refresh_pristine_relaxation_rows()
 
     def _refresh_muon_relaxation_defaults(self) -> None:
         if self._document is None:
@@ -5914,7 +6441,7 @@ class MainWindow(QMainWindow):
                     )
                 except (TypeError, ValueError, IndexError):
                     matrix = None
-            raw_params = entry.get("parameter_values", {})
+            raw_params = entry.get("parameter_values", entry.get("params", {}))
             params = raw_params if isinstance(raw_params, dict) else {}
             restored_params = {
                 str(name): self._restore_castep_param_value(str(name), raw_value)
@@ -5943,6 +6470,227 @@ class MainWindow(QMainWindow):
             ),
             rows=tuple(rows),
         )
+
+    @staticmethod
+    def _normalized_supercell_matrix(
+        matrix: SupercellMatrix | None,
+    ) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None:
+        if matrix is None:
+            return None
+        return (
+            (int(matrix[0][0]), int(matrix[0][1]), int(matrix[0][2])),
+            (int(matrix[1][0]), int(matrix[1][1]), int(matrix[1][2])),
+            (int(matrix[2][0]), int(matrix[2][1]), int(matrix[2][2])),
+        )
+
+    @staticmethod
+    def _normalized_parameter_values(values: Mapping[str, object]) -> object:
+        return to_jsonable({str(name): value for name, value in values.items()})
+
+    def _pristine_relaxation_row_signature(self, row: PristineRelaxationRow) -> tuple[object, ...]:
+        return (
+            bool(row.fix_all_cell),
+            self._normalized_supercell_matrix(row.supercell_matrix),
+            self._normalized_parameter_values(row.parameter_values),
+            tuple(str(name) for name in row.added_advanced),
+        )
+
+    def _muon_relaxation_row_signature(self, row: MuonRelaxationRow) -> tuple[object, ...]:
+        return (
+            str(row.site_id),
+            row.label,
+            tuple(float(value) for value in row.initial_fractional_position),
+            str(row.charge_state),
+            self._normalized_supercell_matrix(row.supercell_matrix),
+            self._normalized_parameter_values(row.parameter_values),
+            tuple(str(name) for name in row.added_advanced),
+        )
+
+    def _uep_row_signature(self, row: UepSourceRow) -> tuple[object, ...]:
+        return (
+            self._normalized_supercell_matrix(row.supercell_matrix),
+            self._normalized_parameter_values(row.parameter_values),
+            tuple(str(name) for name in row.added_advanced),
+        )
+
+    def _definition_workflow_context_matches(self, source_definition, target_definition) -> bool:
+        return (
+            source_definition.workflow_stage == target_definition.workflow_stage
+            and source_definition.calc_type == target_definition.calc_type
+            and source_definition.input_structure_ids == target_definition.input_structure_ids
+            and self._definition_output_directory(source_definition)
+            == self._definition_output_directory(target_definition)
+        )
+
+    @staticmethod
+    def _ensure_label_mapping(definition) -> dict[str, object]:
+        mapping = definition.parameters.setdefault("job_ids_by_label", {})
+        if not isinstance(mapping, dict):
+            mapping = {}
+            definition.parameters["job_ids_by_label"] = mapping
+        return mapping
+
+    def _sync_equivalent_pristine_relaxation_mappings(self, target_definition) -> None:
+        if self._document is None:
+            return
+        target_config = self._deserialize_pristine_relaxation_config(
+            target_definition.parameters.get("configuration", {})
+        )
+        if target_config is None:
+            return
+
+        target_signatures = {
+            row.label: self._pristine_relaxation_row_signature(row)
+            for row in target_config.rows
+        }
+        candidates: dict[str, str] = {}
+        for definition in self._pristine_relaxation_definitions():
+            if not self._definition_workflow_context_matches(definition, target_definition):
+                continue
+            source_config = self._deserialize_pristine_relaxation_config(
+                definition.parameters.get("configuration", {})
+            )
+            if source_config is None:
+                continue
+            source_signatures = {
+                row.label: self._pristine_relaxation_row_signature(row)
+                for row in source_config.rows
+            }
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict):
+                continue
+            for label, raw_job_id in mapping.items():
+                if not isinstance(label, str) or not isinstance(raw_job_id, str):
+                    continue
+                if target_signatures.get(label) != source_signatures.get(label):
+                    continue
+                existing = candidates.get(label)
+                if (
+                    existing is None
+                    or self._convergence_mapping_job_priority(raw_job_id)
+                    > self._convergence_mapping_job_priority(existing)
+                ):
+                    candidates[label] = raw_job_id
+
+        if not candidates:
+            return
+        target_mapping = self._ensure_label_mapping(target_definition)
+        for label, raw_job_id in candidates.items():
+            existing = target_mapping.get(label)
+            if (
+                not isinstance(existing, str)
+                or self._convergence_mapping_job_priority(raw_job_id)
+                > self._convergence_mapping_job_priority(existing)
+            ):
+                target_mapping[label] = raw_job_id
+
+    def _sync_equivalent_muon_relaxation_mappings(self, target_definition) -> None:
+        if self._document is None:
+            return
+        target_config = self._deserialize_muon_relaxation_config(
+            target_definition.parameters.get("configuration", {})
+        )
+        if target_config is None:
+            return
+
+        target_signatures = {
+            f"{muon_charge_state_prefix(row.charge_state)}:{row.label}": self._muon_relaxation_row_signature(row)
+            for row in target_config.rows
+        }
+        candidates: dict[str, str] = {}
+        for definition in self._muon_relaxation_definitions():
+            if not self._definition_workflow_context_matches(definition, target_definition):
+                continue
+            source_config = self._deserialize_muon_relaxation_config(
+                definition.parameters.get("configuration", {})
+            )
+            if source_config is None:
+                continue
+            source_signatures: dict[str, tuple[object, ...]] = {}
+            legacy_key_by_row_label: dict[str, str] = {}
+            for row in source_config.rows:
+                key = f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
+                source_signatures[key] = self._muon_relaxation_row_signature(row)
+                legacy_key_by_row_label[row.label] = key
+
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict):
+                continue
+            for raw_key, raw_job_id in mapping.items():
+                if not isinstance(raw_key, str) or not isinstance(raw_job_id, str):
+                    continue
+                key = raw_key if ":" in raw_key else legacy_key_by_row_label.get(raw_key, raw_key)
+                if target_signatures.get(key) != source_signatures.get(key):
+                    continue
+                existing = candidates.get(key)
+                if (
+                    existing is None
+                    or self._convergence_mapping_job_priority(raw_job_id)
+                    > self._convergence_mapping_job_priority(existing)
+                ):
+                    candidates[key] = raw_job_id
+
+        if not candidates:
+            return
+        target_mapping = self._ensure_label_mapping(target_definition)
+        for key, raw_job_id in candidates.items():
+            existing = target_mapping.get(key)
+            if (
+                not isinstance(existing, str)
+                or self._convergence_mapping_job_priority(raw_job_id)
+                > self._convergence_mapping_job_priority(existing)
+            ):
+                target_mapping[key] = raw_job_id
+
+    def _sync_equivalent_uep_mappings(self, target_definition) -> None:
+        if self._document is None:
+            return
+        target_config = self._deserialize_uep_config(target_definition.parameters.get("configuration", {}))
+        if target_config is None:
+            return
+
+        target_signatures = {
+            row.label: self._uep_row_signature(row)
+            for row in target_config.rows
+        }
+        candidates: dict[str, str] = {}
+        for definition in self._uep_definitions():
+            if not self._definition_workflow_context_matches(definition, target_definition):
+                continue
+            source_config = self._deserialize_uep_config(definition.parameters.get("configuration", {}))
+            if source_config is None:
+                continue
+            source_signatures = {
+                row.label: self._uep_row_signature(row)
+                for row in source_config.rows
+            }
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict):
+                continue
+            for label, raw_job_id in mapping.items():
+                if not isinstance(label, str) or not isinstance(raw_job_id, str):
+                    continue
+                if target_signatures.get(label) != source_signatures.get(label):
+                    continue
+                existing = candidates.get(label)
+                if (
+                    existing is None
+                    or self._convergence_mapping_job_priority(raw_job_id)
+                    > self._convergence_mapping_job_priority(existing)
+                ):
+                    candidates[label] = raw_job_id
+
+        if not candidates:
+            return
+        target_mapping = self._ensure_label_mapping(target_definition)
+        for label, raw_job_id in candidates.items():
+            existing = target_mapping.get(label)
+            if (
+                not isinstance(existing, str)
+                or self._convergence_mapping_job_priority(raw_job_id)
+                > self._convergence_mapping_job_priority(existing)
+            ):
+                target_mapping[label] = raw_job_id
 
     def _uep_definitions(self) -> list:
         if self._document is None:
@@ -6007,6 +6755,7 @@ class MainWindow(QMainWindow):
         definition = self._active_uep_definition()
         if definition is None:
             return set()
+        self._sync_equivalent_uep_mappings(definition)
         mapping = definition.parameters.get("job_ids_by_label", {})
         if not isinstance(mapping, dict):
             return set()
@@ -6141,6 +6890,7 @@ class MainWindow(QMainWindow):
         definition = self._active_uep_definition()
         if definition is None:
             return states
+        self._sync_equivalent_uep_mappings(definition)
         config = self._deserialize_uep_config(definition.parameters.get("configuration", {}))
         if config is None:
             return states
@@ -6167,6 +6917,124 @@ class MainWindow(QMainWindow):
 
     def _refresh_uep_rows(self) -> None:
         self._uep_view.set_runtime_states(self._build_uep_states())
+
+    @staticmethod
+    def _removed_row_labels(payload: object) -> set[str]:
+        if payload is None:
+            return set()
+        if isinstance(payload, str):
+            values = [payload]
+        elif isinstance(payload, (list, tuple, set)):
+            values = list(payload)
+        else:
+            values = [payload]
+        return {str(value).strip() for value in values if str(value).strip()}
+
+    def _on_remove_pristine_relaxation_rows(self, payload: object) -> None:
+        labels = self._removed_row_labels(payload)
+        if self._document is None or not labels:
+            return
+        for definition in self._pristine_relaxation_definitions():
+            self._remove_pristine_relaxation_labels_from_definition(definition, labels)
+        self._refresh_pristine_relaxation_rows()
+
+    def _remove_pristine_relaxation_labels_from_definition(self, definition, labels: set[str]) -> None:
+        config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
+        if config is not None:
+            rows = tuple(row for row in config.rows if row.label not in labels)
+            if len(rows) != len(config.rows):
+                definition.parameters["configuration"] = self._serialize_pristine_relaxation_config(
+                    replace(config, rows=rows)
+                )
+
+        mapping = definition.parameters.get("job_ids_by_label", {})
+        if isinstance(mapping, dict):
+            for label in labels:
+                mapping.pop(label, None)
+
+        self._remove_definition_if_no_rows(definition, self._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY)
+
+    def _on_remove_muon_relaxation_rows(self, payload: object) -> None:
+        labels = self._removed_row_labels(payload)
+        if self._document is None or not labels:
+            return
+        for definition in self._muon_relaxation_definitions():
+            self._remove_muon_relaxation_labels_from_definition(definition, labels)
+        self._refresh_muon_relaxation_rows()
+
+    def _remove_muon_relaxation_labels_from_definition(self, definition, labels: set[str]) -> None:
+        unqualified_labels = {label for label in labels if ":" not in label}
+        full_key_labels = {label.partition(":")[2] for label in labels if ":" in label}
+
+        def row_matches(row: MuonRelaxationRow) -> bool:
+            key = f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
+            return key in labels or row.label in unqualified_labels
+
+        config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+        if config is not None:
+            rows = tuple(row for row in config.rows if not row_matches(row))
+            if len(rows) != len(config.rows):
+                definition.parameters["configuration"] = self._serialize_muon_relaxation_config(
+                    replace(config, rows=rows)
+                )
+
+        for mapping_name in ("job_ids_by_label", "job_seed_names_by_label"):
+            mapping = definition.parameters.get(mapping_name, {})
+            if not isinstance(mapping, dict):
+                continue
+            stale_keys = [
+                key
+                for key in mapping
+                if isinstance(key, str)
+                and (
+                    key in labels
+                    or (":" in key and key.partition(":")[2] in unqualified_labels)
+                    or (":" not in key and key in full_key_labels)
+                )
+            ]
+            for key in stale_keys:
+                mapping.pop(key, None)
+
+        self._remove_definition_if_no_rows(definition, self._ACTIVE_MUON_RELAXATION_DEFINITION_KEY)
+
+    def _on_remove_uep_rows(self, payload: object) -> None:
+        labels = self._removed_row_labels(payload)
+        if self._document is None or not labels:
+            return
+        for definition in self._uep_definitions():
+            self._remove_uep_labels_from_definition(definition, labels)
+        self._refresh_uep_rows()
+
+    def _remove_uep_labels_from_definition(self, definition, labels: set[str]) -> None:
+        config = self._deserialize_uep_config(definition.parameters.get("configuration", {}))
+        if config is not None:
+            rows = tuple(row for row in config.rows if row.label not in labels)
+            if len(rows) != len(config.rows):
+                definition.parameters["configuration"] = self._serialize_uep_config(
+                    replace(config, rows=rows)
+                )
+
+        mapping = definition.parameters.get("job_ids_by_label", {})
+        if isinstance(mapping, dict):
+            for label in labels:
+                mapping.pop(label, None)
+
+        self._remove_definition_if_no_rows(definition, self._ACTIVE_UEP_DEFINITION_KEY)
+
+    def _remove_definition_if_no_rows(self, definition, active_key: str) -> None:
+        if self._document is None:
+            return
+        configuration = definition.parameters.get("configuration")
+        if not isinstance(configuration, dict):
+            return
+        rows = configuration.get("rows")
+        if not isinstance(rows, list):
+            return
+        if rows:
+            return
+        self._document.calculations.pop(definition.id, None)
+        if self._document.ui_state.get(active_key) == str(definition.id):
+            self._document.ui_state.pop(active_key, None)
 
     def _serialize_pristine_relaxation_config(self, config: PristineRelaxationConfig) -> dict[str, object]:
         return {
@@ -6230,7 +7098,7 @@ class MainWindow(QMainWindow):
                 except (TypeError, ValueError, IndexError):
                     matrix = None
 
-            raw_params = entry.get("parameter_values", {})
+            raw_params = entry.get("parameter_values", entry.get("params", {}))
             params = raw_params if isinstance(raw_params, dict) else {}
             restored_params = {
                 str(name): self._restore_castep_param_value(str(name), raw_value)
@@ -6373,6 +7241,7 @@ class MainWindow(QMainWindow):
         if definition is None:
             return None, None
 
+        self._sync_equivalent_pristine_relaxation_mappings(definition)
         config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return None, None
@@ -6399,16 +7268,63 @@ class MainWindow(QMainWindow):
                         return job
         return None
 
+    def _pristine_relaxation_form_config(self) -> PristineRelaxationConfig | None:
+        if self._document is None:
+            return None
+
+        form_sources: list[dict] = []
+        widget_state = self._pristine_relaxation_view.collect_state()
+        if isinstance(widget_state, dict):
+            form_sources.append(widget_state)
+
+        persisted = self._document.ui_state.get("pristine_relaxation_form", {})
+        if isinstance(persisted, dict):
+            form_sources.append(persisted)
+
+        for form_state in form_sources:
+            config = self._deserialize_pristine_relaxation_config(form_state)
+            if config is not None and config.rows:
+                return config
+        return None
+
+    def _pristine_relaxation_configs_match_for_status(
+        self,
+        form_config: PristineRelaxationConfig,
+        definition_config: PristineRelaxationConfig,
+    ) -> bool:
+        if form_config.name_prefix != definition_config.name_prefix:
+            return False
+        form_rows = tuple(
+            (row.label, self._pristine_relaxation_row_signature(row))
+            for row in form_config.rows
+        )
+        definition_rows = tuple(
+            (row.label, self._pristine_relaxation_row_signature(row))
+            for row in definition_config.rows
+        )
+        return form_rows == definition_rows
+
     def _build_pristine_relaxation_states(self) -> dict[str, RelaxationRunState]:
         states: dict[str, RelaxationRunState] = {}
         if self._document is None:
             return states
 
+        form_config = self._pristine_relaxation_form_config()
+        if form_config is not None:
+            for row in form_config.rows:
+                states[row.label] = RelaxationRunState(status="ready")
+
         definition = self._active_pristine_relaxation_definition()
         if definition is None:
             return states
+        self._sync_equivalent_pristine_relaxation_mappings(definition)
         config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
+            return states
+        if form_config is not None and not self._pristine_relaxation_configs_match_for_status(
+            form_config,
+            config,
+        ):
             return states
 
         for row in config.rows:
@@ -6574,6 +7490,7 @@ class MainWindow(QMainWindow):
         definition = self._active_muon_relaxation_definition()
         if definition is None:
             return states
+        self._sync_equivalent_muon_relaxation_mappings(definition)
         config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return states
@@ -6641,33 +7558,18 @@ class MainWindow(QMainWindow):
             else [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
         )
 
-        dialog = SupercellPreviewDialog(
-            structure=host,
-            atomic_spins=self._project_service.structure_atomic_spins(host),
-            propagation_vector=self._project_service.structure_propagation_vector(host),
-            initial_matrix=initial_matrix,
-            accept_button_text="Use Supercell",
-            show_unit_cell_button=True,
-            parent=self,
-        )
-        if dialog.exec() != dialog.DialogCode.Accepted:
-            return
-
-        if dialog.result_mode() == "unit_cell":
-            self._pristine_relaxation_view.set_row_supercell(row_id, None)
-            return
-
-        matrix_values = [
-            [int(row[0]), int(row[1]), int(row[2])]
-            for row in dialog.matrix()
-        ]
-        saved = self._project_service.create_workflow_supercell_asset(
-            self._document,
+        dialog = self._open_supercell_editor(
+            source_structure=host,
             workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
-            host_structure_id=host.id,
-            matrix=matrix_values,
-            reuse_existing=True,
+            initial_matrix=initial_matrix,
+            select_mode=True,
         )
+        if dialog is None:
+            return
+
+        matrix_values = dialog.selected_matrix()
+        if matrix_values is None:
+            return
         matrix = (
             (matrix_values[0][0], matrix_values[0][1], matrix_values[0][2]),
             (matrix_values[1][0], matrix_values[1][1], matrix_values[1][2]),
@@ -6676,7 +7578,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_pristine_relaxation_supercell_options()
         self._pristine_relaxation_view.set_row_supercell(row_id, matrix)
-        self.statusBar().showMessage(f"Saved pristine-relaxation simulation cell '{saved.label}'")
+        self.statusBar().showMessage("Selected pristine-relaxation simulation cell")
 
     def _on_muon_relaxation_supercell_edit_requested(self, payload: object) -> None:
         if self._document is None:
@@ -6699,28 +7601,17 @@ class MainWindow(QMainWindow):
             if existing is not None
             else [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
         )
-        dialog = SupercellPreviewDialog(
-            structure=host,
-            atomic_spins=self._project_service.structure_atomic_spins(host),
-            propagation_vector=self._project_service.structure_propagation_vector(host),
-            initial_matrix=initial_matrix,
-            accept_button_text="Use Supercell",
-            show_unit_cell_button=True,
-            parent=self,
-        )
-        if dialog.exec() != dialog.DialogCode.Accepted:
-            return
-        if dialog.result_mode() == "unit_cell":
-            self._muon_relaxation_view.set_row_supercell(row_id, None)
-            return
-        matrix_values = [[int(row[0]), int(row[1]), int(row[2])] for row in dialog.matrix()]
-        saved = self._project_service.create_workflow_supercell_asset(
-            self._document,
+        dialog = self._open_supercell_editor(
+            source_structure=host,
             workflow_stage=WorkflowStage.MUON_RELAXATION,
-            host_structure_id=host.id,
-            matrix=matrix_values,
-            reuse_existing=True,
+            initial_matrix=initial_matrix,
+            select_mode=True,
         )
+        if dialog is None:
+            return
+        matrix_values = dialog.selected_matrix()
+        if matrix_values is None:
+            return
         matrix = (
             (matrix_values[0][0], matrix_values[0][1], matrix_values[0][2]),
             (matrix_values[1][0], matrix_values[1][1], matrix_values[1][2]),
@@ -6728,7 +7619,7 @@ class MainWindow(QMainWindow):
         )
         self._refresh_muon_relaxation_supercell_options()
         self._muon_relaxation_view.set_row_supercell(row_id, matrix)
-        self.statusBar().showMessage(f"Saved muon-relaxation simulation cell '{saved.label}'")
+        self.statusBar().showMessage("Selected muon-relaxation simulation cell")
 
     def _on_pristine_relaxation_configured(self, config: PristineRelaxationConfig) -> None:
         if self._document is None:
@@ -6757,21 +7648,14 @@ class MainWindow(QMainWindow):
             return
 
         output_root = self._document.project_root / "files" / "pristine_relaxation"
-        self._project_service.register_pristine_relaxation_definition(
+        definition = self._project_service.register_pristine_relaxation_definition(
             self._document,
             input_structure_id=host.id,
             parameters=self._serialize_pristine_relaxation_config(config),
             output_directory=output_root,
         )
-        latest_definition = max(
-            (
-                definition
-                for definition in self._document.calculations.values()
-                if definition.workflow_stage == WorkflowStage.PRISTINE_RELAXATION
-            ),
-            key=lambda definition: definition.created_at,
-        )
-        self._document.ui_state[self._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(latest_definition.id)
+        self._sync_equivalent_pristine_relaxation_mappings(definition)
+        self._document.ui_state[self._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
 
         self._refresh_pristine_relaxation_rows()
         self._refresh_journal_view()
@@ -6809,6 +7693,7 @@ class MainWindow(QMainWindow):
             parameters=self._serialize_muon_relaxation_config(config),
             output_directory=output_root,
         )
+        self._sync_equivalent_muon_relaxation_mappings(definition)
         self._document.ui_state[self._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
         self._refresh_muon_relaxation_rows()
         self._refresh_journal_view()
@@ -7065,6 +7950,7 @@ class MainWindow(QMainWindow):
         definition = self._active_pristine_relaxation_definition()
         if definition is None:
             return []
+        self._sync_equivalent_pristine_relaxation_mappings(definition)
 
         selected: list[Job] = []
         seen: set[UUID] = set()
@@ -7083,6 +7969,7 @@ class MainWindow(QMainWindow):
         definition = self._active_pristine_relaxation_definition()
         if definition is None:
             return []
+        self._sync_equivalent_pristine_relaxation_mappings(definition)
 
         config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
@@ -7147,6 +8034,7 @@ class MainWindow(QMainWindow):
         definition = self._active_muon_relaxation_definition()
         if definition is None:
             return []
+        self._sync_equivalent_muon_relaxation_mappings(definition)
         config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return []
@@ -7169,6 +8057,7 @@ class MainWindow(QMainWindow):
         definition = self._active_muon_relaxation_definition()
         if definition is None:
             return []
+        self._sync_equivalent_muon_relaxation_mappings(definition)
         config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None or not definition.input_structure_ids:
             return []
@@ -7379,29 +8268,18 @@ class MainWindow(QMainWindow):
             if existing is not None
             else [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
         )
-        dialog = SupercellPreviewDialog(
-            structure=source_structure,
-            atomic_spins=self._project_service.structure_atomic_spins(source_structure),
-            propagation_vector=self._project_service.structure_propagation_vector(source_structure),
+        dialog = self._open_supercell_editor(
+            source_structure=source_structure,
+            workflow_stage=WorkflowStage.UEP,
             initial_matrix=initial_matrix,
-            accept_button_text="Use Supercell",
-            show_unit_cell_button=True,
-            parent=self,
+            select_mode=True,
         )
-        if dialog.exec() != dialog.DialogCode.Accepted:
-            return
-        if dialog.result_mode() == "unit_cell":
-            self._uep_view.set_row_supercell(row_id, None)
+        if dialog is None:
             return
 
-        matrix_values = [[int(row[0]), int(row[1]), int(row[2])] for row in dialog.matrix()]
-        saved = self._project_service.create_workflow_supercell_asset(
-            self._document,
-            workflow_stage=WorkflowStage.UEP,
-            host_structure_id=source_structure.id,
-            matrix=matrix_values,
-            reuse_existing=True,
-        )
+        matrix_values = dialog.selected_matrix()
+        if matrix_values is None:
+            return
         matrix = (
             (matrix_values[0][0], matrix_values[0][1], matrix_values[0][2]),
             (matrix_values[1][0], matrix_values[1][1], matrix_values[1][2]),
@@ -7409,7 +8287,7 @@ class MainWindow(QMainWindow):
         )
         self._refresh_uep_supercell_options()
         self._uep_view.set_row_supercell(row_id, matrix)
-        self.statusBar().showMessage(f"Saved UEP simulation cell '{saved.label}'")
+        self.statusBar().showMessage("Selected UEP simulation cell")
 
     def _on_uep_configured(self, config: UepConfig) -> None:
         if self._document is None:
@@ -7442,6 +8320,7 @@ class MainWindow(QMainWindow):
             parameters=self._serialize_uep_config(config),
             output_directory=output_root,
         )
+        self._sync_equivalent_uep_mappings(definition)
         self._document.ui_state[self._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
         self._refresh_uep_rows()
         self._refresh_journal_view()
@@ -7455,6 +8334,7 @@ class MainWindow(QMainWindow):
         definition = self._active_uep_definition()
         if definition is None:
             return []
+        self._sync_equivalent_uep_mappings(definition)
         selected: list[Job] = []
         seen: set[UUID] = set()
         for label in labels:
@@ -7471,6 +8351,7 @@ class MainWindow(QMainWindow):
         definition = self._active_uep_definition()
         if definition is None or not definition.input_structure_ids:
             return []
+        self._sync_equivalent_uep_mappings(definition)
         config = self._deserialize_uep_config(definition.parameters.get("configuration", {}))
         if config is None:
             return []
@@ -7611,10 +8492,14 @@ class MainWindow(QMainWindow):
         existing_dialog = self._uep_analysis_dialogs.get(job.id)
         if existing_dialog is not None:
             try:
-                existing_dialog.show()
-                existing_dialog.raise_()
-                existing_dialog.activateWindow()
-                return
+                is_visible = getattr(existing_dialog, "isVisible", None)
+                if callable(is_visible) and not is_visible():
+                    self._drop_uep_analysis_dialog(job.id)
+                else:
+                    existing_dialog.show()
+                    existing_dialog.raise_()
+                    existing_dialog.activateWindow()
+                    return
             except RuntimeError:
                 self._drop_uep_analysis_dialog(job.id)
 
@@ -7672,7 +8557,40 @@ class MainWindow(QMainWindow):
         else:
             existing.data = serialized
         self._document.results[existing.id] = existing
-        self._refresh_uep_rows()
+        self._queue_raise_visible_uep_analysis_dialog(job_id)
+
+    @staticmethod
+    def _uep_analysis_state_affects_muon_generation(previous: object, updated: dict) -> bool:
+        if not isinstance(previous, dict):
+            previous = {}
+        return (
+            previous.get("batch_results") != updated.get("batch_results")
+            or previous.get("batch_summary_data") != updated.get("batch_summary_data")
+        )
+
+    @staticmethod
+    def _raise_existing_uep_analysis_dialog(dialog: object) -> None:
+        try:
+            is_visible = getattr(dialog, "isVisible", None)
+            if callable(is_visible) and not is_visible():
+                return
+            show = getattr(dialog, "show", None)
+            if callable(show):
+                show()
+            raise_window = getattr(dialog, "raise_", None)
+            if callable(raise_window):
+                raise_window()
+            activate = getattr(dialog, "activateWindow", None)
+            if callable(activate):
+                activate()
+        except RuntimeError:
+            return
+
+    def _queue_raise_visible_uep_analysis_dialog(self, job_id: UUID) -> None:
+        dialog = self._uep_analysis_dialogs.get(job_id)
+        if dialog is None:
+            return
+        QTimer.singleShot(0, lambda dialog=dialog: self._raise_existing_uep_analysis_dialog(dialog))
 
     def _on_uep_analysis_state_changed(self, job_id: UUID, state: dict) -> None:
         if self._document is None or self._shutting_down:
@@ -7686,9 +8604,12 @@ class MainWindow(QMainWindow):
         if not isinstance(states, dict):
             states = {}
         updated = dict(states)
+        previous_state = updated.get(str(job_id), {})
         updated[str(job_id)] = serialized_state
         self._document.ui_state[self._UEP_ANALYSIS_STATES_KEY] = updated
-        self._refresh_muon_generation_table()
+        if self._uep_analysis_state_affects_muon_generation(previous_state, serialized_state):
+            QTimer.singleShot(0, self._refresh_muon_generation_table)
+        self._queue_raise_visible_uep_analysis_dialog(job_id)
 
     @staticmethod
     def _serialize_convergence_config(config: ConvergenceConfig) -> dict:
@@ -7881,6 +8802,7 @@ class MainWindow(QMainWindow):
         if definition is None:
             return states
 
+        self._sync_equivalent_convergence_cutoff_mappings(definition)
         config = self._deserialize_convergence_config(definition.parameters.get("configuration", {}))
         if config is None:
             return states

@@ -321,6 +321,15 @@ Current implemented generation constraints:
 - symmetry-equivalent random-position reservation
 - internal deterministic seed support for regression tests
 
+Relaxation staging:
+
+- selected generated positions must prompt for positive muon, muonium, or both
+  charge states before rows are staged
+- the relaxation table must present charge states as separate positive-muon and
+  muonium tabs rather than a per-row charge column
+- CASTEP total charge remains workflow-controlled: `+1` for positive muon and
+  `0` for muonium
+
 ### 12.4 Site Analysis and Clustering
 
 - extract relaxed sites and energies
@@ -347,7 +356,8 @@ Current implemented generation constraints:
    - a simple diagonal matrix mode (Nx, Ny, Nz)
    - an advanced full 3x3 integer matrix mode
    - read-only visual verification of magnetic pattern propagation across generated supercells
-- host-structure supercell preview is a generation/inspection tool and is not itself the authoritative workflow calculation-cell selector
+- host-structure supercell preview has been promoted to a Supercell Editor that can save, name, edit, delete, and select reusable project supercells
+- matrix edits to saved supercells already frozen into configured calculations must create a future-use copy rather than rewriting the frozen calculation structure
 
 ### 12.9 Workflow-Scoped Simulation Cell Selection and Supercell Assets
 
@@ -362,6 +372,7 @@ Current implemented generation constraints:
   - `properties.supercell_asset.owner_workflow_stage`
   - `properties.supercell_asset.source_asset_structure_id` (nullable clone provenance)
 - saved supercell assets must be reusable across workflows for the same host structure
+- saved supercell assets must support user-facing names that can be changed in the Supercell Editor
 - selecting a saved supercell owned by a different workflow must perform clone-on-load into the current workflow scope, with deduplication when an identical current-workflow host+matrix asset already exists
 - convergence configuration persistence must freeze the resolved simulation cell by storing:
   - the resolved structure id in `CalculationDefinition.input_structure_ids[0]`

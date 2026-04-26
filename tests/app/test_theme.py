@@ -54,6 +54,9 @@ def test_apply_theme_sets_active_palette(qapp) -> None:
     assert 'QWidget#randomSeparationChoice[active="true"]' in stylesheet
     assert "QDialog#clusterPositionsDialog" in stylesheet
     assert "QWidget#clusterPositionsCard" in stylesheet
+    assert "QTabWidget#muonRelaxationChargeTabs" in stylesheet
+    assert "QDialog#muonChargeStateDialog" in stylesheet
+    assert "QWidget#muonChargeStateCard" in stylesheet
     assert "QProgressBar#muonGenerationProgress" in stylesheet
     assert 'QProgressBar#muonGenerationProgress[generationState="complete"]::chunk' in stylesheet
     assert qapp.font().family() == theme_module.body_font_family()

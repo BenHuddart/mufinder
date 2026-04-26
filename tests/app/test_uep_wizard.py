@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -10,9 +11,10 @@ import numpy as np
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QDialog, QPushButton
+from PySide6.QtWidgets import QDialog, QPushButton, QSizePolicy
 
 from mufinder.app.theme import current_palette
+from mufinder.app.uep_clustering_dialog import cluster_color_map
 from mufinder.app.uep_wizard import UepAnalysisDialog, _AddSlicePlaneDialog, _EditSlicePlaneDialog, _SlicePlaneState
 from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
 from mufinder.domain.models import Structure
@@ -68,6 +70,15 @@ def _run_batch_zpe_inline(monkeypatch: pytest.MonkeyPatch) -> None:
         thread.finished.emit()
 
     monkeypatch.setattr("mufinder.app.uep_wizard._BatchZpeThread.start", _start_inline)
+
+
+def _run_isosurface_threads_inline(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _start_inline(thread) -> None:
+        thread.run()
+        thread.finished.emit()
+
+    monkeypatch.setattr("mufinder.app.uep_wizard._IsosurfaceGridThread.start", _start_inline)
+    monkeypatch.setattr("mufinder.app.uep_wizard._IsosurfaceMeshThread.start", _start_inline)
 
 
 def test_add_slice_plane_dialog_allows_point_normal_without_selection(qapp) -> None:
@@ -241,7 +252,9 @@ def test_uep_wizard_exposes_only_branded_batch_isosurface_and_slice_tabs(qapp) -
     assert dialog._tabs.objectName() == "uepAnalysisTabs"
     assert palette.accent in dialog._tabs.styleSheet()
     assert palette.bg_surface in dialog._tabs.styleSheet()
-    assert dialog._slice_colorbar_canvas.minimumHeight() == 360
+    assert dialog._slice_colorbar_canvas.minimumHeight() == 180
+    assert dialog._slice_colorbar_canvas.maximumHeight() == 320
+    assert dialog._slice_colorbar_canvas.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
     assert dialog._slice_manage_muons_button.isVisibleTo(dialog) is True
     dialog.close()
 
@@ -471,6 +484,55 @@ def test_uep_wizard_clustering_window_close_clears_reference_and_allows_reopen(q
     dialog.close()
 
 
+def test_uep_wizard_state_change_keeps_child_dialogs_after_parent_handlers(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+    events: list[str] = []
+
+    class _FakeClusteringDialog:
+        def state_snapshot(self) -> dict[str, object]:
+            return {"method": "hier"}
+
+        def close(self) -> bool:
+            return True
+
+    class _FakeChildDialog:
+        def close(self) -> bool:
+            return True
+
+    clustering_dialog = _FakeClusteringDialog()
+    isosurface_dialog = _FakeChildDialog()
+    slice_dialog = _FakeChildDialog()
+    dialog._clustering_dialog = clustering_dialog
+    dialog._isosurface_muon_dialog = isosurface_dialog
+    dialog._slice_muon_dialog = slice_dialog
+
+    def _keep_child(child) -> None:
+        if child is clustering_dialog:
+            events.append("keep-clustering")
+        elif child is isosurface_dialog:
+            events.append("keep-isosurface")
+        elif child is slice_dialog:
+            events.append("keep-slice")
+
+    monkeypatch.setattr(UepAnalysisDialog, "_keep_dialog_in_front", staticmethod(_keep_child))
+    dialog.state_changed.connect(lambda _state: events.append("parent-handler"))
+
+    dialog._emit_state_changed()
+
+    assert events == ["parent-handler", "keep-clustering", "keep-isosurface", "keep-slice"]
+    dialog.close()
+
+
 def test_uep_wizard_site_selection_updates_viewer_without_direct_promotion(qapp, monkeypatch) -> None:
     _run_batch_search_inline(monkeypatch)
     dialog = UepAnalysisDialog(
@@ -540,11 +602,14 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
     assert len(dialog._isosurface_viewer_muons) == 1
     assert dialog._isosurface_viewer._structure is not None
     assert dialog._isosurface_viewer._structure.species.count("X") == 1
+    expected_color = cluster_color_map([candidate.cluster_index])[candidate.cluster_index]
+    assert dialog._isosurface_viewer._structure.properties["atom_colors"][-1] == expected_color
     viewer_entry = dialog._isosurface_viewer_muons[0]
     assert viewer_entry.linked_isosurface_layer_key is not None
     layer_index = dialog._find_isosurface_layer_index_by_key(viewer_entry.linked_isosurface_layer_key)
     assert layer_index is not None
     linked_layer = dialog._isosurface_layers[layer_index]
+    assert linked_layer.color == expected_color
     assert linked_layer.managed_muon_key == viewer_entry.key
     assert linked_layer.level_ev == pytest.approx(float(candidate.total_energy_ev) + dialog._potential_grid_zero_shift_ev)
     assert linked_layer.status_text == (
@@ -556,6 +621,12 @@ def test_uep_wizard_isosurface_muon_management_adds_and_removes_clustered_muons(
 
     host_count = len(dialog._viewer_host_structure.species)
     assert dialog._isosurface_viewer._selected_indexes == [host_count]
+    legend_texts = [
+        label.text()
+        for label in dialog._isosurface_legend_entries.findChildren(type(dialog._isosurface_min_label))
+    ]
+    assert any(candidate.label in text for text in legend_texts)
+    assert any(f"Cluster {candidate.cluster_index}" in text for text in legend_texts)
 
     dialog._remove_viewer_muons("isosurface", [viewer_entry.key])
 
@@ -705,6 +776,31 @@ def test_uep_wizard_slice_muon_management_restores_custom_muons(qapp) -> None:
     assert restored._slice_viewer_muons[0].fractional_position == pytest.approx((0.125, 0.25, 0.375))
     assert restored._slice_viewer._selected_indexes == [host_count]
     restored.close()
+
+
+def test_uep_wizard_slice_muon_overlays_use_distinct_colors_and_legend(qapp) -> None:
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+
+    dialog._add_custom_muon_to_viewer("slice", (0.125, 0.25, 0.375))
+    dialog._add_custom_muon_to_viewer("slice", (0.375, 0.25, 0.125))
+
+    assert dialog._slice_viewer._structure is not None
+    atom_colors = dialog._slice_viewer._structure.properties["atom_colors"]
+    assert atom_colors[-2] != atom_colors[-1]
+    legend_texts = [
+        label.text()
+        for label in dialog._slice_muon_legend_entries.findChildren(type(dialog._slice_status_label))
+    ]
+    assert any("Custom 1" in text for text in legend_texts)
+    assert any("Custom 2" in text for text in legend_texts)
+    dialog.close()
 
 
 def test_uep_wizard_removing_last_slice_muon_resets_dialog_horizontal_scroll(qapp) -> None:
@@ -969,6 +1065,15 @@ def test_uep_wizard_batch_search_logs_reduced_initial_starts(qapp, monkeypatch) 
 def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch) -> None:
     _run_batch_search_inline(monkeypatch)
     _run_batch_zpe_inline(monkeypatch)
+
+    def _mock_zpe(_field, optimization):
+        return replace(
+            optimization,
+            zero_point_energy_ev=0.125,
+            total_energy_ev=optimization.classical_energy_ev + 0.125,
+        )
+
+    monkeypatch.setattr("mufinder.app.uep_wizard.calculate_optimization_zero_point_energy", _mock_zpe)
     first = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -985,6 +1090,8 @@ def test_uep_wizard_state_snapshot_restores_generated_analysis(qapp, monkeypatch
     first._batch_optimization_tolerance.setValue(3e-5)
     first._batch_max_steps.setValue(5)
     first._run_batch_search()
+    assert first._latest_batch_results
+    first._latest_batch_results[0] = replace(first._latest_batch_results[0], success=True)
     first._run_batch_zpe()
     first._open_clustering_dialog()
     assert first._clustering_dialog is not None
@@ -1139,6 +1246,107 @@ def test_uep_wizard_restores_isosurface_overlay(qapp) -> None:
     assert restored._isosurface_color_button.toolTip() == "Choose the isosurface preview color."
     assert len(restored._isosurface_layers) == 1
     restored.close()
+
+
+def test_uep_wizard_stays_open_when_isosurface_calculation_completes(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run_isosurface_threads_inline(monkeypatch)
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+    dialog.show()
+    qapp.processEvents()
+
+    dialog._start_isosurface_grid_calculation()
+    qapp.processEvents()
+
+    assert dialog.isVisible() is True
+    assert dialog._potential_grid_cache is not None
+    assert dialog._active_isosurface_layer().mesh is not None
+    assert "filled isosurface preview" in dialog._isosurface_status_label.text()
+    dialog.close()
+
+
+def test_uep_wizard_recalculating_grid_refreshes_all_isosurface_layers(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run_isosurface_threads_inline(monkeypatch)
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+    grid = potential_grid(dialog._field)
+    minimum = float(grid.potential_total_ev.min())
+    maximum = float(grid.potential_total_ev.max())
+    first_level = minimum + 0.35 * (maximum - minimum)
+    second_level = minimum + 0.7 * (maximum - minimum)
+    dialog._apply_potential_grid_cache(grid)
+    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=first_level))
+    dialog._add_isosurface_layer()
+    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=second_level))
+    dialog._on_isosurface_tab_changed(0)
+
+    dialog._start_isosurface_grid_calculation()
+    qapp.processEvents()
+
+    assert len(dialog._isosurface_layers) == 2
+    assert all(layer.mesh is not None for layer in dialog._isosurface_layers)
+    layer_statuses = [(layer.status_kind, layer.status_text) for layer in dialog._isosurface_layers]
+    assert all(layer.status_kind == "success" for layer in dialog._isosurface_layers), layer_statuses
+    assert not any("Calculating" in layer.status_text for layer in dialog._isosurface_layers)
+    assert len(dialog._isosurface_viewer._isosurface_specs) == 2
+    dialog.close()
+
+
+def test_uep_wizard_recalculating_grid_keeps_visible_isosurface_until_ready(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+    grid = potential_grid(dialog._field)
+    minimum = float(grid.potential_total_ev.min())
+    maximum = float(grid.potential_total_ev.max())
+    level = minimum + 0.45 * (maximum - minimum)
+    dialog._apply_potential_grid_cache(grid)
+    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=level))
+    original_mesh = dialog._active_isosurface_layer().mesh
+    original_specs = list(dialog._isosurface_viewer._isosurface_specs)
+    assert original_mesh is not None
+    assert original_specs
+
+    sync_calls: list[str] = []
+    original_sync = dialog._sync_isosurface_viewer_layers
+
+    def _record_sync() -> None:
+        sync_calls.append("sync")
+        original_sync()
+
+    monkeypatch.setattr(dialog, "_sync_isosurface_viewer_layers", _record_sync)
+    monkeypatch.setattr("mufinder.app.uep_wizard._IsosurfaceGridThread.start", lambda _thread: None)
+
+    dialog._start_isosurface_grid_calculation()
+
+    assert sync_calls == []
+    assert dialog._active_isosurface_layer().mesh is original_mesh
+    assert dialog._isosurface_viewer._isosurface_specs == original_specs
+    assert dialog._active_isosurface_layer().status_kind == "busy"
+    dialog.close()
 
 
 def test_uep_wizard_isosurface_level_editor_tracks_full_range(qapp) -> None:
@@ -1306,6 +1514,76 @@ def test_uep_wizard_multi_isosurface_tabs_add_switch_delete_and_restore(qapp) ->
     assert restored._isosurface_layer_tabs.isHidden() is False
     assert len(restored._isosurface_viewer._isosurface_specs) == 1
     restored.close()
+
+
+def test_uep_wizard_switching_isosurface_tabs_does_not_rebuild_tab_bar(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+    grid = potential_grid(dialog._field)
+    minimum = float(grid.potential_total_ev.min())
+    maximum = float(grid.potential_total_ev.max())
+    first_level = minimum + 0.35 * (maximum - minimum)
+    second_level = minimum + 0.7 * (maximum - minimum)
+    dialog._apply_potential_grid_cache(grid)
+    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=first_level))
+    dialog._add_isosurface_layer()
+    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=second_level))
+
+    remove_calls: list[int] = []
+    original_remove_tab = dialog._isosurface_layer_tabs.removeTab
+
+    def _record_remove(index: int) -> None:
+        remove_calls.append(int(index))
+        original_remove_tab(index)
+
+    monkeypatch.setattr(dialog._isosurface_layer_tabs, "removeTab", _record_remove)
+
+    dialog._isosurface_layer_tabs.setCurrentIndex(0)
+    qapp.processEvents()
+
+    assert remove_calls == []
+    assert dialog._active_isosurface_index == 0
+    assert dialog._active_isosurface_layer().mesh is not None
+    dialog.close()
+
+
+def test_uep_wizard_delete_current_isosurface_via_button_keeps_window_open(qapp) -> None:
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+    grid = potential_grid(dialog._field)
+    minimum = float(grid.potential_total_ev.min())
+    maximum = float(grid.potential_total_ev.max())
+    first_level = minimum + 0.35 * (maximum - minimum)
+    second_level = minimum + 0.7 * (maximum - minimum)
+    dialog._apply_potential_grid_cache(grid)
+    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=first_level))
+    dialog._add_isosurface_layer()
+    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=second_level))
+    dialog.show()
+    qapp.processEvents()
+
+    dialog._isosurface_delete_button.click()
+    qapp.processEvents()
+
+    assert dialog.isVisible() is True
+    assert len(dialog._isosurface_layers) == 1
+    assert dialog._isosurface_layer_tabs.count() == 1
+    assert dialog._active_isosurface_index == 0
+    dialog.close()
 
 
 def test_uep_wizard_isosurface_mesh_busy_keeps_level_controls_enabled(qapp) -> None:
@@ -2063,6 +2341,9 @@ def test_uep_wizard_close_shuts_down_viewers_and_threads(qapp, monkeypatch: pyte
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
+    assert dialog.testAttribute(Qt.WidgetAttribute.WA_DeleteOnClose) is True
+    emitted_states: list[dict[str, object]] = []
+    dialog.state_changed.connect(lambda state: emitted_states.append(state))
 
     viewer_calls = {"isosurface": 0, "slices": 0, "batch": 0}
     monkeypatch.setattr(dialog._isosurface_viewer, "shutdown", lambda: viewer_calls.__setitem__("isosurface", viewer_calls["isosurface"] + 1))
@@ -2091,9 +2372,12 @@ def test_uep_wizard_close_shuts_down_viewers_and_threads(qapp, monkeypatch: pyte
     dialog._isosurface_grid_thread = grid_thread
     dialog._isosurface_mesh_thread = mesh_thread
     dialog._batch_search_thread = batch_thread
+    current_tab = dialog._tabs.currentIndex()
 
     dialog.close()
 
+    assert emitted_states
+    assert emitted_states[-1]["current_tab"] == current_tab
     assert viewer_calls == {"isosurface": 1, "slices": 1, "batch": 1}
     assert grid_thread.interrupt_calls == 1
     assert grid_thread.quit_calls == 1

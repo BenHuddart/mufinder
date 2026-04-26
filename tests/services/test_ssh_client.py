@@ -12,6 +12,8 @@ from mufinder.services.ssh_client import (
     SSHAuthenticationError,
     SSHConnection,
     SSHHostKeyMismatchError,
+    SSHProtocolBannerError,
+    SSHTransportError,
     SSHUnknownHostKeyError,
     load_trusted_host_key,
     save_trusted_host_key,
@@ -194,6 +196,9 @@ class _FakeParamiko:
     class AuthenticationException(Exception):
         pass
 
+    class SSHException(Exception):
+        pass
+
     class BadHostKeyException(Exception):
         def __init__(self, hostname: str, key, expected_key) -> None:
             super().__init__(hostname)
@@ -296,6 +301,8 @@ def test_ssh_connection_connects_with_key_auth(monkeypatch: pytest.MonkeyPatch) 
 
     assert connection.is_connected
     assert fake_paramiko._client.get_transport().keepalive == 60
+    assert fake_paramiko._client.connect_calls[0]["banner_timeout"] == 30
+    assert fake_paramiko._client.connect_calls[0]["auth_timeout"] == 30
 
 
 def test_ssh_connection_falls_back_to_password(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -415,6 +422,7 @@ def test_ssh_connection_requires_hostname(monkeypatch: pytest.MonkeyPatch) -> No
 def test_ssh_connection_reconnect(monkeypatch: pytest.MonkeyPatch) -> None:
     class _FreshParamiko:
         AuthenticationException = _FakeParamiko.AuthenticationException
+        SSHException = _FakeParamiko.SSHException
         BadHostKeyException = _FakeParamiko.BadHostKeyException
         RSAKey = _FakeParamiko.RSAKey
         Ed25519Key = _FakeParamiko.Ed25519Key
@@ -573,6 +581,51 @@ def test_ssh_connection_import_failure_raises_connection_error(
 
     with pytest.raises(ConnectionError, match="paramiko is required"):
         SSHConnection._import_paramiko()
+
+
+def test_ssh_connection_protocol_banner_failure_is_structured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _BannerClient(_FakeSSHClient):
+        def connect(self, **kwargs) -> None:
+            self.connect_calls.append(kwargs)
+            raise _FakeParamiko.SSHException("Error reading SSH protocol banner")
+
+    class _BannerParamiko(_FakeParamiko):
+        def __init__(self) -> None:
+            self._client = _BannerClient(system_host_keys={"example.org": _FakeKey()})
+
+    fake_paramiko = _BannerParamiko()
+    monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: fake_paramiko))
+
+    connection = SSHConnection(_config("key"))
+
+    with pytest.raises(SSHProtocolBannerError) as exc_info:
+        connection.connect()
+
+    assert exc_info.value.hostname == "example.org"
+    assert exc_info.value.port == 22
+    assert "valid SSH protocol banner" in str(exc_info.value)
+
+
+def test_ssh_connection_generic_ssh_exception_is_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FailingClient(_FakeSSHClient):
+        def connect(self, **kwargs) -> None:
+            self.connect_calls.append(kwargs)
+            raise _FakeParamiko.SSHException("kex failed")
+
+    class _FailingParamiko(_FakeParamiko):
+        def __init__(self) -> None:
+            self._client = _FailingClient(system_host_keys={"example.org": _FakeKey()})
+
+    monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: _FailingParamiko()))
+
+    connection = SSHConnection(_config("key"))
+
+    with pytest.raises(SSHTransportError, match="transport negotiation failed"):
+        connection.connect()
 
 
 def test_ssh_connection_key_auth_forwards_passphrase(

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mufinder.app.relaxation_adapter import _structure_for_row, _template_from_values
+from mufinder.app.relaxation_adapter import (
+    _is_identity_supercell,
+    _structure_for_row,
+    _template_from_values,
+)
 from mufinder.app.uep_types import UepConfig
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import Structure
@@ -84,7 +88,11 @@ def expand_uep_jobs(
         cell = row_structure.lattice_vectors
         kpoint_grid = None
         if project_kpoint_grid is not None and not explicit_kpoint_settings:
-            kpoint_grid = equivalent_grid_for_supercell(reference_lattice, project_kpoint_grid, cell)
+            kpoint_grid = (
+                project_kpoint_grid
+                if _is_identity_supercell(row.supercell_matrix)
+                else equivalent_grid_for_supercell(reference_lattice, project_kpoint_grid, cell)
+            )
             if row.supercell_matrix is not None and kpoint_grid != project_kpoint_grid:
                 messages.append(
                     "K-point grid adjusted from "

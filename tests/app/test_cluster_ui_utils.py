@@ -7,6 +7,7 @@ from mufinder.cluster_setup import ClusterConfig
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
     SSHHostKeyMismatchError,
+    SSHProtocolBannerError,
     SSHTransportError,
     SSHUnknownHostKeyError,
 )
@@ -152,6 +153,14 @@ def test_format_cluster_connection_error_for_all_structured_errors() -> None:
         _config(),
         SSHTransportError("network down"),
     )
+    banner = ui_module.format_cluster_connection_error(
+        _config(),
+        SSHProtocolBannerError(
+            hostname="glamdring.physics.ox.ac.uk",
+            port=22,
+            details="Error reading SSH protocol banner",
+        ),
+    )
     fallback = ui_module.format_cluster_connection_error(_config(), RuntimeError(""))
 
     assert "not trusted yet" in unknown
@@ -159,6 +168,8 @@ def test_format_cluster_connection_error_for_all_structured_errors() -> None:
     assert "username/password pair" in auth_password
     assert "SSH key path" in auth_key
     assert "Could not establish an SSH session" in transport
+    assert "not answering as an SSH server" in banner
+    assert "hostname and SSH port" in banner
     assert fallback == "Unknown cluster connection failure."
 
 

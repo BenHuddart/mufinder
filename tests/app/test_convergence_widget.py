@@ -245,6 +245,37 @@ def test_convergence_widget_single_cutoff_parameter_dialog_updates_row(
     assert configure_button.text() == "Configured..."
 
 
+def test_convergence_widget_queued_cutoff_parameter_dialog_is_read_only(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    widget._cutoff_parameter_values[300.0] = {"max_scf_cycles": 50}
+    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="queued")})
+
+    observed: dict[str, object] = {}
+
+    def fake_exec(dialog) -> int:
+        observed["read_only"] = dialog._read_only
+        observed["title"] = dialog.windowTitle()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(
+        convergence_widget_module.ParameterDialog,
+        "collect_values",
+        lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
+    )
+
+    widget._open_cutoff_parameter_dialog((300.0,))
+
+    assert observed == {"read_only": True, "title": "Inspect Parameters: 300 eV"}
+    assert widget._cutoff_parameter_values[300.0]["max_scf_cycles"] == 50
+    configure_button = widget._cutoff_table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+    assert configure_button.text() == "Configured..."
+
+
 def test_convergence_widget_batch_configure_selected_cutoffs(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:

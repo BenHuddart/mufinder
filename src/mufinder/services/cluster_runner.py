@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from math import ceil
 from pathlib import Path
 import posixpath
+import re
 import shlex
 import tempfile
 from uuid import UUID
@@ -67,7 +68,7 @@ class ClusterJobRunner(QObject):
         self._password_cache: str | None = None
 
         self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(120_000)
+        self._poll_timer.setInterval(60_000)
         self._poll_timer.timeout.connect(self._poll_queue)
 
     @property
@@ -94,9 +95,10 @@ class ClusterJobRunner(QObject):
             return
 
         resolved_password = password
+        auth_method = config.auth_method.strip().lower()
         if (
             resolved_password is None
-            and config.auth_method == "password"
+            and auth_method in {"password", "key"}
             and self._config is not None
             and self._config.name.strip().casefold() == config.name.strip().casefold()
             and self._config.username.strip() == config.username.strip()
@@ -116,7 +118,7 @@ class ClusterJobRunner(QObject):
             queue_check_command_path=config.queue_check_command_path,
             cancel_command_path=config.cancel_command_path,
         )
-        self._password_cache = resolved_password if config.auth_method == "password" else None
+        self._password_cache = resolved_password if auth_method in {"password", "key"} else None
         self.connection_status_changed.emit(True)
         if self._has_active_jobs_for_connected_cluster() and not self._poll_timer.isActive():
             self._poll_timer.start()
@@ -438,6 +440,7 @@ class ClusterJobRunner(QObject):
                 continue
             if mapped == JobStatus.FAILED:
                 entry.terminal = True
+                self._retrieve_error_files(entry)
                 self.job_failed.emit(entry.job_id, "Scheduler reported job failure.")
                 self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
                 continue
@@ -468,6 +471,7 @@ class ClusterJobRunner(QObject):
         local_out_cell = entry.local_output_dir / f"{entry.seed_name}-out.cell"
 
         try:
+            self._retrieve_error_files(entry)
             ssh.get(remote_castep, local_castep)
             if entry.retrieve_den_fmt and ssh.exists(remote_den_fmt):
                 ssh.get(remote_den_fmt, local_den_fmt)
@@ -495,6 +499,45 @@ class ClusterJobRunner(QObject):
         entry.terminal = True
         self.job_finished.emit(entry.job_id, parsed)
         self.status_changed.emit(entry.job_id, JobStatus.COMPLETED.value)
+
+    def _retrieve_error_files(self, entry: _TrackedClusterJob) -> None:
+        ssh = self._require_ssh()
+        try:
+            entry.local_output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+
+        for name in self._remote_error_file_names(entry):
+            remote_path = posixpath.join(entry.remote_dir, name)
+            local_path = entry.local_output_dir / name
+            try:
+                if ssh.exists(remote_path):
+                    ssh.get(remote_path, local_path)
+            except Exception:  # noqa: BLE001
+                continue
+
+    def _remote_error_file_names(self, entry: _TrackedClusterJob) -> list[str]:
+        names: list[str] = [f"{entry.seed_name}.err"]
+        remote_job_id = entry.remote_job_id.strip()
+        if remote_job_id and re.fullmatch(r"[A-Za-z0-9_.-]+", remote_job_id):
+            names.append(f"slurm-{remote_job_id}.out")
+        if not hasattr(self._require_ssh(), "listdir"):
+            return names
+
+        try:
+            entries = self._require_ssh().listdir(entry.remote_dir)
+        except Exception:  # noqa: BLE001
+            return names
+
+        numbered = sorted(
+            str(name)
+            for name in entries
+            if re.fullmatch(rf"{re.escape(entry.seed_name)}\.\d+\.err", str(name))
+        )
+        for name in numbered:
+            if name not in names:
+                names.append(name)
+        return names
 
     @staticmethod
     def _looks_like_walltime(parsed: CastepResult) -> bool:

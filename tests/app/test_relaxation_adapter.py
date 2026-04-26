@@ -68,6 +68,60 @@ def test_expand_pristine_relaxation_jobs_applies_project_defaults() -> None:
     assert expansion.kpoint_messages == ()
 
 
+def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_unit_cell_with_reference_lattice() -> None:
+    config = PristineRelaxationConfig(
+        name_prefix="pristine_relax",
+        rows=(
+            PristineRelaxationRow(
+                label="row_unit",
+                fix_all_cell=True,
+                supercell_matrix=None,
+                parameter_values={"task": "GEOMETRYOPTIMIZATION"},
+            ),
+        ),
+    )
+    host = _host_structure()
+    host.lattice_vectors = [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]]
+
+    expansion = expand_pristine_relaxation_jobs(
+        host_structure=host,
+        config=config,
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(3, 3, 3),
+        project_kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]],
+    )
+
+    assert expansion.jobs[0].cell_file.kpoint_mp_grid == (3, 3, 3)
+    assert expansion.kpoint_messages == ()
+
+
+def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_anisotropic_unit_cell() -> None:
+    config = PristineRelaxationConfig(
+        name_prefix="pristine_relax",
+        rows=(
+            PristineRelaxationRow(
+                label="row_unit",
+                fix_all_cell=True,
+                supercell_matrix=None,
+                parameter_values={"task": "GEOMETRYOPTIMIZATION"},
+            ),
+        ),
+    )
+    host = _host_structure()
+    host.lattice_vectors = [[3.0, 0.0, 0.0], [0.0, 3.2, 0.0], [0.0, 0.0, 5.0]]
+
+    expansion = expand_pristine_relaxation_jobs(
+        host_structure=host,
+        config=config,
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(3, 3, 3),
+        project_kpoint_reference_lattice=None,
+    )
+
+    assert expansion.jobs[0].cell_file.kpoint_mp_grid == (3, 3, 3)
+    assert expansion.kpoint_messages == ()
+
+
 def test_expand_pristine_relaxation_jobs_forces_write_cell_structure_true() -> None:
     config = PristineRelaxationConfig(
         name_prefix="pristine_relax",
@@ -168,6 +222,17 @@ def test_suggested_grid_for_row_handles_identity_and_supercell() -> None:
 
     assert identity == (4, 4, 4)
     assert doubled_a == (2, 4, 4)
+
+
+def test_suggested_grid_for_row_returns_exact_project_grid_for_identity_reference_mismatch() -> None:
+    grid = suggested_grid_for_row(
+        host_lattice=[[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]],
+        row_matrix=None,
+        reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]],
+        reference_grid=(3, 3, 3),
+    )
+
+    assert grid == (3, 3, 3)
 
 
 def test_expand_muon_relaxation_jobs_forces_fixed_cell_and_charge() -> None:

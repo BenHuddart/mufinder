@@ -10,7 +10,7 @@ from ase import Atoms
 from ase.io import write as ase_write
 
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, MuonSite, Result, Structure
+from mufinder.domain.models import CalculationDefinition, CalculationRun, MuonSite, Result, Structure
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.project_service import ProjectService
@@ -760,6 +760,89 @@ def test_use_workflow_supercell_asset_clones_for_other_workflow(tmp_path: Path) 
     assert selected.parent_structure_id == host.id
     assert selected.properties["supercell_asset"]["owner_workflow_stage"] == "convergence_cutoff"
     assert selected.properties["supercell_asset"]["source_asset_structure_id"] == str(source_asset.id)
+
+
+def test_workflow_supercell_asset_rename_update_and_delete(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "workflow_supercell_edit.mufinder", "WorkflowEdit")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    asset = service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+        label="Initial cell",
+        reuse_existing=False,
+    )
+
+    renamed = service.rename_workflow_supercell_asset(
+        doc,
+        asset_structure_id=asset.id,
+        label="Production 2x1x1",
+    )
+    assert renamed.label == "Production 2x1x1"
+
+    updated = service.update_workflow_supercell_asset_matrix(
+        doc,
+        asset_structure_id=asset.id,
+        matrix=[[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+        label="Production 2x2x1",
+    )
+    assert updated.id == asset.id
+    assert updated.label == "Production 2x2x1"
+    assert len(updated.species) == len(host.species) * 4
+    assert updated.properties["supercell_asset"]["matrix"] == [[2, 0, 0], [0, 2, 0], [0, 0, 1]]
+
+    service.use_workflow_supercell_asset(
+        doc,
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        asset_structure_id=asset.id,
+    )
+    removed = service.delete_workflow_supercell_asset(doc, asset_structure_id=asset.id)
+
+    assert removed.id == asset.id
+    assert asset.id not in doc.structures
+    assert doc.ui_state["workflow_supercells"]["pristine_relaxation"]["mode"] == "unit_cell"
+
+
+def test_workflow_supercell_asset_delete_and_matrix_update_block_frozen_definitions(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "workflow_supercell_frozen.mufinder", "WorkflowFrozen")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    asset = service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+        reuse_existing=False,
+    )
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+        input_structure_ids=[asset.id],
+    )
+    doc.calculations[definition.id] = definition
+
+    assert service.supercell_asset_is_frozen(doc, asset_structure_id=asset.id)
+    assert service.supercell_asset_references(doc, asset_structure_id=asset.id) == [
+        "convergence_cutoff calculation 'castep_convergence_cutoff'"
+    ]
+    with pytest.raises(ValueError, match="configured calculations"):
+        service.update_workflow_supercell_asset_matrix(
+            doc,
+            asset_structure_id=asset.id,
+            matrix=[[3, 0, 0], [0, 1, 0], [0, 0, 1]],
+        )
+    with pytest.raises(ValueError, match="configured calculations"):
+        service.delete_workflow_supercell_asset(doc, asset_structure_id=asset.id)
 
 
 def test_resolve_workflow_structure_falls_back_to_unit_cell_for_mismatched_host(tmp_path: Path) -> None:

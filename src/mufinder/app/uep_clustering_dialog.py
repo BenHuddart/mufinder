@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import asdict
 
@@ -44,6 +44,17 @@ _HIER_CUT_LINE_GRAB_PIXELS = 8.0
 _HIER_CUT_LINE_DRAG_PIXELS = 4.0
 _COMPACT_LAYOUT_MAX_WIDTH = 1180
 _COMPACT_LAYOUT_MAX_HEIGHT = 760
+
+
+def cluster_color_map(cluster_labels: Iterable[int]) -> dict[int, str]:
+    """Return the shared cluster-colour palette used by UEP clustering views."""
+
+    cmap = colormaps["tab20"]
+    unique_labels = sorted({int(label) for label in cluster_labels})
+    colors: dict[int, str] = {}
+    for index, label in enumerate(unique_labels):
+        colors[int(label)] = mcolors.to_hex(cmap(index % cmap.N))
+    return colors
 
 
 def _pyvista_camera_snapshots_match(
@@ -417,12 +428,7 @@ class UepClusteringDialog(QDialog):
         return min(max(float(value), 0.0), upper)
 
     def _color_map_for_result(self, result: UepClusteringResult) -> dict[int, str]:
-        cmap = colormaps["tab20"]
-        unique_labels = sorted(set(result.cluster_labels))
-        colors: dict[int, str] = {}
-        for index, label in enumerate(unique_labels):
-            colors[int(label)] = mcolors.to_hex(cmap(index % cmap.N))
-        return colors
+        return cluster_color_map(result.cluster_labels)
 
     def _current_config(self) -> UepClusteringConfig:
         method = self._method_key()

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -66,6 +67,10 @@ _PREFERRED_DEFAULT_PARAMETER_NAMES = (
 )
 _BASIC_BASIS_CONTROL_NAMES = {"basis_precision", "cut_off_energy"}
 _UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready"}
+_CHARGE_STATE_TABS = (
+    (POSITIVE_MUON_CHARGE_STATE, "Positive muon"),
+    (MUONIUM_CHARGE_STATE, "Muonium"),
+)
 
 
 def _append_workflow_stage(values: tuple[str, ...], workflow_stage: str) -> tuple[str, ...]:
@@ -161,17 +166,16 @@ class MuonRelaxationWidget(QWidget):
 
     _LABEL_COLUMN = 0
     _SUPERCELL_COLUMN = 1
-    _CHARGE_COLUMN = 2
-    _INITIAL_FX_COLUMN = 3
-    _INITIAL_FY_COLUMN = 4
-    _INITIAL_FZ_COLUMN = 5
-    _FINAL_FX_COLUMN = 6
-    _FINAL_FY_COLUMN = 7
-    _FINAL_FZ_COLUMN = 8
-    _TOTAL_ENERGY_COLUMN = 9
-    _STATUS_COLUMN = 10
-    _CONFIGURE_COLUMN = 11
-    _REMOVE_COLUMN = 12
+    _INITIAL_FX_COLUMN = 2
+    _INITIAL_FY_COLUMN = 3
+    _INITIAL_FZ_COLUMN = 4
+    _FINAL_FX_COLUMN = 5
+    _FINAL_FY_COLUMN = 6
+    _FINAL_FZ_COLUMN = 7
+    _TOTAL_ENERGY_COLUMN = 8
+    _STATUS_COLUMN = 9
+    _CONFIGURE_COLUMN = 10
+    _REMOVE_COLUMN = 11
 
     configure_requested = Signal(object)
     submit_local_requested = Signal(object)
@@ -190,6 +194,7 @@ class MuonRelaxationWidget(QWidget):
 
         self._row_site_ids: dict[int, UUID] = {}
         self._row_positions: dict[int, tuple[float, float, float]] = {}
+        self._row_charge_states: dict[int, str] = {}
         self._row_supercells: dict[int, SupercellMatrix | None] = {}
         self._row_parameter_values: dict[int, dict[str, object]] = {}
         self._row_added_advanced: dict[int, set[str]] = {}
@@ -203,21 +208,42 @@ class MuonRelaxationWidget(QWidget):
         style_hint_text(self._kpoint_message)
         self._kpoint_message.hide()
 
-        self._table = QTableWidget(0, 13)
-        self._table.setHorizontalHeader(
+        self._charge_tabs = QTabWidget()
+        self._charge_tabs.setObjectName("muonRelaxationChargeTabs")
+        self._tables_by_charge_state: dict[str, QTableWidget] = {}
+        for charge_state, tab_label in _CHARGE_STATE_TABS:
+            table = self._create_table()
+            self._tables_by_charge_state[charge_state] = table
+            self._charge_tabs.addTab(table, tab_label)
+        self._table = self._tables_by_charge_state[POSITIVE_MUON_CHARGE_STATE]
+
+        self._batch_configure_button = QPushButton("Configure Selected Parameters...")
+        self._batch_configure_button.setEnabled(False)
+        self._run_local_button = QPushButton("Run Local Calculations")
+        self._run_cluster_button = QPushButton("Run on Cluster")
+
+        self._specs = self._build_parameter_specs()
+        self._specs_by_name = {spec.name: spec for spec in self._specs}
+        self._default_params = self._default_shared_params()
+
+        self._build_layout()
+        self._connect_signals()
+
+    def _create_table(self) -> QTableWidget:
+        table = QTableWidget(0, 12)
+        table.setHorizontalHeader(
             _GroupedCoordinateHeader(
                 (
                     (self._INITIAL_FX_COLUMN, self._INITIAL_FZ_COLUMN, "Initial"),
                     (self._FINAL_FX_COLUMN, self._FINAL_FZ_COLUMN, "Final"),
                 ),
-                self._table,
+                table,
             )
         )
-        self._table.setHorizontalHeaderLabels(
+        table.setHorizontalHeaderLabels(
             [
                 "Label",
                 "Supercell",
-                "Charge",
                 "fX",
                 "fY",
                 "fZ",
@@ -230,16 +256,16 @@ class MuonRelaxationWidget(QWidget):
                 "",
             ]
         )
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._table.setEditTriggers(
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
             | QAbstractItemView.EditTrigger.SelectedClicked
         )
-        self._table.verticalHeader().setVisible(False)
-        self._table.verticalHeader().setDefaultSectionSize(32)
-        header = self._table.horizontalHeader()
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(32)
+        header = table.horizontalHeader()
         header.setSectionResizeMode(self._LABEL_COLUMN, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(self._SUPERCELL_COLUMN, QHeaderView.ResizeMode.Stretch)
         for column in (
@@ -254,32 +280,10 @@ class MuonRelaxationWidget(QWidget):
             self._CONFIGURE_COLUMN,
         ):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(self._CHARGE_COLUMN, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(self._CHARGE_COLUMN, self._charge_column_width())
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setSectionResizeMode(self._REMOVE_COLUMN, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(self._REMOVE_COLUMN, 34)
-
-        self._batch_configure_button = QPushButton("Configure Selected Parameters...")
-        self._batch_configure_button.setEnabled(False)
-        self._run_local_button = QPushButton("Run Local Calculations")
-        self._run_cluster_button = QPushButton("Run on Cluster")
-
-        self._specs = self._build_parameter_specs()
-        self._specs_by_name = {spec.name: spec for spec in self._specs}
-        self._default_params = self._default_shared_params()
-
-        self._build_layout()
-        self._connect_signals()
-
-    def _charge_column_width(self) -> int:
-        metrics = self._table.fontMetrics()
-        content_width = max(
-            metrics.horizontalAdvance("positive muon"),
-            metrics.horizontalAdvance("muonium"),
-            metrics.horizontalAdvance("Charge"),
-        )
-        return content_width + 72
+        table.setColumnWidth(self._REMOVE_COLUMN, 34)
+        return table
 
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
@@ -318,7 +322,7 @@ class MuonRelaxationWidget(QWidget):
         table_group = QGroupBox("Relaxation Jobs")
         table_layout = QVBoxLayout(table_group)
         table_layout.setContentsMargins(10, 8, 10, 8)
-        table_layout.addWidget(self._table)
+        table_layout.addWidget(self._charge_tabs)
         control_row = QHBoxLayout()
         control_row.addStretch(1)
         control_row.addWidget(self._batch_configure_button)
@@ -337,10 +341,12 @@ class MuonRelaxationWidget(QWidget):
 
     def _connect_signals(self) -> None:
         self._batch_configure_button.clicked.connect(self._configure_selected_rows)
-        self._table.itemChanged.connect(self._on_table_item_changed)
-        selection_model = self._table.selectionModel()
-        if selection_model is not None:
-            selection_model.selectionChanged.connect(lambda *_: self._refresh_batch_button_state())
+        self._charge_tabs.currentChanged.connect(lambda *_: self._refresh_batch_button_state())
+        for table in self._tables_by_charge_state.values():
+            table.itemChanged.connect(self._on_table_item_changed)
+            selection_model = table.selectionModel()
+            if selection_model is not None:
+                selection_model.selectionChanged.connect(lambda *_: self._refresh_batch_button_state())
         self._run_local_button.clicked.connect(self._run_local_selected_rows)
         self._run_cluster_button.clicked.connect(self._run_cluster_selected_rows)
 
@@ -478,7 +484,17 @@ class MuonRelaxationWidget(QWidget):
         self._supercell_options = parsed
         self._refresh_all_rows()
 
-    def add_staged_sites(self, rows: list[dict[str, object]]) -> None:
+    def add_staged_sites(
+        self,
+        rows: list[dict[str, object]],
+        *,
+        charge_states: tuple[str, ...] = (POSITIVE_MUON_CHARGE_STATE,),
+    ) -> None:
+        normalized_charge_states = tuple(
+            charge_state
+            for charge_state in charge_states
+            if charge_state in self._tables_by_charge_state
+        ) or (POSITIVE_MUON_CHARGE_STATE,)
         for row_data in rows:
             raw_site_id = row_data.get("id")
             try:
@@ -488,23 +504,36 @@ class MuonRelaxationWidget(QWidget):
             fractional = row_data.get("fractional_position", row_data.get("fractional", (0.0, 0.0, 0.0)))
             if not isinstance(fractional, (list, tuple)) or len(fractional) != 3:
                 continue
-            base_label = str(row_data.get("label", "")).strip() or f"site_{self._table.rowCount() + 1}"
-            self._add_row(
-                site_id=site_id,
-                label=self._unique_label(base_label),
-                fractional=(float(fractional[0]), float(fractional[1]), float(fractional[2])),
-                charge_state=POSITIVE_MUON_CHARGE_STATE,
-            )
+            for charge_state in normalized_charge_states:
+                table = self._table_for_charge_state(charge_state)
+                base_label = str(row_data.get("label", "")).strip() or f"site_{table.rowCount() + 1}"
+                self._add_row(
+                    site_id=site_id,
+                    label=self._unique_label(base_label, charge_state=charge_state),
+                    fractional=(float(fractional[0]), float(fractional[1]), float(fractional[2])),
+                    charge_state=charge_state,
+                )
         self._emit_state()
+
+    def _table_for_charge_state(self, charge_state: str) -> QTableWidget:
+        return self._tables_by_charge_state.get(charge_state, self._table)
+
+    def _active_table(self) -> QTableWidget:
+        current = self._charge_tabs.currentWidget()
+        return current if isinstance(current, QTableWidget) else self._table
+
+    def _all_tables(self) -> tuple[QTableWidget, ...]:
+        return tuple(self._tables_by_charge_state[charge_state] for charge_state, _label in _CHARGE_STATE_TABS)
 
     def row_supercell_matrix(self, row_id: int) -> SupercellMatrix | None:
         return self._row_supercells.get(int(row_id))
 
     def set_row_supercell(self, row_id: int, matrix: SupercellMatrix | None, *, message: str | None = None) -> None:
         self._row_supercells[int(row_id)] = matrix
-        row = self._row_index_for_id(int(row_id))
-        if row is not None:
-            self._refresh_row(row)
+        location = self._row_location_for_id(int(row_id))
+        if location is not None:
+            table, row = location
+            self._refresh_row(row, table=table)
         if message:
             self._kpoint_message.setText(message)
             self._kpoint_message.show()
@@ -520,8 +549,9 @@ class MuonRelaxationWidget(QWidget):
         item.setFlags(flags)
         return item
 
-    def _unique_label(self, base_label: str) -> str:
-        existing = {self._label_at_row(row) for row in range(self._table.rowCount())}
+    def _unique_label(self, base_label: str, *, charge_state: str) -> str:
+        table = self._table_for_charge_state(charge_state)
+        existing = {self._label_at_row(row, table=table) for row in range(table.rowCount())}
         if base_label not in existing:
             return base_label
         suffix = 2
@@ -537,83 +567,86 @@ class MuonRelaxationWidget(QWidget):
         fractional: tuple[float, float, float],
         charge_state: str,
     ) -> None:
-        row = self._table.rowCount()
+        if charge_state not in self._tables_by_charge_state:
+            charge_state = POSITIVE_MUON_CHARGE_STATE
+        table = self._table_for_charge_state(charge_state)
+        row = table.rowCount()
         row_id = self._next_row_id
         self._next_row_id += 1
         self._row_site_ids[row_id] = site_id
         self._row_positions[row_id] = fractional
+        self._row_charge_states[row_id] = charge_state
         self._row_supercells[row_id] = None
         self._row_parameter_values[row_id] = {}
         self._row_added_advanced[row_id] = set()
 
-        self._table.blockSignals(True)
-        self._table.insertRow(row)
+        table.blockSignals(True)
+        table.insertRow(row)
         label_item = self._make_item(label, editable=True)
         label_item.setData(Qt.ItemDataRole.UserRole, row_id)
-        self._table.setItem(row, self._LABEL_COLUMN, label_item)
+        table.setItem(row, self._LABEL_COLUMN, label_item)
 
-        supercell_combo = QComboBox(self._table)
+        supercell_combo = QComboBox(table)
         supercell_combo.currentIndexChanged.connect(lambda _index, rid=row_id: self._on_supercell_combo_changed(rid))
-        self._table.setCellWidget(row, self._SUPERCELL_COLUMN, supercell_combo)
-
-        charge_combo = QComboBox(self._table)
-        charge_combo.addItem("positive muon", POSITIVE_MUON_CHARGE_STATE)
-        charge_combo.addItem("muonium", MUONIUM_CHARGE_STATE)
-        charge_index = charge_combo.findData(charge_state)
-        charge_combo.setCurrentIndex(charge_index if charge_index >= 0 else 0)
-        charge_combo.currentIndexChanged.connect(lambda *_: self._emit_state())
-        self._table.setCellWidget(row, self._CHARGE_COLUMN, charge_combo)
+        table.setCellWidget(row, self._SUPERCELL_COLUMN, supercell_combo)
 
         for column, value in zip(
             (self._INITIAL_FX_COLUMN, self._INITIAL_FY_COLUMN, self._INITIAL_FZ_COLUMN),
             fractional,
             strict=True,
         ):
-            self._table.setItem(row, column, self._make_item(self._format_fractional(value), editable=False))
-        self._table.setItem(row, self._FINAL_FX_COLUMN, self._make_item("", editable=False))
-        self._table.setItem(row, self._FINAL_FY_COLUMN, self._make_item("", editable=False))
-        self._table.setItem(row, self._FINAL_FZ_COLUMN, self._make_item("", editable=False))
-        self._table.setItem(row, self._TOTAL_ENERGY_COLUMN, self._make_item("", editable=False))
-        self._table.setItem(row, self._STATUS_COLUMN, self._make_item("not generated", editable=False))
+            table.setItem(row, column, self._make_item(self._format_fractional(value), editable=False))
+        table.setItem(row, self._FINAL_FX_COLUMN, self._make_item("", editable=False))
+        table.setItem(row, self._FINAL_FY_COLUMN, self._make_item("", editable=False))
+        table.setItem(row, self._FINAL_FZ_COLUMN, self._make_item("", editable=False))
+        table.setItem(row, self._TOTAL_ENERGY_COLUMN, self._make_item("", editable=False))
+        table.setItem(row, self._STATUS_COLUMN, self._make_item("not generated", editable=False))
 
-        configure_button = QPushButton("Configure...", self._table)
+        configure_button = QPushButton("Configure...", table)
         configure_button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         configure_button.clicked.connect(lambda _checked=False, rid=row_id: self._open_row_parameter_dialog((rid,)))
-        self._table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
+        table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
 
-        remove_button = QToolButton(self._table)
+        remove_button = QToolButton(table)
         remove_button.setText("x")
         remove_button.setAutoRaise(True)
         remove_button.clicked.connect(lambda _checked=False, rid=row_id: self._remove_rows_by_id((rid,)))
-        self._table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
+        table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
 
-        self._refresh_row(row)
-        self._table.blockSignals(False)
+        self._refresh_row(row, table=table)
+        table.blockSignals(False)
         self._refresh_batch_button_state()
 
-    def _row_index_for_id(self, row_id: int) -> int | None:
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, self._LABEL_COLUMN)
-            if item is not None and int(item.data(Qt.ItemDataRole.UserRole)) == int(row_id):
-                return row
+    def _row_location_for_id(self, row_id: int) -> tuple[QTableWidget, int] | None:
+        for table in self._all_tables():
+            for row in range(table.rowCount()):
+                item = table.item(row, self._LABEL_COLUMN)
+                if item is not None and int(item.data(Qt.ItemDataRole.UserRole)) == int(row_id):
+                    return table, row
         return None
 
-    def _row_id_at(self, row: int) -> int | None:
-        item = self._table.item(row, self._LABEL_COLUMN)
+    def _row_index_for_id(self, row_id: int) -> int | None:
+        location = self._row_location_for_id(row_id)
+        return None if location is None else location[1]
+
+    def _row_id_at(self, row: int, *, table: QTableWidget | None = None) -> int | None:
+        target = table or self._table
+        item = target.item(row, self._LABEL_COLUMN)
         if item is None:
             return None
         value = item.data(Qt.ItemDataRole.UserRole)
         return int(value) if value is not None else None
 
-    def _label_at_row(self, row: int) -> str:
-        item = self._table.item(row, self._LABEL_COLUMN)
+    def _label_at_row(self, row: int, *, table: QTableWidget | None = None) -> str:
+        target = table or self._table
+        item = target.item(row, self._LABEL_COLUMN)
         return item.text().strip() if item is not None else ""
 
-    def _charge_state_at_row(self, row: int) -> str:
-        combo = self._table.cellWidget(row, self._CHARGE_COLUMN)
-        if isinstance(combo, QComboBox):
-            return str(combo.currentData() or POSITIVE_MUON_CHARGE_STATE)
-        return POSITIVE_MUON_CHARGE_STATE
+    def _charge_state_at_row(self, row: int, *, table: QTableWidget | None = None) -> str:
+        row_id = self._row_id_at(row, table=table)
+        if row_id is None:
+            return POSITIVE_MUON_CHARGE_STATE
+        return self._row_charge_states.get(row_id, POSITIVE_MUON_CHARGE_STATE)
 
     @staticmethod
     def _runtime_key(label: str, charge_state: str) -> str:
@@ -658,15 +691,16 @@ class MuonRelaxationWidget(QWidget):
         if current is not None and selected_index == 0:
             combo.addItem(self._supercell_label(current), ("matrix", current))
             selected_index = combo.count() - 1
-        combo.addItem("Create new...", ("create", None))
+        combo.addItem("Manage Supercells...", ("create", None))
         combo.setCurrentIndex(selected_index)
         combo.blockSignals(previous)
 
     def _on_supercell_combo_changed(self, row_id: int) -> None:
-        row = self._row_index_for_id(row_id)
-        if row is None:
+        location = self._row_location_for_id(row_id)
+        if location is None:
             return
-        combo = self._table.cellWidget(row, self._SUPERCELL_COLUMN)
+        table, row = location
+        combo = table.cellWidget(row, self._SUPERCELL_COLUMN)
         if not isinstance(combo, QComboBox):
             return
         data = combo.currentData()
@@ -676,13 +710,57 @@ class MuonRelaxationWidget(QWidget):
         matrix = self._coerce_supercell_matrix(data[1])
         if mode == "create":
             self.row_supercell_edit_requested.emit(row_id)
-            self._refresh_row(row)
+            self._refresh_row(row, table=table)
             return
-        self._row_supercells[row_id] = matrix
-        self._row_parameter_values[row_id] = self._strip_implicit_row_defaults(row_id, self._row_parameter_values.get(row_id, {}))
+        target_row_ids = self._supercell_target_row_ids(row_id, table=table)
+        for target_row_id in target_row_ids:
+            self._row_supercells[target_row_id] = matrix
+            self._row_parameter_values[target_row_id] = self._strip_implicit_row_defaults(
+                target_row_id,
+                self._row_parameter_values.get(target_row_id, {}),
+            )
+            location = self._row_location_for_id(target_row_id)
+            if location is not None:
+                target_table, target_row = location
+                self._refresh_row(target_row, table=target_table)
         self._set_kpoint_message_for_row(row_id)
-        self._refresh_row(row)
         self._emit_state()
+
+    def _supercell_target_row_ids(self, row_id: int, *, table: QTableWidget) -> tuple[int, ...]:
+        selection_model = table.selectionModel()
+        selected: list[int] = []
+        if selection_model is not None:
+            for index in selection_model.selectedRows():
+                target_id = self._row_id_at(index.row(), table=table)
+                if target_id is not None and self._row_supercell_is_editable(target_id):
+                    selected.append(target_id)
+        selected_ids = tuple(selected)
+        if row_id not in selected_ids or len(selected_ids) <= 1:
+            return (row_id,)
+
+        response = QMessageBox.question(
+            self,
+            "Apply supercell to selected rows?",
+            "Apply this supercell choice to all selected editable relaxation rows?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if response == QMessageBox.StandardButton.Yes:
+            return selected_ids
+        return (row_id,)
+
+    def _row_supercell_is_editable(self, row_id: int) -> bool:
+        location = self._row_location_for_id(row_id)
+        if location is None:
+            return False
+        table, row = location
+        label = self._label_at_row(row, table=table)
+        charge_state = self._charge_state_at_row(row, table=table)
+        runtime = self._runtime_states.get(self._runtime_key(label, charge_state))
+        if runtime is None:
+            runtime = self._runtime_states.get(label)
+        status = "not generated" if runtime is None else runtime.status or "not generated"
+        return not self._runtime_controls_locked(status)
 
     def _suggested_grid_for_row(self, row_id: int) -> tuple[int, int, int] | None:
         if self._host_lattice is None:
@@ -749,42 +827,63 @@ class MuonRelaxationWidget(QWidget):
         for row_id in tuple(self._row_parameter_values):
             self._row_parameter_values[row_id] = self._strip_implicit_row_defaults(row_id, self._row_parameter_values.get(row_id, {}))
 
-    def _refresh_row(self, row: int) -> None:
-        row_id = self._row_id_at(row)
+    def _refresh_row(self, row: int, *, table: QTableWidget | None = None) -> None:
+        target = table or self._table
+        row_id = self._row_id_at(row, table=target)
         if row_id is None:
             return
-        supercell_combo = self._table.cellWidget(row, self._SUPERCELL_COLUMN)
+        supercell_combo = target.cellWidget(row, self._SUPERCELL_COLUMN)
         if isinstance(supercell_combo, QComboBox):
             self._populate_supercell_combo(supercell_combo, row_id)
-        label = self._label_at_row(row)
-        charge_state = self._charge_state_at_row(row)
+        label = self._label_at_row(row, table=target)
+        charge_state = self._charge_state_at_row(row, table=target)
         runtime = self._runtime_states.get(self._runtime_key(label, charge_state))
         if runtime is None:
             runtime = self._runtime_states.get(label)
         status = "not generated" if runtime is None else runtime.status or "not generated"
         locked = self._runtime_controls_locked(status)
+        label_item = target.item(row, self._LABEL_COLUMN)
+        if label_item is not None:
+            flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+            if not locked:
+                flags |= Qt.ItemFlag.ItemIsEditable
+                label_item.setToolTip("")
+            else:
+                label_item.setToolTip("Job label is locked once this row has been queued for execution.")
+            label_item.setFlags(flags)
         if isinstance(supercell_combo, QComboBox):
             supercell_combo.setEnabled(not locked)
-        charge_combo = self._table.cellWidget(row, self._CHARGE_COLUMN)
-        if isinstance(charge_combo, QComboBox):
-            charge_combo.setEnabled(not locked)
+        remove_button = target.cellWidget(row, self._REMOVE_COLUMN)
+        if isinstance(remove_button, QToolButton):
+            remove_button.setEnabled(True)
         if runtime is None:
-            self._set_status_item(row, status)
-            self._set_fractional_items(row, None)
-            self._set_float_item(row, self._TOTAL_ENERGY_COLUMN, None)
+            self._set_status_item(row, status, table=target)
+            self._set_fractional_items(row, None, table=target)
+            self._set_float_item(row, self._TOTAL_ENERGY_COLUMN, None, table=target)
         else:
-            self._set_status_item(row, status)
-            self._set_fractional_items(row, runtime.final_fractional_position)
-            self._set_float_item(row, self._TOTAL_ENERGY_COLUMN, runtime.total_energy)
-        configure_button = self._table.cellWidget(row, self._CONFIGURE_COLUMN)
+            self._set_status_item(row, status, table=target)
+            self._set_fractional_items(row, runtime.final_fractional_position, table=target)
+            self._set_float_item(row, self._TOTAL_ENERGY_COLUMN, runtime.total_energy, table=target)
+        configure_button = target.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
-            configure_button.setText("Configured..." if self._row_parameter_values.get(row_id, {}) else "Configure...")
+            customized = bool(self._row_parameter_values.get(row_id, {}))
+            configure_button.setText("Configured..." if customized or locked else "Configure...")
+            configure_button.setToolTip(
+                "Inspect the CASTEP parameters used for this row."
+                if locked
+                else (
+                    "Edit custom CASTEP parameters for this row."
+                    if customized
+                    else "Configure CASTEP parameters for this row."
+                )
+            )
 
-    def _set_status_item(self, row: int, status: str) -> None:
-        item = self._table.item(row, self._STATUS_COLUMN)
+    def _set_status_item(self, row: int, status: str, *, table: QTableWidget | None = None) -> None:
+        target = table or self._table
+        item = target.item(row, self._STATUS_COLUMN)
         if item is None:
             item = self._make_item(status, editable=False)
-            self._table.setItem(row, self._STATUS_COLUMN, item)
+            target.setItem(row, self._STATUS_COLUMN, item)
         else:
             item.setText(status)
         item.setForeground(status_brush(status))
@@ -800,35 +899,45 @@ class MuonRelaxationWidget(QWidget):
         value: float | None,
         *,
         formatter: str = ".8g",
+        table: QTableWidget | None = None,
     ) -> None:
-        item = self._table.item(row, column)
+        target = table or self._table
+        item = target.item(row, column)
         text = "" if value is None else format(float(value), formatter)
         if item is None:
-            self._table.setItem(row, column, self._make_item(text, editable=False))
+            target.setItem(row, column, self._make_item(text, editable=False))
         else:
             item.setText(text)
 
-    def _set_fractional_items(self, row: int, values: tuple[float, float, float] | None) -> None:
+    def _set_fractional_items(
+        self,
+        row: int,
+        values: tuple[float, float, float] | None,
+        *,
+        table: QTableWidget | None = None,
+    ) -> None:
         for column, value in zip(
             (self._FINAL_FX_COLUMN, self._FINAL_FY_COLUMN, self._FINAL_FZ_COLUMN),
             values or (None, None, None),
             strict=True,
         ):
-            self._set_float_item(row, column, value, formatter=".3f")
+            self._set_float_item(row, column, value, formatter=".3f", table=table)
 
     def _refresh_all_rows(self) -> None:
-        self._table.blockSignals(True)
-        for row in range(self._table.rowCount()):
-            self._refresh_row(row)
-        self._table.blockSignals(False)
+        for table in self._all_tables():
+            table.blockSignals(True)
+            for row in range(table.rowCount()):
+                self._refresh_row(row, table=table)
+            table.blockSignals(False)
 
     def _selected_row_ids(self) -> tuple[int, ...]:
-        selection_model = self._table.selectionModel()
+        table = self._active_table()
+        selection_model = table.selectionModel()
         if selection_model is None:
             return ()
         ids: list[int] = []
         for index in selection_model.selectedRows():
-            row_id = self._row_id_at(index.row())
+            row_id = self._row_id_at(index.row(), table=table)
             if row_id is not None:
                 ids.append(row_id)
         return tuple(ids)
@@ -859,6 +968,22 @@ class MuonRelaxationWidget(QWidget):
             names.update(self._row_added_advanced.get(row_id, set()))
         return names
 
+    def _row_parameters_locked(self, row_ids: tuple[int, ...]) -> bool:
+        for row_id in row_ids:
+            location = self._row_location_for_id(row_id)
+            if location is None:
+                continue
+            table, row = location
+            label = self._label_at_row(row, table=table)
+            charge_state = self._charge_state_at_row(row, table=table)
+            runtime = self._runtime_states.get(self._runtime_key(label, charge_state))
+            if runtime is None:
+                runtime = self._runtime_states.get(label)
+            status = "" if runtime is None else runtime.status
+            if self._runtime_controls_locked(status):
+                return True
+        return False
+
     def _restore_structured_value(self, name: str, value: object) -> object:
         spec = self._specs_by_name.get(name)
         if spec is None:
@@ -887,32 +1012,44 @@ class MuonRelaxationWidget(QWidget):
         return cleaned
 
     def _open_row_parameter_dialog(self, row_ids: tuple[int, ...]) -> None:
-        intro_labels = [self._label_at_row(row) for row_id in row_ids if (row := self._row_index_for_id(row_id)) is not None]
-        charges = {
-            self._charge_state_at_row(row)
+        row_locations = [
+            location
             for row_id in row_ids
-            if (row := self._row_index_for_id(row_id)) is not None
-        }
-        charge_text = "Variable (set by row control)"
+            if (location := self._row_location_for_id(row_id)) is not None
+        ]
+        intro_labels = [
+            f"{self._label_at_row(row, table=table)} ({muon_charge_state_label(self._charge_state_at_row(row, table=table))})"
+            for table, row in row_locations
+        ]
+        charges = {self._charge_state_at_row(row, table=table) for table, row in row_locations}
+        charge_text = "Variable (selected charge-state tabs)"
         if len(charges) == 1:
             charge_state = next(iter(charges))
             charge_text = f"{muon_charge_for_state(charge_state):+d} ({muon_charge_state_label(charge_state)})"
-        dialog = ParameterDialog(
-            specs=self._specs,
-            workflow_stage=_WORKFLOW_STAGE,
-            locked_values={
+        read_only = self._row_parameters_locked(row_ids)
+        dialog_kwargs = {
+            "specs": self._specs,
+            "workflow_stage": _WORKFLOW_STAGE,
+            "locked_values": {
                 "task": "GEOMETRYOPTIMIZATION",
                 "fix_all_cell": "TRUE (required for muon relaxation)",
                 "write_cell_structure": "TRUE (required for relaxed-cell outputs)",
                 "charge": charge_text,
             },
-            intro_text="Included rows: " + ", ".join(intro_labels),
-            parent=self,
+            "intro_text": "Included rows: " + ", ".join(intro_labels),
+            "parent": self,
+        }
+        if read_only:
+            dialog_kwargs["read_only"] = True
+        dialog = ParameterDialog(**dialog_kwargs)
+        dialog.setWindowTitle(
+            "Inspect Muon Relaxation Parameters" if read_only else "Configure Muon Relaxation Parameters"
         )
-        dialog.setWindowTitle("Configure Muon Relaxation Parameters")
         dialog.set_values(self._common_params_for_rows(row_ids))
         dialog.set_advanced_names(self._advanced_names_for_rows(row_ids))
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if read_only:
             return
         values = self._sanitize_parameter_mapping(dialog.collect_values())
         advanced = set(dialog.advanced_names())
@@ -925,13 +1062,15 @@ class MuonRelaxationWidget(QWidget):
     def _remove_rows_by_id(self, row_ids: tuple[int, ...]) -> None:
         removed_labels: list[str] = []
         for row_id in row_ids:
-            row = self._row_index_for_id(row_id)
-            if row is None:
+            location = self._row_location_for_id(row_id)
+            if location is None:
                 continue
-            removed_labels.append(self._label_at_row(row))
-            self._table.removeRow(row)
+            table, row = location
+            removed_labels.append(self._submission_key_at_row(row, table=table))
+            table.removeRow(row)
             self._row_site_ids.pop(row_id, None)
             self._row_positions.pop(row_id, None)
+            self._row_charge_states.pop(row_id, None)
             self._row_supercells.pop(row_id, None)
             self._row_parameter_values.pop(row_id, None)
             self._row_added_advanced.pop(row_id, None)
@@ -941,52 +1080,68 @@ class MuonRelaxationWidget(QWidget):
             self._emit_state()
 
     def _build_config_or_warn(self) -> MuonRelaxationConfig | None:
-        if self._table.rowCount() == 0:
+        if not any(table.rowCount() for table in self._all_tables()):
             QMessageBox.warning(self, "No jobs", "Create one or more jobs from generated muon sites first.")
             return None
         rows: list[MuonRelaxationRow] = []
         seen: set[str] = set()
-        for row_index in range(self._table.rowCount()):
-            row_id = self._row_id_at(row_index)
-            if row_id is None:
-                continue
-            label = self._label_at_row(row_index)
-            if not label:
-                QMessageBox.warning(self, "Invalid label", "Job labels must not be empty.")
-                return None
-            charge_state = self._charge_state_at_row(row_index)
-            unique = f"{charge_state}:{label}"
-            if unique in seen:
-                QMessageBox.warning(self, "Duplicate label", f"Duplicate {muon_charge_state_label(charge_state)} job label '{label}'.")
-                return None
-            seen.add(unique)
-            effective_values = self._effective_params_for_row(row_id)
-            errors = validate_gui_values(effective_values, self._specs_by_name, task=infer_task(_WORKFLOW_STAGE))
-            if errors:
-                QMessageBox.warning(self, "Invalid parameters", f"Row '{label}':\n" + "\n".join(errors))
-                return None
-            rows.append(
-                MuonRelaxationRow(
-                    site_id=self._row_site_ids[row_id],
-                    label=label,
-                    initial_fractional_position=self._row_positions[row_id],
-                    charge_state=charge_state,
-                    supercell_matrix=self._row_supercells.get(row_id),
-                    parameter_values=dict(self._row_parameter_values.get(row_id, {})),
-                    added_advanced=tuple(sorted(self._row_added_advanced.get(row_id, set()))),
+        for table in self._all_tables():
+            for row_index in range(table.rowCount()):
+                row_id = self._row_id_at(row_index, table=table)
+                if row_id is None:
+                    continue
+                label = self._label_at_row(row_index, table=table)
+                if not label:
+                    QMessageBox.warning(self, "Invalid label", "Job labels must not be empty.")
+                    return None
+                charge_state = self._charge_state_at_row(row_index, table=table)
+                unique = f"{charge_state}:{label}"
+                if unique in seen:
+                    QMessageBox.warning(self, "Duplicate label", f"Duplicate {muon_charge_state_label(charge_state)} job label '{label}'.")
+                    return None
+                seen.add(unique)
+                effective_values = self._effective_params_for_row(row_id)
+                errors = validate_gui_values(effective_values, self._specs_by_name, task=infer_task(_WORKFLOW_STAGE))
+                if errors:
+                    QMessageBox.warning(self, "Invalid parameters", f"Row '{label}':\n" + "\n".join(errors))
+                    return None
+                rows.append(
+                    MuonRelaxationRow(
+                        site_id=self._row_site_ids[row_id],
+                        label=label,
+                        initial_fractional_position=self._row_positions[row_id],
+                        charge_state=charge_state,
+                        supercell_matrix=self._row_supercells.get(row_id),
+                        parameter_values=dict(self._row_parameter_values.get(row_id, {})),
+                        added_advanced=tuple(sorted(self._row_added_advanced.get(row_id, set()))),
+                    )
                 )
-            )
         return MuonRelaxationConfig(rows=tuple(rows))
 
-    def _submission_key_at_row(self, row: int) -> str:
-        return self._runtime_key(self._label_at_row(row), self._charge_state_at_row(row))
+    def _submission_key_at_row(self, row: int, *, table: QTableWidget | None = None) -> str:
+        target = table or self._table
+        return self._runtime_key(self._label_at_row(row, table=target), self._charge_state_at_row(row, table=target))
 
     def _selected_or_all_labels(self) -> list[str]:
-        selection_model = self._table.selectionModel()
-        selected_rows = [index.row() for index in selection_model.selectedRows()] if selection_model is not None else []
-        if not selected_rows:
-            selected_rows = list(range(self._table.rowCount()))
-        return [self._submission_key_at_row(row) for row in selected_rows if self._label_at_row(row)]
+        selected: list[str] = []
+        for table in self._all_tables():
+            selection_model = table.selectionModel()
+            if selection_model is None:
+                continue
+            for index in selection_model.selectedRows():
+                label = self._label_at_row(index.row(), table=table)
+                if label:
+                    selected.append(self._submission_key_at_row(index.row(), table=table))
+        if selected:
+            return selected
+
+        labels: list[str] = []
+        for table in self._all_tables():
+            for row in range(table.rowCount()):
+                label = self._label_at_row(row, table=table)
+                if label:
+                    labels.append(self._submission_key_at_row(row, table=table))
+        return labels
 
     def _run_local_selected_rows(self) -> None:
         config = self._build_config_or_warn()
@@ -1014,35 +1169,38 @@ class MuonRelaxationWidget(QWidget):
 
     def collect_state(self) -> dict[str, Any]:
         rows: list[dict[str, object]] = []
-        for row in range(self._table.rowCount()):
-            row_id = self._row_id_at(row)
-            if row_id is None:
-                continue
-            rows.append(
-                {
-                    "site_id": str(self._row_site_ids[row_id]),
-                    "label": self._label_at_row(row),
-                    "fractional_position": list(self._row_positions[row_id]),
-                    "charge_state": self._charge_state_at_row(row),
-                    "supercell_matrix": (
-                        [list(line) for line in self._row_supercells.get(row_id)]
-                        if self._row_supercells.get(row_id) is not None
-                        else None
-                    ),
-                    "parameter_values": dict(self._row_parameter_values.get(row_id, {})),
-                    "added_advanced": sorted(self._row_added_advanced.get(row_id, set())),
-                }
-            )
+        for table in self._all_tables():
+            for row in range(table.rowCount()):
+                row_id = self._row_id_at(row, table=table)
+                if row_id is None:
+                    continue
+                rows.append(
+                    {
+                        "site_id": str(self._row_site_ids[row_id]),
+                        "label": self._label_at_row(row, table=table),
+                        "fractional_position": list(self._row_positions[row_id]),
+                        "charge_state": self._charge_state_at_row(row, table=table),
+                        "supercell_matrix": (
+                            [list(line) for line in self._row_supercells.get(row_id)]
+                            if self._row_supercells.get(row_id) is not None
+                            else None
+                        ),
+                        "parameter_values": dict(self._row_parameter_values.get(row_id, {})),
+                        "added_advanced": sorted(self._row_added_advanced.get(row_id, set())),
+                    }
+                )
         return {"rows": rows}
 
     def set_form_state(self, state: dict[str, Any]) -> None:
         self._restoring_form_state = True
         try:
-            self._table.blockSignals(True)
-            self._table.setRowCount(0)
+            for table in self._all_tables():
+                table.blockSignals(True)
+                table.setRowCount(0)
             self._next_row_id = 1
             self._row_site_ids.clear()
             self._row_positions.clear()
+            self._row_charge_states.clear()
             self._row_supercells.clear()
             self._row_parameter_values.clear()
             self._row_added_advanced.clear()
@@ -1061,11 +1219,12 @@ class MuonRelaxationWidget(QWidget):
                     continue
                 self._add_row(
                     site_id=site_id,
-                    label=str(entry.get("label", "")).strip() or f"site_{self._table.rowCount() + 1}",
+                    label=str(entry.get("label", "")).strip() or f"site_{self._table_for_charge_state(str(entry.get('charge_state', POSITIVE_MUON_CHARGE_STATE))).rowCount() + 1}",
                     fractional=(float(fractional[0]), float(fractional[1]), float(fractional[2])),
                     charge_state=str(entry.get("charge_state", POSITIVE_MUON_CHARGE_STATE)),
                 )
-                row_id = self._row_id_at(self._table.rowCount() - 1)
+                location = self._row_location_for_id(self._next_row_id - 1)
+                row_id = None if location is None else self._row_id_at(location[1], table=location[0])
                 if row_id is None:
                     continue
                 self._row_supercells[row_id] = self._coerce_supercell_matrix(entry.get("supercell_matrix"))
@@ -1079,7 +1238,8 @@ class MuonRelaxationWidget(QWidget):
             self._refresh_all_rows()
             self._refresh_batch_button_state()
         finally:
-            self._table.blockSignals(False)
+            for table in self._all_tables():
+                table.blockSignals(False)
             self._restoring_form_state = False
         self._emit_state()
 

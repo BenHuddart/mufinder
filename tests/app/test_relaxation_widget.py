@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox, QHeaderView
+from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtWidgets import QComboBox, QHeaderView, QMessageBox, QPushButton, QToolButton
 
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
+from mufinder.app.relaxation_types import RelaxationRunState
 from mufinder.castep_io.types import ValueWithUnit
 
 
@@ -23,11 +25,34 @@ def test_relaxation_widget_supercell_dropdown_lists_project_cells(qapp) -> None:
 
     combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
     assert isinstance(combo, QComboBox)
-
     labels = [combo.itemText(index) for index in range(combo.count())]
     assert labels[0] == "Unit cell"
     assert "convergence_cutoff 2x2x1" in labels
-    assert labels[-1] == "Create new..."
+    assert labels[-1] == "Manage Supercells..."
+
+
+def test_relaxation_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+
+    widget.set_runtime_states({label: RelaxationRunState(status="queued")})
+
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    assert not bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    assert not combo.isEnabled()
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+    assert configure_button.text() == "Configured..."
+    remove_button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    assert isinstance(remove_button, QToolButton)
+    assert remove_button.isEnabled()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    assert widget._row_parameters_locked((row_id,)) is True
 
 
 
@@ -79,6 +104,91 @@ def test_relaxation_widget_supercell_dropdown_selection_sets_matrix(qapp) -> Non
     combo.setCurrentIndex(index)
 
     assert widget.row_supercell_matrix(row_id) == ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+
+
+def test_relaxation_widget_supercell_selection_can_apply_to_selected_rows(
+    qapp,
+    monkeypatch,
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget.set_supercell_options(
+        [
+            {
+                "label": "convergence_cutoff 2x2x1",
+                "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+            }
+        ]
+    )
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    assert first_id is not None
+    assert second_id is not None
+
+    questions: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda _parent, title, *_args: questions.append(title) or QMessageBox.StandardButton.Yes,
+    )
+
+    selection = widget._table.selectionModel()
+    assert selection is not None
+    for row in (0, 1):
+        selection.select(
+            widget._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    combo.setCurrentIndex(combo.findText("convergence_cutoff 2x2x1"))
+
+    expected = ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert questions == ["Apply supercell to selected rows?"]
+    assert widget.row_supercell_matrix(first_id) == expected
+    assert widget.row_supercell_matrix(second_id) == expected
+
+
+def test_relaxation_widget_supercell_selection_can_stay_on_current_row(
+    qapp,
+    monkeypatch,
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget.set_supercell_options(
+        [
+            {
+                "label": "convergence_cutoff 2x2x1",
+                "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+            }
+        ]
+    )
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    assert first_id is not None
+    assert second_id is not None
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: QMessageBox.StandardButton.No,
+    )
+
+    selection = widget._table.selectionModel()
+    assert selection is not None
+    for row in (0, 1):
+        selection.select(
+            widget._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    combo.setCurrentIndex(combo.findText("convergence_cutoff 2x2x1"))
+
+    assert widget.row_supercell_matrix(first_id) == ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert widget.row_supercell_matrix(second_id) is None
 
 
 
@@ -165,6 +275,46 @@ def test_relaxation_widget_uses_project_default_kpoint_in_configure_values(qapp)
     params = widget._common_params_for_rows((row_id,))
 
     assert params["kpoint_mp_grid"] == (4, 4, 4)
+
+
+def test_relaxation_widget_uses_exact_project_kpoint_for_unit_cell_when_reference_lattice_differs(
+    qapp,
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget.set_host_lattice([[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]])
+    widget.set_project_defaults(
+        cutoff_energy=600.0,
+        kpoint_grid=(3, 3, 3),
+        kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]],
+    )
+    widget._add_row()
+
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+
+    params = widget._common_params_for_rows((row_id,))
+
+    assert params["kpoint_mp_grid"] == (3, 3, 3)
+
+
+def test_relaxation_widget_uses_exact_project_kpoint_for_anisotropic_unit_cell_without_reference(
+    qapp,
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget.set_host_lattice([[3.0, 0.0, 0.0], [0.0, 3.2, 0.0], [0.0, 0.0, 5.0]])
+    widget.set_project_defaults(
+        cutoff_energy=600.0,
+        kpoint_grid=(3, 3, 3),
+        kpoint_reference_lattice=None,
+    )
+    widget._add_row()
+
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+
+    params = widget._common_params_for_rows((row_id,))
+
+    assert params["kpoint_mp_grid"] == (3, 3, 3)
 
 
 def test_relaxation_widget_applies_project_defaults_to_existing_rows(qapp) -> None:

@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from PySide6.QtWidgets import QComboBox, QPushButton
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QComboBox, QPushButton, QToolButton
 
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.uep_types import UepRunState
@@ -71,7 +72,7 @@ def test_uep_widget_supercell_dropdown_lists_project_cells(qapp) -> None:
     labels = [combo.itemText(index) for index in range(combo.count())]
     assert labels[0] == "Unit cell"
     assert "pristine_relaxation 2x2x1" in labels
-    assert labels[-1] == "Create new..."
+    assert labels[-1] == "Manage Supercells..."
 
 
 def test_uep_widget_dialog_locks_write_formatted_density(qapp) -> None:
@@ -261,6 +262,30 @@ def test_uep_widget_marks_row_configure_button_as_configured_when_customized(qap
     widget._apply_row_state(row_id)
 
     assert configure_button.text() == "Configured..."
+
+
+def test_uep_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    label = widget._table.item(0, widget._LABEL_COLUMN).text()
+
+    widget.set_runtime_states({label: UepRunState(status="queued")})
+
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    assert not bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    assert not combo.isEnabled()
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+    assert configure_button.text() == "Configured..."
+    remove_button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    assert isinstance(remove_button, QToolButton)
+    assert remove_button.isEnabled()
+    assert widget._runtime_controls_locked(widget._runtime_state_for_row(row_id).status)
 
 
 def test_uep_widget_run_cluster_submits_selected_rows_only(qapp) -> None:

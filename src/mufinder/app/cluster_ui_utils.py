@@ -8,6 +8,7 @@ from mufinder.cluster_setup import ClusterConfig
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
     SSHHostKeyMismatchError,
+    SSHProtocolBannerError,
     SSHTransportError,
     SSHUnknownHostKeyError,
 )
@@ -70,11 +71,19 @@ def format_cluster_connection_error(config: ClusterConfig, exc: Exception) -> st
         )
         return f"Authentication failed for {config.username}@{config.hostname}.\n\n{exc}\n\n{auth_hint}"
 
+    if isinstance(exc, SSHProtocolBannerError):
+        return (
+            f"{exc}\n\n"
+            "This usually means the configured host and port are reachable, but that endpoint is not "
+            "answering as an SSH server. Check the cluster hostname and SSH port in Setup -> HPC Clusters, "
+            "confirm VPN/network access, and try again in case the login node closed the connection under load."
+        )
+
     if isinstance(exc, SSHTransportError):
         return (
             f"Could not establish an SSH session to {config.hostname}:{config.port}.\n\n"
             f"{exc}\n\n"
-            "Check VPN/network access, hostname, port, and cluster SSH availability."
+            "Check VPN/network access, hostname, port, proxy settings, and cluster SSH availability."
         )
 
     return str(exc).strip() or "Unknown cluster connection failure."

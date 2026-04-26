@@ -171,6 +171,9 @@ jobs:
 
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
     needs:
       - detect-release
       - build-windows
@@ -222,6 +225,31 @@ jobs:
           else
             gh release create "$RELEASE_TAG" "${files[@]}" --generate-notes --title "$APP_NAME $RELEASE_TAG" --target "$SOURCE_SHA"
           fi
+
+      - name: Delete uploaded build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          artifact_names=("windows-installer" "macos-dmg")
+
+          for artifact_name in "${artifact_names[@]}"; do
+            artifact_ids="$(gh api --paginate "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" --jq ".artifacts[] | select(.name == \"${artifact_name}\") | .id")"
+
+            if [ -z "$artifact_ids" ]; then
+              echo "No Actions artifact named ${artifact_name} found."
+              continue
+            fi
+
+            while IFS= read -r artifact_id; do
+              if [ -z "$artifact_id" ]; then
+                continue
+              fi
+
+              gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"
+              echo "Deleted Actions artifact ${artifact_name} (${artifact_id})."
+            done <<< "$artifact_ids"
+          done
 
   sync-develop:
     runs-on: ubuntu-latest

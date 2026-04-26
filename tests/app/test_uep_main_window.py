@@ -432,6 +432,63 @@ def test_main_window_open_uep_analysis_reuses_existing_window(qapp, tmp_path: Pa
     window.close()
 
 
+def test_main_window_open_uep_analysis_recreates_closed_window(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_recreate_closed_window.mufinder", "UEPRecreateClosedWindow")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={"name_prefix": "uep", "rows": [{"label": "row_1", "parameter_values": {}, "added_advanced": []}]},
+        output_directory=doc.project_root / "files" / "uep",
+    )
+    doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
+
+    job = service.add_job(
+        doc,
+        label="uep_row_1",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    job.status = JobStatus.COMPLETED
+    definition.parameters["job_ids_by_label"] = {"row_1": str(job.id)}
+    window._document = doc
+
+    output_dir = doc.project_root / "files" / "uep" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / f"{job.label}.castep").write_text(_fixture_text("Si2.castep"), encoding="utf-8")
+    (output_dir / f"{job.label}.den_fmt").write_text(_fixture_text("Si2.den_fmt"), encoding="utf-8")
+    (output_dir / f"{job.label}.cell").write_text(_fixture_text("Si2.cell"), encoding="utf-8")
+
+    constructed: list[QDialog] = []
+
+    class _FakeDialog(QDialog):
+        def __init__(self, **kwargs) -> None:
+            super().__init__(kwargs.get("parent"))
+            self.state_changed = _SignalStub()
+            self.potential_grid_ready = _SignalStub()
+            constructed.append(self)
+
+        def state_snapshot(self) -> dict[str, object]:
+            return {"current_tab": 0}
+
+    monkeypatch.setattr(main_window_module, "UepAnalysisDialog", _FakeDialog)
+
+    window._on_open_uep_analysis_requested("row_1")
+    first = constructed[0]
+    first.close()
+    qapp.processEvents()
+    window._on_open_uep_analysis_requested("row_1")
+
+    assert len(constructed) == 2
+    assert window._uep_analysis_dialogs[job.id] is constructed[1]
+    window.close()
+
+
 def test_main_window_close_closes_open_uep_dialogs_before_saving(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     window = MainWindow()
     service = ProjectService()
@@ -508,6 +565,88 @@ def test_main_window_uep_analysis_state_changed_updates_document_but_not_disk_un
     window.close()
 
 
+def test_main_window_uep_analysis_state_change_keeps_dialog_visible_without_table_refresh(
+    qapp,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_isosurface_state.mufinder", "UEPIsosurfaceState")
+    window._document = doc
+
+    job_id = UUID("11111111-1111-1111-1111-111111111111")
+    cluster_state = {
+        "batch_results": [{"optimized_fractional_position": [0.1, 0.2, 0.3]}],
+        "batch_summary_data": {"clusters": [{"cluster_index": 1, "representative_index": 0}]},
+        "isosurface_layers": [{"label": "Isosurface 1", "level_ev": -0.1}],
+    }
+    doc.ui_state[window._UEP_ANALYSIS_STATES_KEY] = {str(job_id): dict(cluster_state)}
+    refresh_calls: list[str] = []
+    monkeypatch.setattr(window, "_refresh_muon_generation_table", lambda: refresh_calls.append("refresh"))
+
+    class _FakeDialog:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def isVisible(self) -> bool:
+            return True
+
+        def show(self) -> None:
+            self.calls.append("show")
+
+        def raise_(self) -> None:
+            self.calls.append("raise")
+
+        def activateWindow(self) -> None:
+            self.calls.append("activate")
+
+    dialog = _FakeDialog()
+    window._uep_analysis_dialogs[job_id] = dialog
+
+    updated_state = dict(cluster_state)
+    updated_state["isosurface_layers"] = [
+        {"label": "Isosurface 1", "level_ev": -0.1},
+        {"label": "Isosurface 2", "level_ev": 0.2},
+    ]
+    window._on_uep_analysis_state_changed(job_id, updated_state)
+    qapp.processEvents()
+
+    assert refresh_calls == []
+    assert dialog.calls == ["show", "raise", "activate"]
+    assert doc.ui_state[window._UEP_ANALYSIS_STATES_KEY][str(job_id)]["isosurface_layers"] == updated_state[
+        "isosurface_layers"
+    ]
+    window.close()
+
+
+def test_main_window_uep_analysis_state_change_refreshes_muon_sources_for_batch_updates(
+    qapp,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_batch_state.mufinder", "UEPBatchState")
+    window._document = doc
+
+    job_id = UUID("11111111-1111-1111-1111-111111111111")
+    refresh_calls: list[str] = []
+    monkeypatch.setattr(window, "_refresh_muon_generation_table", lambda: refresh_calls.append("refresh"))
+
+    window._on_uep_analysis_state_changed(
+        job_id,
+        {
+            "batch_results": [{"optimized_fractional_position": [0.1, 0.2, 0.3]}],
+            "batch_summary_data": {"clusters": [{"cluster_index": 1, "representative_index": 0}]},
+        },
+    )
+    qapp.processEvents()
+
+    assert refresh_calls == ["refresh"]
+    window.close()
+
+
 def test_main_window_uep_potential_grid_ready_updates_document_but_not_disk_until_save(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
@@ -560,6 +699,139 @@ def test_main_window_uep_potential_grid_ready_updates_document_but_not_disk_unti
     assert reloaded_persisted is not None
     assert reloaded_persisted.result_type == window._UEP_POTENTIAL_GRID_RESULT_TYPE
     reloaded_window.close()
+    window.close()
+
+
+def test_main_window_uep_potential_grid_ready_keeps_active_dialog_visible(
+    qapp,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_grid_focus.mufinder", "UEPGridFocus")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    job = service.add_job(
+        doc,
+        label="uep_row_1",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.COMPLETED)
+    doc.runs[run.id] = run
+
+    output_dir = doc.project_root / "files" / "uep" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / f"{job.label}.castep").write_text(_fixture_text("Si2.castep"), encoding="utf-8")
+    (output_dir / f"{job.label}.den_fmt").write_text(_fixture_text("Si2.den_fmt"), encoding="utf-8")
+    (output_dir / f"{job.label}.cell").write_text(_fixture_text("Si2.cell"), encoding="utf-8")
+
+    grid = potential_grid(
+        UepField(
+            load_uep_source(
+                den_fmt_path=output_dir / f"{job.label}.den_fmt",
+                castep_path=output_dir / f"{job.label}.castep",
+                cell_path=output_dir / f"{job.label}.cell",
+            )
+        )
+    )
+
+    class _FakeDialog:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def isVisible(self) -> bool:
+            return True
+
+        def isActiveWindow(self) -> bool:
+            return True
+
+        def show(self) -> None:
+            self.calls.append("show")
+
+        def raise_(self) -> None:
+            self.calls.append("raise")
+
+        def activateWindow(self) -> None:
+            self.calls.append("activate")
+
+    dialog = _FakeDialog()
+    window._uep_analysis_dialogs[job.id] = dialog
+
+    window._on_uep_potential_grid_ready(job.id, main_window_module.serialize_potential_grid(grid))
+    qapp.processEvents()
+
+    assert dialog.calls == ["show", "raise", "activate"]
+    window.close()
+
+
+def test_main_window_uep_potential_grid_ready_keeps_visible_dialog_when_not_active(
+    qapp,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_grid_visible_focus.mufinder", "UEPGridVisibleFocus")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    job = service.add_job(
+        doc,
+        label="uep_row_1",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.COMPLETED)
+    doc.runs[run.id] = run
+
+    output_dir = doc.project_root / "files" / "uep" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / f"{job.label}.castep").write_text(_fixture_text("Si2.castep"), encoding="utf-8")
+    (output_dir / f"{job.label}.den_fmt").write_text(_fixture_text("Si2.den_fmt"), encoding="utf-8")
+    (output_dir / f"{job.label}.cell").write_text(_fixture_text("Si2.cell"), encoding="utf-8")
+
+    grid = potential_grid(
+        UepField(
+            load_uep_source(
+                den_fmt_path=output_dir / f"{job.label}.den_fmt",
+                castep_path=output_dir / f"{job.label}.castep",
+                cell_path=output_dir / f"{job.label}.cell",
+            )
+        )
+    )
+
+    events: list[str] = []
+    monkeypatch.setattr(window, "_refresh_uep_rows", lambda: events.append("refresh"))
+
+    class _FakeDialog:
+        def isVisible(self) -> bool:
+            return True
+
+        def isActiveWindow(self) -> bool:
+            return False
+
+        def show(self) -> None:
+            events.append("show")
+
+        def raise_(self) -> None:
+            events.append("raise")
+
+        def activateWindow(self) -> None:
+            events.append("activate")
+
+    window._uep_analysis_dialogs[job.id] = _FakeDialog()
+
+    window._on_uep_potential_grid_ready(job.id, main_window_module.serialize_potential_grid(grid))
+    qapp.processEvents()
+
+    assert events == ["show", "raise", "activate"]
     window.close()
 
 

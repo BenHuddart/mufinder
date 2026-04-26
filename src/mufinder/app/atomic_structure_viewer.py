@@ -244,6 +244,61 @@ def _get_atom_style(numbers: np.ndarray, symbols: np.ndarray) -> tuple[np.ndarra
     return colors, radii
 
 
+def _atom_color_overrides(structure: Structure | None, atom_count: int) -> np.ndarray | None:
+    if structure is None:
+        return None
+    raw_colors = structure.properties.get("atom_colors")
+    if not isinstance(raw_colors, Iterable) or isinstance(raw_colors, (str, bytes)):
+        return None
+    entries = list(raw_colors)
+    if len(entries) != int(atom_count):
+        return None
+
+    colors: list[tuple[float, float, float] | None] = []
+    has_override = False
+    for entry in entries:
+        if entry is None:
+            colors.append(None)
+            continue
+        if isinstance(entry, str) and not entry:
+            colors.append(None)
+            continue
+        if isinstance(entry, str):
+            qcolor = QColor(entry)
+            if not qcolor.isValid():
+                colors.append(None)
+                continue
+            colors.append(tuple(float(value) for value in qcolor.getRgbF()[:3]))
+            has_override = True
+            continue
+        if isinstance(entry, Iterable):
+            values = list(entry)
+            if len(values) != 3:
+                colors.append(None)
+                continue
+            try:
+                rgb = tuple(float(value) for value in values)
+            except (TypeError, ValueError):
+                colors.append(None)
+                continue
+            if any(not np.isfinite(value) for value in rgb):
+                colors.append(None)
+                continue
+            scale = 255.0 if max(rgb) > 1.0 else 1.0
+            colors.append(tuple(float(np.clip(value / scale, 0.0, 1.0)) for value in rgb))
+            has_override = True
+            continue
+        colors.append(None)
+    if not has_override:
+        return None
+
+    overrides = np.full((int(atom_count), 3), np.nan, dtype=float)
+    for index, color in enumerate(colors):
+        if color is not None:
+            overrides[index] = np.asarray(color, dtype=float)
+    return overrides
+
+
 def _compute_limits(
     positions: np.ndarray,
     *,
@@ -2089,6 +2144,10 @@ class AtomicStructureViewer(QWidget):
         numbers = np.asarray(self._atoms.get_atomic_numbers(), dtype=int)
         symbols = np.asarray(self._atoms.get_chemical_symbols())
         colors, radii = _get_atom_style(numbers, symbols)
+        color_overrides = _atom_color_overrides(self._structure, len(positions))
+        if color_overrides is not None:
+            override_mask = np.all(np.isfinite(color_overrides), axis=1)
+            colors[override_mask] = color_overrides[override_mask]
         spin_tips = np.empty((0, 3), dtype=float)
         if self._show_spins.isChecked() and self._spins is not None and len(self._spins) == len(positions):
             spin_tips = self._spin_extent_points(positions, radii, self._spins)

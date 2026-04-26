@@ -37,6 +37,14 @@ class _FakeSSH:
     def exists(self, remote_path: str) -> bool:
         return remote_path in self.remote_files
 
+    def listdir(self, remote_path: str) -> list[str]:
+        prefix = remote_path.rstrip("/") + "/"
+        entries: list[str] = []
+        for path in self.remote_files:
+            if path.startswith(prefix):
+                entries.append(path[len(prefix):].split("/", 1)[0])
+        return sorted(set(entries))
+
     def disconnect(self) -> None:
         self.is_connected = False
 
@@ -99,6 +107,12 @@ def _template_file(tmp_path: Path) -> Path:
     template = tmp_path / "template.sh"
     template.write_text("#!/bin/sh\n#SBATCH -J $job_name\n$castep_command\n", encoding="utf-8")
     return template
+
+
+def test_cluster_runner_polls_queue_once_per_minute(qapp) -> None:
+    runner = ClusterJobRunner()
+
+    assert runner._poll_timer.interval() == 60_000
 
 
 def test_cluster_runner_submit_uploads_files_and_emits_queued(qapp, tmp_path: Path) -> None:
@@ -354,6 +368,54 @@ def test_cluster_runner_poll_handles_cancelled_and_failed_states(qapp, tmp_path:
     assert failed[0][0] == fail_job
 
 
+def test_cluster_runner_poll_failed_downloads_numbered_error_files(qapp, tmp_path: Path) -> None:
+    runner = ClusterJobRunner()
+    ssh = _FakeSSH()
+    runner._ssh = ssh
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+
+    job_id = uuid4()
+    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
+        job_id=job_id,
+        remote_job_id="102",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+    )
+    scheduler._states["102"] = "F"
+    ssh.remote_files["/remote/job/seed.0001.err"] = b"numbered error"
+    ssh.remote_files["/remote/job/seed.other.err"] = b"not selected"
+
+    runner._poll_queue()
+
+    assert (tmp_path / "seed.0001.err").read_bytes() == b"numbered error"
+    assert not (tmp_path / "seed.other.err").exists()
+
+
+def test_cluster_runner_poll_failed_downloads_slurm_output(qapp, tmp_path: Path) -> None:
+    runner = ClusterJobRunner()
+    ssh = _FakeSSH()
+    runner._ssh = ssh
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+
+    job_id = uuid4()
+    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
+        job_id=job_id,
+        remote_job_id="771300",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+    )
+    scheduler._states["771300"] = "F"
+    ssh.remote_files["/remote/job/slurm-771300.out"] = b"slurm failure details"
+
+    runner._poll_queue()
+
+    assert (tmp_path / "slurm-771300.out").read_bytes() == b"slurm failure details"
+
+
 def test_cluster_runner_retrieve_incomplete_output_marks_failed(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -384,6 +446,37 @@ def test_cluster_runner_retrieve_incomplete_output_marks_failed(
 
     assert failures == ["not converged"]
     assert statuses[-1] == JobStatus.FAILED.value
+
+
+def test_cluster_runner_retrieve_downloads_numbered_error_files(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = ClusterJobRunner()
+    ssh = _FakeSSH()
+    runner._ssh = ssh
+    runner._scheduler = _FakeScheduler()
+
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="125",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+    )
+    ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
+    ssh.remote_files["/remote/job/seed.0001.err"] = b"rank one"
+    ssh.remote_files["/remote/job/seed.0002.err"] = b"rank two"
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+
+    runner._retrieve_results(entry)
+
+    assert (tmp_path / "seed.0001.err").read_bytes() == b"rank one"
+    assert (tmp_path / "seed.0002.err").read_bytes() == b"rank two"
 
 
 def test_cluster_runner_retrieve_downloads_optional_formatted_density(
@@ -864,6 +957,49 @@ def test_cluster_runner_reconnect_reuses_cached_password_for_same_cluster(
     runner.connect_to_cluster(config, password=None)
 
     assert _SSHFactory.passwords == ["secret", "secret"]
+
+
+def test_cluster_runner_reconnect_reuses_cached_key_passphrase(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = ClusterJobRunner()
+
+    class _SSHFactory:
+        passwords: list[str | None] = []
+
+        def __init__(self, _config, *, settings=None) -> None:
+            _ = settings
+            self.is_connected = False
+
+        def connect(self, password: str | None = None) -> None:
+            self.__class__.passwords.append(password)
+            self.is_connected = True
+
+        def disconnect(self) -> None:
+            self.is_connected = False
+
+    monkeypatch.setattr(cluster_runner_module, "SSHConnection", _SSHFactory)
+    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+
+    config = cluster_runner_module.ClusterConfig(
+        name="redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        username="alice",
+        auth_method="key",
+        key_path="/Users/alice/.ssh/id_ed25519",
+        default_working_directory="/mnt/redwoodfs/alice",
+        queue_system="addqueue",
+        cores_per_node=32,
+        default_walltime="",
+        template_script_path="",
+    )
+
+    runner.connect_to_cluster(config, password="secret-passphrase")
+    runner._ssh.is_connected = False
+    runner.connect_to_cluster(config, password=None)
+
+    assert _SSHFactory.passwords == ["secret-passphrase", "secret-passphrase"]
 
 
 def test_cluster_runner_submit_addqueue_forwards_runtime_options(

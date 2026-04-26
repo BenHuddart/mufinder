@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIEWER_RADIUS_ANG
-from mufinder.app.uep_clustering_dialog import UepClusteringDialog
+from mufinder.app.uep_clustering_dialog import UepClusteringDialog, cluster_color_map
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.theme import (
     body_font_family,
@@ -1111,6 +1111,9 @@ class _ManageViewerMuonsDialog(QDialog):
             else:
                 header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
                 header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False)
+            button.setDefault(False)
         self._refresh_actions()
 
     def set_candidate_entries(self, entries: list[_BatchMuonCandidate]) -> None:
@@ -1532,6 +1535,7 @@ class UepAnalysisDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setWindowTitle(f"UEP Analysis - {source_job_label}")
         self.resize(1180, 920)
         self.setMinimumSize(980, 760)
@@ -1589,6 +1593,7 @@ class UepAnalysisDialog(QDialog):
         self._isosurface_request_id = 0
         self._pending_isosurface_level_ev: float | None = None
         self._pending_isosurface_layer_index: int | None = None
+        self._pending_isosurface_rebuilds: list[tuple[int, float]] = []
         self._pending_slice_preview_bounds: tuple[float, float] | None = None
         self._isosurface_muon_dialog: _ManageViewerMuonsDialog | None = None
         self._slice_muon_dialog: _ManageViewerMuonsDialog | None = None
@@ -1606,9 +1611,11 @@ class UepAnalysisDialog(QDialog):
         self._line_canvas = FigureCanvasQTAgg(self._line_figure)
         self._plane_figure = Figure(figsize=(6.0, 4.0), facecolor=palette.bg_surface, constrained_layout=True)
         self._plane_canvas = FigureCanvasQTAgg(self._plane_figure)
-        self._slice_colorbar_figure = Figure(figsize=(2.6, 5.6), facecolor=palette.bg_surface)
+        self._slice_colorbar_figure = Figure(figsize=(2.6, 3.2), facecolor=palette.bg_surface)
         self._slice_colorbar_canvas = FigureCanvasQTAgg(self._slice_colorbar_figure)
-        self._slice_colorbar_canvas.setMinimumHeight(360)
+        self._slice_colorbar_canvas.setMinimumHeight(180)
+        self._slice_colorbar_canvas.setMaximumHeight(320)
+        self._slice_colorbar_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self._tabs = QTabWidget(self)
         self._tabs.setObjectName("uepAnalysisTabs")
@@ -1633,6 +1640,7 @@ class UepAnalysisDialog(QDialog):
         if initial_potential_grid is not None and self._grid_matches_current_gw_factor(initial_potential_grid):
             self._apply_potential_grid_cache(initial_potential_grid, status_text="Cached full-cell potential grid is ready.")
         self._restore_initial_state(initial_state)
+        self._disable_default_dialog_buttons()
 
     @staticmethod
     def _state_gw_factor(state: Mapping[str, object] | None) -> float:
@@ -1686,6 +1694,11 @@ class UepAnalysisDialog(QDialog):
             }}
             """
         )
+
+    def _disable_default_dialog_buttons(self) -> None:
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False)
+            button.setDefault(False)
 
     @staticmethod
     def _progress_bar_styles(chunk_color: str, *, text_color: str | None = None) -> str:
@@ -2237,6 +2250,16 @@ class UepAnalysisDialog(QDialog):
         self._slice_hide_atoms.toggled.connect(self._on_slice_hide_atoms_toggled)
         side_layout.addWidget(self._slice_hide_atoms)
         side_layout.addSpacing(8)
+        slice_muon_title = QLabel("Muons", side_card)
+        slice_muon_title.setObjectName("uepIsosurfaceLegendTitle")
+        side_layout.addWidget(slice_muon_title)
+        self._slice_muon_legend_entries = QWidget(side_card)
+        self._slice_muon_legend_entries.setStyleSheet("background: transparent;")
+        self._slice_muon_legend_entries_layout = QVBoxLayout(self._slice_muon_legend_entries)
+        self._slice_muon_legend_entries_layout.setContentsMargins(0, 0, 0, 0)
+        self._slice_muon_legend_entries_layout.setSpacing(5)
+        side_layout.addWidget(self._slice_muon_legend_entries)
+        side_layout.addSpacing(8)
         self._slice_manage_muons_button = QPushButton("Add / remove muon", side_card)
         self._slice_manage_muons_button.clicked.connect(self._open_slice_muon_dialog)
         side_layout.addWidget(self._slice_manage_muons_button, 0, Qt.AlignmentFlag.AlignRight)
@@ -2247,6 +2270,7 @@ class UepAnalysisDialog(QDialog):
         self._set_slice_status("Calculate the full-cell electrostatic-potential grid to enable slice viewing.", kind="info")
         self._refresh_slice_plane_buttons()
         self._refresh_slice_colorbar()
+        self._refresh_slice_muon_legend()
         self._refresh_gw_factor_controls()
         return tab
 
@@ -2629,6 +2653,10 @@ class UepAnalysisDialog(QDialog):
                     layer.status_text = self._managed_muon_isosurface_status_text(updated_entry)
                 if int(layer_index) == int(self._active_isosurface_index):
                     self._set_isosurface_status(layer.status_text, kind=layer.status_kind)
+        if viewer_kind == "isosurface":
+            self._refresh_isosurface_legend()
+        else:
+            self._refresh_slice_muon_legend()
         self._refresh_viewer_muon_dialogs()
         if not self._restoring_state:
             self._emit_state_changed()
@@ -2805,7 +2833,30 @@ class UepAnalysisDialog(QDialog):
         host_count = len(self._viewer_host_structure.species)
         return [host_count + index for index, entry in enumerate(entries) if entry.key in selected_keys]
 
-    def _build_structure_with_viewer_muons(self, muons: list[_ManagedViewerMuonState]) -> Structure:
+    def _viewer_muon_cluster_color_map(self) -> dict[int, str]:
+        labels: list[int] = []
+        if self._latest_batch_summary is not None:
+            labels.extend(int(cluster.cluster_index) for cluster in self._latest_batch_summary.clusters)
+        for entry in (*self._isosurface_viewer_muons, *self._slice_viewer_muons):
+            if entry.cluster_index is not None:
+                labels.append(int(entry.cluster_index))
+        return cluster_color_map(labels)
+
+    def _viewer_muon_color(self, entry: _ManagedViewerMuonState, viewer_kind: str) -> str:
+        if entry.cluster_index is not None:
+            color = self._viewer_muon_cluster_color_map().get(int(entry.cluster_index))
+            if color is not None:
+                return color
+        entries = self._viewer_muons_for(viewer_kind)
+        try:
+            index = entries.index(entry)
+        except ValueError:
+            index = 0
+        cmap = colormaps["tab20"]
+        return mcolors.to_hex(cmap((index + 10) % cmap.N))
+
+    def _build_structure_with_viewer_muons(self, viewer_kind: str) -> Structure:
+        muons = self._viewer_muons_for(viewer_kind)
         if not muons:
             return self._viewer_host_structure
         host = self._viewer_host_structure
@@ -2814,6 +2865,13 @@ class UepAnalysisDialog(QDialog):
             values = properties.get(key)
             if isinstance(values, list) and len(values) == len(host.species):
                 properties[key] = list(values) + [0.0] * len(muons)
+        host_atom_colors = properties.get("atom_colors")
+        if isinstance(host_atom_colors, list) and len(host_atom_colors) == len(host.species):
+            atom_colors = list(host_atom_colors)
+        else:
+            atom_colors = [None] * len(host.species)
+        atom_colors.extend(self._viewer_muon_color(entry, viewer_kind) for entry in muons)
+        properties["atom_colors"] = atom_colors
         return Structure(
             label=host.label,
             origin=host.origin,
@@ -2869,6 +2927,15 @@ class UepAnalysisDialog(QDialog):
     def _refresh_viewer_muon_dialogs(self) -> None:
         self._refresh_isosurface_muon_dialog()
         self._refresh_slice_muon_dialog()
+
+    @staticmethod
+    def _clear_widget_layout(layout: QVBoxLayout | QHBoxLayout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
 
     @staticmethod
     def _keep_dialog_in_front(dialog: QDialog | None) -> None:
@@ -2984,7 +3051,7 @@ class UepAnalysisDialog(QDialog):
             label=entry.label,
             key=layer_key,
             level_ev=display_level,
-            color="#dc2626",
+            color=self._viewer_muon_color(entry, "isosurface"),
             status_text=self._managed_muon_isosurface_status_text(entry),
             status_kind="success",
             managed_muon_key=entry.key,
@@ -3606,7 +3673,7 @@ class UepAnalysisDialog(QDialog):
         previous_pyvista_snapshot = deepcopy(
             live_pyvista_snapshot if live_pyvista_snapshot is not None else getattr(self._slice_viewer, "_pyvista_camera_snapshot", None)
         )
-        self._slice_viewer_structure = self._build_structure_with_viewer_muons(self._slice_viewer_muons)
+        self._slice_viewer_structure = self._build_structure_with_viewer_muons("slice")
         if getattr(self._slice_viewer, "_structure", None) is not self._slice_viewer_structure:
             self._set_viewer_structure_preserving_view(self._slice_viewer, self._slice_viewer_structure)
         self._slice_viewer.set_slice_planes(self._viewer_slice_surfaces(preview=preview))
@@ -3631,6 +3698,47 @@ class UepAnalysisDialog(QDialog):
             self._slice_viewer._pyvista_camera_snapshot = previous_pyvista_snapshot
             self._slice_viewer._render()
         self._sync_slice_viewer_muon_selection()
+        self._refresh_slice_muon_legend()
+
+    def _add_muon_legend_entries(self, layout: QVBoxLayout, parent: QWidget, viewer_kind: str) -> None:
+        entries = self._viewer_muons_for(viewer_kind)
+        if not entries:
+            empty = QLabel("No muons overlaid.", parent)
+            empty.setObjectName("uepIsosurfaceBound")
+            empty.setWordWrap(True)
+            empty.setStyleSheet("background: transparent;")
+            layout.addWidget(empty)
+            return
+
+        for entry in entries:
+            row = QWidget(parent)
+            row.setStyleSheet("background: transparent;")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+
+            swatch = _IsosurfaceLegendSwatch(row)
+            swatch.set_color(self._viewer_muon_color(entry, viewer_kind))
+            row_layout.addWidget(swatch, 0, Qt.AlignmentFlag.AlignVCenter)
+
+            label_parts = [entry.label]
+            if entry.cluster_index is not None:
+                label_parts.append(f"Cluster {int(entry.cluster_index)}")
+            elif entry.source_label:
+                label_parts.append(entry.source_label)
+            label = QLabel(" | ".join(label_parts), row)
+            label.setObjectName("uepIsosurfaceBound")
+            label.setWordWrap(True)
+            label.setStyleSheet("background: transparent;")
+            row_layout.addWidget(label, 1, Qt.AlignmentFlag.AlignVCenter)
+            layout.addWidget(row)
+
+    def _refresh_slice_muon_legend(self) -> None:
+        if not hasattr(self, "_slice_muon_legend_entries_layout"):
+            return
+        self._clear_widget_layout(self._slice_muon_legend_entries_layout)
+        self._add_muon_legend_entries(self._slice_muon_legend_entries_layout, self._slice_muon_legend_entries, "slice")
+        self._slice_muon_legend_entries.adjustSize()
 
     def _refresh_slice_colorbar(self) -> None:
         self._slice_colorbar_figure.clear()
@@ -3776,7 +3884,12 @@ class UepAnalysisDialog(QDialog):
             lower, upper = upper, lower
         return (lower, upper)
 
-    def _reapply_potential_grid_display_mode(self, *, status_text: str | None = None) -> None:
+    def _reapply_potential_grid_display_mode(
+        self,
+        *,
+        status_text: str | None = None,
+        sync_isosurface_viewer: bool = True,
+    ) -> None:
         raw_grid = self._potential_grid_raw_cache
         if raw_grid is None:
             self._potential_grid_cache = None
@@ -3832,7 +3945,8 @@ class UepAnalysisDialog(QDialog):
         self._refresh_isosurface_controls()
         self._refresh_slice_controls()
         self._update_isosurface_bounds()
-        self._sync_isosurface_viewer_layers()
+        if sync_isosurface_viewer:
+            self._sync_isosurface_viewer_layers()
         bounds = self._slice_level_bounds()
         if bounds is not None:
             shifted_slice_bounds = self._shift_slice_saturation_bounds(delta_ev=delta)
@@ -3869,7 +3983,7 @@ class UepAnalysisDialog(QDialog):
         return surfaces
 
     def _sync_isosurface_viewer_layers(self) -> None:
-        self._isosurface_viewer_structure = self._build_structure_with_viewer_muons(self._isosurface_viewer_muons)
+        self._isosurface_viewer_structure = self._build_structure_with_viewer_muons("isosurface")
         self._set_viewer_structure_preserving_view(self._isosurface_viewer, self._isosurface_viewer_structure)
         surfaces = self._viewer_isosurface_surfaces()
         self._isosurface_viewer.set_isosurfaces(surfaces)
@@ -3883,12 +3997,7 @@ class UepAnalysisDialog(QDialog):
     def _refresh_isosurface_legend(self) -> None:
         if not hasattr(self, "_isosurface_legend_entries_layout"):
             return
-        while self._isosurface_legend_entries_layout.count():
-            item = self._isosurface_legend_entries_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()
+        self._clear_widget_layout(self._isosurface_legend_entries_layout)
 
         if not self._isosurface_layers:
             empty = QLabel("No isosurfaces yet.", self._isosurface_legend_entries)
@@ -3918,24 +4027,42 @@ class UepAnalysisDialog(QDialog):
             level_label.setStyleSheet("background: transparent;")
             row_layout.addWidget(level_label, 1, Qt.AlignmentFlag.AlignVCenter)
             self._isosurface_legend_entries_layout.addWidget(row)
+        muon_title = QLabel("Muons", self._isosurface_legend_entries)
+        muon_title.setObjectName("uepIsosurfaceLegendTitle")
+        muon_title.setStyleSheet("background: transparent;")
+        self._isosurface_legend_entries_layout.addWidget(muon_title)
+        self._add_muon_legend_entries(
+            self._isosurface_legend_entries_layout,
+            self._isosurface_legend_entries,
+            "isosurface",
+        )
         self._isosurface_legend_entries.adjustSize()
         self._isosurface_legend_card.adjustSize()
 
     def _refresh_isosurface_layer_tabs(self) -> None:
+        if not self._isosurface_layers:
+            self._isosurface_layers = [_IsosurfaceLayerState(label="Isosurface 1", key=self._new_isosurface_layer_key())]
         self._active_isosurface_index = min(max(int(self._active_isosurface_index), 0), len(self._isosurface_layers) - 1)
         previous = self._isosurface_layer_tabs.blockSignals(True)
-        while self._isosurface_layer_tabs.count():
-            self._isosurface_layer_tabs.removeTab(0)
-        for index, _layer in enumerate(self._isosurface_layers):
-            self._isosurface_layer_tabs.addTab(str(index + 1))
-        self._isosurface_layer_tabs.set_layer_colors([layer.color for layer in self._isosurface_layers])
-        if self._isosurface_layers:
+        try:
+            if self._isosurface_layer_tabs.count() != len(self._isosurface_layers):
+                while self._isosurface_layer_tabs.count():
+                    self._isosurface_layer_tabs.removeTab(0)
+                for index, _layer in enumerate(self._isosurface_layers):
+                    self._isosurface_layer_tabs.addTab(str(index + 1))
+            else:
+                for index, _layer in enumerate(self._isosurface_layers):
+                    expected = str(index + 1)
+                    if self._isosurface_layer_tabs.tabText(index) != expected:
+                        self._isosurface_layer_tabs.setTabText(index, expected)
+            self._isosurface_layer_tabs.set_layer_colors([layer.color for layer in self._isosurface_layers])
             self._isosurface_layer_tabs.setCurrentIndex(self._active_isosurface_index)
+        finally:
+            self._isosurface_layer_tabs.blockSignals(previous)
         idle = not self._is_isosurface_busy()
         self._isosurface_delete_button.setEnabled(len(self._isosurface_layers) > 1 and idle)
         self._isosurface_add_button.setEnabled(idle)
         self._isosurface_layer_tabs.setEnabled(idle)
-        self._isosurface_layer_tabs.blockSignals(previous)
         self._refresh_isosurface_legend()
 
     def _apply_active_isosurface_layer_to_controls(self) -> None:
@@ -3962,6 +4089,7 @@ class UepAnalysisDialog(QDialog):
         self._isosurface_preview_timer.stop()
         self._pending_isosurface_level_ev = None
         self._pending_isosurface_layer_index = None
+        self._pending_isosurface_rebuilds = []
 
     def _add_isosurface_layer(self) -> None:
         if self._is_isosurface_busy():
@@ -4020,9 +4148,18 @@ class UepAnalysisDialog(QDialog):
         if not self._restoring_state:
             self._emit_state_changed()
 
-    def _apply_potential_grid_cache(self, grid: UepPotentialGrid, *, status_text: str | None = None) -> None:
+    def _apply_potential_grid_cache(
+        self,
+        grid: UepPotentialGrid,
+        *,
+        status_text: str | None = None,
+        sync_isosurface_viewer: bool = True,
+    ) -> None:
         self._potential_grid_raw_cache = grid
-        self._reapply_potential_grid_display_mode(status_text=status_text)
+        self._reapply_potential_grid_display_mode(
+            status_text=status_text,
+            sync_isosurface_viewer=sync_isosurface_viewer,
+        )
         self._update_isosurface_level_label()
 
     def _invalidate_potential_grid_cache(self) -> None:
@@ -4065,7 +4202,11 @@ class UepAnalysisDialog(QDialog):
             self._set_isosurface_status(status_text, kind="busy" if busy else "info")
 
     def _is_isosurface_busy(self) -> bool:
-        return self._isosurface_grid_thread is not None or self._isosurface_mesh_thread is not None
+        return (
+            self._isosurface_grid_thread is not None
+            or self._isosurface_mesh_thread is not None
+            or bool(self._pending_isosurface_rebuilds)
+        )
 
     def _current_isosurface_level(self) -> float | None:
         bounds = self._isosurface_level_bounds()
@@ -4208,11 +4349,11 @@ class UepAnalysisDialog(QDialog):
         self._potential_grid_preview_cache = None
         self._potential_grid_live_preview_cache = None
         for layer in self._isosurface_layers:
-            layer.mesh = None
             layer.status_text = grid_message
             layer.status_kind = "busy"
-        self._latest_isosurface_mesh = None
-        self._sync_isosurface_viewer_layers()
+        if self._active_isosurface_layer().mesh is None:
+            self._latest_isosurface_mesh = None
+        self._refresh_isosurface_legend()
         self._set_slice_status(grid_message, kind="busy")
 
         thread = _IsosurfaceGridThread(self._field)
@@ -4231,6 +4372,9 @@ class UepAnalysisDialog(QDialog):
 
     def _on_isosurface_mesh_thread_finished(self) -> None:
         self._isosurface_mesh_thread = None
+        if self._pending_isosurface_rebuilds and self._potential_grid_cache is not None:
+            self._start_next_isosurface_rebuild()
+            return
         self._refresh_isosurface_controls()
 
     def _on_isosurface_grid_ready(self, grid: object) -> None:
@@ -4239,19 +4383,32 @@ class UepAnalysisDialog(QDialog):
             return
         grid_gw_factor = 5.0 if grid.gw_factor is None else float(grid.gw_factor)
         ready_message = f"Cached full-cell potential grid is ready for gw_factor {grid_gw_factor:.3f}."
-        self._apply_potential_grid_cache(grid, status_text=ready_message)
+        self._apply_potential_grid_cache(
+            grid,
+            status_text=ready_message,
+            sync_isosurface_viewer=False,
+        )
         self.potential_grid_ready.emit(serialize_potential_grid(grid))
         bounds = self._isosurface_level_bounds()
-        active_layer = self._active_isosurface_layer()
-        if active_layer.mesh is None and bounds is not None:
-            level = 0.5 * (bounds[0] + bounds[1])
-        else:
-            level = self._current_isosurface_level()
-        if level is None and bounds is not None:
-            level = 0.5 * (bounds[0] + bounds[1])
-        if level is not None:
-            self._set_isosurface_level(level)
-            self._start_isosurface_mesh_calculation(level)
+        rebuilds: list[tuple[int, float]] = []
+        for index, layer in enumerate(self._isosurface_layers):
+            level = layer.level_ev
+            if level is None and index == self._active_isosurface_index:
+                level = self._current_isosurface_level()
+            if level is None and bounds is not None:
+                level = 0.5 * (bounds[0] + bounds[1])
+            if level is None:
+                layer.status_text = "The cached potential grid is ready. Choose a level to preview this isosurface."
+                layer.status_kind = "info"
+                continue
+            layer.level_ev = float(level)
+            rebuilds.append((index, float(level)))
+        if rebuilds:
+            self._pending_isosurface_rebuilds = rebuilds
+            active_level = self._isosurface_layers[self._active_isosurface_index].level_ev
+            if active_level is not None:
+                self._set_isosurface_level(float(active_level))
+            self._start_next_isosurface_rebuild()
         else:
             self._set_isosurface_busy(False)
             self._set_isosurface_status(
@@ -4261,16 +4418,27 @@ class UepAnalysisDialog(QDialog):
         self._set_slice_status(ready_message, kind="success")
 
     def _on_isosurface_grid_failed(self, message: str) -> None:
+        self._pending_isosurface_rebuilds = []
         self._set_isosurface_busy(False)
         self._set_isosurface_status(f"Isosurface calculation failed: {message}", kind="error")
         self._set_slice_status(f"Slice grid calculation failed: {message}", kind="error")
 
-    def _start_isosurface_mesh_calculation(self, level_ev: float) -> None:
+    def _start_next_isosurface_rebuild(self) -> None:
+        if self._isosurface_mesh_thread is not None:
+            return
+        while self._pending_isosurface_rebuilds:
+            layer_index, level = self._pending_isosurface_rebuilds.pop(0)
+            if 0 <= int(layer_index) < len(self._isosurface_layers):
+                self._start_isosurface_mesh_calculation(float(level), layer_index=int(layer_index))
+                return
+        self._set_isosurface_busy(False)
+
+    def _start_isosurface_mesh_calculation(self, level_ev: float, *, layer_index: int | None = None) -> None:
         if self._potential_grid_cache is None:
             return
         if self._isosurface_mesh_thread is not None:
             return
-        layer_index = int(self._active_isosurface_index)
+        layer_index = int(self._active_isosurface_index if layer_index is None else layer_index)
         preview_grid = self._potential_grid_preview_cache
         grid = preview_grid if preview_grid is not None else self._potential_grid_cache
         self._isosurface_request_id += 1
@@ -4287,16 +4455,17 @@ class UepAnalysisDialog(QDialog):
         thread.finished.connect(self._on_isosurface_mesh_thread_finished)
         thread.finished.connect(thread.deleteLater)
         self._isosurface_mesh_thread = thread
-        layer = self._active_isosurface_layer()
+        layer = self._isosurface_layers[layer_index]
         layer.level_ev = float(level_ev)
         layer.status_text = (
             f"Refining the isosurface preview at {level_ev:.6f} eV "
             "from the denser cached grid..."
         )
         layer.status_kind = "busy"
+        status_text = layer.status_text if layer_index == self._active_isosurface_index else None
         self._set_isosurface_busy(
             True,
-            status_text=layer.status_text,
+            status_text=status_text,
         )
         thread.start()
 
@@ -4447,7 +4616,8 @@ class UepAnalysisDialog(QDialog):
         if int(request_id) != self._isosurface_request_id or not isinstance(mesh, UepIsosurfaceMesh):
             return
         self._render_isosurface_mesh_for_layer(mesh, layer_index=layer_index)
-        self._set_isosurface_busy(False)
+        if not self._pending_isosurface_rebuilds:
+            self._set_isosurface_busy(False)
         self._emit_state_changed()
         self._dispatch_pending_isosurface_request()
 
@@ -4458,9 +4628,10 @@ class UepAnalysisDialog(QDialog):
             layer = self._isosurface_layers[int(layer_index)]
             layer.status_text = f"Isosurface extraction failed: {message}"
             layer.status_kind = "error"
-        self._set_isosurface_busy(False)
         if int(layer_index) == self._active_isosurface_index:
             self._set_isosurface_status(f"Isosurface extraction failed: {message}", kind="error")
+        if not self._pending_isosurface_rebuilds:
+            self._set_isosurface_busy(False)
         self._emit_state_changed()
         self._dispatch_pending_isosurface_request()
 
@@ -4553,11 +4724,7 @@ class UepAnalysisDialog(QDialog):
             result.zero_point_energy_ev is not None or result.total_energy_ev is not None
             for result in self._latest_batch_results
         ):
-            completed = max(sum(1 for result in self._latest_batch_results if result.success), 1)
-            self._batch_zpe_progress.setRange(0, completed)
-            self._batch_zpe_progress.setValue(completed)
-            self._apply_batch_zpe_progress_style(completed=True)
-            self._batch_zpe_progress.setFormat("ZPE calculation complete")
+            self._set_batch_zpe_progress_complete()
             return
         self._set_batch_zpe_progress_idle()
 
@@ -5266,6 +5433,7 @@ class UepAnalysisDialog(QDialog):
             "batch_results": [asdict(result) for result in self._latest_batch_results],
             "batch_summary_data": None if self._latest_batch_summary is None else asdict(self._latest_batch_summary),
             "batch_summary_text": self._batch_summary.toPlainText(),
+            "batch_zpe_completed": self._batch_zpe_progress.format() == "ZPE calculation complete",
             "batch_selected_keys": selected_keys,
             "clustering_window_state": (
                 dict(self._clustering_window_state or {})
@@ -5278,6 +5446,11 @@ class UepAnalysisDialog(QDialog):
         if self._shutting_down:
             return
         self.state_changed.emit(self.state_snapshot())
+        self._keep_visible_child_dialogs_in_front()
+
+    def _keep_visible_child_dialogs_in_front(self) -> None:
+        for dialog in (self._clustering_dialog, self._isosurface_muon_dialog, self._slice_muon_dialog):
+            self._keep_dialog_in_front(dialog)
 
     def _restore_initial_state(self, state: Mapping[str, object] | None) -> None:
         if not isinstance(state, Mapping):
@@ -5537,6 +5710,8 @@ class UepAnalysisDialog(QDialog):
             self._pending_open_clustering_dialog = False
             self._batch_clustering_button.setEnabled(bool(self._latest_batch_results) and self._batch_search_thread is None)
             self._sync_batch_zpe_progress_from_results()
+            if bool(state.get("batch_zpe_completed")) and self._latest_batch_results:
+                self._set_batch_zpe_progress_complete()
 
             current_tab = state.get("current_tab")
             self._tabs.setCurrentIndex(min(self._normalized_visible_tab_index(current_tab), self._tabs.count() - 1))
@@ -5643,6 +5818,13 @@ class UepAnalysisDialog(QDialog):
         self._batch_zpe_progress.setValue(0)
         self._batch_zpe_progress.setFormat("Ready")
 
+    def _set_batch_zpe_progress_complete(self) -> None:
+        completed = max(sum(1 for result in self._latest_batch_results if result.success), 1)
+        self._batch_zpe_progress.setRange(0, completed)
+        self._batch_zpe_progress.setValue(completed)
+        self._apply_batch_zpe_progress_style(completed=True)
+        self._batch_zpe_progress.setFormat("ZPE calculation complete")
+
     def _on_batch_search_prepared(self, total: int, summary_text: str) -> None:
         self._set_batch_log(summary_text)
         self._apply_batch_search_progress_style(completed=False)
@@ -5684,7 +5866,7 @@ class UepAnalysisDialog(QDialog):
 
     def _on_batch_search_thread_finished(self) -> None:
         sender = self.sender()
-        if sender is self._batch_search_thread:
+        if sender is None or sender is self._batch_search_thread:
             self._batch_search_thread = None
         self._set_batch_controls_enabled(True)
 
@@ -5744,11 +5926,7 @@ class UepAnalysisDialog(QDialog):
             self._batch_zpe_progress.setFormat("ZPE calculation failed")
             return
         self._apply_updated_batch_results(results, summary_text)
-        successful = sum(1 for result in results if result.success)
-        self._apply_batch_zpe_progress_style(completed=True)
-        self._batch_zpe_progress.setRange(0, max(successful, 1))
-        self._batch_zpe_progress.setValue(max(successful, 1))
-        self._batch_zpe_progress.setFormat("ZPE calculation complete")
+        self._set_batch_zpe_progress_complete()
         self._emit_state_changed()
 
     def _on_batch_zpe_failed(self, message: str) -> None:
@@ -5761,7 +5939,7 @@ class UepAnalysisDialog(QDialog):
 
     def _on_batch_zpe_thread_finished(self) -> None:
         sender = self.sender()
-        if sender is self._batch_zpe_thread:
+        if sender is None or sender is self._batch_zpe_thread:
             self._batch_zpe_thread = None
         self._set_batch_controls_enabled(True)
 
@@ -5895,6 +6073,10 @@ class UepAnalysisDialog(QDialog):
         if self._shutting_down:
             super().closeEvent(event)
             return
+        try:
+            self.state_changed.emit(self.state_snapshot())
+        except RuntimeError:
+            pass
         self._shutting_down = True
         preview_timer = getattr(self, "_isosurface_preview_timer", None)
         if preview_timer is not None:

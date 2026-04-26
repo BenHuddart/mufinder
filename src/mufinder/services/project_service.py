@@ -80,6 +80,7 @@ class WorkflowSupercellAsset:
 
     structure_id: UUID
     label: str
+    parent_structure_id: UUID | None
     owner_workflow_stage: WorkflowStage
     matrix: list[list[int]]
     source_asset_structure_id: UUID | None = None
@@ -566,6 +567,7 @@ class ProjectService:
         return WorkflowSupercellAsset(
             structure_id=structure.id,
             label=structure.label,
+            parent_structure_id=structure.parent_structure_id,
             owner_workflow_stage=owner_stage,
             matrix=matrix,
             source_asset_structure_id=self._parse_optional_uuid(raw.get("source_asset_structure_id")),
@@ -796,6 +798,7 @@ class ProjectService:
         workflow_stage: WorkflowStage,
         host_structure_id: UUID,
         matrix: list[list[int]],
+        label: str | None = None,
         source_asset_structure_id: UUID | None = None,
         reuse_existing: bool = True,
     ) -> Structure:
@@ -824,7 +827,7 @@ class ProjectService:
             atomic_spins=self._structure_atomic_spins(host),
             propagation_vector=self._structure_propagation_vector(host),
         )
-        structure.label = self._supercell_asset_label(workflow_stage, parsed_matrix)
+        structure.label = str(label or "").strip() or self._supercell_asset_label(workflow_stage, parsed_matrix)
         structure.parent_structure_id = host_structure_id
         structure.properties["supercell_asset"] = {
             "matrix": [list(row) for row in parsed_matrix],
@@ -835,6 +838,133 @@ class ProjectService:
         }
         document.structures[structure.id] = structure
         return structure
+
+    def supercell_asset_references(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+    ) -> list[str]:
+        """Return user-facing references to a saved supercell asset."""
+
+        references: list[str] = []
+        for definition in document.calculations.values():
+            if asset_structure_id in definition.input_structure_ids:
+                references.append(
+                    f"{definition.workflow_stage.value} calculation '{definition.calc_type}'"
+                )
+
+        for stage_value, raw in self._workflow_supercells_state(document).items():
+            if not isinstance(raw, dict):
+                continue
+            raw_id = self._parse_optional_uuid(raw.get("structure_id"))
+            if raw_id == asset_structure_id:
+                references.append(f"{stage_value} active selection")
+
+        return references
+
+    def supercell_asset_is_frozen(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+    ) -> bool:
+        """Return whether the asset is frozen into a calculation definition."""
+
+        return any(asset_structure_id in definition.input_structure_ids for definition in document.calculations.values())
+
+    def rename_workflow_supercell_asset(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+        label: str,
+    ) -> Structure:
+        """Rename a saved supercell asset."""
+
+        structure = document.structures.get(asset_structure_id)
+        if structure is None or self._supercell_asset(structure) is None:
+            raise ValueError("Selected structure is not a saved supercell asset.")
+        cleaned = str(label).strip()
+        if not cleaned:
+            raise ValueError("Supercell name must not be empty.")
+        structure.label = cleaned
+        return structure
+
+    def update_workflow_supercell_asset_matrix(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+        matrix: list[list[int]],
+        label: str | None = None,
+    ) -> Structure:
+        """Regenerate an unfrozen saved supercell asset with a new matrix."""
+
+        structure = document.structures.get(asset_structure_id)
+        if structure is None:
+            raise ValueError("Selected supercell does not exist in this project.")
+        asset = self._supercell_asset(structure)
+        if asset is None:
+            raise ValueError("Selected structure is not a saved supercell asset.")
+        if self.supercell_asset_is_frozen(document, asset_structure_id=asset_structure_id):
+            raise ValueError("This supercell is already used by configured calculations; save a new copy instead.")
+        if structure.parent_structure_id is None:
+            raise ValueError("Saved supercell is missing its source structure.")
+        host = document.structures.get(structure.parent_structure_id)
+        if host is None:
+            raise ValueError("Saved supercell source structure is no longer available.")
+
+        parsed_matrix = self._coerce_supercell_matrix(matrix)
+        if parsed_matrix is None:
+            raise ValueError("Supercell matrix must be a 3x3 integer matrix.")
+
+        regenerated, _expanded_spins = build_supercell_structure(
+            host,
+            parsed_matrix,
+            atomic_spins=self._structure_atomic_spins(host),
+            propagation_vector=self._structure_propagation_vector(host),
+        )
+        structure.lattice_vectors = [list(vector) for vector in regenerated.lattice_vectors]
+        structure.species = list(regenerated.species)
+        structure.fractional_positions = [list(position) for position in regenerated.fractional_positions]
+        structure.label = str(label or "").strip() or structure.label or self._supercell_asset_label(
+            asset.owner_workflow_stage,
+            parsed_matrix,
+        )
+        structure.properties = dict(regenerated.properties)
+        structure.properties["supercell_asset"] = {
+            "matrix": [list(row) for row in parsed_matrix],
+            "owner_workflow_stage": asset.owner_workflow_stage.value,
+            "source_asset_structure_id": (
+                str(asset.source_asset_structure_id) if asset.source_asset_structure_id is not None else None
+            ),
+        }
+        structure.parent_structure_id = host.id
+        return structure
+
+    def delete_workflow_supercell_asset(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+    ) -> Structure:
+        """Delete an unused saved supercell asset and clear stale active selections."""
+
+        structure = document.structures.get(asset_structure_id)
+        if structure is None or self._supercell_asset(structure) is None:
+            raise ValueError("Selected structure is not a saved supercell asset.")
+        if self.supercell_asset_is_frozen(document, asset_structure_id=asset_structure_id):
+            raise ValueError("This supercell is already used by configured calculations and cannot be deleted.")
+
+        removed = document.structures.pop(asset_structure_id)
+        state = self._workflow_supercells_state(document)
+        for stage_value, raw in list(state.items()):
+            if not isinstance(raw, dict):
+                continue
+            if self._parse_optional_uuid(raw.get("structure_id")) == asset_structure_id:
+                state[stage_value] = {"mode": _WORKFLOW_SUPERCELL_UNIT_CELL}
+        return removed
 
     def use_workflow_supercell_asset(
         self,

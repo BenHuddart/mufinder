@@ -153,16 +153,17 @@ Creating Relaxation Jobs
 ------------------------
 
 Rows in the generated-site table can be selected and staged with ``Create
-job(s) from selected``.  Staging creates one fixed-cell geometry-optimization
-row in ``Muon Sites -> Relaxations`` for each selected generated site and
+job(s) from selected``.  MuFinder asks which charge state to create: positive
+muon, muonium, or both.  Staging creates fixed-cell geometry-optimization rows
+in the matching charge-state tab under ``Muon Sites -> Relaxations`` and
 changes the corresponding ``MuonSite`` status from ``generated`` to
 ``staged``.  The initial position is carried forward as fractional coordinates
-in the single host unit cell.
+in the single host unit cell.  Choosing both charge states creates one row in
+each tab for every selected initial position.
 
-The relaxation row can then be run either as a positive-muon calculation or as
-muonium.  MuFinder writes CASTEP ``charge`` as ``+1`` for positive muon and
-``0`` for muonium, and keeps ``fix_all_cell`` enabled for these jobs.  Job
-names and output directories are separated by charge state, for example
+MuFinder writes CASTEP ``charge`` as ``+1`` for positive muon and ``0`` for
+muonium, and keeps ``fix_all_cell`` enabled for these jobs.  Job names and
+output directories are separated by charge state, for example
 ``files/muon_relaxation/positivemuon/positivemuon_<label>`` and
 ``files/muon_relaxation/muonium/muonium_<label>``.  If a selected submission
 contains both charge states, MuFinder submits them as two batches so each group
@@ -177,18 +178,21 @@ Structural Relaxations Tab
 
 The ``Muon Sites -> Relaxations`` tab is the staging point for full CASTEP
 geometry optimization runs that include one muon or muonium start per row.
-Rows can share a displayed site label when they represent different charge
-states; internally the submission key is charge-qualified so selecting the
-``positive muon`` row does not also submit the matching ``muonium`` row.
+Rows are organized into ``Positive muon`` and ``Muonium`` tabs.  The charge
+state is chosen when jobs are staged rather than edited in the table, leaving
+more table width for labels and supercell names.  Rows can share a displayed
+site label when they live in different charge-state tabs; internally the
+submission key is charge-qualified so selecting a positive-muon row does not
+also submit the matching muonium row.
 
 Per-row parameter dialogs expose the CASTEP controls that are safe for this
 workflow.  The ``task``, ``charge``, ``fix_all_cell``, and
 ``write_cell_structure`` settings are locked by MuFinder: the tab always writes
 geometry-optimization jobs, keeps the host cell fixed, writes the relaxed
 ``-out.cell`` file needed for result ingestion, and derives the CASTEP total
-charge from the row's charge-state selector.  Project-default cutoff and
-k-point settings are inherited unless a row has an explicit compatible
-override.  Supercell rows automatically receive an equivalent-density
+charge from the row's charge-state tab.  Project-default cutoff and k-point
+settings are inherited unless a row has an explicit compatible override.
+Supercell rows automatically receive an equivalent-density
 ``KPOINT_MP_GRID`` suggestion when a project default grid is available.
 
 Input files are materialized on submission, not when rows are first staged.

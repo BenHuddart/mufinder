@@ -15,6 +15,7 @@ features, and quality standards that must be maintained as development expands.
    :caption: Contents
 
    implemented_functionality
+   supercells
    journal
    site_generation
    uep_workflow

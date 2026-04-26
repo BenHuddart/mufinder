@@ -450,12 +450,15 @@ def expand_pristine_relaxation_jobs(
 
         kpoint_grid = None
         if project_kpoint_grid is not None and not explicit_kpoint_settings:
-            row_lattice = row_structure.lattice_vectors
-            kpoint_grid = equivalent_grid_for_supercell(
-                reference_lattice,
-                project_kpoint_grid,
-                row_lattice,
-            )
+            if _is_identity_supercell(row.supercell_matrix):
+                kpoint_grid = project_kpoint_grid
+            else:
+                row_lattice = row_structure.lattice_vectors
+                kpoint_grid = equivalent_grid_for_supercell(
+                    reference_lattice,
+                    project_kpoint_grid,
+                    row_lattice,
+                )
             if row.supercell_matrix is not None and kpoint_grid != project_kpoint_grid:
                 messages.append(
                     "K-point grid adjusted from "
@@ -556,12 +559,15 @@ def expand_muon_relaxation_jobs(
 
         kpoint_grid = None
         if project_kpoint_grid is not None and not explicit_kpoint_settings:
-            row_lattice = row_structure.lattice_vectors
-            kpoint_grid = equivalent_grid_for_supercell(
-                reference_lattice,
-                project_kpoint_grid,
-                row_lattice,
-            )
+            if _is_identity_supercell(row.supercell_matrix):
+                kpoint_grid = project_kpoint_grid
+            else:
+                row_lattice = row_structure.lattice_vectors
+                kpoint_grid = equivalent_grid_for_supercell(
+                    reference_lattice,
+                    project_kpoint_grid,
+                    row_lattice,
+                )
             if row.supercell_matrix is not None and kpoint_grid != project_kpoint_grid:
                 messages.append(
                     "K-point grid adjusted from "
@@ -635,13 +641,15 @@ def suggested_grid_for_row(
     if reference_grid is None:
         return None
 
-    row_lattice = (
-        [list(vector) for vector in host_lattice]
-        if _is_identity_supercell(row_matrix)
-        else [
-            [float(value) for value in vector]
-            for vector in supercell_lattice_vectors(host_lattice, row_matrix or ((1, 0, 0), (0, 1, 0), (0, 0, 1)))
-        ]
-    )
+    if _is_identity_supercell(row_matrix):
+        return reference_grid
+
+    row_lattice = [
+        [float(value) for value in vector]
+        for vector in supercell_lattice_vectors(
+            host_lattice,
+            row_matrix or ((1, 0, 0), (0, 1, 0), (0, 0, 1)),
+        )
+    ]
     base_lattice = reference_lattice if reference_lattice is not None else host_lattice
     return equivalent_grid_for_supercell(base_lattice, reference_grid, row_lattice)

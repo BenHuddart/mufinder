@@ -53,6 +53,7 @@ _PREFERRED_DEFAULT_PARAMETER_NAMES = (
     "kpoint_mp_spacing",
     "kpoints_list",
 )
+_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready"}
 
 
 def _normalize_uep_name_prefix(value: object) -> str:
@@ -480,7 +481,7 @@ class UEPWidget(QWidget):
         supercell_combo.addItem("Unit cell", None)
         for option_label, matrix in self._supercell_options:
             supercell_combo.addItem(option_label, matrix)
-        supercell_combo.addItem("Create new...", "__create__")
+        supercell_combo.addItem("Manage Supercells...", "__create__")
         supercell_combo.currentIndexChanged.connect(
             lambda _index, row_id=row_id, combo=supercell_combo: self._on_supercell_changed(row_id, combo)
         )
@@ -522,6 +523,18 @@ class UEPWidget(QWidget):
         self._refresh_table_rows()
         self._emit_state()
 
+    @staticmethod
+    def _runtime_controls_locked(status: str) -> bool:
+        return str(status).strip().casefold() not in _UNLOCKED_RUNTIME_STATUSES
+
+    def _runtime_state_for_row(self, row_id: int) -> UepRunState:
+        row = self._row_index_for_id(row_id)
+        if row is None:
+            return UepRunState(status="ready")
+        item = self._table.item(row, self._LABEL_COLUMN)
+        label = "" if item is None else item.text().strip()
+        return self._runtime_states.get(label, UepRunState(status="ready"))
+
     def _set_combo_to_supercell(self, combo: QComboBox, matrix: SupercellMatrix | None) -> None:
         for index in range(combo.count()):
             if combo.itemData(index) == matrix:
@@ -530,23 +543,31 @@ class UEPWidget(QWidget):
         combo.setCurrentIndex(0)
 
     def _configure_row(self, row_id: int) -> None:
-        dialog = ParameterDialog(
-            specs=self._specs,
-            workflow_stage="uep",
-            locked_values={
+        read_only = self._runtime_controls_locked(self._runtime_state_for_row(row_id).status)
+        dialog_kwargs = {
+            "specs": self._specs,
+            "workflow_stage": "uep",
+            "locked_values": {
                 "task": "SINGLEPOINT",
                 "write_formatted_density": "TRUE (required for UEP source analysis)",
             },
-            intro_text=(
+            "intro_text": (
                 "UEP source jobs are CASTEP single-point calculations. "
                 "Formatted density output stays enabled because the UEP analysis requires `.den_fmt`."
             ),
-            parent=self,
-        )
+            "parent": self,
+        }
+        if read_only:
+            dialog_kwargs["read_only"] = True
+        dialog = ParameterDialog(**dialog_kwargs)
+        if hasattr(dialog, "setWindowTitle"):
+            dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
         values = self._effective_params_for_row(row_id)
         dialog.set_values(values)
         dialog.set_advanced_names(self._row_added_advanced.get(row_id, set()))
         if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        if read_only:
             return
 
         resolved = self._sanitize_parameter_mapping(dialog.collect_values())
@@ -561,21 +582,32 @@ class UEPWidget(QWidget):
         if not row_ids:
             return
         values = self._common_params_for_rows(row_ids)
-        dialog = ParameterDialog(
-            specs=self._specs,
-            workflow_stage="uep",
-            locked_values={
+        read_only = any(
+            self._runtime_controls_locked(self._runtime_state_for_row(row_id).status)
+            for row_id in row_ids
+        )
+        dialog_kwargs = {
+            "specs": self._specs,
+            "workflow_stage": "uep",
+            "locked_values": {
                 "task": "SINGLEPOINT",
                 "write_formatted_density": "TRUE (required for UEP source analysis)",
             },
-            parent=self,
-        )
+            "parent": self,
+        }
+        if read_only:
+            dialog_kwargs["read_only"] = True
+        dialog = ParameterDialog(**dialog_kwargs)
+        if hasattr(dialog, "setWindowTitle"):
+            dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
         dialog.set_values(values)
         names: set[str] = set()
         for row_id in row_ids:
             names.update(self._row_added_advanced.get(row_id, set()))
         dialog.set_advanced_names(names)
         if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        if read_only:
             return
         collected = self._sanitize_parameter_mapping(dialog.collect_values())
         for row_id in row_ids:
@@ -625,11 +657,13 @@ class UEPWidget(QWidget):
         row = self._row_index_for_id(row_id)
         if row is None:
             return
+        label_item = self._table.item(row, self._LABEL_COLUMN)
+        label = label_item.text().strip() if label_item is not None else ""
         self._table.removeRow(row)
         self._row_supercells.pop(row_id, None)
         self._row_parameter_values.pop(row_id, None)
         self._row_added_advanced.pop(row_id, None)
-        self.remove_requested.emit(row_id)
+        self.remove_requested.emit([label] if label else [])
         self._emit_state()
 
     def _emit_submit_local(self) -> None:
@@ -726,12 +760,12 @@ class UEPWidget(QWidget):
                 current = self._row_supercells.get(row_id)
                 combo.blockSignals(True)
                 labels = [combo.itemText(index) for index in range(combo.count())]
-                if labels != ["Unit cell", *[label for label, _ in self._supercell_options], "Create new..."]:
+                if labels != ["Unit cell", *[label for label, _ in self._supercell_options], "Manage Supercells..."]:
                     combo.clear()
                     combo.addItem("Unit cell", None)
                     for option_label, matrix in self._supercell_options:
                         combo.addItem(option_label, matrix)
-                    combo.addItem("Create new...", "__create__")
+                    combo.addItem("Manage Supercells...", "__create__")
                 self._set_combo_to_supercell(combo, current)
                 combo.blockSignals(False)
             self._apply_row_state(row_id)
@@ -750,6 +784,20 @@ class UEPWidget(QWidget):
             status_item = QTableWidgetItem("")
             self._table.setItem(row, self._STATUS_COLUMN, status_item)
         status_text = state.status or "ready"
+        locked = self._runtime_controls_locked(status_text)
+        flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        if not locked:
+            flags |= Qt.ItemFlag.ItemIsEditable
+            label_item.setToolTip("")
+        else:
+            label_item.setToolTip("Job label is locked once this row has been queued for execution.")
+        label_item.setFlags(flags)
+        supercell_combo = self._table.cellWidget(row, self._SUPERCELL_COLUMN)
+        if isinstance(supercell_combo, QComboBox):
+            supercell_combo.setEnabled(not locked)
+        remove_button = self._table.cellWidget(row, self._REMOVE_COLUMN)
+        if isinstance(remove_button, QToolButton):
+            remove_button.setEnabled(True)
         status_item.setText(status_text)
         status_item.setForeground(status_brush(status_text))
 
@@ -766,11 +814,15 @@ class UEPWidget(QWidget):
         configure_button = self._table.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
             customized = bool(self._row_parameter_values.get(row_id, {}))
-            configure_button.setText("Configured..." if customized else "Configure...")
+            configure_button.setText("Configured..." if customized or locked else "Configure...")
             configure_button.setToolTip(
-                "Edit custom CASTEP parameters for this UEP source job."
-                if customized
-                else "Configure CASTEP parameters for this UEP source job."
+                "Inspect the CASTEP parameters used for this UEP source job."
+                if locked
+                else (
+                    "Edit custom CASTEP parameters for this UEP source job."
+                    if customized
+                    else "Configure CASTEP parameters for this UEP source job."
+                )
             )
 
         wizard_button = self._table.cellWidget(row, self._WIZARD_COLUMN)

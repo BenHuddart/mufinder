@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QDialog, QDialogButtonBox
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QPushButton
 
 import mufinder.app.kpoint_convergence_widget as kpoint_widget_module
 from mufinder.app.convergence_types import SweepPointRunState
@@ -107,6 +107,18 @@ def test_kpoint_spacing_dialog_round_trip_state(qapp) -> None:
     assert dialog.spacing() == pytest.approx(0.25)
     assert dialog.replace_existing() is True
     assert dialog.defaults_state() == {"spacing": pytest.approx(0.25), "replace_existing": True}
+
+
+def test_kpoint_spacing_default_is_dense_sampling(qapp) -> None:
+    dialog = KPointSpacingDialog()
+    widget = KPointConvergenceWidget()
+
+    assert dialog.spacing() == pytest.approx(0.02)
+    assert widget.collect_state()["range"]["spacing"] == pytest.approx(0.02)
+
+    widget.set_form_state({})
+
+    assert widget.collect_state()["range"]["spacing"] == pytest.approx(0.02)
 
 
 def test_kpoint_grid_dialog_enforces_integer_triplet(qapp) -> None:
@@ -332,6 +344,37 @@ def test_kpoint_widget_open_grid_parameter_dialog_applies_to_all_selected(
     assert widget._parameter_values[(2, 2, 2)]["xc_functional"] == "PBE"
     assert widget._parameter_values[(3, 3, 2)]["xc_functional"] == "PBE"
     assert widget._added_advanced[(2, 2, 2)] == {"basis_precision"}
+
+
+def test_kpoint_widget_queued_grid_parameter_dialog_is_read_only(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget._parameter_values[(2, 2, 2)] = {"max_scf_cycles": 50}
+    widget.set_runtime_states({(2, 2, 2): SweepPointRunState(status="queued")})
+
+    observed: dict[str, object] = {}
+
+    def fake_exec(dialog) -> int:
+        observed["read_only"] = dialog._read_only
+        observed["title"] = dialog.windowTitle()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(kpoint_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(
+        kpoint_widget_module.ParameterDialog,
+        "collect_values",
+        lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
+    )
+
+    widget._open_grid_parameter_dialog(((2, 2, 2),))
+
+    assert observed == {"read_only": True, "title": "Inspect K-Point Parameters"}
+    assert widget._parameter_values[(2, 2, 2)]["max_scf_cycles"] == 50
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+    assert configure_button.text() == "Configured..."
 
 
 def test_kpoint_widget_parameter_dialog_prefers_cutoff_and_shows_spin_polarized(

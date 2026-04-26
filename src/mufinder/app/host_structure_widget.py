@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.decimal_input import DecimalLineEdit
-from mufinder.app.supercell_dialog import SupercellPreviewDialog
 from mufinder.app.theme import style_section_subtitle, style_section_title
 from mufinder.domain.models import Structure
 
@@ -36,6 +35,7 @@ class HostStructureWidget(QWidget):
 
     load_requested = Signal()
     magnetic_configuration_changed = Signal(object)
+    supercell_editor_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -83,7 +83,7 @@ class HostStructureWidget(QWidget):
 
         self._load_button = QPushButton("Load Structure (.cif/.mcif/.cell)")
         self._load_button.clicked.connect(self.load_requested.emit)
-        self._supercell_button = QPushButton("Supercell Preview...")
+        self._supercell_button = QPushButton("Supercell Editor...")
         self._supercell_button.setEnabled(False)
         self._supercell_button.clicked.connect(self._on_supercell_preview_requested)
 
@@ -393,17 +393,7 @@ class HostStructureWidget(QWidget):
     def _on_supercell_preview_requested(self) -> None:
         if self._current_structure is None:
             return
-
-        dialog = SupercellPreviewDialog(
-            structure=self._current_structure,
-            atomic_spins=self._atomic_spins,
-            propagation_vector=self._propagation_vector,
-            initial_matrix=self._supercell_matrix,
-            parent=self,
-        )
-        if dialog.exec() == dialog.DialogCode.Accepted:
-            self._supercell_matrix = dialog.matrix()
-            self._emit_magnetic_configuration()
+        self.supercell_editor_requested.emit()
 
     def set_project_supercell_matrix(self, matrix: list[list[int]] | None) -> None:
         if not isinstance(matrix, list) or len(matrix) != 3:

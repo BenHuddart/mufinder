@@ -809,6 +809,57 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
     """
 
 
+def _muon_relaxation_styles(p: MuFinderPalette) -> str:
+    return f"""
+    QTabWidget#muonRelaxationChargeTabs::pane {{
+        border: 1px solid {p.border};
+        border-radius: 8px;
+        top: -1px;
+        background: {p.bg_surface};
+    }}
+    QTabWidget#muonRelaxationChargeTabs QTabBar::tab {{
+        background: {p.bg_surface_alt};
+        color: {p.text_muted};
+        border: 1px solid {p.border};
+        border-bottom: none;
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+        padding: 8px 16px;
+        margin-right: 4px;
+        font-weight: 700;
+    }}
+    QTabWidget#muonRelaxationChargeTabs QTabBar::tab:selected {{
+        background: {p.bg_surface};
+        color: {p.text_primary};
+        border-color: {p.accent};
+    }}
+    QTabWidget#muonRelaxationChargeTabs QTabBar::tab:hover:!selected {{
+        background: {p.bg_surface};
+        color: {p.text_primary};
+    }}
+    QDialog#muonChargeStateDialog {{
+        background: {p.bg_primary};
+    }}
+    QWidget#muonChargeStateCard {{
+        background: {p.bg_surface};
+        border: 1px solid {p.border};
+        border-radius: 8px;
+    }}
+    QWidget#muonChargeStateCard QLabel {{
+        background: transparent;
+    }}
+    QRadioButton[chargeStateOption="true"] {{
+        background: transparent;
+        padding: 6px;
+        color: {p.text_primary};
+    }}
+    QRadioButton[chargeStateOption="true"]:checked {{
+        color: {p.accent};
+        font-weight: 700;
+    }}
+    """
+
+
 def _workflow_tree_styles(
     p: MuFinderPalette,
     branch_right: str,
@@ -1275,6 +1326,7 @@ def _build_stylesheet(p: MuFinderPalette) -> str:
         _item_view_styles(p),
         _panel_container_styles(p),
         _muon_generation_styles(p),
+        _muon_relaxation_styles(p),
         _workflow_tree_styles(
             p,
             branch_right=arrow_right,

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from PySide6.QtWidgets import QComboBox, QHeaderView
+from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtWidgets import QComboBox, QMessageBox, QPushButton, QToolButton
 
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.param_dialog import ParameterDialog
@@ -27,30 +28,86 @@ def test_muon_relaxation_widget_stages_sites_with_positive_muon_default(qapp) ->
     )
 
     assert widget._table.rowCount() == 1
+    assert widget._charge_tabs.count() == 2
+    assert widget._charge_tabs.tabText(0) == "Positive muon"
+    assert widget._charge_tabs.tabText(1) == "Muonium"
     assert widget._table.item(0, 0).text() == "Random Site 1"
     assert widget._table.horizontalHeaderItem(widget._INITIAL_FX_COLUMN).text() == "fX"
     assert widget._table.horizontalHeaderItem(widget._FINAL_FX_COLUMN).text() == "fX"
-    assert widget._table.horizontalHeaderItem(widget._CHARGE_COLUMN).text() == "Charge"
-    assert (
-        widget._table.horizontalHeader().sectionResizeMode(widget._CHARGE_COLUMN)
-        == QHeaderView.ResizeMode.Fixed
-    )
-    assert widget._table.columnWidth(widget._CHARGE_COLUMN) >= (
-        widget._table.fontMetrics().horizontalAdvance("positive muon") + 72
-    )
+    assert "Charge" not in [
+        widget._table.horizontalHeaderItem(column).text()
+        for column in range(widget._table.columnCount())
+        if widget._table.horizontalHeaderItem(column) is not None
+    ]
     assert widget._table.horizontalHeader()._groups == (
         (widget._INITIAL_FX_COLUMN, widget._INITIAL_FZ_COLUMN, "Initial"),
         (widget._FINAL_FX_COLUMN, widget._FINAL_FZ_COLUMN, "Final"),
     )
     assert widget._table.item(0, widget._INITIAL_FX_COLUMN).text() == "0.100"
-    charge_combo = widget._table.cellWidget(0, 2)
-    assert isinstance(charge_combo, QComboBox)
-    assert charge_combo.currentData() == "positive_muon"
+    assert widget._tables_by_charge_state["muonium"].rowCount() == 0
 
     config = widget._build_config_or_warn()
     assert config is not None
     assert config.rows[0].site_id == site_id
     assert config.rows[0].charge_state == "positive_muon"
+
+
+def test_muon_relaxation_widget_can_stage_both_charge_states(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    site_id = uuid4()
+
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(site_id),
+                "label": "Shared Site",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ],
+        charge_states=("positive_muon", "muonium"),
+    )
+
+    positive = widget._tables_by_charge_state["positive_muon"]
+    muonium = widget._tables_by_charge_state["muonium"]
+    assert positive.rowCount() == 1
+    assert muonium.rowCount() == 1
+    assert positive.item(0, widget._LABEL_COLUMN).text() == "Shared Site"
+    assert muonium.item(0, widget._LABEL_COLUMN).text() == "Shared Site"
+
+    config = widget._build_config_or_warn()
+    assert config is not None
+    assert [row.charge_state for row in config.rows] == ["positive_muon", "muonium"]
+
+
+def test_muon_relaxation_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    site_id = uuid4()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(site_id),
+                "label": "Queued Site",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ]
+    )
+    widget.set_runtime_states({"positivemuon:Queued Site": RelaxationRunState(status="queued")})
+
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    assert not bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    assert not combo.isEnabled()
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+    assert configure_button.text() == "Configured..."
+    remove_button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    assert isinstance(remove_button, QToolButton)
+    assert remove_button.isEnabled()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    assert widget._row_parameters_locked((row_id,)) is True
 
 
 def test_muon_relaxation_widget_state_roundtrip_preserves_muonium(qapp) -> None:
@@ -191,8 +248,9 @@ def test_muon_relaxation_widget_runtime_states_are_charge_aware(qapp) -> None:
     assert widget._table.item(0, widget._FINAL_FY_COLUMN).text() == "0.800"
     assert widget._table.item(0, widget._FINAL_FZ_COLUMN).text() == "0.900"
     assert widget._table.item(0, widget._TOTAL_ENERGY_COLUMN).text() == "-12.345679"
-    assert widget._table.item(1, widget._STATUS_COLUMN).text() == "running"
-    assert widget._table.item(1, widget._FINAL_FX_COLUMN).text() == "0.400"
+    muonium_table = widget._tables_by_charge_state["muonium"]
+    assert muonium_table.item(0, widget._STATUS_COLUMN).text() == "running"
+    assert muonium_table.item(0, widget._FINAL_FX_COLUMN).text() == "0.400"
 
 
 def test_muon_relaxation_widget_submits_charge_qualified_selection(qapp) -> None:
@@ -219,13 +277,37 @@ def test_muon_relaxation_widget_submits_charge_qualified_selection(qapp) -> None
     submitted: list[list[str]] = []
     widget.submit_local_requested.connect(lambda payload: submitted.append(list(payload)))
 
-    widget._table.selectRow(1)
+    widget._charge_tabs.setCurrentWidget(widget._tables_by_charge_state["muonium"])
+    widget._tables_by_charge_state["muonium"].selectRow(0)
     widget._run_local_selected_rows()
 
     assert submitted == [["muonium:Shared Site"]]
 
 
-def test_muon_relaxation_widget_locks_supercell_and_charge_after_queue(qapp) -> None:
+def test_muon_relaxation_widget_submits_all_charge_tabs_without_selection(qapp) -> None:
+    site_id = uuid4()
+    widget = MuonRelaxationWidget()
+    widget.set_form_state(
+        {
+            "rows": [
+                {
+                    "site_id": str(site_id),
+                    "label": "Muonium Only",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "muonium",
+                },
+            ]
+        }
+    )
+    submitted: list[list[str]] = []
+    widget.submit_local_requested.connect(lambda payload: submitted.append(list(payload)))
+
+    widget._run_local_selected_rows()
+
+    assert submitted == [["muonium:Muonium Only"]]
+
+
+def test_muon_relaxation_widget_locks_supercell_after_queue(qapp) -> None:
     widget = MuonRelaxationWidget()
     rows = [
         {
@@ -251,19 +333,58 @@ def test_muon_relaxation_widget_locks_supercell_and_charge_after_queue(qapp) -> 
     )
 
     queued_supercell = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
-    queued_charge = widget._table.cellWidget(0, widget._CHARGE_COLUMN)
     ready_supercell = widget._table.cellWidget(1, widget._SUPERCELL_COLUMN)
-    ready_charge = widget._table.cellWidget(1, widget._CHARGE_COLUMN)
     assert isinstance(queued_supercell, QComboBox)
-    assert isinstance(queued_charge, QComboBox)
     assert isinstance(ready_supercell, QComboBox)
-    assert isinstance(ready_charge, QComboBox)
     assert not queued_supercell.isEnabled()
-    assert not queued_charge.isEnabled()
     assert ready_supercell.isEnabled()
-    assert ready_charge.isEnabled()
 
     widget.set_runtime_states({"positivemuon:Queued Site": RelaxationRunState(status="ready")})
 
     assert queued_supercell.isEnabled()
-    assert queued_charge.isEnabled()
+
+
+def test_muon_relaxation_widget_supercell_selection_can_apply_to_selected_rows(
+    qapp,
+    monkeypatch,
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.set_supercell_options(
+        [
+            {
+                "label": "Shared 2x2x1",
+                "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+            }
+        ]
+    )
+    widget.add_staged_sites(
+        [
+            {"id": str(uuid4()), "label": "Site A", "fractional_position": [0.1, 0.2, 0.3]},
+            {"id": str(uuid4()), "label": "Site B", "fractional_position": [0.4, 0.5, 0.6]},
+        ]
+    )
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    assert first_id is not None
+    assert second_id is not None
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: QMessageBox.StandardButton.Yes,
+    )
+
+    selection = widget._table.selectionModel()
+    assert selection is not None
+    for row in (0, 1):
+        selection.select(
+            widget._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    combo.setCurrentIndex(combo.findText("Shared 2x2x1"))
+
+    expected = ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert widget.row_supercell_matrix(first_id) == expected
+    assert widget.row_supercell_matrix(second_id) == expected

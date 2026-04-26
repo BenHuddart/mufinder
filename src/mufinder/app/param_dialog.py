@@ -131,6 +131,7 @@ class ParameterDialog(QDialog):
         workflow_stage: str,
         locked_values: dict[str, str] | None = None,
         intro_text: str | None = None,
+        read_only: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -140,6 +141,7 @@ class ParameterDialog(QDialog):
         self._workflow_stage = workflow_stage
         self._task = infer_task(workflow_stage)
         self._locked_values = dict(locked_values or {})
+        self._read_only = bool(read_only)
         self._task_spec: KeywordSpec | None = None
         self._task_editor: ParamEditorBase | None = None
 
@@ -188,6 +190,8 @@ class ParameterDialog(QDialog):
             self._task_editor = create_param_editor(self._task_spec, self)
             self._task_editor.set_value(self._task)
             self._task_editor.value_changed.connect(self._on_task_changed)
+            if self._read_only:
+                self._task_editor.setEnabled(False)
             task_row.addWidget(self._task_editor, 1)
         else:
             self._task_display = QLineEdit(self._task)
@@ -223,12 +227,16 @@ class ParameterDialog(QDialog):
         controls_row.addStretch(1)
         root.addLayout(controls_row)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            parent=self,
-        )
-        buttons.accepted.connect(self._accept_if_valid)
-        buttons.rejected.connect(self.reject)
+        if self._read_only:
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=self)
+            buttons.rejected.connect(self.reject)
+        else:
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+                parent=self,
+            )
+            buttons.accepted.connect(self._accept_if_valid)
+            buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
         self._rebuild_rows()
@@ -479,6 +487,7 @@ class ParameterDialog(QDialog):
                 label_layout.setContentsMargins(0, 0, 0, 0)
                 radio = QRadioButton(label_widget)
                 radio.setChecked(self._exclusive_selection.get(group_key) == name)
+                radio.setEnabled(not self._read_only)
                 radio.toggled.connect(
                     lambda checked, g=group_key, n=name: self._on_exclusive_toggled(g, n, checked)
                 )
@@ -510,14 +519,16 @@ class ParameterDialog(QDialog):
                 editor.value_changed.connect(self._on_editor_changed)
                 if self._in_inactive_exclusive_choice(name):
                     editor.setEnabled(False)
+                elif self._read_only:
+                    editor.setEnabled(False)
                 value_widget = editor
 
             self._table_layout.addWidget(value_widget, row_index, 1)
 
             reset_button = QPushButton("Reset", self._table_widget)
             reset_button.setMaximumWidth(58)
-            reset_button.setEnabled(not locked and editor is not None)
-            if not locked and editor is not None:
+            reset_button.setEnabled(not self._read_only and not locked and editor is not None)
+            if not self._read_only and not locked and editor is not None:
                 reset_button.clicked.connect(lambda _checked=False, param=name: self._reset_parameter(param))
             self._table_layout.addWidget(reset_button, row_index, 2)
 
@@ -528,7 +539,12 @@ class ParameterDialog(QDialog):
 
             remove_button = QToolButton(self._table_widget)
             remove_button.setText("x")
-            can_remove = self._is_advanced_name(name) and name in self._added_advanced and not locked
+            can_remove = (
+                not self._read_only
+                and self._is_advanced_name(name)
+                and name in self._added_advanced
+                and not locked
+            )
             remove_button.setEnabled(can_remove)
             remove_button.setVisible(can_remove)
             if can_remove:
@@ -695,6 +711,8 @@ class ParameterDialog(QDialog):
         return any(query in candidate.lower() for candidate in haystacks if candidate)
 
     def _on_task_changed(self) -> None:
+        if self._read_only:
+            return
         if self._task_editor is None:
             return
         self._task = str(self._task_editor.value()).strip().upper()
@@ -712,6 +730,8 @@ class ParameterDialog(QDialog):
             self._added_advanced.discard(name)
 
     def _open_add_advanced_dialog(self) -> None:
+        if self._read_only:
+            return
         available = self._available_advanced_specs()
         if not available:
             return
@@ -728,8 +748,10 @@ class ParameterDialog(QDialog):
         self._rebuild_rows()
 
     def _remove_advanced(self, name: str) -> None:
+        if self._read_only:
+            return
         self._added_advanced.discard(name)
         self._rebuild_rows()
 
     def _refresh_add_button_state(self) -> None:
-        self._add_advanced_button.setEnabled(bool(self._available_advanced_specs()))
+        self._add_advanced_button.setEnabled(not self._read_only and bool(self._available_advanced_specs()))

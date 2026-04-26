@@ -42,6 +42,8 @@ datas = collect_data_files("mufinder.assets")
 datas += collect_data_files("ase")
 datas += collect_data_files("pyvista")
 datas += collect_data_files("vtkmodules")
+# The UEP clustering dialog imports Soprano's phylogenetic clustering stack lazily
+# when the batch-search clustering window is opened.
 hiddenimports = [
     "mufinder.app.main_window",
     "mufinder.app.splash_screen",
@@ -54,6 +56,7 @@ hiddenimports = [
     + collect_submodules("paramiko")
     + collect_submodules("pyvista")
     + collect_submodules("pyvistaqt")
+    + collect_submodules("soprano")
     + collect_submodules("vtkmodules")
 )
 

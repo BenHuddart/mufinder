@@ -232,6 +232,29 @@ def test_parameter_dialog_reset_restores_parameter_default(qapp) -> None:
     assert dialog.collect_values()["xc_functional"] == "PBE"
 
 
+def test_parameter_dialog_read_only_disables_editing_controls(qapp) -> None:
+    dialog = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_kpoint",
+        read_only=True,
+    )
+    dialog.set_advanced_names({"basis_precision", "cut_off_energy"})
+    dialog.set_values({"xc_functional": "LDA", "cut_off_energy": ValueWithUnit(420.0, "eV")})
+
+    assert dialog._read_only is True
+    assert dialog._rows["xc_functional"].editor is not None
+    assert not dialog._rows["xc_functional"].editor.isEnabled()
+    assert dialog._rows["cut_off_energy"].radio is not None
+    assert not dialog._rows["cut_off_energy"].radio.isEnabled()
+    assert not dialog._add_advanced_button.isEnabled()
+    reset_buttons = [
+        button for button in dialog._table_widget.findChildren(QPushButton) if button.text() == "Reset"
+    ]
+    assert reset_buttons
+    assert all(not button.isEnabled() for button in reset_buttons)
+    assert dialog.collect_values()["xc_functional"] == "LDA"
+
+
 def test_parameter_dialog_search_filters_by_description_and_aliases(qapp) -> None:
     dialog = ParameterDialog(
         specs=_dialog_specs(),

@@ -58,6 +58,7 @@ _PREFERRED_DEFAULT_PARAMETER_NAMES = (
     "kpoint_mp_spacing",
     "kpoints_list",
 )
+_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready"}
 
 
 def _append_workflow_stage(values: tuple[str, ...], workflow_stage: str) -> tuple[str, ...]:
@@ -611,7 +612,7 @@ class PristineRelaxationWidget(QWidget):
             combo.addItem(self._supercell_label(current), ("matrix", current))
             selected_index = combo.count() - 1
 
-        combo.addItem("Create new...", ("create", None))
+        combo.addItem("Manage Supercells...", ("create", None))
         combo.setCurrentIndex(selected_index)
         combo.blockSignals(previous)
 
@@ -634,14 +635,47 @@ class PristineRelaxationWidget(QWidget):
             self._refresh_row(row)
             return
 
-        self._row_supercells[row_id] = matrix
-        self._row_parameter_values[row_id] = self._strip_implicit_row_defaults(
-            row_id,
-            self._row_parameter_values.get(row_id, {}),
-        )
+        target_row_ids = self._supercell_target_row_ids(row_id)
+        for target_row_id in target_row_ids:
+            self._row_supercells[target_row_id] = matrix
+            self._row_parameter_values[target_row_id] = self._strip_implicit_row_defaults(
+                target_row_id,
+                self._row_parameter_values.get(target_row_id, {}),
+            )
+            target_row = self._row_index_for_id(target_row_id)
+            if target_row is not None:
+                self._refresh_row(target_row)
         self._set_kpoint_message_for_row(row_id)
-        self._refresh_row(row)
         self._emit_state()
+
+    def _supercell_target_row_ids(self, row_id: int) -> tuple[int, ...]:
+        selected = tuple(
+            target_id
+            for target_id in self._selected_row_ids()
+            if self._row_supercell_is_editable(target_id)
+        )
+        if row_id not in selected or len(selected) <= 1:
+            return (row_id,)
+
+        response = QMessageBox.question(
+            self,
+            "Apply supercell to selected rows?",
+            "Apply this supercell choice to all selected editable relaxation rows?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if response == QMessageBox.StandardButton.Yes:
+            return selected
+        return (row_id,)
+
+    def _row_supercell_is_editable(self, row_id: int) -> bool:
+        row = self._row_index_for_id(row_id)
+        if row is None:
+            return False
+        label = self._label_at_row(row)
+        runtime = self._runtime_states.get(label)
+        status = "not generated" if runtime is None else runtime.status or "not generated"
+        return not self._runtime_controls_locked(status)
 
     def _set_status_item(self, row: int, status: str) -> None:
         item = self._table.item(row, self._STATUS_COLUMN)
@@ -677,6 +711,10 @@ class PristineRelaxationWidget(QWidget):
             reference_grid=self._reference_grid,
         )
         return grid
+
+    @staticmethod
+    def _runtime_controls_locked(status: str) -> bool:
+        return str(status).strip().casefold() not in _UNLOCKED_RUNTIME_STATUSES
 
     def _effective_params_for_row(self, row_id: int) -> dict[str, object]:
         values = dict(self._default_params)
@@ -728,6 +766,25 @@ class PristineRelaxationWidget(QWidget):
 
         label = self._label_at_row(row)
         runtime = self._runtime_states.get(label)
+        status = "not generated" if runtime is None else runtime.status or "not generated"
+        locked = self._runtime_controls_locked(status)
+        label_item = self._table.item(row, self._LABEL_COLUMN)
+        if label_item is not None:
+            flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+            if not locked:
+                flags |= Qt.ItemFlag.ItemIsEditable
+                label_item.setToolTip("")
+            else:
+                label_item.setToolTip("Job label is locked once this row has been queued for execution.")
+            label_item.setFlags(flags)
+        if isinstance(supercell_combo, QComboBox):
+            supercell_combo.setEnabled(not locked)
+        fix_combo = self._table.cellWidget(row, self._FIX_CELL_COLUMN)
+        if isinstance(fix_combo, QComboBox):
+            fix_combo.setEnabled(not locked)
+        remove_button = self._table.cellWidget(row, self._REMOVE_COLUMN)
+        if isinstance(remove_button, QToolButton):
+            remove_button.setEnabled(True)
         if runtime is None:
             self._set_status_item(row, "not generated")
             self._set_float_item(row, self._LATTICE_A_COLUMN, None)
@@ -742,7 +799,16 @@ class PristineRelaxationWidget(QWidget):
         configure_button = self._table.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
             customized = bool(self._row_parameter_values.get(row_id, {}))
-            configure_button.setText("Configured..." if customized else "Configure...")
+            configure_button.setText("Configured..." if customized or locked else "Configure...")
+            configure_button.setToolTip(
+                "Inspect the CASTEP parameters used for this row."
+                if locked
+                else (
+                    "Edit custom CASTEP parameters for this row."
+                    if customized
+                    else "Configure CASTEP parameters for this row."
+                )
+            )
 
     def _set_float_item(self, row: int, column: int, value: float | None) -> None:
         item = self._table.item(row, column)
@@ -801,6 +867,17 @@ class PristineRelaxationWidget(QWidget):
             names.update(self._row_added_advanced.get(row_id, set()))
         return names
 
+    def _row_parameters_locked(self, row_ids: tuple[int, ...]) -> bool:
+        for row_id in row_ids:
+            row = self._row_index_for_id(row_id)
+            if row is None:
+                continue
+            runtime = self._runtime_states.get(self._label_at_row(row))
+            status = "" if runtime is None else runtime.status
+            if self._runtime_controls_locked(status):
+                return True
+        return False
+
     def _restore_structured_value(self, name: str, value: object) -> object:
         spec = self._specs_by_name.get(name)
         if spec is None:
@@ -840,22 +917,28 @@ class PristineRelaxationWidget(QWidget):
                 continue
             intro_labels.append(self._label_at_row(row))
 
-        dialog = ParameterDialog(
-            specs=self._specs,
-            workflow_stage="pristine_relaxation",
-            locked_values={
+        read_only = self._row_parameters_locked(row_ids)
+        dialog_kwargs = {
+            "specs": self._specs,
+            "workflow_stage": "pristine_relaxation",
+            "locked_values": {
                 "task": "GEOMETRYOPTIMIZATION",
                 "fix_all_cell": "Variable (set by row control)",
                 "write_cell_structure": "TRUE (required for relaxed-cell outputs)",
             },
-            intro_text="Included rows: " + ", ".join(intro_labels),
-            parent=self,
-        )
-        dialog.setWindowTitle("Configure Relaxation Parameters")
+            "intro_text": "Included rows: " + ", ".join(intro_labels),
+            "parent": self,
+        }
+        if read_only:
+            dialog_kwargs["read_only"] = True
+        dialog = ParameterDialog(**dialog_kwargs)
+        dialog.setWindowTitle("Inspect Relaxation Parameters" if read_only else "Configure Relaxation Parameters")
         dialog.set_values(self._common_params_for_rows(row_ids))
         dialog.set_advanced_names(self._advanced_names_for_rows(row_ids))
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if read_only:
             return
 
         values = self._sanitize_parameter_mapping(dialog.collect_values())
