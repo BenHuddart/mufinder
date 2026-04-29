@@ -90,6 +90,20 @@ def test_uep_widget_dialog_locks_write_formatted_density(qapp) -> None:
     assert dialog._rows["write_formatted_density"].locked is True
 
 
+def test_uep_widget_defaults_symmetry_generate(qapp) -> None:
+    widget = UEPWidget()
+    dialog = ParameterDialog(specs=widget._specs, workflow_stage="uep")
+    dialog.set_values(widget._default_params)
+
+    assert widget._default_params["symmetry_generate"] is True
+    assert dialog.collect_values()["symmetry_generate"] is True
+
+    dialog._rows["symmetry_generate"].editor.set_value(False)
+    dialog._reset_parameter("symmetry_generate")
+
+    assert dialog.collect_values()["symmetry_generate"] is True
+
+
 def test_uep_widget_uses_uep_name_prefix_by_default(qapp) -> None:
     widget = UEPWidget()
 
@@ -286,6 +300,24 @@ def test_uep_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
     assert isinstance(remove_button, QToolButton)
     assert remove_button.isEnabled()
     assert widget._runtime_controls_locked(widget._runtime_state_for_row(row_id).status)
+
+
+def test_uep_widget_cancelled_row_keeps_parameters_editable(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    label = widget._table.item(0, widget._LABEL_COLUMN).text()
+
+    widget.set_runtime_states({label: UepRunState(status="cancelled")})
+
+    assert not widget._runtime_controls_locked(widget._runtime_state_for_row(row_id).status)
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    assert bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    assert combo.isEnabled()
 
 
 def test_uep_widget_run_cluster_submits_selected_rows_only(qapp) -> None:

@@ -580,7 +580,7 @@ def _draw_spin_arrows(
     length_scale: float = 0.85,
     head_fraction: float = 0.38,
 ) -> np.ndarray:
-    """Draw high-visibility 3D spin arrows aligned with the z-axis."""
+    """Draw high-visibility 3D spin arrows."""
 
     if len(positions) == 0:
         return np.empty((0, 3), dtype=float)
@@ -591,11 +591,15 @@ def _draw_spin_arrows(
 
     extent_points: list[np.ndarray] = []
     for position, radius, spin in zip(positions, radii, spins):
-        magnitude = float(abs(spin))
+        spin_array = np.asarray(spin, dtype=float)
+        is_vector = spin_array.shape == (3,)
+        spin_vector = spin_array if is_vector else np.array([0.0, 0.0, float(spin_array)], dtype=float)
+        magnitude = float(np.linalg.norm(spin_vector))
         if magnitude <= 1e-10:
             continue
 
-        direction = 1.0 if spin >= 0.0 else -1.0
+        direction_vector = spin_vector / magnitude
+        direction = 1.0 if direction_vector[2] >= 0.0 else -1.0
         sphere_radius = float(radius)
         arrow_length = max(0.3, magnitude * length_scale) + 0.4 * sphere_radius
         half_length = 0.5 * arrow_length
@@ -610,6 +614,25 @@ def _draw_spin_arrows(
         tip_z = center_z + direction * half_length
 
         color = "#1f78b4" if direction > 0 else "#d7301f"
+
+        if is_vector:
+            tail = np.asarray(position, dtype=float) - direction_vector * half_length
+            tip = np.asarray(position, dtype=float) + direction_vector * half_length
+            axis.quiver(
+                tail[0],
+                tail[1],
+                tail[2],
+                direction_vector[0] * arrow_length,
+                direction_vector[1] * arrow_length,
+                direction_vector[2] * arrow_length,
+                color=color,
+                linewidth=max(1.0, shaft_radius * 12.0),
+                arrow_length_ratio=head_fraction,
+                normalize=False,
+            )
+            extent_points.append(tip)
+            extent_points.append(tail)
+            continue
 
         z_line = np.linspace(tail_z, shaft_end_z, 2)
         shaft_x = position[0] + shaft_radius * np.outer(cos_t, np.ones_like(z_line))
@@ -1700,16 +1723,21 @@ class AtomicStructureViewer(QWidget):
         self._render()
 
     def set_spins(self, spins: list[float] | tuple[float, ...] | np.ndarray | None) -> None:
-        """Replace current per-atom spin values and redraw."""
+        """Replace current per-atom scalar spins or vector moments and redraw."""
         if self._atoms is None or spins is None:
             self._spins = None
         else:
             spin_array = np.asarray(spins, dtype=float)
-            self._spins = spin_array.copy() if len(spin_array) == len(self._atoms) else None
+            valid_shape = spin_array.shape == (len(self._atoms),) or spin_array.shape == (len(self._atoms), 3)
+            self._spins = spin_array.copy() if valid_shape else None
         if self._spins is not None and np.any(np.abs(self._spins) > 1e-10):
             self._show_spins.setChecked(True)
         self._store_view()
         self._render()
+
+    def set_moment_vectors(self, moments: list[list[float]] | tuple[tuple[float, float, float], ...] | np.ndarray | None) -> None:
+        """Replace current per-atom magnetic moment vectors and redraw."""
+        self.set_spins(moments)
 
     def set_isosurface(
         self,
@@ -1934,6 +1962,10 @@ class AtomicStructureViewer(QWidget):
         indexes = [] if atom_indexes is None else [int(value) for value in atom_indexes]
         self._set_selected_atoms(indexes, emit_signal=False)
 
+    def selected_atom_indices(self) -> tuple[int, ...]:
+        """Return currently selected atom indices."""
+        return tuple(int(index) for index in self._selected_indexes)
+
     def _set_selected_atom(self, atom_index: int | None, *, emit_signal: bool) -> None:
         self._set_selected_atoms([] if atom_index is None else [int(atom_index)], emit_signal=emit_signal)
 
@@ -1999,8 +2031,18 @@ class AtomicStructureViewer(QWidget):
         pbc = structure.properties.get("pbc", [True, True, True])
         if not isinstance(pbc, Iterable):
             pbc = [True, True, True]
+        symbols = []
+        for species in structure.species:
+            label = str(species).strip()
+            lowered = label.casefold()
+            if lowered == "h:mu" or lowered.endswith(":mu"):
+                symbols.append("X")
+            elif ":" in label:
+                symbols.append(label.split(":", 1)[0] or "X")
+            else:
+                symbols.append(label or "X")
         return Atoms(
-            symbols=structure.species,
+            symbols=symbols,
             scaled_positions=structure.fractional_positions,
             cell=lattice,
             pbc=[bool(value) for value in pbc],
@@ -2270,14 +2312,16 @@ class AtomicStructureViewer(QWidget):
     def _spin_extent_points(self, positions: np.ndarray, radii: np.ndarray, spins: np.ndarray) -> np.ndarray:
         tips: list[np.ndarray] = []
         for position, radius, spin in zip(positions, radii, spins):
-            magnitude = float(abs(spin))
+            spin_array = np.asarray(spin, dtype=float)
+            spin_vector = spin_array if spin_array.shape == (3,) else np.array([0.0, 0.0, float(spin_array)], dtype=float)
+            magnitude = float(np.linalg.norm(spin_vector))
             if magnitude <= 1e-10:
                 continue
-            direction = 1.0 if spin >= 0.0 else -1.0
+            direction_vector = spin_vector / magnitude
             arrow_length = max(0.3, magnitude * 0.85) + 0.4 * float(radius)
             half_length = 0.5 * arrow_length
-            tips.append(np.array([position[0], position[1], position[2] + direction * half_length], dtype=float))
-            tips.append(np.array([position[0], position[1], position[2] - direction * half_length], dtype=float))
+            tips.append(np.asarray(position, dtype=float) + direction_vector * half_length)
+            tips.append(np.asarray(position, dtype=float) - direction_vector * half_length)
         if not tips:
             return np.empty((0, 3), dtype=float)
         return np.vstack(tips)
@@ -3226,10 +3270,13 @@ class AtomicStructureViewer(QWidget):
     def _draw_pyvista_spins(self, plotter, pv, positions: np.ndarray, radii: np.ndarray, spins: np.ndarray) -> list[object]:
         actors: list[object] = []
         for position, radius, spin in zip(positions, radii, spins):
-            magnitude = float(abs(spin))
+            spin_array = np.asarray(spin, dtype=float)
+            spin_vector = spin_array if spin_array.shape == (3,) else np.array([0.0, 0.0, float(spin_array)], dtype=float)
+            magnitude = float(np.linalg.norm(spin_vector))
             if magnitude <= 1e-10:
                 continue
-            direction = 1.0 if spin >= 0.0 else -1.0
+            direction_vector = spin_vector / magnitude
+            direction = 1.0 if direction_vector[2] >= 0.0 else -1.0
             sphere_radius = float(radius)
             arrow_length = max(0.3, magnitude * 0.85) + 0.4 * sphere_radius
             half_length = 0.5 * arrow_length
@@ -3237,9 +3284,9 @@ class AtomicStructureViewer(QWidget):
             shaft_tip_offset = max(half_length - head_length, 0.05)
             shaft_radius = max(0.055, 0.12 * sphere_radius)
             head_radius = max(0.12, 0.2 * sphere_radius)
-            tail = np.array([position[0], position[1], position[2] - direction * half_length], dtype=float)
-            shaft_end = np.array([position[0], position[1], position[2] + direction * shaft_tip_offset], dtype=float)
-            tip = np.array([position[0], position[1], position[2] + direction * half_length], dtype=float)
+            tail = np.asarray(position, dtype=float) - direction_vector * half_length
+            shaft_end = np.asarray(position, dtype=float) + direction_vector * shaft_tip_offset
+            tip = np.asarray(position, dtype=float) + direction_vector * half_length
             color = "#1f78b4" if direction > 0 else "#d7301f"
             actor = self._add_pyvista_cylinder(
                 plotter,
@@ -3254,7 +3301,7 @@ class AtomicStructureViewer(QWidget):
                 actors.append(actor)
             cone = pv.Cone(
                 center=tuple(float(value) for value in 0.5 * (shaft_end + tip)),
-                direction=(0.0, 0.0, float(direction)),
+                direction=tuple(float(value) for value in direction_vector),
                 height=float(np.linalg.norm(tip - shaft_end)),
                 radius=float(head_radius),
                 resolution=18,

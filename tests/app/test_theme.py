@@ -42,6 +42,7 @@ def test_apply_theme_sets_active_palette(qapp) -> None:
     assert "QTreeWidget#workflowTree::branch:selected" in stylesheet
     assert "QTreeWidget#workflowTree::branch:closed:has-children" in stylesheet
     assert "QToolButton#sectionToggleButton" in stylesheet
+    assert "QToolButton#mufinderHelpButton" in stylesheet
     assert 'QTableWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last' in stylesheet
     assert 'QTableWidget[hasVisibleVerticalHeader="true"] QHeaderView::section:horizontal:first' in stylesheet
     assert 'QTreeWidget[squareTopCorners="true"]' in stylesheet
@@ -54,7 +55,11 @@ def test_apply_theme_sets_active_palette(qapp) -> None:
     assert 'QWidget#randomSeparationChoice[active="true"]' in stylesheet
     assert "QDialog#clusterPositionsDialog" in stylesheet
     assert "QWidget#clusterPositionsCard" in stylesheet
+    assert "QFrame#connectedToleranceScanPanel" in stylesheet
     assert "QTabWidget#muonRelaxationChargeTabs" in stylesheet
+    assert "QTabWidget#muonRelaxationChargeTabs QTabBar" in stylesheet
+    assert "QTabWidget#analysisWorkspaceTabs" in stylesheet
+    assert "QTabWidget#analysisWorkspaceTabs QTabBar" in stylesheet
     assert "QDialog#muonChargeStateDialog" in stylesheet
     assert "QWidget#muonChargeStateCard" in stylesheet
     assert "QProgressBar#muonGenerationProgress" in stylesheet
@@ -125,6 +130,16 @@ def test_use_square_top_table_corners_sets_property(qapp) -> None:
     table = QTableWidget(0, 1)
     theme_module.use_square_top_table_corners(table)
 
+    assert table.property("squareTopCorners") == "true"
+
+
+def test_use_tabbed_table_corners_sets_tabbed_and_square_properties(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    table = QTableWidget(0, 1)
+    theme_module.use_tabbed_table_corners(table)
+
+    assert table.property("tabbedTable") == "true"
     assert table.property("squareTopCorners") == "true"
 
 

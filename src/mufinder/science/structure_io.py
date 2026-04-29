@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 import re
 import shlex
@@ -274,17 +275,31 @@ def _extract_mcif_magnetic_structure(source: Path) -> dict[str, Any] | None:
     text = source.read_text(encoding="utf-8")
     tags, loops = _parse_cif_tags_and_loops(text)
 
-    propagation = _extract_propagation_vector(tags)
-    moments = _extract_moments_from_loops(loops)
+    atom_labels = _extract_atom_labels(tags, loops)
+    propagation_vectors = _extract_propagation_vectors(tags, loops)
+    propagation = propagation_vectors[0] if propagation_vectors else None
+    moments = _attach_moment_atom_indices(
+        _extract_moments_from_loops(loops),
+        atom_labels=atom_labels,
+    )
 
-    if not propagation and not moments:
+    if not propagation_vectors and not moments:
         return None
 
-    payload: dict[str, Any] = {}
+    payload: dict[str, Any] = {"source": "mcif"}
+    if atom_labels:
+        payload["atom_labels"] = atom_labels
     if propagation:
         payload["propagation_vector"] = propagation
+    if propagation_vectors:
+        payload["propagation_vectors_rlu"] = propagation_vectors
     if moments:
         payload["moments"] = moments
+        payload["site_moments"] = {
+            str(moment["label"]): list(moment["vector"])
+            for moment in moments
+            if isinstance(moment.get("label"), str) and isinstance(moment.get("vector"), list)
+        }
     return payload
 
 
@@ -300,13 +315,21 @@ def _spins_from_magnetic_structure(
     spins = [0.0] * atom_count
     saw_moment = False
     for index, moment in enumerate(moments):
-        if index >= atom_count or not isinstance(moment, dict):
-            break
+        if not isinstance(moment, dict):
+            continue
+        atom_index = index
+        if "atom_index" in moment:
+            try:
+                atom_index = int(moment["atom_index"])
+            except (TypeError, ValueError):
+                continue
+        if atom_index < 0 or atom_index >= atom_count:
+            continue
         vector = moment.get("vector")
         if not isinstance(vector, list) or len(vector) < 3:
             continue
         try:
-            spins[index] = float(vector[2])
+            spins[atom_index] = float(vector[2])
             saw_moment = True
         except (TypeError, ValueError):
             continue
@@ -396,8 +419,50 @@ def _tokenize_cif_line(line: str) -> list[str]:
         return line.split()
 
 
-def _extract_propagation_vector(tags: dict[str, str]) -> list[float] | None:
-    """Extract propagation vector if present in MCIF tags."""
+def _extract_atom_labels(tags: dict[str, str], loops: list[dict[str, Any]]) -> list[str]:
+    """Extract MCIF atom labels in structure order when present."""
+    labels: list[str] = []
+    if "_atom_site_label" in tags:
+        labels.append(str(tags["_atom_site_label"]))
+
+    for loop in loops:
+        headers: list[str] = loop.get("headers", [])
+        if "_atom_site_label" not in headers:
+            continue
+        for row in loop.get("rows", []):
+            label = str(row.get("_atom_site_label", "")).strip()
+            if label:
+                labels.append(label)
+
+    return _dedupe_strings(labels)
+
+
+def _extract_propagation_vectors(tags: dict[str, str], loops: list[dict[str, Any]]) -> list[list[float]]:
+    """Extract all known MCIF propagation vectors in reciprocal-lattice units."""
+    vectors: list[list[float]] = []
+
+    for key in ("_magnetic_propagation_vector_kxkykz", "_propagation_vector_kxkykz"):
+        if key in tags:
+            triplet = _parse_cif_triplet(tags[key])
+            if triplet is not None:
+                vectors.append(triplet)
+
+    for loop in loops:
+        headers: list[str] = loop.get("headers", [])
+        key = _first_matching_header(
+            headers,
+            [
+                "_magnetic_propagation_vector_kxkykz",
+                "_propagation_vector_kxkykz",
+            ],
+        )
+        if key is None:
+            continue
+        for row in loop.get("rows", []):
+            triplet = _parse_cif_triplet(str(row.get(key, "")))
+            if triplet is not None:
+                vectors.append(triplet)
+
     candidates = [
         ("_cell_wave_vector_x", "_cell_wave_vector_y", "_cell_wave_vector_z"),
         ("_propagation_vector_x", "_propagation_vector_y", "_propagation_vector_z"),
@@ -414,8 +479,8 @@ def _extract_propagation_vector(tags: dict[str, str]) -> list[float] | None:
             y = _parse_cif_float(tags[ky])
             z = _parse_cif_float(tags[kz])
             if x is not None and y is not None and z is not None:
-                return [x, y, z]
-    return None
+                vectors.append([x, y, z])
+    return _dedupe_vectors(vectors)
 
 
 def _extract_moments_from_loops(loops: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -432,15 +497,26 @@ def _extract_moments_from_loops(loops: list[dict[str, Any]]) -> list[dict[str, A
             [
                 "_atom_site_moment.label",
                 "_atom_site_moment.atom_site_label",
+                "_atom_site_moment_label",
+                "_atom_site_moment_site_label",
             ],
         )
-        x_key = _first_header_with_suffix(headers, [".crystalaxis_x", ".cartn_x", ".x"])
-        y_key = _first_header_with_suffix(headers, [".crystalaxis_y", ".cartn_y", ".y"])
-        z_key = _first_header_with_suffix(headers, [".crystalaxis_z", ".cartn_z", ".z"])
+        x_key = _first_header_with_suffix(
+            headers,
+            [".crystalaxis_x", ".cartn_x", ".x", "_crystalaxis_x", "_cartn_x", "_x"],
+        )
+        y_key = _first_header_with_suffix(
+            headers,
+            [".crystalaxis_y", ".cartn_y", ".y", "_crystalaxis_y", "_cartn_y", "_y"],
+        )
+        z_key = _first_header_with_suffix(
+            headers,
+            [".crystalaxis_z", ".cartn_z", ".z", "_crystalaxis_z", "_cartn_z", "_z"],
+        )
         if not (x_key and y_key and z_key):
             continue
 
-        coordinate_system = "cartesian" if ".cartn_" in x_key else "crystalaxis"
+        coordinate_system = "cartesian" if "cartn" in x_key else "crystalaxis"
         for row_index, row in enumerate(loop.get("rows", []), start=1):
             x = _parse_cif_float(str(row.get(x_key, "")))
             y = _parse_cif_float(str(row.get(y_key, "")))
@@ -460,6 +536,39 @@ def _extract_moments_from_loops(loops: list[dict[str, Any]]) -> list[dict[str, A
     return extracted
 
 
+def _attach_moment_atom_indices(
+    moments: list[dict[str, Any]],
+    *,
+    atom_labels: list[str],
+) -> list[dict[str, Any]]:
+    """Attach MCIF atom indices using exact or unique prefix label matches."""
+    if not atom_labels:
+        return moments
+
+    mapped: list[dict[str, Any]] = []
+    for moment in moments:
+        updated = dict(moment)
+        label = str(updated.get("label", "")).strip()
+        atom_index = _find_atom_label_index(atom_labels, label)
+        if atom_index is not None:
+            updated["atom_index"] = atom_index
+            updated["atom_label"] = atom_labels[atom_index]
+        mapped.append(updated)
+    return mapped
+
+
+def _find_atom_label_index(atom_labels: list[str], label: str) -> int | None:
+    """Return the atom index for an MCIF label using mag2spectra-style matching."""
+    if not label:
+        return None
+    if label in atom_labels:
+        return atom_labels.index(label)
+    prefix_matches = [index for index, candidate in enumerate(atom_labels) if candidate.startswith(f"{label}_")]
+    if len(prefix_matches) == 1:
+        return prefix_matches[0]
+    return None
+
+
 def _first_matching_header(headers: list[str], options: list[str]) -> str | None:
     for option in options:
         if option in headers:
@@ -475,6 +584,20 @@ def _first_header_with_suffix(headers: list[str], suffixes: list[str]) -> str | 
     return None
 
 
+def _parse_cif_triplet(token: str) -> list[float] | None:
+    """Parse a CIF triplet token such as ``0, 0, 1/4`` or ``0 0 0.25``."""
+    text = token.strip().strip("'\"").strip("[]()")
+    if text in {"", ".", "?"}:
+        return None
+    parts = [part.strip() for part in text.split(",")] if "," in text else text.split()
+    if len(parts) != 3:
+        return None
+    values = [_parse_cif_float(part) for part in parts]
+    if any(value is None for value in values):
+        return None
+    return [float(value) for value in values if value is not None]
+
+
 def _parse_cif_float(token: str) -> float | None:
     """Parse numeric CIF token, removing uncertainty notation when present."""
     text = token.strip().strip("'\"")
@@ -484,6 +607,32 @@ def _parse_cif_float(token: str) -> float | None:
     if "(" in text:
         text = text.split("(", maxsplit=1)[0]
 
+    if "/" in text:
+        try:
+            return float(Fraction(text))
+        except (ValueError, ZeroDivisionError):
+            return None
+
     if not re.match(r"^[+-]?(\d+\.?\d*|\d*\.\d+)([eE][+-]?\d+)?$", text):
         return None
     return float(text)
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def _dedupe_vectors(vectors: list[list[float]]) -> list[list[float]]:
+    out: list[list[float]] = []
+    for vector in vectors:
+        if any(all(abs(float(a) - float(b)) <= 1e-12 for a, b in zip(vector, existing, strict=True)) for existing in out):
+            continue
+        out.append([float(value) for value in vector])
+    return out

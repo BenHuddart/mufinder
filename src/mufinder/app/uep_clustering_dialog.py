@@ -161,6 +161,83 @@ class _DendrogramNavigationToolbar(NavigationToolbar2QT):
         self._sync_button_states()
 
 
+class _EqualInitialSplitter(QSplitter):
+    """Splitter that waits for real geometry before applying a 50:50 default."""
+
+    def __init__(self, orientation: Qt.Orientation, parent: QWidget | None = None) -> None:
+        super().__init__(orientation, parent)
+        self._equal_initial_sizes_pending = True
+        self._equal_initial_sizes_scheduled = False
+        self._last_equal_extent = 0
+        self._stable_equal_extent_passes = 0
+        self._programmatic_sizing = False
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().showEvent(event)
+        self._schedule_equal_initial_sizes()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().resizeEvent(event)
+        self._schedule_equal_initial_sizes()
+
+    def setOrientation(self, orientation: Qt.Orientation) -> None:  # noqa: N802 - Qt API naming.
+        if orientation != self.orientation():
+            self.reset_default_balance()
+        super().setOrientation(orientation)
+
+    def reset_default_balance(self) -> None:
+        self._equal_initial_sizes_pending = True
+        self._last_equal_extent = 0
+        self._stable_equal_extent_passes = 0
+        self._schedule_equal_initial_sizes()
+
+    def mark_user_sized(self) -> None:
+        self._equal_initial_sizes_pending = False
+
+    def is_programmatic_sizing(self) -> bool:
+        return self._programmatic_sizing
+
+    def setSizes(self, sizes: list[int]) -> None:  # noqa: N802 - Qt API naming.
+        self._programmatic_sizing = True
+        try:
+            super().setSizes(sizes)
+        finally:
+            QTimer.singleShot(0, self._clear_programmatic_sizing)
+
+    def moveSplitter(self, pos: int, index: int) -> None:  # noqa: N802 - Qt API naming.
+        self._programmatic_sizing = True
+        try:
+            super().moveSplitter(pos, index)
+        finally:
+            QTimer.singleShot(0, self._clear_programmatic_sizing)
+
+    def _clear_programmatic_sizing(self) -> None:
+        self._programmatic_sizing = False
+
+    def _schedule_equal_initial_sizes(self) -> None:
+        if self._equal_initial_sizes_pending and self.isVisible() and not self._equal_initial_sizes_scheduled:
+            self._equal_initial_sizes_scheduled = True
+            QTimer.singleShot(0, self._apply_equal_initial_sizes)
+
+    def _apply_equal_initial_sizes(self) -> None:
+        self._equal_initial_sizes_scheduled = False
+        if not self._equal_initial_sizes_pending or self.count() < 2:
+            return
+        extent = self.width() if self.orientation() == Qt.Orientation.Horizontal else self.height()
+        if extent <= 2:
+            self._schedule_equal_initial_sizes()
+            return
+        first = max(extent // 2, 1)
+        self.setSizes([first, max(extent - first, 1)])
+        if extent == self._last_equal_extent:
+            self._stable_equal_extent_passes += 1
+        else:
+            self._last_equal_extent = extent
+            self._stable_equal_extent_passes = 0
+        self._equal_initial_sizes_pending = self._stable_equal_extent_passes < 2
+        self._schedule_equal_initial_sizes()
+
+
 class UepClusteringDialog(QDialog):
     """Separate clustering window for relaxed UEP batch-search sites."""
 
@@ -312,11 +389,13 @@ class UepClusteringDialog(QDialog):
         controls_layout.setColumnStretch(3, 1)
         layout.addWidget(controls_card)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        splitter = _EqualInitialSplitter(Qt.Orientation.Horizontal, self)
         splitter.setChildrenCollapsible(False)
         self._main_splitter = splitter
 
         left_panel = QWidget(splitter)
+        left_panel.setMinimumWidth(0)
+        left_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
@@ -335,6 +414,8 @@ class UepClusteringDialog(QDialog):
         left_layout.addWidget(self._left_canvas, 1)
 
         right_panel = QWidget(splitter)
+        right_panel.setMinimumWidth(0)
+        right_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(8)
@@ -350,6 +431,8 @@ class UepClusteringDialog(QDialog):
         viewer_layout.setSpacing(8)
 
         self._structure_viewer = AtomicStructureViewer(viewer_panel)
+        self._structure_viewer.setMinimumWidth(0)
+        self._structure_viewer.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         self._structure_viewer.set_structure(self._viewer_host_structure)
         self._structure_viewer.setMinimumHeight(260)
         viewer_layout.addWidget(self._structure_viewer, 1)
@@ -371,7 +454,7 @@ class UepClusteringDialog(QDialog):
         bubble_layout.addWidget(self._bubble_note_label)
         self._bubble_card = bubble_card
 
-        right_splitter = QSplitter(Qt.Orientation.Vertical, right_panel)
+        right_splitter = _EqualInitialSplitter(Qt.Orientation.Vertical, right_panel)
         right_splitter.setChildrenCollapsible(False)
         right_splitter.addWidget(viewer_panel)
         right_splitter.addWidget(bubble_card)
@@ -379,6 +462,11 @@ class UepClusteringDialog(QDialog):
         right_splitter.setStretchFactor(1, 1)
         right_splitter.setSizes([1, 1])
         self._right_splitter = right_splitter
+        self._right_splitter.splitterMoved.connect(
+            lambda *_args: None
+            if self._right_splitter.is_programmatic_sizing()
+            else self._right_splitter.mark_user_sized()
+        )
         self._right_splitter.splitterMoved.connect(lambda *_args: self._emit_state_changed())
         right_layout.addWidget(right_splitter, 1)
 
@@ -387,6 +475,11 @@ class UepClusteringDialog(QDialog):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([1, 1])
+        self._main_splitter.splitterMoved.connect(
+            lambda *_args: None
+            if self._main_splitter.is_programmatic_sizing()
+            else self._main_splitter.mark_user_sized()
+        )
         self._main_splitter.splitterMoved.connect(lambda *_args: self._emit_state_changed())
         layout.addWidget(splitter, 1)
 
@@ -977,6 +1070,7 @@ class UepClusteringDialog(QDialog):
             if isinstance(splitter_sizes, list) and len(splitter_sizes) == 2:
                 try:
                     self._main_splitter.setSizes([int(splitter_sizes[0]), int(splitter_sizes[1])])
+                    self._main_splitter.mark_user_sized()
                     self._has_restored_splitter_state = True
                     self._pending_main_splitter_sizes = [int(splitter_sizes[0]), int(splitter_sizes[1])]
                 except (TypeError, ValueError):
@@ -985,6 +1079,7 @@ class UepClusteringDialog(QDialog):
             if isinstance(right_splitter_sizes, list) and len(right_splitter_sizes) == 2:
                 try:
                     self._right_splitter.setSizes([int(right_splitter_sizes[0]), int(right_splitter_sizes[1])])
+                    self._right_splitter.mark_user_sized()
                     self._has_restored_splitter_state = True
                     self._pending_right_splitter_sizes = [int(right_splitter_sizes[0]), int(right_splitter_sizes[1])]
                 except (TypeError, ValueError):
@@ -1010,6 +1105,7 @@ class UepClusteringDialog(QDialog):
             try:
                 self._pending_main_splitter_sizes = [int(splitter_sizes[0]), int(splitter_sizes[1])]
                 self._main_splitter.setSizes(self._pending_main_splitter_sizes)
+                self._main_splitter.mark_user_sized()
             except (TypeError, ValueError):
                 pass
         right_splitter_sizes = state.get("right_splitter_sizes") if isinstance(state, Mapping) else None
@@ -1017,6 +1113,7 @@ class UepClusteringDialog(QDialog):
             try:
                 self._pending_right_splitter_sizes = [int(right_splitter_sizes[0]), int(right_splitter_sizes[1])]
                 self._right_splitter.setSizes(self._pending_right_splitter_sizes)
+                self._right_splitter.mark_user_sized()
             except (TypeError, ValueError):
                 pass
 

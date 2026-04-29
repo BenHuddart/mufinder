@@ -27,7 +27,12 @@ class RelaxationJobConfig:
 
 
 def _task_param_template() -> ParamTemplate:
-    return ParamTemplate(keywords=(KeywordAssignment("task", "GEOMETRYOPTIMIZATION"),))
+    return ParamTemplate(
+        keywords=(
+            KeywordAssignment("task", "GEOMETRYOPTIMIZATION"),
+            KeywordAssignment("continuation", "DEFAULT"),
+        )
+    )
 
 
 def _cell_override_template(config: RelaxationJobConfig) -> CellTemplate:

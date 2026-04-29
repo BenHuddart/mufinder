@@ -113,6 +113,29 @@ def test_widget_delete_selected_candidates_emits_site_ids(qapp) -> None:
     assert emitted == [["site-b"]]
 
 
+def test_widget_backspace_shortcut_deletes_selected_candidate_on_macos(qapp) -> None:
+    widget = MuonGenerationWidget()
+    widget.set_sites(
+        [
+            {
+                "id": "site-a",
+                "label": "Site A",
+                "method": "random",
+                "status": "generated",
+                "fractional": [0.1, 0.2, 0.3],
+            }
+        ]
+    )
+
+    emitted: list[list[str]] = []
+    widget.delete_candidates_requested.connect(lambda site_ids: emitted.append(list(site_ids)))
+    widget._site_table.selectRow(0)
+
+    widget._backspace_shortcut.activated.emit()
+
+    assert emitted == [["site-a"]]
+
+
 def test_widget_create_jobs_from_selected_emits_site_ids(qapp) -> None:
     widget = MuonGenerationWidget()
     widget.set_sites(

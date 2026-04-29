@@ -377,6 +377,34 @@ def test_kpoint_widget_queued_grid_parameter_dialog_is_read_only(
     assert configure_button.text() == "Configured..."
 
 
+def test_kpoint_widget_cancelled_grid_parameters_are_editable(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget._parameter_values[(2, 2, 2)] = {"max_scf_cycles": 50}
+    widget.set_runtime_states({(2, 2, 2): SweepPointRunState(status="cancelled")})
+
+    observed: dict[str, object] = {}
+
+    def fake_exec(dialog) -> int:
+        observed["read_only"] = dialog._read_only
+        observed["title"] = dialog.windowTitle()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(kpoint_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(
+        kpoint_widget_module.ParameterDialog,
+        "collect_values",
+        lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
+    )
+
+    widget._open_grid_parameter_dialog(((2, 2, 2),))
+
+    assert observed == {"read_only": False, "title": "Configure K-Point Parameters"}
+    assert widget._parameter_values[(2, 2, 2)]["max_scf_cycles"] == 99
+
+
 def test_kpoint_widget_parameter_dialog_prefers_cutoff_and_shows_spin_polarized(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:

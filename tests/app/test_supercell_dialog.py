@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from PySide6.QtWidgets import QHeaderView
+
 from mufinder.app.supercell_dialog import SupercellEditorDialog, SupercellPreviewDialog
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Structure
@@ -111,6 +113,31 @@ def test_supercell_editor_saves_named_asset_and_selects_it(qapp, tmp_path) -> No
     assert dialog.selected_structure_id() == saved.id
     assert dialog.selected_matrix() == [[2, 0, 0], [0, 1, 0], [0, 0, 1]]
     assert doc.structures[saved.id].label == "Relaxation 2x1x1"
+    dialog.close()
+
+
+def test_supercell_editor_asset_table_visible_columns_stretch(qapp, tmp_path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "editor_columns.mufinder", "EditorColumns")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    dialog = SupercellEditorDialog(
+        document=doc,
+        project_service=service,
+        source_structure=host,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+    )
+
+    header = dialog._asset_table.horizontalHeader()
+    assert header.sectionResizeMode(dialog._ID_COLUMN) == QHeaderView.ResizeMode.Fixed
+    for column in (
+        dialog._NAME_COLUMN,
+        dialog._MATRIX_COLUMN,
+        dialog._ATOMS_COLUMN,
+        dialog._USAGE_COLUMN,
+    ):
+        assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.Stretch
     dialog.close()
 
 

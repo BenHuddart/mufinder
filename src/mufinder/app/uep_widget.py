@@ -53,7 +53,7 @@ _PREFERRED_DEFAULT_PARAMETER_NAMES = (
     "kpoint_mp_spacing",
     "kpoints_list",
 )
-_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready"}
+_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready", "cancelled"}
 
 
 def _normalize_uep_name_prefix(value: object) -> str:
@@ -303,6 +303,7 @@ class UEPWidget(QWidget):
     def _default_shared_params(self) -> dict[str, object]:
         defaults: dict[str, object] = {
             "task": "SINGLEPOINT",
+            "symmetry_generate": True,
             "write_formatted_density": True,
         }
         return defaults

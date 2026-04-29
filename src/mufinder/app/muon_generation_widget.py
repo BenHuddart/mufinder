@@ -221,6 +221,8 @@ class MuonGenerationWidget(QWidget):
         self._configure_site_table_columns()
         self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._site_table)
         self._delete_shortcut.activated.connect(self._emit_delete_selected)
+        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self._site_table)
+        self._backspace_shortcut.activated.connect(self._emit_delete_selected)
         self._clear_selection_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self._site_table)
         self._clear_selection_shortcut.activated.connect(self._clear_site_selection)
         self._site_table.viewport().installEventFilter(self)

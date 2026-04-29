@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QComboBox, QMessageBox, QPushButton, QToolButton
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_types import RelaxationRunState
+from mufinder.castep_io.gui_metadata import keyword_visible_in_workflow
 from mufinder.castep_io.types import ValueWithUnit
 
 
@@ -52,6 +53,74 @@ def test_muon_relaxation_widget_stages_sites_with_positive_muon_default(qapp) ->
     assert config.rows[0].charge_state == "positive_muon"
 
 
+def test_muon_relaxation_widget_tabbed_tables_use_square_corner_theme(qapp) -> None:
+    widget = MuonRelaxationWidget()
+
+    for table in widget._tables_by_charge_state.values():
+        assert table.property("tabbedTable") == "true"
+        assert table.property("squareTopCorners") == "true"
+
+
+def test_muon_relaxation_widget_exposes_geometry_optimization_parameters(qapp) -> None:
+    widget = MuonRelaxationWidget()
+
+    visible_basic = {
+        spec.name
+        for spec in widget._specs
+        if keyword_visible_in_workflow(
+            spec,
+            workflow_stage="muon_relaxation",
+            include_advanced=False,
+        )
+    }
+
+    assert {
+        "geom_max_iter",
+        "geom_energy_tol",
+        "geom_force_tol",
+        "geom_disp_tol",
+        "geom_stress_tol",
+        "geom_frequency_est",
+    } <= visible_basic
+
+
+def test_muon_relaxation_widget_defaults_continuation_to_default(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    dialog = ParameterDialog(specs=widget._specs, workflow_stage="muon_relaxation")
+    dialog.set_values(widget._default_params)
+
+    assert widget._default_params["continuation"] == "DEFAULT"
+    assert dialog.collect_values()["continuation"] == "DEFAULT"
+
+    dialog._rows["continuation"].editor.set_value("CUSTOM")
+    dialog._reset_parameter("continuation")
+
+    assert dialog.collect_values()["continuation"] == "DEFAULT"
+
+
+def test_muon_relaxation_widget_does_not_default_symmetry_generate(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    dialog = ParameterDialog(specs=widget._specs, workflow_stage="muon_relaxation")
+    dialog.set_values(widget._default_params)
+
+    assert "symmetry_generate" not in widget._default_params
+    assert "symmetry_generate" not in dialog.collect_values()
+
+
+def test_muon_relaxation_widget_defaults_geometry_max_iterations_to_300(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    dialog = ParameterDialog(specs=widget._specs, workflow_stage="muon_relaxation")
+    dialog.set_values(widget._default_params)
+
+    assert widget._default_params["geom_max_iter"] == 300
+    assert dialog.collect_values()["geom_max_iter"] == 300
+
+    dialog._rows["geom_max_iter"].editor.set_value(30)
+    dialog._reset_parameter("geom_max_iter")
+
+    assert dialog.collect_values()["geom_max_iter"] == 300
+
+
 def test_muon_relaxation_widget_can_stage_both_charge_states(qapp) -> None:
     widget = MuonRelaxationWidget()
     site_id = uuid4()
@@ -77,6 +146,31 @@ def test_muon_relaxation_widget_can_stage_both_charge_states(qapp) -> None:
     config = widget._build_config_or_warn()
     assert config is not None
     assert [row.charge_state for row in config.rows] == ["positive_muon", "muonium"]
+
+
+def test_muon_relaxation_widget_emits_analysis_workspace_from_selected_rows(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(uuid4()),
+                "label": "Site A",
+                "fractional_position": [0.1, 0.2, 0.3],
+            },
+            {
+                "id": str(uuid4()),
+                "label": "Site B",
+                "fractional_position": [0.4, 0.5, 0.6],
+            },
+        ]
+    )
+    captured: list[list[str]] = []
+    widget.analysis_workspace_requested.connect(lambda labels: captured.append(labels))
+
+    widget._table.selectRow(1)
+    widget._create_analysis_workspace_from_selection()
+
+    assert captured == [["positivemuon:Site B"]]
 
 
 def test_muon_relaxation_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
@@ -108,6 +202,33 @@ def test_muon_relaxation_widget_queued_row_locks_controls_and_parameters(qapp) -
     row_id = widget._row_id_at(0)
     assert row_id is not None
     assert widget._row_parameters_locked((row_id,)) is True
+
+
+def test_muon_relaxation_widget_cancelled_row_keeps_parameters_editable(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    site_id = uuid4()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(site_id),
+                "label": "Cancelled Site",
+                "fractional_position": [0.1, 0.2, 0.3],
+                "charge_state": "positive_muon",
+            }
+        ]
+    )
+
+    widget.set_runtime_states({"positivemuon:Cancelled Site": RelaxationRunState(status="cancelled")})
+
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    assert bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    assert combo.isEnabled()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    assert widget._row_parameters_locked((row_id,)) is False
 
 
 def test_muon_relaxation_widget_state_roundtrip_preserves_muonium(qapp) -> None:
@@ -152,6 +273,48 @@ def test_muon_relaxation_widget_allows_same_site_to_be_staged_multiple_times(qap
     config = widget._build_config_or_warn()
     assert config is not None
     assert [entry.site_id for entry in config.rows] == [site_id, site_id]
+
+
+def test_muon_relaxation_widget_delete_shortcut_removes_selected_jobs(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {"id": str(uuid4()), "label": "Site A", "fractional_position": [0.1, 0.2, 0.3]},
+            {"id": str(uuid4()), "label": "Site B", "fractional_position": [0.4, 0.5, 0.6]},
+        ]
+    )
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+
+    widget._table.selectRow(0)
+    widget._table_delete_shortcuts[widget._table].activated.emit()
+
+    assert removed == [["positivemuon:Site A"]]
+    assert widget._table.rowCount() == 1
+    assert widget._label_at_row(0, table=widget._table) == "Site B"
+
+
+def test_muon_relaxation_widget_backspace_shortcut_removes_selected_jobs_from_active_charge_tab(
+    qapp,
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {"id": str(uuid4()), "label": "Shared Site", "fractional_position": [0.1, 0.2, 0.3]},
+        ],
+        charge_states=("positive_muon", "muonium"),
+    )
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    muonium_table = widget._tables_by_charge_state["muonium"]
+
+    widget._charge_tabs.setCurrentWidget(muonium_table)
+    muonium_table.selectRow(0)
+    widget._table_backspace_shortcuts[muonium_table].activated.emit()
+
+    assert removed == [["muonium:Shared Site"]]
+    assert muonium_table.rowCount() == 0
+    assert widget._tables_by_charge_state["positive_muon"].rowCount() == 1
 
 
 def test_muon_relaxation_widget_project_cutoff_removes_basis_precision_default(qapp) -> None:
@@ -284,12 +447,18 @@ def test_muon_relaxation_widget_submits_charge_qualified_selection(qapp) -> None
     assert submitted == [["muonium:Shared Site"]]
 
 
-def test_muon_relaxation_widget_submits_all_charge_tabs_without_selection(qapp) -> None:
+def test_muon_relaxation_widget_submits_current_charge_tab_without_selection(qapp) -> None:
     site_id = uuid4()
     widget = MuonRelaxationWidget()
     widget.set_form_state(
         {
             "rows": [
+                {
+                    "site_id": str(site_id),
+                    "label": "Positive Only",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "positive_muon",
+                },
                 {
                     "site_id": str(site_id),
                     "label": "Muonium Only",
@@ -302,9 +471,41 @@ def test_muon_relaxation_widget_submits_all_charge_tabs_without_selection(qapp) 
     submitted: list[list[str]] = []
     widget.submit_local_requested.connect(lambda payload: submitted.append(list(payload)))
 
+    widget._charge_tabs.setCurrentWidget(widget._tables_by_charge_state["muonium"])
     widget._run_local_selected_rows()
 
     assert submitted == [["muonium:Muonium Only"]]
+
+
+def test_muon_relaxation_widget_ignores_hidden_charge_tab_selection_for_submission(qapp) -> None:
+    site_id = uuid4()
+    widget = MuonRelaxationWidget()
+    widget.set_form_state(
+        {
+            "rows": [
+                {
+                    "site_id": str(site_id),
+                    "label": "Shared Site",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "positive_muon",
+                },
+                {
+                    "site_id": str(site_id),
+                    "label": "Shared Site",
+                    "fractional_position": [0.1, 0.2, 0.3],
+                    "charge_state": "muonium",
+                },
+            ]
+        }
+    )
+    submitted: list[list[str]] = []
+    widget.submit_local_requested.connect(lambda payload: submitted.append(list(payload)))
+
+    widget._charge_tabs.setCurrentWidget(widget._tables_by_charge_state["positive_muon"])
+    widget._tables_by_charge_state["muonium"].selectRow(0)
+    widget._run_local_selected_rows()
+
+    assert submitted == [["positivemuon:Shared Site"]]
 
 
 def test_muon_relaxation_widget_locks_supercell_after_queue(qapp) -> None:

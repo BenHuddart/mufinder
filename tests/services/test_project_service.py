@@ -1038,6 +1038,9 @@ loop_
         assert structure.properties.get("propagation_vector") == pytest.approx([0.0, 0.0, 0.25])
         assert doc.project.magnetic_structure is not None
         assert doc.project.magnetic_structure["propagation_vector"] == pytest.approx([0.0, 0.0, 0.25])
+        assert len(doc.project.magnetic_structure["propagation_vectors_rlu"]) == 1
+        assert doc.project.magnetic_structure["propagation_vectors_rlu"][0] == pytest.approx([0.0, 0.0, 0.25])
+        assert doc.project.magnetic_structure["moments"][0]["atom_index"] == 0
 
         service.save_project(doc)
         loaded = service.load_project(root)

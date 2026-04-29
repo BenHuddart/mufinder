@@ -207,8 +207,9 @@ The tab follows the project save boundary used elsewhere in MuFinder.  Staging
 generated sites and saving a relaxation configuration update the in-memory
 project workflow but do not write project files immediately.  Those staged rows
 and definitions are written when the user chooses ``Save Project`` or accepts
-the close-project save prompt.  Materializing actual job records and input-file
-mappings during submission is a project-file change and is autosaved.
+the close-project save prompt.  Creating or deleting generated muon-site
+entities, and materializing actual job records and input-file mappings during
+submission, are project-file changes and are autosaved.
 
 Element-Attached Positions
 --------------------------

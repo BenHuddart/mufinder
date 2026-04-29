@@ -402,6 +402,7 @@ def expand_pristine_relaxation_jobs(
 
     workflow_defaults_values: dict[str, object] = {
         "task": "GEOMETRYOPTIMIZATION",
+        "geom_max_iter": 300,
         "symmetry_generate": True,
         "write_cell_structure": True,
     }
@@ -509,7 +510,7 @@ def expand_muon_relaxation_jobs(
 
     workflow_defaults_values: dict[str, object] = {
         "task": "GEOMETRYOPTIMIZATION",
-        "symmetry_generate": True,
+        "geom_max_iter": 300,
         "write_cell_structure": True,
     }
     if project_cutoff_energy is not None:

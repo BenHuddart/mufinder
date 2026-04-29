@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -58,7 +59,7 @@ _PREFERRED_DEFAULT_PARAMETER_NAMES = (
     "kpoint_mp_spacing",
     "kpoints_list",
 )
-_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready"}
+_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready", "cancelled"}
 
 
 def _append_workflow_stage(values: tuple[str, ...], workflow_stage: str) -> tuple[str, ...]:
@@ -81,10 +82,15 @@ def _clone_spec_for_pristine_workflow(
     if advanced:
         advanced_workflows = _append_workflow_stage(advanced_workflows, "pristine_relaxation")
 
+    default_value = 300 if spec.name == "geom_max_iter" else spec.default_value
+    if spec.name == "continuation":
+        default_value = "DEFAULT"
+
     return replace(
         spec,
         basic_workflows=basic_workflows,
         advanced_workflows=advanced_workflows,
+        default_value=default_value,
     )
 
 
@@ -184,6 +190,10 @@ class PristineRelaxationWidget(QWidget):
         )
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(32)
+        self._table_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._table)
+        self._table_delete_shortcut.activated.connect(self._delete_selected_rows)
+        self._table_backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self._table)
+        self._table_backspace_shortcut.activated.connect(self._delete_selected_rows)
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(self._LABEL_COLUMN, QHeaderView.ResizeMode.Stretch)
@@ -845,6 +855,12 @@ class PristineRelaxationWidget(QWidget):
             QMessageBox.information(self, "No rows selected", "Select one or more rows first.")
             return
         self._open_row_parameter_dialog(row_ids)
+
+    def _delete_selected_rows(self) -> None:
+        row_ids = self._selected_row_ids()
+        if not row_ids:
+            return
+        self._remove_rows_by_id(row_ids)
 
     def _common_params_for_rows(self, row_ids: tuple[int, ...]) -> dict[str, object]:
         if not row_ids:

@@ -6,6 +6,7 @@ import pytest
 
 from mufinder.app.uep_adapter import expand_uep_jobs
 from mufinder.app.uep_types import UepConfig, UepSourceRow
+from mufinder.castep_io import write_cell
 from mufinder.domain.models import Structure
 
 
@@ -44,6 +45,8 @@ def test_expand_uep_jobs_applies_project_defaults() -> None:
     assert param_values["cut_off_energy"].value == pytest.approx(650.0)
     assert param_values["task"] == "SINGLEPOINT"
     assert param_values["write_formatted_density"] is True
+    assert job.cell_file.symmetry_generate is True
+    assert "SYMMETRY_GENERATE" in write_cell(job.cell_file)
     assert job.cell_file.kpoint_mp_grid == (4, 4, 4)
 
 

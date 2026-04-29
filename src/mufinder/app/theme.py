@@ -493,6 +493,13 @@ def use_square_top_table_corners(table: QTableWidget | QTreeWidget) -> None:
     _repolish_widget(table.verticalScrollBar())
 
 
+def use_tabbed_table_corners(table: QTableWidget | QTreeWidget) -> None:
+    """Opt an item view into the square-corner treatment used inside tab panes."""
+
+    table.setProperty("tabbedTable", "true")
+    use_square_top_table_corners(table)
+
+
 def _build_palette(palette: MuFinderPalette) -> QPalette:
     qpalette = QPalette()
     qpalette.setColor(QPalette.ColorRole.Window, QColor(palette.bg_primary))
@@ -701,13 +708,14 @@ def _panel_container_styles(p: MuFinderPalette) -> str:
         border: none;
         background: transparent;
     }}
-    QLabel#projectTreePanelTitle {{
+    QFrame#projectTreePanelHeader {{
         background: {p.bg_surface_alt};
         border: 1px solid {p.border};
         border-bottom: 1px solid {p.border};
         border-top-left-radius: 10px;
         border-top-right-radius: 10px;
-        padding: 8px 12px;
+    }}
+    QLabel#projectTreePanelTitle {{
         font-weight: 600;
     }}
     QFrame#projectTreePanelBody {{
@@ -811,13 +819,23 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
 
 def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     return f"""
-    QTabWidget#muonRelaxationChargeTabs::pane {{
+    QTabWidget#muonRelaxationChargeTabs::pane,
+    QTabWidget#analysisWorkspaceTabs::pane {{
         border: 1px solid {p.border};
         border-radius: 8px;
         top: -1px;
         background: {p.bg_surface};
     }}
-    QTabWidget#muonRelaxationChargeTabs QTabBar::tab {{
+    QTabWidget#muonRelaxationChargeTabs,
+    QTabWidget#analysisWorkspaceTabs {{
+        background: {p.bg_surface};
+    }}
+    QTabWidget#muonRelaxationChargeTabs QTabBar,
+    QTabWidget#analysisWorkspaceTabs QTabBar {{
+        background: {p.bg_surface};
+    }}
+    QTabWidget#muonRelaxationChargeTabs QTabBar::tab,
+    QTabWidget#analysisWorkspaceTabs QTabBar::tab {{
         background: {p.bg_surface_alt};
         color: {p.text_muted};
         border: 1px solid {p.border};
@@ -828,12 +846,14 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
         margin-right: 4px;
         font-weight: 700;
     }}
-    QTabWidget#muonRelaxationChargeTabs QTabBar::tab:selected {{
+    QTabWidget#muonRelaxationChargeTabs QTabBar::tab:selected,
+    QTabWidget#analysisWorkspaceTabs QTabBar::tab:selected {{
         background: {p.bg_surface};
         color: {p.text_primary};
         border-color: {p.accent};
     }}
-    QTabWidget#muonRelaxationChargeTabs QTabBar::tab:hover:!selected {{
+    QTabWidget#muonRelaxationChargeTabs QTabBar::tab:hover:!selected,
+    QTabWidget#analysisWorkspaceTabs QTabBar::tab:hover:!selected {{
         background: {p.bg_surface};
         color: {p.text_primary};
     }}
@@ -1071,6 +1091,42 @@ def _button_styles(p: MuFinderPalette) -> str:
     QToolButton#sectionToggleButton:pressed {{
         color: {p.accent_hover};
     }}
+    QToolButton#mufinderHelpButton {{
+        border: 1px solid {p.border};
+        border-radius: 8px;
+        padding: 3px;
+        min-width: 24px;
+        min-height: 24px;
+        background: {p.bg_surface};
+    }}
+    QToolButton#mufinderHelpButton:hover {{
+        border-color: {p.accent};
+        background: {p.bg_surface_alt};
+    }}
+    QToolButton#mufinderHelpButton:pressed {{
+        border-color: {p.accent_hover};
+        background: {p.bg_surface_alt};
+    }}
+    QToolButton#projectHomeButton {{
+        border: 1px solid {p.border};
+        border-radius: 7px;
+        padding: 3px;
+        min-width: 24px;
+        min-height: 24px;
+        background: {p.bg_surface};
+    }}
+    QToolButton#projectHomeButton:hover {{
+        border-color: {p.accent};
+        background: {p.bg_surface_alt};
+    }}
+    QToolButton#projectHomeButton:pressed {{
+        border-color: {p.accent_hover};
+        background: {p.bg_surface_alt};
+    }}
+    QToolButton#projectHomeButton:disabled {{
+        border-color: {p.border};
+        background: {p.bg_surface_alt};
+    }}
     """
 
 
@@ -1266,7 +1322,8 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
         background: {p.bg_surface_alt};
     }}
     QFrame#uepIsosurfaceSliderPanel,
-    QFrame#uepIsosurfaceInfoCard {{
+    QFrame#uepIsosurfaceInfoCard,
+    QFrame#connectedToleranceScanPanel {{
         border: 1px solid {p.border};
         border-radius: 12px;
         background: {p.bg_surface};

@@ -65,7 +65,7 @@ _ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
 _PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
 _SUBMITTABLE_JOB_STATUSES = {"ready", "defined"}
 _RESETTABLE_JOB_STATUSES = {"failed", "stopped", "cancelled"}
-_LOCKED_CUTOFF_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES
+_LOCKED_CUTOFF_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"cancelled"}
 
 
 def _reorder_specs_with_kpoint_anchor(specs: list[KeywordSpec]) -> list[KeywordSpec]:

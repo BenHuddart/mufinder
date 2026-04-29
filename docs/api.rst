@@ -65,6 +65,10 @@ Science
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.science.demagnetization
+   :members:
+   :undoc-members:
+
 Workflow
 --------
 

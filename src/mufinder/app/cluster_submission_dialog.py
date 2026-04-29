@@ -327,7 +327,14 @@ class ClusterSubmissionDialog(QDialog):
         return "/".join(part for part in parts if part)
 
     def _default_job_name_prefix(self) -> str:
-        last_component = self._workflow_type.strip("/").rsplit("/", 1)[-1]
+        normalized = self._workflow_type.strip("/")
+        workflow_defaults = {
+            "pristine_relaxation": "pristine_relax",
+            "uep": "uep",
+        }
+        if normalized in workflow_defaults:
+            return workflow_defaults[normalized]
+        last_component = normalized.rsplit("/", 1)[-1]
         if last_component in {"positivemuon", "muonium"}:
             return last_component
         return "convergence"

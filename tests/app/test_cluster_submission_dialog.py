@@ -176,6 +176,36 @@ def test_cluster_submission_dialog_builds_project_workflow_workdir(qapp) -> None
     dialog.close()
 
 
+def test_cluster_submission_dialog_defaults_pristine_relaxation_prefix(qapp) -> None:
+    dialog = ClusterSubmissionDialog(
+        job_labels=["relax_1"],
+        cluster_configs=_configs(),
+        project_name="My Project",
+        workflow_type="pristine_relaxation",
+    )
+
+    config = dialog.config()
+
+    assert config.working_directory == "/work/alice/My_Project/pristine_relaxation"
+    assert config.job_name_prefix == "pristine_relax"
+    dialog.close()
+
+
+def test_cluster_submission_dialog_defaults_uep_prefix(qapp) -> None:
+    dialog = ClusterSubmissionDialog(
+        job_labels=["uep_1"],
+        cluster_configs=_configs(),
+        project_name="My Project",
+        workflow_type="uep",
+    )
+
+    config = dialog.config()
+
+    assert config.working_directory == "/work/alice/My_Project/uep"
+    assert config.job_name_prefix == "uep"
+    dialog.close()
+
+
 def test_cluster_submission_dialog_preserves_nested_muon_workdir_and_prefix(qapp) -> None:
     dialog = ClusterSubmissionDialog(
         job_labels=["Random Site 1"],

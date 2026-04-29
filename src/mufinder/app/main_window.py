@@ -7,12 +7,26 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from math import isnan
 from pathlib import Path
+import posixpath
 import re
 import shutil
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from PySide6.QtCore import QSettings, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QActionGroup, QColor, QFont, QGuiApplication, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
+from PySide6.QtGui import (
+    QActionGroup,
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QGuiApplication,
+    QKeySequence,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QPolygonF,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -37,6 +51,7 @@ from PySide6.QtWidgets import (
     QStatusBar,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -44,7 +59,12 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.castep_setup import load_castep_setup
-from mufinder.branding import app_icon, logo_path
+from mufinder.branding import (
+    app_icon,
+    logo_path,
+    project_home_color_map_path,
+    project_home_map_path,
+)
 from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_cluster_configs
 from mufinder.castep_io.gui_metadata import normalize_gui_value
 from mufinder.castep_io.schema import get_keyword_spec
@@ -92,6 +112,12 @@ from mufinder.app.relaxation_types import (
     RelaxationRunState,
     SupercellMatrix,
 )
+from mufinder.app.relaxation_analysis_widget import (
+    CompletedRelaxationAnalysisSource,
+    RelaxationAnalysisJobDialog,
+    RelaxationAnalysisWidget,
+    default_workspace_state,
+)
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.uep_adapter import expand_uep_jobs
@@ -101,6 +127,7 @@ from mufinder.app.uep_widget import UEPWidget
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.icons import icon, workflow_stage_icon
 from mufinder.app.journal_widget import JournalWidget
+from mufinder.app.magnetic_field_widget import MagneticFieldWidget
 from mufinder.app.muon_generation_widget import MuonGenerationWidget
 from mufinder.app.supercell_dialog import SupercellEditorDialog
 from mufinder.app.submission_dialog import LocalSubmissionDialog
@@ -111,6 +138,7 @@ from mufinder.app.theme import (
     apply_theme,
     body_font_family,
     current_palette,
+    heading_font_family,
     load_theme_mode,
     save_theme_mode,
     style_section_subtitle,
@@ -131,11 +159,13 @@ from mufinder.services.ssh_client import (
     save_trusted_host_key,
 )
 from mufinder.science.kpoint_grids import lattice_parameters
+from mufinder.science.relaxation_analysis import folded_muon_position_from_structure
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.uep import UepError, UepPotentialGrid, deserialize_potential_grid, serialize_potential_grid
 from mufinder.science.structure_comparison import DftComparisonInput, compare_structures
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
+from mufinder.workflow.naming import job_name
 
 
 _ACTIVE_LOCAL_JOB_STATES = {
@@ -145,6 +175,7 @@ _ACTIVE_LOCAL_JOB_STATES = {
     JobStatus.RETRIEVING,
 }
 _VISIBLE_DASHBOARD_STATES = _ACTIVE_LOCAL_JOB_STATES | {JobStatus.STOPPED, JobStatus.FAILED}
+_RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 
 # Backward-compatible alias used by legacy tests and call sites.
 CutoffRunState = SweepPointRunState
@@ -161,6 +192,18 @@ class WorkflowDefinition:
     completion_goal: str | None = None
     completion_check: Callable[[ProjectDocument], bool] | None = None
     children: tuple["WorkflowDefinition", ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectTrailDestination:
+    """Describe one clickable landmark on the project home trail."""
+
+    title: str
+    route: str
+    theme: str
+    completed: bool = False
+    completion_goal: str | None = None
+    placement: str = "trail"
 
 
 class MuonChargeStateDialog(QDialog):
@@ -276,115 +319,787 @@ class _MuonGenerationThread(QThread):
         self.generated.emit(created)
 
 
-class ExpeditionTrailWidget(QWidget):
-    """Paint a compact workflow trail with completion markers."""
+class ProjectHomeTrailWidget(QWidget):
+    """Paint the clickable project-home trail map."""
+
+    route_requested = Signal(str)
+
+    _SOURCE_WIDTH = 1536.0
+    _SOURCE_HEIGHT = 1024.0
+    _ARTWORK_SOURCE_REGION = QRectF(80.0, 44.0, 1421.0, 800.0)
+    _SIGN_REGIONS = {
+        "host_structure": QRectF(114.0, 340.0, 196.0, 46.0),
+        "supercell_editor": QRectF(422.0, 315.0, 262.0, 46.0),
+        "convergence_cutoff": QRectF(356.0, 503.0, 252.0, 46.0),
+        "convergence_kpoint": QRectF(763.0, 311.0, 220.0, 46.0),
+        "pristine_relaxation": QRectF(835.0, 502.0, 250.0, 46.0),
+        "uep": QRectF(1078.0, 276.0, 164.0, 47.0),
+        "muon_candidates": QRectF(1275.0, 382.0, 201.0, 47.0),
+        "magnetic_fields": QRectF(1128.0, 586.0, 196.0, 47.0),
+        "quantum_corrections": QRectF(711.0, 758.0, 225.0, 47.0),
+        "energy_barriers": QRectF(224.0, 747.0, 245.0, 47.0),
+    }
+    _SIGN_TEXT_INSETS = {
+        "host_structure": (12.0, 1.0, 14.0, 10.0),
+        "supercell_editor": (14.0, 1.0, 16.0, 10.0),
+        "convergence_cutoff": (12.0, 1.0, 14.0, 10.0),
+        "convergence_kpoint": (12.0, 1.0, 14.0, 10.0),
+        "pristine_relaxation": (14.0, 1.0, 16.0, 10.0),
+        "uep": (14.0, 1.0, 16.0, 10.0),
+        "muon_candidates": (8.0, 1.0, 10.0, 10.0),
+        "magnetic_fields": (6.0, 1.0, 8.0, 10.0),
+        "quantum_corrections": (6.0, 1.0, 8.0, 10.0),
+        "energy_barriers": (14.0, 1.0, 16.0, 10.0),
+    }
+    _SIGN_TEXT_OFFSETS = {
+        "host_structure": (0.0, 6.0),
+        "supercell_editor": (-16.0, 3.0),
+        "convergence_cutoff": (-20.0, 6.0),
+        "convergence_kpoint": (-5.0, 5.0),
+        "pristine_relaxation": (-12.0, 6.0),
+        "muon_candidates": (9.0, -3.0),
+        "magnetic_fields": (0.0, 12.0),
+        "quantum_corrections": (12.0, 3.0),
+    }
+    _SIGN_HIGHLIGHT_OFFSETS = {
+        "supercell_editor": (-14.0, 0.0),
+        "convergence_cutoff": (-14.0, 0.0),
+        "muon_candidates": (8.0, -5.0),
+    }
+    _SIGN_TEXT_MAX_SIZES = {
+        "magnetic_fields": 28,
+        "quantum_corrections": 28,
+    }
+    _LANDMARK_REGIONS = {
+        "host_structure": QRectF(70.0, 100.0, 260.0, 230.0),
+        "supercell_editor": QRectF(385.0, 30.0, 330.0, 275.0),
+        "convergence_cutoff": QRectF(280.0, 370.0, 465.0, 165.0),
+        "convergence_kpoint": QRectF(720.0, 70.0, 260.0, 220.0),
+        "pristine_relaxation": QRectF(780.0, 360.0, 330.0, 150.0),
+        "uep": QRectF(965.0, 35.0, 295.0, 210.0),
+        "muon_candidates": QRectF(1288.0, 130.0, 225.0, 240.0),
+        "magnetic_fields": QRectF(1070.0, 420.0, 290.0, 180.0),
+        "quantum_corrections": QRectF(690.0, 590.0, 285.0, 200.0),
+        "energy_barriers": QRectF(210.0, 585.0, 360.0, 195.0),
+        "provenance_log": QRectF(1080.0, 675.0, 355.0, 170.0),
+    }
+    _CHECK_POINTS = {
+        "host_structure": QPointF(294.0, 331.0),
+        "supercell_editor": QPointF(660.0, 304.0),
+        "convergence_cutoff": QPointF(580.0, 492.0),
+        "convergence_kpoint": QPointF(982.0, 301.0),
+        "pristine_relaxation": QPointF(1062.0, 492.0),
+        "uep": QPointF(1223.0, 274.0),
+        "muon_candidates": QPointF(1468.0, 364.0),
+        "magnetic_fields": QPointF(1320.0, 578.0),
+        "quantum_corrections": QPointF(913.0, 756.0),
+        "energy_barriers": QPointF(450.0, 745.0),
+    }
+    _LOGO_COVER_REGION = QRectF(34.0, 780.0, 174.0, 190.0)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._stages: list[tuple[str, str]] = []
-        self.setMinimumHeight(136)
+        self._destinations: list[ProjectTrailDestination] = []
+        self._hit_rects: dict[str, QRectF] = {}
+        self._hovered_route: str | None = None
+        self._logo_pixmap = QPixmap(logo_path())
+        self._map_pixmap = QPixmap(project_home_map_path())
+        self._color_map_pixmap = QPixmap(project_home_color_map_path())
+        self.setObjectName("projectHomeTrail")
+        self.setMinimumSize(720, 480)
+        self.setMouseTracking(True)
+        self.setAccessibleName("Project workflow home trail")
 
-    def set_stages(self, stages: list[tuple[str, str]]) -> None:
-        self._stages = list(stages)
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API naming.
+        return QSize(960, 640)
+
+    def set_destinations(self, destinations: list[ProjectTrailDestination]) -> None:
+        self._destinations = list(destinations)
+        self.setAccessibleName(
+            "Project workflow home trail: "
+            + ", ".join(destination.title for destination in self._destinations)
+        )
         self.update()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        if event.button() == Qt.MouseButton.LeftButton:
+            point = event.position()
+            for route, rect in self._destination_hit_rects().items():
+                if rect.contains(point):
+                    self.route_requested.emit(route)
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        hovered_route = self._route_at(event.position())
+        if hovered_route != self._hovered_route:
+            self._hovered_route = hovered_route
+            self.setCursor(Qt.CursorShape.PointingHandCursor if hovered_route else Qt.CursorShape.ArrowCursor)
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        if self._hovered_route is not None:
+            self._hovered_route = None
+            self.unsetCursor()
+            self.update()
+        super().leaveEvent(event)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().paintEvent(event)
-        if not self._stages:
+        palette = current_palette()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        painter.fillRect(self.rect(), QColor(palette.bg_primary))
+        map_rect = self._map_rect()
+        if self._map_pixmap.isNull():
+            self._paint_map_background(painter, palette, map_rect)
+            self._paint_terrain(painter, palette, map_rect)
+            self._paint_trail_path(painter, palette, map_rect)
+            for destination in self._destinations:
+                self._paint_destination(painter, palette, destination, map_rect)
+        else:
+            self._paint_map_artwork(painter, map_rect)
+        self._hit_rects = self._destination_hit_rects(map_rect)
+
+        self._paint_hover_region(painter, palette, map_rect)
+        if not self._map_pixmap.isNull():
+            self._paint_sign_titles(painter, palette, map_rect)
+        self._paint_completion_seals(painter, palette, map_rect)
+
+        painter.end()
+
+    def _map_rect(self) -> QRectF:
+        available = QRectF(self.rect()).adjusted(8.0, 8.0, -8.0, -8.0)
+        if available.isEmpty():
+            return QRectF()
+        source_region = self._active_source_region()
+        source_ratio = source_region.width() / source_region.height()
+        available_ratio = available.width() / max(1.0, available.height())
+        if available_ratio > source_ratio:
+            height = available.height()
+            width = height * source_ratio
+        else:
+            width = available.width()
+            height = width / source_ratio
+        return QRectF(
+            available.center().x() - width / 2.0,
+            available.center().y() - height / 2.0,
+            width,
+            height,
+        )
+
+    def _active_source_region(self) -> QRectF:
+        if self._map_pixmap.isNull():
+            return QRectF(0.0, 0.0, self._SOURCE_WIDTH, self._SOURCE_HEIGHT)
+        return self._ARTWORK_SOURCE_REGION
+
+    def _map_rect_from_source(self, source_rect: QRectF, map_rect: QRectF | None = None) -> QRectF:
+        target = map_rect if map_rect is not None else self._map_rect()
+        source_region = self._active_source_region()
+        return QRectF(
+            target.left() + target.width() * ((source_rect.left() - source_region.left()) / source_region.width()),
+            target.top() + target.height() * ((source_rect.top() - source_region.top()) / source_region.height()),
+            target.width() * (source_rect.width() / source_region.width()),
+            target.height() * (source_rect.height() / source_region.height()),
+        )
+
+    def _map_point_from_source(self, point: QPointF, map_rect: QRectF | None = None) -> QPointF:
+        target = map_rect if map_rect is not None else self._map_rect()
+        source_region = self._active_source_region()
+        return QPointF(
+            target.left() + target.width() * ((point.x() - source_region.left()) / source_region.width()),
+            target.top() + target.height() * ((point.y() - source_region.top()) / source_region.height()),
+        )
+
+    def _destination_hit_rects(self, map_rect: QRectF | None = None) -> dict[str, QRectF]:
+        hit_rects: dict[str, QRectF] = {}
+        for destination in self._destinations:
+            region = self._LANDMARK_REGIONS.get(destination.route)
+            if region is None:
+                region = self._SIGN_REGIONS.get(destination.route)
+            if region is not None:
+                hit_rects[destination.route] = self._map_rect_from_source(region, map_rect).adjusted(
+                    -8.0,
+                    -8.0,
+                    8.0,
+                    8.0,
+                )
+                sign_region = self._SIGN_REGIONS.get(destination.route)
+                if sign_region is not None:
+                    hit_rects[destination.route] = hit_rects[destination.route].united(
+                        self._map_rect_from_source(sign_region, map_rect).adjusted(-6.0, -6.0, 6.0, 6.0)
+                    )
+        return hit_rects
+
+    def _route_at(self, point: QPointF) -> str | None:
+        for route, rect in self._destination_hit_rects().items():
+            if rect.contains(point):
+                return route
+        return None
+
+    def _paint_map_background(self, painter: QPainter, palette, map_rect: QRectF) -> None:
+        if map_rect.isEmpty():
             return
 
+        painter.setPen(QPen(QColor(palette.border).darker(135), 2.0))
+        painter.setBrush(QColor(palette.bg_surface))
+        painter.drawRoundedRect(map_rect, 18.0, 18.0)
+
+        inner = map_rect.adjusted(10.0, 10.0, -10.0, -10.0)
+        painter.setPen(QPen(QColor(palette.border), 1.0, Qt.PenStyle.DotLine))
+        painter.setBrush(QColor(palette.bg_primary))
+        painter.drawRoundedRect(inner, 12.0, 12.0)
+
+        painter.setPen(QPen(QColor(palette.border), 1.0, Qt.PenStyle.DotLine))
+        for index in range(4):
+            y = map_rect.top() + map_rect.height() * (0.18 + index * 0.14)
+            path = QPainterPath(QPointF(map_rect.left() + 24.0, y))
+            path.cubicTo(
+                QPointF(map_rect.left() + map_rect.width() * 0.28, y - 16.0),
+                QPointF(map_rect.left() + map_rect.width() * 0.58, y + 18.0),
+                QPointF(map_rect.right() - 24.0, y - 6.0),
+            )
+            painter.drawPath(path)
+
+    def _source_rect(self, left: float, top: float, width: float, height: float, map_rect: QRectF) -> QRectF:
+        return self._map_rect_from_source(QRectF(left, top, width, height), map_rect)
+
+    def _paint_map_artwork(self, painter: QPainter, map_rect: QRectF) -> None:
+        if map_rect.isEmpty():
+            return
+        painter.drawPixmap(map_rect, self._map_pixmap, self._active_source_region())
+
+    def _paint_terrain(self, painter: QPainter, palette, map_rect: QRectF) -> None:
+        water = QColor("#2E7D8A" if palette.mode == THEME_LIGHT else "#2A6472")
+        water.setAlpha(34 if palette.mode == THEME_LIGHT else 48)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(water)
+        painter.drawEllipse(self._source_rect(-166.0, 430.0, 250.0, 190.0, map_rect))
+        painter.drawEllipse(self._source_rect(1460.0, 430.0, 210.0, 212.0, map_rect))
+        painter.drawEllipse(self._source_rect(740.0, 982.0, 430.0, 72.0, map_rect))
+
+        wave_pen = QColor(palette.bg_surface)
+        wave_pen.setAlpha(120)
+        painter.setPen(QPen(wave_pen, 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        for offset in (0.0, 20.0):
+            wave = QPainterPath(self._map_point_from_source(QPointF(22.0, 486.0 + offset), map_rect))
+            wave.cubicTo(
+                self._map_point_from_source(QPointF(64.0, 462.0 + offset), map_rect),
+                self._map_point_from_source(QPointF(96.0, 512.0 + offset), map_rect),
+                self._map_point_from_source(QPointF(132.0, 488.0 + offset), map_rect),
+            )
+            painter.drawPath(wave)
+
+        for source_rect in (
+            QRectF(260.0, 72.0, 112.0, 136.0),
+            QRectF(675.0, 92.0, 96.0, 86.0),
+            QRectF(1298.0, 86.0, 118.0, 92.0),
+            QRectF(280.0, 638.0, 250.0, 188.0),
+            QRectF(1018.0, 508.0, 95.0, 76.0),
+        ):
+            painter.save()
+            painter.setOpacity(0.28)
+            self._draw_mountain_group(painter, palette, self._map_rect_from_source(source_rect, map_rect))
+            painter.restore()
+
+        for point in (
+            QPointF(210.0, 410.0),
+            QPointF(182.0, 556.0),
+            QPointF(258.0, 585.0),
+            QPointF(710.0, 862.0),
+            QPointF(1260.0, 500.0),
+            QPointF(1372.0, 532.0),
+            QPointF(690.0, 230.0),
+            QPointF(1186.0, 164.0),
+        ):
+            painter.save()
+            painter.setOpacity(0.5)
+            self._draw_tree(painter, palette, self._map_point_from_source(point, map_rect), map_rect.width() * 0.018)
+            painter.restore()
+
+    def _paint_trail_path(self, painter: QPainter, palette, map_rect: QRectF) -> None:
+        trail_points = [
+            QPointF(300.0, 370.0),
+            QPointF(378.0, 320.0),
+            QPointF(520.0, 338.0),
+            QPointF(748.0, 338.0),
+            QPointF(842.0, 414.0),
+            QPointF(860.0, 560.0),
+            QPointF(650.0, 730.0),
+            QPointF(480.0, 824.0),
+            QPointF(735.0, 778.0),
+            QPointF(978.0, 636.0),
+            QPointF(1150.0, 628.0),
+            QPointF(1230.0, 518.0),
+            QPointF(1228.0, 378.0),
+            QPointF(1335.0, 392.0),
+        ]
+        if len(trail_points) < 2:
+            return
+
+        path = QPainterPath(self._map_point_from_source(trail_points[0], map_rect))
+        for start, end in zip(trail_points, trail_points[1:]):
+            start_point = self._map_point_from_source(start, map_rect)
+            end_point = self._map_point_from_source(end, map_rect)
+            mid_x = (start_point.x() + end_point.x()) / 2.0
+            path.cubicTo(QPointF(mid_x, start_point.y()), QPointF(mid_x, end_point.y()), end_point)
+
+        painter.setPen(
+            QPen(
+                QColor(palette.text_muted).darker(130),
+                max(2.0, map_rect.width() * 0.008),
+                Qt.PenStyle.DotLine,
+                Qt.PenCapStyle.RoundCap,
+            )
+        )
+        painter.drawPath(path)
+
+    def _draw_mountain_group(self, painter: QPainter, palette, rect: QRectF) -> None:
+        painter.setPen(QPen(QColor(palette.border), 1.1))
+        painter.setBrush(QColor(palette.bg_surface_alt))
+        for x_frac, peak_frac, width_frac in ((0.0, 0.18, 0.48), (0.28, 0.02, 0.52), (0.58, 0.24, 0.42)):
+            left = rect.left() + rect.width() * x_frac
+            width = rect.width() * width_frac
+            peak = QPointF(left + width * 0.5, rect.top() + rect.height() * peak_frac)
+            painter.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(left, rect.bottom()),
+                        peak,
+                        QPointF(left + width, rect.bottom()),
+                    ]
+                )
+            )
+            painter.setPen(QPen(QColor(palette.bg_surface), 1.0))
+            painter.drawLine(peak, QPointF(peak.x() - width * 0.12, peak.y() + rect.height() * 0.18))
+            painter.drawLine(peak, QPointF(peak.x() + width * 0.14, peak.y() + rect.height() * 0.22))
+            painter.setPen(QPen(QColor(palette.border), 1.1))
+
+    def _draw_tree(self, painter: QPainter, palette, base: QPointF, size: float) -> None:
+        painter.setPen(QPen(QColor(palette.border).darker(135), 1.0))
+        painter.setBrush(QColor("#5D9A57" if palette.mode == THEME_LIGHT else "#3D7661"))
+        for index in range(3):
+            y = base.y() - size * (0.8 + index * 0.55)
+            half_width = size * (0.75 - index * 0.12)
+            painter.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(base.x() - half_width, y + size * 0.7),
+                        QPointF(base.x(), y),
+                        QPointF(base.x() + half_width, y + size * 0.7),
+                    ]
+                )
+            )
+        painter.setPen(QPen(QColor(palette.border).darker(150), 1.4))
+        painter.drawLine(base, QPointF(base.x(), base.y() - size * 0.7))
+
+    def _paint_logo_overlay(self, painter: QPainter, palette, map_rect: QRectF) -> None:
+        cover_rect = self._map_rect_from_source(self._LOGO_COVER_REGION, map_rect)
+        painter.setPen(QPen(QColor(palette.border).darker(135), 1.2))
+        painter.setBrush(QColor("#D6AE6B"))
+        painter.drawEllipse(cover_rect.adjusted(6.0, 10.0, -6.0, -10.0))
+
+        if self._logo_pixmap.isNull():
+            return
+        logo_rect = cover_rect.adjusted(32.0, 40.0, -32.0, -40.0)
+        painter.drawPixmap(logo_rect, self._logo_pixmap, QRectF(self._logo_pixmap.rect()))
+
+    def _paint_hover_region(self, painter: QPainter, palette, map_rect: QRectF) -> None:
+        if self._hovered_route is None:
+            return
+        rect = self._hit_rects.get(self._hovered_route)
+        if rect is None:
+            return
+        if not self._map_pixmap.isNull() and not self._color_map_pixmap.isNull() and not map_rect.isEmpty():
+            self._paint_colored_destination_artwork(painter, map_rect, self._hovered_route)
+
+        sign_source = self._SIGN_REGIONS.get(self._hovered_route)
+        if sign_source is None:
+            return
+        rect = self._map_rect_from_source(sign_source, map_rect)
+        highlight_offset = self._SIGN_HIGHLIGHT_OFFSETS.get(self._hovered_route)
+        if highlight_offset is not None:
+            scale = rect.height() / 46.0
+            rect.translate(highlight_offset[0] * scale, highlight_offset[1] * scale)
+
+        painter.save()
+        clip_path = QPainterPath()
+        clip_path.addRoundedRect(rect, 6.0, 6.0)
+        painter.setClipPath(clip_path)
+
+        glow = QColor(palette.seal_gold)
+        glow.setAlpha(70)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(glow)
+        painter.drawRoundedRect(rect, 6.0, 6.0)
+
+        wash = QColor("#FFFFFF")
+        wash.setAlpha(46)
+        painter.setBrush(wash)
+        painter.drawRoundedRect(rect.adjusted(3.0, 3.0, -3.0, -3.0), 4.5, 4.5)
+        painter.restore()
+
+    def _paint_colored_destination_artwork(self, painter: QPainter, map_rect: QRectF, route: str) -> None:
+        reveal_path = QPainterPath()
+        landmark_source = self._LANDMARK_REGIONS.get(route)
+        if landmark_source is not None:
+            landmark_rect = self._map_rect_from_source(landmark_source, map_rect).adjusted(-8.0, -8.0, 8.0, 8.0)
+            radius = min(28.0, max(12.0, landmark_rect.height() * 0.18))
+            reveal_path.addRoundedRect(landmark_rect, radius, radius)
+
+        sign_source = self._SIGN_REGIONS.get(route)
+        if sign_source is not None:
+            sign_rect = self._map_rect_from_source(sign_source, map_rect).adjusted(-4.0, -4.0, 4.0, 4.0)
+            reveal_path.addRoundedRect(sign_rect, 8.0, 8.0)
+
+        if reveal_path.isEmpty():
+            return
+
+        painter.save()
+        painter.setClipPath(reveal_path)
+        painter.drawPixmap(map_rect, self._color_map_pixmap, self._active_source_region())
+        painter.restore()
+
+    def _paint_sign_titles(self, painter: QPainter, palette, map_rect: QRectF) -> None:
+        for destination in self._destinations:
+            sign_source = self._SIGN_REGIONS.get(destination.route)
+            if sign_source is None:
+                continue
+            sign_rect = self._map_rect_from_source(sign_source, map_rect)
+            self._draw_sign_title(painter, palette, sign_rect, destination.title, destination.route)
+
+    def _draw_sign_title(self, painter: QPainter, palette, rect: QRectF, title: str, route: str) -> None:
+        left, top, right, bottom = self._SIGN_TEXT_INSETS.get(route, (18.0, 5.0, 20.0, 8.0))
+        text_rect = rect.adjusted(left, top, -right, -bottom)
+        offset_x, offset_y = self._SIGN_TEXT_OFFSETS.get(route, (0.0, 0.0))
+        offset_scale = rect.height() / 46.0
+        text_rect.translate(offset_x * offset_scale, offset_y * offset_scale)
+
+        font = QFont(heading_font_family())
+        font.setBold(True)
+        font.setPointSize(self._SIGN_TEXT_MAX_SIZES.get(route, 13 if len(title) <= 16 else 11))
+        while font.pointSize() > 8 and QFontMetricsF(font).horizontalAdvance(title) > text_rect.width() - 8.0:
+            font.setPointSize(font.pointSize() - 1)
+
+        painter.setFont(font)
+        painter.setPen(QColor(palette.text_primary))
+        painter.drawText(
+            text_rect,
+            int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine),
+            title,
+        )
+
+    def _paint_completion_seals(self, painter: QPainter, palette, map_rect: QRectF) -> None:
+        completed_routes = {destination.route for destination in self._destinations if destination.completed}
+        for route in completed_routes:
+            source_point = self._CHECK_POINTS.get(route)
+            if source_point is None:
+                continue
+            center = self._map_point_from_source(source_point, map_rect)
+            self._draw_completion_seal(painter, palette, center)
+
+    def _paint_destination(
+        self,
+        painter: QPainter,
+        palette,
+        destination: ProjectTrailDestination,
+        map_rect: QRectF,
+    ) -> None:
+        landmark_source = self._LANDMARK_REGIONS.get(destination.route)
+        sign_source = self._SIGN_REGIONS.get(destination.route)
+        if landmark_source is None or sign_source is None:
+            return
+
+        landmark_rect = self._map_rect_from_source(landmark_source, map_rect)
+        sign_rect = self._map_rect_from_source(sign_source, map_rect)
+
+        self._draw_scaled_landmark(painter, palette, destination.theme, landmark_rect)
+        self._draw_sign(painter, palette, sign_rect, destination.title)
+
+    def _draw_scaled_landmark(self, painter: QPainter, palette, theme: str, rect: QRectF) -> None:
+        if rect.isEmpty():
+            return
+        painter.save()
+        painter.translate(rect.left(), rect.top())
+        painter.scale(rect.width() / 68.0, rect.height() / 54.0)
+        self._draw_landmark(painter, palette, theme, QRectF(0.0, 0.0, 68.0, 54.0))
+        painter.restore()
+
+    def _draw_sign(self, painter: QPainter, palette, rect: QRectF, title: str) -> None:
+        post_x = rect.center().x() - 3.0
+        painter.setPen(QPen(QColor(palette.border).darker(145), 1.0))
+        painter.setBrush(QColor(palette.border).darker(115))
+        painter.drawRoundedRect(QRectF(post_x, rect.bottom() - 2.0, 6.0, 28.0), 2.0, 2.0)
+
+        painter.setPen(QPen(QColor(palette.border).darker(140), 1.1))
+        painter.setBrush(QColor(palette.bg_surface))
+        painter.drawRoundedRect(rect, 6.0, 6.0)
+
+        font = QFont(body_font_family())
+        font.setPointSize(8 if len(title) > 16 else 9)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor(palette.text_primary))
+        painter.drawText(
+            rect.adjusted(7.0, 3.0, -7.0, -3.0),
+            int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap),
+            title,
+        )
+
+    def _draw_completion_seal(self, painter: QPainter, palette, center: QPointF) -> None:
+        painter.setPen(QPen(QColor(palette.border), 1.1))
+        painter.setBrush(QColor(palette.seal_gold))
+        painter.drawEllipse(center, 14.0, 14.0)
+        painter.setPen(QPen(QColor(palette.bg_surface), 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(QPointF(center.x() - 6.0, center.y()), QPointF(center.x() - 2.0, center.y() + 5.0))
+        painter.drawLine(QPointF(center.x() - 2.0, center.y() + 5.0), QPointF(center.x() + 7.0, center.y() - 6.0))
+
+    def _draw_landmark(self, painter: QPainter, palette, theme: str, rect: QRectF) -> None:
+        if theme == "house":
+            self._draw_house(painter, palette, rect)
+        elif theme == "castle":
+            self._draw_castle(painter, palette, rect)
+        elif theme == "ocean":
+            self._draw_ocean(painter, palette, rect)
+        elif theme == "cube":
+            self._draw_cube(painter, palette, rect)
+        elif theme == "hammock":
+            self._draw_hammock(painter, palette, rect)
+        elif theme == "storm":
+            self._draw_storm(painter, palette, rect)
+        elif theme == "muon":
+            self._draw_muon(painter, palette, rect)
+        elif theme == "magnet":
+            self._draw_magnet(painter, palette, rect)
+        elif theme == "cat":
+            self._draw_cat(painter, palette, rect)
+        elif theme == "mountains":
+            self._draw_mountains(painter, palette, rect)
+        elif theme == "journal":
+            self._draw_journal(painter, palette, rect)
+
+    def _draw_house(self, painter: QPainter, palette, rect: QRectF) -> None:
+        body = QRectF(rect.left() + 14, rect.top() + 24, 40, 26)
+        roof = QPolygonF(
+            [
+                QPointF(body.left() - 4, body.top() + 2),
+                QPointF(body.center().x(), rect.top() + 8),
+                QPointF(body.right() + 4, body.top() + 2),
+            ]
+        )
+        painter.setPen(QPen(QColor(palette.border), 1.2))
+        painter.setBrush(QColor(palette.bg_surface))
+        painter.drawRect(body)
+        painter.setBrush(QColor(palette.accent))
+        painter.drawPolygon(roof)
+        painter.setBrush(QColor(palette.bg_surface_alt))
+        painter.drawRect(QRectF(body.center().x() - 5, body.bottom() - 15, 10, 15))
+
+    def _draw_castle(self, painter: QPainter, palette, rect: QRectF) -> None:
+        painter.setPen(QPen(QColor(palette.border), 1.2))
+        painter.setBrush(QColor(palette.bg_surface_alt))
+        for x in (rect.left() + 10, rect.center().x() - 10, rect.right() - 30):
+            painter.drawRect(QRectF(x, rect.top() + 14, 20, 36))
+        painter.drawRect(QRectF(rect.left() + 16, rect.top() + 28, 36, 22))
+        painter.setBrush(QColor(palette.seal_gold))
+        for x in (rect.left() + 10, rect.center().x() - 10, rect.right() - 30):
+            painter.drawRect(QRectF(x, rect.top() + 8, 20, 8))
+
+    def _draw_ocean(self, painter: QPainter, palette, rect: QRectF) -> None:
+        painter.setPen(QPen(QColor(palette.accent), 2.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        for index in range(4):
+            y = rect.top() + 16 + index * 8
+            path = QPainterPath(QPointF(rect.left() + 8, y))
+            path.cubicTo(
+                QPointF(rect.left() + 22, y - 10),
+                QPointF(rect.left() + 34, y + 10),
+                QPointF(rect.left() + 52, y),
+            )
+            painter.drawPath(path)
+
+    def _draw_cube(self, painter: QPainter, palette, rect: QRectF) -> None:
+        painter.setPen(QPen(QColor(palette.border), 1.1))
+        colors = (palette.accent, palette.seal_gold, palette.bg_surface_alt)
+        size = 12
+        left = rect.left() + 14
+        top = rect.top() + 10
+        for row in range(3):
+            for col in range(3):
+                painter.setBrush(QColor(colors[(row + col) % len(colors)]))
+                painter.drawRect(QRectF(left + col * size, top + row * size, size, size))
+
+    def _draw_hammock(self, painter: QPainter, palette, rect: QRectF) -> None:
+        painter.setPen(QPen(QColor(palette.border).darker(140), 2.0))
+        painter.drawLine(QPointF(rect.left() + 12, rect.bottom() - 6), QPointF(rect.left() + 20, rect.top() + 6))
+        painter.drawLine(QPointF(rect.right() - 12, rect.bottom() - 6), QPointF(rect.right() - 20, rect.top() + 6))
+        painter.setPen(QPen(QColor(palette.accent), 3.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        path = QPainterPath(QPointF(rect.left() + 19, rect.top() + 17))
+        path.cubicTo(
+            QPointF(rect.left() + 28, rect.top() + 42),
+            QPointF(rect.right() - 28, rect.top() + 42),
+            QPointF(rect.right() - 19, rect.top() + 17),
+        )
+        painter.drawPath(path)
+
+    def _draw_storm(self, painter: QPainter, palette, rect: QRectF) -> None:
+        cloud = QColor(palette.bg_surface_alt)
+        painter.setPen(QPen(QColor(palette.border), 1.2))
+        painter.setBrush(cloud)
+        painter.drawEllipse(QRectF(rect.left() + 10, rect.top() + 16, 26, 22))
+        painter.drawEllipse(QRectF(rect.left() + 26, rect.top() + 9, 26, 28))
+        painter.drawEllipse(QRectF(rect.left() + 38, rect.top() + 18, 20, 20))
+        painter.setBrush(QColor(palette.seal_gold))
+        bolt = QPolygonF(
+            [
+                QPointF(rect.center().x(), rect.top() + 30),
+                QPointF(rect.center().x() - 8, rect.bottom()),
+                QPointF(rect.center().x() + 2, rect.bottom() - 11),
+                QPointF(rect.center().x() - 2, rect.bottom() - 11),
+                QPointF(rect.center().x() + 8, rect.top() + 30),
+            ]
+        )
+        painter.drawPolygon(bolt)
+
+    def _draw_muon(self, painter: QPainter, palette, rect: QRectF) -> None:
+        font = QFont(body_font_family())
+        font.setPointSize(34)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor(palette.accent))
+        painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), "mu")
+
+    def _draw_magnet(self, painter: QPainter, palette, rect: QRectF) -> None:
+        painter.setPen(QPen(QColor(palette.accent), 8.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawArc(QRectF(rect.left() + 14, rect.top() + 10, 40, 42), 0, 180 * 16)
+        painter.setPen(QPen(QColor(palette.border), 5.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(QPointF(rect.left() + 15, rect.top() + 30), QPointF(rect.left() + 15, rect.bottom() - 4))
+        painter.drawLine(QPointF(rect.right() - 15, rect.top() + 30), QPointF(rect.right() - 15, rect.bottom() - 4))
+
+    def _draw_cat(self, painter: QPainter, palette, rect: QRectF) -> None:
+        painter.setPen(QPen(QColor(palette.border), 1.2))
+        painter.setBrush(QColor(palette.bg_surface_alt))
+        face = QRectF(rect.left() + 16, rect.top() + 16, 36, 30)
+        painter.drawEllipse(face)
+        ears = QPolygonF(
+            [
+                QPointF(face.left() + 4, face.top() + 7),
+                QPointF(face.left() + 10, face.top() - 8),
+                QPointF(face.left() + 17, face.top() + 6),
+                QPointF(face.right() - 17, face.top() + 6),
+                QPointF(face.right() - 10, face.top() - 8),
+                QPointF(face.right() - 4, face.top() + 7),
+            ]
+        )
+        painter.drawPolygon(ears)
+        painter.setBrush(QColor(palette.text_primary))
+        painter.drawEllipse(QPointF(face.left() + 13, face.top() + 14), 2.0, 2.0)
+        painter.drawEllipse(QPointF(face.right() - 13, face.top() + 14), 2.0, 2.0)
+
+    def _draw_mountains(self, painter: QPainter, palette, rect: QRectF) -> None:
+        painter.setPen(QPen(QColor(palette.border), 1.2))
+        painter.setBrush(QColor(palette.bg_surface_alt))
+        painter.drawPolygon(
+            QPolygonF(
+                [
+                    QPointF(rect.left() + 4, rect.bottom() - 4),
+                    QPointF(rect.left() + 24, rect.top() + 8),
+                    QPointF(rect.left() + 42, rect.bottom() - 4),
+                ]
+            )
+        )
+        painter.setBrush(QColor(palette.bg_surface))
+        painter.drawPolygon(
+            QPolygonF(
+                [
+                    QPointF(rect.left() + 28, rect.bottom() - 4),
+                    QPointF(rect.left() + 48, rect.top() + 14),
+                    QPointF(rect.right() - 4, rect.bottom() - 4),
+                ]
+            )
+        )
+
+    def _draw_journal(self, painter: QPainter, palette, rect: QRectF) -> None:
+        book = QRectF(rect.left() + 16, rect.top() + 8, 36, 42)
+        painter.setPen(QPen(QColor(palette.border), 1.2))
+        painter.setBrush(QColor(palette.bg_surface))
+        painter.drawRoundedRect(book, 4.0, 4.0)
+        painter.setPen(QPen(QColor(palette.accent), 2.0))
+        painter.drawLine(QPointF(book.left() + 8, book.top() + 7), QPointF(book.left() + 8, book.bottom() - 7))
+        painter.setPen(QPen(QColor(palette.text_muted), 1.0))
+        for index in range(3):
+            y = book.top() + 14 + index * 8
+            painter.drawLine(QPointF(book.left() + 15, y), QPointF(book.right() - 7, y))
+
+
+class ConstructionSignWidget(QWidget):
+    """Paint an in-progress workflow placeholder as a planted wooden sign."""
+
+    _MESSAGE = "Under construction.\nCome back soon."
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setMinimumSize(420, 300)
+        self.setAccessibleName(self._MESSAGE.replace("\n", " "))
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().paintEvent(event)
         palette = current_palette()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         width = max(1, self.width())
-        margin = 20
-        center_y = 44
-        count = len(self._stages)
-        usable = max(1, width - (margin * 2))
-        step = usable / max(1, count - 1)
-        compact = step < 105
-        alternate = step >= 88
-        label_width = int(max(62 if compact else 84, min(122, step - (8 if compact else 12) if count > 1 else 122)))
-        compact_titles = {
-            "Host Structure": "Host",
-            "Convergence": "Conv.",
-            "Muon Sites": "Muon",
-            "Results": "Results",
-        }
+        height = max(1, self.height())
+        horizon = int(height * 0.72)
+        painter.fillRect(self.rect(), QColor(palette.bg_primary))
+        painter.fillRect(0, horizon, width, height - horizon, QColor(palette.bg_surface_alt))
 
-        if count > 1:
-            painter.setPen(QPen(QColor(palette.border), 1.2, Qt.PenStyle.DotLine))
-            painter.drawLine(margin, center_y, width - margin, center_y)
+        sign_width = int(min(560, max(260, width - 96)))
+        sign_height = 144
+        sign_x = int((width - sign_width) / 2)
+        sign_y = int(max(36, min(horizon - sign_height - 58, height * 0.24)))
+        post_top = sign_y + sign_height - 10
+        post_bottom = min(height - 22, horizon + 104)
 
-        for index, (title, state) in enumerate(self._stages):
-            x = int(margin + (step * index if count > 1 else usable / 2))
+        post_width = 34
+        post_x = int(width / 2 - post_width / 2)
+        painter.setPen(QPen(QColor("#5C341E"), 1.2))
+        painter.setBrush(QColor("#7A4728"))
+        painter.drawRoundedRect(QRectF(post_x, post_top, post_width, post_bottom - post_top), 5, 5)
+        painter.setPen(QPen(QColor("#A66A3A"), 1.0))
+        painter.drawLine(post_x + 8, post_top + 8, post_x + 8, post_bottom - 8)
 
-            if state == "completed":
-                painter.setPen(QPen(QColor(palette.border), 1.1))
-                painter.setBrush(QColor(palette.seal_gold))
-                painter.drawEllipse(x - 8, center_y - 8, 16, 16)
-                painter.setPen(
-                    QPen(
-                        QColor(palette.bg_surface),
-                        1.9,
-                        Qt.PenStyle.SolidLine,
-                        Qt.PenCapStyle.RoundCap,
-                    )
-                )
-                painter.drawLine(x - 3, center_y, x - 1, center_y + 3)
-                painter.drawLine(x - 1, center_y + 3, x + 4, center_y - 3)
-            elif state == "active":
-                painter.setPen(QPen(QColor(palette.accent), 1.8))
-                painter.setBrush(QColor(palette.bg_surface))
-                painter.drawEllipse(x - 8, center_y - 8, 16, 16)
-                painter.setPen(
-                    QPen(
-                        QColor(palette.accent),
-                        1.8,
-                        Qt.PenStyle.SolidLine,
-                        Qt.PenCapStyle.RoundCap,
-                    )
-                )
-                # Anchor symbol for active stage.
-                painter.drawLine(x, center_y - 4, x, center_y + 4)
-                painter.drawLine(x - 2, center_y - 3, x + 2, center_y - 3)
-                painter.drawLine(x - 5, center_y + 3, x - 2, center_y)
-                painter.drawLine(x + 5, center_y + 3, x + 2, center_y)
-                painter.drawArc(x - 5, center_y - 1, 10, 10, 180 * 16, 180 * 16)
-            else:
-                painter.setPen(
-                    QPen(
-                        QColor(palette.text_muted),
-                        1.4,
-                        Qt.PenStyle.DotLine,
-                        Qt.PenCapStyle.RoundCap,
-                    )
-                )
-                painter.setBrush(QColor(palette.bg_surface))
-                painter.drawEllipse(x - 7, center_y - 7, 14, 14)
-
-            label_font = QFont(body_font_family())
-            label_font.setPointSize(9 if compact else 10)
-            painter.setFont(label_font)
-            painter.setPen(
-                QColor(palette.text_primary if state in {"completed", "active"} else palette.text_muted)
+        plank_height = sign_height / 3
+        for index, colour in enumerate(("#9B5F32", "#B3723D", "#8A512C")):
+            plank_y = sign_y + index * plank_height
+            painter.setPen(QPen(QColor("#5F371F"), 1.4))
+            painter.setBrush(QColor(colour))
+            painter.drawRoundedRect(QRectF(sign_x, plank_y, sign_width, plank_height + 2), 10, 10)
+            painter.setPen(QPen(QColor("#C88B55"), 1.0))
+            painter.drawLine(
+                sign_x + 24,
+                int(plank_y + plank_height * 0.46),
+                sign_x + sign_width - 24,
+                int(plank_y + plank_height * 0.46),
             )
 
-            label_y = center_y + 14
-            if alternate:
-                label_y = center_y + 14 if index % 2 == 0 else center_y - 48
-            label_x = max(4, min(x - (label_width // 2), width - label_width - 4))
-            label_text = compact_titles.get(title, title) if compact else title
-            painter.drawText(
-                label_x,
-                label_y,
-                label_width,
-                36,
-                int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
-                label_text,
-            )
+        painter.setPen(QPen(QColor("#5F371F"), 1.2))
+        painter.setBrush(QColor("#D2A169"))
+        for nail_x in (sign_x + 26, sign_x + sign_width - 26):
+            for nail_y in (sign_y + 22, sign_y + sign_height - 22):
+                painter.drawEllipse(nail_x - 3, nail_y - 3, 6, 6)
 
+        font = QFont(body_font_family(), 20)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QPen(QColor("#FFF8EA"), 1.0))
+        painter.drawText(
+            QRectF(sign_x + 28, sign_y + 18, sign_width - 56, sign_height - 36),
+            Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+            self._MESSAGE,
+        )
         painter.end()
 
 
@@ -407,6 +1122,8 @@ class MainWindow(QMainWindow):
     _JOB_CANCEL_COLUMN = 9
     _JOB_INSPECT_COLUMN = 10
     _JOB_RESET_COLUMN = 11
+    _PROJECT_TREE_MIN_WIDTH = 220
+    _PROJECT_TREE_MAX_WIDTH = 300
     _ACTIVE_CONVERGENCE_DEFINITION_KEY = "active_convergence_cutoff_definition_id"
     _ACTIVE_KPOINT_DEFINITION_KEY = "active_convergence_kpoint_definition_id"
     _ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY = "active_pristine_relaxation_definition_id"
@@ -416,6 +1133,9 @@ class MainWindow(QMainWindow):
     _KPOINT_EXAMINER_STATE_KEY = "kpoint_examiner_state"
     _UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
     _UEP_POTENTIAL_GRID_RESULT_TYPE = "uep_potential_grid"
+    _MAGNETIC_FIELD_FORM_KEY = "magnetic_field_form"
+    _MAGNETIC_FIELD_WORKSPACES_KEY = "magnetic_field_workspaces"
+    _MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX = "magnetic_fields/workspace/"
     _CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY = "convergence_overview_snapshots"
     _LAST_CLUSTER_SUBMISSION_CONFIG_KEY = "last_cluster_submission_config"
     _COMPARISON_ROUTE_PREFIX = "pristine_relaxation/comparison/"
@@ -439,9 +1159,14 @@ class MainWindow(QMainWindow):
         self._shutting_down = False
         self._recent_projects_menu: QMenu | None = None
         self._home_recent_projects_layout: QVBoxLayout | None = None
-        self._expedition_trail: ExpeditionTrailWidget | None = None
+        self._home_content_stack: QStackedWidget | None = None
+        self._home_welcome_page: QWidget | None = None
+        self._project_home_page: QWidget | None = None
+        self._project_home_trail: ProjectHomeTrailWidget | None = None
+        self._project_home_button: QToolButton | None = None
         self._cluster_connected = False
         self._comparison_widgets: dict[UUID, ComparisonTableWidget] = {}
+        self._magnetic_field_workspace_widgets: dict[str, MagneticFieldWidget] = {}
         self._uep_analysis_dialogs: dict[UUID, UepAnalysisDialog] = {}
         self._muon_generation_thread: _MuonGenerationThread | None = None
         self._muon_generation_failed = False
@@ -585,6 +1310,20 @@ class MainWindow(QMainWindow):
         self._muon_relaxation_view.submit_local_requested.connect(self._on_submit_local_from_muon_relaxation)
         self._muon_relaxation_view.submit_cluster_requested.connect(self._on_submit_cluster_from_muon_relaxation)
         self._muon_relaxation_view.remove_requested.connect(self._on_remove_muon_relaxation_rows)
+        self._muon_relaxation_view.analysis_workspace_requested.connect(
+            self._on_create_relaxation_analysis_workspace_requested
+        )
+        self._relaxation_analysis_view = RelaxationAnalysisWidget()
+        self._relaxation_analysis_view.state_changed.connect(self._on_relaxation_analysis_state_changed)
+        self._relaxation_analysis_view.add_sites_requested.connect(self._on_relaxation_analysis_add_sites_requested)
+        self._magnetic_field_view = MagneticFieldWidget()
+        self._magnetic_field_view.magnetic_structure_changed.connect(
+            self._on_magnetic_field_structure_changed
+        )
+        self._magnetic_field_view.form_state_changed.connect(self._on_magnetic_field_form_state_changed)
+        self._magnetic_field_view.pin_requested.connect(self._on_magnetic_field_pin_requested)
+        self._quantum_corrections_placeholder = ConstructionSignWidget()
+        self._energy_barriers_placeholder = ConstructionSignWidget()
         self._journal_view = JournalWidget()
         self._main_stack.addWidget(self._home_page)
         self._main_stack.addWidget(self._host_structure_view)
@@ -596,6 +1335,10 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._uep_view)
         self._main_stack.addWidget(self._muon_generation_view)
         self._main_stack.addWidget(self._muon_relaxation_view)
+        self._main_stack.addWidget(self._relaxation_analysis_view)
+        self._main_stack.addWidget(self._magnetic_field_view)
+        self._main_stack.addWidget(self._quantum_corrections_placeholder)
+        self._main_stack.addWidget(self._energy_barriers_placeholder)
         self._main_stack.addWidget(self._journal_view)
 
         self._jobs_table = QTableWidget(0, 12)
@@ -619,6 +1362,10 @@ class MainWindow(QMainWindow):
         self._jobs_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._jobs_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._jobs_table.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self._jobs_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._jobs_table)
+        self._jobs_delete_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
+        self._jobs_backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self._jobs_table)
+        self._jobs_backspace_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
         self._configure_jobs_table_columns()
 
         self._local_runner.job_started.connect(self._on_local_job_started)
@@ -656,15 +1403,32 @@ class MainWindow(QMainWindow):
 
         self._project_tree_panel = QFrame(central)
         self._project_tree_panel.setObjectName("projectTreePanel")
-        self._project_tree_panel.setMinimumWidth(280)
+        self._project_tree_panel.setMinimumWidth(self._PROJECT_TREE_MIN_WIDTH)
+        self._project_tree_panel.setMaximumWidth(self._PROJECT_TREE_MAX_WIDTH)
         project_tree_layout = QVBoxLayout(self._project_tree_panel)
         project_tree_layout.setContentsMargins(0, 0, 0, 0)
         project_tree_layout.setSpacing(0)
 
-        self._project_tree_title = QLabel("Project", self._project_tree_panel)
+        project_tree_header = QFrame(self._project_tree_panel)
+        project_tree_header.setObjectName("projectTreePanelHeader")
+        project_tree_header_layout = QHBoxLayout(project_tree_header)
+        project_tree_header_layout.setContentsMargins(8, 6, 10, 6)
+        project_tree_header_layout.setSpacing(6)
+
+        self._project_home_button = QToolButton(project_tree_header)
+        self._project_home_button.setObjectName("projectHomeButton")
+        self._project_home_button.setIcon(icon("project_home"))
+        self._project_home_button.setIconSize(QSize(22, 22))
+        self._project_home_button.setToolTip("Show project home")
+        self._project_home_button.setEnabled(False)
+        self._project_home_button.clicked.connect(self._show_project_home)
+        project_tree_header_layout.addWidget(self._project_home_button)
+
+        self._project_tree_title = QLabel("Project", project_tree_header)
         self._project_tree_title.setObjectName("projectTreePanelTitle")
         self._project_tree_title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        project_tree_layout.addWidget(self._project_tree_title)
+        project_tree_header_layout.addWidget(self._project_tree_title, 1)
+        project_tree_layout.addWidget(project_tree_header)
 
         self._project_tree_body = QFrame(self._project_tree_panel)
         self._project_tree_body.setObjectName("projectTreePanelBody")
@@ -717,8 +1481,10 @@ class MainWindow(QMainWindow):
                     self._sync_job_runtime_timer()
                     event.ignore()
                     return
+            self._relaxation_analysis_view.shutdown()
         else:
             self._shutting_down = True
+            self._relaxation_analysis_view.shutdown()
         if self._muon_generation_thread is not None:
             self._muon_generation_thread.wait()
             self._muon_generation_thread = None
@@ -836,6 +1602,25 @@ class MainWindow(QMainWindow):
         hero_row.addLayout(hero_text, 1)
         layout.addLayout(hero_row)
 
+        self._home_content_stack = QStackedWidget(page)
+        self._home_content_stack.setObjectName("homeContentStack")
+        self._home_welcome_page = self._build_welcome_home_page()
+        self._project_home_page = self._build_project_home_page()
+        self._home_content_stack.addWidget(self._home_welcome_page)
+        self._home_content_stack.addWidget(self._project_home_page)
+        layout.addWidget(self._home_content_stack, 1)
+
+        self._refresh_home_recent_projects()
+        self._sync_project_home_trail()
+        self._sync_home_content_page()
+        return page
+
+    def _build_welcome_home_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
         actions_grid = QGridLayout()
         actions_grid.setHorizontalSpacing(12)
         actions_grid.setVerticalSpacing(12)
@@ -872,52 +1657,25 @@ class MainWindow(QMainWindow):
         actions_grid.addWidget(demo_card, 0, 2)
         layout.addLayout(actions_grid)
 
-        lower_grid = QGridLayout()
-        lower_grid.setHorizontalSpacing(12)
-        lower_grid.setVerticalSpacing(12)
-
         recent_card, recent_layout = self._make_home_card(
             "Recent Projects",
             "Jump back into your recent work.",
         )
         self._home_recent_projects_layout = QVBoxLayout()
         recent_layout.addLayout(self._home_recent_projects_layout)
-        lower_grid.addWidget(recent_card, 0, 0)
-
-        guide_card, guide_layout = self._make_home_card(
-            "Expedition Trail",
-            "Track your journey through each workflow milestone.",
-        )
-        title = QLabel("Notebook Progress", guide_card)
-        title.setObjectName("expeditionTrailTitle")
-        guide_layout.addWidget(title)
-
-        hint = QLabel(
-            "Seals mark completed milestones, open rings mark pending milestones.",
-            guide_card,
-        )
-        hint.setObjectName("expeditionTrailHint")
-        hint.setWordWrap(True)
-        guide_layout.addWidget(hint)
-
-        self._expedition_trail = ExpeditionTrailWidget(guide_card)
-        guide_layout.addWidget(self._expedition_trail)
-
-        legend = QHBoxLayout()
-        complete = QLabel("Completed", guide_card)
-        complete.setObjectName("expeditionLegendComplete")
-        pending = QLabel("Pending", guide_card)
-        pending.setObjectName("expeditionLegendPending")
-        legend.addWidget(complete)
-        legend.addWidget(pending)
-        legend.addStretch(1)
-        guide_layout.addLayout(legend)
-        lower_grid.addWidget(guide_card, 0, 1)
-
-        layout.addLayout(lower_grid)
-        self._refresh_home_recent_projects()
-        self._sync_expedition_trail()
+        layout.addWidget(recent_card)
         layout.addStretch(1)
+        return page
+
+    def _build_project_home_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._project_home_trail = ProjectHomeTrailWidget(page)
+        self._project_home_trail.route_requested.connect(self._set_active_route)
+        layout.addWidget(self._project_home_trail, 1)
         return page
 
     def _build_supercell_editor_page(self) -> QWidget:
@@ -1027,7 +1785,7 @@ class MainWindow(QMainWindow):
             apply_theme(app, mode)
         self._refresh_cluster_connection_label_colour()
         self._refresh_workflow_stage_icons()
-        self._sync_expedition_trail()
+        self._sync_project_home_trail()
 
     def _new_project(self) -> None:
         project_name, ok = QInputDialog.getText(self, "New Project", "Project name:")
@@ -1306,12 +2064,15 @@ class MainWindow(QMainWindow):
 
         self._main_title.setText(f"Project: {self._document.project.name}")
         self._main_body.setText(
-            "Continue your expedition from the journal on the left, or use quick actions below."
+            "Follow the workflow trail, or return here from the project home button."
         )
+        self._project_tree_title.setText(f"Project: {self._document.project.name}")
         self._sync_comparison_table_views()
-        self._populate_project_tree()
+        self._sync_magnetic_field_workspace_views()
+        self._populate_project_tree(preserve_selection=False)
         self._refresh_jobs_table()
         self._refresh_host_structure_view()
+        self._refresh_magnetic_field_view()
         self._refresh_muon_generation_table()
         self._convergence_view.set_form_state(self._convergence_form_restore_state())
         self._refresh_convergence_simulation_cell()
@@ -1350,6 +2111,7 @@ class MainWindow(QMainWindow):
         self._refresh_pristine_relaxation_rows()
         self._refresh_muon_relaxation_defaults()
         self._refresh_muon_relaxation_rows()
+        self._refresh_relaxation_analysis_context()
         self._refresh_uep_defaults()
         self._refresh_uep_rows()
         self._refresh_uep_source_structures()
@@ -1556,6 +2318,14 @@ class MainWindow(QMainWindow):
     def _workflow_host_complete(document: ProjectDocument) -> bool:
         return document.project.host_structure_id is not None
 
+    def _workflow_supercell_editor_complete(self, document: ProjectDocument) -> bool:
+        return bool(
+            self._project_service.list_workflow_supercell_assets(
+                document,
+                host_structure_id=document.project.host_structure_id,
+            )
+        )
+
     @staticmethod
     def _workflow_cutoff_complete(document: ProjectDocument) -> bool:
         return document.project.recommended_cutoff_energy is not None
@@ -1567,10 +2337,6 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _workflow_muon_candidates_complete(document: ProjectDocument) -> bool:
         return bool(document.sites)
-
-    @staticmethod
-    def _workflow_results_complete(document: ProjectDocument) -> bool:
-        return bool(document.results)
 
     @staticmethod
     def _workflow_convergence_complete(document: ProjectDocument) -> bool:
@@ -1678,6 +2444,56 @@ class MainWindow(QMainWindow):
 
         return saw_row
 
+    @staticmethod
+    def _workflow_relaxation_analysis_complete(document: ProjectDocument) -> bool:
+        workspaces = document.ui_state.get(_RELAXATION_ANALYSIS_STATE_KEY)
+        return isinstance(workspaces, list) and any(isinstance(workspace, dict) for workspace in workspaces)
+
+    @staticmethod
+    def _workflow_magnetic_fields_complete(document: ProjectDocument) -> bool:
+        magnetic_structure = document.project.magnetic_structure
+        if not isinstance(magnetic_structure, dict):
+            return False
+        components = magnetic_structure.get("components")
+        if isinstance(components, list):
+            return any(isinstance(component, dict) for component in components)
+        moments = magnetic_structure.get("moments")
+        return isinstance(moments, list) and bool(moments)
+
+    def _magnetic_field_workspaces_state(self) -> list[dict[str, object]]:
+        if self._document is None:
+            return []
+        workspaces = self._document.ui_state.get(self._MAGNETIC_FIELD_WORKSPACES_KEY, [])
+        if not isinstance(workspaces, list):
+            return []
+        return [workspace for workspace in workspaces if isinstance(workspace, dict)]
+
+    def _magnetic_field_workspace_route(self, workspace_id: str) -> str:
+        return f"{self._MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX}{workspace_id}"
+
+    def _magnetic_field_workspace_id_from_route(self, route: object) -> str | None:
+        if not isinstance(route, str) or not route.startswith(self._MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX):
+            return None
+        workspace_id = route[len(self._MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX) :].strip()
+        return workspace_id or None
+
+    @staticmethod
+    def _magnetic_workspace_has_structure(workspace: Mapping[str, object]) -> bool:
+        magnetic_structure = workspace.get("magnetic_structure")
+        if not isinstance(magnetic_structure, Mapping):
+            return False
+        components = magnetic_structure.get("components")
+        if isinstance(components, list):
+            return any(isinstance(component, dict) for component in components)
+        moments = magnetic_structure.get("moments")
+        return isinstance(moments, list) and bool(moments)
+
+    def _workflow_magnetic_field_workspace_complete(self, workspace_id: str) -> bool:
+        for workspace in self._magnetic_field_workspaces_state():
+            if str(workspace.get("id", "")).strip() == workspace_id:
+                return self._magnetic_workspace_has_structure(workspace)
+        return False
+
     def _workflow_definitions(self) -> tuple[WorkflowDefinition, ...]:
         cutoff = WorkflowDefinition(
             key="convergence_cutoff",
@@ -1704,6 +2520,22 @@ class MainWindow(QMainWindow):
             completion_check=self._workflow_convergence_complete,
             children=(cutoff, kpoint),
         )
+        magnetic_workspaces = tuple(
+            WorkflowDefinition(
+                key=f"magnetic_field_workspace_{str(workspace.get('id', '')).strip()}",
+                title=str(workspace.get("title", "Magnetic Fields")).strip() or "Magnetic Fields",
+                route=self._magnetic_field_workspace_route(str(workspace.get("id", "")).strip()),
+                completion_goal="Define at least one magnetic component in this saved workspace.",
+                completion_check=(
+                    lambda _document, workspace_id=str(workspace.get("id", "")).strip(): (
+                        self._workflow_magnetic_field_workspace_complete(workspace_id)
+                    )
+                ),
+            )
+            for workspace in self._magnetic_field_workspaces_state()
+            if str(workspace.get("id", "")).strip()
+        )
+
         return (
             WorkflowDefinition(
                 key="host_structure",
@@ -1719,6 +2551,7 @@ class MainWindow(QMainWindow):
                 subtitle="Reusable cells",
                 route="supercell_editor",
                 completion_goal="Save reusable supercells for workflow setup.",
+                completion_check=self._workflow_supercell_editor_complete,
             ),
             convergence,
             WorkflowDefinition(
@@ -1759,6 +2592,13 @@ class MainWindow(QMainWindow):
                         completion_check=self._workflow_muon_relaxations_complete,
                     ),
                     WorkflowDefinition(
+                        key="muon_analysis",
+                        title="Analysis",
+                        route="muon_analysis",
+                        completion_goal="Create at least one structural-relaxation analysis workspace.",
+                        completion_check=self._workflow_relaxation_analysis_complete,
+                    ),
+                    WorkflowDefinition(
                         key="muon_confirmed",
                         title="Confirmed Sites",
                         route="muon_confirmed",
@@ -1766,16 +2606,24 @@ class MainWindow(QMainWindow):
                 ),
             ),
             WorkflowDefinition(
-                key="results",
-                title="Results",
-                subtitle="Review what MuFinder found",
-                route="results",
-                completion_goal="Capture at least one completed parsed result.",
-                completion_check=self._workflow_results_complete,
+                key="magnetic_fields",
+                title="Magnetic Fields",
+                subtitle="Build magnetic model",
+                route="magnetic_fields",
+                completion_goal="Define at least one magnetic component.",
+                completion_check=self._workflow_magnetic_fields_complete,
+                children=magnetic_workspaces,
             ),
-            WorkflowDefinition(key="magnetic_fields", title="Magnetic Fields"),
-            WorkflowDefinition(key="quantum_corrections", title="Quantum Corrections"),
-            WorkflowDefinition(key="energy_barriers", title="Energy Barriers"),
+            WorkflowDefinition(
+                key="quantum_corrections",
+                title="Quantum Corrections",
+                route="quantum_corrections",
+            ),
+            WorkflowDefinition(
+                key="energy_barriers",
+                title="Energy Barriers",
+                route="energy_barriers",
+            ),
             WorkflowDefinition(key="provenance_log", title="Journal", route="provenance_log"),
         )
 
@@ -1818,24 +2666,33 @@ class MainWindow(QMainWindow):
                 return found
         return None
 
-    def _populate_project_tree(self) -> None:
+    def _find_tree_item_by_route(self, route: str) -> QTreeWidgetItem | None:
+        for index in range(self._project_tree.topLevelItemCount()):
+            item = self._project_tree.topLevelItem(index)
+            if item is None:
+                continue
+            found = self._find_workflow_item_by_route(item, route)
+            if found is not None:
+                return found
+        return None
+
+    def _populate_project_tree(self, *, preserve_selection: bool = True) -> None:
         if self._document is None:
             return
 
         previous_route: str | None = None
-        current_item = self._project_tree.currentItem()
+        current_item = self._project_tree.currentItem() if preserve_selection else None
         if current_item is not None:
             raw_route = current_item.data(0, Qt.ItemDataRole.UserRole)
             if isinstance(raw_route, str) and raw_route.strip():
                 previous_route = raw_route.strip()
 
         self._project_tree.clear()
-        root = QTreeWidgetItem([self._document.project.name])
 
         for definition in self._workflow_definitions():
-            root.addChild(self._build_workflow_tree_item(definition))
+            self._project_tree.addTopLevelItem(self._build_workflow_tree_item(definition))
 
-        pristine_item = self._find_workflow_item_by_route(root, "pristine_relaxation")
+        pristine_item = self._find_tree_item_by_route("pristine_relaxation")
         if pristine_item is not None:
             ordered_tables = sorted(
                 self._document.comparison_tables.values(),
@@ -1847,24 +2704,27 @@ class MainWindow(QMainWindow):
                 pristine_item.addChild(child)
             pristine_item.setExpanded(True)
 
-        self._project_tree.addTopLevelItem(root)
-        root.setExpanded(True)
-        for index in range(root.childCount()):
-            child = root.child(index)
-            if child is None:
+        for index in range(self._project_tree.topLevelItemCount()):
+            item = self._project_tree.topLevelItem(index)
+            if item is None:
                 continue
-            label = child.text(0)
-            if label.startswith("Convergence Testing") or label.startswith("Muon Sites"):
-                child.setExpanded(True)
-        selected_item = root
+            label = item.text(0)
+            if label.startswith(("Convergence Testing", "Magnetic Fields", "Muon Sites")):
+                item.setExpanded(True)
+        selected_item = None
         if previous_route is not None:
-            match = self._find_workflow_item_by_route(root, previous_route)
+            match = self._find_tree_item_by_route(previous_route)
             if match is not None:
                 selected_item = match
 
-        self._project_tree.setCurrentItem(selected_item)
+        if selected_item is None:
+            self._project_tree.clearSelection()
+            self._main_stack.setCurrentWidget(self._home_page)
+            self._sync_home_content_page()
+        else:
+            self._project_tree.setCurrentItem(selected_item)
         self._refresh_workflow_stage_icons()
-        self._sync_expedition_trail()
+        self._sync_project_home_trail()
 
     def _refresh_jobs_table(self) -> None:
         self._jobs_table.setRowCount(0)
@@ -1877,6 +2737,13 @@ class MainWindow(QMainWindow):
             self._pristine_relaxation_view.set_runtime_states({})
             self._muon_relaxation_view.set_runtime_states({})
             self._uep_view.set_runtime_states({})
+            self._relaxation_analysis_view.set_context(
+                workspaces=[],
+                sources=[],
+                structures={},
+                host_structure=None,
+                comparison_options=[],
+            )
             return
 
         for job in self._document.jobs.values():
@@ -1958,7 +2825,7 @@ class MainWindow(QMainWindow):
         self._refresh_pristine_relaxation_rows()
         self._refresh_muon_relaxation_rows()
         self._refresh_uep_rows()
-        self._sync_expedition_trail()
+        self._sync_project_home_trail()
 
     def _refresh_active_job_runtime_cells(self) -> None:
         if self._document is None:
@@ -2231,6 +3098,18 @@ class MainWindow(QMainWindow):
             target = self._muon_generation_view
         elif route == "muon_relaxations":
             target = self._muon_relaxation_view
+        elif route == "muon_analysis":
+            target = self._relaxation_analysis_view
+        elif route == "magnetic_fields":
+            target = self._magnetic_field_view
+        elif isinstance(route, str) and self._magnetic_field_workspace_id_from_route(route) is not None:
+            workspace_id = self._magnetic_field_workspace_id_from_route(route)
+            if workspace_id is not None:
+                target = self._magnetic_field_workspace_widgets.get(workspace_id, self._magnetic_field_view)
+        elif route == "quantum_corrections":
+            target = self._quantum_corrections_placeholder
+        elif route == "energy_barriers":
+            target = self._energy_barriers_placeholder
         elif route == "provenance_log":
             target = self._journal_view
         elif isinstance(route, str):
@@ -2239,7 +3118,7 @@ class MainWindow(QMainWindow):
                 target = self._comparison_widgets.get(table_id, self._pristine_relaxation_view)
         self._main_stack.setCurrentWidget(target)
         self._refresh_workflow_stage_icons()
-        self._sync_expedition_trail()
+        self._sync_project_home_trail()
 
     def _comparison_route(self, table_id: UUID) -> str:
         return f"{self._COMPARISON_ROUTE_PREFIX}{table_id}"
@@ -2275,6 +3154,76 @@ class MainWindow(QMainWindow):
             widget.delete_requested.connect(self._on_delete_comparison_table_requested)
             self._main_stack.addWidget(widget)
             self._comparison_widgets[table.id] = widget
+
+    def _sync_magnetic_field_workspace_views(self) -> None:
+        for widget in self._magnetic_field_workspace_widgets.values():
+            self._main_stack.removeWidget(widget)
+            widget.deleteLater()
+        self._magnetic_field_workspace_widgets.clear()
+
+        if self._document is None:
+            return
+
+        for workspace in self._magnetic_field_workspaces_state():
+            workspace_id = str(workspace.get("id", "")).strip()
+            if not workspace_id:
+                continue
+            title = str(workspace.get("title", "Magnetic Fields")).strip() or "Magnetic Fields"
+            magnetic_structure = workspace.get("magnetic_structure")
+            form_state = workspace.get("form", {})
+            widget = MagneticFieldWidget(parent=self)
+            widget.set_document(
+                self._document,
+                magnetic_structure=magnetic_structure if isinstance(magnetic_structure, Mapping) else None,
+                title=title,
+                title_editable=True,
+                deletable=True,
+            )
+            widget.set_form_state(form_state if isinstance(form_state, Mapping) else {})
+            widget.magnetic_structure_changed.connect(
+                lambda payload, workspace_id=workspace_id: self._on_magnetic_field_workspace_structure_changed(
+                    workspace_id,
+                    payload,
+                )
+            )
+            widget.form_state_changed.connect(
+                lambda state, workspace_id=workspace_id: self._on_magnetic_field_workspace_form_state_changed(
+                    workspace_id,
+                    state,
+                )
+            )
+            widget.workspace_title_changed.connect(
+                lambda title, workspace_id=workspace_id: self._on_magnetic_field_workspace_title_changed(
+                    workspace_id,
+                    title,
+                )
+            )
+            widget.pin_requested.connect(self._on_magnetic_field_pin_requested)
+            widget.delete_requested.connect(
+                lambda workspace_id=workspace_id: self._delete_magnetic_field_workspace(workspace_id)
+            )
+            self._main_stack.addWidget(widget)
+            self._magnetic_field_workspace_widgets[workspace_id] = widget
+
+    def _refresh_magnetic_field_workspace_views(self) -> None:
+        if self._document is None:
+            return
+        for workspace in self._magnetic_field_workspaces_state():
+            workspace_id = str(workspace.get("id", "")).strip()
+            widget = self._magnetic_field_workspace_widgets.get(workspace_id)
+            if widget is None:
+                continue
+            title = str(workspace.get("title", "Magnetic Fields")).strip() or "Magnetic Fields"
+            magnetic_structure = workspace.get("magnetic_structure")
+            form_state = workspace.get("form", {})
+            widget.set_document(
+                self._document,
+                magnetic_structure=magnetic_structure if isinstance(magnetic_structure, Mapping) else None,
+                title=title,
+                title_editable=True,
+                deletable=True,
+            )
+            widget.set_form_state(form_state if isinstance(form_state, Mapping) else {})
 
     def _on_delete_comparison_table_requested(self, payload: object) -> None:
         if isinstance(payload, UUID):
@@ -2317,10 +3266,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Deleted comparison table")
 
     def _set_active_route(self, route: str) -> None:
-        root = self._project_tree.topLevelItem(0)
-        if root is None:
-            return
-        item = self._find_workflow_item_by_route(root, route)
+        item = self._find_tree_item_by_route(route)
         if item is None:
             return
         self._project_tree.setCurrentItem(item)
@@ -2335,43 +3281,107 @@ class MainWindow(QMainWindow):
             return route.strip()
         return None
 
-    def _expedition_stage_states(self) -> list[tuple[str, str]]:
-        if self._document is None:
-            return [
-                ("Host Structure", "incomplete"),
-                ("Convergence", "incomplete"),
-                ("Muon Sites", "incomplete"),
-                ("Results", "incomplete"),
-            ]
+    def _show_project_home(self) -> None:
+        self._project_tree.clearSelection()
+        self._main_stack.setCurrentWidget(self._home_page)
+        self._sync_home_content_page()
+        self._refresh_workflow_stage_icons()
+        self._sync_project_home_trail()
 
-        completion = {
-            "host": self._workflow_host_complete(self._document),
-            "convergence": self._workflow_convergence_complete(self._document),
-            "muon": self._workflow_muon_candidates_complete(self._document),
-            "results": self._workflow_results_complete(self._document),
-        }
-        stages = [
-            ("host", "Host Structure"),
-            ("convergence", "Convergence"),
-            ("muon", "Muon Sites"),
-            ("results", "Results"),
-        ]
-        resolved: list[tuple[str, str]] = []
-        for key, label in stages:
-            state = "completed" if completion[key] else "incomplete"
-            resolved.append((label, state))
-        return resolved
-
-    def _sync_expedition_trail(self) -> None:
-        if self._expedition_trail is None:
+    def _sync_home_content_page(self) -> None:
+        if self._home_content_stack is None:
             return
-        self._expedition_trail.set_stages(self._expedition_stage_states())
+        target = self._project_home_page if self._document is not None else self._home_welcome_page
+        if target is not None:
+            self._home_content_stack.setCurrentWidget(target)
+        if self._project_home_button is not None:
+            self._project_home_button.setEnabled(self._document is not None)
+
+    def _project_home_destinations(self) -> list[ProjectTrailDestination]:
+        if self._document is None:
+            return []
+
+        return [
+            ProjectTrailDestination(
+                title="Host Structure",
+                route="host_structure",
+                theme="house",
+                completed=self._workflow_host_complete(self._document),
+                completion_goal="Load a host structure.",
+            ),
+            ProjectTrailDestination(
+                title="Supercell Generation",
+                route="supercell_editor",
+                theme="castle",
+                completed=self._workflow_supercell_editor_complete(self._document),
+                completion_goal="Save reusable supercells for workflow setup.",
+            ),
+            ProjectTrailDestination(
+                title="Cutoff Convergence",
+                route="convergence_cutoff",
+                theme="ocean",
+                completed=self._workflow_cutoff_complete(self._document),
+                completion_goal="Set a project default cutoff value.",
+            ),
+            ProjectTrailDestination(
+                title="K-Point Grid",
+                route="convergence_kpoint",
+                theme="cube",
+                completed=self._workflow_kpoint_complete(self._document),
+                completion_goal="Set a project default k-point grid.",
+            ),
+            ProjectTrailDestination(
+                title="Pristine Relaxation",
+                route="pristine_relaxation",
+                theme="hammock",
+                completed=self._workflow_pristine_relaxation_complete(self._document),
+                completion_goal="Generate at least one comparison table.",
+            ),
+            ProjectTrailDestination(
+                title="UEP",
+                route="uep",
+                theme="storm",
+                completed=self._workflow_uep_complete(self._document),
+                completion_goal="Complete at least one UEP source job.",
+            ),
+            ProjectTrailDestination(
+                title="Muon Sites",
+                route="muon_candidates",
+                theme="muon",
+                completed=self._workflow_muon_candidates_complete(self._document),
+                completion_goal="Generate at least one muon site.",
+            ),
+            ProjectTrailDestination(
+                title="Magnetic Fields",
+                route="magnetic_fields",
+                theme="magnet",
+                completed=self._workflow_magnetic_fields_complete(self._document),
+                completion_goal="Define at least one magnetic component.",
+            ),
+            ProjectTrailDestination(
+                title="Quantum Corrections",
+                route="quantum_corrections",
+                theme="cat",
+            ),
+            ProjectTrailDestination(
+                title="Energy Barriers",
+                route="energy_barriers",
+                theme="mountains",
+            ),
+            ProjectTrailDestination(
+                title="Journal",
+                route="provenance_log",
+                theme="journal",
+                placement="journal",
+            ),
+        ]
+
+    def _sync_project_home_trail(self) -> None:
+        if self._project_home_trail is None:
+            return
+        self._project_home_trail.set_destinations(self._project_home_destinations())
 
     def _refresh_workflow_stage_icons(self) -> None:
-        root = self._project_tree.topLevelItem(0)
-        if root is None:
-            return
-
         def visit(item: QTreeWidgetItem) -> None:
             has_goal = item.data(0, self._WORKFLOW_GOAL_ROLE) is not None
             if has_goal:
@@ -2384,7 +3394,10 @@ class MainWindow(QMainWindow):
                 if child is not None:
                     visit(child)
 
-        visit(root)
+        for index in range(self._project_tree.topLevelItemCount()):
+            item = self._project_tree.topLevelItem(index)
+            if item is not None:
+                visit(item)
 
     def _on_submit_local_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:
@@ -2431,6 +3444,89 @@ class MainWindow(QMainWindow):
             return
         jobs = [self._document.jobs.get(job_id) for job_id in job_ids]
         self._reset_failed_jobs([job for job in jobs if job is not None])
+
+    def _on_dashboard_delete_key_requested(self) -> None:
+        jobs = self._selected_dashboard_jobs()
+        if not jobs:
+            return
+
+        active_jobs = [job for job in jobs if job.status in _ACTIVE_LOCAL_JOB_STATES]
+        resettable_jobs = [
+            job for job in jobs if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+        ]
+        deletable_jobs = [
+            job
+            for job in jobs
+            if job.status not in _ACTIVE_LOCAL_JOB_STATES
+            and job.status not in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+        ]
+
+        if active_jobs:
+            self._cancel_jobs(active_jobs)
+        if resettable_jobs:
+            self._reset_failed_jobs(resettable_jobs)
+        if deletable_jobs:
+            self._delete_dashboard_jobs(deletable_jobs)
+
+    def _selected_dashboard_jobs(self) -> list[Job]:
+        if self._document is None:
+            return []
+
+        selection_model = self._jobs_table.selectionModel()
+        if selection_model is None:
+            return []
+
+        selected_rows = selection_model.selectedRows()
+        if not selected_rows and self._jobs_table.currentRow() >= 0:
+            selected_rows = [self._jobs_table.model().index(self._jobs_table.currentRow(), 0)]
+
+        selected: list[Job] = []
+        seen: set[UUID] = set()
+        for index in selected_rows:
+            label_item = self._jobs_table.item(index.row(), self._JOB_LABEL_COLUMN)
+            if label_item is None:
+                continue
+            try:
+                job_id = UUID(str(label_item.data(Qt.ItemDataRole.UserRole)))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            job = self._document.jobs.get(job_id)
+            if job is None or job.id in seen:
+                continue
+            selected.append(job)
+            seen.add(job.id)
+        return selected
+
+    def _delete_dashboard_jobs(self, jobs: list[Job]) -> None:
+        if self._document is None:
+            return
+
+        deletable_jobs = [
+            job
+            for job in self._dedupe_jobs(jobs)
+            if job.status not in _ACTIVE_LOCAL_JOB_STATES
+            and job.status not in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+        ]
+        if not deletable_jobs:
+            return
+
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle("Delete jobs")
+        message.setText(f"Delete {len(deletable_jobs)} selected job(s)?")
+        message.setInformativeText("This removes the selected job records and any linked run/result records.")
+        message.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        message.setDefaultButton(QMessageBox.StandardButton.No)
+        if message.exec() != QMessageBox.StandardButton.Yes:
+            return
+
+        for job in deletable_jobs:
+            self._delete_job_records(job.id)
+
+        self._refresh_jobs_table()
+        self._refresh_convergence_cutoff_rows()
+        self._refresh_kpoint_convergence_rows()
+        self.statusBar().showMessage(f"Deleted {len(deletable_jobs)} job(s)")
 
     def _jobs_for_convergence_cutoffs(self, cutoff_values: list[float]) -> list[Job]:
         if self._document is None:
@@ -2930,6 +4026,26 @@ class MainWindow(QMainWindow):
             return 10
         return 0
 
+    def _relaxation_mapping_job_priority(self, raw_job_id: str) -> int:
+        if self._document is None:
+            return 0
+        try:
+            job_id = UUID(str(raw_job_id))
+        except ValueError:
+            return 0
+        job = self._document.jobs.get(job_id)
+        if job is None:
+            return 0
+        if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING}:
+            return 50
+        if job.status == JobStatus.COMPLETED:
+            return 40
+        if job.status == JobStatus.DEFINED:
+            return 35
+        if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}:
+            return 30
+        return 0
+
     def _materialize_convergence_jobs(self, cutoff_values: list[float]) -> list[Job]:
         if self._document is None:
             return []
@@ -3396,13 +4512,28 @@ class MainWindow(QMainWindow):
         *,
         include_apply_all: bool = False,
     ) -> str | None:
+        return self._prompt_job_file_disposition(
+            title="Remove cutoff with files",
+            text=f"Cutoff {cutoff:.8g} eV has associated files in {job_dir.name}.",
+            keep_text="or Cancel to keep the cutoff entry.",
+            include_apply_all=include_apply_all,
+        )
+
+    def _prompt_job_file_disposition(
+        self,
+        *,
+        title: str,
+        text: str,
+        keep_text: str,
+        include_apply_all: bool = False,
+    ) -> str | None:
         message = QMessageBox(self)
         message.setIcon(QMessageBox.Icon.Warning)
-        message.setWindowTitle("Remove cutoff with files")
-        message.setText(f"Cutoff {cutoff:.8g} eV has associated files in {job_dir.name}.")
+        message.setWindowTitle(title)
+        message.setText(text)
         message.setInformativeText(
             "Choose Yes to delete those files, No to move them into a separate 'removed_from_workflow' "
-            "subfolder, or Cancel to keep the cutoff entry."
+            f"subfolder, {keep_text}"
         )
         buttons = (
             QMessageBox.StandardButton.Yes
@@ -3439,6 +4570,15 @@ class MainWindow(QMainWindow):
             for run in self._document.runs.values()
             if run.job_id == job_id and run.result_id is not None
         )
+
+        run_id_set = set(run_ids)
+        for site in self._document.sites.values():
+            if site.relaxation_run_id not in run_id_set:
+                continue
+            site.relaxation_run_id = None
+            site.relative_energy_eV = None
+            if site.status == "relaxed":
+                site.status = "staged"
 
         for result_id in result_ids:
             self._document.results.pop(result_id, None)
@@ -3939,6 +5079,12 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _default_cluster_job_name_prefix(workflow_type: str | None) -> str:
         normalized = (workflow_type or "").strip().strip("/")
+        workflow_defaults = {
+            "pristine_relaxation": "pristine_relax",
+            "uep": "uep",
+        }
+        if normalized in workflow_defaults:
+            return workflow_defaults[normalized]
         last_component = normalized.rsplit("/", 1)[-1]
         if last_component in {"positivemuon", "muonium"}:
             return last_component
@@ -4119,27 +5265,34 @@ class MainWindow(QMainWindow):
 
     def _error_file_candidates(self, job: Job, output_dir: Path) -> list[Path]:
         discovered: list[Path] = []
-        preferred = output_dir / f"{job.label}.err"
-        if preferred.exists() and preferred.is_file():
-            discovered.append(preferred)
+        seed_names = list(dict.fromkeys([job.label, self._job_seed_name(job)]))
+        for seed_name in seed_names:
+            preferred = output_dir / f"{seed_name}.err"
+            if preferred.exists() and preferred.is_file():
+                discovered.append(preferred)
 
         remote_job_id = (job.remote_job_id or "").strip()
         if remote_job_id and re.fullmatch(r"[A-Za-z0-9_.-]+", remote_job_id):
-            slurm_output = output_dir / f"slurm-{remote_job_id}.out"
-            if slurm_output.exists() and slurm_output.is_file():
-                discovered.append(slurm_output)
+            for slurm_output in sorted(output_dir.glob(f"*-{remote_job_id}.out")):
+                if slurm_output.is_file():
+                    discovered.append(slurm_output)
 
-        numbered_pattern = re.compile(rf"{re.escape(job.label)}\.\d+\.err$")
+        numbered_patterns = [
+            re.compile(rf"{re.escape(seed_name)}\.\d+\.err$")
+            for seed_name in seed_names
+        ]
         if not output_dir.exists() or not output_dir.is_dir():
             return list(dict.fromkeys(discovered))
         for candidate in sorted(output_dir.iterdir()):
-            if candidate.is_file() and numbered_pattern.fullmatch(candidate.name):
+            if candidate.is_file() and any(pattern.fullmatch(candidate.name) for pattern in numbered_patterns):
                 discovered.append(candidate)
 
         if discovered:
             return list(dict.fromkeys(discovered))
 
         fallback_patterns = ("*.err", "slurm-*.out")
+        if remote_job_id and re.fullmatch(r"[A-Za-z0-9_.-]+", remote_job_id):
+            fallback_patterns = (*fallback_patterns, f"*-{remote_job_id}.out")
         fallback: list[Path] = []
         for pattern in fallback_patterns:
             fallback.extend(sorted(path for path in output_dir.glob(pattern) if path.is_file()))
@@ -4304,6 +5457,15 @@ class MainWindow(QMainWindow):
                             raw_seed = seed_mapping.get(matching_key)
                             if isinstance(raw_seed, str) and raw_seed.strip():
                                 seed_name = raw_seed.strip()
+                        if seed_name == job.label:
+                            remote_seed = self._remote_directory_seed_name(job)
+                            if remote_seed:
+                                seed_name = remote_seed
+                        if seed_name == job.label:
+                            inferred_seed = job_name(prefix, job.label)
+                            inferred_path = base / prefix / inferred_seed
+                            if inferred_path.exists() and inferred_path.is_dir():
+                                seed_name = inferred_seed
                         return base / prefix / seed_name
                     return base / job.label
 
@@ -4332,10 +5494,21 @@ class MainWindow(QMainWindow):
         return None
 
     def _job_seed_name(self, job: Job) -> str:
+        remote_seed = self._remote_directory_seed_name(job)
+        if remote_seed:
+            return remote_seed
         output_dir = self._job_output_directory(job)
         if output_dir is not None:
             return output_dir.name
         return job.label
+
+    @staticmethod
+    def _remote_directory_seed_name(job: Job) -> str:
+        remote_directory = (job.remote_directory or "").strip()
+        if not remote_directory:
+            return ""
+        seed_name = posixpath.basename(posixpath.normpath(remote_directory)).strip()
+        return seed_name if seed_name not in {"", ".", "/"} else ""
 
     def _output_files_for_job(self, job: Job) -> list[str]:
         if self._document is None:
@@ -5243,6 +6416,10 @@ class MainWindow(QMainWindow):
             return
 
         removed = self._project_service.remove_candidate_sites(self._document, site_ids)
+        if removed:
+            self._persist_document_ui_state(
+                failure_message="Muon sites were deleted, but autosave failed."
+            )
         self._refresh_muon_generation_table()
         self._refresh_journal_view()
         self.statusBar().showMessage(f"Deleted {len(removed)} generated muon site(s)")
@@ -5332,6 +6509,113 @@ class MainWindow(QMainWindow):
         if self._document is None or self._shutting_down:
             return
         self._document.ui_state["muon_relaxation_form"] = state
+        self._refresh_muon_relaxation_rows()
+
+    def _on_create_relaxation_analysis_workspace_requested(self, labels: object) -> None:
+        if self._document is None:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+        host = self._project_service.active_host_structure(self._document)
+        if host is None:
+            QMessageBox.warning(self, "No host structure", "Load a host structure before creating an analysis workspace.")
+            return
+        label_list = [str(label) for label in labels] if isinstance(labels, list) else [str(labels)]
+        sources = self._completed_muon_relaxation_sources_for_labels(label_list)
+        if not sources:
+            QMessageBox.information(
+                self,
+                "No completed relaxations",
+                "Select completed, converged structural relaxation rows before creating an analysis workspace.",
+            )
+            return
+        charge_states = {source.charge_state for source in sources}
+        if len(charge_states) > 1:
+            QMessageBox.warning(
+                self,
+                "Mixed charge states",
+                "Create separate analysis workspaces for positive muon and muonium relaxation results.",
+            )
+            return
+
+        charge_state = next(iter(charge_states))
+        default_name = f"{muon_charge_state_label(charge_state)} analysis"
+        name, accepted = QInputDialog.getText(
+            self,
+            "Create Analysis Workspace",
+            "Workspace name",
+            QLineEdit.EchoMode.Normal,
+            default_name,
+        )
+        if not accepted:
+            return
+
+        workspace = default_workspace_state(
+            name=name,
+            charge_state=charge_state,
+            host_structure_id=host.id,
+            job_ids=[source.job_id for source in sources],
+        )
+        workspaces = self._relaxation_analysis_workspaces()
+        workspaces.append(workspace)
+        self._set_relaxation_analysis_workspaces(workspaces)
+        self._refresh_relaxation_analysis_context()
+        self._populate_project_tree()
+        self._set_active_route("muon_analysis")
+        self._relaxation_analysis_view.focus_workspace(str(workspace["id"]))
+        self.statusBar().showMessage(f"Created analysis workspace '{workspace['name']}'")
+
+    def _on_relaxation_analysis_state_changed(self, workspaces: list) -> None:
+        if self._document is None or self._shutting_down:
+            return
+        cleaned = [dict(workspace) for workspace in workspaces if isinstance(workspace, dict)]
+        self._set_relaxation_analysis_workspaces(cleaned)
+        self._refresh_workflow_stage_icons()
+
+    def _on_relaxation_analysis_add_sites_requested(self, workspace_id: str) -> None:
+        if self._document is None:
+            return
+        workspace = next(
+            (entry for entry in self._relaxation_analysis_workspaces() if str(entry.get("id", "")) == str(workspace_id)),
+            None,
+        )
+        if workspace is None:
+            return
+        charge_state = str(workspace.get("charge_state", POSITIVE_MUON_CHARGE_STATE))
+        existing_ids = set()
+        raw_job_ids = workspace.get("job_ids", [])
+        if isinstance(raw_job_ids, list):
+            for raw_job_id in raw_job_ids:
+                try:
+                    existing_ids.add(UUID(str(raw_job_id)))
+                except (TypeError, ValueError):
+                    continue
+        sources = [
+            source
+            for source in self._completed_muon_relaxation_sources()
+            if source.charge_state == charge_state
+        ]
+        if not sources:
+            QMessageBox.information(
+                self,
+                "No matching relaxations",
+                f"No completed {muon_charge_state_label(charge_state)} relaxation results are available to add.",
+            )
+            return
+        dialog = RelaxationAnalysisJobDialog(
+            title="Add Structure to Analysis",
+            sources=sources,
+            excluded_job_ids=existing_ids,
+            reference_job_ids=existing_ids,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dialog.selected_job_ids()
+        if not selected:
+            return
+        self._relaxation_analysis_view.add_job_ids_to_workspace(str(workspace_id), selected)
+        self._refresh_relaxation_analysis_context()
+        self.statusBar().showMessage(f"Added {len(selected)} relaxation result(s) to the analysis workspace")
 
     def _on_convergence_form_state_changed(self, state: dict) -> None:
         if self._document is None or self._shutting_down:
@@ -6567,8 +7851,8 @@ class MainWindow(QMainWindow):
                 existing = candidates.get(label)
                 if (
                     existing is None
-                    or self._convergence_mapping_job_priority(raw_job_id)
-                    > self._convergence_mapping_job_priority(existing)
+                    or self._relaxation_mapping_job_priority(raw_job_id)
+                    > self._relaxation_mapping_job_priority(existing)
                 ):
                     candidates[label] = raw_job_id
 
@@ -6579,8 +7863,8 @@ class MainWindow(QMainWindow):
             existing = target_mapping.get(label)
             if (
                 not isinstance(existing, str)
-                or self._convergence_mapping_job_priority(raw_job_id)
-                > self._convergence_mapping_job_priority(existing)
+                or self._relaxation_mapping_job_priority(raw_job_id)
+                > self._relaxation_mapping_job_priority(existing)
             ):
                 target_mapping[label] = raw_job_id
 
@@ -6625,8 +7909,8 @@ class MainWindow(QMainWindow):
                 existing = candidates.get(key)
                 if (
                     existing is None
-                    or self._convergence_mapping_job_priority(raw_job_id)
-                    > self._convergence_mapping_job_priority(existing)
+                    or self._relaxation_mapping_job_priority(raw_job_id)
+                    > self._relaxation_mapping_job_priority(existing)
                 ):
                     candidates[key] = raw_job_id
 
@@ -6637,8 +7921,8 @@ class MainWindow(QMainWindow):
             existing = target_mapping.get(key)
             if (
                 not isinstance(existing, str)
-                or self._convergence_mapping_job_priority(raw_job_id)
-                > self._convergence_mapping_job_priority(existing)
+                or self._relaxation_mapping_job_priority(raw_job_id)
+                > self._relaxation_mapping_job_priority(existing)
             ):
                 target_mapping[key] = raw_job_id
 
@@ -6934,9 +8218,21 @@ class MainWindow(QMainWindow):
         labels = self._removed_row_labels(payload)
         if self._document is None or not labels:
             return
-        for definition in self._pristine_relaxation_definitions():
+        definitions = self._pristine_relaxation_definitions()
+        should_autosave = self._relaxation_removal_touches_project_files(
+            definitions,
+            lambda key: str(key) in labels,
+        )
+        if not self._cleanup_pristine_relaxation_rows(definitions, labels):
+            self._restore_pristine_relaxation_form_from_definition()
+            return
+        for definition in definitions:
             self._remove_pristine_relaxation_labels_from_definition(definition, labels)
         self._refresh_pristine_relaxation_rows()
+        if should_autosave:
+            self._persist_document_ui_state(
+                failure_message="Pristine relaxation rows were removed, but autosave failed."
+            )
 
     def _remove_pristine_relaxation_labels_from_definition(self, definition, labels: set[str]) -> None:
         config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
@@ -6958,8 +8254,352 @@ class MainWindow(QMainWindow):
         labels = self._removed_row_labels(payload)
         if self._document is None or not labels:
             return
-        for definition in self._muon_relaxation_definitions():
+        definitions = self._muon_relaxation_definitions()
+        key_matches = self._muon_relaxation_label_matcher(labels)
+        removed_site_ids = self._muon_relaxation_site_ids_for_removed_rows(definitions, labels)
+        should_autosave = self._relaxation_removal_touches_project_files(definitions, key_matches)
+        if not self._cleanup_muon_relaxation_rows(definitions, labels):
+            self._restore_muon_relaxation_form_from_definition()
+            return
+        for definition in definitions:
             self._remove_muon_relaxation_labels_from_definition(definition, labels)
+        self._remove_muon_relaxation_labels_from_ui_state(labels)
+        site_status_changed = self._restore_removed_muon_relaxation_sites(removed_site_ids)
+        self._refresh_muon_relaxation_rows()
+        if should_autosave or self._site_status_revert_touches_project_files(removed_site_ids, site_status_changed):
+            self._persist_document_ui_state(
+                failure_message="Muon relaxation rows were removed, but autosave failed."
+            )
+
+    def _cleanup_pristine_relaxation_rows(self, definitions: list, labels: set[str]) -> bool:
+        return self._cleanup_relaxation_row_jobs(
+            definitions,
+            lambda key: str(key) in labels,
+            title="Remove relaxation job with files",
+            text_for_job=lambda job: f"Relaxation job '{job.label}' has associated files.",
+            keep_text="or Cancel to keep the relaxation row.",
+        )
+
+    def _cleanup_muon_relaxation_rows(self, definitions: list, labels: set[str]) -> bool:
+        return self._cleanup_relaxation_row_jobs(
+            definitions,
+            self._muon_relaxation_label_matcher(labels),
+            title="Remove relaxation job with files",
+            text_for_job=lambda job: f"Relaxation job '{job.label}' has associated files.",
+            keep_text="or Cancel to keep the relaxation row.",
+        )
+
+    def _muon_relaxation_label_matcher(self, labels: set[str]) -> Callable[[object], bool]:
+        unqualified_labels = {label for label in labels if ":" not in label}
+        full_key_labels = {label.partition(":")[2] for label in labels if ":" in label}
+
+        def matches(key: object) -> bool:
+            if not isinstance(key, str):
+                return False
+            return (
+                key in labels
+                or (":" in key and key.partition(":")[2] in unqualified_labels)
+                or (":" not in key and key in full_key_labels)
+            )
+
+        return matches
+
+    def _muon_relaxation_site_ids_for_removed_rows(
+        self,
+        definitions: list,
+        labels: set[str],
+    ) -> set[UUID]:
+        if self._document is None:
+            return set()
+
+        key_matches = self._muon_relaxation_label_matcher(labels)
+        site_ids: set[UUID] = set()
+
+        def collect_from_rows(rows: object) -> None:
+            if not isinstance(rows, list):
+                return
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                label = str(row.get("label", "")).strip()
+                charge_state = str(row.get("charge_state", "")).strip()
+                keys = (
+                    [f"{muon_charge_state_prefix(charge_state)}:{label}"]
+                    if charge_state
+                    else [label]
+                )
+                if not any(key_matches(key) for key in keys):
+                    continue
+                try:
+                    site_ids.add(UUID(str(row.get("site_id"))))
+                except (TypeError, ValueError):
+                    continue
+
+        state = self._document.ui_state.get("muon_relaxation_form", {})
+        if isinstance(state, dict):
+            collect_from_rows(state.get("rows", []))
+
+        for definition in definitions:
+            config = definition.parameters.get("configuration", {})
+            if isinstance(config, dict):
+                collect_from_rows(config.get("rows", []))
+
+        return site_ids
+
+    def _restore_removed_muon_relaxation_sites(self, site_ids: set[UUID]) -> bool:
+        if self._document is None:
+            return False
+
+        changed = False
+        for site_id in site_ids:
+            site = self._document.sites.get(site_id)
+            if site is None or site.status != "staged" or self._site_has_muon_relaxation_rows(site_id):
+                continue
+            site.status = "generated"
+            changed = True
+        return changed
+
+    def _site_has_muon_relaxation_rows(self, site_id: UUID) -> bool:
+        if self._document is None:
+            return False
+
+        def rows_include_site(rows: object) -> bool:
+            if not isinstance(rows, list):
+                return False
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    if UUID(str(row.get("site_id"))) == site_id:
+                        return True
+                except (TypeError, ValueError):
+                    continue
+            return False
+
+        state = self._document.ui_state.get("muon_relaxation_form", {})
+        if isinstance(state, dict) and rows_include_site(state.get("rows", [])):
+            return True
+
+        for definition in self._muon_relaxation_definitions():
+            config = definition.parameters.get("configuration", {})
+            if isinstance(config, dict) and rows_include_site(config.get("rows", [])):
+                return True
+        return False
+
+    def _site_status_revert_touches_project_files(self, site_ids: set[UUID], changed: bool) -> bool:
+        if not changed:
+            return False
+        return any(self._entity_file("sites", site_id).exists() for site_id in site_ids)
+
+    def _remove_muon_relaxation_labels_from_ui_state(self, labels: set[str]) -> None:
+        if self._document is None:
+            return
+        state = self._document.ui_state.get("muon_relaxation_form", {})
+        if not isinstance(state, dict):
+            return
+        rows = state.get("rows", [])
+        if not isinstance(rows, list):
+            return
+        key_matches = self._muon_relaxation_label_matcher(labels)
+        kept: list[object] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                kept.append(row)
+                continue
+            label = str(row.get("label", "")).strip()
+            charge_state = str(row.get("charge_state", "")).strip()
+            keys = (
+                [f"{muon_charge_state_prefix(charge_state)}:{label}"]
+                if charge_state
+                else [label]
+            )
+            if any(key_matches(key) for key in keys):
+                continue
+            kept.append(row)
+        updated = dict(state)
+        updated["rows"] = kept
+        self._document.ui_state["muon_relaxation_form"] = updated
+
+    def _relaxation_removal_touches_project_files(
+        self,
+        definitions: list,
+        key_matches: Callable[[object], bool],
+    ) -> bool:
+        if self._document is None:
+            return False
+
+        for definition in definitions:
+            config_file = self._entity_file("calculations", definition.id)
+            config = definition.parameters.get("configuration", {})
+            rows = config.get("rows", []) if isinstance(config, dict) else []
+            if config_file.exists() and isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    label = str(row.get("label", "")).strip()
+                    charge_state = str(row.get("charge_state", "")).strip()
+                    keys = (
+                        [f"{muon_charge_state_prefix(charge_state)}:{label}"]
+                        if charge_state
+                        else [label]
+                    )
+                    if any(key_matches(key) for key in keys):
+                        return True
+
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict):
+                continue
+            for key, raw_job_id in mapping.items():
+                if not key_matches(key):
+                    continue
+                try:
+                    job_id = UUID(str(raw_job_id))
+                except (TypeError, ValueError):
+                    continue
+                job = self._document.jobs.get(job_id)
+                if self._job_touches_project_files(job_id, job):
+                    return True
+        return False
+
+    def _job_touches_project_files(self, job_id: UUID, job: Job | None = None) -> bool:
+        if self._document is None:
+            return False
+        if self._entity_file("jobs", job_id).exists():
+            return True
+        for run in self._document.runs.values():
+            if run.job_id != job_id:
+                continue
+            if self._entity_file("runs", run.id).exists():
+                return True
+            if run.result_id is not None and self._entity_file("results", run.result_id).exists():
+                return True
+        if job is not None:
+            job_dir = self._job_output_directory(job)
+            if job_dir is not None and job_dir.exists():
+                return True
+        return False
+
+    def _entity_file(self, entity_type: str, entity_id: UUID) -> Path:
+        if self._document is None:
+            return Path("")
+        return self._document.project_root / "entities" / entity_type / f"{entity_id}.json"
+
+    def _cleanup_relaxation_row_jobs(
+        self,
+        definitions: list,
+        key_matches: Callable[[object], bool],
+        *,
+        title: str,
+        text_for_job: Callable[[Job], str],
+        keep_text: str,
+    ) -> bool:
+        if self._document is None:
+            return True
+
+        jobs: list[Job] = []
+        seen: set[UUID] = set()
+        for definition in definitions:
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict):
+                continue
+            for key, raw_job_id in mapping.items():
+                if not key_matches(key):
+                    continue
+                try:
+                    job_id = UUID(str(raw_job_id))
+                except (TypeError, ValueError):
+                    continue
+                job = self._document.jobs.get(job_id)
+                if job is None or job.id in seen:
+                    continue
+                jobs.append(job)
+                seen.add(job.id)
+
+        shared_file_disposition: str | None = None
+        multi = len(jobs) > 1
+        for job in jobs:
+            job_dir = self._job_output_directory(job)
+            if job_dir is not None and job_dir.exists():
+                disposition = shared_file_disposition
+                if disposition is None:
+                    disposition = self._prompt_job_file_disposition(
+                        title=title,
+                        text=f"{text_for_job(job)}\n\n{job_dir}",
+                        keep_text=keep_text,
+                        include_apply_all=multi,
+                    )
+                if disposition is None:
+                    return False
+                try:
+                    if disposition in {"delete", "delete_all"}:
+                        self._delete_path(job_dir)
+                    else:
+                        output_root = self._relaxation_archive_root_for_job(job, job_dir)
+                        self._archive_cutoff_directory(job_dir, output_root)
+                except OSError as exc:
+                    QMessageBox.warning(
+                        self,
+                        "File cleanup failed",
+                        f"Could not update files for job '{job.label}':\n{exc}",
+                    )
+                    return False
+
+                if disposition in {"delete_all", "archive_all"}:
+                    shared_file_disposition = disposition
+
+            self._delete_job_records(job.id)
+
+        return True
+
+    def _relaxation_archive_root_for_job(self, job: Job, job_dir: Path) -> Path | None:
+        if self._document is None:
+            return None
+
+        for definition in self._document.calculations.values():
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict) or str(job.id) not in {str(value) for value in mapping.values()}:
+                continue
+            base = self._definition_output_directory(definition)
+            if base is None:
+                continue
+            if definition.workflow_stage == WorkflowStage.MUON_RELAXATION and job_dir.parent.name in {
+                "positivemuon",
+                "muonium",
+            }:
+                return job_dir.parent
+            return base
+        return job_dir.parent
+
+    def _restore_pristine_relaxation_form_from_definition(self) -> None:
+        definition = self._active_pristine_relaxation_definition()
+        if definition is None:
+            return
+        config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
+        if config is None:
+            return
+        state = self._serialize_pristine_relaxation_config(config)
+        for row in state.get("rows", []):
+            if isinstance(row, dict) and "params" not in row:
+                row["params"] = dict(row.get("parameter_values", {}))
+        self._pristine_relaxation_view.set_form_state(state)
+        if self._document is not None:
+            self._document.ui_state["pristine_relaxation_form"] = state
+        self._refresh_pristine_relaxation_rows()
+
+    def _restore_muon_relaxation_form_from_definition(self) -> None:
+        definition = self._active_muon_relaxation_definition()
+        if definition is None:
+            return
+        config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+        if config is None:
+            return
+        state = self._serialize_muon_relaxation_config(config)
+        for row in state.get("rows", []):
+            if isinstance(row, dict) and "fractional_position" not in row:
+                row["fractional_position"] = list(row.get("initial_fractional_position", (0.0, 0.0, 0.0)))
+        self._muon_relaxation_view.set_form_state(state)
+        if self._document is not None:
+            self._document.ui_state["muon_relaxation_form"] = state
         self._refresh_muon_relaxation_rows()
 
     def _remove_muon_relaxation_labels_from_definition(self, definition, labels: set[str]) -> None:
@@ -7422,6 +9062,29 @@ class MainWindow(QMainWindow):
             return prefix == muon_charge_state_prefix(row.charge_state) and label == row.label
         return selection == row.label
 
+    def _muon_relaxation_form_config(self) -> MuonRelaxationConfig | None:
+        if self._document is None:
+            return None
+
+        form_sources: list[dict] = []
+        widget_state = self._muon_relaxation_view.collect_state()
+        if isinstance(widget_state, dict):
+            form_sources.append(widget_state)
+
+        persisted = self._document.ui_state.get("muon_relaxation_form", {})
+        if isinstance(persisted, dict):
+            form_sources.append(persisted)
+
+        for form_state in form_sources:
+            config = self._deserialize_muon_relaxation_config(form_state)
+            if config is not None and config.rows:
+                return config
+        return None
+
+    @staticmethod
+    def _muon_relaxation_row_key(row: MuonRelaxationRow) -> str:
+        return f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
+
     def _muon_relaxation_row_for_job(self, job: Job) -> MuonRelaxationRow | None:
         _definition, row = self._muon_relaxation_definition_and_row_for_job(job)
         return row
@@ -7487,6 +9150,11 @@ class MainWindow(QMainWindow):
         states: dict[str, RelaxationRunState] = {}
         if self._document is None:
             return states
+        form_config = self._muon_relaxation_form_config()
+        if form_config is not None:
+            for row in form_config.rows:
+                states[self._muon_relaxation_row_key(row)] = RelaxationRunState(status="ready")
+
         definition = self._active_muon_relaxation_definition()
         if definition is None:
             return states
@@ -7494,13 +9162,33 @@ class MainWindow(QMainWindow):
         config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return states
-        for row in config.rows:
-            state_key = f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
+
+        if form_config is not None:
+            definition_rows_by_key = {
+                self._muon_relaxation_row_key(row): row
+                for row in config.rows
+            }
+            rows_for_status = [
+                definition_rows_by_key[self._muon_relaxation_row_key(row)]
+                for row in form_config.rows
+                if (
+                    self._muon_relaxation_row_key(row) in definition_rows_by_key
+                    and self._muon_relaxation_row_signature(row)
+                    == self._muon_relaxation_row_signature(
+                        definition_rows_by_key[self._muon_relaxation_row_key(row)]
+                    )
+                )
+            ]
+        else:
+            rows_for_status = list(config.rows)
+
+        for row in rows_for_status:
+            state_key = self._muon_relaxation_row_key(row)
             job = self._job_for_muon_relaxation_label(definition, row.label, row.charge_state)
             if job is None:
                 states[state_key] = RelaxationRunState(status="ready")
                 continue
-            status_value = "ready" if job.status == JobStatus.DEFINED else job.status.value
+            status_value = job.status.value
             run = self._run_for_job(job.id)
             if status_value == JobStatus.COMPLETED.value and run is not None and run.convergence_achieved is False:
                 status_value = "not converged"
@@ -7532,6 +9220,131 @@ class MainWindow(QMainWindow):
 
     def _refresh_muon_relaxation_rows(self) -> None:
         self._muon_relaxation_view.set_runtime_states(self._build_muon_relaxation_states())
+        self._refresh_relaxation_analysis_context()
+
+    def _relaxation_analysis_workspaces(self) -> list[dict[str, object]]:
+        if self._document is None:
+            return []
+        raw = self._document.ui_state.get(_RELAXATION_ANALYSIS_STATE_KEY, [])
+        if not isinstance(raw, list):
+            return []
+        return [dict(workspace) for workspace in raw if isinstance(workspace, dict)]
+
+    def _set_relaxation_analysis_workspaces(self, workspaces: list[dict[str, object]]) -> None:
+        if self._document is None:
+            return
+        self._document.ui_state[_RELAXATION_ANALYSIS_STATE_KEY] = [dict(workspace) for workspace in workspaces]
+
+    def _completed_muon_relaxation_sources(self) -> list[CompletedRelaxationAnalysisSource]:
+        if self._document is None:
+            return []
+        host = self._project_service.active_host_structure(self._document)
+        if host is None:
+            return []
+
+        sources: list[CompletedRelaxationAnalysisSource] = []
+        seen: set[UUID] = set()
+        for definition in self._muon_relaxation_definitions():
+            if host.id not in definition.input_structure_ids:
+                continue
+            config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+            if config is None:
+                continue
+            for row in config.rows:
+                job = self._job_for_muon_relaxation_label(definition, row.label, row.charge_state)
+                if job is None or job.status != JobStatus.COMPLETED or job.id in seen:
+                    continue
+                run = self._run_for_job(job.id)
+                if run is None or run.result_id is None or run.convergence_achieved is False:
+                    continue
+                result = self._document.results.get(run.result_id)
+                if result is None or not result.derived_structure_ids:
+                    continue
+                structure_id = result.derived_structure_ids[0]
+                structure = self._document.structures.get(structure_id)
+                if structure is None:
+                    continue
+                fractional = None
+                if isinstance(result.data, dict):
+                    fractional = self._coerce_fractional_triplet(result.data.get("muon_final_fractional_position_host"))
+                if fractional is None:
+                    fractional = folded_muon_position_from_structure(structure)
+                if fractional is None:
+                    continue
+                total_energy = self._total_energy_for_job(job.id)
+                sources.append(
+                    CompletedRelaxationAnalysisSource(
+                        job_id=job.id,
+                        job_label=row.label,
+                        charge_state=row.charge_state,
+                        structure_id=structure_id,
+                        site_id=row.site_id,
+                        folded_fractional_position=fractional,
+                        total_energy_ev=total_energy,
+                    )
+                )
+                seen.add(job.id)
+        return sorted(
+            sources,
+            key=lambda source: (
+                float("inf") if source.total_energy_ev is None else float(source.total_energy_ev),
+                source.job_label.casefold(),
+            ),
+        )
+
+    def _completed_muon_relaxation_sources_for_labels(
+        self,
+        labels: list[str],
+    ) -> list[CompletedRelaxationAnalysisSource]:
+        wanted = {str(label) for label in labels}
+        selected: list[CompletedRelaxationAnalysisSource] = []
+        for source in self._completed_muon_relaxation_sources():
+            key = f"{muon_charge_state_prefix(source.charge_state)}:{source.job_label}"
+            if key in wanted or source.job_label in wanted:
+                selected.append(source)
+        return selected
+
+    def _comparison_structure_options_for_relaxation_analysis(self) -> list[tuple[UUID, str, bool]]:
+        if self._document is None:
+            return []
+
+        options: list[tuple[UUID, str, bool]] = []
+        host = self._project_service.active_host_structure(self._document)
+        if host is not None:
+            options.append((host.id, f"Host structure - {host.label}", False))
+
+        definition = self._active_pristine_relaxation_definition()
+        fix_all_cell_by_label: dict[str, bool] = {}
+        if definition is not None:
+            config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
+            if config is not None:
+                fix_all_cell_by_label = {row.label: bool(row.fix_all_cell) for row in config.rows}
+
+        for job in self._completed_pristine_relaxation_jobs():
+            fixed_cell = fix_all_cell_by_label.get(job.job_label, True)
+            label = f"Pristine relaxed - {job.job_label}"
+            if not fixed_cell:
+                label = f"{label} (free cell; unavailable)"
+            options.append((job.structure_id, label, not fixed_cell))
+        return options
+
+    def _refresh_relaxation_analysis_context(self) -> None:
+        if self._document is None:
+            self._relaxation_analysis_view.set_context(
+                workspaces=[],
+                sources=[],
+                structures={},
+                host_structure=None,
+                comparison_options=[],
+            )
+            return
+        self._relaxation_analysis_view.set_context(
+            workspaces=self._relaxation_analysis_workspaces(),
+            sources=self._completed_muon_relaxation_sources(),
+            structures=self._document.structures,
+            host_structure=self._project_service.active_host_structure(self._document),
+            comparison_options=self._comparison_structure_options_for_relaxation_analysis(),
+        )
 
     def _on_pristine_relaxation_supercell_edit_requested(self, payload: object) -> None:
         if self._document is None:
@@ -8679,12 +10492,23 @@ class MainWindow(QMainWindow):
         if self._document is None:
             self._host_structure_view.set_structure(None)
             self._host_structure_view.set_project_supercell_matrix(None)
+            self._refresh_magnetic_field_view()
             return
 
         host_id = self._document.project.host_structure_id
         host: Structure | None = self._document.structures.get(host_id) if host_id else None
         self._host_structure_view.set_project_supercell_matrix(self._document.project.supercell_matrix)
         self._host_structure_view.set_structure(host)
+        self._refresh_magnetic_field_view()
+
+    def _refresh_magnetic_field_view(self) -> None:
+        self._magnetic_field_view.set_document(self._document)
+        if self._document is None:
+            return
+        self._magnetic_field_view.set_form_state(
+            self._document.ui_state.get(self._MAGNETIC_FIELD_FORM_KEY, {})
+        )
+        self._refresh_magnetic_field_workspace_views()
 
     def _on_host_magnetic_configuration_changed(self, payload: object) -> None:
         if self._document is None or not isinstance(payload, dict):
@@ -8728,6 +10552,142 @@ class MainWindow(QMainWindow):
                 [int(row[0]), int(row[1]), int(row[2])]
                 for row in raw_matrix
             ]
+
+        self._refresh_magnetic_field_view()
+        self._refresh_workflow_stage_icons()
+
+    def _on_magnetic_field_structure_changed(self, payload: object) -> None:
+        if self._document is None or not isinstance(payload, dict):
+            return
+        self._document.project.magnetic_structure = payload
+        host_id = self._document.project.host_structure_id
+        host = self._document.structures.get(host_id) if host_id is not None else None
+        if host is not None:
+            host.properties["magnetic_structure"] = payload
+        self._refresh_workflow_stage_icons()
+
+    def _on_magnetic_field_form_state_changed(self, state: dict) -> None:
+        if self._document is None or self._shutting_down:
+            return
+        self._document.ui_state[self._MAGNETIC_FIELD_FORM_KEY] = state
+
+    def _normalize_magnetic_field_workspace_title(self, title: object) -> str:
+        normalized = str(title).strip()
+        return normalized or "Magnetic Field Workspace"
+
+    def _replace_magnetic_field_workspace(self, workspace_id: str, updates: Mapping[str, object]) -> bool:
+        if self._document is None:
+            return False
+        workspaces = list(self._magnetic_field_workspaces_state())
+        updated = False
+        for index, workspace in enumerate(workspaces):
+            if str(workspace.get("id", "")).strip() != workspace_id:
+                continue
+            replacement = dict(workspace)
+            replacement.update(updates)
+            workspaces[index] = replacement
+            updated = True
+            break
+        if not updated:
+            return False
+        self._document.ui_state[self._MAGNETIC_FIELD_WORKSPACES_KEY] = workspaces
+        return True
+
+    def _on_magnetic_field_workspace_structure_changed(self, workspace_id: str, payload: object) -> None:
+        if self._document is None or not isinstance(payload, dict):
+            return
+        self._replace_magnetic_field_workspace(workspace_id, {"magnetic_structure": payload})
+        self._refresh_workflow_stage_icons()
+
+    def _on_magnetic_field_workspace_form_state_changed(self, workspace_id: str, state: dict) -> None:
+        if self._document is None or self._shutting_down:
+            return
+        self._replace_magnetic_field_workspace(workspace_id, {"form": state})
+
+    def _on_magnetic_field_workspace_title_changed(self, workspace_id: str, title: str) -> None:
+        if self._document is None or self._shutting_down:
+            return
+        normalized = self._normalize_magnetic_field_workspace_title(title)
+        if not self._replace_magnetic_field_workspace(workspace_id, {"title": normalized}):
+            return
+        widget = self._magnetic_field_workspace_widgets.get(workspace_id)
+        if widget is not None:
+            widget.set_workspace_title(normalized, editable=True, deletable=True)
+        self._populate_project_tree()
+        self._set_active_route(self._magnetic_field_workspace_route(workspace_id))
+        self._persist_document_ui_state(
+            failure_message="Magnetic field workspace title was updated, but autosave failed."
+        )
+
+    def _on_magnetic_field_pin_requested(self, snapshot: dict) -> None:
+        if self._document is None or self._shutting_down:
+            return
+        default_title = self._normalize_magnetic_field_workspace_title(snapshot.get("title", "Magnetic Field Workspace"))
+        title, accepted = QInputDialog.getText(
+            self,
+            "Save Magnetic Field Workspace",
+            "Workspace name:",
+            QLineEdit.EchoMode.Normal,
+            default_title,
+        )
+        if not accepted:
+            return
+        normalized = self._normalize_magnetic_field_workspace_title(title)
+        workspace_id = str(uuid4())
+        magnetic_structure = snapshot.get("magnetic_structure")
+        form_state = snapshot.get("form", {})
+        workspace = {
+            "id": workspace_id,
+            "title": normalized,
+            "magnetic_structure": magnetic_structure if isinstance(magnetic_structure, dict) else None,
+            "form": form_state if isinstance(form_state, dict) else {},
+        }
+        workspaces = list(self._magnetic_field_workspaces_state())
+        workspaces.append(workspace)
+        self._document.ui_state[self._MAGNETIC_FIELD_WORKSPACES_KEY] = workspaces
+        self._sync_magnetic_field_workspace_views()
+        self._populate_project_tree()
+        self._set_active_route(self._magnetic_field_workspace_route(workspace_id))
+        self._persist_document_ui_state(
+            failure_message="Magnetic field workspace was saved, but autosave failed."
+        )
+        self.statusBar().showMessage(f"Saved magnetic field workspace '{normalized}'")
+
+    def _delete_magnetic_field_workspace(self, workspace_id: str, *, confirm: bool = True) -> None:
+        if self._document is None:
+            return
+        workspaces = list(self._magnetic_field_workspaces_state())
+        target = next(
+            (workspace for workspace in workspaces if str(workspace.get("id", "")).strip() == workspace_id),
+            None,
+        )
+        if target is None:
+            return
+        title = self._normalize_magnetic_field_workspace_title(target.get("title", "Magnetic Field Workspace"))
+        if confirm:
+            answer = QMessageBox.question(
+                self,
+                "Delete magnetic field workspace",
+                f"Delete magnetic field workspace '{title}'?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._document.ui_state[self._MAGNETIC_FIELD_WORKSPACES_KEY] = [
+            workspace
+            for workspace in workspaces
+            if str(workspace.get("id", "")).strip() != workspace_id
+        ]
+        self._sync_magnetic_field_workspace_views()
+        self._populate_project_tree()
+        route = self._active_route()
+        if route is None or self._magnetic_field_workspace_id_from_route(route) == workspace_id:
+            self._set_active_route("magnetic_fields")
+        self._persist_document_ui_state(
+            failure_message="Magnetic field workspace was deleted, but autosave failed."
+        )
+        self.statusBar().showMessage(f"Deleted magnetic field workspace '{title}'")
 
     def _refresh_convergence_cutoff_rows(self) -> None:
         if self._document is None:

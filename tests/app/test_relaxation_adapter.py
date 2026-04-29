@@ -58,6 +58,8 @@ def test_expand_pristine_relaxation_jobs_applies_project_defaults() -> None:
 
     assert job.name == "pristine_relax_row_a"
     assert param_values["cut_off_energy"].value == pytest.approx(600.0)
+    assert param_values["continuation"] == "DEFAULT"
+    assert param_values["geom_max_iter"] == 300
     assert param_values["write_cell_structure"] is True
     assert cell_values["fix_all_cell"] is True
     rendered_cell = write_cell(job.cell_file)
@@ -269,13 +271,19 @@ def test_expand_muon_relaxation_jobs_forces_fixed_cell_and_charge() -> None:
     muonium_params = {keyword.name: keyword.value for keyword in expansion.jobs[1].param_file.keywords}
     positive_cell = {keyword.name: keyword.value for keyword in expansion.jobs[0].cell_file.scalars}
 
+    assert positive_params["continuation"] == "DEFAULT"
+    assert muonium_params["continuation"] == "DEFAULT"
+    assert positive_params["geom_max_iter"] == 300
+    assert muonium_params["geom_max_iter"] == 300
     assert positive_params["charge"] == 1
     assert muonium_params["charge"] == 0
     assert positive_params["write_cell_structure"] is True
+    assert expansion.jobs[0].cell_file.symmetry_generate is False
     assert positive_cell["fix_all_cell"] is True
     rendered_cell = write_cell(expansion.jobs[0].cell_file)
     assert "FIX_ALL_CELL : TRUE" in rendered_cell
     assert "FIX_CELL" not in rendered_cell
+    assert "SYMMETRY_GENERATE" not in rendered_cell
 
 
 def test_expand_muon_relaxation_jobs_places_muon_in_origin_supercell_image() -> None:

@@ -56,6 +56,24 @@ def test_relaxation_widget_queued_row_locks_controls_and_parameters(qapp) -> Non
 
 
 
+def test_relaxation_widget_cancelled_row_keeps_parameters_editable(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+
+    widget.set_runtime_states({label: RelaxationRunState(status="cancelled")})
+
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    assert bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    assert combo.isEnabled()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+    assert widget._row_parameters_locked((row_id,)) is False
+
+
 def test_relaxation_widget_supercell_dropdown_create_emits_signal(qapp) -> None:
     widget = PristineRelaxationWidget()
     widget.set_supercell_options(
@@ -217,6 +235,37 @@ def test_relaxation_widget_defaults_fix_cell_to_relax(qapp) -> None:
     assert combo.currentData() is False
 
 
+def test_relaxation_widget_delete_shortcut_removes_selected_jobs(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    removed_label = widget._label_at_row(0)
+    remaining_label = widget._label_at_row(1)
+
+    widget._table.selectRow(0)
+    widget._table_delete_shortcut.activated.emit()
+
+    assert removed == [[removed_label]]
+    assert widget._table.rowCount() == 1
+    assert widget._label_at_row(0) == remaining_label
+
+
+def test_relaxation_widget_backspace_shortcut_removes_selected_jobs(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    removed_label = widget._label_at_row(0)
+
+    widget._table.selectRow(0)
+    widget._table_backspace_shortcut.activated.emit()
+
+    assert removed == [[removed_label]]
+    assert widget._table.rowCount() == 0
+
+
 def test_relaxation_widget_dialog_locks_write_cell_structure(qapp) -> None:
     widget = PristineRelaxationWidget()
     dialog = ParameterDialog(
@@ -245,6 +294,34 @@ def test_relaxation_widget_parameter_subset_matches_convergence_plus_geometry(qa
     assert "fix_all_cell" not in names
     assert "md_delta_t" not in names
     assert {"geom_energy_tol", "geom_force_tol", "geom_max_iter", "geom_stress_tol"} <= names
+
+
+def test_relaxation_widget_defaults_continuation_to_default(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    dialog = ParameterDialog(specs=widget._specs, workflow_stage="pristine_relaxation")
+    dialog.set_values(widget._default_params)
+
+    assert widget._default_params["continuation"] == "DEFAULT"
+    assert dialog.collect_values()["continuation"] == "DEFAULT"
+
+    dialog._rows["continuation"].editor.set_value("CUSTOM")
+    dialog._reset_parameter("continuation")
+
+    assert dialog.collect_values()["continuation"] == "DEFAULT"
+
+
+def test_relaxation_widget_defaults_geometry_max_iterations_to_300(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    dialog = ParameterDialog(specs=widget._specs, workflow_stage="pristine_relaxation")
+    dialog.set_values(widget._default_params)
+
+    assert widget._default_params["geom_max_iter"] == 300
+    assert dialog.collect_values()["geom_max_iter"] == 300
+
+    dialog._rows["geom_max_iter"].editor.set_value(30)
+    dialog._reset_parameter("geom_max_iter")
+
+    assert dialog.collect_values()["geom_max_iter"] == 300
 
 
 def test_relaxation_widget_positions_kpoint_below_basis_controls(qapp) -> None:

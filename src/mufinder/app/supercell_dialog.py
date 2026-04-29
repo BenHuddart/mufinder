@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -302,6 +303,7 @@ class SupercellEditorDialog(QDialog):
         self._asset_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._asset_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._asset_table.itemSelectionChanged.connect(self._on_asset_selection_changed)
+        self._configure_asset_table_columns()
 
         self._name_edit = QLineEdit()
         self._name_edit.setPlaceholderText("Supercell name")
@@ -381,6 +383,12 @@ class SupercellEditorDialog(QDialog):
             return None
         asset = self._project_service._supercell_asset(structure)
         return None if asset is None else [list(row) for row in asset.matrix]
+
+    def _configure_asset_table_columns(self) -> None:
+        header = self._asset_table.horizontalHeader()
+        header.setSectionResizeMode(self._ID_COLUMN, QHeaderView.ResizeMode.Fixed)
+        for column in (self._NAME_COLUMN, self._MATRIX_COLUMN, self._ATOMS_COLUMN, self._USAGE_COLUMN):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
 
     def matrix(self) -> list[list[int]]:
         """Return the currently configured editor matrix."""

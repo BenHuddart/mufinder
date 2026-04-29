@@ -30,8 +30,9 @@ User-facing save behavior is intentionally split between autosave and manual
 save:
 
 - Durable project state such as imported structures, saved workflow assets,
-  calculation definitions, run tracking, and results is autosaved so active
-  work is not lost if MuFinder needs to rebuild the project view.
+  generated/removed muon-site entities, calculation definitions, run tracking,
+  and results is autosaved so active work is not lost if MuFinder needs to
+  rebuild the project view.
 - Analysis-session state stays in session memory until the user explicitly
   chooses ``Save Project`` (or accepts the save prompt when closing a modified
   project).
@@ -97,9 +98,19 @@ Import behavior currently includes:
 - Copying source files into project ``imports/`` for provenance.
 - Setting imported structure as active host structure by default.
 - Capturing import provenance records.
-- Extracting MCIF magnetic metadata when present (propagation vector and site moments).
+- Extracting MCIF magnetic metadata when present, including atom labels,
+  single-vector legacy tags, ``_magnetic_propagation_vector_kxkykz`` entries,
+  and atom-site moment vectors.
+- Preserving all imported propagation vectors as reciprocal-lattice-unit
+  ``propagation_vectors_rlu`` metadata while keeping the first vector mirrored
+  to the legacy ``propagation_vector`` property.
+- Mapping imported moment labels onto atom indices by exact MCIF label match or
+  the unique ``label_...`` expansion used by mag2spectra MCIF fixtures.
 - Promoting extracted MCIF magnetic metadata to project-level magnetic structure when active host is imported.
 - Deriving per-atom scalar spins from imported magnetic metadata and storing them in host structure properties.
+- Converting MCIF-derived moments into propagation-vector components with the
+  phase correction needed for the unit-cell moment at each labelled site to
+  reconstruct the imported MCIF moment.
 - Parsing inline ``SPIN=...`` tokens from ``POSITIONS_FRAC`` rows when loading ``.cell`` files.
 
 Host-structure visualization and magnetic editing
@@ -122,6 +133,29 @@ The host-structure panel now includes:
   advanced full 3x3 matrix entry, naming, preview, save, edit, delete, and
   workflow selection support.
 - A PyVista/VTK structure-viewer backend with camera-preserving overlay updates for bonds, spins, slice planes, point markers, and UEP isosurfaces.
+
+Magnetic-field and nuclear-relaxation analysis
+----------------------------------------------
+
+The Magnetic Fields workflow currently includes:
+
+- propagation-vector magnetic-structure editing and preview;
+- commensurate dipolar-field calculations and incommensurate field-distribution
+  sampling, including independent multi-q phase sampling with Auto, Grid, and
+  Monte Carlo controls, active phase dimensions derived from the used
+  component wavevectors, and separate lookup-resolution and distribution-sample
+  limits;
+- demagnetizing-field corrections for none, sphere, infinite plate, advanced
+  ellipsoid, and advanced rectangular-prism sample shapes, with PyVista shape
+  preview for advanced shapes, analytic rectangular-prism tensor averaging, and
+  per-phase correction for incommensurate distributions;
+- dipolar tensor calculations for selected magnetic ions;
+- selected muon-site reuse from UEP and structural-relaxation clustering;
+- native nuclear second-moment relaxation calculations for ZF/TF and
+  single-crystal/polycrystal modes;
+- bundled natural-abundance isotope data for reproducible nuclear relaxation;
+- optional muon-induced distortion corrections when a selected
+  structural-relaxation cluster site has a derived distorted structure.
 
 Supercell editor
 ----------------

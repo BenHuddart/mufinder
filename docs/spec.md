@@ -1,8 +1,8 @@
 # MuFinder Product and Architecture Specification
 
 - Spec ID: MUFINDER-SPEC
-- Spec Version: 1.12.0
-- Last Updated: 2026-04-10
+- Spec Version: 1.13.0
+- Last Updated: 2026-04-29
 - Status: Active
 - Scope: PySide6 desktop rebuild
 
@@ -23,6 +23,7 @@
 | 1.10.0 | 2026-04-08 | Added a dedicated parent Convergence Testing overview page with notebook-style pinned cutoff/k-point plots, adoption-driven snapshot persistence, child-workflow action cards, and stale-snapshot fallback behavior on host/default changes. |
 | 1.11.0 | 2026-04-08 | Added startup responsiveness requirements: splash screen must be shown before heavyweight startup imports/initialization, with deferred feature imports after splash exposure. |
 | 1.12.0 | 2026-04-10 | Added pristine-relaxation requirements for per-row supercell/fixed-cell controls, project-default cutoff+k-point propagation, equivalent-density k-point scaling, `-out.cell` parsing, and geometry-convergence completion gating. |
+| 1.13.0 | 2026-04-29 | Expanded MCIF magnetic import requirements to preserve atom labels, multiple propagation vectors, label-to-atom mappings, and phase-corrected magnetic-model promotion. |
 
 ## 1. Executive Summary
 
@@ -491,11 +492,16 @@ Import behavior:
 
 MCIF magnetic extraction behavior:
 
-- parse propagation vector from known MCIF tags where present
-- parse atom-site moment vectors from `_atom_site_moment` loops where present
+- parse propagation vectors from known scalar tags and `_magnetic_propagation_vector_kxkykz` triplet entries where present
+- preserve multiple imported propagation vectors in reciprocal-lattice units, up to the three-vector basis used by the magnetic model
+- mirror the first imported propagation vector to the legacy `propagation_vector` property for existing supercell workflows
+- parse atom labels from `_atom_site_label`
+- parse atom-site moment vectors from dotted and underscored `_atom_site_moment` loops where present, including CIF uncertainty and fraction numeric notation
+- map atom-site moment labels onto host atom indices by exact label or a unique `label_...` atom-label expansion
 - attach extracted magnetic metadata to structure properties
 - when imported structure is active host, populate project-level magnetic structure
 - derive and store per-atom scalar spins from extracted moments for host-structure editing/visualization
+- promote MCIF-derived moments to propagation-vector components with phase-corrected Fourier coefficients so the unit-cell evaluated moments reproduce the imported labelled MCIF moments
 - persist extracted propagation vectors in structure-level properties for supercell spin propagation workflows
 
 Host visualization and CASTEP output behavior:

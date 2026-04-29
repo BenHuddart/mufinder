@@ -1922,6 +1922,64 @@ def test_uep_wizard_viewer_uses_source_structure_spins(qapp) -> None:
     dialog.close()
 
 
+def test_uep_wizard_viewer_aligns_project_spins_when_castep_reorders_atoms() -> None:
+    source_structure = _source_structure_with_spins()
+    source_structure.species = ["Co", "Co", "F", "F"]
+    source_structure.fractional_positions = [
+        [0.0, 0.0, 0.0],
+        [0.5, 0.5, 0.5],
+        [0.25, 0.25, 0.0],
+        [0.75, 0.75, 0.0],
+    ]
+    source_structure.properties["atomic_spins"] = [1.0, -1.0, 0.0, 0.0]
+
+    dialog = UepAnalysisDialog.__new__(UepAnalysisDialog)
+    dialog._source_job_label = "uep_source_row1"
+    dialog._source_structure = source_structure
+    dialog._source = SimpleNamespace(
+        structure=SimpleNamespace(
+            lattice_vectors=source_structure.lattice_vectors,
+            species=("F", "F", "Co", "Co"),
+            fractional_positions=(
+                (0.25, 0.25, 0.0),
+                (0.75, 0.75, 0.0),
+                (0.0, 0.0, 0.0),
+                (0.5, 0.5, 0.5),
+            ),
+            atomic_spins=None,
+        )
+    )
+
+    viewer_structure = dialog._build_viewer_host_structure()
+
+    assert viewer_structure.species == ["F", "F", "Co", "Co"]
+    assert viewer_structure.properties["atomic_spins"] == pytest.approx([0.0, 0.0, 1.0, -1.0])
+
+
+def test_uep_wizard_viewer_hides_tiny_mulliken_ligand_spins() -> None:
+    source_structure = _source_structure_with_spins()
+    dialog = UepAnalysisDialog.__new__(UepAnalysisDialog)
+    dialog._source_job_label = "uep_source_row1"
+    dialog._source_structure = source_structure
+    dialog._source = SimpleNamespace(
+        structure=SimpleNamespace(
+            lattice_vectors=source_structure.lattice_vectors,
+            species=("F", "F", "Co", "Co"),
+            fractional_positions=(
+                (0.25, 0.25, 0.0),
+                (0.75, 0.75, 0.0),
+                (0.0, 0.0, 0.0),
+                (0.5, 0.5, 0.5),
+            ),
+            atomic_spins=(-0.037, 0.038, 2.658, -2.656),
+        )
+    )
+
+    viewer_structure = dialog._build_viewer_host_structure()
+
+    assert viewer_structure.properties["atomic_spins"] == pytest.approx([0.0, 0.0, 2.658, -2.656])
+
+
 def test_uep_wizard_slice_controls_share_zero_minimum_with_isosurface(qapp) -> None:
     dialog = UepAnalysisDialog(
         source_job_label="uep_source_row1",

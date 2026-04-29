@@ -144,7 +144,7 @@ def parse_castep_mulliken_atomic_spins(path: Path) -> tuple[float, ...] | None:
     if header_index is None:
         return None
 
-    spins_by_ion: dict[int, float] = {}
+    spins: list[float] = []
     saw_spin = False
     for line in lines[header_index + 1 :]:
         stripped = line.strip()
@@ -164,21 +164,16 @@ def parse_castep_mulliken_atomic_spins(path: Path) -> tuple[float, ...] | None:
         spin_channel = tokens[2].lower()
         if spin_channel not in {"up:", "dn:"}:
             continue
-        try:
-            ion_index = int(tokens[1]) - 1
-        except ValueError:
-            continue
         if spin_channel == "up:":
             try:
-                spins_by_ion[ion_index] = float(tokens[-1])
+                spins.append(float(tokens[-1]))
                 saw_spin = True
             except ValueError:
                 continue
 
     if not saw_spin:
         return None
-    atom_count = max(spins_by_ion) + 1 if spins_by_ion else 0
-    return tuple(float(spins_by_ion.get(index, 0.0)) for index in range(atom_count))
+    return tuple(spins)
 
 
 def _last_numeric_match(text: str, patterns: tuple[re.Pattern[str], ...]) -> float | None:

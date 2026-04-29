@@ -537,6 +537,15 @@ class ClusterJobRunner(QObject):
         for name in numbered:
             if name not in names:
                 names.append(name)
+        if remote_job_id and re.fullmatch(r"[A-Za-z0-9_.-]+", remote_job_id):
+            scheduler_outputs = sorted(
+                str(name)
+                for name in entries
+                if re.fullmatch(rf".*-{re.escape(remote_job_id)}\.out", str(name))
+            )
+            for name in scheduler_outputs:
+                if name not in names:
+                    names.append(name)
         return names
 
     @staticmethod

@@ -19,6 +19,8 @@ features, and quality standards that must be maintained as development expands.
    journal
    site_generation
    uep_workflow
+   structural_relaxation_analysis
+   magnetic_fields
    comparison_table
    quality_and_automation
    project_specification

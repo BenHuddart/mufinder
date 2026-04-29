@@ -174,12 +174,16 @@ def test_uep_clustering_dialog_default_layout_balances_three_panels_evenly(qapp)
     )
 
     dialog.show()
-    qapp.processEvents()
+    dialog.resize(1280, 860)
+    for _ in range(4):
+        qapp.processEvents()
 
     assert dialog._main_splitter.orientation() == Qt.Orientation.Horizontal
     assert dialog._right_splitter.orientation() == Qt.Orientation.Vertical
     assert dialog._pending_main_splitter_sizes is not None
     assert dialog._pending_right_splitter_sizes is not None
+    assert 0.45 <= _split_ratio(dialog._main_splitter.sizes()) <= 0.55
+    assert 0.4 <= _split_ratio(dialog._right_splitter.sizes()) <= 0.6
     dialog.close()
 
 

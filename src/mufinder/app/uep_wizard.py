@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -120,6 +120,74 @@ _BATCH_ZPE_TOOLTIP = (
     "MuFinder uses E_zp = 1/2 sum_i hbar omega_i with omega_i = sqrt(lambda_i / m_mu), where the Hessian eigenvalues "
     "lambda_i are taken at the optimized UEP minimum."
 )
+_VIEWER_SPIN_DISPLAY_THRESHOLD = 0.1
+
+
+def _coerced_spin_values(raw: object, count: int) -> list[float] | None:
+    if not isinstance(raw, Sequence) or isinstance(raw, str | bytes) or len(raw) != count:
+        return None
+    values: list[float] = []
+    for value in raw:
+        try:
+            values.append(float(value))
+        except (TypeError, ValueError):
+            values.append(0.0)
+    return values
+
+
+def _viewer_spin_values(values: Sequence[float]) -> list[float]:
+    return [
+        float(value) if abs(float(value)) >= _VIEWER_SPIN_DISPLAY_THRESHOLD else 0.0
+        for value in values
+    ]
+
+
+def _periodic_fractional_distance_squared(first: Sequence[float], second: Sequence[float]) -> float:
+    total = 0.0
+    for left, right in zip(first[:3], second[:3], strict=False):
+        delta = float(left) - float(right)
+        delta -= round(delta)
+        total += delta * delta
+    return total
+
+
+def _align_spins_to_fractional_structure_order(
+    *,
+    target_species: Sequence[str],
+    target_fractional_positions: Sequence[Sequence[float]],
+    source_structure: Structure,
+    source_spins: Sequence[float],
+    tolerance: float = 1e-4,
+) -> list[float] | None:
+    if (
+        len(source_structure.species) != len(target_species)
+        or len(source_structure.fractional_positions) != len(target_fractional_positions)
+        or len(source_spins) != len(target_species)
+    ):
+        return None
+
+    tolerance_squared = tolerance * tolerance
+    unused = set(range(len(source_structure.species)))
+    aligned: list[float] = []
+    for target_symbol, target_position in zip(target_species, target_fractional_positions, strict=True):
+        candidates = [
+            (
+                _periodic_fractional_distance_squared(target_position, source_structure.fractional_positions[index]),
+                index,
+            )
+            for index in unused
+            if str(source_structure.species[index]) == str(target_symbol)
+        ]
+        if not candidates:
+            return None
+        distance_squared, source_index = min(candidates)
+        if distance_squared > tolerance_squared:
+            return None
+        unused.remove(source_index)
+        aligned.append(float(source_spins[source_index]))
+    return aligned
+
+
 _BATCH_VIEWER_IDLE_TEXT = "Showing the host structure. Select one or more clusters or sites to overlay their muon positions."
 _BATCH_TABLE_INDENTATION = 10
 _BATCH_TABLE_HEADERS = [
@@ -2689,16 +2757,28 @@ class UepAnalysisDialog(QDialog):
     def _build_viewer_host_structure(self) -> Structure:
         source_structure = self._source.structure
         properties: dict[str, Any] = {"pbc": [True, True, True]}
+        linked_source = self._source_structure
         if (
             source_structure.atomic_spins is not None
             and len(source_structure.atomic_spins) == len(source_structure.species)
         ):
-            properties["atomic_spins"] = [float(value) for value in source_structure.atomic_spins]
-        linked_source = self._source_structure
+            properties["atomic_spins"] = _viewer_spin_values(source_structure.atomic_spins)
+        elif linked_source is not None:
+            linked_spins = _coerced_spin_values(
+                linked_source.properties.get("atomic_spins"),
+                len(linked_source.species),
+            )
+            if linked_spins is not None:
+                aligned_spins = _align_spins_to_fractional_structure_order(
+                    target_species=source_structure.species,
+                    target_fractional_positions=source_structure.fractional_positions,
+                    source_structure=linked_source,
+                    source_spins=linked_spins,
+                )
+                if aligned_spins is not None:
+                    properties["atomic_spins"] = _viewer_spin_values(aligned_spins)
         if linked_source is not None and len(linked_source.species) == len(source_structure.species):
-            for key in ("atomic_spins", "initial_magnetic_moments", "magnetic_structure", "propagation_vector"):
-                if key == "atomic_spins" and "atomic_spins" in properties:
-                    continue
+            for key in ("magnetic_structure", "propagation_vector"):
                 value = linked_source.properties.get(key)
                 if isinstance(value, (list, dict)):
                     properties[key] = deepcopy(value)

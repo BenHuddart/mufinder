@@ -66,7 +66,7 @@ _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
 _KPOINT_SORT_ANCHOR_NAMES = ("basis_precision", "cut_off_energy")
 _ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
 _PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
-_LOCKED_GRID_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES
+_LOCKED_GRID_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"cancelled"}
 _DEFAULT_KPOINT_SPACING = 0.02
 
 

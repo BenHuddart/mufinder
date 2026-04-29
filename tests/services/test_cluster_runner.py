@@ -416,6 +416,29 @@ def test_cluster_runner_poll_failed_downloads_slurm_output(qapp, tmp_path: Path)
     assert (tmp_path / "slurm-771300.out").read_bytes() == b"slurm failure details"
 
 
+def test_cluster_runner_poll_failed_downloads_scheduler_job_output(qapp, tmp_path: Path) -> None:
+    runner = ClusterJobRunner()
+    ssh = _FakeSSH()
+    runner._ssh = ssh
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+
+    job_id = uuid4()
+    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
+        job_id=job_id,
+        remote_job_id="703535",
+        remote_dir="/remote/job",
+        seed_name="positivemuon_Random_Site_20",
+        local_output_dir=tmp_path,
+    )
+    scheduler._states["703535"] = "F"
+    ssh.remote_files["/remote/job/castep.mpi-703535.out"] = b"scheduler failure details"
+
+    runner._poll_queue()
+
+    assert (tmp_path / "castep.mpi-703535.out").read_bytes() == b"scheduler failure details"
+
+
 def test_cluster_runner_retrieve_incomplete_output_marks_failed(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

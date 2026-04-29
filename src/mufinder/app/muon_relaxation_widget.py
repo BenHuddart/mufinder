@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -37,7 +37,14 @@ from mufinder.app.relaxation_adapter import (
     suggested_grid_for_row,
 )
 from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow, RelaxationRunState, SupercellMatrix
-from mufinder.app.theme import current_palette, status_brush, style_hint_text, style_section_subtitle, style_section_title
+from mufinder.app.theme import (
+    current_palette,
+    status_brush,
+    style_hint_text,
+    style_section_subtitle,
+    style_section_title,
+    use_tabbed_table_corners,
+)
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     infer_task,
@@ -65,8 +72,7 @@ _PREFERRED_DEFAULT_PARAMETER_NAMES = (
     "kpoint_mp_spacing",
     "kpoints_list",
 )
-_BASIC_BASIS_CONTROL_NAMES = {"basis_precision", "cut_off_energy"}
-_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready"}
+_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready", "cancelled"}
 _CHARGE_STATE_TABS = (
     (POSITIVE_MUON_CHARGE_STATE, "Positive muon"),
     (MUONIUM_CHARGE_STATE, "Muonium"),
@@ -79,13 +85,33 @@ def _append_workflow_stage(values: tuple[str, ...], workflow_stage: str) -> tupl
     return (*values, workflow_stage)
 
 
-def _clone_spec_for_muon_workflow(spec: KeywordSpec) -> KeywordSpec:
-    if spec.name not in _BASIC_BASIS_CONTROL_NAMES:
-        return spec
+def _clone_spec_for_muon_workflow(
+    spec: KeywordSpec,
+    *,
+    basic: bool,
+    advanced: bool,
+) -> KeywordSpec:
+    basic_workflows = spec.basic_workflows
+    advanced_workflows = spec.advanced_workflows
+
+    if basic:
+        basic_workflows = _append_workflow_stage(basic_workflows, _WORKFLOW_STAGE)
+    if advanced:
+        advanced_workflows = _append_workflow_stage(advanced_workflows, _WORKFLOW_STAGE)
+
+    default_value = spec.default_value
+    if spec.name == "continuation":
+        default_value = "DEFAULT"
+    elif spec.name == "geom_max_iter":
+        default_value = 300
+    elif spec.name == "symmetry_generate":
+        default_value = None
+
     return replace(
         spec,
-        basic_workflows=_append_workflow_stage(spec.basic_workflows, _WORKFLOW_STAGE),
-        advanced_workflows=_append_workflow_stage(spec.advanced_workflows, _WORKFLOW_STAGE),
+        basic_workflows=basic_workflows,
+        advanced_workflows=advanced_workflows,
+        default_value=default_value,
     )
 
 
@@ -182,6 +208,7 @@ class MuonRelaxationWidget(QWidget):
     submit_cluster_requested = Signal(object)
     row_supercell_edit_requested = Signal(object)
     remove_requested = Signal(object)
+    analysis_workspace_requested = Signal(object)
     form_state_changed = Signal(dict)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -200,6 +227,8 @@ class MuonRelaxationWidget(QWidget):
         self._row_added_advanced: dict[int, set[str]] = {}
         self._runtime_states: dict[str, RelaxationRunState] = {}
         self._supercell_options: list[tuple[str, SupercellMatrix]] = []
+        self._table_delete_shortcuts: dict[QTableWidget, QShortcut] = {}
+        self._table_backspace_shortcuts: dict[QTableWidget, QShortcut] = {}
 
         self._project_default_cutoff = QLabel("Not set")
         self._project_default_kpoint = QLabel("Not set")
@@ -219,6 +248,7 @@ class MuonRelaxationWidget(QWidget):
 
         self._batch_configure_button = QPushButton("Configure Selected Parameters...")
         self._batch_configure_button.setEnabled(False)
+        self._create_analysis_button = QPushButton("Create analysis workspace from selection")
         self._run_local_button = QPushButton("Run Local Calculations")
         self._run_cluster_button = QPushButton("Run on Cluster")
 
@@ -265,6 +295,12 @@ class MuonRelaxationWidget(QWidget):
         )
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(32)
+        delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, table)
+        delete_shortcut.activated.connect(lambda target=table: self._delete_selected_rows(target))
+        backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), table)
+        backspace_shortcut.activated.connect(lambda target=table: self._delete_selected_rows(target))
+        self._table_delete_shortcuts[table] = delete_shortcut
+        self._table_backspace_shortcuts[table] = backspace_shortcut
         header = table.horizontalHeader()
         header.setSectionResizeMode(self._LABEL_COLUMN, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(self._SUPERCELL_COLUMN, QHeaderView.ResizeMode.Stretch)
@@ -283,6 +319,7 @@ class MuonRelaxationWidget(QWidget):
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setSectionResizeMode(self._REMOVE_COLUMN, QHeaderView.ResizeMode.Fixed)
         table.setColumnWidth(self._REMOVE_COLUMN, 34)
+        use_tabbed_table_corners(table)
         return table
 
     def _build_layout(self) -> None:
@@ -324,6 +361,7 @@ class MuonRelaxationWidget(QWidget):
         table_layout.setContentsMargins(10, 8, 10, 8)
         table_layout.addWidget(self._charge_tabs)
         control_row = QHBoxLayout()
+        control_row.addWidget(self._create_analysis_button)
         control_row.addStretch(1)
         control_row.addWidget(self._batch_configure_button)
         table_layout.addLayout(control_row)
@@ -341,6 +379,7 @@ class MuonRelaxationWidget(QWidget):
 
     def _connect_signals(self) -> None:
         self._batch_configure_button.clicked.connect(self._configure_selected_rows)
+        self._create_analysis_button.clicked.connect(self._create_analysis_workspace_from_selection)
         self._charge_tabs.currentChanged.connect(lambda *_: self._refresh_batch_button_state())
         for table in self._tables_by_charge_state.values():
             table.itemChanged.connect(self._on_table_item_changed)
@@ -351,21 +390,52 @@ class MuonRelaxationWidget(QWidget):
         self._run_cluster_button.clicked.connect(self._run_cluster_selected_rows)
 
     def _build_parameter_specs(self) -> list[KeywordSpec]:
-        specs = [
-            _clone_spec_for_muon_workflow(spec)
-            for spec in get_gui_keyword_specs_for_files(
-                files=("param", "cell"),
-                workflow_stage=_WORKFLOW_STAGE,
-                include_advanced=True,
+        specs: list[KeywordSpec] = []
+        seen_names: set[str] = set()
+
+        convergence_specs = get_gui_keyword_specs_for_files(
+            files=("param", "cell"),
+            workflow_stage="convergence_cutoff",
+            include_advanced=True,
+        )
+        for spec in convergence_specs:
+            if spec.name in _EXCLUDED_PARAMETER_NAMES or spec.name in seen_names:
+                continue
+            basic_in_convergence = keyword_visible_in_workflow(
+                spec,
+                workflow_stage="convergence_cutoff",
+                include_advanced=False,
             )
-            if spec.name not in _EXCLUDED_PARAMETER_NAMES
-        ]
-        seen = {spec.name for spec in specs}
+            cloned = _clone_spec_for_muon_workflow(
+                spec,
+                basic=(
+                    basic_in_convergence
+                    or spec.name == "kpoint_mp_grid"
+                    or spec.name in _EXTRA_GEOMETRY_PARAMETER_NAMES
+                ),
+                advanced=keyword_visible_in_workflow(
+                    spec,
+                    workflow_stage="convergence_cutoff",
+                    include_advanced=True,
+                )
+                and not basic_in_convergence,
+            )
+            specs.append(cloned)
+            seen_names.add(cloned.name)
+
         for name in _EXTRA_GEOMETRY_PARAMETER_NAMES:
             spec = get_keyword_spec("param", name) or get_keyword_spec("cell", name)
-            if spec is not None and spec.name not in seen and spec.name not in _EXCLUDED_PARAMETER_NAMES:
-                specs.append(spec)
-                seen.add(spec.name)
+            if spec is None or spec.name in _EXCLUDED_PARAMETER_NAMES or spec.name in seen_names:
+                continue
+            specs.append(
+                _clone_spec_for_muon_workflow(
+                    spec,
+                    basic=True,
+                    advanced=True,
+                )
+            )
+            seen_names.add(spec.name)
+
         return specs
 
     @staticmethod
@@ -952,6 +1022,20 @@ class MuonRelaxationWidget(QWidget):
             return
         self._open_row_parameter_dialog(row_ids)
 
+    def _delete_selected_rows(self, table: QTableWidget | None = None) -> None:
+        target = table or self._active_table()
+        selection_model = target.selectionModel()
+        if selection_model is None:
+            return
+        row_ids: list[int] = []
+        for index in selection_model.selectedRows():
+            row_id = self._row_id_at(index.row(), table=target)
+            if row_id is not None:
+                row_ids.append(row_id)
+        if not row_ids:
+            return
+        self._remove_rows_by_id(tuple(row_ids))
+
     def _common_params_for_rows(self, row_ids: tuple[int, ...]) -> dict[str, object]:
         if not row_ids:
             return dict(self._default_params)
@@ -1124,10 +1208,9 @@ class MuonRelaxationWidget(QWidget):
 
     def _selected_or_all_labels(self) -> list[str]:
         selected: list[str] = []
-        for table in self._all_tables():
-            selection_model = table.selectionModel()
-            if selection_model is None:
-                continue
+        table = self._active_table()
+        selection_model = table.selectionModel()
+        if selection_model is not None:
             for index in selection_model.selectedRows():
                 label = self._label_at_row(index.row(), table=table)
                 if label:
@@ -1136,12 +1219,34 @@ class MuonRelaxationWidget(QWidget):
             return selected
 
         labels: list[str] = []
-        for table in self._all_tables():
-            for row in range(table.rowCount()):
-                label = self._label_at_row(row, table=table)
-                if label:
-                    labels.append(self._submission_key_at_row(row, table=table))
+        for row in range(table.rowCount()):
+            label = self._label_at_row(row, table=table)
+            if label:
+                labels.append(self._submission_key_at_row(row, table=table))
         return labels
+
+    def _selected_labels_only(self) -> list[str]:
+        selected: list[str] = []
+        table = self._active_table()
+        selection_model = table.selectionModel()
+        if selection_model is None:
+            return selected
+        for index in selection_model.selectedRows():
+            label = self._label_at_row(index.row(), table=table)
+            if label:
+                selected.append(self._submission_key_at_row(index.row(), table=table))
+        return selected
+
+    def _create_analysis_workspace_from_selection(self) -> None:
+        labels = self._selected_labels_only()
+        if not labels:
+            QMessageBox.information(
+                self,
+                "No relaxations selected",
+                "Select one or more completed structural relaxation rows first.",
+            )
+            return
+        self.analysis_workspace_requested.emit(labels)
 
     def _run_local_selected_rows(self) -> None:
         config = self._build_config_or_warn()
