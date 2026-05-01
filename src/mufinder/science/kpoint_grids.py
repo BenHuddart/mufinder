@@ -228,8 +228,27 @@ def equivalent_grid_for_supercell(
 ) -> tuple[int, int, int]:
     """Return a supercell grid with approximately equivalent k-point density."""
 
-    spacing = spacing_from_grid(reference_lattice, reference_grid)
-    return grid_from_spacing(supercell_lattice, spacing)
+    reference_reciprocal = reciprocal_lattice_vectors(reference_lattice)
+    supercell_reciprocal = reciprocal_lattice_vectors(supercell_lattice)
+
+    grid: list[int] = []
+    for reference_count, reference_vector, supercell_vector in zip(
+        reference_grid,
+        reference_reciprocal,
+        supercell_reciprocal,
+        strict=True,
+    ):
+        count = int(reference_count)
+        if count <= 0:
+            raise ValueError("reference_grid values must be positive integers.")
+        reference_magnitude = _norm(reference_vector)
+        if reference_magnitude <= 0.0:
+            raise ValueError("reference_lattice must define non-zero reciprocal vectors.")
+
+        ratio = _norm(supercell_vector) / reference_magnitude
+        grid.append(max(1, int(math.ceil((float(count) * ratio) - 1e-12))))
+
+    return (grid[0], grid[1], grid[2])
 
 
 def _angle_degrees(lhs: Sequence[float], rhs: Sequence[float]) -> float:

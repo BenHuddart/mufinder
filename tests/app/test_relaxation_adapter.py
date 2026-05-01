@@ -226,6 +226,19 @@ def test_suggested_grid_for_row_handles_identity_and_supercell() -> None:
     assert doubled_a == (2, 4, 4)
 
 
+def test_suggested_grid_for_row_halves_grid_for_doubled_unequal_lattice() -> None:
+    host_lattice = [[3.6, 0.0, 0.0], [0.0, 4.2, 0.0], [0.0, 0.0, 5.4]]
+
+    grid = suggested_grid_for_row(
+        host_lattice=host_lattice,
+        row_matrix=((2, 0, 0), (0, 2, 0), (0, 0, 2)),
+        reference_lattice=host_lattice,
+        reference_grid=(4, 4, 4),
+    )
+
+    assert grid == (2, 2, 2)
+
+
 def test_suggested_grid_for_row_returns_exact_project_grid_for_identity_reference_mismatch() -> None:
     grid = suggested_grid_for_row(
         host_lattice=[[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]],

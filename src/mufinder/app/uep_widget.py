@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -18,7 +19,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -151,6 +151,7 @@ class UEPWidget(QWidget):
         self._supercell_options: list[tuple[str, SupercellMatrix]] = []
         self._source_structure_options: list[tuple[str, str]] = []
         self._updating_source_structure = False
+        self._parameter_species_options: tuple[str, ...] = ()
 
         self._name_prefix = QLineEdit("uep")
         self._project_default_cutoff = QLabel("Not set")
@@ -210,6 +211,12 @@ class UEPWidget(QWidget):
 
         self._build_layout()
         self._connect_signals()
+        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
+        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._delete_shortcut.activated.connect(self._delete_selected_rows)
+        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._backspace_shortcut.activated.connect(self._delete_selected_rows)
 
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
@@ -374,6 +381,11 @@ class UEPWidget(QWidget):
             return data.strip()
         return None
 
+    def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
+        self._parameter_species_options = tuple(
+            dict.fromkeys(option for item in species_options if (option := str(item).strip()))
+        )
+
     def set_runtime_states(self, states: Mapping[str, UepRunState]) -> None:
         self._runtime_states = {str(label): state for label, state in states.items()}
         self._refresh_table_rows()
@@ -446,6 +458,16 @@ class UEPWidget(QWidget):
             if row_id is not None:
                 row_ids.append(row_id)
         return tuple(row_ids)
+
+    def _selected_or_current_row_ids(self) -> tuple[int, ...]:
+        row_ids = self._selected_row_ids()
+        if row_ids:
+            return row_ids
+        current_row = self._table.currentRow()
+        if current_row < 0:
+            return ()
+        row_id = self._row_id_at(current_row)
+        return () if row_id is None else (row_id,)
 
     def _row_id_at(self, table_row: int) -> int | None:
         item = self._table.item(table_row, self._LABEL_COLUMN)
@@ -556,6 +578,7 @@ class UEPWidget(QWidget):
                 "UEP source jobs are CASTEP single-point calculations. "
                 "Formatted density output stays enabled because the UEP analysis requires `.den_fmt`."
             ),
+            "species_options": self._parameter_species_options,
             "parent": self,
         }
         if read_only:
@@ -594,6 +617,7 @@ class UEPWidget(QWidget):
                 "task": "SINGLEPOINT",
                 "write_formatted_density": "TRUE (required for UEP source analysis)",
             },
+            "species_options": self._parameter_species_options,
             "parent": self,
         }
         if read_only:
@@ -655,17 +679,33 @@ class UEPWidget(QWidget):
         return effective
 
     def _remove_row(self, row_id: int) -> None:
-        row = self._row_index_for_id(row_id)
-        if row is None:
+        self._remove_rows_by_id((row_id,))
+
+    def _remove_rows_by_id(self, row_ids: tuple[int, ...]) -> None:
+        removed_labels: list[str] = []
+        for row_id in row_ids:
+            row = self._row_index_for_id(row_id)
+            if row is None:
+                continue
+            label_item = self._table.item(row, self._LABEL_COLUMN)
+            label = label_item.text().strip() if label_item is not None else ""
+            self._table.removeRow(row)
+            self._row_supercells.pop(row_id, None)
+            self._row_parameter_values.pop(row_id, None)
+            self._row_added_advanced.pop(row_id, None)
+            if label:
+                removed_labels.append(label)
+        if removed_labels:
+            self.remove_requested.emit(removed_labels)
+            self._refresh_batch_button_state()
+            self._emit_state()
+
+    def _delete_selected_rows(self) -> None:
+        if self._table.state() == QAbstractItemView.State.EditingState:
             return
-        label_item = self._table.item(row, self._LABEL_COLUMN)
-        label = label_item.text().strip() if label_item is not None else ""
-        self._table.removeRow(row)
-        self._row_supercells.pop(row_id, None)
-        self._row_parameter_values.pop(row_id, None)
-        self._row_added_advanced.pop(row_id, None)
-        self.remove_requested.emit([label] if label else [])
-        self._emit_state()
+        row_ids = self._selected_or_current_row_ids()
+        if row_ids:
+            self._remove_rows_by_id(row_ids)
 
     def _emit_submit_local(self) -> None:
         config = self._build_config_or_warn()

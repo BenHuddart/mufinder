@@ -7,6 +7,7 @@ Quality gates
 All implemented and future functionality must satisfy these gates:
 
 - Unit and integration tests must pass.
+- Agent-harness structural tests must pass.
 - Coverage must remain at or above 85 percent (enforced by pytest-cov).
 - Sphinx documentation must build with warnings treated as errors.
 - New functionality is incomplete until tests and docs are included.
@@ -52,7 +53,9 @@ The local CASTEP execution feature is validated by targeted tests that cover:
 - setup persistence and mpirun discovery behavior
 - submission-dialog validation for cores and concurrency
 - cutoff-table context-menu submission wiring
-- shared dashboard row-button actions for submit/cancel/inspect/reset
+- shared dashboard row-button actions for resubmit/cancel/inspect/reset
+- shared workflow-row submission planning for convergence, relaxation, and UEP workflows
+- shared job execution lifecycle orchestration for local and remote runners
 - local runner queue/cancel behavior
 - CASTEP output parsing for success/failure cases, including zero-K energy and force extraction
 
@@ -62,6 +65,8 @@ Run targeted checks during focused iteration:
 
    python -m pytest --no-cov \
      tests/test_castep_output_parser.py \
+     tests/app/test_workflow_submission.py \
+     tests/services/test_job_execution_controller.py \
      tests/services/test_local_runner.py \
      tests/app/test_submission_dialog.py \
      tests/app/test_castep_setup_dialog.py \
@@ -73,6 +78,27 @@ Then run the full coverage-enabled suite before merge:
 .. code-block:: bash
 
    python -m pytest
+
+Agent harness checks
+--------------------
+
+MuFinder keeps repository knowledge and package boundaries executable so future
+agent runs can work from local context rather than hidden conversation state.
+
+Run the harness checks after changing ``AGENTS.md``, docs indexes, package
+boundaries, or shared architecture:
+
+.. code-block:: bash
+
+   python -m pytest --no-cov tests/test_agent_harness.py
+
+The harness tests currently verify:
+
+- ``AGENTS.md`` remains a short route map and points to durable docs.
+- The Sphinx index includes the agent harness and architecture documents.
+- Lower package layers do not import higher package layers.
+- Source, test, and docs trees do not track Python bytecode artifacts that can
+  confuse packaging and review.
 
 Automation policy
 -----------------

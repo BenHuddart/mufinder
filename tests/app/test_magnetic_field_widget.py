@@ -12,6 +12,7 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QAbstractItemView, QDialog, QGridLayout, QScrollArea
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
+from mufinder.app import theme as theme_module
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.magnetic_field_widget import (
     DipolarTensorDialog,
@@ -1297,6 +1298,90 @@ def test_demagnetizing_advanced_dialog_collects_prism_values(qapp, monkeypatch) 
     assert sample.padding == pytest.approx(3.0)
     assert "N =" in dialog._tensor_label.text()
     dialog.close()
+
+
+def test_demagnetizing_pyvista_axis_triad_uses_active_theme(qapp, monkeypatch) -> None:
+    class _FakeMesh:
+        pass
+
+    class _FakePv:
+        @staticmethod
+        def Cube(*, bounds):
+            return ("cube", bounds)
+
+        @staticmethod
+        def Arrow(**kwargs):
+            return ("arrow", kwargs)
+
+        @staticmethod
+        def PolyData(points, faces):
+            return ("polydata", points, faces)
+
+    class _FakePlotter(magnetic_field_widget_module.QWidget):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.backgrounds = []
+            self.meshes = []
+            self.labels = []
+            self.clear_calls = 0
+            self.render_calls = 0
+
+        def set_background(self, color):
+            self.backgrounds.append(color)
+
+        def enable_parallel_projection(self):
+            pass
+
+        def clear(self):
+            self.clear_calls += 1
+
+        def add_mesh(self, mesh, **kwargs):
+            self.meshes.append((mesh, kwargs))
+            return _FakeMesh()
+
+        def add_point_labels(self, points, labels, **kwargs):
+            self.labels.append((tuple(labels), kwargs))
+
+        def reset_camera(self):
+            pass
+
+        def render(self):
+            self.render_calls += 1
+
+    monkeypatch.setattr(magnetic_field_widget_module, "_pyvista_modules", lambda: (_FakePv, _FakePlotter))
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+    try:
+        canvas = magnetic_field_widget_module._DemagnetizingPyVistaCanvas()
+        sample = magnetic_field_widget_module.DemagnetizingSample(
+            shape="rectangular_prism",
+            prism_lengths=(2.0, 3.0, 4.0),
+        )
+
+        canvas.set_sample(sample)
+        palette = magnetic_field_widget_module.current_palette()
+
+        assert canvas._plotter.backgrounds[-1] == palette.bg_primary
+        assert [entry[1]["color"] for entry in canvas._plotter.meshes[1:4]] == [
+            palette.accent,
+            palette.success,
+            palette.status_submitting,
+        ]
+        assert [entry[1]["text_color"] for entry in canvas._plotter.labels[:3]] == [
+            palette.accent,
+            palette.success,
+            palette.status_submitting,
+        ]
+
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+        canvas.changeEvent(QEvent(QEvent.Type.ApplicationPaletteChange))
+        assert canvas._plotter.backgrounds[-1] == magnetic_field_widget_module.current_palette().bg_primary
+        assert canvas._plotter.clear_calls >= 2
+        clear_calls = canvas._plotter.clear_calls
+        canvas.changeEvent(QEvent(QEvent.Type.StyleChange))
+        assert canvas._plotter.clear_calls == clear_calls
+        canvas.close()
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
 
 
 def test_magnetic_field_widget_opens_advanced_demag_dialog(qapp, tmp_path, monkeypatch) -> None:

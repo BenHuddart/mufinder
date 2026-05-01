@@ -14,13 +14,13 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
-    QHBoxLayout,
     QVBoxLayout,
     QWidget,
 )
@@ -235,6 +235,7 @@ class ComparisonTableWidget(QWidget):
     """Display one persisted comparison table with metric help and export/delete actions."""
 
     delete_requested = Signal(object)
+    title_changed = Signal(object, str)
 
     @staticmethod
     def _column_header_label(raw_label: object) -> str:
@@ -300,8 +301,16 @@ class ComparisonTableWidget(QWidget):
         self._parameter_diff_section_row: int | None = None
         self._parameter_diff_toggle: QToolButton | None = None
         self._parameter_diff_expanded = True
+        self._restoring_title = False
 
-        self._title_label = QLabel(self._table.label or "Comparison Table")
+        self._title_edit = QLineEdit(self._table.label or "Comparison Table")
+        self._title_edit.setObjectName("comparisonTableTitleEdit")
+        self._title_edit.setMaxLength(80)
+        title_font = self._title_edit.font()
+        title_font.setBold(True)
+        if title_font.pointSize() > 0:
+            title_font.setPointSize(title_font.pointSize() + 2)
+        self._title_edit.setFont(title_font)
         self._warning_banner = QLabel("")
         self._warning_banner.setWordWrap(True)
         self._warning_banner.hide()
@@ -323,13 +332,21 @@ class ComparisonTableWidget(QWidget):
     def comparison_table_id(self) -> UUID:
         return self._table.id
 
+    def set_table_label(self, label: str) -> None:
+        normalized = str(label).strip() or "Comparison Table"
+        self._restoring_title = True
+        try:
+            self._title_edit.setText(normalized)
+        finally:
+            self._restoring_title = False
+
     def _build_layout(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(6)
 
         header = QHBoxLayout()
-        header.addWidget(self._title_label)
+        header.addWidget(self._title_edit)
         header.addStretch(1)
         header.addWidget(self._export_button)
         header.addWidget(self._delete_button)
@@ -339,8 +356,20 @@ class ComparisonTableWidget(QWidget):
         root.addWidget(self._grid, 1)
 
     def _connect_signals(self) -> None:
+        self._title_edit.editingFinished.connect(self._on_title_edit_finished)
         self._export_button.clicked.connect(self._export_csv)
         self._delete_button.clicked.connect(self._confirm_delete)
+
+    def _on_title_edit_finished(self) -> None:
+        normalized = self._title_edit.text().strip() or "Comparison Table"
+        if self._title_edit.text() != normalized:
+            self._title_edit.setText(normalized)
+        if self._restoring_title:
+            return
+        current_label = self._table.label or "Comparison Table"
+        if normalized == current_label:
+            return
+        self.title_changed.emit(self._table.id, normalized)
 
     def _populate_table(self) -> None:
         payload = self._table.result_data

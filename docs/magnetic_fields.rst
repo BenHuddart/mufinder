@@ -135,7 +135,8 @@ is applied to atoms. If the texture has no out-of-plane component, the colour
 scale falls back to moment magnitude. The main builder's 3D viewer then
 previews the accepted texture on the actual host structure and selected
 supercell. The preview canvas can be switched between light and dark modes
-without changing the rest of the MuFinder interface.
+without changing the rest of the MuFinder interface, and the structure-viewer
+backgrounds and axis triads follow the active application palette.
 
 Moment Normalization and Pruning
 --------------------------------

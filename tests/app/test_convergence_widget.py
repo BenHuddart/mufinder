@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import QPoint, QItemSelectionModel, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QMessageBox, QPushButton, QToolButton
 
 import mufinder.app.convergence_widget as convergence_widget_module
@@ -574,6 +575,49 @@ def test_convergence_widget_remove_selected_or_current_cutoffs_uses_selection(qa
     widget._remove_selected_or_current_cutoffs()
 
     assert requested_rows == [(0, 1)]
+
+
+def test_convergence_widget_delete_shortcut_requests_selected_cutoff_removal(qapp) -> None:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    widget._add_cutoff(360.0)
+    requested: list[list[float]] = []
+    widget.remove_cutoff_requested.connect(lambda cutoffs: requested.append(list(cutoffs)))
+
+    widget._cutoff_table.selectRow(1)
+    widget._delete_shortcut.activated.emit()
+
+    assert requested == [[360.0]]
+
+
+def test_convergence_widget_backspace_shortcut_requests_current_cutoff_removal(qapp) -> None:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    requested: list[list[float]] = []
+    widget.remove_cutoff_requested.connect(lambda cutoffs: requested.append(list(cutoffs)))
+
+    widget._cutoff_table.setCurrentCell(0, widget._CUTOFF_COLUMN)
+    widget._backspace_shortcut.activated.emit()
+
+    assert requested == [[300.0]]
+
+
+def test_convergence_widget_delete_key_requests_selected_cutoff_from_child_focus(qapp) -> None:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    widget._add_cutoff(360.0)
+    requested: list[list[float]] = []
+    widget.remove_cutoff_requested.connect(lambda cutoffs: requested.append(list(cutoffs)))
+    configure_button = widget._cutoff_table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    widget.show()
+    widget._cutoff_table.selectRow(0)
+    configure_button.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(configure_button, Qt.Key.Key_Delete)
+
+    assert requested == [[300.0]]
 
 
 def test_convergence_widget_batch_confirm_uses_yes_to_all_for_progressed_rows(

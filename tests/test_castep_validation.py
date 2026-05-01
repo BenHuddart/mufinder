@@ -6,6 +6,7 @@ import pytest
 
 from mufinder.castep_io import (
     AtomicPosition,
+    BlockSection,
     CellFile,
     ConflictingKeywordError,
     KPoint,
@@ -132,4 +133,15 @@ def test_validate_cell_rejects_atomic_spins_without_positions_frac() -> None:
     )
 
     with pytest.raises(ValueError, match="Per-atom spins require POSITIONS_FRAC"):
+        validate_cell_file(cell_file)
+
+
+def test_validate_cell_rejects_invalid_hubbard_u_rows() -> None:
+    cell_file = CellFile(
+        lattice_cart=LatticeCart(vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0))),
+        positions_frac=PositionBlock(positions=(AtomicPosition("Ni", (0.0, 0.0, 0.0)),)),
+        blocks=(BlockSection("hubbard_u", (("Ni", "x:", 2.4),), unit="eV"),),
+    )
+
+    with pytest.raises(ValueError, match="orbitals must be one of s, p, d, or f"):
         validate_cell_file(cell_file)

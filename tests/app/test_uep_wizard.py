@@ -24,7 +24,6 @@ from mufinder.science.uep import (
     fractional_point_to_cartesian,
     miller_indices_to_cartesian_normal,
     plane_from_fractional_anchor_and_miller,
-    plane_from_point_and_normal,
     potential_grid,
     serialize_potential_grid,
 )

@@ -6,9 +6,10 @@ import pytest
 from PySide6.QtWidgets import QLabel, QPushButton
 
 import mufinder.app.param_dialog as param_dialog_module
+from mufinder.app.param_widgets import HubbardUParamEditor
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.castep_io.schema import KeywordSpec
-from mufinder.castep_io.types import ValueWithUnit
+from mufinder.castep_io.types import BlockSection, ValueWithUnit
 
 
 def _dialog_specs() -> list[KeywordSpec]:
@@ -186,6 +187,34 @@ def test_parameter_dialog_roundtrip_values_and_advanced_rows(qapp) -> None:
     assert collected["xc_functional"] == "LDA"
     assert collected["basis_precision"] == "PRECISE"
     assert set(dialog.advanced_names()) == {"basis_precision"}
+
+
+def test_parameter_dialog_uses_rich_hubbard_u_editor_when_advanced(qapp) -> None:
+    specs = [
+        *_dialog_specs(),
+        KeywordSpec(
+            name="hubbard_u",
+            file="cell",
+            kind="block",
+            value_type="hubbard_u_block",
+            widget_hint="hubbard_u",
+            advanced_workflows=("convergence_kpoint",),
+        ),
+    ]
+    dialog = ParameterDialog(
+        specs=specs,
+        workflow_stage="convergence_kpoint",
+        species_options=("La", "Mn", "O"),
+    )
+    value = BlockSection(name="hubbard_u", rows=(("Ni", "d:", 2.4),), unit="eV")
+
+    dialog.set_advanced_names({"hubbard_u"})
+    dialog.set_values({"hubbard_u": value})
+
+    assert isinstance(dialog._rows["hubbard_u"].editor, HubbardUParamEditor)
+    assert dialog._rows["hubbard_u"].editor._species_options == ("La", "Mn", "O")
+    assert dialog.collect_values()["hubbard_u"] == value
+    assert set(dialog.advanced_names()) == {"hubbard_u"}
 
 
 def test_parameter_dialog_rebuild_does_not_duplicate_headers(qapp) -> None:

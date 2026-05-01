@@ -10,6 +10,7 @@ from pathlib import Path
 import posixpath
 import re
 import shutil
+from typing import TypeVar
 from uuid import UUID, uuid4
 
 from PySide6.QtCore import QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
@@ -139,6 +140,7 @@ from mufinder.app.theme import (
     body_font_family,
     current_palette,
     heading_font_family,
+    light_palette,
     load_theme_mode,
     save_theme_mode,
     style_section_subtitle,
@@ -146,11 +148,17 @@ from mufinder.app.theme import (
     status_brush,
     use_square_top_table_corners,
 )
+from mufinder.app.workflow_submission import (
+    WorkflowSubmissionCoordinator,
+    sweep_point_state_is_ready,
+    workflow_row_state_is_ready,
+)
 from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
 from mufinder.services.cluster_runner import ClusterJobRunner
+from mufinder.services.job_execution_controller import ClusterJobSubmission, JobExecutionController
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.services.ssh_client import (
@@ -174,8 +182,17 @@ _ACTIVE_LOCAL_JOB_STATES = {
     JobStatus.RUNNING,
     JobStatus.RETRIEVING,
 }
-_VISIBLE_DASHBOARD_STATES = _ACTIVE_LOCAL_JOB_STATES | {JobStatus.STOPPED, JobStatus.FAILED}
+_RESUBMITTABLE_JOB_STATES = {JobStatus.FAILED, JobStatus.CANCELLED}
+_VISIBLE_DASHBOARD_STATES = _ACTIVE_LOCAL_JOB_STATES | {JobStatus.STOPPED} | _RESUBMITTABLE_JOB_STATES
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
+_WorkflowKey = TypeVar("_WorkflowKey")
+
+
+def _structure_species_options(structure: Structure | None) -> tuple[str, ...]:
+    if structure is None:
+        return ()
+    return tuple(dict.fromkeys(species for item in structure.species if (species := str(item).strip())))
+
 
 # Backward-compatible alias used by legacy tests and call sites.
 CutoffRunState = SweepPointRunState
@@ -771,6 +788,10 @@ class ProjectHomeTrailWidget(QWidget):
             sign_rect = self._map_rect_from_source(sign_source, map_rect)
             self._draw_sign_title(painter, palette, sign_rect, destination.title, destination.route)
 
+    @staticmethod
+    def _workflow_scroll_label_color() -> QColor:
+        return QColor(light_palette().text_primary)
+
     def _draw_sign_title(self, painter: QPainter, palette, rect: QRectF, title: str, route: str) -> None:
         left, top, right, bottom = self._SIGN_TEXT_INSETS.get(route, (18.0, 5.0, 20.0, 8.0))
         text_rect = rect.adjusted(left, top, -right, -bottom)
@@ -785,7 +806,7 @@ class ProjectHomeTrailWidget(QWidget):
             font.setPointSize(font.pointSize() - 1)
 
         painter.setFont(font)
-        painter.setPen(QColor(palette.text_primary))
+        painter.setPen(self._workflow_scroll_label_color())
         painter.drawText(
             text_rect,
             int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine),
@@ -1151,6 +1172,16 @@ class MainWindow(QMainWindow):
         self._local_runner = LocalJobRunner(self)
         self._cluster_runner = ClusterJobRunner(self, settings=self._settings)
         self._active_run_by_job: dict[UUID, UUID] = {}
+        self._job_execution = JobExecutionController(
+            document_getter=lambda: self._document,
+            project_service=self._project_service,
+            local_runner=self._local_runner,
+            cluster_runner=self._cluster_runner,
+            job_output_directory=self._job_output_directory,
+            job_seed_name=self._job_seed_name,
+            active_run_by_job=self._active_run_by_job,
+        )
+        self._workflow_submission = WorkflowSubmissionCoordinator(dedupe_jobs=self._dedupe_jobs)
         self._job_runtime_timer = QTimer(self)
         self._job_runtime_timer.setInterval(1000)
         self._job_runtime_timer.timeout.connect(self._refresh_active_job_runtime_cells)
@@ -1352,7 +1383,7 @@ class MainWindow(QMainWindow):
                 "Remote Job ID",
                 "Runtime",
                 "Processes",
-                "Submit",
+                "Resubmit",
                 "Cancel",
                 "Inspect",
                 "Reset",
@@ -1362,10 +1393,6 @@ class MainWindow(QMainWindow):
         self._jobs_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._jobs_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._jobs_table.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-        self._jobs_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._jobs_table)
-        self._jobs_delete_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
-        self._jobs_backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self._jobs_table)
-        self._jobs_backspace_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
         self._configure_jobs_table_columns()
 
         self._local_runner.job_started.connect(self._on_local_job_started)
@@ -1449,6 +1476,12 @@ class MainWindow(QMainWindow):
             Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea
         )
         jobs_dock.setWidget(self._jobs_table)
+        self._jobs_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, jobs_dock)
+        self._jobs_delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._jobs_delete_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
+        self._jobs_backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), jobs_dock)
+        self._jobs_backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._jobs_backspace_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, jobs_dock)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
@@ -2775,7 +2808,7 @@ class MainWindow(QMainWindow):
                 QTableWidgetItem("" if job.num_processes is None else str(job.num_processes)),
             )
 
-            can_submit = job.status == JobStatus.DEFINED
+            can_resubmit = job.status in _RESUBMITTABLE_JOB_STATES
             can_cancel = job.status in _ACTIVE_LOCAL_JOB_STATES
             can_inspect = job.status in {JobStatus.FAILED, JobStatus.STOPPED}
             can_reset = job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
@@ -2784,9 +2817,9 @@ class MainWindow(QMainWindow):
                 row,
                 self._JOB_SUBMIT_COLUMN,
                 self._make_job_action_button(
-                    "Submit",
-                    enabled=can_submit,
-                    callback=lambda _checked=False, job_id=job.id: self._on_submit_from_dashboard([job_id]),
+                    "Resubmit",
+                    enabled=can_resubmit,
+                    callback=lambda _checked=False, job_id=job.id: self._on_resubmit_from_dashboard([job_id]),
                 ),
             )
             self._jobs_table.setCellWidget(
@@ -3152,6 +3185,7 @@ class MainWindow(QMainWindow):
         for table in ordered_tables:
             widget = ComparisonTableWidget(table, parent=self)
             widget.delete_requested.connect(self._on_delete_comparison_table_requested)
+            widget.title_changed.connect(self._on_comparison_table_title_changed)
             self._main_stack.addWidget(widget)
             self._comparison_widgets[table.id] = widget
 
@@ -3237,6 +3271,34 @@ class MainWindow(QMainWindow):
             return
         # The comparison widget already asks for confirmation before emitting.
         self._delete_comparison_table(table_id, confirm=False)
+
+    def _on_comparison_table_title_changed(self, payload: object, title: str) -> None:
+        if self._document is None or self._shutting_down:
+            return
+        if isinstance(payload, UUID):
+            table_id = payload
+        elif isinstance(payload, str):
+            try:
+                table_id = UUID(payload)
+            except ValueError:
+                return
+        else:
+            return
+        normalized = str(title).strip() or "Comparison Table"
+        table = self._project_service.rename_comparison_table(self._document, table_id, normalized)
+        if table is None:
+            return
+        widget = self._comparison_widgets.get(table_id)
+        if widget is not None:
+            widget.set_table_label(table.label)
+        self._populate_project_tree()
+        self._set_active_route(self._comparison_route(table_id))
+        try:
+            self._project_service.save_project(self._document)
+        except ValueError:
+            self.statusBar().showMessage("Comparison table title was updated, but autosave failed.")
+            return
+        self.statusBar().showMessage(f"Renamed comparison table to '{table.label}'")
 
     def _delete_comparison_table(self, table_id: UUID, *, confirm: bool = True) -> None:
         if self._document is None:
@@ -3426,6 +3488,49 @@ class MainWindow(QMainWindow):
             if len(targets) == 1:
                 preferred = next(iter(targets))
             self._submit_jobs_on_cluster(cluster_jobs, default_cluster_name=preferred)
+
+    def _on_resubmit_from_dashboard(self, job_ids: list[UUID]) -> None:
+        if self._document is None:
+            return
+
+        jobs = [self._document.jobs.get(job_id) for job_id in job_ids]
+        selected = [job for job in jobs if job is not None and job.status in _RESUBMITTABLE_JOB_STATES]
+        if not selected:
+            QMessageBox.information(
+                self,
+                "No resubmittable jobs",
+                "Only failed or cancelled jobs can be resubmitted from the job dashboard.",
+            )
+            return
+
+        local_jobs = [job for job in selected if job.execution_target == "local"]
+        cluster_jobs = [job for job in selected if job.execution_target != "local"]
+
+        if local_jobs:
+            self._submit_jobs_locally(
+                local_jobs,
+                eligible_statuses=_RESUBMITTABLE_JOB_STATES,
+                no_eligible_message=(
+                    "Selected jobs must be in the 'failed' or 'cancelled' state for local resubmission."
+                ),
+                success_message=lambda count: f"Resubmitted {count} local job(s)",
+            )
+
+        if cluster_jobs:
+            preferred = None
+            targets = {job.execution_target for job in cluster_jobs}
+            if len(targets) == 1:
+                preferred = next(iter(targets))
+            self._submit_jobs_on_cluster(
+                cluster_jobs,
+                default_cluster_name=preferred,
+                eligible_statuses=_RESUBMITTABLE_JOB_STATES,
+                no_eligible_message=(
+                    "Selected jobs must be in the 'failed' or 'cancelled' state for cluster resubmission."
+                ),
+                reuse_existing_remote_files=True,
+                success_message=lambda count, cluster: f"Resubmitted {count} cluster job(s) on {cluster}",
+            )
 
     def _on_cancel_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:
@@ -4121,61 +4226,28 @@ class MainWindow(QMainWindow):
         return deduped
 
     def _on_submit_local_from_convergence(self, cutoff_values: list[float]) -> None:
-        seen_cutoffs: set[float] = set()
-        ordered_cutoffs: list[float] = []
-        for cutoff in cutoff_values:
-            normalized = float(cutoff)
-            if normalized in seen_cutoffs:
-                continue
-            seen_cutoffs.add(normalized)
-            ordered_cutoffs.append(normalized)
-
-        states = self._build_convergence_cutoff_states()
-        jobs = self._jobs_for_convergence_cutoffs(ordered_cutoffs)
-        ready_cutoffs = [
-            cutoff
-            for cutoff in ordered_cutoffs
-            if (states.get(cutoff) or SweepPointRunState()).status == "ready"
-        ]
-        jobs.extend(self._materialize_convergence_jobs(ready_cutoffs))
-        jobs = self._dedupe_jobs(jobs)
-        if not jobs:
-            QMessageBox.information(
-                self,
-                "No ready jobs",
-                "Only configured cutoffs in the 'ready' state can be submitted.",
-            )
-            return
-        self._submit_jobs_locally(jobs)
+        self._submit_workflow_selection(
+            cutoff_values,
+            normalize=float,
+            build_states=self._build_convergence_cutoff_states,
+            jobs_for_values=self._jobs_for_convergence_cutoffs,
+            materialize_values=self._materialize_convergence_jobs,
+            is_ready=sweep_point_state_is_ready,
+            no_ready_message="Only configured cutoffs in the 'ready' state can be submitted.",
+            submit=self._submit_jobs_locally,
+        )
 
     def _on_submit_cluster_from_convergence(self, cutoff_values: list[float]) -> None:
-        seen_cutoffs: set[float] = set()
-        ordered_cutoffs: list[float] = []
-        for cutoff in cutoff_values:
-            normalized = float(cutoff)
-            if normalized in seen_cutoffs:
-                continue
-            seen_cutoffs.add(normalized)
-            ordered_cutoffs.append(normalized)
-
-        states = self._build_convergence_cutoff_states()
-        jobs = self._jobs_for_convergence_cutoffs(ordered_cutoffs)
-        ready_cutoffs = [
-            cutoff
-            for cutoff in ordered_cutoffs
-            if (states.get(cutoff) or SweepPointRunState()).status == "ready"
-        ]
-        jobs.extend(self._materialize_convergence_jobs(ready_cutoffs))
-        jobs = self._dedupe_jobs(jobs)
-        if not jobs:
-            QMessageBox.information(
-                self,
-                "No ready jobs",
-                "Only configured cutoffs in the 'ready' state can be submitted.",
-            )
-            return
-
-        self._submit_jobs_on_cluster(jobs)
+        self._submit_workflow_selection(
+            cutoff_values,
+            normalize=float,
+            build_states=self._build_convergence_cutoff_states,
+            jobs_for_values=self._jobs_for_convergence_cutoffs,
+            materialize_values=self._materialize_convergence_jobs,
+            is_ready=sweep_point_state_is_ready,
+            no_ready_message="Only configured cutoffs in the 'ready' state can be submitted.",
+            submit=self._submit_jobs_on_cluster,
+        )
 
     def _on_examine_convergence(self) -> None:
         if self._document is None:
@@ -4602,16 +4674,24 @@ class MainWindow(QMainWindow):
                 for key in stale_keys:
                     mapping.pop(key, None)
 
-    def _submit_jobs_locally(self, jobs: list[Job]) -> None:
+    def _submit_jobs_locally(
+        self,
+        jobs: list[Job],
+        *,
+        eligible_statuses: set[JobStatus] | None = None,
+        no_eligible_message: str = "Selected jobs must be in the 'defined' state for local submission.",
+        success_message: Callable[[int], str] | None = None,
+    ) -> None:
         if self._document is None or not jobs:
             return
 
-        defined_jobs = [job for job in self._dedupe_jobs(jobs) if job.status == JobStatus.DEFINED]
-        if not defined_jobs:
+        allowed_statuses = eligible_statuses or {JobStatus.DEFINED}
+        eligible_jobs = [job for job in self._dedupe_jobs(jobs) if job.status in allowed_statuses]
+        if not eligible_jobs:
             QMessageBox.information(
                 self,
                 "No eligible jobs",
-                "Selected jobs must be in the 'defined' state for local submission.",
+                no_eligible_message,
             )
             return
 
@@ -4625,7 +4705,7 @@ class MainWindow(QMainWindow):
             return
 
         dialog = LocalSubmissionDialog(
-            job_labels=[job.label for job in defined_jobs],
+            job_labels=[job.label for job in eligible_jobs],
             mpirun_configured=bool(setup.mpirun_path),
             parent=self,
         )
@@ -4633,75 +4713,69 @@ class MainWindow(QMainWindow):
             return
 
         config = dialog.config()
-        self._local_runner.max_concurrent = config.max_concurrent if config.parallel else 1
 
-        missing_paths: list[str] = []
-        submitted = 0
-        submitted_jobs: list[Job] = []
-        for job in defined_jobs:
-            output_dir = self._job_output_directory(job)
-            if output_dir is None:
-                missing_paths.append(job.label)
-                continue
-            seed_name = self._job_seed_name(job)
-
-            try:
-                job.execution_target = "local"
-                self._project_service.submit_job(job)
-            except ValueError:
-                continue
-            job.num_processes = max(1, int(config.num_cores))
-
-            run = CalculationRun(
-                job_id=job.id,
-                run_index=self._next_run_index(job.id),
-                status=JobStatus.SUBMITTING,
-            )
-            self._document.runs[run.id] = run
-            self._active_run_by_job[job.id] = run.id
-            submitted += 1
-
-            self._local_runner.submit(
-                job_id=job.id,
-                job_dir=output_dir,
-                seed_name=seed_name,
-                castep_executable=setup.executable_path,
-                mpirun_path=setup.mpirun_path,
-                num_cores=config.num_cores,
-            )
-            submitted_jobs.append(job)
+        outcome = self._job_execution.submit_local_jobs(
+            eligible_jobs,
+            num_cores=config.num_cores,
+            max_concurrent=config.max_concurrent if config.parallel else 1,
+            castep_executable=setup.executable_path,
+            mpirun_path=setup.mpirun_path,
+            eligible_statuses=allowed_statuses,
+        )
 
         self._refresh_jobs_table()
         self._refresh_convergence_cutoff_rows()
         self._refresh_kpoint_convergence_rows()
+        if outcome.journal_changed:
+            self._refresh_journal_view()
 
-        if missing_paths:
+        if outcome.missing_paths:
             QMessageBox.warning(
                 self,
                 "Missing job directories",
                 "Could not locate generated input directories for:\n"
-                + "\n".join(f"- {label}" for label in missing_paths),
+                + "\n".join(f"- {label}" for label in outcome.missing_paths),
             )
 
-        if submitted:
-            self._record_job_submission(submitted_jobs, "local")
-            self.statusBar().showMessage(f"Submitted {submitted} local job(s)")
+        if outcome.failed_messages:
+            show_detailed_warning(
+                self,
+                "Local submission failed",
+                "Some jobs failed to submit:\n" + "\n".join(outcome.failed_messages),
+                informative_text="Open Details to inspect the full submission failures.",
+            )
+
+        if outcome.submitted_count:
+            self._persist_document_ui_state(
+                failure_message="Submitted local jobs, but autosave failed.",
+            )
+            message = (
+                success_message(outcome.submitted_count)
+                if success_message is not None
+                else f"Submitted {outcome.submitted_count} local job(s)"
+            )
+            self.statusBar().showMessage(message)
 
     def _submit_jobs_on_cluster(
         self,
         jobs: list[Job],
         *,
         default_cluster_name: str | None = None,
+        eligible_statuses: set[JobStatus] | None = None,
+        no_eligible_message: str = "Selected jobs must be in the 'defined' state for cluster submission.",
+        reuse_existing_remote_files: bool = False,
+        success_message: Callable[[int, str], str] | None = None,
     ) -> None:
         if self._document is None or not jobs:
             return
 
-        defined_jobs = [job for job in self._dedupe_jobs(jobs) if job.status == JobStatus.DEFINED]
-        if not defined_jobs:
+        allowed_statuses = eligible_statuses or {JobStatus.DEFINED}
+        eligible_jobs = [job for job in self._dedupe_jobs(jobs) if job.status in allowed_statuses]
+        if not eligible_jobs:
             QMessageBox.information(
                 self,
                 "No eligible jobs",
-                "Selected jobs must be in the 'defined' state for cluster submission.",
+                no_eligible_message,
             )
             return
 
@@ -4714,7 +4788,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        workflow_type = self._cluster_workflow_directory_fragment(defined_jobs)
+        workflow_type = self._cluster_workflow_directory_fragment(eligible_jobs)
         last_submission = self._load_last_cluster_submission_config(workflow_type=workflow_type)
         initial_cluster_name = (
             default_cluster_name
@@ -4722,7 +4796,7 @@ class MainWindow(QMainWindow):
         )
 
         dialog = ClusterSubmissionDialog(
-            job_labels=[job.label for job in defined_jobs],
+            job_labels=[job.label for job in eligible_jobs],
             cluster_configs=cluster_configs,
             default_cluster_name=initial_cluster_name,
             initial_config=last_submission,
@@ -4746,7 +4820,7 @@ class MainWindow(QMainWindow):
         if runtime_username and runtime_username != selected_cluster.username:
             selected_cluster = replace(selected_cluster, username=runtime_username)
 
-        seed_name_by_job = {job.id: self._job_seed_name(job) for job in defined_jobs}
+        seed_name_by_job = {job.id: self._job_seed_name(job) for job in eligible_jobs}
         invalid_labels = self._cluster_runner.invalid_remote_job_labels(list(seed_name_by_job.values()))
         if invalid_labels:
             show_detailed_warning(
@@ -4793,27 +4867,33 @@ class MainWindow(QMainWindow):
         failed_submit: list[str] = []
         skipped_submit: list[str] = []
         remote_target_by_job: dict[UUID, str] = {}
+        reuse_existing_files_by_job: dict[UUID, bool] = {}
         existing_remote_targets: list[str] = []
-        for index, job in enumerate(defined_jobs, start=1):
+        for index, job in enumerate(eligible_jobs, start=1):
             self.statusBar().showMessage(
-                f"Checking remote directories ({index}/{len(defined_jobs)}): {job.label}"
+                f"Checking remote directories ({index}/{len(eligible_jobs)}): {job.label}"
             )
             QApplication.processEvents()
-            remote_target = self._cluster_runner.remote_job_directory(
-                working_directory=submission.working_directory,
-                seed_name=seed_name_by_job.get(job.id, job.label),
-            )
+            remote_target = (job.remote_directory or "").strip() if reuse_existing_remote_files else ""
+            reuse_existing_files_for_job = bool(remote_target)
+            if not remote_target:
+                remote_target = self._cluster_runner.remote_job_directory(
+                    working_directory=submission.working_directory,
+                    seed_name=seed_name_by_job.get(job.id, job.label),
+                )
             remote_target_by_job[job.id] = remote_target
-            try:
-                if self._cluster_runner.remote_directory_exists(remote_target):
-                    existing_remote_targets.append(remote_target)
-            except Exception as exc:  # noqa: BLE001
-                failed_submit.append(f"- {job.label}: Failed to check remote directory ({exc})")
+            reuse_existing_files_by_job[job.id] = reuse_existing_files_for_job
+            if not reuse_existing_files_for_job:
+                try:
+                    if self._cluster_runner.remote_directory_exists(remote_target):
+                        existing_remote_targets.append(remote_target)
+                except Exception as exc:  # noqa: BLE001
+                    failed_submit.append(f"- {job.label}: Failed to check remote directory ({exc})")
 
         overwrite_mode: str | None = None
-        for job in defined_jobs:
+        for job in eligible_jobs:
             self.statusBar().showMessage(
-                f"Submitting cluster jobs ({submitted + 1}/{len(defined_jobs)}): {job.label}"
+                f"Submitting cluster jobs ({submitted + 1}/{len(eligible_jobs)}): {job.label}"
             )
             QApplication.processEvents()
 
@@ -4852,28 +4932,13 @@ class MainWindow(QMainWindow):
                     QApplication.processEvents()
                     continue
 
-            try:
-                self._project_service.submit_job(job)
-            except ValueError:
-                self._refresh_jobs_table()
-                QApplication.processEvents()
-                continue
-            job.num_processes = max(1, int(submission.num_processes))
-
-            run = CalculationRun(
-                job_id=job.id,
-                run_index=self._next_run_index(job.id),
-                status=JobStatus.SUBMITTING,
-            )
-            self._document.runs[run.id] = run
-            self._active_run_by_job[job.id] = run.id
-
-            job.execution_target = selected_cluster.name
-            try:
-                remote_job_id = self._cluster_runner.submit(
-                    job_id=job.id,
-                    local_job_dir=output_dir,
+            outcome = self._job_execution.submit_cluster_job(
+                ClusterJobSubmission(
+                    job=job,
+                    output_dir=output_dir,
                     seed_name=seed_name,
+                    remote_target=remote_target,
+                    execution_target=selected_cluster.name,
                     num_processes=submission.num_processes,
                     walltime=submission.walltime,
                     working_directory=submission.working_directory,
@@ -4886,27 +4951,16 @@ class MainWindow(QMainWindow):
                     retrieve_den_fmt=job.calc_type == "castep_uep_source",
                     retrieve_out_cell=job.calc_type == "castep_pristine_relaxation"
                     or is_muon_relaxation_calc_type(job.calc_type),
+                    reuse_existing_files=reuse_existing_files_by_job.get(job.id, False),
                 )
-                job.remote_job_id = remote_job_id
-                job.remote_directory = remote_target
-                if job.status == JobStatus.SUBMITTING:
-                    self._project_service.mark_job_queued(job, remote_job_id=remote_job_id)
-                run.status = job.status
+            )
+            if outcome.submitted_job is not None:
                 submitted += 1
-                submitted_jobs.append(job)
-            except Exception as exc:  # noqa: BLE001
-                failed_submit.append(f"- {job.label}: {exc}")
-                try:
-                    self._project_service.fail_job(job, str(exc))
-                except ValueError:
-                    pass
-                run.status = JobStatus.FAILED
-                run.completed_at = utc_now()
-                self._record_job_terminal_event(
-                    action="job_failed",
-                    job=job,
-                    error_message=str(exc),
-                )
+                submitted_jobs.append(outcome.submitted_job)
+            if outcome.failed_message is not None:
+                failed_submit.append(outcome.failed_message)
+            if outcome.journal_changed:
+                self._refresh_journal_view()
             self._refresh_jobs_table()
             QApplication.processEvents()
 
@@ -4939,10 +4993,17 @@ class MainWindow(QMainWindow):
             )
 
         if submitted:
-            self._record_job_submission(submitted_jobs, selected_cluster.name)
-            self.statusBar().showMessage(
-                f"Submitted {submitted} cluster job(s) on {selected_cluster.name}"
+            if self._job_execution.record_submission(submitted_jobs, selected_cluster.name):
+                self._refresh_journal_view()
+            self._persist_document_ui_state(
+                failure_message="Submitted cluster jobs, but autosave failed.",
             )
+            message = (
+                success_message(submitted, selected_cluster.name)
+                if success_message is not None
+                else f"Submitted {submitted} cluster job(s) on {selected_cluster.name}"
+            )
+            self.statusBar().showMessage(message)
 
     def _load_last_cluster_submission_config(
         self,
@@ -5218,6 +5279,9 @@ class MainWindow(QMainWindow):
             )
 
         if reset_count:
+            self._persist_document_ui_state(
+                failure_message="Reset job state was recorded, but autosave failed.",
+            )
             if cleanup_choice:
                 self.statusBar().showMessage(f"Reset {reset_count} failed job(s) and cleaned directories")
             else:
@@ -5233,6 +5297,31 @@ class MainWindow(QMainWindow):
             seen.add(job.id)
             deduped.append(job)
         return deduped
+
+    def _submit_workflow_selection(
+        self,
+        values: list[_WorkflowKey],
+        *,
+        normalize: Callable[[_WorkflowKey], _WorkflowKey],
+        build_states: Callable[[], Mapping[_WorkflowKey, object]],
+        jobs_for_values: Callable[[list[_WorkflowKey]], list[Job]],
+        materialize_values: Callable[[list[_WorkflowKey]], list[Job]],
+        is_ready: Callable[[Mapping[_WorkflowKey, object], _WorkflowKey], bool],
+        no_ready_message: str,
+        submit: Callable[[list[Job]], None],
+    ) -> None:
+        plan = self._workflow_submission.submission_plan(
+            values,
+            normalize=normalize,
+            build_states=build_states,
+            jobs_for_values=jobs_for_values,
+            materialize_values=materialize_values,
+            is_ready=is_ready,
+        )
+        if not plan.has_jobs:
+            QMessageBox.information(self, "No ready jobs", no_ready_message)
+            return
+        submit(list(plan.jobs))
 
     def _failure_diagnostics_for_job(self, job: Job) -> str:
         lines = [
@@ -5376,26 +5465,8 @@ class MainWindow(QMainWindow):
             else:
                 child.unlink()
 
-    def _next_run_index(self, job_id: UUID) -> int:
-        if self._document is None:
-            return 1
-        indices = [run.run_index for run in self._document.runs.values() if run.job_id == job_id]
-        if not indices:
-            return 1
-        return max(indices) + 1
-
     def _run_for_job(self, job_id: UUID) -> CalculationRun | None:
-        if self._document is None:
-            return None
-
-        run_id = self._active_run_by_job.get(job_id)
-        if run_id is not None:
-            return self._document.runs.get(run_id)
-
-        runs = [run for run in self._document.runs.values() if run.job_id == job_id]
-        if not runs:
-            return None
-        return max(runs, key=lambda run: run.run_index)
+        return self._job_execution.run_for_job(job_id)
 
     def _results_for_run(self, run_id: UUID) -> list[Result]:
         if self._document is None:
@@ -5535,35 +5606,6 @@ class MainWindow(QMainWindow):
                 files.append(str(path))
         return files
 
-    def _record_job_submission(self, jobs: list[Job], execution_target: str) -> None:
-        if self._document is None or not jobs:
-            return
-        self._project_service.record_job_submission(
-            self._document,
-            jobs=jobs,
-            execution_target=execution_target,
-        )
-        self._refresh_journal_view()
-
-    def _record_job_terminal_event(
-        self,
-        *,
-        action: str,
-        job: Job,
-        result: Result | None = None,
-        error_message: str | None = None,
-    ) -> None:
-        if self._document is None:
-            return
-        self._project_service.record_job_terminal_event(
-            self._document,
-            action=action,
-            job=job,
-            result=result,
-            error_message=error_message,
-        )
-        self._refresh_journal_view()
-
     def _record_job_reset(self, *, job: Job, cleaned_output_directory: bool) -> None:
         if self._document is None:
             return
@@ -5577,42 +5619,24 @@ class MainWindow(QMainWindow):
     def _on_local_job_status_changed(self, job_id: UUID, status_value: str) -> None:
         if self._document is None:
             return
-        job = self._document.jobs.get(job_id)
-        if job is None:
-            return
-
-        if status_value == JobStatus.QUEUED.value and job.status == JobStatus.SUBMITTING:
-            try:
-                self._project_service.mark_job_queued(job, remote_job_id=None)
-            except ValueError:
-                return
-            run = self._run_for_job(job_id)
-            if run is not None:
-                run.status = JobStatus.QUEUED
+        update = self._job_execution.mark_local_status_changed(job_id, status_value)
+        if update.changed:
             self._refresh_jobs_table()
             self._refresh_convergence_cutoff_rows()
             self._refresh_kpoint_convergence_rows()
+            self._persist_document_ui_state(
+                failure_message="Local job status changed, but autosave failed.",
+            )
 
     def _on_local_job_started(self, job_id: UUID) -> None:
         if self._document is None:
             return
-        job = self._document.jobs.get(job_id)
-        if job is None:
-            return
-
-        if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}:
-            try:
-                self._project_service.start_job(job)
-            except ValueError:
-                pass
-
-        run = self._run_for_job(job_id)
-        if run is not None:
-            run.status = JobStatus.RUNNING
-            if run.started_at is None:
-                run.started_at = utc_now()
-
-        self._refresh_jobs_table()
+        update = self._job_execution.mark_started(job_id)
+        if update.changed:
+            self._refresh_jobs_table()
+            self._persist_document_ui_state(
+                failure_message="Local job start was recorded, but autosave failed.",
+            )
 
     def _on_local_job_finished(self, job_id: UUID, parsed: CastepResult) -> None:
         if self._document is None:
@@ -5632,15 +5656,9 @@ class MainWindow(QMainWindow):
             )
             return
 
-        run = self._run_for_job(job_id)
+        run = self._job_execution.ensure_run_for_job(job, status=JobStatus.RUNNING, started=True)
         if run is None:
-            run = CalculationRun(
-                job_id=job.id,
-                run_index=self._next_run_index(job.id),
-                status=JobStatus.RUNNING,
-                started_at=utc_now(),
-            )
-            self._document.runs[run.id] = run
+            return
 
         result_payload = {
             "completed": parsed.completed,
@@ -5745,149 +5763,74 @@ class MainWindow(QMainWindow):
         )
         self._document.results[result.id] = result
 
-        run.result_id = result.id
-        run.status = JobStatus.COMPLETED
-        if run.started_at is None:
-            run.started_at = utc_now()
-        run.completed_at = utc_now()
-        run.warnings = list(parsed.warnings)
-        run.convergence_achieved = parsed.geom_converged
-
-        if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}:
-            try:
-                self._project_service.start_job(job)
-            except ValueError:
-                pass
-        if job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}:
-            try:
-                self._project_service.complete_job(job)
-            except ValueError:
-                pass
-
-        self._active_run_by_job.pop(job_id, None)
-        self._record_job_terminal_event(action="job_completed", job=job, result=result)
+        self._job_execution.complete_job_with_result(
+            job,
+            result=result,
+            warnings=parsed.warnings,
+            convergence_achieved=parsed.geom_converged,
+        )
+        self._refresh_journal_view()
         self._refresh_jobs_table()
         self._refresh_pristine_relaxation_rows()
         self._refresh_muon_relaxation_rows()
         self._refresh_muon_generation_table()
+        self._persist_document_ui_state(
+            failure_message="Completed job result was recorded, but autosave failed.",
+        )
         self.statusBar().showMessage(f"Completed local job {job.label}")
 
     def _on_local_job_failed(self, job_id: UUID, message: str) -> None:
         if self._document is None:
             return
-        job = self._document.jobs.get(job_id)
-        if job is None:
+        update = self._job_execution.fail_job(job_id, message)
+        if update.job is None:
             return
-
-        if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING}:
-            try:
-                self._project_service.fail_job(job, message)
-            except ValueError:
-                pass
-
-        run = self._run_for_job(job_id)
-        if run is not None:
-            if run.started_at is None:
-                run.started_at = utc_now()
-            run.completed_at = utc_now()
-            run.status = JobStatus.FAILED
-            run.warnings = [message]
-
-        self._active_run_by_job.pop(job_id, None)
-        self._record_job_terminal_event(action="job_failed", job=job, error_message=message)
+        if update.journal_changed:
+            self._refresh_journal_view()
         self._refresh_jobs_table()
-        self.statusBar().showMessage(f"Local job failed: {job.label}")
+        self._persist_document_ui_state(
+            failure_message="Failed job state was recorded, but autosave failed.",
+        )
+        self.statusBar().showMessage(f"Local job failed: {update.job.label}")
 
     def _on_local_job_cancelled(self, job_id: UUID) -> None:
         if self._document is None:
             return
-        job = self._document.jobs.get(job_id)
-        if job is None:
+        update = self._job_execution.cancel_job(job_id)
+        if update.job is None:
             return
-
-        if job.status in _ACTIVE_LOCAL_JOB_STATES | {JobStatus.DEFINED}:
-            try:
-                self._project_service.cancel_job(job)
-            except ValueError:
-                pass
-
-        run = self._run_for_job(job_id)
-        if run is not None:
-            run.completed_at = utc_now()
-            run.status = JobStatus.CANCELLED
-
-        self._active_run_by_job.pop(job_id, None)
-        self._record_job_terminal_event(action="job_cancelled", job=job)
+        if update.journal_changed:
+            self._refresh_journal_view()
         self._refresh_jobs_table()
-        self.statusBar().showMessage(f"Cancelled local job {job.label}")
+        self._persist_document_ui_state(
+            failure_message="Cancelled job state was recorded, but autosave failed.",
+        )
+        self.statusBar().showMessage(f"Cancelled local job {update.job.label}")
 
     def _on_cluster_job_status_changed(self, job_id: UUID, status_value: str) -> None:
         if self._document is None:
             return
-        job = self._document.jobs.get(job_id)
-        if job is None:
+        update = self._job_execution.mark_cluster_status_changed(job_id, status_value)
+        if not update.changed:
             return
-
-        status_map = {
-            JobStatus.QUEUED.value: JobStatus.QUEUED,
-            JobStatus.RUNNING.value: JobStatus.RUNNING,
-            JobStatus.RETRIEVING.value: JobStatus.RETRIEVING,
-            JobStatus.STOPPED.value: JobStatus.STOPPED,
-        }
-        mapped = status_map.get(status_value)
-        if mapped is None:
-            return
-
-        try:
-            if mapped == JobStatus.QUEUED and job.status == JobStatus.SUBMITTING:
-                self._project_service.mark_job_queued(job, remote_job_id=job.remote_job_id)
-            elif mapped == JobStatus.RUNNING and job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}:
-                self._project_service.start_job(job)
-            elif mapped == JobStatus.RETRIEVING and job.status == JobStatus.RUNNING:
-                self._project_service.mark_job_retrieving(job)
-            elif mapped == JobStatus.STOPPED and job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}:
-                self._project_service.stop_job(job, "Job stopped before successful completion.")
-        except ValueError:
-            return
-
-        run = self._run_for_job(job_id)
-        if run is not None:
-            run.status = mapped
-            if mapped == JobStatus.RUNNING and run.started_at is None:
-                run.started_at = utc_now()
-            if mapped == JobStatus.STOPPED:
-                run.completed_at = utc_now()
-
-        if mapped == JobStatus.STOPPED:
-            self._record_job_terminal_event(
-                action="job_stopped",
-                job=job,
-                error_message=job.error_message,
-            )
+        if update.journal_changed:
+            self._refresh_journal_view()
         self._refresh_jobs_table()
         self._refresh_convergence_cutoff_rows()
         self._refresh_kpoint_convergence_rows()
+        self._persist_document_ui_state(
+            failure_message="Cluster job status changed, but autosave failed.",
+        )
 
     def _on_cluster_job_started(self, job_id: UUID) -> None:
         if self._document is None:
             return
-        job = self._document.jobs.get(job_id)
-        if job is None:
-            return
-
-        if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}:
-            try:
-                self._project_service.start_job(job)
-            except ValueError:
-                pass
-
-        run = self._run_for_job(job_id)
-        if run is not None:
-            run.status = JobStatus.RUNNING
-            if run.started_at is None:
-                run.started_at = utc_now()
-
-        self._refresh_jobs_table()
+        update = self._job_execution.mark_started(job_id)
+        if update.changed:
+            self._refresh_jobs_table()
+            self._persist_document_ui_state(
+                failure_message="Cluster job start was recorded, but autosave failed.",
+            )
 
     def _on_cluster_job_finished(self, job_id: UUID, parsed: CastepResult) -> None:
         self._on_local_job_finished(job_id, parsed)
@@ -6631,6 +6574,7 @@ class MainWindow(QMainWindow):
                 selected_structure_id=None,
                 enabled=False,
             )
+            self._convergence_view.set_parameter_species_options(())
             return
 
         resolution = self._project_service.resolve_workflow_structure(
@@ -6655,6 +6599,9 @@ class MainWindow(QMainWindow):
             assets=assets,
             selected_structure_id=selected_structure_id,
             enabled=resolution.structure is not None,
+        )
+        self._convergence_view.set_parameter_species_options(
+            _structure_species_options(resolution.structure)
         )
 
     def _convergence_supercell_initial_matrix(self) -> list[list[int]]:
@@ -7122,6 +7069,7 @@ class MainWindow(QMainWindow):
                 selected_structure_id=None,
                 enabled=False,
             )
+            self._kpoint_convergence_view.set_parameter_species_options(())
             self._kpoint_convergence_view.set_generation_context(structure_id=None, lattice_vectors=None)
             return
 
@@ -7147,6 +7095,9 @@ class MainWindow(QMainWindow):
             assets=assets,
             selected_structure_id=selected_structure_id,
             enabled=resolution.structure is not None,
+        )
+        self._kpoint_convergence_view.set_parameter_species_options(
+            _structure_species_options(resolution.structure)
         )
         self._kpoint_convergence_view.set_generation_context(
             structure_id=(str(resolution.structure.id) if resolution.structure is not None else None),
@@ -7243,63 +7194,31 @@ class MainWindow(QMainWindow):
         self,
         grids: list[tuple[int, int, int]],
     ) -> None:
-        ordered_grids: list[tuple[int, int, int]] = []
-        seen: set[tuple[int, int, int]] = set()
-        for grid in grids:
-            normalized = (int(grid[0]), int(grid[1]), int(grid[2]))
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            ordered_grids.append(normalized)
-
-        states = self._build_convergence_kpoint_states()
-        jobs = self._jobs_for_convergence_kpoint_grids(ordered_grids)
-        ready_grids = [
-            grid
-            for grid in ordered_grids
-            if (states.get(grid) or SweepPointRunState()).status == "ready"
-        ]
-        jobs.extend(self._materialize_kpoint_jobs(ready_grids))
-        jobs = self._dedupe_jobs(jobs)
-        if not jobs:
-            QMessageBox.information(
-                self,
-                "No ready jobs",
-                "Only configured grids in the 'ready' state can be submitted.",
-            )
-            return
-        self._submit_jobs_locally(jobs)
+        self._submit_workflow_selection(
+            grids,
+            normalize=lambda grid: (int(grid[0]), int(grid[1]), int(grid[2])),
+            build_states=self._build_convergence_kpoint_states,
+            jobs_for_values=self._jobs_for_convergence_kpoint_grids,
+            materialize_values=self._materialize_kpoint_jobs,
+            is_ready=sweep_point_state_is_ready,
+            no_ready_message="Only configured grids in the 'ready' state can be submitted.",
+            submit=self._submit_jobs_locally,
+        )
 
     def _on_submit_cluster_from_kpoint_convergence(
         self,
         grids: list[tuple[int, int, int]],
     ) -> None:
-        ordered_grids: list[tuple[int, int, int]] = []
-        seen: set[tuple[int, int, int]] = set()
-        for grid in grids:
-            normalized = (int(grid[0]), int(grid[1]), int(grid[2]))
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            ordered_grids.append(normalized)
-
-        states = self._build_convergence_kpoint_states()
-        jobs = self._jobs_for_convergence_kpoint_grids(ordered_grids)
-        ready_grids = [
-            grid
-            for grid in ordered_grids
-            if (states.get(grid) or SweepPointRunState()).status == "ready"
-        ]
-        jobs.extend(self._materialize_kpoint_jobs(ready_grids))
-        jobs = self._dedupe_jobs(jobs)
-        if not jobs:
-            QMessageBox.information(
-                self,
-                "No ready jobs",
-                "Only configured grids in the 'ready' state can be submitted.",
-            )
-            return
-        self._submit_jobs_on_cluster(jobs)
+        self._submit_workflow_selection(
+            grids,
+            normalize=lambda grid: (int(grid[0]), int(grid[1]), int(grid[2])),
+            build_states=self._build_convergence_kpoint_states,
+            jobs_for_values=self._jobs_for_convergence_kpoint_grids,
+            materialize_values=self._materialize_kpoint_jobs,
+            is_ready=sweep_point_state_is_ready,
+            no_ready_message="Only configured grids in the 'ready' state can be submitted.",
+            submit=self._submit_jobs_on_cluster,
+        )
 
     def _on_cancel_from_kpoint_convergence(self, grids: list[tuple[int, int, int]]) -> None:
         jobs = self._jobs_for_convergence_kpoint_grids(grids)
@@ -7483,9 +7402,13 @@ class MainWindow(QMainWindow):
                 kpoint_reference_lattice=None,
             )
             self._pristine_relaxation_view.set_supercell_options([])
+            self._pristine_relaxation_view.set_parameter_species_options(())
             return
 
         host = self._project_service.active_host_structure(self._document)
+        self._pristine_relaxation_view.set_parameter_species_options(
+            _structure_species_options(host)
+        )
         self._pristine_relaxation_view.set_host_lattice(
             host.lattice_vectors if host is not None else None
         )
@@ -7535,9 +7458,13 @@ class MainWindow(QMainWindow):
                 kpoint_reference_lattice=None,
             )
             self._muon_relaxation_view.set_supercell_options([])
+            self._muon_relaxation_view.set_parameter_species_options(())
             return
 
         host = self._project_service.active_host_structure(self._document)
+        self._muon_relaxation_view.set_parameter_species_options(
+            _structure_species_options(host)
+        )
         self._muon_relaxation_view.set_host_lattice(
             host.lattice_vectors if host is not None else None
         )
@@ -7575,9 +7502,11 @@ class MainWindow(QMainWindow):
                 kpoint_reference_lattice=None,
             )
             self._uep_view.set_host_lattice(None)
+            self._uep_view.set_parameter_species_options(())
             return
 
         source_structure = self._selected_uep_source_structure()
+        self._uep_view.set_parameter_species_options(_structure_species_options(source_structure))
         self._uep_view.set_project_defaults(
             cutoff_energy=self._document.project.recommended_cutoff_energy,
             kpoint_grid=self._document.project.recommended_kpoint_grid,
@@ -7623,6 +7552,7 @@ class MainWindow(QMainWindow):
     def _refresh_uep_source_structures(self) -> None:
         if self._document is None:
             self._uep_view.set_source_structure_options([], selected_id=None, summary="Create or open a project first.")
+            self._uep_view.set_parameter_species_options(())
             return
 
         structures = self._available_uep_source_structures()
@@ -7634,6 +7564,7 @@ class MainWindow(QMainWindow):
                 selected_id=None,
                 summary="Load a host structure before configuring the UEP workflow.",
             )
+            self._uep_view.set_parameter_species_options(())
             return
 
         summary = (
@@ -7646,6 +7577,7 @@ class MainWindow(QMainWindow):
             selected_id=selected_id,
             summary=summary,
         )
+        self._uep_view.set_parameter_species_options(_structure_species_options(selected))
 
     def _refresh_uep_supercell_options(self) -> None:
         if self._document is None:
@@ -9938,42 +9870,28 @@ class MainWindow(QMainWindow):
         return jobs
 
     def _on_submit_local_from_pristine_relaxation(self, labels: list[str]) -> None:
-        states = self._build_pristine_relaxation_states()
-        ready_labels = [
-            label
-            for label in labels
-            if (states.get(label) or RelaxationRunState()).status in {"ready", "defined", "not generated"}
-        ]
-        jobs = self._jobs_for_pristine_relaxation_labels(labels)
-        jobs.extend(self._materialize_pristine_relaxation_jobs(ready_labels))
-        jobs = self._dedupe_jobs(jobs)
-        if not jobs:
-            QMessageBox.information(
-                self,
-                "No ready jobs",
-                "Only configured pristine-relaxation rows in the 'ready' state can be submitted.",
-            )
-            return
-        self._submit_jobs_locally(jobs)
+        self._submit_workflow_selection(
+            labels,
+            normalize=str,
+            build_states=self._build_pristine_relaxation_states,
+            jobs_for_values=self._jobs_for_pristine_relaxation_labels,
+            materialize_values=self._materialize_pristine_relaxation_jobs,
+            is_ready=workflow_row_state_is_ready,
+            no_ready_message="Only configured pristine-relaxation rows in the 'ready' state can be submitted.",
+            submit=self._submit_jobs_locally,
+        )
 
     def _on_submit_cluster_from_pristine_relaxation(self, labels: list[str]) -> None:
-        states = self._build_pristine_relaxation_states()
-        ready_labels = [
-            label
-            for label in labels
-            if (states.get(label) or RelaxationRunState()).status in {"ready", "defined", "not generated"}
-        ]
-        jobs = self._jobs_for_pristine_relaxation_labels(labels)
-        jobs.extend(self._materialize_pristine_relaxation_jobs(ready_labels))
-        jobs = self._dedupe_jobs(jobs)
-        if not jobs:
-            QMessageBox.information(
-                self,
-                "No ready jobs",
-                "Only configured pristine-relaxation rows in the 'ready' state can be submitted.",
-            )
-            return
-        self._submit_jobs_on_cluster(jobs)
+        self._submit_workflow_selection(
+            labels,
+            normalize=str,
+            build_states=self._build_pristine_relaxation_states,
+            jobs_for_values=self._jobs_for_pristine_relaxation_labels,
+            materialize_values=self._materialize_pristine_relaxation_jobs,
+            is_ready=workflow_row_state_is_ready,
+            no_ready_message="Only configured pristine-relaxation rows in the 'ready' state can be submitted.",
+            submit=self._submit_jobs_on_cluster,
+        )
 
     @staticmethod
     def _muon_relaxation_label_is_ready(states: dict[str, RelaxationRunState], label: str) -> bool:
@@ -9991,42 +9909,28 @@ class MainWindow(QMainWindow):
         )
 
     def _on_submit_local_from_muon_relaxation(self, labels: list[str]) -> None:
-        states = self._build_muon_relaxation_states()
-        ready_labels = [
-            label
-            for label in labels
-            if self._muon_relaxation_label_is_ready(states, label)
-        ]
-        jobs = self._jobs_for_muon_relaxation_labels(labels)
-        jobs.extend(self._materialize_muon_relaxation_jobs(ready_labels))
-        jobs = self._dedupe_jobs(jobs)
-        if not jobs:
-            QMessageBox.information(
-                self,
-                "No ready jobs",
-                "Only configured muon-relaxation rows in the 'ready' state can be submitted.",
-            )
-            return
-        self._submit_muon_relaxation_jobs_grouped(jobs, target="local")
+        self._submit_workflow_selection(
+            labels,
+            normalize=str,
+            build_states=self._build_muon_relaxation_states,
+            jobs_for_values=self._jobs_for_muon_relaxation_labels,
+            materialize_values=self._materialize_muon_relaxation_jobs,
+            is_ready=self._muon_relaxation_label_is_ready,
+            no_ready_message="Only configured muon-relaxation rows in the 'ready' state can be submitted.",
+            submit=lambda jobs: self._submit_muon_relaxation_jobs_grouped(jobs, target="local"),
+        )
 
     def _on_submit_cluster_from_muon_relaxation(self, labels: list[str]) -> None:
-        states = self._build_muon_relaxation_states()
-        ready_labels = [
-            label
-            for label in labels
-            if self._muon_relaxation_label_is_ready(states, label)
-        ]
-        jobs = self._jobs_for_muon_relaxation_labels(labels)
-        jobs.extend(self._materialize_muon_relaxation_jobs(ready_labels))
-        jobs = self._dedupe_jobs(jobs)
-        if not jobs:
-            QMessageBox.information(
-                self,
-                "No ready jobs",
-                "Only configured muon-relaxation rows in the 'ready' state can be submitted.",
-            )
-            return
-        self._submit_muon_relaxation_jobs_grouped(jobs, target="cluster")
+        self._submit_workflow_selection(
+            labels,
+            normalize=str,
+            build_states=self._build_muon_relaxation_states,
+            jobs_for_values=self._jobs_for_muon_relaxation_labels,
+            materialize_values=self._materialize_muon_relaxation_jobs,
+            is_ready=self._muon_relaxation_label_is_ready,
+            no_ready_message="Only configured muon-relaxation rows in the 'ready' state can be submitted.",
+            submit=lambda jobs: self._submit_muon_relaxation_jobs_grouped(jobs, target="cluster"),
+        )
 
     def _submit_muon_relaxation_jobs_grouped(self, jobs: list[Job], *, target: str) -> None:
         grouped: dict[str, list[Job]] = {}
@@ -10213,42 +10117,28 @@ class MainWindow(QMainWindow):
         return self._dedupe_jobs(created)
 
     def _on_submit_local_from_uep(self, labels: list[str]) -> None:
-        states = self._build_uep_states()
-        ready_labels = [
-            label
-            for label in labels
-            if (states.get(label) or UepRunState()).status in {"ready", "defined", "not generated"}
-        ]
-        jobs = self._jobs_for_uep_labels(labels)
-        jobs.extend(self._materialize_uep_jobs(ready_labels))
-        jobs = self._dedupe_jobs(jobs)
-        if not jobs:
-            QMessageBox.information(
-                self,
-                "No ready jobs",
-                "Only configured UEP rows in the 'ready' state can be submitted.",
-            )
-            return
-        self._submit_jobs_locally(jobs)
+        self._submit_workflow_selection(
+            labels,
+            normalize=str,
+            build_states=self._build_uep_states,
+            jobs_for_values=self._jobs_for_uep_labels,
+            materialize_values=self._materialize_uep_jobs,
+            is_ready=workflow_row_state_is_ready,
+            no_ready_message="Only configured UEP rows in the 'ready' state can be submitted.",
+            submit=self._submit_jobs_locally,
+        )
 
     def _on_submit_cluster_from_uep(self, labels: list[str]) -> None:
-        states = self._build_uep_states()
-        ready_labels = [
-            label
-            for label in labels
-            if (states.get(label) or UepRunState()).status in {"ready", "defined", "not generated"}
-        ]
-        jobs = self._jobs_for_uep_labels(labels)
-        jobs.extend(self._materialize_uep_jobs(ready_labels))
-        jobs = self._dedupe_jobs(jobs)
-        if not jobs:
-            QMessageBox.information(
-                self,
-                "No ready jobs",
-                "Only configured UEP rows in the 'ready' state can be submitted.",
-            )
-            return
-        self._submit_jobs_on_cluster(jobs)
+        self._submit_workflow_selection(
+            labels,
+            normalize=str,
+            build_states=self._build_uep_states,
+            jobs_for_values=self._jobs_for_uep_labels,
+            materialize_values=self._materialize_uep_jobs,
+            is_ready=workflow_row_state_is_ready,
+            no_ready_message="Only configured UEP rows in the 'ready' state can be submitted.",
+            submit=self._submit_jobs_on_cluster,
+        )
 
     def _on_cancel_from_uep(self, labels: list[str]) -> None:
         self._cancel_jobs(self._jobs_for_uep_labels(labels))

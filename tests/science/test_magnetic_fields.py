@@ -257,6 +257,22 @@ def test_auto_two_q_sampling_is_bounded_by_phase_sample_count() -> None:
     assert phases.shape[0] < 4096**2
 
 
+def test_auto_two_q_sampling_ignores_large_legacy_grid_cap() -> None:
+    from mufinder.science import magnetic_fields as module
+
+    phases = module._build_phase_samples_turns(
+        n_dim=2,
+        nangles=4096,
+        phase_sample_count=200_000,
+        sampling="auto",
+        random_seed=None,
+        max_grid_samples=20_000_000,
+    )
+
+    assert phases.shape == (199_809, 2)
+    assert phases.shape[0] < 4096**2
+
+
 def test_contact_coupling_unit_conversion_to_muesr_acont() -> None:
     assert contact_coupling_to_angstrom_minus3(2.0, "angstrom^-3") == pytest.approx(2.0)
     assert contact_coupling_to_angstrom_minus3(1.0, "T_per_muB") == pytest.approx(

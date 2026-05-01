@@ -257,6 +257,11 @@ def test_template_from_values_still_supports_non_structural_cell_blocks() -> Non
                 name="kpoints_list",
                 rows=((0.0, 0.0, 0.0, 1.0),),
             ),
+            "hubbard_u": BlockSection(
+                name="hubbard_u",
+                rows=(("Ni", "d:", 2.4),),
+                unit="eV",
+            ),
         }
     )
 
@@ -265,3 +270,6 @@ def test_template_from_values_still_supports_non_structural_cell_blocks() -> Non
     assert template.cell.species_pot[0].species == "Si"
     assert template.cell.kpoints_list is not None
     assert template.cell.kpoints_list[0].weight == 1.0
+    assert template.cell.extra_blocks == (
+        BlockSection(name="hubbard_u", rows=(("Ni", "d:", 2.4),), unit="eV"),
+    )

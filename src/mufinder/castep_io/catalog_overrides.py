@@ -335,6 +335,18 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
             "widget_hint": "block",
             "advanced_workflows": ALL_WORKFLOWS,
         },
+        "hubbard_u": {
+            "label": "Hubbard U",
+            "description": "DFT+U orbital corrections for all atoms of selected species.",
+            "category": "electronic",
+            "widget_hint": "hubbard_u",
+            "advanced_workflows": ALL_WORKFLOWS,
+            "unit": "eV",
+            "notes": (
+                "CASTEP reads HUBBARD_U from the .cell file. The guided editor writes one row per "
+                "species/orbital target, followed by a U value in eV or Ha."
+            ),
+        },
     },
     "param": {
         "task": {

@@ -87,7 +87,6 @@ from mufinder.science.uep import (
     optimize_muon_position,
     plane_from_best_fit,
     plane_from_fractional_anchor_and_miller,
-    plane_from_point_and_normal,
     plane_from_three_points,
     potential_grid,
     preview_potential_grid,

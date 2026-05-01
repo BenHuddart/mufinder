@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 from uuid import UUID
@@ -227,8 +228,7 @@ class MuonRelaxationWidget(QWidget):
         self._row_added_advanced: dict[int, set[str]] = {}
         self._runtime_states: dict[str, RelaxationRunState] = {}
         self._supercell_options: list[tuple[str, SupercellMatrix]] = []
-        self._table_delete_shortcuts: dict[QTableWidget, QShortcut] = {}
-        self._table_backspace_shortcuts: dict[QTableWidget, QShortcut] = {}
+        self._parameter_species_options: tuple[str, ...] = ()
 
         self._project_default_cutoff = QLabel("Not set")
         self._project_default_kpoint = QLabel("Not set")
@@ -258,6 +258,12 @@ class MuonRelaxationWidget(QWidget):
 
         self._build_layout()
         self._connect_signals()
+        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
+        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._delete_shortcut.activated.connect(self._delete_selected_rows)
+        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._backspace_shortcut.activated.connect(self._delete_selected_rows)
 
     def _create_table(self) -> QTableWidget:
         table = QTableWidget(0, 12)
@@ -295,12 +301,6 @@ class MuonRelaxationWidget(QWidget):
         )
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(32)
-        delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, table)
-        delete_shortcut.activated.connect(lambda target=table: self._delete_selected_rows(target))
-        backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), table)
-        backspace_shortcut.activated.connect(lambda target=table: self._delete_selected_rows(target))
-        self._table_delete_shortcuts[table] = delete_shortcut
-        self._table_backspace_shortcuts[table] = backspace_shortcut
         header = table.horizontalHeader()
         header.setSectionResizeMode(self._LABEL_COLUMN, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(self._SUPERCELL_COLUMN, QHeaderView.ResizeMode.Stretch)
@@ -553,6 +553,11 @@ class MuonRelaxationWidget(QWidget):
                 parsed.append((label, matrix))
         self._supercell_options = parsed
         self._refresh_all_rows()
+
+    def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
+        self._parameter_species_options = tuple(
+            dict.fromkeys(option for item in species_options if (option := str(item).strip()))
+        )
 
     def add_staged_sites(
         self,
@@ -1024,12 +1029,18 @@ class MuonRelaxationWidget(QWidget):
 
     def _delete_selected_rows(self, table: QTableWidget | None = None) -> None:
         target = table or self._active_table()
+        if target.state() == QAbstractItemView.State.EditingState:
+            return
         selection_model = target.selectionModel()
         if selection_model is None:
             return
         row_ids: list[int] = []
         for index in selection_model.selectedRows():
             row_id = self._row_id_at(index.row(), table=target)
+            if row_id is not None:
+                row_ids.append(row_id)
+        if not row_ids and target.currentRow() >= 0:
+            row_id = self._row_id_at(target.currentRow(), table=target)
             if row_id is not None:
                 row_ids.append(row_id)
         if not row_ids:
@@ -1121,6 +1132,7 @@ class MuonRelaxationWidget(QWidget):
                 "charge": charge_text,
             },
             "intro_text": "Included rows: " + ", ".join(intro_labels),
+            "species_options": self._parameter_species_options,
             "parent": self,
         }
         if read_only:

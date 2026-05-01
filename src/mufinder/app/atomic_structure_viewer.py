@@ -444,6 +444,35 @@ def _viewer_background_color() -> str:
     return _viewer_style().background
 
 
+def _viewer_style_signature() -> tuple[str, ...]:
+    """Return the style values that are baked into rendered viewer scenes."""
+
+    style = _viewer_style()
+    return (
+        style.background,
+        style.surface,
+        style.surface_alt,
+        style.border,
+        style.text_primary,
+        style.text_muted,
+        style.accent,
+        style.accent_hover,
+        style.accent_pressed,
+        style.seal_gold,
+        style.success,
+        style.info,
+        *style.triad_axis_colors,
+        style.triad_hub_inner,
+        style.triad_hub_mid,
+        style.triad_hub_outer,
+        style.unit_cell,
+        style.isosurface,
+        style.selection_fill,
+        style.selection_stroke,
+        style.triad_label_font_family,
+    )
+
+
 def _shutdown_pyvista_widget(widget: object | None) -> None:
     """Close a PyVista Qt interactor safely, stopping its internal timers first."""
 
@@ -794,6 +823,9 @@ class _CrystallographicTriadCanvas(QWidget):
     def draw_idle(self) -> None:
         self.update()
 
+    def refresh_theme(self) -> None:
+        self.update()
+
     def _project_axis(self, direction: np.ndarray) -> tuple[float, float, float]:
         view = _normalized_vector(self._camera_focal_point - self._camera_position, np.array([0.0, 0.0, -1.0], dtype=float))
         right = _normalized_vector(np.cross(view, self._camera_up), np.array([1.0, 0.0, 0.0], dtype=float))
@@ -1115,7 +1147,6 @@ def _configure_pyvista_vesta_style(
         pass
 
     direction = _coerce_light_direction(light_direction)
-    focus = np.asarray(focal_point, dtype=float)
     light = pv.Light()
     light.set_camera_light()
     light.positional = False
@@ -1136,6 +1167,7 @@ class _PyVistaCanvas(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._closed = False
+        self._refreshing_theme = False
         pv, qt_interactor = _pyvista_modules()
         if pv is None or qt_interactor is None:
             raise RuntimeError("PyVista backend requested but PyVista is not installed.")
@@ -1163,6 +1195,18 @@ class _PyVistaCanvas(QWidget):
         if self._closed or self._plotter is None:
             return
         self._plotter.render()
+
+    def refresh_theme(self) -> None:
+        plotter = getattr(self, "_plotter", None)
+        if self._closed or self._refreshing_theme or plotter is None:
+            return
+        self._refreshing_theme = True
+        try:
+            plotter.setPalette(self.palette())
+            _configure_transparent_pyvista_background(plotter)
+            self.draw_idle()
+        finally:
+            self._refreshing_theme = False
 
     def shutdown(self) -> None:
         if self._closed:
@@ -1218,6 +1262,7 @@ class _PyVistaTriadCanvas(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._closed = False
+        self._refreshing_theme = False
         pv, qt_interactor = _pyvista_modules()
         if pv is None or qt_interactor is None:
             raise RuntimeError("PyVista triad requested but PyVista is not installed.")
@@ -1235,6 +1280,8 @@ class _PyVistaTriadCanvas(QWidget):
         self.setFixedWidth(132)
         self.setFixedHeight(130)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent;")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1245,13 +1292,12 @@ class _PyVistaTriadCanvas(QWidget):
         self._camera_focal_point = np.zeros(3, dtype=float)
         self._camera_up = np.array([0.0, 0.0, 1.0], dtype=float)
         self._light_direction = _DEFAULT_PYVISTA_LIGHT_DIRECTION.copy()
+        self._style_signature: tuple[str, ...] | None = None
 
         self._configure_background()
         self._build_axes_scene()
 
     def _configure_background(self) -> None:
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setStyleSheet("background: transparent;")
         self._plotter.setPalette(self.palette())
         _configure_transparent_pyvista_background(self._plotter)
 
@@ -1268,6 +1314,7 @@ class _PyVistaTriadCanvas(QWidget):
         self._configure_background()
         self._configure_lighting()
         style = _viewer_style()
+        self._style_signature = _viewer_style_signature()
 
         if float(np.max(np.linalg.norm(self._cell, axis=1))) <= 1e-12:
             self._apply_camera()
@@ -1369,11 +1416,14 @@ class _PyVistaTriadCanvas(QWidget):
         focal_point: np.ndarray | tuple[float, float, float],
         view_up: np.ndarray | tuple[float, float, float],
     ) -> None:
+        rebuild_scene = self._style_signature != _viewer_style_signature()
         if cell is not None and np.asarray(cell).shape == (3, 3):
             cell_array = np.asarray(cell, dtype=float)
             if not np.allclose(cell_array, self._cell):
                 self._cell = cell_array
-                self._build_axes_scene()
+                rebuild_scene = True
+        if rebuild_scene:
+            self._build_axes_scene()
         self._camera_position = np.asarray(camera_position, dtype=float)
         self._camera_focal_point = np.asarray(focal_point, dtype=float)
         self._camera_up = _normalized_vector(np.asarray(view_up, dtype=float), np.array([0.0, 0.0, 1.0], dtype=float))
@@ -1383,6 +1433,17 @@ class _PyVistaTriadCanvas(QWidget):
     def set_light_direction(self, direction: np.ndarray | tuple[float, float, float] | list[float]) -> None:
         self._light_direction = _coerce_light_direction(direction)
         self._build_axes_scene()
+
+    def refresh_theme(self) -> None:
+        plotter = getattr(self, "_plotter", None)
+        if self._closed or self._refreshing_theme or plotter is None:
+            return
+        self._refreshing_theme = True
+        try:
+            self._build_axes_scene()
+            self.draw_idle()
+        finally:
+            self._refreshing_theme = False
 
     def draw_idle(self) -> None:
         if self._closed or self._plotter is None:
@@ -1490,6 +1551,9 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_camera_snapshot: tuple[np.ndarray, np.ndarray, np.ndarray, float] | None = None
         self._pyvista_light_direction = _DEFAULT_PYVISTA_LIGHT_DIRECTION.copy()
         self._shutting_down = False
+        self._refreshing_theme = False
+        self._theme_refresh_pending = False
+        self._style_signature = _viewer_style_signature()
 
         self._backend_name = _require_pyvista_backend()
         self._canvas = _PyVistaCanvas(self)
@@ -1571,6 +1635,58 @@ class AtomicStructureViewer(QWidget):
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().resizeEvent(event)
         self._refresh_interaction_hint_layout()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().changeEvent(event)
+        if event.type() in {
+            QEvent.Type.StyleChange,
+            QEvent.Type.PaletteChange,
+            QEvent.Type.ApplicationPaletteChange,
+        }:
+            self._schedule_theme_refresh()
+
+    def _schedule_theme_refresh(self) -> None:
+        if (
+            getattr(self, "_shutting_down", False)
+            or getattr(self, "_refreshing_theme", False)
+            or getattr(self, "_theme_refresh_pending", False)
+            or not hasattr(self, "_interaction_hint")
+            or getattr(self, "_style_signature", None) == _viewer_style_signature()
+        ):
+            return
+        self._theme_refresh_pending = True
+        QTimer.singleShot(0, self._refresh_theme_if_needed)
+
+    def _refresh_theme_if_needed(self) -> None:
+        self._theme_refresh_pending = False
+        if getattr(self, "_style_signature", None) == _viewer_style_signature():
+            return
+        self.refresh_theme()
+
+    def refresh_theme(self) -> None:
+        """Refresh palette-dependent VTK and Qt painting state."""
+
+        if (
+            getattr(self, "_shutting_down", False)
+            or getattr(self, "_refreshing_theme", False)
+            or not hasattr(self, "_interaction_hint")
+        ):
+            return
+        self._refreshing_theme = True
+        try:
+            self._style_signature = _viewer_style_signature()
+            style_hint_text(self._interaction_hint)
+            self._refresh_interaction_hint_layout()
+            canvas = getattr(self, "_canvas", None)
+            if hasattr(canvas, "refresh_theme"):
+                canvas.refresh_theme()
+            triad_canvas = getattr(self, "_triad_canvas", None)
+            if hasattr(triad_canvas, "refresh_theme"):
+                triad_canvas.refresh_theme()
+            self._store_view()
+            self._render()
+        finally:
+            self._refreshing_theme = False
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API naming.
         canvas = getattr(self, "_canvas", None)
@@ -2357,7 +2473,12 @@ class AtomicStructureViewer(QWidget):
 
         if self._atoms is None or len(self._atoms) == 0:
             self._configure_pyvista_lighting(plotter, pv)
-            plotter.add_text("Load a host structure to inspect it here.", position="upper_left", font_size=12)
+            plotter.add_text(
+                "Load a host structure to inspect it here.",
+                position="upper_left",
+                font_size=12,
+                color=_viewer_style().text_primary,
+            )
             self._pyvista_last_camera_signature = None
             self._canvas.draw_idle()
             return

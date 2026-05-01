@@ -507,7 +507,7 @@ def _parse_generic_token(token: str) -> object:
 
 def _looks_like_unit(token: str) -> bool:
     lowered = token.strip().lower()
-    return lowered in _CELL_UNITS or "/" in lowered
+    return lowered in _CELL_UNITS or lowered in {"ev", "ha"} or "/" in lowered
 
 
 def _strip_comment(line: str) -> str:

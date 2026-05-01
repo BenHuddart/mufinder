@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QDockWidget, QFrame, QHeaderView, QLabel, QMessage
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.app.main_window as main_window_module
+from mufinder.app import theme as theme_module
 import mufinder.castep_io.schema as schema_module
 from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import JobStatus, WorkflowStage
@@ -576,6 +577,18 @@ def test_project_home_trail_destinations_include_journal(qapp, tmp_path: Path) -
     assert not pixmap.isNull()
 
     window.close()
+
+
+def test_project_home_trail_scroll_labels_keep_dark_ink_in_dark_mode(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+    try:
+        dark_palette = theme_module.current_palette()
+        label_color = main_window_module.ProjectHomeTrailWidget._workflow_scroll_label_color()
+
+        assert label_color.name().lower() == theme_module.light_palette().text_primary.lower()
+        assert label_color.name().lower() != dark_palette.text_primary.lower()
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
 
 
 def test_project_home_button_returns_to_project_home(qapp, tmp_path: Path) -> None:

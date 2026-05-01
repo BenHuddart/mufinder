@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QHeaderView, QMessageBox, QPushButton, QToolButton
 
 from mufinder.app.param_dialog import ParameterDialog
@@ -264,6 +265,26 @@ def test_relaxation_widget_backspace_shortcut_removes_selected_jobs(qapp) -> Non
 
     assert removed == [[removed_label]]
     assert widget._table.rowCount() == 0
+
+
+def test_relaxation_widget_delete_key_removes_selected_job_from_child_focus(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    removed_label = widget._label_at_row(0)
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    widget.show()
+    widget._table.selectRow(0)
+    configure_button.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(configure_button, Qt.Key.Key_Delete)
+
+    assert removed == [[removed_label]]
+    assert widget._table.rowCount() == 1
 
 
 def test_relaxation_widget_dialog_locks_write_cell_structure(qapp) -> None:

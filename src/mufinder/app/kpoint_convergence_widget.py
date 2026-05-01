@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import re
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIntValidator
+from PySide6.QtGui import QIntValidator, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -243,6 +243,7 @@ class KPointConvergenceWidget(QWidget):
             "spacing": _DEFAULT_KPOINT_SPACING,
             "replace_existing": False,
         }
+        self._parameter_species_options: tuple[str, ...] = ()
 
         self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels(
@@ -315,6 +316,12 @@ class KPointConvergenceWidget(QWidget):
 
         self._build_layout()
         self._connect_signals()
+        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
+        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._delete_shortcut.activated.connect(self._remove_selected_or_current_grids)
+        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._backspace_shortcut.activated.connect(self._remove_selected_or_current_grids)
 
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
@@ -519,6 +526,11 @@ class KPointConvergenceWidget(QWidget):
             self._simulation_cell_use_unit_button.setEnabled(enabled)
         finally:
             self._updating_simulation_cell = False
+
+    def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
+        self._parameter_species_options = tuple(
+            dict.fromkeys(option for item in species_options if (option := str(item).strip()))
+        )
 
     def _on_simulation_cell_combo_changed(self, index: int) -> None:
         if self._updating_simulation_cell:
@@ -763,6 +775,7 @@ class KPointConvergenceWidget(QWidget):
             "workflow_stage": "convergence_kpoint",
             "locked_values": self._shared_locked_values(),
             "intro_text": intro,
+            "species_options": self._parameter_species_options,
             "parent": self,
         }
         if read_only:
@@ -864,6 +877,18 @@ class KPointConvergenceWidget(QWidget):
 
         if grids:
             self.remove_grid_requested.emit(grids)
+
+    def _remove_selected_or_current_grids(self) -> None:
+        if self._table.state() == QAbstractItemView.State.EditingState:
+            return
+        selected_rows = self._selected_rows()
+        if selected_rows:
+            self._request_grid_removals(selected_rows)
+            return
+
+        current_row = self._table.currentRow()
+        if current_row >= 0:
+            self._request_grid_removals((current_row,))
 
     def remove_grids(self, grids: list[tuple[int, int, int]] | tuple[tuple[int, int, int], ...]) -> None:
         targets = {tuple(int(component) for component in grid) for grid in grids}

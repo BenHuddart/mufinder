@@ -8,7 +8,7 @@ import tempfile
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt
 from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QPalette
-from PySide6.QtWidgets import QApplication, QLabel, QScrollBar, QTableWidget, QTreeWidget, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QScrollBar, QTableWidget, QToolButton, QTreeWidget, QWidget
 
 THEME_LIGHT = "light"
 THEME_DARK = "dark"
@@ -125,11 +125,11 @@ def light_palette() -> MuFinderPalette:
         success="#146C43",
         warning="#A16207",
         danger="#B91C1C",
-        status_ready="#0F766E",
+        status_ready="#0369A1",
         status_defined="#4B5563",
         status_submitting="#2563EB",
-        status_queued="#1D4ED8",
-        status_running="#C2410C",
+        status_queued="#A16207",
+        status_running="#2563EB",
         status_retrieving="#7C3AED",
         status_stopped="#B45309",
         status_completed="#15803D",
@@ -156,11 +156,11 @@ def dark_palette() -> MuFinderPalette:
         success="#34D399",
         warning="#F59E0B",
         danger="#F87171",
-        status_ready="#5EEAD4",
+        status_ready="#7DD3FC",
         status_defined="#A5B4FC",
         status_submitting="#60A5FA",
-        status_queued="#93C5FD",
-        status_running="#FB923C",
+        status_queued="#FBBF24",
+        status_running="#60A5FA",
         status_retrieving="#C4B5FD",
         status_stopped="#FBBF24",
         status_completed="#4ADE80",
@@ -481,6 +481,45 @@ def style_warning_text(label: QLabel) -> None:
     label.setObjectName("warningText")
 
 
+def style_inline_group(widget: QWidget) -> None:
+    """Tag a compact row/group widget as transparent inline UI chrome."""
+
+    widget.setObjectName("mufinderInlineGroup")
+
+
+def style_option_card(card: QWidget) -> None:
+    """Tag a frame-like widget as a selectable feature option card."""
+
+    card.setObjectName("mufinderOptionCard")
+    card.setProperty("selected", False)
+    card.setProperty("unavailable", False)
+
+
+def set_option_card_state(
+    card: QWidget,
+    *,
+    selected: bool,
+    unavailable: bool = False,
+) -> None:
+    """Update option-card state properties and refresh stylesheet polish."""
+
+    card.setProperty("selected", bool(selected))
+    card.setProperty("unavailable", bool(unavailable))
+    refresh_widget_style(card)
+
+
+def style_help_button(button: QToolButton) -> None:
+    """Tag a small help/info tool button for shared feature-dialog styling."""
+
+    button.setObjectName("mufinderHelpButton")
+
+
+def style_small_checked_tool_button(button: QToolButton) -> None:
+    """Tag a small checkable tool button for shared feature-dialog styling."""
+
+    button.setObjectName("mufinderCheckedToolButton")
+
+
 def use_square_top_table_corners(table: QTableWidget | QTreeWidget) -> None:
     """Opt a table/tree item view into square top corners for titled container layouts."""
 
@@ -544,6 +583,86 @@ def _base_widget_styles(p: MuFinderPalette) -> str:
         color: {p.text_primary};
     }}
     """
+
+
+def feature_dialog_stylesheet(*, include_scroll_area: bool = False, extra: str = "") -> str:
+    """Return reusable feature-dialog stylesheet fragments for local dialog styles."""
+
+    palette = current_palette()
+    scroll_area = (
+        """
+        QScrollArea {
+            background: transparent;
+            border: none;
+        }
+        QScrollArea > QWidget > QWidget {
+            background: transparent;
+        }
+        """
+        if include_scroll_area
+        else ""
+    )
+    return (
+        f"""
+        QDialog {{
+            background: {palette.bg_primary};
+        }}
+        QGroupBox {{
+            background: {palette.bg_surface};
+            border: 1px solid {palette.border};
+            border-radius: 14px;
+            margin-top: 12px;
+            padding-top: 14px;
+            font-weight: 700;
+            color: {palette.text_primary};
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            left: 12px;
+            padding: 0 8px;
+        }}
+        QFrame#mufinderOptionCard {{
+            background: {palette.bg_surface_alt};
+            border: 1px solid {palette.border};
+            border-radius: 12px;
+        }}
+        QFrame#mufinderOptionCard[selected="true"] {{
+            background: {palette.bg_surface};
+            border: 1px solid {palette.accent};
+        }}
+        QFrame#mufinderOptionCard[unavailable="true"] {{
+            background: {palette.bg_primary};
+            border: 1px solid {palette.border};
+        }}
+        QWidget#mufinderInlineGroup,
+        QWidget#mufinderInlineGroup QLabel {{
+            background: transparent;
+        }}
+        QRadioButton {{
+            background: transparent;
+        }}
+        QCheckBox {{
+            background: transparent;
+        }}
+        QToolButton#mufinderCheckedToolButton {{
+            background: {palette.bg_surface_alt};
+            border: 1px solid {palette.border};
+            border-radius: 8px;
+            padding: 4px;
+            min-width: 24px;
+            min-height: 24px;
+        }}
+        QToolButton#mufinderCheckedToolButton:checked {{
+            background: {palette.bg_surface};
+            border: 1px solid {palette.accent};
+        }}
+        QToolButton#mufinderCheckedToolButton:hover {{
+            border: 1px solid {palette.accent_hover};
+        }}
+        {scroll_area}
+        {extra}
+        """
+    )
 
 
 def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) -> str:
@@ -1107,6 +1226,21 @@ def _button_styles(p: MuFinderPalette) -> str:
         border-color: {p.accent_hover};
         background: {p.bg_surface_alt};
     }}
+    QToolButton#mufinderCheckedToolButton {{
+        border: 1px solid {p.border};
+        border-radius: 8px;
+        padding: 4px;
+        min-width: 24px;
+        min-height: 24px;
+        background: {p.bg_surface_alt};
+    }}
+    QToolButton#mufinderCheckedToolButton:checked {{
+        border-color: {p.accent};
+        background: {p.bg_surface};
+    }}
+    QToolButton#mufinderCheckedToolButton:hover {{
+        border-color: {p.accent_hover};
+    }}
     QToolButton#projectHomeButton {{
         border: 1px solid {p.border};
         border-radius: 7px;
@@ -1320,6 +1454,23 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
         border: 2px dashed {p.border};
         border-radius: 12px;
         background: {p.bg_surface_alt};
+    }}
+    QFrame#mufinderOptionCard {{
+        border: 1px solid {p.border};
+        border-radius: 12px;
+        background: {p.bg_surface_alt};
+    }}
+    QFrame#mufinderOptionCard[selected="true"] {{
+        border-color: {p.accent};
+        background: {p.bg_surface};
+    }}
+    QFrame#mufinderOptionCard[unavailable="true"] {{
+        border-color: {p.border};
+        background: {p.bg_primary};
+    }}
+    QWidget#mufinderInlineGroup,
+    QWidget#mufinderInlineGroup QLabel {{
+        background: transparent;
     }}
     QFrame#uepIsosurfaceSliderPanel,
     QFrame#uepIsosurfaceInfoCard,

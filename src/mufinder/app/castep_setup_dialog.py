@@ -35,7 +35,6 @@ from mufinder.castep_setup import (
     CastepSetup,
     apply_castep_environment,
     discover_mpirun,
-    generate_castep_keywords_json,
     load_castep_setup,
     save_castep_setup,
 )

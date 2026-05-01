@@ -33,7 +33,9 @@ from mufinder.app.atomic_structure_viewer import (
     _ViewerSliceSpec,
     _viewer_background_color,
     _viewer_style,
+    _viewer_style_signature,
 )
+from mufinder.app import theme as theme_module
 from mufinder.app.theme import body_font_family, current_palette
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.domain.models import Structure
@@ -2062,6 +2064,65 @@ def test_atomic_structure_viewer_style_tracks_theme_palette() -> None:
     assert style.isosurface == palette.status_submitting
     assert style.selection_stroke == palette.accent_pressed
     assert style.triad_label_font_family == body_font_family()
+
+
+def test_viewer_style_signature_changes_with_active_theme(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    light_signature = _viewer_style_signature()
+
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+    try:
+        dark_signature = _viewer_style_signature()
+
+        assert dark_signature != light_signature
+        assert theme_module.current_palette().bg_primary in dark_signature
+        assert theme_module.current_palette().text_primary in dark_signature
+    finally:
+        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+
+def test_atomic_structure_viewer_theme_refresh_rerenders_scene(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+    viewer = AtomicStructureViewer()
+    calls = {"store": 0, "render": 0, "canvas": 0, "triad": 0}
+
+    class _Canvas:
+        def refresh_theme(self) -> None:
+            calls["canvas"] += 1
+
+    class _Triad:
+        def refresh_theme(self) -> None:
+            calls["triad"] += 1
+
+    viewer._canvas = _Canvas()
+    viewer._triad_canvas = _Triad()
+    monkeypatch.setattr(viewer, "_store_view", lambda: calls.__setitem__("store", calls["store"] + 1))
+    monkeypatch.setattr(viewer, "_render", lambda: calls.__setitem__("render", calls["render"] + 1))
+
+    viewer.refresh_theme()
+
+    assert calls == {"store": 1, "render": 1, "canvas": 1, "triad": 1}
+    viewer.close()
+
+
+def test_atomic_structure_viewer_coalesces_theme_change_events(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
+    viewer = AtomicStructureViewer()
+    calls = {"refresh": 0}
+    monkeypatch.setattr(viewer, "refresh_theme", lambda: calls.__setitem__("refresh", calls["refresh"] + 1))
+
+    viewer._style_signature = ("stale",)
+    event = QEvent(QEvent.Type.ApplicationPaletteChange)
+    viewer.changeEvent(event)
+    viewer.changeEvent(event)
+    qapp.processEvents()
+
+    assert calls["refresh"] == 1
+
+    viewer._style_signature = _viewer_style_signature()
+    viewer.changeEvent(event)
+    qapp.processEvents()
+
+    assert calls["refresh"] == 1
+    viewer.close()
 
 
 def test_atomic_structure_viewer_shutdown_closes_pyvista_resources(qapp) -> None:

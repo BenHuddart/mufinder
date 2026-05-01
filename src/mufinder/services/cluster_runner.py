@@ -152,6 +152,8 @@ class ClusterJobRunner(QObject):
         castep_executable: str = "",
         retrieve_den_fmt: bool = False,
         retrieve_out_cell: bool = False,
+        remote_directory: str | None = None,
+        reuse_existing_files: bool = False,
     ) -> str:
         """Upload files, submit scheduler script, and start tracking the remote job."""
 
@@ -163,18 +165,20 @@ class ClusterJobRunner(QObject):
             raise ConnectionError(f"Local job directory does not exist: {local_dir}")
 
         remote_root = working_directory.strip()
-        if not remote_root:
+        normalized_remote_directory = (remote_directory or "").strip()
+        if not remote_root and not normalized_remote_directory:
             raise ConnectionError("Remote working directory is required.")
         self._validate_seed_name(seed_name)
 
-        remote_dir = posixpath.join(remote_root, seed_name)
+        remote_dir = normalized_remote_directory or posixpath.join(remote_root, seed_name)
         ssh.mkdir(remote_dir, exist_ok=True)
 
-        for suffix in (".cell", ".param"):
-            source = local_dir / f"{seed_name}{suffix}"
-            if not source.exists():
-                raise ConnectionError(f"Missing local input file: {source.name}")
-            ssh.put(source, posixpath.join(remote_dir, source.name))
+        if not reuse_existing_files:
+            for suffix in (".cell", ".param"):
+                source = local_dir / f"{seed_name}{suffix}"
+                if not source.exists():
+                    raise ConnectionError(f"Missing local input file: {source.name}")
+                ssh.put(source, posixpath.join(remote_dir, source.name))
 
         cluster_name = self._config.name if self._config is not None else ""
         queue_system = self._config.queue_system if self._config is not None else ""
@@ -187,46 +191,47 @@ class ClusterJobRunner(QObject):
         remote_script = ""
         queue = queue_system.strip().lower()
         if queue != "addqueue":
-            template = load_template_for_cluster(
-                template_script_path,
-                cluster_name=cluster_name,
-                queue_system=queue_system,
-            )
-            nodes = max(1, int(ceil(max(1, int(num_processes)) / max(1, int(cores_per_node)))))
-            if queue == "slurm":
-                command = (
-                    f"srun -n {max(1, int(num_processes))} "
-                    f"{shlex.quote(resolved_castep_executable)} {seed_name}"
-                )
-            else:
-                command = (
-                    f"mpirun -np {max(1, int(num_processes))} "
-                    f"{shlex.quote(resolved_castep_executable)} {seed_name}"
-                )
-            script_content = populate_template(
-                template,
-                {
-                    "job_name": seed_name,
-                    "num_processes": str(max(1, int(num_processes))),
-                    "num_nodes": str(nodes),
-                    "cores_per_node": str(max(1, int(cores_per_node))),
-                    "walltime": walltime,
-                    "working_directory": remote_dir,
-                    "seed_name": seed_name,
-                    "castep_command": command,
-                },
-            )
-
             remote_script = posixpath.join(remote_dir, "run.sh")
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".sh", delete=False) as handle:
-                handle.write(script_content)
-                temp_path = Path(handle.name)
-            try:
-                ssh.put(temp_path, remote_script)
-            finally:
-                temp_path.unlink(missing_ok=True)
+            if not reuse_existing_files:
+                template = load_template_for_cluster(
+                    template_script_path,
+                    cluster_name=cluster_name,
+                    queue_system=queue_system,
+                )
+                nodes = max(1, int(ceil(max(1, int(num_processes)) / max(1, int(cores_per_node)))))
+                if queue == "slurm":
+                    command = (
+                        f"srun -n {max(1, int(num_processes))} "
+                        f"{shlex.quote(resolved_castep_executable)} {seed_name}"
+                    )
+                else:
+                    command = (
+                        f"mpirun -np {max(1, int(num_processes))} "
+                        f"{shlex.quote(resolved_castep_executable)} {seed_name}"
+                    )
+                script_content = populate_template(
+                    template,
+                    {
+                        "job_name": seed_name,
+                        "num_processes": str(max(1, int(num_processes))),
+                        "num_nodes": str(nodes),
+                        "cores_per_node": str(max(1, int(cores_per_node))),
+                        "walltime": walltime,
+                        "working_directory": remote_dir,
+                        "seed_name": seed_name,
+                        "castep_command": command,
+                    },
+                )
 
-            ssh.chmod(remote_script, 0o755)
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".sh", delete=False) as handle:
+                    handle.write(script_content)
+                    temp_path = Path(handle.name)
+                try:
+                    ssh.put(temp_path, remote_script)
+                finally:
+                    temp_path.unlink(missing_ok=True)
+
+                ssh.chmod(remote_script, 0o755)
         request = SchedulerSubmitRequest(
             working_dir=remote_dir,
             seed_name=seed_name,

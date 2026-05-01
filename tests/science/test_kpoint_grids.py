@@ -87,6 +87,28 @@ def test_equivalent_grid_for_supercell_preserves_density() -> None:
     assert equivalent == (2, 4, 4)
 
 
+def test_equivalent_grid_for_supercell_scales_each_axis_for_unequal_lattice_lengths() -> None:
+    lattice = [[3.6, 0.0, 0.0], [0.0, 4.2, 0.0], [0.0, 0.0, 5.4]]
+    reference_grid = (4, 4, 4)
+    doubled_all = ((2, 0, 0), (0, 2, 0), (0, 0, 2))
+
+    super_lattice = supercell_lattice_vectors(lattice, doubled_all)
+    equivalent = equivalent_grid_for_supercell(lattice, reference_grid, super_lattice)
+
+    assert equivalent == (2, 2, 2)
+
+
+def test_equivalent_grid_for_supercell_rounds_up_to_avoid_undersampling() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    reference_grid = (4, 4, 4)
+    supercell = ((2, 0, 0), (0, 2, 0), (0, 0, 3))
+
+    super_lattice = supercell_lattice_vectors(lattice, supercell)
+    equivalent = equivalent_grid_for_supercell(lattice, reference_grid, super_lattice)
+
+    assert equivalent == (2, 2, 2)
+
+
 def test_spacing_from_grid_roundtrip_for_nontrivial_grid() -> None:
     lattice = [[4.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 8.0]]
     grid = (3, 2, 2)

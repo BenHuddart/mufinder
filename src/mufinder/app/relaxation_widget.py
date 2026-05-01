@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
@@ -158,6 +158,7 @@ class PristineRelaxationWidget(QWidget):
         self._row_added_advanced: dict[int, set[str]] = {}
         self._runtime_states: dict[str, RelaxationRunState] = {}
         self._supercell_options: list[tuple[str, SupercellMatrix]] = []
+        self._parameter_species_options: tuple[str, ...] = ()
 
         self._name_prefix = QLineEdit("pristine_relax")
         self._project_default_cutoff = QLabel("Not set")
@@ -190,9 +191,11 @@ class PristineRelaxationWidget(QWidget):
         )
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(32)
-        self._table_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._table)
+        self._table_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
+        self._table_delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._table_delete_shortcut.activated.connect(self._delete_selected_rows)
-        self._table_backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self._table)
+        self._table_backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        self._table_backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._table_backspace_shortcut.activated.connect(self._delete_selected_rows)
 
         header = self._table.horizontalHeader()
@@ -449,6 +452,11 @@ class PristineRelaxationWidget(QWidget):
             parsed.append((label, matrix))
         self._supercell_options = parsed
         self._refresh_all_rows()
+
+    def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
+        self._parameter_species_options = tuple(
+            dict.fromkeys(option for item in species_options if (option := str(item).strip()))
+        )
 
     def row_supercell_matrix(self, row_id: int) -> SupercellMatrix | None:
         return self._row_supercells.get(int(row_id))
@@ -857,7 +865,13 @@ class PristineRelaxationWidget(QWidget):
         self._open_row_parameter_dialog(row_ids)
 
     def _delete_selected_rows(self) -> None:
+        if self._table.state() == QAbstractItemView.State.EditingState:
+            return
         row_ids = self._selected_row_ids()
+        if not row_ids and self._table.currentRow() >= 0:
+            row_id = self._row_id_at(self._table.currentRow())
+            if row_id is not None:
+                row_ids = (row_id,)
         if not row_ids:
             return
         self._remove_rows_by_id(row_ids)
@@ -943,6 +957,7 @@ class PristineRelaxationWidget(QWidget):
                 "write_cell_structure": "TRUE (required for relaxed-cell outputs)",
             },
             "intro_text": "Included rows: " + ", ".join(intro_labels),
+            "species_options": self._parameter_species_options,
             "parent": self,
         }
         if read_only:

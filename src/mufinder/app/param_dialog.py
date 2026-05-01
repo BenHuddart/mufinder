@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -132,6 +133,7 @@ class ParameterDialog(QDialog):
         locked_values: dict[str, str] | None = None,
         intro_text: str | None = None,
         read_only: bool = False,
+        species_options: Sequence[str] = (),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -142,6 +144,7 @@ class ParameterDialog(QDialog):
         self._task = infer_task(workflow_stage)
         self._locked_values = dict(locked_values or {})
         self._read_only = bool(read_only)
+        self._species_options = tuple(species_options)
         self._task_spec: KeywordSpec | None = None
         self._task_editor: ParamEditorBase | None = None
 
@@ -187,7 +190,11 @@ class ParameterDialog(QDialog):
         task_row = QHBoxLayout()
         task_row.addWidget(QLabel("Task"))
         if self._task_spec is not None and not self._task_locked():
-            self._task_editor = create_param_editor(self._task_spec, self)
+            self._task_editor = create_param_editor(
+                self._task_spec,
+                self,
+                species_options=self._species_options,
+            )
             self._task_editor.set_value(self._task)
             self._task_editor.value_changed.connect(self._on_task_changed)
             if self._read_only:
@@ -506,7 +513,11 @@ class ParameterDialog(QDialog):
                 value_widget: QWidget = QLabel(value_text, self._table_widget)
                 value_widget.setEnabled(False)
             else:
-                editor = create_param_editor(spec, self._table_widget)
+                editor = create_param_editor(
+                    spec,
+                    self._table_widget,
+                    species_options=self._species_options,
+                )
                 self._row_default_values[name] = self._default_editor_value(spec)
                 if name in self._values:
                     try:
@@ -573,7 +584,7 @@ class ParameterDialog(QDialog):
             except (TypeError, ValueError):
                 pass
 
-        probe_editor = create_param_editor(spec, self)
+        probe_editor = create_param_editor(spec, self, species_options=self._species_options)
         try:
             return probe_editor.value()
         finally:

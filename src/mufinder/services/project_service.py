@@ -37,7 +37,7 @@ from mufinder.science.site_generation import (
     lattice_cart_to_frac,
     lattice_frac_to_cart,
 )
-from mufinder.science.structure_io import StructureLoadError, load_structure_file
+from mufinder.science.structure_io import load_structure_file
 from mufinder.science.supercell import build_supercell_structure
 
 _WORKFLOW_SUPERCELLS_STATE_KEY = "workflow_supercells"
@@ -216,6 +216,14 @@ class ProjectService:
         """Register one persisted comparison table in the current document."""
         document.comparison_tables[table.id] = table
 
+    def rename_comparison_table(self, document: ProjectDocument, table_id: UUID, label: str) -> ComparisonTable | None:
+        """Update the display label for one persisted comparison table."""
+        table = document.comparison_tables.get(table_id)
+        if table is None:
+            return None
+        table.label = str(label).strip() or "Comparison Table"
+        return table
+
     def remove_comparison_table(self, document: ProjectDocument, table_id: UUID) -> None:
         """Delete one persisted comparison table from the current document."""
         document.comparison_tables.pop(table_id, None)
@@ -353,6 +361,19 @@ class ProjectService:
                     "execution_target": execution_target,
                     "job_count": len(submitted_jobs),
                     "job_labels": [job.label for job in submitted_jobs],
+                    "jobs": [
+                        {
+                            "job_id": str(job.id),
+                            "label": job.label,
+                            "status": job.status.value,
+                            "execution_target": job.execution_target,
+                            "remote_job_id": job.remote_job_id,
+                            "remote_directory": job.remote_directory,
+                            "num_processes": job.num_processes,
+                            "submitted_at": job.submitted_at.isoformat() if job.submitted_at else None,
+                        }
+                        for job in submitted_jobs
+                    ],
                 },
                 output_entity_ids=[job.id for job in submitted_jobs],
             ),
@@ -1622,6 +1643,9 @@ class ProjectService:
         self._assert_transition(job.status, JobStatus.SUBMITTING)
         job.status = JobStatus.SUBMITTING
         job.submitted_at = utc_now()
+        job.started_at = None
+        job.completed_at = None
+        job.error_message = None
 
     def mark_job_queued(self, job: Job, remote_job_id: str | None = None) -> None:
         """Mark an in-flight submission as queued."""

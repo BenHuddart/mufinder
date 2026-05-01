@@ -13,7 +13,6 @@ from mufinder.science.uep import (
     UepField,
     UepOptimizationResult,
     UepProbeResult,
-    UepBatchSummary,
     cluster_uep_optimizations,
     cluster_optimized_positions,
     load_uep_source,

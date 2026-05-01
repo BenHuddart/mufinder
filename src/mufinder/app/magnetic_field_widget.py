@@ -56,9 +56,15 @@ from mufinder.app.atomic_structure_viewer import (
 from mufinder.app.icons import icon
 from mufinder.app.theme import (
     current_palette,
+    feature_dialog_stylesheet,
+    set_option_card_state,
+    style_help_button,
     style_hint_text,
+    style_inline_group,
+    style_option_card,
     style_section_subtitle,
     style_section_title,
+    style_small_checked_tool_button,
     use_square_top_table_corners,
 )
 from mufinder.domain.models import Structure
@@ -181,7 +187,7 @@ class MagneticComponentDialog(QDialog):
         self._kind_combo = QComboBox()
         self._kind_combo.addItems(list(self._TEXTURE_KINDS))
         self._component_info_button = QToolButton()
-        self._component_info_button.setObjectName("mufinderHelpButton")
+        style_help_button(self._component_info_button)
         self._component_info_button.setIcon(icon("help"))
         self._component_info_button.setIconSize(QSize(22, 22))
         self._component_info_button.setToolTip("Explain this component in the propagation-vector formalism")
@@ -248,14 +254,14 @@ class MagneticComponentDialog(QDialog):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.addRow("Label", self._label_edit)
         component_type_group = QWidget()
-        component_type_group.setObjectName("magneticInlineFieldGroup")
+        style_inline_group(component_type_group)
         component_type_layout = QHBoxLayout(component_type_group)
         component_type_layout.setContentsMargins(0, 0, 0, 0)
         component_type_layout.addWidget(self._kind_combo, 1)
         component_type_layout.addWidget(self._component_info_button)
         form.addRow("Component type", component_type_group)
         amplitude_group = QWidget()
-        amplitude_group.setObjectName("magneticInlineFieldGroup")
+        style_inline_group(amplitude_group)
         amplitude_layout = QHBoxLayout(amplitude_group)
         amplitude_layout.setContentsMargins(0, 0, 0, 0)
         amplitude_layout.addWidget(self._amplitude)
@@ -276,7 +282,7 @@ class MagneticComponentDialog(QDialog):
         self._cone_angle_row_label = QLabel("Cone angle (degrees)")
         form.addRow(self._cone_angle_row_label, self._cone_angle)
         q_group = QWidget()
-        q_group.setObjectName("magneticInlineFieldGroup")
+        style_inline_group(q_group)
         q_layout = QHBoxLayout(q_group)
         q_layout.setContentsMargins(0, 0, 0, 0)
         q_layout.addWidget(self._q_x)
@@ -360,7 +366,7 @@ class MagneticComponentDialog(QDialog):
     @staticmethod
     def _direction_group(inputs: tuple[QLineEdit, QLineEdit, QLineEdit]) -> QWidget:
         group = QWidget()
-        group.setObjectName("magneticInlineFieldGroup")
+        style_inline_group(group)
         layout = QHBoxLayout(group)
         layout.setContentsMargins(0, 0, 0, 0)
         for edit in inputs:
@@ -369,9 +375,7 @@ class MagneticComponentDialog(QDialog):
 
     def _build_target_card(self, button: QRadioButton, hint_text: str, editor: QWidget | None = None) -> QFrame:
         card = QFrame(self)
-        card.setObjectName("magneticTargetCard")
-        card.setProperty("selected", False)
-        card.setProperty("unavailable", False)
+        style_option_card(card)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(12, 12, 12, 12)
         card_layout.setSpacing(6)
@@ -390,60 +394,17 @@ class MagneticComponentDialog(QDialog):
         return card
 
     def _apply_styles(self) -> None:
-        palette = current_palette()
         self.setStyleSheet(
-            "QDialog {"
-            f"background: {palette.bg_primary};"
-            "}"
-            "QGroupBox {"
-            f"background: {palette.bg_surface};"
-            f"border: 1px solid {palette.border};"
-            "border-radius: 14px;"
-            "margin-top: 12px;"
-            "padding-top: 14px;"
-            "font-weight: 700;"
-            f"color: {palette.text_primary};"
-            "}"
-            "QGroupBox::title {"
-            "subcontrol-origin: margin;"
-            "left: 12px;"
-            "padding: 0 8px;"
-            "}"
-            "QFrame#magneticTargetCard {"
-            f"background: {palette.bg_surface_alt};"
-            f"border: 1px solid {palette.border};"
-            "border-radius: 12px;"
-            "}"
-            "QFrame#magneticTargetCard[selected=\"true\"] {"
-            f"background: {palette.bg_surface};"
-            f"border: 1px solid {palette.accent};"
-            "}"
-            "QFrame#magneticTargetCard[unavailable=\"true\"] {"
-            f"background: {palette.bg_primary};"
-            f"border: 1px solid {palette.border};"
-            "}"
-            "QWidget#magneticInlineFieldGroup {"
-            "background: transparent;"
-            "}"
-            "QToolButton#mufinderHelpButton {"
-            f"background: {palette.bg_surface};"
-            f"border: 1px solid {palette.border};"
-            "border-radius: 8px;"
-            "padding: 3px;"
-            "min-width: 24px;"
-            "min-height: 24px;"
-            "}"
-            "QToolButton#mufinderHelpButton:hover {"
-            f"border: 1px solid {palette.accent};"
-            f"background: {palette.bg_surface_alt};"
-            "}"
-            "QRadioButton {"
-            "background: transparent;"
-            "font-weight: 600;"
-            "spacing: 10px;"
-            "padding-top: 4px;"
-            "padding-bottom: 4px;"
-            "}"
+            feature_dialog_stylesheet(
+                extra=(
+                    "QRadioButton {"
+                    "font-weight: 600;"
+                    "spacing: 10px;"
+                    "padding-top: 4px;"
+                    "padding-bottom: 4px;"
+                    "}"
+                )
+            )
         )
 
     def _refresh_target_options(self) -> None:
@@ -470,13 +431,8 @@ class MagneticComponentDialog(QDialog):
 
     def _refresh_target_card_styles(self, *_args) -> None:
         for button, card, hint in self._selector_rows:
-            card.setProperty("selected", button.isChecked())
-            card.setProperty("unavailable", not button.isEnabled())
+            set_option_card_state(card, selected=button.isChecked(), unavailable=not button.isEnabled())
             hint.setEnabled(button.isEnabled())
-            style = card.style()
-            style.unpolish(card)
-            style.polish(card)
-            card.update()
 
     def _refresh_texture_controls(self) -> None:
         kind = self._TEXTURE_KINDS.get(self._kind_combo.currentText(), "collinear")
@@ -1410,7 +1366,7 @@ class MagneticTextureDialog(QDialog):
         self._prune_threshold = self._decimal_input("0.001", minimum=0.0, maximum=1000.0, placeholder="0.001")
         self._prune_top_n = self._integer_input(32, 1, 10000)
         self._magnitude_info_button = QToolButton()
-        self._magnitude_info_button.setObjectName("mufinderHelpButton")
+        style_help_button(self._magnitude_info_button)
         self._magnitude_info_button.setIcon(icon("help"))
         self._magnitude_info_button.setIconSize(QSize(22, 22))
         self._magnitude_info_button.setToolTip("Explain magnitude normalization and pruning")
@@ -1542,7 +1498,7 @@ class MagneticTextureDialog(QDialog):
         normalize_form = QFormLayout()
         normalize_form.addRow(self._normalise_check)
         grid_group = QWidget()
-        grid_group.setObjectName("magneticInlineFieldGroup")
+        style_inline_group(grid_group)
         grid_layout = QHBoxLayout(grid_group)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_layout.addWidget(QLabel("u"))
@@ -1610,8 +1566,7 @@ class MagneticTextureDialog(QDialog):
 
     def _build_mode_card(self, button: QRadioButton, hint_text: str) -> QFrame:
         card = QFrame(self)
-        card.setObjectName("magneticTargetCard")
-        card.setProperty("selected", False)
+        style_option_card(card)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(12, 12, 12, 12)
         button.setParent(card)
@@ -1627,9 +1582,7 @@ class MagneticTextureDialog(QDialog):
 
     def _build_target_card(self, button: QRadioButton, hint_text: str, editor: QWidget | None = None) -> QFrame:
         card = QFrame(self)
-        card.setObjectName("magneticTargetCard")
-        card.setProperty("selected", False)
-        card.setProperty("unavailable", False)
+        style_option_card(card)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(12, 12, 12, 12)
         button.setParent(card)
@@ -1648,7 +1601,7 @@ class MagneticTextureDialog(QDialog):
 
     def _preview_canvas_button(self, tooltip: str, icon_name: str) -> QToolButton:
         button = QToolButton(self)
-        button.setObjectName("texturePreviewModeButton")
+        style_small_checked_tool_button(button)
         button.setIcon(icon(icon_name))
         button.setToolTip(tooltip)
         button.setCheckable(True)
@@ -1686,7 +1639,7 @@ class MagneticTextureDialog(QDialog):
 
     def _vector_row(self, label: str, inputs: tuple[QLineEdit, QLineEdit, QLineEdit]) -> QWidget:
         row = QWidget(self)
-        row.setObjectName("magneticInlineFieldGroup")
+        style_inline_group(row)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -1698,7 +1651,7 @@ class MagneticTextureDialog(QDialog):
 
     def _field_row(self, label: str, editor: QWidget) -> QWidget:
         row = QWidget(self)
-        row.setObjectName("magneticInlineFieldGroup")
+        style_inline_group(row)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -1709,76 +1662,7 @@ class MagneticTextureDialog(QDialog):
         return row
 
     def _apply_styles(self) -> None:
-        palette = current_palette()
-        self.setStyleSheet(
-            "QDialog {"
-            f"background: {palette.bg_primary};"
-            "}"
-            "QScrollArea {"
-            "background: transparent;"
-            "border: none;"
-            "}"
-            "QScrollArea > QWidget > QWidget {"
-            "background: transparent;"
-            "}"
-            "QGroupBox {"
-            f"background: {palette.bg_surface};"
-            f"border: 1px solid {palette.border};"
-            "border-radius: 14px;"
-            "margin-top: 12px;"
-            "padding-top: 14px;"
-            "font-weight: 700;"
-            f"color: {palette.text_primary};"
-            "}"
-            "QGroupBox::title {"
-            "subcontrol-origin: margin;"
-            "left: 12px;"
-            "padding: 0 8px;"
-            "}"
-            "QFrame#magneticTargetCard {"
-            f"background: {palette.bg_surface_alt};"
-            f"border: 1px solid {palette.border};"
-            "border-radius: 12px;"
-            "}"
-            "QFrame#magneticTargetCard[selected=\"true\"] {"
-            f"background: {palette.bg_surface};"
-            f"border: 1px solid {palette.accent};"
-            "}"
-            "QFrame#magneticTargetCard[unavailable=\"true\"] {"
-            f"background: {palette.bg_primary};"
-            f"border: 1px solid {palette.border};"
-            "}"
-            "QToolButton#texturePreviewModeButton {"
-            f"background: {palette.bg_surface_alt};"
-            f"border: 1px solid {palette.border};"
-            "border-radius: 8px;"
-            "padding: 4px;"
-            "min-width: 24px;"
-            "min-height: 24px;"
-            "}"
-            "QToolButton#texturePreviewModeButton:checked {"
-            f"background: {palette.bg_surface};"
-            f"border: 1px solid {palette.accent};"
-            "}"
-            "QToolButton#texturePreviewModeButton:hover {"
-            f"border: 1px solid {palette.accent_hover};"
-            "}"
-            "QToolButton#mufinderHelpButton {"
-            f"background: {palette.bg_surface};"
-            f"border: 1px solid {palette.border};"
-            "border-radius: 8px;"
-            "padding: 3px;"
-            "min-width: 24px;"
-            "min-height: 24px;"
-            "}"
-            "QToolButton#mufinderHelpButton:hover {"
-            f"border: 1px solid {palette.accent};"
-            f"background: {palette.bg_surface_alt};"
-            "}"
-            "QWidget#magneticInlineFieldGroup, QLabel, QRadioButton, QCheckBox {"
-            "background: transparent;"
-            "}"
-        )
+        self.setStyleSheet(feature_dialog_stylesheet(include_scroll_area=True))
 
     def _connect_preview_updates(self) -> None:
         for edit in (
@@ -1822,13 +1706,8 @@ class MagneticTextureDialog(QDialog):
 
     def _refresh_target_card_styles(self, *_args) -> None:
         for button, card, hint in self._selector_rows:
-            card.setProperty("selected", button.isChecked())
-            card.setProperty("unavailable", not button.isEnabled())
+            set_option_card_state(card, selected=button.isChecked(), unavailable=not button.isEnabled())
             hint.setEnabled(button.isEnabled())
-            style = card.style()
-            style.unpolish(card)
-            style.polish(card)
-            card.update()
 
     def _refresh_mode_controls(self, *_args) -> None:
         mode = self.mode()
@@ -1847,11 +1726,7 @@ class MagneticTextureDialog(QDialog):
         self._add_term_button.setEnabled(custom)
         self._background.setEnabled(square)
         for button, card, _hint in self._mode_rows:
-            card.setProperty("selected", button.isChecked())
-            style = card.style()
-            style.unpolish(card)
-            style.polish(card)
-            card.update()
+            set_option_card_state(card, selected=button.isChecked())
         self._refresh_preview()
 
     def _refresh_preview_canvas_mode(self, *_args) -> None:
@@ -3623,6 +3498,9 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         self._pv, qt_interactor = _pyvista_modules()
         if self._pv is None or qt_interactor is None:
             raise RuntimeError("PyVista and pyvistaqt are required for demagnetizing-field visualisation.")
+        self._sample: DemagnetizingSample | None = None
+        self._refreshing_theme = False
+        self._style_signature = self._style_signature_for_current_palette()
         self._plotter = qt_interactor(self)
         _configure_transparent_pyvista_background(self._plotter)
         self._plotter.enable_parallel_projection()
@@ -3632,10 +3510,24 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         self.setMinimumSize(360, 280)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
+    @staticmethod
+    def _style_signature_for_current_palette() -> tuple[str, ...]:
+        palette = current_palette()
+        return (
+            palette.bg_primary,
+            palette.status_running,
+            palette.accent,
+            palette.success,
+            palette.status_submitting,
+            palette.text_primary,
+        )
+
     def set_sample(self, sample: DemagnetizingSample) -> None:
+        self._sample = sample
         plotter = self._plotter
         pv = self._pv
         plotter.clear()
+        _configure_transparent_pyvista_background(plotter)
         shape = str(sample.shape).strip().lower()
         if shape == "rectangular_prism":
             lengths = np.asarray(sample.prism_lengths, dtype=float)
@@ -3657,12 +3549,39 @@ class _DemagnetizingPyVistaCanvas(QWidget):
 
         palette = current_palette()
         plotter.add_mesh(mesh, color=palette.status_running, opacity=0.42, smooth_shading=True)
-        self._add_arrow((0.0, 0.0, 0.0), (1.25 * extent, 0.0, 0.0), palette.status_failed, "a")
-        self._add_arrow((0.0, 0.0, 0.0), (0.0, 1.25 * extent, 0.0), palette.status_complete, "b")
-        self._add_arrow((0.0, 0.0, 0.0), (0.0, 0.0, 1.25 * extent), palette.accent, "c")
+        axis_colors = (palette.accent, palette.success, palette.status_submitting)
+        self._add_arrow((0.0, 0.0, 0.0), (1.25 * extent, 0.0, 0.0), axis_colors[0], "a")
+        self._add_arrow((0.0, 0.0, 0.0), (0.0, 1.25 * extent, 0.0), axis_colors[1], "b")
+        self._add_arrow((0.0, 0.0, 0.0), (0.0, 0.0, 1.25 * extent), axis_colors[2], "c")
         self._add_arrow((0.0, 0.0, -0.18 * extent), (0.0, 0.0, 1.65 * extent), palette.text_primary, "M")
         plotter.reset_camera()
         plotter.render()
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        super().changeEvent(event)
+        plotter = getattr(self, "_plotter", None)
+        signature = self._style_signature_for_current_palette()
+        if (
+            self._refreshing_theme
+            or plotter is None
+            or signature == getattr(self, "_style_signature", None)
+            or event.type() not in {
+                QEvent.Type.StyleChange,
+                QEvent.Type.PaletteChange,
+                QEvent.Type.ApplicationPaletteChange,
+            }
+        ):
+            return
+        self._refreshing_theme = True
+        try:
+            self._style_signature = signature
+            _configure_transparent_pyvista_background(plotter)
+            if self._sample is not None:
+                self.set_sample(self._sample)
+            else:
+                plotter.render()
+        finally:
+            self._refreshing_theme = False
 
     def shutdown(self) -> None:
         _shutdown_pyvista_widget(self._plotter)
@@ -4001,7 +3920,7 @@ class NuclearRelaxationDialog(QDialog):
         mode_form.addRow("Field regime", self._regime_combo)
         mode_form.addRow("Sample", self._sample_combo)
         direction_group = QWidget(mode_group)
-        direction_group.setObjectName("magneticInlineFieldGroup")
+        style_inline_group(direction_group)
         direction_layout = QHBoxLayout(direction_group)
         direction_layout.setContentsMargins(0, 0, 0, 0)
         direction_layout.addWidget(QLabel("x"))
@@ -4036,10 +3955,6 @@ class NuclearRelaxationDialog(QDialog):
     def _apply_styles(self) -> None:
         palette = current_palette()
         self.setStyleSheet(
-            "QWidget#magneticInlineFieldGroup, "
-            "QWidget#magneticInlineFieldGroup QLabel {"
-            "background: transparent;"
-            "}"
             "QLineEdit#nuclearDirectionInput {"
             f"background: {palette.bg_surface};"
             f"border: 1px solid {palette.border};"

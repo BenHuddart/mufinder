@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
@@ -228,6 +228,7 @@ class CutoffConvergenceWidget(QWidget):
             "step": 100.0,
             "replace_existing": False,
         }
+        self._parameter_species_options: tuple[str, ...] = ()
 
         self._cutoff_table = QTableWidget(0, 6)
         self._cutoff_table.setHorizontalHeaderLabels(
@@ -286,9 +287,11 @@ class CutoffConvergenceWidget(QWidget):
 
         self._build_layout()
         self._connect_signals()
-        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._cutoff_table)
+        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
+        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._delete_shortcut.activated.connect(self._remove_selected_or_current_cutoffs)
-        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self._cutoff_table)
+        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._backspace_shortcut.activated.connect(self._remove_selected_or_current_cutoffs)
 
     def _build_layout(self) -> None:
@@ -466,6 +469,11 @@ class CutoffConvergenceWidget(QWidget):
             self._simulation_cell_use_unit_button.setEnabled(enabled)
         finally:
             self._updating_simulation_cell = False
+
+    def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
+        self._parameter_species_options = tuple(
+            dict.fromkeys(option for item in species_options if (option := str(item).strip()))
+        )
 
     def _on_simulation_cell_combo_changed(self, index: int) -> None:
         if self._updating_simulation_cell:
@@ -652,6 +660,7 @@ class CutoffConvergenceWidget(QWidget):
             "workflow_stage": "convergence_cutoff",
             "locked_values": self._shared_locked_values(),
             "intro_text": intro_text,
+            "species_options": self._parameter_species_options,
             "parent": self,
         }
         if read_only:
@@ -883,6 +892,8 @@ class CutoffConvergenceWidget(QWidget):
             self.remove_cutoff_requested.emit(cutoffs)
 
     def _remove_selected_or_current_cutoffs(self) -> None:
+        if self._cutoff_table.state() == QAbstractItemView.State.EditingState:
+            return
         selected_rows = self._selected_rows()
         if selected_rows:
             self._request_cutoff_removals(selected_rows)

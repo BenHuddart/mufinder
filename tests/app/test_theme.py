@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QTableWidget, QTreeWidget, QTreeWidgetItem
+from PySide6.QtWidgets import QFrame, QTableWidget, QToolButton, QTreeWidget, QTreeWidgetItem, QWidget
 
 from mufinder.app import theme as theme_module
 
@@ -43,6 +43,9 @@ def test_apply_theme_sets_active_palette(qapp) -> None:
     assert "QTreeWidget#workflowTree::branch:closed:has-children" in stylesheet
     assert "QToolButton#sectionToggleButton" in stylesheet
     assert "QToolButton#mufinderHelpButton" in stylesheet
+    assert "QToolButton#mufinderCheckedToolButton" in stylesheet
+    assert "QFrame#mufinderOptionCard" in stylesheet
+    assert "QWidget#mufinderInlineGroup" in stylesheet
     assert 'QTableWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last' in stylesheet
     assert 'QTableWidget[hasVisibleVerticalHeader="true"] QHeaderView::section:horizontal:first' in stylesheet
     assert 'QTreeWidget[squareTopCorners="true"]' in stylesheet
@@ -74,6 +77,61 @@ def test_status_brush_uses_palette_tokens(qapp) -> None:
     colour = brush.color().name().lower()
 
     assert colour == theme_module.current_palette().status_failed.lower()
+
+
+def test_lifecycle_status_colours_distinguish_ready_queued_and_running(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    light_palette = theme_module.current_palette()
+    assert light_palette.status_ready == "#0369A1"
+    assert light_palette.status_queued == "#A16207"
+    assert light_palette.status_running == "#2563EB"
+    assert theme_module.status_brush("ready").color().name().lower() == "#0369a1"
+    assert theme_module.status_brush("queued").color().name().lower() == "#a16207"
+    assert theme_module.status_brush("running").color().name().lower() == "#2563eb"
+
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+
+    dark_palette = theme_module.current_palette()
+    assert dark_palette.status_ready == "#7DD3FC"
+    assert dark_palette.status_queued == "#FBBF24"
+    assert dark_palette.status_running == "#60A5FA"
+    assert theme_module.status_brush("ready").color().name().lower() == "#7dd3fc"
+    assert theme_module.status_brush("queued").color().name().lower() == "#fbbf24"
+    assert theme_module.status_brush("running").color().name().lower() == "#60a5fa"
+
+
+def test_feature_dialog_style_helpers_tag_reusable_widgets(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    inline = QWidget()
+    card = QFrame()
+    help_button = QToolButton()
+    checked_button = QToolButton()
+
+    theme_module.style_inline_group(inline)
+    theme_module.style_option_card(card)
+    theme_module.style_help_button(help_button)
+    theme_module.style_small_checked_tool_button(checked_button)
+    theme_module.set_option_card_state(card, selected=True, unavailable=True)
+
+    assert inline.objectName() == "mufinderInlineGroup"
+    assert card.objectName() == "mufinderOptionCard"
+    assert card.property("selected") is True
+    assert card.property("unavailable") is True
+    assert help_button.objectName() == "mufinderHelpButton"
+    assert checked_button.objectName() == "mufinderCheckedToolButton"
+
+
+def test_feature_dialog_stylesheet_uses_shared_feature_selectors(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
+
+    stylesheet = theme_module.feature_dialog_stylesheet(include_scroll_area=True)
+
+    assert "QFrame#mufinderOptionCard" in stylesheet
+    assert "QWidget#mufinderInlineGroup" in stylesheet
+    assert "QToolButton#mufinderCheckedToolButton" in stylesheet
+    assert "QScrollArea" in stylesheet
 
 
 def test_dark_palette_uses_night_expedition_accent(qapp) -> None:

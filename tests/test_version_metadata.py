@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import re
+import sys
 
 import mufinder._version as version_module
 from mufinder import __version__
@@ -21,12 +22,37 @@ def _pyproject_version() -> str:
     return match.group(1)
 
 
+def _pyproject_requires_python() -> str:
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^requires-python = "([^"]+)"$', text, re.MULTILINE)
+    assert match is not None
+    return match.group(1)
+
+
 def test_runtime_version_matches_pyproject() -> None:
     expected = _pyproject_version()
 
     assert current_version() == expected
     assert __version__ == expected
     assert Project().app_version == expected
+
+
+def test_python_requirement_matches_supported_syntax() -> None:
+    assert _pyproject_requires_python() == ">=3.12"
+    assert sys.version_info >= (3, 12)
+
+
+def test_github_workflows_target_supported_python_version() -> None:
+    workflow_dir = ROOT / ".github" / "workflows"
+    workflow_texts = [path.read_text(encoding="utf-8") for path in workflow_dir.glob("*.yml")]
+    versions = {
+        match.group(1)
+        for text in workflow_texts
+        for match in re.finditer(r'python-version:\s*"([^"]+)"', text)
+    }
+
+    assert versions
+    assert versions == {"3.12"}
 
 
 def test_current_version_prefers_source_tree_pyproject(

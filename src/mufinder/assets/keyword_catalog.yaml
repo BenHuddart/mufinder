@@ -89,6 +89,30 @@ keywords:
       %ENDBLOCK SPECIES_POT
     notes: Starter implementation handles one species/pseudopotential pair per row.
 
+  - name: HUBBARD_U
+    canonical_name: hubbard_u
+    file: cell
+    kind: block
+    value_type: hubbard_u_block
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK HUBBARD_U
+      eV
+      Sm f: 6.1
+      Ni d: 2.4
+      U d: 1.2
+      U f: 2.1
+      %ENDBLOCK HUBBARD_U
+    notes: Optional first line stores the Hubbard U unit, currently eV or Ha. The guided editor writes one row per species/orbital target, using `s:`, `p:`, `d:`, or `f:` values for all atoms of that species.
+    gui:
+      label: Hubbard U
+      category: electronic
+      widget_hint: hubbard_u
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, uep, muon_generation, muon_relaxation, site_analysis, magnetic_field, quantum_corrections, energy_barriers]
+
   - name: KPOINTS_LIST
     canonical_name: kpoints_list
     file: cell

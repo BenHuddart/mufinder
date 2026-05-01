@@ -1467,7 +1467,6 @@ class RelaxationAnalysisWidget(QWidget):
             existing = cluster_items.get(int(label))
             if existing is not None:
                 return existing
-            members = [index for index, current in enumerate(labels) if int(current) == int(label)]
             match = assignments.get(int(label))
             title = f"Cluster {int(label)}: {_wyckoff_assignment_text(match)}"
             item = QTreeWidgetItem([title, "", "", "", "", "", ""])

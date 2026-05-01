@@ -573,11 +573,26 @@ def test_record_job_submission_appends_one_provenance_milestone(tmp_path: Path) 
     )
 
     service.submit_job(job)
+    job.remote_job_id = "12345"
+    job.remote_directory = "/remote/work/Conv300"
+    job.num_processes = 16
     service.record_job_submission(doc, jobs=[job], execution_target="local")
 
     assert doc.provenance[-1].action == "submit_jobs"
     assert doc.provenance[-1].parameters["job_labels"] == ["Conv300"]
     assert doc.provenance[-1].parameters["execution_target"] == "local"
+    assert doc.provenance[-1].parameters["jobs"] == [
+        {
+            "job_id": str(job.id),
+            "label": "Conv300",
+            "status": "submitting",
+            "execution_target": "local",
+            "remote_job_id": "12345",
+            "remote_directory": "/remote/work/Conv300",
+            "num_processes": 16,
+            "submitted_at": job.submitted_at.isoformat() if job.submitted_at else None,
+        }
+    ]
 
 
 def test_record_job_terminal_events_and_reset_append_provenance(tmp_path: Path) -> None:

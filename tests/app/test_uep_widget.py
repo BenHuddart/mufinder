@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QPushButton, QToolButton
 
 from mufinder.app.param_dialog import ParameterDialog
@@ -174,11 +175,12 @@ def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkey
             *,
             specs: list[Any],
             workflow_stage: str,
-            locked_values: Mapping[str, object],
-            intro_text: str | None = None,
-            parent: object | None = None,
-        ) -> None:
-            del specs, workflow_stage, locked_values, intro_text, parent
+                locked_values: Mapping[str, object],
+                intro_text: str | None = None,
+                species_options: tuple[str, ...] = (),
+                parent: object | None = None,
+            ) -> None:
+                del specs, workflow_stage, locked_values, intro_text, species_options, parent
 
         def set_values(self, values: Mapping[str, object]) -> None:
             calls.append(("set_values", dict(values)))
@@ -229,12 +231,13 @@ def test_uep_widget_reopens_dialog_with_saved_row_values(qapp, monkeypatch) -> N
             *,
             specs: list[Any],
             workflow_stage: str,
-            locked_values: Mapping[str, object],
-            intro_text: str | None = None,
-            parent: object | None = None,
-        ) -> None:
-            del specs, workflow_stage, locked_values, intro_text, parent
-            self._payload = next(dialog_payloads)
+                locked_values: Mapping[str, object],
+                intro_text: str | None = None,
+                species_options: tuple[str, ...] = (),
+                parent: object | None = None,
+            ) -> None:
+                del specs, workflow_stage, locked_values, intro_text, species_options, parent
+                self._payload = next(dialog_payloads)
 
         def set_values(self, values: Mapping[str, object]) -> None:
             seen_values.append(dict(values))
@@ -300,6 +303,41 @@ def test_uep_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
     assert isinstance(remove_button, QToolButton)
     assert remove_button.isEnabled()
     assert widget._runtime_controls_locked(widget._runtime_state_for_row(row_id).status)
+
+
+def test_uep_widget_delete_shortcut_removes_selected_job(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    removed_label = widget._table.item(0, widget._LABEL_COLUMN).text()
+
+    widget._table.selectRow(0)
+    widget._delete_shortcut.activated.emit()
+
+    assert removed == [[removed_label]]
+    assert widget._table.rowCount() == 1
+
+
+def test_uep_widget_delete_key_removes_selected_job_from_child_focus(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    removed_label = widget._table.item(0, widget._LABEL_COLUMN).text()
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    widget.show()
+    widget._table.selectRow(0)
+    configure_button.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(configure_button, Qt.Key.Key_Delete)
+
+    assert removed == [[removed_label]]
+    assert widget._table.rowCount() == 1
 
 
 def test_uep_widget_cancelled_row_keeps_parameters_editable(qapp) -> None:

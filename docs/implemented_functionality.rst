@@ -43,6 +43,17 @@ save:
   their current analysis layout and visualization choices to disk for the next
   session, while autosave mainly protects durable project and job state.
 
+Development harness
+-------------------
+
+The repository now includes an agent-legible development harness:
+
+- ``AGENTS.md`` is a short route map to durable repository docs.
+- :doc:`agent_harness` documents the expected agent workflow and feedback loop.
+- :doc:`architecture` defines package layers and dependency directions.
+- ``tests/test_agent_harness.py`` enforces the first structural guardrails for
+  docs indexing, layer imports, and tracked bytecode artifacts.
+
 Journal view
 ------------
 
@@ -127,7 +138,7 @@ The host-structure panel now includes:
 - Spin rendering disabled by default, with automatic enablement when any edited/imported spin value is non-zero.
 - Atom transparency automatically applied when spin rendering is enabled.
 - Viewer fitting accounts for full atom sphere extents (not just atom centers), preventing unnecessary clipping at left/right boundaries.
-- Crystallographic axis triad rendered below the main viewer to maximize primary structure viewport area.
+- Crystallographic axis triad rendered below the main viewer to maximize primary structure viewport area, with viewer and triad colours refreshed from the active light/dark palette.
 - Left-clicking empty space in the viewer clears the current atom selection.
 - A project-level supercell editor with simple diagonal controls, optional
   advanced full 3x3 matrix entry, naming, preview, save, edit, delete, and
@@ -458,7 +469,7 @@ The optional ``Pristine Relaxation`` stage now includes:
 - Per-row ``FIX_ALL_CELL`` control with deterministic CASTEP ``FIX_ALL_CELL`` serialization.
 - Per-row parameter configuration through the shared workflow-aware CASTEP parameter dialog.
 - Project-default propagation of cutoff energy and k-point grid into generated pristine-relaxation jobs.
-- Supercell-aware k-point remapping that preserves equivalent reciprocal-space sampling density relative to the recommended reference lattice.
+- Supercell-aware k-point remapping that preserves equivalent reciprocal-space sampling density relative to the recommended reference lattice by scaling each k-point component with the corresponding reciprocal-axis change and always rounding up to avoid undersampling. For example, a ``4x4x4`` default maps to ``2x2x2`` for diagonal ``2x2x2`` and ``2x2x3`` supercells.
 - Runtime status columns for each row including ``a``, ``b``, ``c`` lattice parameters extracted from relaxed outputs.
 
 Pristine-relaxation result handling now includes:
@@ -477,6 +488,7 @@ The ``Pristine Relaxation`` stage now includes a ``Generate Comparison Table`` f
 - a dialog listing completed pristine-relaxation jobs with include tickboxes,
 - support for selecting one or more DFT jobs against the active experimental host structure,
 - generation of a persisted comparison-table subtab under ``Pristine Relaxation`` in the project tree,
+- inline editing of comparison-table titles after creation, with the project-tree subtab label kept in sync,
 - deletion from either a top-right ``Delete`` button in the comparison view or a project-tree context menu,
 - metric rows with per-metric ``Info`` dialogs,
 - a collapsible ``DFT Parameter Differences`` section that shows only parameter values that differ across selected DFT jobs,
@@ -518,7 +530,7 @@ Submission entry points include:
 - Right-click context menu in cutoff convergence rows.
 - Delete/Backspace keyboard removal for the current cutoff row or a selected set of rows.
 - Per-row action buttons in the shared job dashboard table after a job has entered the queue/submission lifecycle.
-- Failed-job inspection and reset actions in the shared job dashboard.
+- Failed/cancelled-job resubmit plus failed-job inspection and reset actions in the shared job dashboard.
 
 Submission controls include:
 
@@ -548,8 +560,19 @@ Runtime behavior includes:
 
 - Resetting failed jobs back to ``ready`` for rerun, with optional cleanup
 	of output files while preserving generated input files.
+- Resubmitting failed or cancelled dashboard jobs directly, reusing existing
+	remote files for continuation runs and replacing the stored remote scheduler
+	id with the new id.
 - Save-on-close prompting for open visible projects.
 - Color-coded status text for dashboard and convergence status displays.
+
+The shared job dashboard is intended to show jobs that still need attention.
+Ready jobs are submitted from their workflow tables. Active jobs appear in the
+dashboard while they are submitting, queued, running, or retrieving outputs.
+Completed jobs leave the dashboard after successful result handling. Failed,
+stopped, and cancelled jobs remain visible so they can be inspected,
+resubmitted, or reset. See :doc:`job_lifecycle` for the full lifecycle contract
+and the current stuck-row prevention recommendations.
 
 Failure diagnostics include:
 
@@ -567,6 +590,7 @@ Status transitions across local and cluster execution now also include:
 
 - ``running``/``retrieving`` -> ``stopped`` (for walltime/time-limit stops)
 - ``failed``/``stopped``/``cancelled`` -> ``defined`` via reset for resubmission
+- ``failed``/``cancelled`` -> ``submitting`` via dashboard resubmission
 
 Output handling includes:
 
@@ -633,4 +657,7 @@ Remote lifecycle and retrieval includes:
 
 - Scheduler state mapping to MuFinder job states (queued/running/completed/failed/cancelled/stopped).
 - Automatic retrieval of completion outputs for parser ingestion.
-- ``stopped`` state support for walltime-limited runs with reset/resubmit flow.
+- ``stopped`` state support for walltime-limited runs with reset flow.
+- Shared job execution lifecycle orchestration records submissions, creates
+  calculation runs, applies local/remote status transitions, and records
+  terminal provenance events outside the Qt window layer.

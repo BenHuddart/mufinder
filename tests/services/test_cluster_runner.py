@@ -145,6 +145,37 @@ def test_cluster_runner_submit_uploads_files_and_emits_queued(qapp, tmp_path: Pa
     assert any(cmd[0] == "put" and str(cmd[1]).endswith(".param") for cmd in runner._ssh.commands)
 
 
+def test_cluster_runner_submit_can_reuse_existing_remote_files(qapp, tmp_path: Path) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+
+    job_id = uuid4()
+    seed = "conv_ecut_300"
+    job_dir = _prepare_local_job(tmp_path, seed)
+    template = _template_file(tmp_path)
+
+    remote_job_id = runner.submit(
+        job_id=job_id,
+        local_job_dir=job_dir,
+        seed_name=seed,
+        num_processes=8,
+        walltime="01:00:00",
+        working_directory="/remote/work",
+        template_script_path=str(template),
+        cores_per_node=32,
+        remote_directory="/remote/work/existing_continuation",
+        reuse_existing_files=True,
+    )
+
+    assert remote_job_id == "12345"
+    assert runner._ssh.commands == [("mkdir", ("/remote/work/existing_continuation", True))]
+    request = scheduler.submit_requests[0]
+    assert request.working_dir == "/remote/work/existing_continuation"
+    assert request.script_path == "/remote/work/existing_continuation/run.sh"
+
+
 def test_cluster_runner_poll_moves_running_and_completed(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
     runner._ssh = _FakeSSH()

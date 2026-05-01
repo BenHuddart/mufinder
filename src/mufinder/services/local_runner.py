@@ -10,7 +10,7 @@ from uuid import UUID
 
 from PySide6.QtCore import QObject, QProcess, Signal
 
-from mufinder.castep_io.output_parser import CastepResult, parse_castep_output
+from mufinder.castep_io.output_parser import parse_castep_output
 from mufinder.domain.enums import JobStatus
 
 

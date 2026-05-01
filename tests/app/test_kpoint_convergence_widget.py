@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QPushButton
 
 import mufinder.app.kpoint_convergence_widget as kpoint_widget_module
@@ -478,6 +480,49 @@ def test_kpoint_widget_remove_grids_prunes_configs(qapp) -> None:
 
     assert (2, 2, 2) not in widget._parameter_values
     assert _table_grids(widget) == [(3, 3, 2)]
+
+
+def test_kpoint_widget_delete_shortcut_requests_selected_grid_removal(qapp) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget._add_grid((3, 3, 2))
+    requested: list[list[tuple[int, int, int]]] = []
+    widget.remove_grid_requested.connect(lambda grids: requested.append(list(grids)))
+
+    widget._table.selectRow(1)
+    widget._delete_shortcut.activated.emit()
+
+    assert requested == [[(3, 3, 2)]]
+
+
+def test_kpoint_widget_backspace_shortcut_requests_current_grid_removal(qapp) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    requested: list[list[tuple[int, int, int]]] = []
+    widget.remove_grid_requested.connect(lambda grids: requested.append(list(grids)))
+
+    widget._table.setCurrentCell(0, widget._GRID_COLUMN)
+    widget._backspace_shortcut.activated.emit()
+
+    assert requested == [[(2, 2, 2)]]
+
+
+def test_kpoint_widget_delete_key_requests_selected_grid_from_child_focus(qapp) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget._add_grid((3, 3, 2))
+    requested: list[list[tuple[int, int, int]]] = []
+    widget.remove_grid_requested.connect(lambda grids: requested.append(list(grids)))
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    widget.show()
+    widget._table.selectRow(0)
+    configure_button.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(configure_button, Qt.Key.Key_Delete)
+
+    assert requested == [[(2, 2, 2)]]
 
 
 def test_kpoint_widget_build_config_warns_for_invalid_grids_and_duplicates(

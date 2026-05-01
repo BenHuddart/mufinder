@@ -80,8 +80,9 @@ The local CASTEP execution path must satisfy the following requirements:
    the current convergence configuration and submits the selected/current cutoff rows,
    replacing any separate pre-generation step.
 
-- The cutoff convergence table must support removing the current row or selected rows
-   via the Delete key, not just via pointer-driven controls.
+- Workflow row tables for relaxation and convergence jobs must support
+   removing the current row or selected rows via Delete and Backspace,
+   not just via pointer-driven controls.
 
 - Shared job dashboard controls must be exposed as per-row action buttons,
   rather than requiring a context menu.
@@ -121,8 +122,12 @@ The local CASTEP execution path must satisfy the following requirements:
 - When removing multiple cutoff rows in one action, repeated confirmations must offer
    ``Yes to All`` / ``No to All`` choices for both status-transition prompts and file-handling prompts.
 
-- Failed-job management must be available from the shared dashboard UI:
+- Failed and cancelled job management must be available from the shared dashboard UI:
 
+   - resubmit failed or cancelled jobs while reusing existing remote files so
+     continuation runs can start from the same working directory
+   - update the dashboard row with the replacement remote scheduler id after
+     successful resubmission
    - inspect available ``*.err`` files for failed jobs
    - report contextual excerpts around failure lines from those ``*.err`` files
    - reset failed jobs to ``ready`` for rerun

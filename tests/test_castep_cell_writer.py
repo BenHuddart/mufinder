@@ -6,6 +6,7 @@ from pathlib import Path
 
 from mufinder.castep_io import (
     AtomicPosition,
+    BlockSection,
     CellFile,
     KeywordAssignment,
     KPoint,
@@ -165,6 +166,38 @@ def test_write_cell_serializes_inline_spins_in_positions_frac() -> None:
 
     assert "Fe 0 0 0 SPIN=2" in rendered
     assert "Fe 0.5 0.5 0.5 SPIN=-2" in rendered
+
+
+def test_write_cell_serializes_hubbard_u_block() -> None:
+    cell_file = CellFile(
+        lattice_cart=LatticeCart(
+            vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+            unit="ang",
+        ),
+        positions_frac=PositionBlock(
+            positions=(
+                AtomicPosition("Sm", (0.0, 0.0, 0.0)),
+                AtomicPosition("Ni", (0.5, 0.5, 0.5)),
+            )
+        ),
+        blocks=(
+            BlockSection(
+                "hubbard_u",
+                (
+                    ("Sm", 1, "f:", 6.1),
+                    ("Ni", "d:", 2.4),
+                ),
+                unit="eV",
+            ),
+        ),
+    )
+
+    rendered = write_cell(cell_file)
+
+    assert "%BLOCK HUBBARD_U" in rendered
+    assert "eV" in rendered
+    assert "Sm 1 f: 6.1" in rendered
+    assert "Ni d: 2.4" in rendered
 
 
 def test_write_cell_omits_zero_spins_and_matches_golden() -> None:

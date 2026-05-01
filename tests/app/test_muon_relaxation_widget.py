@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QMessageBox, QPushButton, QToolButton
 
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
@@ -287,7 +288,58 @@ def test_muon_relaxation_widget_delete_shortcut_removes_selected_jobs(qapp) -> N
     widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
 
     widget._table.selectRow(0)
-    widget._table_delete_shortcuts[widget._table].activated.emit()
+    widget._delete_shortcut.activated.emit()
+
+    assert removed == [["positivemuon:Site A"]]
+    assert widget._table.rowCount() == 1
+    assert widget._label_at_row(0, table=widget._table) == "Site B"
+
+
+def test_muon_relaxation_widget_delete_shortcut_removes_current_job_without_selection(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {"id": str(uuid4()), "label": "Site A", "fractional_position": [0.1, 0.2, 0.3]},
+            {"id": str(uuid4()), "label": "Site B", "fractional_position": [0.4, 0.5, 0.6]},
+        ]
+    )
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+
+    widget._table.setCurrentCell(1, widget._LABEL_COLUMN)
+    widget._table.clearSelection()
+    widget._delete_shortcut.activated.emit()
+
+    assert removed == [["positivemuon:Site B"]]
+    assert widget._table.rowCount() == 1
+    assert widget._label_at_row(0, table=widget._table) == "Site A"
+
+
+def test_muon_relaxation_widget_delete_shortcuts_include_cell_widgets(qapp) -> None:
+    widget = MuonRelaxationWidget()
+
+    assert widget._delete_shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    assert widget._backspace_shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+
+
+def test_muon_relaxation_widget_delete_key_removes_selected_row_from_child_focus(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {"id": str(uuid4()), "label": "Site A", "fractional_position": [0.1, 0.2, 0.3]},
+            {"id": str(uuid4()), "label": "Site B", "fractional_position": [0.4, 0.5, 0.6]},
+        ]
+    )
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    widget.show()
+    widget._table.selectRow(0)
+    configure_button.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(configure_button, Qt.Key.Key_Delete)
 
     assert removed == [["positivemuon:Site A"]]
     assert widget._table.rowCount() == 1
@@ -310,7 +362,7 @@ def test_muon_relaxation_widget_backspace_shortcut_removes_selected_jobs_from_ac
 
     widget._charge_tabs.setCurrentWidget(muonium_table)
     muonium_table.selectRow(0)
-    widget._table_backspace_shortcuts[muonium_table].activated.emit()
+    widget._backspace_shortcut.activated.emit()
 
     assert removed == [["muonium:Shared Site"]]
     assert muonium_table.rowCount() == 0
