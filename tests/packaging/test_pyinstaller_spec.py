@@ -49,6 +49,7 @@ def test_pyinstaller_spec_bundles_mufinder_runtime_assets_and_data() -> None:
 
     assert 'collect_data_files("mufinder.assets")' in spec_text
     assert 'collect_data_files("mufinder.data")' in spec_text
+    assert 'copy_metadata("mufinder")' in spec_text
 
 
 def test_pyinstaller_spec_bundles_ase_spacegroup_data() -> None:

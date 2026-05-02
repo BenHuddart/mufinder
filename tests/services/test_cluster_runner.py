@@ -562,6 +562,35 @@ def test_cluster_runner_retrieve_downloads_optional_formatted_density(
     assert (tmp_path / "seed.den_fmt").read_bytes() == b"density output"
 
 
+def test_cluster_runner_retrieve_downloads_optional_phonon(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="125",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+        retrieve_phonon=True,
+    )
+    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
+    runner._ssh.remote_files["/remote/job/seed.phonon"] = b"phonon output"
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+
+    runner._retrieve_results(entry)
+
+    assert (tmp_path / "seed.phonon").read_bytes() == b"phonon output"
+
+
 def test_cluster_runner_retrieve_skips_optional_files_when_not_requested(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -581,6 +610,7 @@ def test_cluster_runner_retrieve_skips_optional_files_when_not_requested(
     runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
     runner._ssh.remote_files["/remote/job/seed.den_fmt"] = b"density output"
     runner._ssh.remote_files["/remote/job/seed-out.cell"] = b"relaxed cell"
+    runner._ssh.remote_files["/remote/job/seed.phonon"] = b"phonon output"
 
     monkeypatch.setattr(
         cluster_runner_module,
@@ -592,6 +622,7 @@ def test_cluster_runner_retrieve_skips_optional_files_when_not_requested(
 
     assert not (tmp_path / "seed.den_fmt").exists()
     assert not (tmp_path / "seed-out.cell").exists()
+    assert not (tmp_path / "seed.phonon").exists()
 
 
 def test_cluster_runner_retrieve_incomplete_walltime_marks_stopped(

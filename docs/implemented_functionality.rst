@@ -168,6 +168,38 @@ The Magnetic Fields workflow currently includes:
 - optional muon-induced distortion corrections when a selected
   structural-relaxation cluster site has a derived distorted structure.
 
+Quantum Corrections
+-------------------
+
+The Quantum Corrections workflow now has a project page and implemented core
+phonon analysis support.
+
+Current behavior includes:
+
+- listing structurally relaxed MuFinder muon sites that are eligible phonon
+  sources;
+- rejecting generated, UEP-only, pristine-relaxation, failed, and
+  provenance-free sources;
+- expanding Gamma-only CASTEP phonon ``JobSpec`` objects with ``TASK : PHONON``,
+  ``PHONON_METHOD``, ``PHONON_KPOINT_MP_GRID 1 1 1``, and explicit ``H:mu``
+  mass/gamma cell blocks;
+- finite displacement as the default phonon method, with DFPT/linear-response
+  compatibility checks for known pseudopotential restrictions;
+- parsing CASTEP ``.phonon`` files into typed q-point, atom, frequency, and
+  eigenvector data;
+- selecting the three Gamma modes with largest muon participation;
+- calculating per-mode and total muon ZPE, covariance/correlation tensors, and
+  legacy-style ``w1``/``w2`` witnesses;
+- solving one-dimensional single-particle effective potentials for
+  Gomilsek-style weakly-bound and imported strongly-bound adiabatic analyses;
+- retrieving ``.phonon`` files from cluster jobs and listing them with other
+  job outputs;
+- persisting completed quantum phonon analysis summaries into ``Result``
+  entities.
+
+See :doc:`quantum_corrections` for method assumptions and the planned
+Gomilsek-style single-particle approximation layer.
+
 Supercell editor
 ----------------
 

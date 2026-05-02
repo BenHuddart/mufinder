@@ -130,6 +130,11 @@ from mufinder.app.icons import icon, workflow_stage_icon
 from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.magnetic_field_widget import MagneticFieldWidget
 from mufinder.app.muon_generation_widget import MuonGenerationWidget
+from mufinder.app.quantum_corrections_widget import (
+    QuantumCorrectionsWidget,
+    QuantumResultRow,
+    QuantumSourceRow,
+)
 from mufinder.app.supercell_dialog import SupercellEditorDialog
 from mufinder.app.submission_dialog import LocalSubmissionDialog
 from mufinder.app.theme import (
@@ -167,6 +172,7 @@ from mufinder.services.ssh_client import (
     save_trusted_host_key,
 )
 from mufinder.science.kpoint_grids import lattice_parameters
+from mufinder.science.quantum_phonons import PhononParseError, muon_zpe, parse_phonon_path, w1_entanglement_witness
 from mufinder.science.relaxation_analysis import folded_muon_position_from_structure
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.uep import UepError, UepPotentialGrid, deserialize_potential_grid, serialize_potential_grid
@@ -174,6 +180,7 @@ from mufinder.science.structure_comparison import DftComparisonInput, compare_st
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
 from mufinder.workflow.naming import job_name
+from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, quantum_source_eligibility
 
 
 _ACTIVE_LOCAL_JOB_STATES = {
@@ -192,6 +199,15 @@ def _structure_species_options(structure: Structure | None) -> tuple[str, ...]:
     if structure is None:
         return ()
     return tuple(dict.fromkeys(species for item in structure.species if (species := str(item).strip())))
+
+
+def _format_energy(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        return f"{float(value):.6g} eV"
+    except (TypeError, ValueError):
+        return ""
 
 
 # Backward-compatible alias used by legacy tests and call sites.
@@ -1353,7 +1369,7 @@ class MainWindow(QMainWindow):
         )
         self._magnetic_field_view.form_state_changed.connect(self._on_magnetic_field_form_state_changed)
         self._magnetic_field_view.pin_requested.connect(self._on_magnetic_field_pin_requested)
-        self._quantum_corrections_placeholder = ConstructionSignWidget()
+        self._quantum_corrections_view = QuantumCorrectionsWidget()
         self._energy_barriers_placeholder = ConstructionSignWidget()
         self._journal_view = JournalWidget()
         self._main_stack.addWidget(self._home_page)
@@ -1368,7 +1384,7 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._muon_relaxation_view)
         self._main_stack.addWidget(self._relaxation_analysis_view)
         self._main_stack.addWidget(self._magnetic_field_view)
-        self._main_stack.addWidget(self._quantum_corrections_placeholder)
+        self._main_stack.addWidget(self._quantum_corrections_view)
         self._main_stack.addWidget(self._energy_barriers_placeholder)
         self._main_stack.addWidget(self._journal_view)
 
@@ -2435,7 +2451,9 @@ class MainWindow(QMainWindow):
             except ValueError:
                 continue
             job = document.jobs.get(job_id)
-            if job is not None:
+            if job is not None and is_muon_relaxation_calc_type(job.calc_type):
+                if charge_state and job.calc_type != muon_relaxation_calc_type(charge_state):
+                    continue
                 return job
         return None
 
@@ -3140,7 +3158,8 @@ class MainWindow(QMainWindow):
             if workspace_id is not None:
                 target = self._magnetic_field_workspace_widgets.get(workspace_id, self._magnetic_field_view)
         elif route == "quantum_corrections":
-            target = self._quantum_corrections_placeholder
+            self._refresh_quantum_corrections_view()
+            target = self._quantum_corrections_view
         elif route == "energy_barriers":
             target = self._energy_barriers_placeholder
         elif route == "provenance_log":
@@ -4151,6 +4170,13 @@ class MainWindow(QMainWindow):
             return 30
         return 0
 
+    @staticmethod
+    def _job_submission_sort_key(job: Job) -> float:
+        for stamp in (job.submitted_at, job.started_at, job.completed_at):
+            if stamp is not None:
+                return stamp.timestamp()
+        return 0.0
+
     def _materialize_convergence_jobs(self, cutoff_values: list[float]) -> list[Job]:
         if self._document is None:
             return []
@@ -4951,6 +4977,7 @@ class MainWindow(QMainWindow):
                     retrieve_den_fmt=job.calc_type == "castep_uep_source",
                     retrieve_out_cell=job.calc_type == "castep_pristine_relaxation"
                     or is_muon_relaxation_calc_type(job.calc_type),
+                    retrieve_phonon=job.calc_type == QUANTUM_PHONON_CALC_TYPE,
                     reuse_existing_files=reuse_existing_files_by_job.get(job.id, False),
                 )
             )
@@ -5473,6 +5500,81 @@ class MainWindow(QMainWindow):
             return []
         return [result for result in self._document.results.values() if result.calculation_run_id == run_id]
 
+    @staticmethod
+    def _charge_state_label_for_job(job: Job | None) -> str:
+        if job is None:
+            return ""
+        if job.calc_type == muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE):
+            return muon_charge_state_label(POSITIVE_MUON_CHARGE_STATE)
+        if job.calc_type == muon_relaxation_calc_type(MUONIUM_CHARGE_STATE):
+            return muon_charge_state_label(MUONIUM_CHARGE_STATE)
+        return ""
+
+    def _refresh_quantum_corrections_view(self) -> None:
+        if self._document is None:
+            self._quantum_corrections_view.set_sources([])
+            self._quantum_corrections_view.set_results([])
+            return
+
+        source_rows: list[QuantumSourceRow] = []
+        for site in self._document.sites.values():
+            run = self._document.runs.get(site.relaxation_run_id) if site.relaxation_run_id is not None else None
+            job = self._document.jobs.get(run.job_id) if run is not None and run.job_id is not None else None
+            result = self._document.results.get(run.result_id) if run is not None and run.result_id is not None else None
+            relaxed_structure = None
+            if result is not None and result.derived_structure_ids:
+                relaxed_structure = self._document.structures.get(result.derived_structure_ids[0])
+            verdict = quantum_source_eligibility(
+                site=site,
+                run=run,
+                job=job,
+                relaxed_structure=relaxed_structure,
+            )
+            if not verdict.eligible:
+                continue
+            source_rows.append(
+                QuantumSourceRow(
+                    label=site.label or (job.label if job is not None else "Relaxed site"),
+                    charge_state=self._charge_state_label_for_job(job),
+                    relative_energy=_format_energy(site.relative_energy_eV),
+                    source_job=job.label if job is not None else "",
+                    status="Ready",
+                )
+            )
+
+        result_rows: list[QuantumResultRow] = []
+        for result in self._document.results.values():
+            if result.result_type != QUANTUM_PHONON_CALC_TYPE:
+                continue
+            job_label = ""
+            run = self._document.runs.get(result.calculation_run_id) if result.calculation_run_id is not None else None
+            if run is not None and run.job_id is not None:
+                job = self._document.jobs.get(run.job_id)
+                if job is not None:
+                    job_label = job.label
+            modes = result.data.get("muon_zpe_modes", []) if isinstance(result.data, dict) else []
+            mode_text = ", ".join(
+                f"{mode.get('mode_index')}:{float(mode.get('frequency_cm', 0.0)):.1f}"
+                for mode in modes
+                if isinstance(mode, dict)
+            )
+            result_rows.append(
+                QuantumResultRow(
+                    label=job_label or "Quantum phonon",
+                    zpe=_format_energy(result.data.get("muon_zpe_total_eV") if isinstance(result.data, dict) else None),
+                    modes=mode_text,
+                    witness=(
+                        f"{float(result.data['w1_entanglement_witness']):.4g}"
+                        if isinstance(result.data, dict) and "w1_entanglement_witness" in result.data
+                        else ""
+                    ),
+                    phonon_file=str(result.data.get("phonon_file", "")) if isinstance(result.data, dict) else "",
+                )
+            )
+
+        self._quantum_corrections_view.set_sources(source_rows)
+        self._quantum_corrections_view.set_results(result_rows)
+
     def _uep_potential_grid_result_for_job(self, job_id: UUID) -> Result | None:
         run = self._run_for_job(job_id)
         if run is None:
@@ -5595,6 +5697,7 @@ class MainWindow(QMainWindow):
             output_dir / f"{seed_name}.castep",
             output_dir / f"{seed_name}.den_fmt",
             output_dir / f"{seed_name}-out.cell",
+            output_dir / f"{seed_name}.phonon",
         ]
         files: list[str] = []
         for path in paths:
@@ -5686,6 +5789,38 @@ class MainWindow(QMainWindow):
                 return
             result_payload["density_available"] = True
 
+        if job.calc_type == QUANTUM_PHONON_CALC_TYPE:
+            output_dir = self._job_output_directory(job)
+            seed_name = self._job_seed_name(job)
+            phonon_path = None if output_dir is None else output_dir / f"{seed_name}.phonon"
+            if phonon_path is None or not phonon_path.exists():
+                self._on_local_job_failed(
+                    job_id,
+                    f"Expected CASTEP phonon output was not found: {seed_name}.phonon",
+                )
+                return
+            try:
+                phonon = parse_phonon_path(phonon_path)
+                zpe = muon_zpe(phonon)
+                result_payload["phonon_file"] = str(phonon_path)
+                result_payload["gamma_only"] = len(phonon.qpoints) == 1 and phonon.qpoints[0].is_gamma
+                result_payload["muon_zpe_total_eV"] = zpe.total_eV
+                result_payload["muon_zpe_modes"] = [
+                    {
+                        "mode_index": mode.mode_index,
+                        "frequency_cm": mode.frequency_cm,
+                        "participation": mode.participation,
+                        "zpe_eV": mode.zpe_eV,
+                    }
+                    for mode in zpe.modes
+                ]
+                result_payload["w1_entanglement_witness"] = w1_entanglement_witness(phonon)
+                if zpe.warnings:
+                    result_payload["phonon_warnings"] = list(zpe.warnings)
+            except PhononParseError as exc:
+                self._on_local_job_failed(job_id, f"Failed to parse CASTEP phonon output: {exc}")
+                return
+
         derived_structure_ids: list[UUID] = []
         if job.calc_type == "castep_pristine_relaxation" or is_muon_relaxation_calc_type(job.calc_type):
             output_dir = self._job_output_directory(job)
@@ -5774,6 +5909,7 @@ class MainWindow(QMainWindow):
         self._refresh_pristine_relaxation_rows()
         self._refresh_muon_relaxation_rows()
         self._refresh_muon_generation_table()
+        self._refresh_quantum_corrections_view()
         self._persist_document_ui_state(
             failure_message="Completed job result was recorded, but autosave failed.",
         )
@@ -6075,6 +6211,7 @@ class MainWindow(QMainWindow):
                 retrieve_den_fmt=job.calc_type == "castep_uep_source",
                 retrieve_out_cell=job.calc_type == "castep_pristine_relaxation"
                 or is_muon_relaxation_calc_type(job.calc_type),
+                retrieve_phonon=job.calc_type == QUANTUM_PHONON_CALC_TYPE,
             )
 
     def _infer_remote_job_directory(self, job: Job, cluster_name: str) -> str:
@@ -7814,6 +7951,7 @@ class MainWindow(QMainWindow):
             for row in target_config.rows
         }
         candidates: dict[str, str] = {}
+        seed_candidates: dict[str, str] = {}
         for definition in self._muon_relaxation_definitions():
             if not self._definition_workflow_context_matches(definition, target_definition):
                 continue
@@ -7832,11 +7970,15 @@ class MainWindow(QMainWindow):
             mapping = definition.parameters.get("job_ids_by_label", {})
             if not isinstance(mapping, dict):
                 continue
+            seed_mapping = definition.parameters.get("job_seed_names_by_label", {})
             for raw_key, raw_job_id in mapping.items():
                 if not isinstance(raw_key, str) or not isinstance(raw_job_id, str):
                     continue
                 key = raw_key if ":" in raw_key else legacy_key_by_row_label.get(raw_key, raw_key)
                 if target_signatures.get(key) != source_signatures.get(key):
+                    continue
+                job = self._muon_relaxation_job_for_mapping_value(key, raw_job_id)
+                if job is None or job.status == JobStatus.DEFINED:
                     continue
                 existing = candidates.get(key)
                 if (
@@ -7845,10 +7987,18 @@ class MainWindow(QMainWindow):
                     > self._relaxation_mapping_job_priority(existing)
                 ):
                     candidates[key] = raw_job_id
+                    if isinstance(seed_mapping, dict):
+                        raw_seed = seed_mapping.get(raw_key, seed_mapping.get(key))
+                        if isinstance(raw_seed, str) and raw_seed.strip():
+                            seed_candidates[key] = raw_seed.strip()
 
         if not candidates:
             return
         target_mapping = self._ensure_label_mapping(target_definition)
+        target_seed_mapping = target_definition.parameters.setdefault("job_seed_names_by_label", {})
+        if not isinstance(target_seed_mapping, dict):
+            target_seed_mapping = {}
+            target_definition.parameters["job_seed_names_by_label"] = target_seed_mapping
         for key, raw_job_id in candidates.items():
             existing = target_mapping.get(key)
             if (
@@ -7857,6 +8007,46 @@ class MainWindow(QMainWindow):
                 > self._relaxation_mapping_job_priority(existing)
             ):
                 target_mapping[key] = raw_job_id
+                raw_seed = seed_candidates.get(key)
+                if raw_seed:
+                    target_seed_mapping[key] = raw_seed
+
+    def _sync_active_muon_relaxation_dashboard_jobs(self, target_definition) -> None:
+        if self._document is None:
+            return
+        config = self._deserialize_muon_relaxation_config(
+            target_definition.parameters.get("configuration", {})
+        )
+        if config is None:
+            return
+
+        mapping = self._ensure_label_mapping(target_definition)
+        for row in config.rows:
+            key = self._muon_relaxation_row_key(row)
+            existing = mapping.get(key)
+            if isinstance(existing, str) and self._muon_relaxation_job_for_mapping_value(key, existing) is not None:
+                continue
+
+            expected_calc_type = muon_relaxation_calc_type(row.charge_state)
+            candidates = [
+                job
+                for job in self._document.jobs.values()
+                if job.workflow_stage == WorkflowStage.MUON_RELAXATION
+                and job.calc_type == expected_calc_type
+                and job.label == row.label
+                and job.status in _ACTIVE_LOCAL_JOB_STATES
+            ]
+            if not candidates:
+                continue
+
+            job = max(
+                candidates,
+                key=lambda candidate: (
+                    self._relaxation_mapping_job_priority(str(candidate.id)),
+                    self._job_submission_sort_key(candidate),
+                ),
+            )
+            mapping[key] = str(job.id)
 
     def _sync_equivalent_uep_mappings(self, target_definition) -> None:
         if self._document is None:
@@ -8966,6 +9156,27 @@ class MainWindow(QMainWindow):
         definitions = self._muon_relaxation_definitions()
         return definitions[0] if definitions else None
 
+    def _muon_relaxation_job_for_mapping_value(self, key: str, raw_job_id: str) -> Job | None:
+        if self._document is None:
+            return None
+        try:
+            job_id = UUID(str(raw_job_id))
+        except ValueError:
+            return None
+        job = self._document.jobs.get(job_id)
+        if job is None or not is_muon_relaxation_calc_type(job.calc_type):
+            return None
+        prefix, separator, _label = str(key).partition(":")
+        if not separator:
+            return job
+        if prefix == muon_charge_state_prefix(POSITIVE_MUON_CHARGE_STATE):
+            expected = muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE)
+        elif prefix == muon_charge_state_prefix(MUONIUM_CHARGE_STATE):
+            expected = muon_relaxation_calc_type(MUONIUM_CHARGE_STATE)
+        else:
+            return None
+        return job if job.calc_type == expected else None
+
     def _job_for_muon_relaxation_label(self, definition, label: str, charge_state: str | None = None) -> Job | None:
         if self._document is None:
             return None
@@ -8977,11 +9188,7 @@ class MainWindow(QMainWindow):
             for key in keys:
                 raw_job_id = mapping.get(key)
                 if isinstance(raw_job_id, str):
-                    try:
-                        job_id = UUID(raw_job_id)
-                    except ValueError:
-                        continue
-                    job = self._document.jobs.get(job_id)
+                    job = self._muon_relaxation_job_for_mapping_value(key, raw_job_id)
                     if job is not None:
                         return job
         return None
@@ -9091,6 +9298,7 @@ class MainWindow(QMainWindow):
         if definition is None:
             return states
         self._sync_equivalent_muon_relaxation_mappings(definition)
+        self._sync_active_muon_relaxation_dashboard_jobs(definition)
         config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return states
@@ -9100,17 +9308,22 @@ class MainWindow(QMainWindow):
                 self._muon_relaxation_row_key(row): row
                 for row in config.rows
             }
-            rows_for_status = [
-                definition_rows_by_key[self._muon_relaxation_row_key(row)]
-                for row in form_config.rows
-                if (
-                    self._muon_relaxation_row_key(row) in definition_rows_by_key
-                    and self._muon_relaxation_row_signature(row)
-                    == self._muon_relaxation_row_signature(
-                        definition_rows_by_key[self._muon_relaxation_row_key(row)]
-                    )
+            rows_for_status = []
+            for row in form_config.rows:
+                key = self._muon_relaxation_row_key(row)
+                definition_row = definition_rows_by_key.get(key)
+                if definition_row is None:
+                    continue
+                if self._muon_relaxation_row_signature(row) == self._muon_relaxation_row_signature(definition_row):
+                    rows_for_status.append(definition_row)
+                    continue
+                job = self._job_for_muon_relaxation_label(
+                    definition,
+                    definition_row.label,
+                    definition_row.charge_state,
                 )
-            ]
+                if job is not None and job.status in _ACTIVE_LOCAL_JOB_STATES:
+                    rows_for_status.append(definition_row)
         else:
             rows_for_status = list(config.rows)
 
@@ -9780,6 +9993,7 @@ class MainWindow(QMainWindow):
         if definition is None:
             return []
         self._sync_equivalent_muon_relaxation_mappings(definition)
+        self._sync_active_muon_relaxation_dashboard_jobs(definition)
         config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return []
@@ -9803,6 +10017,7 @@ class MainWindow(QMainWindow):
         if definition is None:
             return []
         self._sync_equivalent_muon_relaxation_mappings(definition)
+        self._sync_active_muon_relaxation_dashboard_jobs(definition)
         config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None or not definition.input_structure_ids:
             return []

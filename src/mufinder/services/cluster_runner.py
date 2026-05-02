@@ -35,6 +35,7 @@ class _TrackedClusterJob:
     terminal: bool = False
     retrieve_den_fmt: bool = False
     retrieve_out_cell: bool = False
+    retrieve_phonon: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +153,7 @@ class ClusterJobRunner(QObject):
         castep_executable: str = "",
         retrieve_den_fmt: bool = False,
         retrieve_out_cell: bool = False,
+        retrieve_phonon: bool = False,
         remote_directory: str | None = None,
         reuse_existing_files: bool = False,
     ) -> str:
@@ -257,6 +259,7 @@ class ClusterJobRunner(QObject):
             terminal=False,
             retrieve_den_fmt=bool(retrieve_den_fmt),
             retrieve_out_cell=bool(retrieve_out_cell),
+            retrieve_phonon=bool(retrieve_phonon),
         )
 
         self.status_changed.emit(job_id, JobStatus.QUEUED.value)
@@ -308,6 +311,7 @@ class ClusterJobRunner(QObject):
         status: JobStatus,
         retrieve_den_fmt: bool = False,
         retrieve_out_cell: bool = False,
+        retrieve_phonon: bool = False,
     ) -> None:
         """Register a persisted cluster job for queue polling and retrieval."""
 
@@ -327,6 +331,7 @@ class ClusterJobRunner(QObject):
             terminal=status not in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING},
             retrieve_den_fmt=bool(retrieve_den_fmt),
             retrieve_out_cell=bool(retrieve_out_cell),
+            retrieve_phonon=bool(retrieve_phonon),
         )
         self._tracked_jobs[job_id] = tracked
         if (
@@ -471,9 +476,11 @@ class ClusterJobRunner(QObject):
         remote_castep = posixpath.join(entry.remote_dir, f"{entry.seed_name}.castep")
         remote_den_fmt = posixpath.join(entry.remote_dir, f"{entry.seed_name}.den_fmt")
         remote_out_cell = posixpath.join(entry.remote_dir, f"{entry.seed_name}-out.cell")
+        remote_phonon = posixpath.join(entry.remote_dir, f"{entry.seed_name}.phonon")
         local_castep = entry.local_output_dir / f"{entry.seed_name}.castep"
         local_den_fmt = entry.local_output_dir / f"{entry.seed_name}.den_fmt"
         local_out_cell = entry.local_output_dir / f"{entry.seed_name}-out.cell"
+        local_phonon = entry.local_output_dir / f"{entry.seed_name}.phonon"
 
         try:
             self._retrieve_error_files(entry)
@@ -482,6 +489,8 @@ class ClusterJobRunner(QObject):
                 ssh.get(remote_den_fmt, local_den_fmt)
             if entry.retrieve_out_cell and ssh.exists(remote_out_cell):
                 ssh.get(remote_out_cell, local_out_cell)
+            if entry.retrieve_phonon and ssh.exists(remote_phonon):
+                ssh.get(remote_phonon, local_phonon)
             parsed = parse_castep_output(local_castep)
         except Exception as exc:  # noqa: BLE001
             entry.terminal = True

@@ -7395,6 +7395,116 @@ def test_main_window_muon_relaxation_sync_prefers_defined_job_over_cancelled_his
     window.close()
 
 
+def test_main_window_muon_relaxation_sync_ignores_historical_defined_jobs(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_defined_history.mufinder", "MuonDefinedHistory")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    doc.sites[site.id] = site
+    window._document = doc
+
+    row = main_window_module.MuonRelaxationRow(
+        site_id=site.id,
+        label="Site 1",
+        initial_fractional_position=(0.25, 0.25, 0.25),
+        charge_state="positive_muon",
+    )
+    config = main_window_module.MuonRelaxationConfig(rows=(row,))
+    serialized = window._serialize_muon_relaxation_config(config)
+    output_directory = doc.project_root / "files" / "muon_relaxation"
+    historical_definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=serialized,
+        output_directory=output_directory,
+    )
+    active_definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=serialized,
+        output_directory=output_directory,
+    )
+    defined_job = service.add_job(
+        doc,
+        label="Site 1",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
+    )
+    key = "positivemuon:Site 1"
+    historical_definition.parameters["job_ids_by_label"] = {key: str(defined_job.id)}
+    historical_definition.parameters["job_seed_names_by_label"] = {key: "positivemuon_Site_1"}
+    doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(active_definition.id)
+    doc.ui_state["muon_relaxation_form"] = serialized
+
+    window._refresh_ui_after_project_change()
+
+    table = window._muon_relaxation_view._tables_by_charge_state["positive_muon"]
+    assert active_definition.parameters.get("job_ids_by_label", {}) == {}
+    assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "ready"
+    window.close()
+
+
+def test_main_window_muon_relaxation_recovers_active_dashboard_job_mapping(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_dashboard_recover.mufinder", "MuonDashboardRecover")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    doc.sites[site.id] = site
+    window._document = doc
+
+    row = main_window_module.MuonRelaxationRow(
+        site_id=site.id,
+        label="Site 1",
+        initial_fractional_position=(0.25, 0.25, 0.25),
+        charge_state="positive_muon",
+    )
+    serialized = window._serialize_muon_relaxation_config(
+        main_window_module.MuonRelaxationConfig(rows=(row,))
+    )
+    definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=serialized,
+        output_directory=doc.project_root / "files" / "muon_relaxation",
+    )
+    queued_job = service.add_job(
+        doc,
+        label="Site 1",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
+    )
+    queued_job.status = JobStatus.QUEUED
+    queued_job.submitted_at = datetime(2026, 5, 1, tzinfo=UTC)
+    doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    doc.ui_state["muon_relaxation_form"] = serialized
+
+    window._refresh_ui_after_project_change()
+
+    key = "positivemuon:Site 1"
+    table = window._muon_relaxation_view._tables_by_charge_state["positive_muon"]
+    assert definition.parameters["job_ids_by_label"][key] == str(queued_job.id)
+    assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "queued"
+    window.close()
+
+
 def test_main_window_muon_relaxation_added_form_rows_preserve_existing_job_states(
     qapp, tmp_path: Path
 ) -> None:
@@ -7645,7 +7755,9 @@ def test_muon_relaxation_preserves_running_row_across_reconfiguration(
         calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
     )
     running_job.status = JobStatus.RUNNING
-    old_definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(running_job.id)}
+    key = "positivemuon:Site 1"
+    old_definition.parameters["job_ids_by_label"] = {key: str(running_job.id)}
+    old_definition.parameters["job_seed_names_by_label"] = {key: "positivemuon_Site_1"}
 
     new_definition = service.register_muon_relaxation_definition(
         doc,
@@ -7659,7 +7771,8 @@ def test_muon_relaxation_preserves_running_row_across_reconfiguration(
 
     assert states["positivemuon:Site 1"].status == JobStatus.RUNNING.value
     assert states["positivemuon:Site 1"].job_id == running_job.id
-    assert new_definition.parameters["job_ids_by_label"]["positivemuon:Site 1"] == str(running_job.id)
+    assert new_definition.parameters["job_ids_by_label"][key] == str(running_job.id)
+    assert new_definition.parameters["job_seed_names_by_label"][key] == "positivemuon_Site_1"
     window.close()
 
 

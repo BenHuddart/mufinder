@@ -49,6 +49,7 @@ class ClusterJobSubmission:
     castep_executable: str = ""
     retrieve_den_fmt: bool = False
     retrieve_out_cell: bool = False
+    retrieve_phonon: bool = False
     reuse_existing_files: bool = False
 
 
@@ -257,6 +258,7 @@ class JobExecutionController:
                 castep_executable=request.castep_executable,
                 retrieve_den_fmt=request.retrieve_den_fmt,
                 retrieve_out_cell=request.retrieve_out_cell,
+                retrieve_phonon=request.retrieve_phonon,
                 remote_directory=request.remote_target,
                 reuse_existing_files=request.reuse_existing_files,
             )

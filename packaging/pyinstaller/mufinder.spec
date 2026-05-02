@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PIL import Image
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 
 project_root = Path.cwd()
@@ -38,6 +38,9 @@ bundle_icon = _build_icon(".icns") if sys.platform == "darwin" else None
 
 datas = collect_data_files("mufinder.assets")
 datas += collect_data_files("mufinder.data")
+# Keep importlib.metadata.version("mufinder") available when no source-tree
+# pyproject.toml exists inside a frozen application bundle.
+datas += copy_metadata("mufinder")
 # ASE's CIF reader resolves symmetry data relative to ase.spacegroup.__file__.
 # Bundle ASE package data so frozen macOS apps can load spacegroup.dat.
 datas += collect_data_files("ase")

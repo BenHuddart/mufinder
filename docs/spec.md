@@ -385,8 +385,14 @@ Relaxation staging:
 
 ### 12.6 Quantum Corrections
 
-- phonon workflows on confirmed sites
-- parse and persist quantum outputs
+- quantum phonon calculations must start only from completed structural muon relaxation results
+- UEP candidates, generated sites, pristine relaxations, failed jobs, and manual sites without structural-relaxation provenance are not valid sources
+- CASTEP phonon jobs are Gamma-point only and must write `PHONON_KPOINT_MP_GRID 1 1 1`
+- generated inputs must include `TASK : PHONON`, a selected `PHONON_METHOD`, and explicit `H:mu` mass/gamma cell blocks
+- finite displacement is the default method; DFPT/linear-response workflows must reject known ultrasoft pseudopotentials and warn for unknown pseudopotential family metadata
+- `.phonon` files are expected outputs for quantum phonon jobs and must be retrieved from cluster runs
+- parsed results must persist selected muon-dominated modes, per-mode and total ZPE, witness metrics, output files, and source relaxation provenance
+- single-particle quantum approximations should be implemented as a later analysis layer using directional effective potentials; PIMD is out of scope
 
 ### 12.7 Energy Barriers
 

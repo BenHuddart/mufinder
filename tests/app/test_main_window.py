@@ -431,7 +431,7 @@ def test_main_window_pins_restores_renames_and_deletes_magnetic_field_workspace(
     reloaded_window.close()
 
 
-def test_main_window_routes_to_construction_placeholders(qapp, tmp_path: Path) -> None:
+def test_main_window_routes_to_quantum_view_and_construction_placeholders(qapp, tmp_path: Path) -> None:
     window = MainWindow()
 
     service = ProjectService()
@@ -444,10 +444,8 @@ def test_main_window_routes_to_construction_placeholders(qapp, tmp_path: Path) -
     window._project_tree.setCurrentItem(quantum_item)
     window._on_tree_selection_changed()
 
-    assert window._main_stack.currentWidget() is window._quantum_corrections_placeholder
-    assert window._quantum_corrections_placeholder.accessibleName() == (
-        "Under construction. Come back soon."
-    )
+    assert window._main_stack.currentWidget() is window._quantum_corrections_view
+    assert window._quantum_corrections_view.accessibleName() == "Quantum Corrections workflow"
 
     barriers_item = _find_tree_item_by_route(window, "energy_barriers")
     assert barriers_item is not None
