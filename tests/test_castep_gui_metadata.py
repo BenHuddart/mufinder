@@ -72,6 +72,7 @@ def test_infer_task_from_workflow_stage() -> None:
     assert infer_task("uep") == "SINGLEPOINT"
     assert infer_task("pristine_relaxation") == "GEOMETRYOPTIMIZATION"
     assert infer_task("muon_relaxation") == "GEOMETRYOPTIMIZATION"
+    assert infer_task("energy_barriers") == "TRANSITIONSTATESEARCH"
 
 
 def test_keyword_locked_in_workflow() -> None:

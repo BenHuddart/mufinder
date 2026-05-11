@@ -50,6 +50,7 @@ class ClusterJobSubmission:
     retrieve_den_fmt: bool = False
     retrieve_out_cell: bool = False
     retrieve_phonon: bool = False
+    retrieve_ts: bool = False
     reuse_existing_files: bool = False
 
 
@@ -259,6 +260,7 @@ class JobExecutionController:
                 retrieve_den_fmt=request.retrieve_den_fmt,
                 retrieve_out_cell=request.retrieve_out_cell,
                 retrieve_phonon=request.retrieve_phonon,
+                retrieve_ts=request.retrieve_ts,
                 remote_directory=request.remote_target,
                 reuse_existing_files=request.reuse_existing_files,
             )

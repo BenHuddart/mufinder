@@ -1,8 +1,8 @@
 # MuFinder Product and Architecture Specification
 
 - Spec ID: MUFINDER-SPEC
-- Spec Version: 1.13.0
-- Last Updated: 2026-04-29
+- Spec Version: 1.15.0
+- Last Updated: 2026-05-09
 - Status: Active
 - Scope: PySide6 desktop rebuild
 
@@ -24,6 +24,8 @@
 | 1.11.0 | 2026-04-08 | Added startup responsiveness requirements: splash screen must be shown before heavyweight startup imports/initialization, with deferred feature imports after splash exposure. |
 | 1.12.0 | 2026-04-10 | Added pristine-relaxation requirements for per-row supercell/fixed-cell controls, project-default cutoff+k-point propagation, equivalent-density k-point scaling, `-out.cell` parsing, and geometry-convergence completion gating. |
 | 1.13.0 | 2026-04-29 | Expanded MCIF magnetic import requirements to preserve atom labels, multiple propagation vectors, label-to-atom mappings, and phase-corrected magnetic-model promotion. |
+| 1.14.0 | 2026-05-09 | Refined Energy Barriers UX to require explicit initial/final site selection before path generation and added a plotted NEB reaction-coordinate profile in the inline inspector. |
+| 1.15.0 | 2026-05-09 | Split the Energy Barriers workflow across dedicated tabs for path generation, transition-state jobs, and NEB analysis to improve usability on smaller displays. |
 
 ## 1. Executive Summary
 
@@ -396,8 +398,11 @@ Relaxation staging:
 
 ### 12.7 Energy Barriers
 
-- path selection among confirmed sites
+- path generation is explicit and pair-scoped: users select initial and final confirmed relaxed sites, then generate distinct paths for that pair on demand
 - TSS and NEB support
+- the workflow is split across dedicated tabs for path generation, transition-state results, and NEB analysis so the interface remains usable on smaller displays
+- completed NEB jobs expose an inline path inspector with image-by-image geometry preview in the shared structure viewer
+- the inline NEB inspector includes a plotted reaction-coordinate profile synchronized with the image table, slider, and structure viewer
 - persisted profiles and export paths
 
 ## 13. Directory and Storage Strategy

@@ -206,7 +206,7 @@ def _cell_template(config: QuantumPhononJobConfig) -> CellTemplate:
     )
     if config.cell_overrides is None:
         return base
-    merged = merge_templates(InputTemplate(cell=config.cell_overrides), InputTemplate(cell=base))
+    merged = merge_templates(InputTemplate(cell=base), InputTemplate(cell=config.cell_overrides))
     return merged.cell or base
 
 
@@ -221,5 +221,5 @@ def _param_template(config: QuantumPhononJobConfig) -> ParamTemplate:
     base = ParamTemplate(keywords=tuple(keywords))
     if config.param_overrides is None:
         return base
-    merged = merge_templates(InputTemplate(param=config.param_overrides), InputTemplate(param=base))
+    merged = merge_templates(InputTemplate(param=base), InputTemplate(param=config.param_overrides))
     return merged.param or base

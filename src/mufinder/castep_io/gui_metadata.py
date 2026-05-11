@@ -27,7 +27,7 @@ WORKFLOW_TASK_MAP: dict[str, str] = {
     "site_analysis": "SINGLEPOINT",
     "magnetic_field": "SINGLEPOINT",
     "quantum_corrections": "SINGLEPOINT",
-    "energy_barriers": "SINGLEPOINT",
+    "energy_barriers": "TRANSITIONSTATESEARCH",
 }
 
 

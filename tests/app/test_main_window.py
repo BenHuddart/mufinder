@@ -7,15 +7,18 @@ from uuid import uuid4
 
 import numpy as np
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QDockWidget, QFrame, QHeaderView, QLabel, QMessageBox, QToolButton, QTreeWidgetItem
+from PySide6.QtWidgets import QDockWidget, QFrame, QHeaderView, QLabel, QMessageBox, QTabWidget, QToolButton, QTreeWidgetItem
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.app.main_window as main_window_module
 from mufinder.app import theme as theme_module
 import mufinder.castep_io.schema as schema_module
 from mufinder.app.main_window import MainWindow
+from mufinder.castep_io.ts_parser import TransitionStateImage, TransitionStatePath
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationDefinition, ComparisonTable, Structure
+from mufinder.domain.models import CalculationDefinition, CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure
+from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE
+from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
 from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel, build_collinear_component
 from mufinder.services.project_service import ProjectService
 
@@ -271,7 +274,7 @@ def test_main_window_restores_magnetic_field_form_state(qapp, tmp_path: Path) ->
     assert view._demag_shape() == "none"
     assert view._field_options().supercell == (18, 20, 22)
     assert view._field_options().find_equivalent_sites is True
-    assert view._field_options().nangles == 8192
+    assert view._field_options().phase_sample_count == 8192
     assert view._field_options().histogram_bins == 1024
     assert view.selected_muon_site().fractional_position == (0.25, 0.5, 0.75)
 
@@ -289,7 +292,7 @@ def test_main_window_restores_magnetic_field_form_state(qapp, tmp_path: Path) ->
     assert reloaded_view._demag_shape() == "none"
     assert reloaded_view._field_options().supercell == (18, 20, 22)
     assert reloaded_view._field_options().find_equivalent_sites is True
-    assert reloaded_view._field_options().nangles == 8192
+    assert reloaded_view._field_options().phase_sample_count == 8192
     assert reloaded_view._field_options().histogram_bins == 768
     assert reloaded_view.selected_muon_site().fractional_position == (0.25, 0.5, 0.75)
 
@@ -389,7 +392,7 @@ def test_main_window_pins_restores_renames_and_deletes_magnetic_field_workspace(
     assert workspace_item.text(0) == "Pinned helix"
     assert window._main_stack.currentWidget() is workspace_widget
     assert workspace_widget.workspace_title() == "Pinned helix"
-    assert workspace_widget._field_options().nangles == 8192
+    assert workspace_widget._field_options().phase_sample_count == 8192
 
     workspace_widget._set_model(_magnetic_model("Copied helix"))
 
@@ -452,10 +455,858 @@ def test_main_window_routes_to_quantum_view_and_construction_placeholders(qapp, 
     window._project_tree.setCurrentItem(barriers_item)
     window._on_tree_selection_changed()
 
-    assert window._main_stack.currentWidget() is window._energy_barriers_placeholder
-    assert window._energy_barriers_placeholder.accessibleName() == (
-        "Under construction. Come back soon."
+    assert window._main_stack.currentWidget() is window._energy_barriers_view
+    assert window._energy_barriers_view.accessibleName() == "Energy Barriers workflow"
+    tabs = window._energy_barriers_view.findChild(QTabWidget, "energyBarriersTabs")
+    assert tabs is not None
+    assert [tabs.tabText(index) for index in range(tabs.count())] == [
+        "Paths",
+        "Transition States",
+        "NEB Analysis",
+    ]
+    window.close()
+
+
+def test_main_window_close_tolerates_missing_relaxation_analysis_view(qapp) -> None:
+    window = MainWindow()
+
+    delattr(window, "_relaxation_analysis_view")
+
+    window.close()
+
+    assert window._shutting_down is True
+
+
+def test_main_window_materializes_quantum_phonon_jobs_from_relaxed_sources(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_doc.mufinder", "Quantum")
+    window._document = doc
+
+    relaxed_structure = Structure(
+        label="site relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
     )
+    doc.structures[relaxed_structure.id] = relaxed_structure
+
+    source_job = Job(
+        label="mu-site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[source_job.id] = source_job
+    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=source_job.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_structure.id],
+    )
+    run.result_id = result.id
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    doc.sites[site.id] = site
+
+    jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+
+    assert len(jobs) == 1
+    assert jobs[0].calc_type == QUANTUM_PHONON_CALC_TYPE
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
+    param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
+    assert "PHONON_KPOINT_MP_GRID 1 1 1" in cell_text
+    assert "TASK : PHONON" in param_text
+    assert "PHONON_METHOD : FINITEDISPLACEMENT" in param_text
+
+
+def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_row_config_doc.mufinder", "QuantumRowConfig")
+    window._document = doc
+
+    relaxed_structure = Structure(
+        label="site relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_structure.id] = relaxed_structure
+
+    source_job = Job(
+        label="mu-site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[source_job.id] = source_job
+    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=source_job.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_structure.id],
+    )
+    run.result_id = result.id
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    doc.sites[site.id] = site
+
+    definition = window._ensure_quantum_corrections_definition([str(site.id)])
+    assert definition is not None
+    definition.parameters["configuration"]["row_settings"] = {
+        str(site.id): {
+            "parameter_values": {
+                "phonon_method": "DFPT",
+                "cut_off_energy": {"value": 650.0, "unit": "eV"},
+                "kpoint_mp_grid": [2, 2, 2],
+                "phonon_kpoint_mp_grid": [2, 2, 1],
+            },
+            "pseudopotential_family": "norm_conserving",
+        }
+    }
+
+    window._refresh_quantum_corrections_view()
+    configure_button = window._quantum_corrections_view._sources_table.cellWidget(0, 5)
+    assert configure_button.text() == "Configured..."
+
+    jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+
+    assert len(jobs) == 1
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
+    param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
+    assert "PHONON_METHOD : DFPT" in param_text
+    assert "CUT_OFF_ENERGY : 650" in param_text
+    assert "KPOINT_MP_GRID 2 2 2" in cell_text
+    assert "PHONON_KPOINT_MP_GRID 2 2 1" in cell_text
+
+
+def test_main_window_materializes_energy_barrier_jobs_from_relaxed_sources(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_doc.mufinder", "Barriers")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    job_a = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    job_b = Job(
+        label="mu-site-b",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job_a.id] = job_a
+    doc.jobs[job_b.id] = job_b
+    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result_a = Result(
+        calculation_run_id=run_a.id,
+        result_type=job_a.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_a.id],
+    )
+    result_b = Result(
+        calculation_run_id=run_b.id,
+        result_type=job_b.calc_type,
+        data={"total_energy": -0.9},
+        derived_structure_ids=[relaxed_b.id],
+    )
+    run_a.result_id = result_a.id
+    run_b.result_id = result_b.id
+    doc.runs[run_a.id] = run_a
+    doc.runs[run_b.id] = run_b
+    doc.results[result_a.id] = result_a
+    doc.results[result_b.id] = result_b
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    window._ensure_energy_barriers_view()
+    window._refresh_energy_barriers_view()
+    assert window._energy_barriers_view._sources_table.rowCount() == 0
+
+    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
+    candidates = window._eligible_energy_barrier_source_candidates()
+
+    assert candidates
+    jobs = window._materialize_energy_barriers_jobs([candidates[0].key])
+
+    assert len(jobs) == 1
+    assert jobs[0].calc_type == TRANSITION_STATE_SEARCH_CALC_TYPE
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
+    param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
+    assert "%BLOCK POSITIONS_FRAC_PRODUCT" in cell_text
+    assert "TASK : TRANSITIONSTATESEARCH" in param_text
+    assert "TSSEARCH_METHOD : LSTQST" in param_text
+
+
+def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_preview(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_row_config_doc.mufinder", "BarrierRowConfig")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    job_a = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    job_b = Job(
+        label="mu-site-b",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job_a.id] = job_a
+    doc.jobs[job_b.id] = job_b
+    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result_a = Result(
+        calculation_run_id=run_a.id,
+        result_type=job_a.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_a.id],
+    )
+    result_b = Result(
+        calculation_run_id=run_b.id,
+        result_type=job_b.calc_type,
+        data={"total_energy": -0.9},
+        derived_structure_ids=[relaxed_b.id],
+    )
+    run_a.result_id = result_a.id
+    run_b.result_id = result_b.id
+    doc.runs[run_a.id] = run_a
+    doc.runs[run_b.id] = run_b
+    doc.results[result_a.id] = result_a
+    doc.results[result_b.id] = result_b
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
+    candidate = window._eligible_energy_barrier_source_candidates()[0]
+    definition = window._ensure_energy_barriers_definition([candidate.key])
+    assert definition is not None
+    definition.parameters["configuration"]["row_settings"] = {
+        candidate.key: {
+            "parameter_values": {
+                "kpoint_mp_grid": [2, 1, 1],
+                "tssearch_qst_max_iter": 12,
+            }
+        }
+    }
+
+    window._ensure_energy_barriers_view()
+    window._refresh_energy_barriers_view()
+    configure_button = window._energy_barriers_view._sources_table.cellWidget(0, 6)
+    assert configure_button.text() == "Configured..."
+
+    jobs = window._materialize_energy_barriers_jobs([candidate.key])
+
+    assert len(jobs) == 1
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
+    param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
+    assert "KPOINT_MP_GRID 2 1 1" in cell_text
+    assert "TSSEARCH_QST_MAX_ITER : 12" in param_text
+
+    opened: dict[str, object] = {}
+
+    class _FakeDialog:
+        def __init__(self, *, structure, start_fractional, end_fractional, title, parent=None):
+            opened["structure"] = structure
+            opened["start_fractional"] = tuple(start_fractional)
+            opened["end_fractional"] = tuple(end_fractional)
+            opened["title"] = title
+
+        def exec(self):
+            opened["shown"] = True
+            return 0
+
+    monkeypatch.setattr(main_window_module, "EnergyBarrierPathViewerDialog", _FakeDialog)
+
+    window._on_view_energy_barrier_source(candidate.key)
+
+    assert opened["shown"] is True
+    assert opened["structure"].origin == "energy_barriers_path_preview"
+    assert opened["start_fractional"] == candidate.path.start_fractional
+    assert opened["end_fractional"] == candidate.path.end_fractional
+
+
+def test_main_window_records_energy_barrier_result_from_ts_file(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_result_doc.mufinder", "BarrierResult")
+    window._document = doc
+
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type="castep_transition_state_search_set",
+        parameters={
+            "output_directory": "files/energy_barriers",
+            "job_ids_by_label": {},
+        },
+    )
+    doc.calculations[definition.id] = definition
+
+    job = service.add_job(
+        doc,
+        label="barrier_siteA_to_siteB_path1",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=TRANSITION_STATE_SEARCH_CALC_TYPE,
+    )
+    definition.parameters["job_ids_by_label"] = {"source-key": str(job.id)}
+    output_dir = window._job_output_directory(job)
+    assert output_dir is not None
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / f"{output_dir.name}.ts").write_text("placeholder", encoding="utf-8")
+
+    monkeypatch.setattr(
+        main_window_module,
+        "parse_transition_state_file",
+        lambda _path: TransitionStatePath(
+            images=(
+                TransitionStateImage(
+                    label="REA",
+                    iteration=1,
+                    reaction_coordinate=0.0,
+                    energy=-1.0,
+                    lattice_vectors=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+                    species=("Si",),
+                    cartesian_positions=((0.0, 0.0, 0.0),),
+                    forces=((0.0, 0.0, 0.0),),
+                ),
+                TransitionStateImage(
+                    label="TST",
+                    iteration=1,
+                    reaction_coordinate=0.5,
+                    energy=-0.8,
+                    lattice_vectors=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+                    species=("Si",),
+                    cartesian_positions=((0.0, 0.0, 0.0),),
+                    forces=((0.0, 0.0, 0.0),),
+                ),
+                TransitionStateImage(
+                    label="PRO",
+                    iteration=1,
+                    reaction_coordinate=1.0,
+                    energy=-0.9,
+                    lattice_vectors=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+                    species=("Si",),
+                    cartesian_positions=((0.0, 0.0, 0.0),),
+                    forces=((0.0, 0.0, 0.0),),
+                ),
+            )
+        ),
+    )
+
+    window._on_local_job_finished(job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0))
+
+    stored = next(iter(doc.results.values()))
+    assert stored.result_type == TRANSITION_STATE_SEARCH_CALC_TYPE
+    assert stored.data["barrier_height_eV"] == 0.19999999999999996
+    assert stored.data["num_images"] == 3
+
+    window.close()
+
+
+def test_main_window_materializes_neb_jobs_from_completed_transition_state_result(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_neb_doc.mufinder", "BarrierNeb")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    site_a = MuonSite(label="siteA", status="relaxed")
+    site_b = MuonSite(label="siteB", status="relaxed")
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    definition = service.register_transition_state_search_definition(
+        doc,
+        input_structure_ids=[relaxed_a.id, relaxed_b.id],
+        input_site_ids=[site_a.id, site_b.id],
+        parameters={
+            "method": "LSTQST",
+            "sources": [
+                {
+                    "key": "source-key",
+                    "label": "siteA_to_siteB_path1",
+                    "reactant_site_id": str(site_a.id),
+                    "product_site_id": str(site_b.id),
+                    "reactant_run_id": str(uuid4()),
+                    "product_run_id": str(uuid4()),
+                    "reactant_job_id": str(uuid4()),
+                    "product_job_id": str(uuid4()),
+                    "reactant_structure_id": str(relaxed_a.id),
+                    "product_structure_id": str(relaxed_b.id),
+                    "path_start_fractional": [0.25, 0.25, 0.25],
+                    "path_end_fractional": [0.75, 0.25, 0.25],
+                    "path_length_ang": 2.5,
+                }
+            ],
+        },
+        output_directory=doc.project_root / "files" / "energy_barriers",
+    )
+
+    ts_job = service.add_job(
+        doc,
+        label="barrier_siteA_to_siteB_path1",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=TRANSITION_STATE_SEARCH_CALC_TYPE,
+    )
+    definition.parameters["job_ids_by_label"] = {"source-key": str(ts_job.id)}
+    ts_run = CalculationRun(job_id=ts_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    ts_path = doc.project_root / "files" / "energy_barriers" / ts_job.label / f"{ts_job.label}.ts"
+    ts_path.parent.mkdir(parents=True, exist_ok=True)
+    ts_path.write_text("placeholder", encoding="utf-8")
+    ts_result = Result(
+        calculation_run_id=ts_run.id,
+        result_type=TRANSITION_STATE_SEARCH_CALC_TYPE,
+        data={
+            "transition_state_file": str(ts_path),
+            "barrier_height_eV": 0.2,
+            "num_images": 3,
+        },
+    )
+    ts_run.result_id = ts_result.id
+    doc.runs[ts_run.id] = ts_run
+    doc.results[ts_result.id] = ts_result
+
+    monkeypatch.setattr(
+        main_window_module,
+        "parse_transition_state_file",
+        lambda _path: TransitionStatePath(
+            images=(
+                TransitionStateImage(
+                    label="REA",
+                    iteration=1,
+                    reaction_coordinate=0.0,
+                    energy=-1.0,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si", "H:mu"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.6, 2.5, 2.5), (1.25, 1.25, 1.25)),
+                    forces=((0.0, 0.0, 0.0),) * 3,
+                ),
+                TransitionStateImage(
+                    label="TST",
+                    iteration=1,
+                    reaction_coordinate=0.5,
+                    energy=-0.8,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si", "H:mu"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.6, 2.5, 2.5), (2.5, 1.25, 1.25)),
+                    forces=((0.0, 0.0, 0.0),) * 3,
+                ),
+                TransitionStateImage(
+                    label="PRO",
+                    iteration=1,
+                    reaction_coordinate=1.0,
+                    energy=-0.9,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si", "H:mu"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.6, 2.5, 2.5), (3.75, 1.25, 1.25)),
+                    forces=((0.0, 0.0, 0.0),) * 3,
+                ),
+            )
+        ),
+    )
+
+    jobs = window._materialize_energy_barrier_neb_jobs(["source-key"])
+
+    assert len(jobs) == 1
+    assert jobs[0].calc_type == NUDGED_ELASTIC_BAND_CALC_TYPE
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
+    param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
+    assert "%BLOCK POSITIONS_ABS_PRODUCT" in cell_text
+    assert "%BLOCK POSITIONS_ABS_INTERMEDIATE" in cell_text
+    assert "TSSEARCH_METHOD : NEB" in param_text
+
+    window.close()
+
+
+def test_main_window_applies_neb_row_configuration_to_materialized_job(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_neb_row_config_doc.mufinder", "BarrierNebRowConfig")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    site_a = MuonSite(label="siteA", status="relaxed")
+    site_b = MuonSite(label="siteB", status="relaxed")
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    definition = service.register_transition_state_search_definition(
+        doc,
+        input_structure_ids=[relaxed_a.id, relaxed_b.id],
+        input_site_ids=[site_a.id, site_b.id],
+        parameters={
+            "method": "LSTQST",
+            "sources": [
+                {
+                    "key": "source-key",
+                    "label": "siteA_to_siteB_path1",
+                    "reactant_site_id": str(site_a.id),
+                    "product_site_id": str(site_b.id),
+                    "reactant_run_id": str(uuid4()),
+                    "product_run_id": str(uuid4()),
+                    "reactant_job_id": str(uuid4()),
+                    "product_job_id": str(uuid4()),
+                    "reactant_structure_id": str(relaxed_a.id),
+                    "product_structure_id": str(relaxed_b.id),
+                    "path_start_fractional": [0.25, 0.25, 0.25],
+                    "path_end_fractional": [0.75, 0.25, 0.25],
+                    "path_length_ang": 2.5,
+                }
+            ],
+        },
+        output_directory=doc.project_root / "files" / "energy_barriers",
+    )
+
+    ts_job = service.add_job(
+        doc,
+        label="barrier_siteA_to_siteB_path1",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=TRANSITION_STATE_SEARCH_CALC_TYPE,
+    )
+    definition.parameters["job_ids_by_label"] = {"source-key": str(ts_job.id)}
+    ts_run = CalculationRun(job_id=ts_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    ts_path = doc.project_root / "files" / "energy_barriers" / ts_job.label / f"{ts_job.label}.ts"
+    ts_path.parent.mkdir(parents=True, exist_ok=True)
+    ts_path.write_text("placeholder", encoding="utf-8")
+    ts_result = Result(
+        calculation_run_id=ts_run.id,
+        result_type=TRANSITION_STATE_SEARCH_CALC_TYPE,
+        data={
+            "transition_state_file": str(ts_path),
+            "barrier_height_eV": 0.2,
+            "num_images": 3,
+        },
+    )
+    ts_run.result_id = ts_result.id
+    doc.runs[ts_run.id] = ts_run
+    doc.results[ts_result.id] = ts_result
+
+    monkeypatch.setattr(
+        main_window_module,
+        "parse_transition_state_file",
+        lambda _path: TransitionStatePath(
+            images=(
+                TransitionStateImage(
+                    label="REA",
+                    iteration=1,
+                    reaction_coordinate=0.0,
+                    energy=-1.0,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si", "H:mu"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.6, 2.5, 2.5), (1.25, 1.25, 1.25)),
+                    forces=((0.0, 0.0, 0.0),) * 3,
+                ),
+                TransitionStateImage(
+                    label="TST",
+                    iteration=1,
+                    reaction_coordinate=0.5,
+                    energy=-0.8,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si", "H:mu"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.6, 2.5, 2.5), (2.5, 1.25, 1.25)),
+                    forces=((0.0, 0.0, 0.0),) * 3,
+                ),
+                TransitionStateImage(
+                    label="PRO",
+                    iteration=1,
+                    reaction_coordinate=1.0,
+                    energy=-0.9,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si", "H:mu"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.6, 2.5, 2.5), (3.75, 1.25, 1.25)),
+                    forces=((0.0, 0.0, 0.0),) * 3,
+                ),
+            )
+        ),
+    )
+
+    neb_definition = window._ensure_energy_barrier_neb_definition(["source-key"])
+    assert neb_definition is not None
+    neb_definition.parameters["configuration"]["row_settings"] = {
+        "source-key": {
+            "parameter_values": {
+                "kpoint_mp_grid": [1, 1, 2],
+                "tssearch_neb_max_iter": 24,
+            }
+        }
+    }
+
+    window._ensure_energy_barriers_view()
+    window._refresh_energy_barriers_view()
+    configure_button = window._energy_barriers_view._results_table.cellWidget(0, 5)
+    assert configure_button.text() == "Configured..."
+
+    jobs = window._materialize_energy_barrier_neb_jobs(["source-key"])
+
+    assert len(jobs) == 1
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
+    param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
+    assert "KPOINT_MP_GRID 1 1 2" in cell_text
+    assert "TSSEARCH_NEB_MAX_ITER : 24" in param_text
+
+
+def test_main_window_records_neb_result_and_loads_preview(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_neb_preview_doc.mufinder", "BarrierNebPreview")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type="castep_nudged_elastic_band_set",
+        parameters={
+            "output_directory": "files/energy_barriers_neb",
+            "job_ids_by_label": {},
+        },
+    )
+    doc.calculations[definition.id] = definition
+
+    job = service.add_job(
+        doc,
+        label="barrier_siteA_to_siteB_path1_neb",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+    )
+    definition.parameters["job_ids_by_label"] = {"source-key": str(job.id)}
+    output_dir = window._job_output_directory(job)
+    assert output_dir is not None
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / f"{output_dir.name}.ts").write_text("placeholder", encoding="utf-8")
+
+    monkeypatch.setattr(
+        main_window_module,
+        "parse_transition_state_file",
+        lambda _path: TransitionStatePath(
+            images=(
+                TransitionStateImage(
+                    label="REA",
+                    iteration=1,
+                    reaction_coordinate=0.0,
+                    energy=-1.0,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si", "H:mu"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.5, 2.5, 2.5), (1.25, 1.25, 1.25)),
+                    forces=((0.0, 0.0, 0.0),) * 3,
+                ),
+                TransitionStateImage(
+                    label="TST",
+                    iteration=1,
+                    reaction_coordinate=0.5,
+                    energy=-0.8,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si", "H:mu"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.5, 2.5, 2.5), (2.5, 1.25, 1.25)),
+                    forces=((0.0, 0.0, 0.0),) * 3,
+                ),
+                TransitionStateImage(
+                    label="PRO",
+                    iteration=1,
+                    reaction_coordinate=1.0,
+                    energy=-0.9,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si", "H:mu"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.5, 2.5, 2.5), (3.75, 1.25, 1.25)),
+                    forces=((0.0, 0.0, 0.0),) * 3,
+                ),
+            )
+        ),
+    )
+
+    window._on_local_job_finished(job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0))
+
+    stored = next(iter(doc.results.values()))
+    assert stored.result_type == NUDGED_ELASTIC_BAND_CALC_TYPE
+    assert stored.data["barrier_height_eV"] == 0.19999999999999996
+    assert stored.data["num_images"] == 3
+
+    window._ensure_energy_barriers_view()
+    window._refresh_energy_barriers_view()
+    assert window._energy_barriers_view._neb_results_table.rowCount() == 1
+
+    window._on_energy_barrier_neb_result_selected(str(stored.id))
+
+    assert window._energy_barriers_view._profile_plot.point_count() == 3
+    assert window._energy_barriers_view._preview_slider.maximum() == 2
+    assert window._energy_barriers_view._preview_slider_start_label.text() == "0"
+    assert window._energy_barriers_view._preview_slider_end_label.text() == "1"
+    window._energy_barriers_view._preview_slider.setValue(1)
+    assert "TST" in window._energy_barriers_view._preview_summary.text()
+
     window.close()
 
 

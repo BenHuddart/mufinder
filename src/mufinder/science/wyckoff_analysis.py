@@ -11,6 +11,7 @@ import numpy as np
 import spglib
 
 from mufinder.domain.models import Structure
+from mufinder.science.spglib_compat import get_crystal_symmetry, get_crystal_symmetry_dataset
 from mufinder.science.relaxation_analysis import (
     RelaxationClusterSummary,
     RelaxedMuonSite,
@@ -146,13 +147,10 @@ def _label_candidate(
     dummy_number = _dummy_atomic_number(host_numbers)
     positions = np.vstack([host_positions, np.asarray(orbit, dtype=float)])
     numbers = np.asarray([*host_numbers.tolist(), *([dummy_number] * len(orbit))], dtype=int)
-    try:
-        dataset = spglib.get_symmetry_dataset(
-            (lattice, positions, numbers),
-            symprec=float(symprec),
-        )
-    except Exception:  # noqa: BLE001 - spglib can fail on malformed cells.
-        return None
+    dataset = get_crystal_symmetry_dataset(
+        (lattice, positions, numbers),
+        symprec=float(symprec),
+    )
     if dataset is None:
         return None
     offset = len(host_positions)
@@ -338,8 +336,8 @@ def assign_cluster_wyckoff_sites(
         )
 
     try:
-        symmetry = spglib.get_symmetry(host_cell, symprec=float(symprec))
-        dataset = spglib.get_symmetry_dataset(host_cell, symprec=float(symprec))
+        symmetry = get_crystal_symmetry(host_cell, symprec=float(symprec))
+        dataset = get_crystal_symmetry_dataset(host_cell, symprec=float(symprec))
     except Exception:  # noqa: BLE001 - spglib can fail on malformed cells.
         symmetry = None
         dataset = None

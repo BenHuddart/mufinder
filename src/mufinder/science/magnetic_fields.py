@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
+import warnings
 
 import numpy as np
-import spglib
 
 from mufinder.domain.models import MuonSite, Structure
+from mufinder.science.spglib_compat import get_crystal_symmetry
 from mufinder.science.demagnetization import DemagnetizingSample, demagnetizing_tensor
 from mufinder.science._muesr_compat import patch_numpy_aliases_for_muesr
 from mufinder.science.magnetic_structure import (
@@ -232,7 +233,7 @@ def find_equivalent_muon_sites(
 
     mu = _canonical_fractional(muon_position)
     atoms = structure_to_ase_atoms(structure)
-    symmetry = spglib.get_symmetry(
+    symmetry = get_crystal_symmetry(
         (
             np.asarray(structure.lattice_vectors, dtype=float),
             np.asarray(structure.fractional_positions, dtype=float),
@@ -732,11 +733,25 @@ def _distribution_calculation_parameters(options: MagneticFieldOptions, radius: 
 def _load_muesr_engines():
     patch_numpy_aliases_for_muesr()
     try:
-        from muesr.engines import find_largest_sphere, locfield
-        from muesr.engines.clfc import dipten
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="'cgi' is deprecated and slated for removal in Python 3.13",
+                category=DeprecationWarning,
+                module=r"muesr\.core\.prettytable",
+            )
+            from muesr.engines import find_largest_sphere, locfield
+            from muesr.engines.clfc import dipten
     except ImportError:
         try:
-            from muesr.engines.clfc import dipten, find_largest_sphere, locfield
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="'cgi' is deprecated and slated for removal in Python 3.13",
+                    category=DeprecationWarning,
+                    module=r"muesr\.core\.prettytable",
+                )
+                from muesr.engines.clfc import dipten, find_largest_sphere, locfield
         except ImportError as exc:
             raise MagneticFieldDependencyError(
                 "muesr is required for periodic magnetic field calculations. "
@@ -748,8 +763,15 @@ def _load_muesr_engines():
 def _build_muesr_sample(structure: Structure, muon_positions_frac: Sequence[Sequence[float]]):
     patch_numpy_aliases_for_muesr()
     try:
-        from muesr.core.atoms import Atoms as MuesrAtoms
-        from muesr.core.sample import Sample as MuesrSample
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="'cgi' is deprecated and slated for removal in Python 3.13",
+                category=DeprecationWarning,
+                module=r"muesr\.core\.prettytable",
+            )
+            from muesr.core.atoms import Atoms as MuesrAtoms
+            from muesr.core.sample import Sample as MuesrSample
     except ImportError as exc:
         raise MagneticFieldDependencyError(
             "muesr is required for periodic magnetic field calculations."

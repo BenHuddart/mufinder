@@ -1531,6 +1531,189 @@ class ProjectService:
 
         return definition
 
+    def register_quantum_phonon_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_ids: list[UUID],
+        input_site_ids: list[UUID],
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one Quantum Corrections phonon configuration."""
+
+        if not input_structure_ids:
+            raise ValueError("At least one input structure is required.")
+        missing_structures = [structure_id for structure_id in input_structure_ids if structure_id not in document.structures]
+        if missing_structures:
+            raise ValueError("input_structure_ids must reference known structures.")
+        missing_sites = [site_id for site_id in input_site_ids if site_id not in document.sites]
+        if missing_sites:
+            raise ValueError("input_site_ids must reference known sites.")
+
+        relative_output = str(output_directory)
+        try:
+            relative_output = str(output_directory.relative_to(document.project_root))
+        except ValueError:
+            relative_output = str(output_directory)
+
+        snapshot = to_jsonable(parameters)
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+            calc_type="castep_quantum_phonon_set",
+            parameters={
+                "configuration": snapshot,
+                "output_directory": relative_output,
+                "job_ids_by_label": dict(job_ids_by_label or {}),
+            },
+            input_structure_ids=list(input_structure_ids),
+            input_site_ids=list(input_site_ids),
+        )
+        document.calculations[definition.id] = definition
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="configure_quantum_corrections",
+                workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+                actor="user",
+                description=f"Configured Quantum Corrections with {len(input_site_ids)} relaxed site(s)",
+                parameters={
+                    "calculation_definition_id": str(definition.id),
+                    "configuration": snapshot,
+                    "output_directory": relative_output,
+                    "job_ids_by_label": dict(job_ids_by_label or {}),
+                },
+                input_entity_ids=[*input_structure_ids, *input_site_ids],
+                output_entity_ids=[definition.id],
+            ),
+        )
+
+        return definition
+
+    def register_transition_state_search_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_ids: list[UUID],
+        input_site_ids: list[UUID],
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one Energy Barriers transition-state-search configuration."""
+
+        if not input_structure_ids:
+            raise ValueError("At least one input structure is required.")
+        missing_structures = [structure_id for structure_id in input_structure_ids if structure_id not in document.structures]
+        if missing_structures:
+            raise ValueError("input_structure_ids must reference known structures.")
+        missing_sites = [site_id for site_id in input_site_ids if site_id not in document.sites]
+        if missing_sites:
+            raise ValueError("input_site_ids must reference known sites.")
+
+        relative_output = str(output_directory)
+        try:
+            relative_output = str(output_directory.relative_to(document.project_root))
+        except ValueError:
+            relative_output = str(output_directory)
+
+        snapshot = to_jsonable(parameters)
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+            calc_type="castep_transition_state_search_set",
+            parameters={
+                "configuration": snapshot,
+                "output_directory": relative_output,
+                "job_ids_by_label": dict(job_ids_by_label or {}),
+            },
+            input_structure_ids=list(input_structure_ids),
+            input_site_ids=list(input_site_ids),
+        )
+        document.calculations[definition.id] = definition
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="configure_energy_barriers",
+                workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+                actor="user",
+                description=f"Configured Energy Barriers with {len(input_site_ids)} relaxed site(s)",
+                parameters={
+                    "calculation_definition_id": str(definition.id),
+                    "configuration": snapshot,
+                    "output_directory": relative_output,
+                    "job_ids_by_label": dict(job_ids_by_label or {}),
+                },
+                input_entity_ids=[*input_structure_ids, *input_site_ids],
+                output_entity_ids=[definition.id],
+            ),
+        )
+
+        return definition
+
+    def register_nudged_elastic_band_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_ids: list[UUID],
+        input_site_ids: list[UUID],
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one Energy Barriers NEB configuration."""
+
+        if not input_structure_ids:
+            raise ValueError("At least one input structure is required.")
+        missing_structures = [structure_id for structure_id in input_structure_ids if structure_id not in document.structures]
+        if missing_structures:
+            raise ValueError("input_structure_ids must reference known structures.")
+        missing_sites = [site_id for site_id in input_site_ids if site_id not in document.sites]
+        if missing_sites:
+            raise ValueError("input_site_ids must reference known sites.")
+
+        relative_output = str(output_directory)
+        try:
+            relative_output = str(output_directory.relative_to(document.project_root))
+        except ValueError:
+            relative_output = str(output_directory)
+
+        snapshot = to_jsonable(parameters)
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+            calc_type="castep_nudged_elastic_band_set",
+            parameters={
+                "configuration": snapshot,
+                "output_directory": relative_output,
+                "job_ids_by_label": dict(job_ids_by_label or {}),
+            },
+            input_structure_ids=list(input_structure_ids),
+            input_site_ids=list(input_site_ids),
+        )
+        document.calculations[definition.id] = definition
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="configure_energy_barriers",
+                workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+                actor="user",
+                description=f"Configured Energy Barriers NEB with {len(input_site_ids)} relaxed site(s)",
+                parameters={
+                    "calculation_definition_id": str(definition.id),
+                    "configuration": snapshot,
+                    "output_directory": relative_output,
+                    "job_ids_by_label": dict(job_ids_by_label or {}),
+                },
+                input_entity_ids=[*input_structure_ids, *input_site_ids],
+                output_entity_ids=[definition.id],
+            ),
+        )
+
+        return definition
+
     def set_recommended_cutoff(
         self,
         document: ProjectDocument,

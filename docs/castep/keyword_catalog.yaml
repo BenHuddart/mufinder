@@ -74,6 +74,56 @@ keywords:
       %ENDBLOCK POSITIONS_ABS
     notes: Optional first line stores the Cartesian unit. MuFinder treats this as structure-controlled and does not expose it in parameter dialogs.
 
+  - name: POSITIONS_FRAC_PRODUCT
+    canonical_name: positions_frac_product
+    file: cell
+    kind: block
+    value_type: positions_block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK = TRANSITIONSTATESEARCH]
+    example: |
+      %BLOCK POSITIONS_FRAC_PRODUCT
+      Fe 0 0 0 SPIN=2
+      Fe 0.5 0.5 0.5 SPIN=-2
+      %ENDBLOCK POSITIONS_FRAC_PRODUCT
+    notes: Product-state fractional positions for CASTEP transition-state searches. MuFinder generates this from the selected product relaxed structure and does not expose it in parameter dialogs.
+
+  - name: POSITIONS_ABS_PRODUCT
+    canonical_name: positions_abs_product
+    file: cell
+    kind: block
+    value_type: positions_block
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK = TRANSITIONSTATESEARCH]
+    example: |
+      %BLOCK POSITIONS_ABS_PRODUCT
+      ang
+      Fe 0 0 0 SPIN=2
+      Fe 2.5 2.5 2.5 SPIN=-2
+      %ENDBLOCK POSITIONS_ABS_PRODUCT
+    notes: Product-state Cartesian positions for CASTEP transition-state searches. MuFinder uses this form for NEB jobs generated from completed transition-state searches.
+
+  - name: POSITIONS_ABS_INTERMEDIATE
+    canonical_name: positions_abs_intermediate
+    file: cell
+    kind: block
+    value_type: positions_block
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK = TRANSITIONSTATESEARCH]
+    example: |
+      %BLOCK POSITIONS_ABS_INTERMEDIATE
+      ang
+      Fe 0 0 0 SPIN=2
+      Fe 1.25 2.5 2.5 SPIN=-2
+      %ENDBLOCK POSITIONS_ABS_INTERMEDIATE
+    notes: Intermediate Cartesian positions for CASTEP transition-state searches. MuFinder Phase 2 Energy Barriers NEB jobs populate this from the highest-energy image in the completed `.ts` path.
+
   - name: SPECIES_POT
     canonical_name: species_pot
     file: cell
@@ -364,7 +414,26 @@ keywords:
       category: electronic
       widget_hint: dropdown
       default_value: LDA
-      basic_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+
+  - name: TSSEARCH_METHOD
+    canonical_name: tssearch_method
+    file: param
+    kind: scalar
+    value_type: enum
+    unit:
+    allowed_values:
+      - LSTQST
+      - NEB
+    mutually_exclusive_with: []
+    requires: [TASK = TRANSITIONSTATESEARCH]
+    example: TSSEARCH_METHOD : LSTQST
+    notes: Transition-state search method used by MuFinder Energy Barriers jobs. Supported values are limited to the CASTEP runtime metadata verified during development.
+    gui:
+      label: TS Search Method
+      category: workflow
+      widget_hint: dropdown
+      basic_workflows: [energy_barriers]
+      advanced_workflows: [energy_barriers]
 
   - name: BASIS_PRECISION
     canonical_name: basis_precision

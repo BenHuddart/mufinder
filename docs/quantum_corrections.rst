@@ -5,6 +5,62 @@ Quantum Corrections estimates muon zero-point and phonon-derived correlation
 metrics from CASTEP Gamma-point phonon calculations. The workflow is designed
 for relaxed MuFinder muon sites, not for unrelaxed candidate generation output.
 
+Scientific intent
+-----------------
+
+This workflow is aimed at the regime where the muon already has a well-defined,
+locally relaxed stopping site and the next question is how strongly local
+vibrational motion modifies that picture. MuFinder therefore focuses on
+Gamma-point phonons of the relaxed defect cell and extracts the modes with the
+largest muon participation. The resulting zero-point estimate is a local,
+harmonic approximation to the muon's vibrational ground-state contribution, and
+the witness metrics summarize how strongly the muon motion is correlated with
+the host modes retained in that reduced description.
+
+Using the workflow page
+-----------------------
+
+The Quantum Corrections page is split into two user-facing sections:
+
+- ``Quantum Phonon Jobs`` lists eligible relaxed muon sites that can seed a
+  phonon calculation.
+- ``Completed Results`` lists completed phonon jobs with the parsed ZPE and
+  witness summary.
+
+Typical use is:
+
+1. finish the structural muon relaxation workflow and confirm the site is in a
+   relaxed state;
+2. open Quantum Corrections and select one or more eligible rows;
+3. use ``Configure...`` to edit the most relevant phonon controls directly,
+   or add extra CASTEP parameters through the searchable advanced list;
+4. submit the selected rows locally or on the cluster;
+5. review the completed result table once the ``.phonon`` file has been parsed.
+
+The page is intentionally row-driven. Each eligible relaxed site becomes its
+own phonon job candidate, so you can tune settings per site without changing
+other sources in the same project.
+
+Configuration UI
+----------------
+
+The row configuration dialog intentionally starts with the controls most users
+are likely to need for a Gamma-point phonon run:
+
+- ``PHONON_METHOD``;
+- ``BASIS_PRECISION`` or ``CUT_OFF_ENERGY`` depending on the chosen parameter
+  combination;
+- ``FINE_CUT_OFF_ENERGY``;
+- ``ELEC_ENERGY_TOL``;
+- ``KPOINT_MP_GRID``;
+- ``PHONON_KPOINT_MP_GRID``;
+- pseudopotential family metadata for DFPT compatibility checks.
+
+Additional workflow-supported CASTEP parameters remain available through the
+``Add Parameter`` dialog, which provides search by keyword name, alias,
+description, and category. MuFinder keeps workflow-controlled values such as
+``TASK : PHONON`` locked in the dialog.
+
 Implemented Phase 1 scope
 -------------------------
 
@@ -21,6 +77,8 @@ The implemented core supports:
 - MuFinder ``JobSpec`` expansion for CASTEP phonon jobs with
   ``TASK : PHONON``, explicit ``PHONON_METHOD``, ``PHONON_KPOINT_MP_GRID 1 1 1``,
   ``SPECIES_MASS`` for ``H:mu``, and ``SPECIES_GAMMA`` for ``H:mu``.
+- Project-page submission of selected eligible sites through the shared local
+  and cluster CASTEP runners.
 - Local and cluster result handling that treats ``.phonon`` as an expected
   output for quantum phonon jobs.
 
@@ -68,15 +126,24 @@ Outputs and interpretation
 
 Completed quantum phonon results persist:
 
+- the source relaxed site and source relaxation provenance;
 - the CASTEP ``.phonon`` file path;
 - whether the parsed output is Gamma-only;
 - selected mode indices, frequencies, muon participation, and per-mode ZPE;
 - total selected-mode muon ZPE in eV;
 - ``w1`` and optional warnings for unstable selected modes.
 
+Rows remain inspectable after submission. Once a job has moved beyond the ready
+state, the parameter dialog becomes read-only so the stored job inputs remain
+traceable to the actual calculation that was submitted.
+
 The ZPE value is a harmonic, Gamma-point estimate based on the selected
 muon-dominated modes. It should be interpreted as a local-defect approximation,
 not as a full anharmonic many-body quantum treatment.
+
+In practice, this means Quantum Corrections is best used as a comparative tool
+between already-relaxed candidate sites or charge states, rather than as a
+standalone predictor of absolute quantum free energies.
 
 Gomilsek single-particle approximations
 ---------------------------------------

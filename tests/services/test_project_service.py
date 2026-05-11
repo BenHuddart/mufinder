@@ -1196,6 +1196,105 @@ def test_register_pristine_relaxation_definition_persists_configuration(tmp_path
     assert loaded_definition.parameters["job_ids_by_label"] == {}
 
 
+def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "quantum_definition.mufinder"
+    doc = service.create_project(root, "QuantumDefinition")
+    structure = service.import_structure_file(doc, Path("tests/golden/si_geom_opt.cell"), make_active=True)
+    site = MuonSite(label="siteA", status="relaxed", source_structure_id=structure.id)
+    doc.sites[site.id] = site
+
+    definition = service.register_quantum_phonon_definition(
+        doc,
+        input_structure_ids=[structure.id],
+        input_site_ids=[site.id],
+        parameters={
+            "method": "finite_displacement",
+            "pseudopotential_family": "unknown",
+            "sources": [{"site_id": str(site.id), "label": "siteA"}],
+        },
+        output_directory=root / "files" / "quantum_corrections",
+    )
+
+    assert definition.id in doc.calculations
+    assert doc.calculations[definition.id].workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS
+    assert doc.calculations[definition.id].input_site_ids == [site.id]
+    assert doc.calculations[definition.id].parameters["configuration"]["method"] == "finite_displacement"
+    assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
+    assert doc.provenance[-1].action == "configure_quantum_corrections"
+
+    service.save_project(doc)
+    loaded = service.load_project(root)
+    loaded_definition = loaded.calculations[definition.id]
+    assert loaded_definition.input_site_ids == [site.id]
+    assert loaded_definition.parameters["configuration"]["sources"][0]["label"] == "siteA"
+
+
+def test_register_transition_state_search_definition_persists_configuration(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "energy_barriers_definition.mufinder"
+    doc = service.create_project(root, "EnergyBarriersDefinition")
+    structure = service.import_structure_file(doc, Path("tests/golden/si_geom_opt.cell"), make_active=True)
+    site = MuonSite(label="siteA", status="relaxed", source_structure_id=structure.id)
+    doc.sites[site.id] = site
+
+    definition = service.register_transition_state_search_definition(
+        doc,
+        input_structure_ids=[structure.id],
+        input_site_ids=[site.id],
+        parameters={
+            "method": "LSTQST",
+            "sources": [{"site_id": str(site.id), "label": "siteA_to_siteB_path1"}],
+        },
+        output_directory=root / "files" / "energy_barriers",
+    )
+
+    assert definition.id in doc.calculations
+    assert doc.calculations[definition.id].workflow_stage == WorkflowStage.ENERGY_BARRIERS
+    assert doc.calculations[definition.id].input_site_ids == [site.id]
+    assert doc.calculations[definition.id].parameters["configuration"]["method"] == "LSTQST"
+    assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
+    assert doc.provenance[-1].action == "configure_energy_barriers"
+
+    service.save_project(doc)
+    loaded = service.load_project(root)
+    loaded_definition = loaded.calculations[definition.id]
+    assert loaded_definition.input_site_ids == [site.id]
+    assert loaded_definition.parameters["configuration"]["sources"][0]["label"] == "siteA_to_siteB_path1"
+
+
+def test_register_nudged_elastic_band_definition_persists_configuration(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "energy_barriers_neb_definition.mufinder"
+    doc = service.create_project(root, "EnergyBarriersNebDefinition")
+    structure = service.import_structure_file(doc, Path("tests/golden/si_geom_opt.cell"), make_active=True)
+    site = MuonSite(label="siteA", status="relaxed", source_structure_id=structure.id)
+    doc.sites[site.id] = site
+
+    definition = service.register_nudged_elastic_band_definition(
+        doc,
+        input_structure_ids=[structure.id],
+        input_site_ids=[site.id],
+        parameters={
+            "method": "NEB",
+            "sources": [{"site_id": str(site.id), "label": "siteA_to_siteB_path1_neb"}],
+        },
+        output_directory=root / "files" / "energy_barriers_neb",
+    )
+
+    assert definition.id in doc.calculations
+    assert doc.calculations[definition.id].workflow_stage == WorkflowStage.ENERGY_BARRIERS
+    assert doc.calculations[definition.id].calc_type == "castep_nudged_elastic_band_set"
+    assert doc.calculations[definition.id].parameters["configuration"]["method"] == "NEB"
+    assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
+    assert doc.provenance[-1].action == "configure_energy_barriers"
+
+    service.save_project(doc)
+    loaded = service.load_project(root)
+    loaded_definition = loaded.calculations[definition.id]
+    assert loaded_definition.parameters["configuration"]["sources"][0]["label"] == "siteA_to_siteB_path1_neb"
+
+
 def test_save_project_serializes_ui_state_with_value_with_unit(tmp_path: Path) -> None:
     service = ProjectService()
     root = tmp_path / "ui_state_value_with_unit.mufinder"

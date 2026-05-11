@@ -94,6 +94,16 @@ class _ViewerPointOverlaySpec:
     alpha: float
 
 
+@dataclass(frozen=True, slots=True)
+class _ViewerLineOverlaySpec:
+    start: np.ndarray
+    end: np.ndarray
+    color: tuple[float, float, float]
+    width: float
+    alpha: float
+    arrow: bool
+
+
 class _AxesProxy:
     """Renderer-neutral camera proxy used by tests and viewer state."""
 
@@ -1520,6 +1530,7 @@ class AtomicStructureViewer(QWidget):
         self._isosurface_specs: list[_ViewerIsosurfaceSpec] = []
         self._slice_specs: list[_ViewerSliceSpec] = []
         self._point_overlay_specs: list[_ViewerPointOverlaySpec] = []
+        self._line_overlay_specs: list[_ViewerLineOverlaySpec] = []
         self._hide_atoms_in_front_of_planes = False
         self._camera_state = _CameraState(*_DEFAULT_VIEW, _DEFAULT_VIEW_ROLL)
         self._view = _DEFAULT_VIEW
@@ -1544,6 +1555,7 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_isosurface_actors: list[object] = []
         self._pyvista_slice_actors: list[object] = []
         self._pyvista_point_overlay_actors: list[object] = []
+        self._pyvista_line_overlay_actors: list[object] = []
         self._pyvista_selection_actor = None
         self._pyvista_bond_actors: list[object] = []
         self._pyvista_spin_actors: list[object] = []
@@ -1804,6 +1816,7 @@ class AtomicStructureViewer(QWidget):
         self._isosurface_specs = []
         self._slice_specs = []
         self._point_overlay_specs = []
+        self._line_overlay_specs = []
         self._hide_atoms_in_front_of_planes = False
         self._set_spin_visibility_default_from_data()
         self._selected_index = None
@@ -2040,6 +2053,67 @@ class AtomicStructureViewer(QWidget):
         self._point_overlay_specs = specs
         self._store_view()
         if self._try_update_pyvista_point_overlay():
+            return
+        self._render()
+
+    def set_line_overlays(self, overlays: Iterable[Mapping[str, object]] | None) -> None:
+        """Attach zero or more line or arrow overlays."""
+
+        specs: list[_ViewerLineOverlaySpec] = []
+        if overlays is not None:
+            for entry in overlays:
+                if not isinstance(entry, Mapping):
+                    continue
+                if "positions" in entry:
+                    positions = np.asarray(entry.get("positions"), dtype=float)
+                    if positions.shape != (2, 3):
+                        continue
+                    start = positions[0]
+                    end = positions[1]
+                else:
+                    start = np.asarray(entry.get("start"), dtype=float)
+                    end = np.asarray(entry.get("end"), dtype=float)
+                    if start.shape != (3,) or end.shape != (3,):
+                        continue
+                if not np.isfinite(start).all() or not np.isfinite(end).all():
+                    continue
+
+                color_raw = entry.get("color", entry.get("colors", "#15a3a3"))
+                if isinstance(color_raw, str):
+                    qcolor = QColor(color_raw)
+                    if not qcolor.isValid():
+                        continue
+                    color = tuple(float(value) for value in qcolor.getRgbF()[:3])
+                else:
+                    color_array = np.asarray(color_raw, dtype=float).reshape(-1)
+                    if color_array.shape != (3,) or not np.isfinite(color_array).all():
+                        continue
+                    scale = 255.0 if float(np.max(color_array)) > 1.0 else 1.0
+                    color = tuple(float(np.clip(value / scale, 0.0, 1.0)) for value in color_array)
+
+                try:
+                    width = float(entry.get("width", 5.0))
+                except (TypeError, ValueError):
+                    width = 5.0
+                try:
+                    alpha = float(entry.get("alpha", 0.9))
+                except (TypeError, ValueError):
+                    alpha = 0.9
+
+                specs.append(
+                    _ViewerLineOverlaySpec(
+                        start=np.asarray(start, dtype=float),
+                        end=np.asarray(end, dtype=float),
+                        color=color,
+                        width=max(1.0, width),
+                        alpha=float(np.clip(alpha, 0.0, 1.0)),
+                        arrow=bool(entry.get("arrow", False)),
+                    )
+                )
+
+        self._line_overlay_specs = specs
+        self._store_view()
+        if self._try_update_pyvista_line_overlay():
             return
         self._render()
 
@@ -2337,6 +2411,12 @@ class AtomicStructureViewer(QWidget):
             overlay_points = np.vstack([spec.positions for spec in self._point_overlay_specs if len(spec.positions)])
             if len(overlay_points):
                 extra_points = overlay_points if extra_points is None else np.vstack([extra_points, overlay_points])
+        if self._line_overlay_specs:
+            overlay_points = np.vstack(
+                [np.vstack([spec.start.reshape(1, 3), spec.end.reshape(1, 3)]) for spec in self._line_overlay_specs]
+            )
+            if len(overlay_points):
+                extra_points = overlay_points if extra_points is None else np.vstack([extra_points, overlay_points])
         if extra_points is None:
             extra_points = np.empty((0, 3), dtype=float)
         return positions, numbers, symbols, colors, radii, extra_points
@@ -2464,6 +2544,7 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_isosurface_actors = []
         self._pyvista_slice_actors = []
         self._pyvista_point_overlay_actors = []
+        self._pyvista_line_overlay_actors = []
         self._pyvista_selection_actor = None
         self._pyvista_bond_actors = []
         self._pyvista_spin_actors = []
@@ -2566,6 +2647,8 @@ class AtomicStructureViewer(QWidget):
             self._draw_pyvista_slices(plotter, pv)
         if self._point_overlay_specs:
             self._draw_pyvista_point_overlays(plotter, pv)
+        if self._line_overlay_specs:
+            self._draw_pyvista_line_overlays(plotter, pv)
         if self._selected_indexes:
             self._draw_pyvista_selection(plotter, pv, positions, radii)
 
@@ -2880,6 +2963,60 @@ class AtomicStructureViewer(QWidget):
             )
             self._pyvista_point_overlay_actors.append(actor)
 
+    def _draw_pyvista_line_overlays(self, plotter, pv) -> None:
+        self._pyvista_line_overlay_actors = []
+        for index, spec in enumerate(self._line_overlay_specs):
+            direction = np.asarray(spec.end - spec.start, dtype=float)
+            length = float(np.linalg.norm(direction))
+            if length <= 1e-10:
+                continue
+            unit = direction / length
+            color = tuple(float(value) for value in spec.color)
+
+            if spec.arrow:
+                head_length = min(max(length * 0.18, 0.18), length * 0.45)
+                shaft_end = np.asarray(spec.end, dtype=float) - unit * (0.68 * head_length)
+            else:
+                head_length = 0.0
+                shaft_end = np.asarray(spec.end, dtype=float)
+
+            line = pv.Line(np.asarray(spec.start, dtype=float), shaft_end)
+            line_actor = plotter.add_mesh(
+                line,
+                color=color,
+                opacity=float(spec.alpha),
+                line_width=float(spec.width),
+                render_lines_as_tubes=True,
+                smooth_shading=True,
+                name=f"line-overlay-{index}",
+                render=False,
+            )
+            self._pyvista_line_overlay_actors.append(line_actor)
+
+            if not spec.arrow:
+                continue
+
+            cone = pv.Cone(
+                center=np.asarray(spec.end, dtype=float) - unit * (0.5 * head_length),
+                direction=unit,
+                height=float(head_length),
+                radius=max(0.06, 0.02 * float(spec.width)),
+                resolution=20,
+                capping=True,
+            )
+            cone_actor = plotter.add_mesh(
+                cone,
+                color=color,
+                opacity=float(spec.alpha),
+                smooth_shading=True,
+                ambient=0.6,
+                diffuse=0.28,
+                specular=0.0,
+                name=f"line-overlay-arrow-{index}",
+                render=False,
+            )
+            self._pyvista_line_overlay_actors.append(cone_actor)
+
     def _build_pyvista_isosurface_mesh(self, pv, *, vertices: np.ndarray, faces: np.ndarray):
         faces = np.hstack(
             [
@@ -2985,6 +3122,11 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_point_overlay_actors = []
         return removed
 
+    def _remove_pyvista_line_overlay(self) -> bool:
+        removed = self._remove_pyvista_actor_group(self._pyvista_line_overlay_actors)
+        self._pyvista_line_overlay_actors = []
+        return removed
+
     def _try_update_pyvista_point_overlay(self) -> bool:
         if self._backend_name != "pyvista" or self._shutting_down or self._atoms is None or len(self._atoms) == 0:
             return False
@@ -3005,6 +3147,29 @@ class AtomicStructureViewer(QWidget):
 
         self._remove_pyvista_point_overlay()
         self._draw_pyvista_point_overlays(plotter, pv)
+        self._canvas.draw_idle()
+        return True
+
+    def _try_update_pyvista_line_overlay(self) -> bool:
+        if self._backend_name != "pyvista" or self._shutting_down or self._atoms is None or len(self._atoms) == 0:
+            return False
+
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None:
+            return False
+
+        if not self._line_overlay_specs:
+            if not self._remove_pyvista_line_overlay():
+                return False
+            self._canvas.draw_idle()
+            return True
+
+        pv, _qt_interactor = _pyvista_modules()
+        if pv is None:
+            return False
+
+        self._remove_pyvista_line_overlay()
+        self._draw_pyvista_line_overlays(plotter, pv)
         self._canvas.draw_idle()
         return True
 

@@ -645,6 +645,8 @@ class UepClusteringDialog(QDialog):
         compact = (self.width() <= _COMPACT_LAYOUT_MAX_WIDTH) or (self.height() <= _COMPACT_LAYOUT_MAX_HEIGHT)
         layout_changed = compact != self._compact_layout_active
         self._compact_layout_active = compact
+        self._left_figure.set_layout_engine("none" if compact else "constrained")
+        self._bubble_figure.set_layout_engine("none" if compact else "constrained")
 
         self._controls_layout.removeWidget(self._hier_controls)
         self._controls_layout.removeWidget(self._kmeans_controls)
@@ -1141,8 +1143,10 @@ class UepClusteringDialog(QDialog):
         self._emit_state_changed()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        snapshot = self.state_snapshot()
-        snapshot["is_open"] = False
-        self.state_changed.emit(snapshot)
-        self.shutdown()
+        if hasattr(self, "state_changed") and hasattr(self, "_method_combo"):
+            snapshot = self.state_snapshot()
+            snapshot["is_open"] = False
+            self.state_changed.emit(snapshot)
+        if hasattr(self, "_structure_viewer"):
+            self.shutdown()
         super().closeEvent(event)

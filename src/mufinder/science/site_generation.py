@@ -10,7 +10,8 @@ from typing import Sequence
 
 from ase.data import atomic_numbers
 import numpy as np
-import spglib
+
+from mufinder.science.spglib_compat import get_crystal_symmetry
 
 
 class SiteGenerationError(ValueError):
@@ -155,17 +156,14 @@ def _symmetry_operations(
     numbers = _species_to_numbers(host_species)
     if numbers is None or len(numbers) != len(host_positions_frac):
         return None
-    try:
-        symmetry = spglib.get_symmetry(
-            (
-                np.asarray(lattice, dtype=float),
-                np.asarray(host_positions_frac, dtype=float),
-                np.asarray(numbers, dtype=int),
-            ),
-            symprec=float(symprec),
-        )
-    except Exception:  # noqa: BLE001 - spglib can fail on malformed cells.
-        return None
+    symmetry = get_crystal_symmetry(
+        (
+            np.asarray(lattice, dtype=float),
+            np.asarray(host_positions_frac, dtype=float),
+            np.asarray(numbers, dtype=int),
+        ),
+        symprec=float(symprec),
+    )
     if symmetry is None:
         return None
     return (

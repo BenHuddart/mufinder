@@ -29,8 +29,14 @@ def _find_route(window: MainWindow, route: str):
                 return found
         return None
 
-    root = window._project_tree.topLevelItem(0)
-    return None if root is None else visit(root)
+    for index in range(window._project_tree.topLevelItemCount()):
+        root = window._project_tree.topLevelItem(index)
+        if root is None:
+            continue
+        found = visit(root)
+        if found is not None:
+            return found
+    return None
 
 
 def _host_structure() -> Structure:

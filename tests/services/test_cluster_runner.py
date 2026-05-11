@@ -591,6 +591,35 @@ def test_cluster_runner_retrieve_downloads_optional_phonon(
     assert (tmp_path / "seed.phonon").read_bytes() == b"phonon output"
 
 
+def test_cluster_runner_retrieve_downloads_optional_ts_file(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="125",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+        retrieve_ts=True,
+    )
+    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
+    runner._ssh.remote_files["/remote/job/seed.ts"] = b"ts output"
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+
+    runner._retrieve_results(entry)
+
+    assert (tmp_path / "seed.ts").read_bytes() == b"ts output"
+
+
 def test_cluster_runner_retrieve_skips_optional_files_when_not_requested(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -11,6 +11,7 @@ import numpy as np
 import spglib
 
 from mufinder.domain.models import Structure
+from mufinder.science.spglib_compat import get_crystal_symmetry_dataset
 
 MAGNETIC_STRUCTURE_SCHEMA_VERSION = 2
 
@@ -1302,16 +1303,13 @@ def _equivalent_atom_representatives(structure: Structure) -> tuple[int, ...]:
 
 
 def _equivalent_atoms(structure: Structure) -> np.ndarray | None:
-    try:
-        dataset = spglib.get_symmetry_dataset(
-            (
-                np.asarray(structure.lattice_vectors, dtype=float),
-                np.asarray(structure.fractional_positions, dtype=float),
-                np.asarray(structure_to_ase_atoms(structure).get_atomic_numbers(), dtype=int),
-            )
+    dataset = get_crystal_symmetry_dataset(
+        (
+            np.asarray(structure.lattice_vectors, dtype=float),
+            np.asarray(structure.fractional_positions, dtype=float),
+            np.asarray(structure_to_ase_atoms(structure).get_atomic_numbers(), dtype=int),
         )
-    except Exception:
-        return None
+    )
     if dataset is None:
         return None
     if hasattr(dataset, "equivalent_atoms"):

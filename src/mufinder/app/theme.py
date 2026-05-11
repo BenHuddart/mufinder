@@ -939,22 +939,26 @@ def _muon_generation_styles(p: MuFinderPalette) -> str:
 def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     return f"""
     QTabWidget#muonRelaxationChargeTabs::pane,
-    QTabWidget#analysisWorkspaceTabs::pane {{
+    QTabWidget#analysisWorkspaceTabs::pane,
+    QTabWidget#energyBarriersTabs::pane {{
         border: 1px solid {p.border};
         border-radius: 8px;
         top: -1px;
         background: {p.bg_surface};
     }}
     QTabWidget#muonRelaxationChargeTabs,
-    QTabWidget#analysisWorkspaceTabs {{
+    QTabWidget#analysisWorkspaceTabs,
+    QTabWidget#energyBarriersTabs {{
         background: {p.bg_surface};
     }}
     QTabWidget#muonRelaxationChargeTabs QTabBar,
-    QTabWidget#analysisWorkspaceTabs QTabBar {{
+    QTabWidget#analysisWorkspaceTabs QTabBar,
+    QTabWidget#energyBarriersTabs QTabBar {{
         background: {p.bg_surface};
     }}
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab,
-    QTabWidget#analysisWorkspaceTabs QTabBar::tab {{
+    QTabWidget#analysisWorkspaceTabs QTabBar::tab,
+    QTabWidget#energyBarriersTabs QTabBar::tab {{
         background: {p.bg_surface_alt};
         color: {p.text_muted};
         border: 1px solid {p.border};
@@ -966,13 +970,15 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
         font-weight: 700;
     }}
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab:selected,
-    QTabWidget#analysisWorkspaceTabs QTabBar::tab:selected {{
+    QTabWidget#analysisWorkspaceTabs QTabBar::tab:selected,
+    QTabWidget#energyBarriersTabs QTabBar::tab:selected {{
         background: {p.bg_surface};
         color: {p.text_primary};
         border-color: {p.accent};
     }}
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab:hover:!selected,
-    QTabWidget#analysisWorkspaceTabs QTabBar::tab:hover:!selected {{
+    QTabWidget#analysisWorkspaceTabs QTabBar::tab:hover:!selected,
+    QTabWidget#energyBarriersTabs QTabBar::tab:hover:!selected {{
         background: {p.bg_surface};
         color: {p.text_primary};
     }}

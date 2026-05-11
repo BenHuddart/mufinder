@@ -20,6 +20,7 @@ from scipy.spatial import distance as spdistance
 
 from mufinder.castep_io.output_parser import parse_castep_mulliken_atomic_spins
 from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
+from mufinder.science.spglib_compat import configure_spglib_error_handling
 
 
 _COULOMB_PREFactor = 1.0 / (4.0 * np.pi * cnst.epsilon_0)
@@ -2048,6 +2049,7 @@ def prepare_uep_clustering_dataset(
 ) -> UepPreparedClusteringDataset:
     """Prepare reusable Soprano-derived clustering features for a relaxed-site batch."""
 
+    configure_spglib_error_handling()
     active = _validate_clustering_config(config or UepClusteringConfig())
     if not optimizations:
         return UepPreparedClusteringDataset(

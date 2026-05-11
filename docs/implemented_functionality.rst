@@ -183,6 +183,8 @@ Current behavior includes:
 - expanding Gamma-only CASTEP phonon ``JobSpec`` objects with ``TASK : PHONON``,
   ``PHONON_METHOD``, ``PHONON_KPOINT_MP_GRID 1 1 1``, and explicit ``H:mu``
   mass/gamma cell blocks;
+- submitting selected eligible sites through the shared local and cluster
+  CASTEP job runners;
 - finite displacement as the default phonon method, with DFPT/linear-response
   compatibility checks for known pseudopotential restrictions;
 - parsing CASTEP ``.phonon`` files into typed q-point, atom, frequency, and
@@ -196,9 +198,37 @@ Current behavior includes:
   job outputs;
 - persisting completed quantum phonon analysis summaries into ``Result``
   entities.
+- exposing a curated parameter dialog with searchable advanced CASTEP controls
+  for each row.
 
 See :doc:`quantum_corrections` for method assumptions and the planned
 Gomilsek-style single-particle approximation layer.
+
+Energy Barriers
+---------------
+
+The Energy Barriers workflow now has a dedicated project page for staged path,
+transition-state, and NEB work.
+
+Current behavior includes:
+
+- explicit selection of initial and final relaxed endpoints before path
+  generation;
+- symmetry-guided enumeration of distinct muon paths between the selected
+  endpoints;
+- a path preview dialog that shows the undistorted matching pristine supercell
+  with initial/final muon positions and an optional path arrow;
+- curated per-row parameter dialogs for both transition-state and NEB jobs,
+  with searchable advanced CASTEP controls available on demand;
+- transition-state search job expansion with aligned reactant/product endpoint
+  structures;
+- NEB job expansion from completed transition-state results, including product
+  and intermediate images when present in the parsed path file;
+- inline NEB inspection with synchronized plot, image table, slider, and
+  structure viewer.
+
+See :doc:`energy_barriers` for the user-facing workflow, assumptions, and
+current scope.
 
 Supercell editor
 ----------------

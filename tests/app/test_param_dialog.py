@@ -94,6 +94,20 @@ def test_parameter_dialog_infers_task_and_hides_locked_value(qapp) -> None:
     assert "cut_off_energy" not in values
 
 
+def test_parameter_dialog_uses_locked_task_value_when_overridden(qapp) -> None:
+    dialog = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_cutoff",
+        locked_values={"task": "PHONON"},
+    )
+
+    if dialog._task_editor is not None:
+        assert dialog._task_editor.value() == "PHONON"
+    else:
+        assert dialog._task_display.text() == "PHONON"
+    assert dialog.collect_values()["task"] == "PHONON"
+
+
 def test_parameter_dialog_blocks_conflict_with_locked_keyword(qapp) -> None:
     dialog = ParameterDialog(
         specs=_dialog_specs(),

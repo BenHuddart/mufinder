@@ -141,8 +141,9 @@ class ParameterDialog(QDialog):
         self.resize(900, 720)
 
         self._workflow_stage = workflow_stage
-        self._task = infer_task(workflow_stage)
         self._locked_values = dict(locked_values or {})
+        locked_task = str(self._locked_values.get("task", "")).strip().upper()
+        self._task = locked_task or infer_task(workflow_stage)
         self._read_only = bool(read_only)
         self._species_options = tuple(species_options)
         self._task_spec: KeywordSpec | None = None
