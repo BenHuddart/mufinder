@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
 from PIL import Image
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata
 
 
 project_root = Path.cwd()
@@ -16,6 +17,15 @@ logo_source = src_root / "mufinder" / "assets" / "mufinder_logo.png"
 
 if str(src_root) not in sys.path:
     sys.path.insert(0, str(src_root))
+
+
+def _require_installed_modules(*module_names: str) -> None:
+    missing = [module_name for module_name in module_names if importlib.util.find_spec(module_name) is None]
+    if missing:
+        missing_text = ", ".join(sorted(missing))
+        raise ModuleNotFoundError(
+            f"PyInstaller build requires installed runtime modules: {missing_text}"
+        )
 
 
 def _build_icon(extension: str) -> str:
@@ -39,7 +49,20 @@ def _build_icon(extension: str) -> str:
 exe_icon = _build_icon(".ico") if sys.platform.startswith("win") else None
 bundle_icon = _build_icon(".icns") if sys.platform == "darwin" else None
 
-datas = collect_data_files("mufinder.assets")
+_require_installed_modules(
+    "PySide6",
+    "ase",
+    "paramiko",
+    "pyvista",
+    "pyvistaqt",
+    "vtkmodules",
+    "muesr",
+    "mulfc",
+    "soprano",
+)
+
+datas = collect_data_files("PySide6")
+datas += collect_data_files("mufinder.assets")
 datas += collect_data_files("mufinder.data")
 # Expose the source tree's mufinder.egg-info to importlib.metadata so PyInstaller
 # can copy runtime package metadata even when CI builds from an editable checkout.
@@ -62,7 +85,8 @@ hiddenimports = [
     "mufinder.branding",
     "mufinder.castep_setup",
 ] + (
-    collect_submodules("ase.io")
+    collect_submodules("PySide6")
+    + collect_submodules("ase.io")
     + collect_submodules("mufinder.app")
     + collect_submodules("muesr")
     + collect_submodules("mulfc")
@@ -73,10 +97,14 @@ hiddenimports = [
     + collect_submodules("vtkmodules")
 )
 
+# PyVista/VTK is imported lazily in the viewer stack, so static analysis does not
+# reliably discover VTK's native libraries during preview builds on Windows.
+binaries = collect_dynamic_libs("PySide6") + collect_dynamic_libs("vtkmodules")
+
 a = Analysis(
     [str(src_root / "mufinder" / "main.py")],
     pathex=[str(src_root)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

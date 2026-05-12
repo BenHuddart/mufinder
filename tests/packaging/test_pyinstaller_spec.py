@@ -49,6 +49,8 @@ def test_pyinstaller_spec_bundles_mufinder_runtime_assets_and_data() -> None:
 
     assert 'if str(src_root) not in sys.path:' in spec_text
     assert 'sys.path.insert(0, str(src_root))' in spec_text
+    assert 'def _require_installed_modules(*module_names: str) -> None:' in spec_text
+    assert 'PyInstaller build requires installed runtime modules:' in spec_text
     assert 'collect_data_files("mufinder.assets")' in spec_text
     assert 'collect_data_files("mufinder.data")' in spec_text
     assert 'copy_metadata("mufinder")' in spec_text
@@ -63,8 +65,12 @@ def test_pyinstaller_spec_bundles_ase_spacegroup_data() -> None:
 def test_pyinstaller_spec_bundles_pyvista_and_vtk_runtime_assets() -> None:
     spec_text = _pyinstaller_spec_text()
 
+    assert 'collect_data_files("PySide6")' in spec_text
+    assert 'collect_submodules("PySide6")' in spec_text
+    assert 'collect_dynamic_libs("PySide6")' in spec_text
     assert 'collect_data_files("pyvista")' in spec_text
     assert 'collect_data_files("vtkmodules")' in spec_text
+    assert 'collect_dynamic_libs("vtkmodules")' in spec_text
     assert 'collect_submodules("pyvista")' in spec_text
     assert 'collect_submodules("pyvistaqt")' in spec_text
     assert 'collect_submodules("vtkmodules")' in spec_text
