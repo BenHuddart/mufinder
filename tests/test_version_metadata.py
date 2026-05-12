@@ -55,6 +55,19 @@ def test_github_workflows_target_supported_python_version() -> None:
     assert versions == {"3.12"}
 
 
+def test_packaging_workflows_install_runtime_dependencies_before_pyinstaller() -> None:
+    preview_text = (ROOT / ".github" / "workflows" / "preview-build.yml").read_text(encoding="utf-8")
+    release_text = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    for workflow_text in (preview_text, release_text):
+        assert "python -m pip install ." in workflow_text
+        assert "python -m pip install -e ." not in workflow_text
+        assert "- name: Verify packaged runtime imports" in workflow_text
+        assert "PySide6.QtCore" in workflow_text
+        assert "vtkmodules" in workflow_text
+        assert "pyinstaller --noconfirm packaging/pyinstaller/mufinder.spec" in workflow_text
+
+
 def test_current_version_prefers_source_tree_pyproject(
     tmp_path: Path,
     monkeypatch,

@@ -91,8 +91,12 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e .
+          python -m pip install .
           python -m pip install pyinstaller Pillow
+
+      - name: Verify packaged runtime imports
+        run: |
+          python -c "import importlib; [importlib.import_module(name) for name in ['PySide6.QtCore', 'ase', 'paramiko', 'pyvista', 'pyvistaqt', 'vtkmodules', 'muesr', 'mulfc', 'soprano']]"
 
       - name: Install NSIS
         run: choco install nsis --no-progress -y
@@ -124,7 +128,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: windows-installer
-          path: ${{ env.WINDOWS_INSTALLER }}
+          path: dist/MuFinder-${{ env.RELEASE_TAG }}-windows-x64.exe
 
   build-macos:
     needs: detect-release
@@ -146,8 +150,12 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e .
+          python -m pip install .
           python -m pip install pyinstaller dmgbuild Pillow
+
+      - name: Verify packaged runtime imports
+        run: |
+          python -c "import importlib; [importlib.import_module(name) for name in ['PySide6.QtCore', 'ase', 'paramiko', 'pyvista', 'pyvistaqt', 'vtkmodules', 'muesr', 'mulfc', 'soprano']]"
 
       - name: Build PyInstaller app bundle
         run: pyinstaller --noconfirm packaging/pyinstaller/mufinder.spec
