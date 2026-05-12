@@ -49,6 +49,7 @@ def test_pyinstaller_spec_bundles_mufinder_runtime_assets_and_data() -> None:
 
     assert 'if str(src_root) not in sys.path:' in spec_text
     assert 'sys.path.insert(0, str(src_root))' in spec_text
+    assert 'def _module_is_available(module_name: str) -> bool:' in spec_text
     assert 'def _require_installed_modules(*module_names: str) -> None:' in spec_text
     assert 'PyInstaller build requires installed runtime modules:' in spec_text
     assert 'collect_data_files("mufinder.assets")' in spec_text
@@ -79,16 +80,16 @@ def test_pyinstaller_spec_bundles_pyvista_and_vtk_runtime_assets() -> None:
 def test_pyinstaller_spec_bundles_soprano_clustering_modules() -> None:
     spec_text = _pyinstaller_spec_text()
 
-    assert 'collect_submodules("soprano")' in spec_text
+    assert '_optional_collect_submodules("soprano")' in spec_text
 
 
 def test_pyinstaller_spec_bundles_magnetic_field_backend_modules() -> None:
     spec_text = _pyinstaller_spec_text()
 
-    assert 'collect_data_files("muesr")' in spec_text
-    assert 'collect_submodules("muesr")' in spec_text
-    assert 'collect_submodules("mulfc")' in spec_text
-    assert '"lfclib"' in spec_text
+    assert '_optional_collect_data_files("muesr")' in spec_text
+    assert '_optional_collect_submodules("muesr")' in spec_text
+    assert '_optional_collect_submodules("mulfc")' in spec_text
+    assert '_module_is_available("lfclib")' in spec_text
 
 
 def test_pyinstaller_spec_builds_windows_icon() -> None:

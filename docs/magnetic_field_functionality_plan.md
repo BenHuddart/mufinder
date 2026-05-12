@@ -9,7 +9,7 @@ This plan tracks the staged implementation of MuFinder's magnetic-field workflow
 - Support commensurate local-field calculations and incommensurate field distributions.
 - Allow symmetry-equivalent muon sites and muon-induced distortion corrections to be used together.
 - Move beyond single-q incommensurate structures.
-- Use `muesr` and `muLFC` as runtime dependencies for local-field calculations, with clear user-facing errors if an environment is missing them.
+- Use `muesr` and `muLFC` as optional local-field backends, with clear user-facing errors when a platform or environment does not provide them.
 - Provide comprehensive tests and theory documentation.
 
 ## Phase 1: Magnetic Structure Model and Builder
@@ -39,7 +39,7 @@ Status: foundation implemented.
 
 Implemented:
 
-- Guarded imports for `muesr` field engines, with `muesr` and `muLFC` declared as project runtime dependencies.
+- Guarded imports for `muesr` field engines, with `muesr` and `muLFC` installed as optional scientific backends when the target platform provides them.
 - Commensurability classification.
 - Finite dipole-field helper for tests and distortion corrections.
 - Commensurate field calculation wrapper, dipolar tensor wrapper, equivalent muon-site expansion, and incommensurate sampling scaffolding.

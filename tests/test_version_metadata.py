@@ -6,6 +6,7 @@ import importlib.util
 from pathlib import Path
 import re
 import sys
+import tomllib
 
 import mufinder._version as version_module
 from mufinder import __version__
@@ -27,6 +28,10 @@ def _pyproject_requires_python() -> str:
     match = re.search(r'^requires-python = "([^"]+)"$', text, re.MULTILINE)
     assert match is not None
     return match.group(1)
+
+
+def _pyproject_data() -> dict[str, object]:
+    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
 
 def test_runtime_version_matches_pyproject() -> None:
@@ -60,12 +65,31 @@ def test_packaging_workflows_install_runtime_dependencies_before_pyinstaller() -
     release_text = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
     for workflow_text in (preview_text, release_text):
-        assert "python -m pip install ." in workflow_text
+        assert "python -m pip install numpy" in workflow_text
+        assert 'python -m pip install ".[scientific-backends]"' in workflow_text
+        assert "python -m pip install ." not in workflow_text
         assert "python -m pip install -e ." not in workflow_text
         assert "- name: Verify packaged runtime imports" in workflow_text
         assert "PySide6.QtCore" in workflow_text
+        assert 'mulfc' in workflow_text
         assert "vtkmodules" in workflow_text
         assert "pyinstaller --noconfirm packaging/pyinstaller/mufinder.spec" in workflow_text
+
+
+def test_optional_scientific_backends_are_not_required_base_dependencies() -> None:
+    project = _pyproject_data()["project"]
+    dependencies = set(project["dependencies"])
+    optional_dependencies = project["optional-dependencies"]
+
+    assert "muesr" not in dependencies
+    assert "Soprano>=0.10,<0.12" not in dependencies
+    assert "muLFC" not in dependencies
+    assert optional_dependencies["scientific-backends"] == [
+        "muesr",
+        'mulfc @ git+https://github.com/bonfus/muLFC.git@v0.0.4; platform_system == "Windows"',
+        'muLFC; platform_system != "Windows"',
+        "Soprano>=0.10,<0.12",
+    ]
 
 
 def test_current_version_prefers_source_tree_pyproject(

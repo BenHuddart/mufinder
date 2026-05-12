@@ -19,13 +19,29 @@ if str(src_root) not in sys.path:
     sys.path.insert(0, str(src_root))
 
 
+def _module_is_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
 def _require_installed_modules(*module_names: str) -> None:
-    missing = [module_name for module_name in module_names if importlib.util.find_spec(module_name) is None]
+    missing = [module_name for module_name in module_names if not _module_is_available(module_name)]
     if missing:
         missing_text = ", ".join(sorted(missing))
         raise ModuleNotFoundError(
             f"PyInstaller build requires installed runtime modules: {missing_text}"
         )
+
+
+def _optional_collect_data_files(module_name: str):
+    if not _module_is_available(module_name):
+        return []
+    return collect_data_files(module_name)
+
+
+def _optional_collect_submodules(module_name: str):
+    if not _module_is_available(module_name):
+        return []
+    return collect_submodules(module_name)
 
 
 def _build_icon(extension: str) -> str:
@@ -56,9 +72,6 @@ _require_installed_modules(
     "pyvista",
     "pyvistaqt",
     "vtkmodules",
-    "muesr",
-    "mulfc",
-    "soprano",
 )
 
 datas = collect_data_files("PySide6")
@@ -71,14 +84,19 @@ datas += copy_metadata("mufinder")
 # Bundle ASE package data so frozen macOS apps can load spacegroup.dat.
 datas += collect_data_files("ase")
 # muesr ships core lookup data alongside its Python modules.
-datas += collect_data_files("muesr")
+datas += _optional_collect_data_files("muesr")
 datas += collect_data_files("pyvista")
 datas += collect_data_files("vtkmodules")
 # The UEP clustering dialog imports Soprano's phylogenetic clustering stack lazily
 # when the batch-search clustering window is opened.
 # Magnetic-field calculations import muesr/muLFC only when a calculation starts.
-hiddenimports = [
-    "lfclib",
+optional_hiddenimports = (["lfclib"] if _module_is_available("lfclib") else []) + (
+    _optional_collect_submodules("muesr")
+    + _optional_collect_submodules("mulfc")
+    + _optional_collect_submodules("soprano")
+)
+
+hiddenimports = optional_hiddenimports + [
     "mufinder.app.main_window",
     "mufinder.app.splash_screen",
     "mufinder.app.theme",
@@ -88,12 +106,9 @@ hiddenimports = [
     collect_submodules("PySide6")
     + collect_submodules("ase.io")
     + collect_submodules("mufinder.app")
-    + collect_submodules("muesr")
-    + collect_submodules("mulfc")
     + collect_submodules("paramiko")
     + collect_submodules("pyvista")
     + collect_submodules("pyvistaqt")
-    + collect_submodules("soprano")
     + collect_submodules("vtkmodules")
 )
 

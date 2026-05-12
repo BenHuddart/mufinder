@@ -462,12 +462,16 @@ Optional contributions include:
 Dependency Handling
 -------------------
 
-``muesr`` and ``muLFC`` are project runtime dependencies. MuFinder still imports
-these engines only when a calculation requires them, so an incorrectly
-configured environment raises a clear dependency error in the Magnetic Fields
-workflow rather than failing during application startup. The import boundary also
-applies MuFinder's narrow compatibility shim for NumPy aliases that current
-``muesr`` releases still use internally.
+``muesr`` and ``muLFC`` are optional scientific backends for periodic local-field
+calculations. MuFinder imports these engines only when a calculation requires
+them, so an environment without those packages raises a clear dependency error in
+the Magnetic Fields workflow rather than failing during application startup. The
+packaged desktop builds install these optional backends when they are available
+for the target platform. On Windows, MuFinder follows the older project build
+strategy and installs ``muLFC`` from the upstream Git source because PyPI does
+not currently publish a Windows wheel or source distribution for that backend.
+The import boundary also applies MuFinder's narrow compatibility shim for NumPy aliases
+that current ``muesr`` releases still use internally.
 
 Current Scope
 -------------
