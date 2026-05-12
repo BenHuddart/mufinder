@@ -143,6 +143,10 @@ def test_cluster_runner_submit_uploads_files_and_emits_queued(qapp, tmp_path: Pa
     assert statuses[-1] == (job_id, JobStatus.QUEUED.value)
     assert any(cmd[0] == "put" and str(cmd[1]).endswith(".cell") for cmd in runner._ssh.commands)
     assert any(cmd[0] == "put" and str(cmd[1]).endswith(".param") for cmd in runner._ssh.commands)
+    uploaded_runner = next(
+        remote_path for action, remote_path in runner._ssh.commands if action == "put" and str(remote_path).endswith("run.sh")
+    )
+    assert b"\r\n" not in runner._ssh.remote_files[uploaded_runner]
 
 
 def test_cluster_runner_submit_can_reuse_existing_remote_files(qapp, tmp_path: Path) -> None:

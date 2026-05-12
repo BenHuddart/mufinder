@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
+    make_message_box_resizable,
     prompt_to_trust_host_key,
     show_detailed_warning,
 )
@@ -591,7 +592,7 @@ class CastepSetupDialog(QDialog):
             QMessageBox.warning(self, "Generation failed", summary)
             return
 
-        box = QMessageBox(self)
+        box = make_message_box_resizable(QMessageBox(self))
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Generation failed")
         box.setText(summary)

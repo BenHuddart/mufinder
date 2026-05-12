@@ -79,6 +79,7 @@ from mufinder.app.comparison_job_dialog import ComparisonJobDialog, CompletedPri
 from mufinder.app.comparison_table_widget import ComparisonTableWidget
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
+    make_message_box_resizable,
     prompt_to_trust_host_key,
     show_detailed_warning,
 )
@@ -5648,7 +5649,7 @@ class MainWindow(QMainWindow):
             return True
 
         details = "\n".join(f"- {path}" for path in sorted(set(remote_dirs)))
-        message = QMessageBox(self)
+        message = make_message_box_resizable(QMessageBox(self))
         message.setIcon(QMessageBox.Icon.Warning)
         message.setWindowTitle("Confirm remote deletion")
         message.setText("Delete all existing remote job directories?")
@@ -5755,7 +5756,7 @@ class MainWindow(QMainWindow):
             )
         )
 
-        message = QMessageBox(self)
+        message = make_message_box_resizable(QMessageBox(self))
         message.setIcon(QMessageBox.Icon.Information)
         message.setWindowTitle("Failed job diagnostics")
         message.setText(f"Failure details for {len(failed_jobs)} job(s).")

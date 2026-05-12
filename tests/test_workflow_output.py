@@ -57,8 +57,11 @@ def test_write_job_set_creates_input_files_and_manifest(tmp_path: Path) -> None:
 
         assert "%BLOCK LATTICE_CART" in cell_path.read_text(encoding="utf-8")
         assert "TASK : SINGLEPOINT" in param_path.read_text(encoding="utf-8")
+        assert b"\r\n" not in cell_path.read_bytes()
+        assert b"\r\n" not in param_path.read_bytes()
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["version"] == 1
     assert len(manifest["jobs"]) == 2
     assert manifest["jobs"][0]["name"] == jobs[0].name
+    assert b"\r\n" not in manifest_path.read_bytes()

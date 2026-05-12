@@ -612,10 +612,22 @@ def _generate_scheduler_keywords_json(
 
     remote_job_id = ""
     try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".py", delete=False) as handle:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            suffix=".py",
+            delete=False,
+        ) as handle:
             handle.write(_REMOTE_GENERATOR_SCRIPT)
             generator_path = Path(handle.name)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".sh", delete=False) as handle:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            suffix=".sh",
+            delete=False,
+        ) as handle:
             handle.write(
                 _scheduler_runner_script(
                     config=config,

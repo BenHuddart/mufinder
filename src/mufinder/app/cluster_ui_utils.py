@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 from mufinder.cluster_setup import ClusterConfig
@@ -12,6 +13,14 @@ from mufinder.services.ssh_client import (
     SSHTransportError,
     SSHUnknownHostKeyError,
 )
+
+
+def make_message_box_resizable(box: QMessageBox) -> QMessageBox:
+    """Allow a QMessageBox with details to be resized by the user."""
+
+    box.setSizeGripEnabled(True)
+    box.setWindowFlag(Qt.WindowType.MSWindowsFixedSizeDialogHint, False)
+    return box
 
 
 def show_detailed_warning(
@@ -33,7 +42,7 @@ def show_detailed_warning(
         QMessageBox.warning(parent, title, summary)
         return
 
-    box = QMessageBox(parent)
+    box = make_message_box_resizable(QMessageBox(parent))
     box.setIcon(QMessageBox.Icon.Warning)
     box.setWindowTitle(title)
     box.setText(summary)
@@ -92,7 +101,7 @@ def format_cluster_connection_error(config: ClusterConfig, exc: Exception) -> st
 def prompt_to_trust_host_key(parent, config: ClusterConfig, exc: SSHUnknownHostKeyError) -> bool:
     """Prompt the user to trust an unknown SSH host key."""
 
-    message = QMessageBox(parent)
+    message = make_message_box_resizable(QMessageBox(parent))
     message.setIcon(QMessageBox.Icon.Warning)
     message.setWindowTitle("Trust SSH host key?")
     message.setText(f"Trust the SSH host key for {config.name} ({config.hostname}:{config.port})?")

@@ -20,8 +20,8 @@ def write_job_directory(job_spec: JobSpec, base_path: Path) -> Path:
     job_dir.mkdir(parents=True, exist_ok=True)
 
     cell_text, param_text = render_job(job_spec)
-    (job_dir / f"{job_spec.name}.cell").write_text(cell_text, encoding="utf-8")
-    (job_dir / f"{job_spec.name}.param").write_text(param_text, encoding="utf-8")
+    (job_dir / f"{job_spec.name}.cell").write_text(cell_text, encoding="utf-8", newline="\n")
+    (job_dir / f"{job_spec.name}.param").write_text(param_text, encoding="utf-8", newline="\n")
 
     return job_dir
 
@@ -51,7 +51,11 @@ def write_manifest(jobs: Sequence[JobSpec], base_path: Path, *, file_name: str =
     }
 
     manifest_path = base_path / file_name
-    manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     return manifest_path
 
 

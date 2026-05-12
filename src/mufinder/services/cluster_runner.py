@@ -227,7 +227,13 @@ class ClusterJobRunner(QObject):
                     },
                 )
 
-                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".sh", delete=False) as handle:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    newline="\n",
+                    suffix=".sh",
+                    delete=False,
+                ) as handle:
                     handle.write(script_content)
                     temp_path = Path(handle.name)
                 try:
