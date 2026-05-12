@@ -667,7 +667,7 @@ def feature_dialog_stylesheet(*, include_scroll_area: bool = False, extra: str =
 
 def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) -> str:
     return f"""
-    QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QComboBox {{
+    QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
         border: 1px solid {p.border};
         border-radius: 6px;
         padding: 4px 8px;
@@ -695,10 +695,10 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         width: 12px;
         height: 12px;
     }}
-    QSpinBox {{
+    QSpinBox, QDoubleSpinBox {{
         padding-right: 30px;
     }}
-    QSpinBox::up-button {{
+    QSpinBox::up-button, QDoubleSpinBox::up-button {{
         subcontrol-origin: border;
         subcontrol-position: top right;
         width: 22px;
@@ -708,7 +708,7 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         border-top-right-radius: 6px;
         background: {p.bg_surface_alt};
     }}
-    QSpinBox::down-button {{
+    QSpinBox::down-button, QDoubleSpinBox::down-button {{
         subcontrol-origin: border;
         subcontrol-position: bottom right;
         width: 22px;
@@ -718,16 +718,18 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         background: {p.bg_surface_alt};
     }}
     QSpinBox::up-button:hover,
-    QSpinBox::down-button:hover {{
+    QDoubleSpinBox::up-button:hover,
+    QSpinBox::down-button:hover,
+    QDoubleSpinBox::down-button:hover {{
         background: {p.bg_surface_alt};
         border-left-color: {p.accent};
     }}
-    QSpinBox::up-arrow {{
+    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
         image: url("{arrow_up}");
         width: 12px;
         height: 12px;
     }}
-    QSpinBox::down-arrow {{
+    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
         image: url("{arrow_down}");
         width: 12px;
         height: 12px;

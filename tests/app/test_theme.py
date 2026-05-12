@@ -54,6 +54,8 @@ def test_apply_theme_sets_active_palette(qapp) -> None:
     assert "QComboBox::down-arrow" in stylesheet
     assert "QSpinBox::up-button" in stylesheet
     assert "QSpinBox::up-arrow" in stylesheet
+    assert "QDoubleSpinBox::up-button" in stylesheet
+    assert "QDoubleSpinBox::up-arrow" in stylesheet
     assert "QGroupBox#muonGenerationSetupCard" in stylesheet
     assert 'QWidget#randomSeparationChoice[active="true"]' in stylesheet
     assert "QDialog#clusterPositionsDialog" in stylesheet

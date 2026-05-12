@@ -14,6 +14,9 @@ src_root = project_root / "src"
 build_root = project_root / "packaging" / "build"
 logo_source = src_root / "mufinder" / "assets" / "mufinder_logo.png"
 
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
+
 
 def _build_icon(extension: str) -> str:
     build_root.mkdir(parents=True, exist_ok=True)
@@ -38,8 +41,8 @@ bundle_icon = _build_icon(".icns") if sys.platform == "darwin" else None
 
 datas = collect_data_files("mufinder.assets")
 datas += collect_data_files("mufinder.data")
-# Keep importlib.metadata.version("mufinder") available when no source-tree
-# pyproject.toml exists inside a frozen application bundle.
+# Expose the source tree's mufinder.egg-info to importlib.metadata so PyInstaller
+# can copy runtime package metadata even when CI builds from an editable checkout.
 datas += copy_metadata("mufinder")
 # ASE's CIF reader resolves symmetry data relative to ase.spacegroup.__file__.
 # Bundle ASE package data so frozen macOS apps can load spacegroup.dat.
