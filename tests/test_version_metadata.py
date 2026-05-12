@@ -75,6 +75,9 @@ def test_packaging_workflows_install_runtime_dependencies_before_pyinstaller() -
         assert "vtkmodules" in workflow_text
         assert "pyinstaller --noconfirm packaging/pyinstaller/mufinder.spec" in workflow_text
 
+    assert "python -m pip install git+https://github.com/bonfus/muLFC.git@v0.0.4" in preview_text
+    assert "python -m pip install git+https://github.com/bonfus/muLFC.git@v0.0.4" in release_text
+
 
 def test_optional_scientific_backends_are_not_required_base_dependencies() -> None:
     project = _pyproject_data()["project"]
@@ -86,7 +89,6 @@ def test_optional_scientific_backends_are_not_required_base_dependencies() -> No
     assert "muLFC" not in dependencies
     assert optional_dependencies["scientific-backends"] == [
         "muesr",
-        'mulfc @ git+https://github.com/bonfus/muLFC.git@v0.0.4; platform_system == "Windows"',
         'muLFC; platform_system != "Windows"',
         "Soprano>=0.10,<0.12",
     ]

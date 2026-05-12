@@ -23,7 +23,6 @@ dependencies = [
 [project.optional-dependencies]
 scientific-backends = [
   "muesr",
-  'mulfc @ git+https://github.com/bonfus/muLFC.git@v0.0.4; platform_system == "Windows"',
   'muLFC; platform_system != "Windows"',
   "Soprano>=0.10,<0.12",
 ]

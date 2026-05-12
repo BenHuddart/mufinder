@@ -34,6 +34,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install numpy
+          python -m pip install git+https://github.com/bonfus/muLFC.git@v0.0.4
           python -m pip install ".[scientific-backends]"
           python -m pip install pyinstaller Pillow
 
