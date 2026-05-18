@@ -133,6 +133,7 @@ class ParameterDialog(QDialog):
         locked_values: dict[str, str] | None = None,
         intro_text: str | None = None,
         read_only: bool = False,
+        editable_names: Iterable[str] | None = None,
         species_options: Sequence[str] = (),
         parent: QWidget | None = None,
     ) -> None:
@@ -145,6 +146,11 @@ class ParameterDialog(QDialog):
         locked_task = str(self._locked_values.get("task", "")).strip().upper()
         self._task = locked_task or infer_task(workflow_stage)
         self._read_only = bool(read_only)
+        self._editable_names = (
+            None
+            if editable_names is None
+            else {str(name).strip() for name in editable_names if str(name).strip()}
+        )
         self._species_options = tuple(species_options)
         self._task_spec: KeywordSpec | None = None
         self._task_editor: ParamEditorBase | None = None
@@ -198,7 +204,7 @@ class ParameterDialog(QDialog):
             )
             self._task_editor.set_value(self._task)
             self._task_editor.value_changed.connect(self._on_task_changed)
-            if self._read_only:
+            if self._read_only or not self._is_name_editable("task"):
                 self._task_editor.setEnabled(False)
             task_row.addWidget(self._task_editor, 1)
         else:
@@ -353,6 +359,13 @@ class ParameterDialog(QDialog):
         spec = self._specs_by_name[name]
         return keyword_locked_in_workflow(spec, workflow_stage=self._workflow_stage)
 
+    def _is_name_editable(self, name: str) -> bool:
+        if self._read_only:
+            return False
+        if self._editable_names is None:
+            return True
+        return name in self._editable_names
+
     def _task_locked(self) -> bool:
         if self._task_spec is None:
             return True
@@ -495,7 +508,7 @@ class ParameterDialog(QDialog):
                 label_layout.setContentsMargins(0, 0, 0, 0)
                 radio = QRadioButton(label_widget)
                 radio.setChecked(self._exclusive_selection.get(group_key) == name)
-                radio.setEnabled(not self._read_only)
+                radio.setEnabled(self._is_name_editable(name))
                 radio.toggled.connect(
                     lambda checked, g=group_key, n=name: self._on_exclusive_toggled(g, n, checked)
                 )
@@ -531,7 +544,7 @@ class ParameterDialog(QDialog):
                 editor.value_changed.connect(self._on_editor_changed)
                 if self._in_inactive_exclusive_choice(name):
                     editor.setEnabled(False)
-                elif self._read_only:
+                elif not self._is_name_editable(name):
                     editor.setEnabled(False)
                 value_widget = editor
 
@@ -539,8 +552,8 @@ class ParameterDialog(QDialog):
 
             reset_button = QPushButton("Reset", self._table_widget)
             reset_button.setMaximumWidth(58)
-            reset_button.setEnabled(not self._read_only and not locked and editor is not None)
-            if not self._read_only and not locked and editor is not None:
+            reset_button.setEnabled(self._is_name_editable(name) and not locked and editor is not None)
+            if self._is_name_editable(name) and not locked and editor is not None:
                 reset_button.clicked.connect(lambda _checked=False, param=name: self._reset_parameter(param))
             self._table_layout.addWidget(reset_button, row_index, 2)
 
@@ -552,7 +565,7 @@ class ParameterDialog(QDialog):
             remove_button = QToolButton(self._table_widget)
             remove_button.setText("x")
             can_remove = (
-                not self._read_only
+                self._is_name_editable(name)
                 and self._is_advanced_name(name)
                 and name in self._added_advanced
                 and not locked
@@ -704,6 +717,8 @@ class ParameterDialog(QDialog):
         specs: list[KeywordSpec] = []
         for name in sorted(self._specs_by_name, key=lambda item: self._order.get(item, 10_000)):
             if name in self._blocked_names:
+                continue
+            if not self._is_name_editable(name):
                 continue
             if not self._is_advanced_name(name):
                 continue

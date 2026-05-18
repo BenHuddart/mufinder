@@ -379,6 +379,39 @@ def test_local_runner_process_finished_emits_success(
     assert statuses[-1] == (job_id, JobStatus.COMPLETED.value)
 
 
+def test_local_runner_process_finished_uses_task_farm_primary_output(
+    qapp, monkeypatch, tmp_path: Path
+) -> None:
+    runner = LocalJobRunner()
+    job_id = uuid4()
+    seed = "farm_success"
+    (tmp_path / f"{seed}_farm001.castep").write_text("ok", encoding="utf-8")
+
+    request = local_runner_module._PendingJob(
+        job_id=job_id,
+        job_dir=tmp_path,
+        seed_name=seed,
+        castep_executable="/usr/bin/castep",
+        mpirun_path="",
+        num_cores=1,
+        task_farming_enabled=True,
+        num_farms=4,
+    )
+    runner._active[job_id] = local_runner_module._ActiveJob(request=request, process=_DummyProcess())
+
+    seen_paths: list[Path] = []
+    parsed = CastepResult(completed=True, total_energy=-1.23)
+    monkeypatch.setattr(
+        local_runner_module,
+        "parse_castep_output",
+        lambda path: (seen_paths.append(Path(path)), parsed)[1],
+    )
+
+    runner._on_process_finished(job_id, 0)
+
+    assert seen_paths == [tmp_path / f"{seed}_farm001.castep"]
+
+
 def test_local_runner_cancel_all_cancels_pending_and_running(
     qapp, tmp_path: Path
 ) -> None:

@@ -942,7 +942,8 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     return f"""
     QTabWidget#muonRelaxationChargeTabs::pane,
     QTabWidget#analysisWorkspaceTabs::pane,
-    QTabWidget#energyBarriersTabs::pane {{
+    QTabWidget#energyBarriersTabs::pane,
+    QTabWidget#quantumAnalysisTabs::pane {{
         border: 1px solid {p.border};
         border-radius: 8px;
         top: -1px;
@@ -950,17 +951,20 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     }}
     QTabWidget#muonRelaxationChargeTabs,
     QTabWidget#analysisWorkspaceTabs,
-    QTabWidget#energyBarriersTabs {{
+    QTabWidget#energyBarriersTabs,
+    QTabWidget#quantumAnalysisTabs {{
         background: {p.bg_surface};
     }}
     QTabWidget#muonRelaxationChargeTabs QTabBar,
     QTabWidget#analysisWorkspaceTabs QTabBar,
-    QTabWidget#energyBarriersTabs QTabBar {{
+    QTabWidget#energyBarriersTabs QTabBar,
+    QTabWidget#quantumAnalysisTabs QTabBar {{
         background: {p.bg_surface};
     }}
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab,
     QTabWidget#analysisWorkspaceTabs QTabBar::tab,
-    QTabWidget#energyBarriersTabs QTabBar::tab {{
+    QTabWidget#energyBarriersTabs QTabBar::tab,
+    QTabWidget#quantumAnalysisTabs QTabBar::tab {{
         background: {p.bg_surface_alt};
         color: {p.text_muted};
         border: 1px solid {p.border};
@@ -978,11 +982,38 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
         color: {p.text_primary};
         border-color: {p.accent};
     }}
+    QTabWidget#quantumAnalysisTabs QTabBar::tab:selected {{
+        background: {p.bg_primary};
+        color: {p.text_primary};
+        border-color: {p.accent};
+    }}
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab:hover:!selected,
     QTabWidget#analysisWorkspaceTabs QTabBar::tab:hover:!selected,
-    QTabWidget#energyBarriersTabs QTabBar::tab:hover:!selected {{
+    QTabWidget#energyBarriersTabs QTabBar::tab:hover:!selected,
+    QTabWidget#quantumAnalysisTabs QTabBar::tab:hover:!selected {{
         background: {p.bg_surface};
         color: {p.text_primary};
+    }}
+    QDialog#quantumPhononAnalysisDialog,
+    QDialog#quantumAnalysisHelpDialog,
+    QTabWidget#quantumAnalysisTabs,
+    QTabWidget#quantumAnalysisTabs::pane,
+    QWidget#quantumAnalysisTabPage,
+    QWidget#quantumAnalysisHelpContent {{
+        background: {p.bg_primary};
+    }}
+    QToolButton#quantumAnalysisHelpButton {{
+        background: {p.bg_surface_alt};
+        color: {p.text_primary};
+        border: 1px solid {p.border};
+        border-radius: 12px;
+        min-width: 24px;
+        min-height: 24px;
+        font-weight: 800;
+    }}
+    QToolButton#quantumAnalysisHelpButton:hover {{
+        background: {p.bg_surface};
+        border-color: {p.accent};
     }}
     QDialog#muonChargeStateDialog {{
         background: {p.bg_primary};

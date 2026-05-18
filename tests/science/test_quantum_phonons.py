@@ -13,8 +13,12 @@ from mufinder.science.quantum_phonons import (
     correlation_matrix,
     covariance_matrix,
     muon_zpe,
+    muon_mode_participations,
     parse_phonon_text,
+    real_mode_displacements,
+    scaled_mode_displacements,
     select_muon_modes,
+    structure_from_phonon_calculation,
     w1_entanglement_witness,
     w2_entanglement_witness,
     zpe_from_frequency_cm,
@@ -67,6 +71,18 @@ def test_parse_phonon_text_reads_header_gamma_and_eigenvectors() -> None:
     assert calculation.gamma_point().eigenvectors.shape == (6, 2, 3)
 
 
+def test_structure_from_phonon_calculation_builds_muonated_structure() -> None:
+    calculation = parse_phonon_text(PHONON_TEXT)
+
+    structure = structure_from_phonon_calculation(calculation, label="Gamma cell")
+
+    assert structure.label == "Gamma cell"
+    assert structure.origin == "phonon"
+    assert structure.species == ["N", "H:mu"]
+    assert structure.fractional_positions == [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]
+    assert structure.properties["pbc"] == [True, True, True]
+
+
 def test_muon_modes_and_zpe_use_half_quantum_conversion() -> None:
     calculation = parse_phonon_text(PHONON_TEXT)
 
@@ -77,6 +93,25 @@ def test_muon_modes_and_zpe_use_half_quantum_conversion() -> None:
 
     assert result.total_eV == pytest.approx((400.0 + 900.0 + 1600.0) * CM_INV_ZPE_TO_EV)
     assert zpe_from_frequency_cm(1000.0) == pytest.approx(0.06199209915)
+
+
+def test_muon_mode_helpers_return_participation_real_shape_and_scaled_amplitude() -> None:
+    calculation = parse_phonon_text(PHONON_TEXT)
+
+    participation = muon_mode_participations(calculation)
+    assert len(participation) == 6
+    assert all(value >= 0.0 for value in participation)
+    assert sorted(index + 1 for index in np.argsort(participation)[-3:]) == [2, 3, 4]
+
+    mode_shape = real_mode_displacements(calculation, 2)
+    assert mode_shape.shape == (2, 3)
+    assert np.isrealobj(mode_shape)
+    assert np.linalg.norm(mode_shape[1]) > 0.0
+
+    scaled = scaled_mode_displacements(calculation, 2, 0.2)
+    assert scaled.shape == (2, 3)
+    assert float(np.max(np.linalg.norm(scaled, axis=1))) == pytest.approx(0.2)
+    assert np.allclose(scaled / 0.2, mode_shape / np.max(np.linalg.norm(mode_shape, axis=1)))
 
 
 def test_entanglement_witnesses_and_covariance_are_finite() -> None:

@@ -9,6 +9,7 @@ from math import isnan
 from pathlib import Path
 import posixpath
 import re
+import shlex
 import shutil
 from typing import TypeVar
 from uuid import UUID, uuid4
@@ -141,6 +142,7 @@ from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.magnetic_field_widget import MagneticFieldWidget
 from mufinder.app.muon_generation_widget import MuonGenerationWidget
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.quantum_analysis_dialog import QuantumPhononAnalysisDialog
 from mufinder.app.quantum_corrections_widget import (
     QuantumCorrectionsWidget,
     QuantumResultRow,
@@ -219,14 +221,17 @@ from mufinder.workflow.energy_barriers import (
 )
 from mufinder.workflow.naming import job_name
 from mufinder.workflow.quantum import (
+    QUANTUM_SINGLEPOINT_CALC_TYPE,
     QUANTUM_PHONON_CALC_TYPE,
     QUANTUM_PHONON_SET_CALC_TYPE,
     QuantumPhononJobConfig,
     QuantumPhononSource,
+    expand_quantum_singlepoint_jobs,
     expand_quantum_phonon_jobs,
     quantum_source_eligibility,
 )
-from mufinder.workflow.types import CellTemplate, InputTemplate, ParamTemplate
+from mufinder.workflow.renderer import render_job
+from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamTemplate
 
 
 _ACTIVE_LOCAL_JOB_STATES = {
@@ -241,13 +246,10 @@ _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _WorkflowKey = TypeVar("_WorkflowKey")
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {"lattice_cart", "lattice_abc", "positions_frac", "positions_abs"}
 _QUANTUM_CONFIG_KEYWORD_NAMES = (
-    "phonon_method",
     "basis_precision",
     "cut_off_energy",
-    "fine_cut_off_energy",
     "elec_energy_tol",
     "kpoint_mp_grid",
-    "phonon_kpoint_mp_grid",
 )
 _ENERGY_BARRIER_TSS_KEYWORD_NAMES = (
     "basis_precision",
@@ -285,7 +287,10 @@ _QUANTUM_GUI_TO_METHOD = {
     "DFPT": "dfpt",
     "LINEARRESPONSE": "linear_response",
 }
+_QUANTUM_DEFAULT_ELEC_ENERGY_TOL = ValueWithUnit(1e-9, "eV")
 _QUANTUM_METHOD_TO_GUI = {value: key for key, value in _QUANTUM_GUI_TO_METHOD.items()}
+_QUANTUM_STAGE_SINGLEPOINT = "singlepoint"
+_QUANTUM_STAGE_PHONON = "phonon"
 
 
 def _structure_species_options(structure: Structure | None) -> tuple[str, ...]:
@@ -301,6 +306,18 @@ def _format_energy(value: object) -> str:
         return f"{float(value):.6g} eV"
     except (TypeError, ValueError):
         return ""
+
+
+def _format_phonon_eigenvalues(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    entries: list[str] = []
+    for mode_index, eigenvalue in enumerate(value, start=1):
+        try:
+            entries.append(f"{mode_index}:{float(eigenvalue):.1f}")
+        except (TypeError, ValueError):
+            continue
+    return ", ".join(entries)
 
 
 def _merge_serialized_sources(
@@ -508,6 +525,15 @@ class _QuantumSourceCandidate:
     run: CalculationRun
     job: Job
     structure: Structure
+
+
+@dataclass(frozen=True, slots=True)
+class _QuantumStageState:
+    """Current two-stage Quantum Corrections state for one source row."""
+
+    stage: str
+    status: str
+    current_job: Job | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1518,6 +1544,7 @@ class MainWindow(QMainWindow):
         self._comparison_widgets: dict[UUID, ComparisonTableWidget] = {}
         self._magnetic_field_workspace_widgets: dict[str, MagneticFieldWidget] = {}
         self._uep_analysis_dialogs: dict[UUID, UepAnalysisDialog] = {}
+        self._quantum_analysis_dialogs: dict[UUID, QuantumPhononAnalysisDialog] = {}
         self._muon_generation_thread: _MuonGenerationThread | None = None
         self._muon_generation_failed = False
 
@@ -1674,11 +1701,20 @@ class MainWindow(QMainWindow):
         self._magnetic_field_view.pin_requested.connect(self._on_magnetic_field_pin_requested)
         self._quantum_corrections_view = QuantumCorrectionsWidget()
         self._quantum_corrections_view.configure_requested.connect(self._on_configure_quantum_corrections_source)
+        self._quantum_corrections_view.source_label_renamed.connect(
+            self._on_quantum_corrections_source_label_renamed
+        )
         self._quantum_corrections_view.submit_local_requested.connect(
             self._on_submit_local_from_quantum_corrections
         )
         self._quantum_corrections_view.submit_cluster_requested.connect(
             self._on_submit_cluster_from_quantum_corrections
+        )
+        self._quantum_corrections_view.reset_stage_requested.connect(
+            self._on_reset_quantum_corrections_to_stage_one
+        )
+        self._quantum_corrections_view.analysis_requested.connect(
+            self._on_launch_quantum_phonon_analysis
         )
         self._energy_barriers_view: EnergyBarriersWidget | None = None
         self._journal_view = JournalWidget()
@@ -3013,6 +3049,17 @@ class MainWindow(QMainWindow):
     def _workflow_label(self, definition: WorkflowDefinition) -> str:
         return definition.title
 
+    def _workflow_completion_checks_by_route(
+        self,
+        definitions: tuple[WorkflowDefinition, ...] | None = None,
+    ) -> dict[str, Callable[[ProjectDocument], bool]]:
+        checks: dict[str, Callable[[ProjectDocument], bool]] = {}
+        for definition in self._workflow_definitions() if definitions is None else definitions:
+            if definition.route and definition.completion_check is not None:
+                checks[definition.route] = definition.completion_check
+            checks.update(self._workflow_completion_checks_by_route(definition.children))
+        return checks
+
     def _build_workflow_tree_item(self, definition: WorkflowDefinition) -> QTreeWidgetItem:
         item = QTreeWidgetItem([self._workflow_label(definition)])
         if definition.route:
@@ -3208,6 +3255,7 @@ class MainWindow(QMainWindow):
         self._refresh_pristine_relaxation_rows()
         self._refresh_muon_relaxation_rows()
         self._refresh_uep_rows()
+        self._refresh_workflow_stage_icons()
         self._sync_project_home_trail()
 
     def _refresh_active_job_runtime_cells(self) -> None:
@@ -3800,10 +3848,21 @@ class MainWindow(QMainWindow):
         self._project_home_trail.set_destinations(self._project_home_destinations())
 
     def _refresh_workflow_stage_icons(self) -> None:
+        completion_checks = self._workflow_completion_checks_by_route()
+
         def visit(item: QTreeWidgetItem) -> None:
             has_goal = item.data(0, self._WORKFLOW_GOAL_ROLE) is not None
             if has_goal:
-                is_complete = bool(item.data(0, self._WORKFLOW_COMPLETE_ROLE))
+                route = item.data(0, Qt.ItemDataRole.UserRole)
+                if (
+                    self._document is not None
+                    and isinstance(route, str)
+                    and (completion_check := completion_checks.get(route)) is not None
+                ):
+                    is_complete = bool(completion_check(self._document))
+                    item.setData(0, self._WORKFLOW_COMPLETE_ROLE, is_complete)
+                else:
+                    is_complete = bool(item.data(0, self._WORKFLOW_COMPLETE_ROLE))
                 state = "completed" if is_complete else "incomplete"
                 item.setIcon(0, workflow_stage_icon(state))
 
@@ -4142,6 +4201,191 @@ class MainWindow(QMainWindow):
         }
         return restored_params, added_advanced, extras
 
+    def _project_convergence_parameter_values(self) -> dict[str, object]:
+        if self._document is None:
+            return {}
+        values: dict[str, object] = {}
+        cutoff = self._document.project.recommended_cutoff_energy
+        if cutoff is not None:
+            values["cut_off_energy"] = ValueWithUnit(value=float(cutoff), unit="eV")
+        grid = self._document.project.recommended_kpoint_grid
+        if grid is not None:
+            values["kpoint_mp_grid"] = tuple(int(component) for component in grid)
+        return values
+
+    def _workflow_row_configuration_with_project_defaults(
+        self,
+        definition,
+        key: str,
+    ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
+        params, advanced, extras = self._workflow_row_configuration(definition, key)
+        values = self._project_convergence_parameter_values()
+        values.update(params)
+        return values, advanced, extras
+
+    def _project_convergence_input_defaults(self) -> InputTemplate | None:
+        values = self._project_convergence_parameter_values()
+        if not values:
+            return None
+        return _input_template_from_keyword_values(values)
+
+    @staticmethod
+    def _parse_param_scalar_value(raw_value: str, spec: KeywordSpec | None) -> object:
+        if spec is not None and spec.value_type == "text":
+            return raw_value.strip()
+
+        tokens = shlex.split(raw_value)
+        if not tokens:
+            return None
+
+        if spec is not None and spec.value_type == "bool":
+            token = tokens[0].strip().lower()
+            if token in {"true", "t", ".true.", "yes", "1"}:
+                return True
+            if token in {"false", "f", ".false.", "no", "0"}:
+                return False
+            raise ValueError(f"Invalid boolean value '{tokens[0]}' for {spec.name.upper()}.")
+
+        if spec is not None and spec.value_type == "int_triplet":
+            if len(tokens) < 3:
+                raise ValueError(f"{spec.name.upper()} requires three integer values.")
+            return (int(tokens[0]), int(tokens[1]), int(tokens[2]))
+
+        if spec is not None and spec.value_type in {"physical", "positive_float_with_optional_unit"}:
+            if len(tokens) == 1:
+                return float(tokens[0])
+            if len(tokens) >= 2:
+                return ValueWithUnit(value=float(tokens[0]), unit=tokens[1])
+
+        if spec is not None and spec.value_type == "int":
+            return int(tokens[0])
+
+        if spec is not None and spec.value_type in {"float", "number"}:
+            return float(tokens[0])
+
+        if len(tokens) == 1:
+            token = tokens[0]
+            lowered = token.strip().lower()
+            if lowered in {"true", "t", ".true.", "yes"}:
+                return True
+            if lowered in {"false", "f", ".false.", "no"}:
+                return False
+            try:
+                return int(token)
+            except ValueError:
+                pass
+            try:
+                return float(token)
+            except ValueError:
+                return token
+
+        values: list[object] = []
+        for token in tokens:
+            try:
+                values.append(int(token))
+                continue
+            except ValueError:
+                pass
+            try:
+                values.append(float(token))
+                continue
+            except ValueError:
+                values.append(token)
+        return tuple(values)
+
+    @staticmethod
+    def _parse_param_scalar_assignments(text: str) -> dict[str, object]:
+        assignments: dict[str, object] = {}
+        in_block = False
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            for marker in ("!", "#"):
+                if marker in line:
+                    line = line.split(marker, maxsplit=1)[0].strip()
+            if not line:
+                continue
+            upper = line.upper()
+            if upper.startswith("%BLOCK "):
+                in_block = True
+                continue
+            if upper.startswith("%ENDBLOCK "):
+                in_block = False
+                continue
+            if in_block:
+                continue
+            if ":" in line:
+                raw_name, raw_value = line.split(":", maxsplit=1)
+            else:
+                parts = line.split(maxsplit=1)
+                if not parts:
+                    continue
+                raw_name = parts[0]
+                raw_value = parts[1] if len(parts) > 1 else ""
+            canonical_name = canonical_keyword_name("param", raw_name.strip())
+            spec = get_keyword_spec("param", canonical_name)
+            if not raw_value.strip():
+                assignments[canonical_name] = None
+                continue
+            assignments[canonical_name] = MainWindow._parse_param_scalar_value(raw_value.strip(), spec)
+        return assignments
+
+    def _quantum_source_default_parameter_values(self, candidate: _QuantumSourceCandidate) -> dict[str, object]:
+        values: dict[str, object] = {}
+        output_dir = self._job_output_directory(candidate.job)
+        if output_dir is None:
+            return values
+
+        seed_name = self._job_seed_name(candidate.job)
+        cell_path = output_dir / f"{seed_name}.cell"
+        if cell_path.is_file():
+            try:
+                parsed_cell = parse_cell_file(cell_path)
+            except (CellParseError, OSError, ValueError):
+                parsed_cell = None
+            if parsed_cell is not None and parsed_cell.cell_file.kpoint_mp_grid is not None:
+                values["kpoint_mp_grid"] = tuple(int(component) for component in parsed_cell.cell_file.kpoint_mp_grid)
+
+        param_path = output_dir / f"{seed_name}.param"
+        if param_path.is_file():
+            try:
+                assignments = self._parse_param_scalar_assignments(param_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                assignments = {}
+            cutoff = assignments.get("cut_off_energy")
+            if cutoff is not None:
+                values["cut_off_energy"] = cutoff
+        return values
+
+    def _quantum_row_configuration_with_source_defaults(
+        self,
+        definition,
+        key: str,
+    ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
+        params, advanced, extras = self._workflow_row_configuration(definition, key)
+        candidate = self._quantum_source_candidate_by_key(key)
+        values = self._quantum_source_default_parameter_values(candidate) if candidate is not None else {}
+        legacy_method = extras.get("phonon_method")
+        if legacy_method is not None:
+            values.setdefault("phonon_method", _quantum_method_to_gui_value(legacy_method))
+        values.update(params)
+        return values, advanced, extras
+
+    @staticmethod
+    def _quantum_num_farms_from_extras(extras: Mapping[str, object]) -> int:
+        raw = extras.get("num_farms", 1)
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return 1
+
+    @staticmethod
+    def _quantum_phonon_method_from_extras(extras: Mapping[str, object]) -> str:
+        raw = extras.get("phonon_method", "finite_displacement")
+        normalized = str(raw).strip().lower()
+        return normalized or "finite_displacement"
+
     def _workflow_row_configuration_exists(self, definition, key: str) -> bool:
         params, advanced, extras = self._workflow_row_configuration(definition, key)
         return bool(params) or bool(advanced) or any(str(value).strip() for value in extras.values())
@@ -4160,10 +4404,16 @@ class MainWindow(QMainWindow):
         rows[key] = payload
 
     def _quantum_parameter_specs(self) -> list[KeywordSpec]:
-        return build_workflow_parameter_surface(
+        specs = build_workflow_parameter_surface(
             workflow_stage="quantum_corrections",
             basic_names=_QUANTUM_CONFIG_KEYWORD_NAMES,
         )
+        return [
+            replace(spec, default_value=_QUANTUM_DEFAULT_ELEC_ENERGY_TOL)
+            if spec.name == "elec_energy_tol"
+            else spec
+            for spec in specs
+        ]
 
     def _energy_barrier_source_parameter_specs(self) -> list[KeywordSpec]:
         return build_workflow_parameter_surface(
@@ -4200,7 +4450,7 @@ class MainWindow(QMainWindow):
         return None
 
     def _quantum_runtime_configuration(self, definition, key: str) -> tuple[dict[str, object], str]:
-        params, _advanced, extras = self._workflow_row_configuration(definition, key)
+        params, _advanced, extras = self._quantum_row_configuration_with_source_defaults(definition, key)
         config = definition.parameters.get("configuration", {}) if definition is not None else {}
         legacy_method = "finite_displacement"
         legacy_pseudopotential = "unknown"
@@ -4211,6 +4461,7 @@ class MainWindow(QMainWindow):
             )
         values = dict(params)
         values.setdefault("phonon_method", _quantum_method_to_gui_value(legacy_method))
+        values.setdefault("elec_energy_tol", _QUANTUM_DEFAULT_ELEC_ENERGY_TOL)
         pseudopotential_family = str(extras.get("pseudopotential_family", legacy_pseudopotential)).strip() or "unknown"
         return values, pseudopotential_family
 
@@ -5202,13 +5453,51 @@ class MainWindow(QMainWindow):
             return
         target = str(job_id)
         for definition in self._document.calculations.values():
-            for mapping_name in ("job_ids_by_cutoff", "job_ids_by_grid", "job_ids_by_label"):
+            for mapping_name in (
+                "job_ids_by_cutoff",
+                "job_ids_by_grid",
+                "job_ids_by_label",
+                "singlepoint_job_ids_by_label",
+                "phonon_job_ids_by_label",
+            ):
                 mapping = definition.parameters.get(mapping_name, {})
                 if not isinstance(mapping, dict):
                     continue
                 stale_keys = [key for key, value in mapping.items() if str(value) == target]
                 for key in stale_keys:
                     mapping.pop(key, None)
+
+    def _quantum_definition_and_key_for_job(self, job: Job) -> tuple[object, str] | tuple[None, None]:
+        for definition in self._quantum_corrections_definitions():
+            for mapping_name in ("singlepoint_job_ids_by_label", "phonon_job_ids_by_label", "job_ids_by_label"):
+                mapping = self._quantum_job_mapping(definition, mapping_name)
+                for key, value in mapping.items():
+                    if str(value) == str(job.id):
+                        return definition, str(key)
+        return None, None
+
+    def _quantum_task_farming_for_job(self, job: Job) -> tuple[bool, int | None]:
+        if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
+            return False, None
+        definition, key = self._quantum_definition_and_key_for_job(job)
+        if definition is None or key is None:
+            return False, None
+        _params, _advanced, extras = self._workflow_row_configuration(definition, key)
+        num_farms = self._quantum_num_farms_from_extras(extras)
+        return num_farms > 1, (num_farms if num_farms > 1 else None)
+
+    def _quantum_continuation_remote_target(self, job: Job, *, cluster_name: str) -> str:
+        if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
+            return ""
+        definition, key = self._quantum_definition_and_key_for_job(job)
+        if definition is None or key is None:
+            return ""
+        source_job = self._singlepoint_job_for_quantum_source_key(definition, key)
+        if source_job is None or source_job.status != JobStatus.COMPLETED:
+            return ""
+        if source_job.execution_target.strip().casefold() != cluster_name.strip().casefold():
+            return ""
+        return (source_job.remote_directory or "").strip()
 
     def _submit_jobs_locally(
         self,
@@ -5257,6 +5546,7 @@ class MainWindow(QMainWindow):
             castep_executable=setup.executable_path,
             mpirun_path=setup.mpirun_path,
             eligible_statuses=allowed_statuses,
+            task_farming_for_job=self._quantum_task_farming_for_job,
         )
 
         self._refresh_jobs_table()
@@ -5405,14 +5695,23 @@ class MainWindow(QMainWindow):
         skipped_submit: list[str] = []
         remote_target_by_job: dict[UUID, str] = {}
         reuse_existing_files_by_job: dict[UUID, bool] = {}
+        allow_existing_remote_directory_by_job: dict[UUID, bool] = {}
         existing_remote_targets: list[str] = []
         for index, job in enumerate(eligible_jobs, start=1):
             self.statusBar().showMessage(
                 f"Checking remote directories ({index}/{len(eligible_jobs)}): {job.label}"
             )
             QApplication.processEvents()
+            allow_existing_remote_directory = False
             remote_target = (job.remote_directory or "").strip() if reuse_existing_remote_files else ""
+            if not remote_target:
+                continuation_target = self._quantum_continuation_remote_target(job, cluster_name=selected_cluster.name)
+                if continuation_target:
+                    remote_target = continuation_target
+                    allow_existing_remote_directory = True
             reuse_existing_files_for_job = bool(remote_target)
+            if allow_existing_remote_directory:
+                reuse_existing_files_for_job = False
             if not remote_target:
                 remote_target = self._cluster_runner.remote_job_directory(
                     working_directory=submission.working_directory,
@@ -5420,7 +5719,8 @@ class MainWindow(QMainWindow):
                 )
             remote_target_by_job[job.id] = remote_target
             reuse_existing_files_by_job[job.id] = reuse_existing_files_for_job
-            if not reuse_existing_files_for_job:
+            allow_existing_remote_directory_by_job[job.id] = allow_existing_remote_directory
+            if not reuse_existing_files_for_job and not allow_existing_remote_directory:
                 try:
                     if self._cluster_runner.remote_directory_exists(remote_target):
                         existing_remote_targets.append(remote_target)
@@ -5491,6 +5791,9 @@ class MainWindow(QMainWindow):
                     retrieve_phonon=job.calc_type == QUANTUM_PHONON_CALC_TYPE,
                     retrieve_ts=job.calc_type in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE},
                     reuse_existing_files=reuse_existing_files_by_job.get(job.id, False),
+                    allow_existing_remote_directory=allow_existing_remote_directory_by_job.get(job.id, False),
+                    task_farming_enabled=self._quantum_task_farming_for_job(job)[0],
+                    num_farms=self._quantum_task_farming_for_job(job)[1],
                 )
             )
             if outcome.submitted_job is not None:
@@ -6035,15 +6338,25 @@ class MainWindow(QMainWindow):
         definition = self._active_quantum_corrections_definition()
         for candidate in self._eligible_quantum_source_candidates():
             state = quantum_states.get(candidate.key)
+            stage_state = self._quantum_stage_state(definition, candidate)
+            _params, _advanced, extras = self._workflow_row_configuration(definition, candidate.key)
             source_rows.append(
                 QuantumSourceRow(
                     key=candidate.key,
                     label=candidate.site.label or candidate.job.label,
                     charge_state=self._charge_state_label_for_job(candidate.job),
                     relative_energy=_format_energy(candidate.site.relative_energy_eV),
+                    displacements=str(3 * len(candidate.structure.species)),
                     source_job=candidate.job.label,
+                    stage=stage_state.stage,
+                    num_farms_display=(
+                        str(self._quantum_num_farms_from_extras(extras))
+                        if stage_state.stage == _QUANTUM_STAGE_PHONON
+                        else ""
+                    ),
                     status=getattr(state, "status", "ready") or "ready",
                     configured=self._workflow_row_configuration_exists(definition, candidate.key),
+                    resettable=self._quantum_can_reset_to_stage_one(definition, candidate),
                 )
             )
 
@@ -6057,23 +6370,30 @@ class MainWindow(QMainWindow):
                 job = self._document.jobs.get(run.job_id)
                 if job is not None:
                     job_label = job.label
-            modes = result.data.get("muon_zpe_modes", []) if isinstance(result.data, dict) else []
-            mode_text = ", ".join(
-                f"{mode.get('mode_index')}:{float(mode.get('frequency_cm', 0.0)):.1f}"
-                for mode in modes
-                if isinstance(mode, dict)
+            eigenvalue_text = (
+                _format_phonon_eigenvalues(result.data.get("phonon_mode_eigenvalues_cm"))
+                if isinstance(result.data, dict)
+                else ""
             )
+            if not eigenvalue_text and isinstance(result.data, dict):
+                modes = result.data.get("muon_zpe_modes", [])
+                if isinstance(modes, list):
+                    eigenvalue_text = ", ".join(
+                        f"{mode.get('mode_index')}:{float(mode.get('frequency_cm', 0.0)):.1f}"
+                        for mode in modes
+                        if isinstance(mode, dict)
+                    )
             result_rows.append(
                 QuantumResultRow(
+                    key=str(result.id),
                     label=job_label or "Quantum phonon",
                     zpe=_format_energy(result.data.get("muon_zpe_total_eV") if isinstance(result.data, dict) else None),
-                    modes=mode_text,
+                    eigenvalues=eigenvalue_text,
                     witness=(
                         f"{float(result.data['w1_entanglement_witness']):.4g}"
                         if isinstance(result.data, dict) and "w1_entanglement_witness" in result.data
                         else ""
                     ),
-                    phonon_file=str(result.data.get("phonon_file", "")) if isinstance(result.data, dict) else "",
                 )
             )
 
@@ -6192,9 +6512,18 @@ class MainWindow(QMainWindow):
                 return candidate
         return None
 
+    def _quantum_source_labels_by_key(self) -> dict[str, str]:
+        labels_by_key: dict[str, str] = {}
+        counts: dict[str, int] = {}
+        for candidate in self._eligible_quantum_source_candidates():
+            base = str(candidate.site.label or candidate.job.label or "site").strip() or "site"
+            count = counts.get(base, 0) + 1
+            counts[base] = count
+            labels_by_key[candidate.key] = base if count == 1 else f"{base}_{count}"
+        return labels_by_key
+
     def _quantum_source_label(self, candidate: _QuantumSourceCandidate) -> str:
-        base = candidate.site.label or candidate.job.label or "site"
-        return f"{base}_{candidate.key[:8]}"
+        return self._quantum_source_labels_by_key().get(candidate.key, "site")
 
     def _energy_barrier_form_state(self) -> dict[str, object]:
         if self._document is None:
@@ -6422,6 +6751,25 @@ class MainWindow(QMainWindow):
                 if base is not None:
                     return base / job.label
 
+            if definition.workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS:
+                base = self._definition_output_directory(definition)
+                if base is None:
+                    continue
+                for mapping_name in ("singlepoint_job_ids_by_label", "phonon_job_ids_by_label", "job_ids_by_label"):
+                    mapping = params.get(mapping_name, {})
+                    if not isinstance(mapping, dict):
+                        continue
+                    matching_key = next(
+                        (
+                            str(key)
+                            for key, value in mapping.items()
+                            if str(value) == str(job.id)
+                        ),
+                        "",
+                    )
+                    if matching_key:
+                        return base / self._quantum_seed_name_for_key(definition, matching_key)
+
             job_ids_by_label = params.get("job_ids_by_label", {})
             if isinstance(job_ids_by_label, dict) and str(job.id) in {
                 str(value) for value in job_ids_by_label.values()
@@ -6513,6 +6861,7 @@ class MainWindow(QMainWindow):
             output_dir / f"{seed_name}.cell",
             output_dir / f"{seed_name}.param",
             output_dir / f"{seed_name}.castep",
+            output_dir / f"{seed_name}_farm001.castep",
             output_dir / f"{seed_name}.den_fmt",
             output_dir / f"{seed_name}-out.cell",
             output_dir / f"{seed_name}.phonon",
@@ -6527,6 +6876,14 @@ class MainWindow(QMainWindow):
             except ValueError:
                 files.append(str(path))
         return files
+
+    def _write_quantum_job_directory(self, job_spec, output_root: Path, *, seed_name: str) -> Path:
+        job_dir = output_root / seed_name
+        job_dir.mkdir(parents=True, exist_ok=True)
+        cell_text, param_text = render_job(job_spec)
+        (job_dir / f"{seed_name}.cell").write_text(cell_text, encoding="utf-8", newline="\n")
+        (job_dir / f"{seed_name}.param").write_text(param_text, encoding="utf-8", newline="\n")
+        return job_dir
 
     def _record_job_reset(self, *, job: Job, cleaned_output_directory: bool) -> None:
         if self._document is None:
@@ -6625,6 +6982,9 @@ class MainWindow(QMainWindow):
                 zpe = muon_zpe(phonon)
                 result_payload["phonon_file"] = str(phonon_path)
                 result_payload["gamma_only"] = len(phonon.qpoints) == 1 and phonon.qpoints[0].is_gamma
+                result_payload["phonon_mode_eigenvalues_cm"] = [
+                    float(value) for value in phonon.gamma_point().frequencies_cm
+                ]
                 result_payload["muon_zpe_total_eV"] = zpe.total_eV
                 result_payload["muon_zpe_modes"] = [
                     {
@@ -7063,6 +7423,8 @@ class MainWindow(QMainWindow):
                 or is_muon_relaxation_calc_type(job.calc_type),
                 retrieve_phonon=job.calc_type == QUANTUM_PHONON_CALC_TYPE,
                 retrieve_ts=job.calc_type in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE},
+                task_farming_enabled=self._quantum_task_farming_for_job(job)[0],
+                num_farms=self._quantum_task_farming_for_job(job)[1],
             )
 
     def _infer_remote_job_directory(self, job: Job, cluster_name: str) -> str:
@@ -9900,23 +10262,6 @@ class MainWindow(QMainWindow):
                 return config
         return None
 
-    def _pristine_relaxation_configs_match_for_status(
-        self,
-        form_config: PristineRelaxationConfig,
-        definition_config: PristineRelaxationConfig,
-    ) -> bool:
-        if form_config.name_prefix != definition_config.name_prefix:
-            return False
-        form_rows = tuple(
-            (row.label, self._pristine_relaxation_row_signature(row))
-            for row in form_config.rows
-        )
-        definition_rows = tuple(
-            (row.label, self._pristine_relaxation_row_signature(row))
-            for row in definition_config.rows
-        )
-        return form_rows == definition_rows
-
     def _build_pristine_relaxation_states(self) -> dict[str, RelaxationRunState]:
         states: dict[str, RelaxationRunState] = {}
         if self._document is None:
@@ -9934,13 +10279,20 @@ class MainWindow(QMainWindow):
         config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return states
-        if form_config is not None and not self._pristine_relaxation_configs_match_for_status(
-            form_config,
-            config,
-        ):
-            return states
 
-        for row in config.rows:
+        if form_config is not None:
+            definition_rows_by_label = {row.label: row for row in config.rows}
+            rows_for_status = [
+                definition_row
+                for row in form_config.rows
+                if (definition_row := definition_rows_by_label.get(row.label)) is not None
+                and self._pristine_relaxation_row_signature(row)
+                == self._pristine_relaxation_row_signature(definition_row)
+            ]
+        else:
+            rows_for_status = list(config.rows)
+
+        for row in rows_for_status:
             job = self._job_for_pristine_relaxation_label(definition, row.label)
             if job is None:
                 states[row.label] = RelaxationRunState(status="ready")
@@ -11028,6 +11380,110 @@ class MainWindow(QMainWindow):
         definitions = self._quantum_corrections_definitions()
         return definitions[0] if definitions else None
 
+    @staticmethod
+    def _quantum_job_mapping(definition, key: str) -> dict[str, str]:
+        if definition is None:
+            return {}
+        mapping = definition.parameters.get(key, {})
+        return dict(mapping) if isinstance(mapping, dict) else {}
+
+    def _quantum_seed_name_for_candidate(self, candidate: _QuantumSourceCandidate) -> str:
+        return job_name("quantum", self._quantum_source_label(candidate))
+
+    def _quantum_seed_name_for_key(self, definition, key: str) -> str:
+        mapping = self._quantum_job_mapping(definition, "job_seed_names_by_label")
+        raw_seed = mapping.get(key)
+        if isinstance(raw_seed, str) and raw_seed.strip():
+            return raw_seed.strip()
+        candidate = self._quantum_source_candidate_by_key(key)
+        if candidate is None:
+            return "quantum"
+        return self._quantum_seed_name_for_candidate(candidate)
+
+    def _job_from_mapping_for_quantum_source_key(
+        self,
+        definition,
+        *,
+        mapping_name: str,
+        key: str,
+        calc_type: str,
+    ) -> Job | None:
+        if self._document is None or definition is None:
+            return None
+        mapping = self._quantum_job_mapping(definition, mapping_name)
+        raw_job_id = mapping.get(key)
+        if not isinstance(raw_job_id, str):
+            return None
+        try:
+            job_id = UUID(raw_job_id)
+        except ValueError:
+            return None
+        job = self._document.jobs.get(job_id)
+        if job is None or job.calc_type != calc_type:
+            return None
+        return job
+
+    def _singlepoint_job_for_quantum_source_key(self, definition, key: str) -> Job | None:
+        return self._job_from_mapping_for_quantum_source_key(
+            definition,
+            mapping_name="singlepoint_job_ids_by_label",
+            key=key,
+            calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
+        )
+
+    def _phonon_job_for_quantum_source_key(self, definition, key: str) -> Job | None:
+        job = self._job_from_mapping_for_quantum_source_key(
+            definition,
+            mapping_name="phonon_job_ids_by_label",
+            key=key,
+            calc_type=QUANTUM_PHONON_CALC_TYPE,
+        )
+        if job is not None:
+            return job
+        return self._job_from_mapping_for_quantum_source_key(
+            definition,
+            mapping_name="job_ids_by_label",
+            key=key,
+            calc_type=QUANTUM_PHONON_CALC_TYPE,
+        )
+
+    def _quantum_stage_state(self, definition, candidate: _QuantumSourceCandidate) -> _QuantumStageState:
+        phonon_job = self._phonon_job_for_quantum_source_key(definition, candidate.key)
+        if phonon_job is not None:
+            return _QuantumStageState(
+                stage=_QUANTUM_STAGE_PHONON,
+                status=phonon_job.status.value,
+                current_job=phonon_job,
+            )
+
+        singlepoint_job = self._singlepoint_job_for_quantum_source_key(definition, candidate.key)
+        if singlepoint_job is None:
+            return _QuantumStageState(stage=_QUANTUM_STAGE_SINGLEPOINT, status="ready")
+        if singlepoint_job.status == JobStatus.COMPLETED:
+            return _QuantumStageState(stage=_QUANTUM_STAGE_PHONON, status="ready")
+        return _QuantumStageState(
+            stage=_QUANTUM_STAGE_SINGLEPOINT,
+            status=singlepoint_job.status.value,
+            current_job=singlepoint_job,
+        )
+
+    def _quantum_allows_farms_only_edit(self, definition, candidate: _QuantumSourceCandidate) -> bool:
+        stage_state = self._quantum_stage_state(definition, candidate)
+        return (
+            stage_state.stage == _QUANTUM_STAGE_PHONON
+            and stage_state.status == "ready"
+            and stage_state.current_job is None
+        )
+
+    def _quantum_can_reset_to_stage_one(self, definition, candidate: _QuantumSourceCandidate) -> bool:
+        singlepoint_job = self._singlepoint_job_for_quantum_source_key(definition, candidate.key)
+        if singlepoint_job is None:
+            return False
+        phonon_job = self._phonon_job_for_quantum_source_key(definition, candidate.key)
+        if phonon_job is not None:
+            return phonon_job.status not in _ACTIVE_LOCAL_JOB_STATES
+        return singlepoint_job.status == JobStatus.COMPLETED
+
     def _ensure_quantum_corrections_definition(self, source_keys: list[str]):
         if self._document is None:
             return None
@@ -11050,10 +11506,13 @@ class MainWindow(QMainWindow):
                 config.setdefault("method", "finite_displacement")
                 config.setdefault("pseudopotential_family", "unknown")
                 config["sources"] = self._serialize_quantum_sources(definition.input_site_ids)
+            definition.parameters.setdefault("singlepoint_job_ids_by_label", {})
+            definition.parameters.setdefault("phonon_job_ids_by_label", {})
+            definition.parameters.setdefault("job_seed_names_by_label", {})
             return definition
 
         output_root = self._document.project_root / "files" / "quantum_corrections"
-        return self._project_service.register_quantum_phonon_definition(
+        definition = self._project_service.register_quantum_phonon_definition(
             self._document,
             input_structure_ids=list(dict.fromkeys(candidate.structure.id for candidate in candidates)),
             input_site_ids=list(dict.fromkeys(candidate.site.id for candidate in candidates)),
@@ -11061,9 +11520,16 @@ class MainWindow(QMainWindow):
                 "method": "finite_displacement",
                 "pseudopotential_family": "unknown",
                 "sources": self._serialize_quantum_sources([candidate.site.id for candidate in candidates]),
+                "singlepoint_job_ids_by_label": {},
+                "phonon_job_ids_by_label": {},
+                "job_seed_names_by_label": {},
             },
             output_directory=output_root,
         )
+        definition.parameters.setdefault("singlepoint_job_ids_by_label", {})
+        definition.parameters.setdefault("phonon_job_ids_by_label", {})
+        definition.parameters.setdefault("job_seed_names_by_label", {})
+        return definition
 
     def _serialize_quantum_sources(self, site_ids: list[UUID]) -> list[dict[str, object]]:
         serialized: list[dict[str, object]] = []
@@ -11094,34 +11560,31 @@ class MainWindow(QMainWindow):
         return None
 
     def _job_for_quantum_source_key(self, definition, key: str) -> Job | None:
-        if self._document is None or definition is None:
+        candidate = self._quantum_source_candidate_by_key(key)
+        if candidate is None:
             return None
-        mapping = definition.parameters.get("job_ids_by_label", {})
-        if not isinstance(mapping, dict):
+        return self._quantum_stage_state(definition, candidate).current_job
+
+    def _quantum_job_by_label(self, label: str) -> Job | None:
+        if self._document is None:
             return None
-        raw_job_id = mapping.get(key)
-        if not isinstance(raw_job_id, str):
-            return None
-        try:
-            job_id = UUID(raw_job_id)
-        except ValueError:
-            return None
-        job = self._document.jobs.get(job_id)
-        if job is None or job.calc_type != QUANTUM_PHONON_CALC_TYPE:
-            return None
-        return job
+        for job in self._document.jobs.values():
+            if job.calc_type in {QUANTUM_SINGLEPOINT_CALC_TYPE, QUANTUM_PHONON_CALC_TYPE} and job.label == label:
+                return job
+        return None
 
     def _build_quantum_corrections_states(self) -> dict[str, RelaxationRunState]:
         states: dict[str, RelaxationRunState] = {}
         definition = self._active_quantum_corrections_definition()
         for candidate in self._eligible_quantum_source_candidates():
-            job = self._job_for_quantum_source_key(definition, candidate.key)
+            stage_state = self._quantum_stage_state(definition, candidate)
+            job = stage_state.current_job
             if job is None:
-                states[candidate.key] = RelaxationRunState(status="ready")
+                states[candidate.key] = RelaxationRunState(status=stage_state.status)
                 continue
             error_message = job.error_message
             states[candidate.key] = RelaxationRunState(
-                status=job.status.value,
+                status=stage_state.status,
                 job_id=job.id,
                 job_label=job.label,
                 error_message=error_message,
@@ -11505,7 +11968,10 @@ class MainWindow(QMainWindow):
                 product_spec = structure_to_spec(prepared.product)
             except (EnergyBarrierError, StructureBridgeError):
                 continue
-            values, _advanced_names, _extras = self._workflow_row_configuration(definition, key)
+            values, _advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(
+                definition,
+                key,
+            )
             values = {name: value for name, value in values.items() if name != "task"}
             try:
                 overrides = _input_template_from_keyword_values(values)
@@ -11533,7 +11999,11 @@ class MainWindow(QMainWindow):
         if not configs:
             return []
         try:
-            specs = expand_transition_state_search_jobs(jobs=configs, name_prefix="barrier")
+            specs = expand_transition_state_search_jobs(
+                jobs=configs,
+                name_prefix="barrier",
+                global_defaults=self._project_convergence_input_defaults(),
+            )
         except (ValueError, StructureBridgeError):
             return []
 
@@ -11620,7 +12090,10 @@ class MainWindow(QMainWindow):
                 continue
             if intermediate_image is None:
                 continue
-            values, _advanced_names, _extras = self._workflow_row_configuration(definition, key)
+            values, _advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(
+                definition,
+                key,
+            )
             values = {name: value for name, value in values.items() if name != "task"}
             try:
                 overrides = _input_template_from_keyword_values(values)
@@ -11658,7 +12131,11 @@ class MainWindow(QMainWindow):
         if not configs:
             return []
         try:
-            specs = expand_nudged_elastic_band_jobs(jobs=configs, name_prefix="barrier")
+            specs = expand_nudged_elastic_band_jobs(
+                jobs=configs,
+                name_prefix="barrier",
+                global_defaults=self._project_convergence_input_defaults(),
+            )
         except (ValueError, StructureBridgeError):
             return []
 
@@ -11780,20 +12257,34 @@ class MainWindow(QMainWindow):
             return
         definition = self._active_quantum_corrections_definition()
         values, pseudopotential_family = self._quantum_runtime_configuration(definition, key)
-        _params, advanced_names, _extras = self._workflow_row_configuration(definition, key)
-        read_only = not workflow_row_state_is_ready(self._build_quantum_corrections_states(), key)
+        _params, advanced_names, extras = self._workflow_row_configuration(definition, key)
+        stage_state = self._quantum_stage_state(definition, candidate)
+        farms_only = self._quantum_allows_farms_only_edit(definition, candidate)
+        fully_editable = stage_state.stage == _QUANTUM_STAGE_SINGLEPOINT and stage_state.status == "ready"
+        read_only = not fully_editable and not farms_only
 
         dialog = QuantumCorrectionsConfigDialog(
             specs=self._quantum_parameter_specs(),
             pseudopotential_family=pseudopotential_family,
-            intro_text=f"Source: {candidate.site.label or candidate.job.label}",
+            num_farms=self._quantum_num_farms_from_extras(extras),
+            intro_text=(
+                f"Source: {candidate.site.label or candidate.job.label}\n"
+                f"Current stage: {stage_state.stage}\n"
+                f"Displacements required for the phonon stage: {3 * len(candidate.structure.species)}"
+            ),
             read_only=read_only,
+            editable_param_names=() if farms_only else None,
+            pseudopotential_editable=fully_editable,
+            num_farms_editable=(fully_editable or farms_only),
             species_options=_structure_species_options(candidate.structure),
             parent=self,
         )
-        dialog.setWindowTitle(
-            "Inspect Quantum Corrections Parameters" if read_only else "Configure Quantum Corrections Parameters"
-        )
+        if read_only:
+            dialog.setWindowTitle("Inspect Quantum Corrections Parameters")
+        elif farms_only:
+            dialog.setWindowTitle("Configure Quantum Corrections Stage 2 Farms")
+        else:
+            dialog.setWindowTitle("Configure Quantum Corrections Parameters")
         dialog.set_values(values)
         dialog.set_advanced_names(advanced_names)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -11804,11 +12295,10 @@ class MainWindow(QMainWindow):
         pseudopotential_family = dialog.pseudopotential_family()
         payload = self._workflow_dialog_payload(
             dialog,
-            extra_payload=(
-                {"pseudopotential_family": pseudopotential_family}
-                if pseudopotential_family != "unknown"
-                else None
-            ),
+            extra_payload={
+                "pseudopotential_family": pseudopotential_family,
+                "num_farms": dialog.num_farms(),
+            },
         )
         definition = self._ensure_quantum_corrections_definition([key])
         if definition is None:
@@ -11819,6 +12309,23 @@ class MainWindow(QMainWindow):
             failure_message="Quantum Corrections configuration was updated, but autosave failed."
         )
 
+    def _on_quantum_corrections_source_label_renamed(self, key: str, label: str) -> None:
+        if self._document is None or self._shutting_down:
+            return
+        candidate = self._quantum_source_candidate_by_key(key)
+        if candidate is None:
+            return
+        normalized = str(label).strip()
+        if not normalized or normalized == candidate.site.label:
+            self._refresh_quantum_corrections_view()
+            return
+        candidate.site.label = normalized
+        self._refresh_quantum_corrections_view()
+        self._refresh_energy_barriers_view()
+        self._persist_document_ui_state(
+            failure_message="Quantum Corrections site label was updated, but autosave failed."
+        )
+
     def _on_configure_energy_barrier_source(self, key: str) -> None:
         if self._document is None:
             return
@@ -11826,7 +12333,7 @@ class MainWindow(QMainWindow):
         if candidate is None:
             return
         definition = self._active_energy_barriers_definition()
-        values, advanced_names, _extras = self._workflow_row_configuration(definition, key)
+        values, advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(definition, key)
         read_only = not workflow_row_state_is_ready(self._build_energy_barriers_states(), key)
 
         dialog = ParameterDialog(
@@ -11868,7 +12375,7 @@ class MainWindow(QMainWindow):
         if candidate is None:
             return
         definition = self._active_energy_barrier_neb_definition()
-        values, advanced_names, _extras = self._workflow_row_configuration(definition, key)
+        values, advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(definition, key)
         read_only = not workflow_row_state_is_ready(self._build_energy_barrier_neb_states(), key)
         reactant_structure = self._document.structures.get(self._uuid_from_source(candidate.source, "reactant_structure_id"))
 
@@ -11947,16 +12454,23 @@ class MainWindow(QMainWindow):
         if output_root is None:
             return []
 
-        configs: list[QuantumPhononJobConfig] = []
+        singlepoint_configs: list[QuantumPhononJobConfig] = []
+        phonon_configs: list[QuantumPhononJobConfig] = []
         for key in keys:
             candidate = self._quantum_source_candidate_by_key(key)
             if candidate is None:
+                continue
+            stage_state = self._quantum_stage_state(definition, candidate)
+            if stage_state.status != "ready" and (
+                stage_state.current_job is None or stage_state.current_job.status != JobStatus.DEFINED
+            ):
                 continue
             try:
                 structure = structure_to_spec(candidate.structure)
             except StructureBridgeError:
                 continue
             values, pseudopotential_family = self._quantum_runtime_configuration(definition, key)
+            _params, _advanced, extras = self._workflow_row_configuration(definition, key)
             values = {name: value for name, value in values.items() if name != "task"}
             method_value = values.pop("phonon_method", "FINITEDISPLACEMENT")
             try:
@@ -11964,53 +12478,99 @@ class MainWindow(QMainWindow):
                 overrides = _input_template_from_keyword_values(values)
             except ValueError:
                 continue
-            configs.append(
-                QuantumPhononJobConfig(
-                    source=QuantumPhononSource(
-                        label=self._quantum_source_label(candidate),
-                        structure=structure,
-                        source_site_id=candidate.site.id,
-                        source_relaxation_run_id=candidate.run.id,
-                        source_relaxation_job_id=candidate.job.id,
-                        charge_state=self._charge_state_for_job(candidate.job),
-                        relative_energy_eV=candidate.site.relative_energy_eV,
-                    ),
-                    method=method,
-                    pseudopotential_family=str(pseudopotential_family),
-                    cell_overrides=overrides.cell,
-                    param_overrides=overrides.param,
-                )
+            config = QuantumPhononJobConfig(
+                source=QuantumPhononSource(
+                    label=self._quantum_source_label(candidate),
+                    structure=structure,
+                    source_site_id=candidate.site.id,
+                    source_relaxation_run_id=candidate.run.id,
+                    source_relaxation_job_id=candidate.job.id,
+                    charge_state=self._charge_state_for_job(candidate.job),
+                    relative_energy_eV=candidate.site.relative_energy_eV,
+                ),
+                method=method,
+                pseudopotential_family=str(pseudopotential_family),
+                num_farms=self._quantum_num_farms_from_extras(extras),
+                cell_overrides=overrides.cell,
+                param_overrides=overrides.param,
             )
-        if not configs:
+            if stage_state.stage == _QUANTUM_STAGE_SINGLEPOINT:
+                singlepoint_configs.append(config)
+            else:
+                phonon_configs.append(config)
+        if not singlepoint_configs and not phonon_configs:
             return []
+
+        singlepoint_specs: list[JobSpec] = []
+        phonon_specs: list[JobSpec] = []
         try:
-            specs = expand_quantum_phonon_jobs(jobs=configs, name_prefix="quantum")
+            if singlepoint_configs:
+                singlepoint_specs = expand_quantum_singlepoint_jobs(
+                    jobs=singlepoint_configs,
+                    name_prefix="quantum_singlepoint",
+                )
+            if phonon_configs:
+                phonon_specs = expand_quantum_phonon_jobs(
+                    jobs=phonon_configs,
+                    name_prefix="quantum_phonon",
+                )
         except (ValueError, StructureBridgeError):
             return []
 
-        mapping = definition.parameters.setdefault("job_ids_by_label", {})
-        if not isinstance(mapping, dict):
-            mapping = {}
-            definition.parameters["job_ids_by_label"] = mapping
+        singlepoint_mapping = definition.parameters.setdefault("singlepoint_job_ids_by_label", {})
+        if not isinstance(singlepoint_mapping, dict):
+            singlepoint_mapping = {}
+            definition.parameters["singlepoint_job_ids_by_label"] = singlepoint_mapping
+        phonon_mapping = definition.parameters.setdefault("phonon_job_ids_by_label", {})
+        if not isinstance(phonon_mapping, dict):
+            phonon_mapping = {}
+            definition.parameters["phonon_job_ids_by_label"] = phonon_mapping
+        seed_mapping = definition.parameters.setdefault("job_seed_names_by_label", {})
+        if not isinstance(seed_mapping, dict):
+            seed_mapping = {}
+            definition.parameters["job_seed_names_by_label"] = seed_mapping
+        definition.parameters["job_ids_by_label"] = phonon_mapping
 
-        spec_by_key = {str(spec.provenance.get("source_site_id", "")): spec for spec in specs}
+        singlepoint_specs_by_key = {
+            str(spec.provenance.get("source_site_id", "")): spec
+            for spec in singlepoint_specs
+        }
+        phonon_specs_by_key = {
+            str(spec.provenance.get("source_site_id", "")): spec
+            for spec in phonon_specs
+        }
         created: list[Job] = []
         for key in keys:
-            spec = spec_by_key.get(key)
-            existing = self._job_for_quantum_source_key(definition, key)
-            if existing is not None:
-                if existing.status == JobStatus.DEFINED and spec is not None:
-                    write_job_directory(spec, output_root)
-                created.append(existing)
+            candidate = self._quantum_source_candidate_by_key(key)
+            if candidate is None:
                 continue
+            stage_state = self._quantum_stage_state(definition, candidate)
+            seed_name = self._quantum_seed_name_for_key(definition, key)
+            seed_mapping[key] = seed_name
+            if stage_state.stage == _QUANTUM_STAGE_SINGLEPOINT:
+                spec = singlepoint_specs_by_key.get(key)
+                existing = self._singlepoint_job_for_quantum_source_key(definition, key)
+                mapping = singlepoint_mapping
+                calc_type = QUANTUM_SINGLEPOINT_CALC_TYPE
+            else:
+                spec = phonon_specs_by_key.get(key)
+                existing = self._phonon_job_for_quantum_source_key(definition, key)
+                mapping = phonon_mapping
+                calc_type = QUANTUM_PHONON_CALC_TYPE
             if spec is None:
                 continue
-            write_job_directory(spec, output_root)
+            if existing is not None:
+                if existing.status == JobStatus.DEFINED:
+                    existing.label = spec.name
+                    self._write_quantum_job_directory(spec, output_root, seed_name=seed_name)
+                created.append(existing)
+                continue
+            self._write_quantum_job_directory(spec, output_root, seed_name=seed_name)
             job = self._project_service.add_job(
                 self._document,
                 label=spec.name,
                 workflow_stage=spec.workflow_stage,
-                calc_type=QUANTUM_PHONON_CALC_TYPE,
+                calc_type=calc_type,
             )
             mapping[key] = str(job.id)
             created.append(job)
@@ -12046,6 +12606,140 @@ class MainWindow(QMainWindow):
             no_ready_message="Only eligible relaxed muon sites in the 'ready' state can be submitted.",
             submit=self._submit_jobs_on_cluster,
         )
+
+    def _on_reset_quantum_corrections_to_stage_one(self, keys: list[str]) -> None:
+        if self._document is None:
+            return
+        definition = self._active_quantum_corrections_definition()
+        if definition is None:
+            return
+
+        resettable_keys: list[str] = []
+        for key in keys:
+            candidate = self._quantum_source_candidate_by_key(key)
+            if candidate is None:
+                continue
+            if self._quantum_can_reset_to_stage_one(definition, candidate):
+                resettable_keys.append(key)
+        if not resettable_keys:
+            QMessageBox.information(
+                self,
+                "No resettable rows",
+                "Only progressed Quantum Corrections rows without an active job can be reset to stage 1.",
+            )
+            return
+
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle("Reset Quantum Corrections")
+        message.setText(f"Reset {len(resettable_keys)} Quantum Corrections row(s) to stage 1?")
+        message.setInformativeText(
+            "This removes the staged Quantum Corrections job records and clears the shared output directory "
+            "for each selected row so stage 1 can be rerun with updated parameters."
+        )
+        message.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        message.setDefaultButton(QMessageBox.StandardButton.No)
+        if message.exec() != QMessageBox.StandardButton.Yes:
+            return
+
+        cleanup_errors: list[str] = []
+        reset_count = 0
+        seed_mapping = definition.parameters.setdefault("job_seed_names_by_label", {})
+        if not isinstance(seed_mapping, dict):
+            seed_mapping = {}
+            definition.parameters["job_seed_names_by_label"] = seed_mapping
+        for key in resettable_keys:
+            candidate = self._quantum_source_candidate_by_key(key)
+            if candidate is None:
+                continue
+            singlepoint_job = self._singlepoint_job_for_quantum_source_key(definition, key)
+            phonon_job = self._phonon_job_for_quantum_source_key(definition, key)
+            output_dir = self._job_output_directory(phonon_job or singlepoint_job) if (phonon_job or singlepoint_job) else None
+            if output_dir is not None and output_dir.exists() and output_dir.is_dir():
+                try:
+                    self._delete_path(output_dir)
+                except OSError as exc:
+                    cleanup_errors.append(f"- {candidate.site.label or candidate.job.label}: {exc}")
+                    continue
+            for job in (phonon_job, singlepoint_job):
+                if job is None:
+                    continue
+                self._delete_job_records(job.id)
+            seed_mapping.pop(key, None)
+            reset_count += 1
+
+        self._refresh_jobs_table()
+        self._refresh_quantum_corrections_view()
+
+        if cleanup_errors:
+            QMessageBox.warning(
+                self,
+                "Directory cleanup issues",
+                "Some Quantum Corrections rows could not be reset cleanly:\n" + "\n".join(cleanup_errors),
+            )
+
+        if reset_count:
+            self._persist_document_ui_state(
+                failure_message="Quantum Corrections stage reset was recorded, but autosave failed.",
+            )
+            self.statusBar().showMessage(f"Reset {reset_count} Quantum Corrections row(s) to stage 1")
+
+    def _on_launch_quantum_phonon_analysis(self, result_id: str) -> None:
+        if self._document is None:
+            return
+        try:
+            parsed_result_id = UUID(str(result_id))
+        except ValueError:
+            return
+        result = self._document.results.get(parsed_result_id)
+        if result is None or result.result_type != QUANTUM_PHONON_CALC_TYPE:
+            return
+
+        existing = self._quantum_analysis_dialogs.get(result.id)
+        if existing is not None:
+            if existing.isVisible():
+                existing.show()
+                existing.raise_()
+                existing.activateWindow()
+                return
+            self._quantum_analysis_dialogs.pop(result.id, None)
+
+        phonon_file = result.data.get("phonon_file") if isinstance(result.data, dict) else None
+        if not isinstance(phonon_file, str) or not phonon_file.strip():
+            QMessageBox.warning(self, "Phonon analysis unavailable", "The completed result does not reference a phonon file.")
+            return
+        phonon_path = Path(phonon_file)
+        if not phonon_path.is_absolute() and self._document is not None:
+            phonon_path = self._document.project_root / phonon_path
+        if not phonon_path.exists():
+            QMessageBox.warning(self, "Phonon analysis unavailable", f"Could not find phonon file:\n{phonon_path}")
+            return
+
+        job_label = "Quantum phonon"
+        run = self._document.runs.get(result.calculation_run_id) if result.calculation_run_id is not None else None
+        job = self._document.jobs.get(run.job_id) if run is not None and run.job_id is not None else None
+        if job is not None:
+            job_label = job.label
+
+        try:
+            dialog = QuantumPhononAnalysisDialog(
+                phonon_path=str(phonon_path),
+                job_label=job_label,
+                result_data=result.data if isinstance(result.data, dict) else {},
+                parent=self,
+            )
+        except PhononParseError as exc:
+            QMessageBox.warning(self, "Phonon analysis unavailable", str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Phonon analysis unavailable", f"Could not open the analysis window: {exc}")
+            return
+
+        dialog.destroyed.connect(lambda *_args, result_id=result.id: self._quantum_analysis_dialogs.pop(result_id, None))
+        self._quantum_analysis_dialogs[result.id] = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _on_submit_local_from_energy_barriers(self, keys: list[str]) -> None:
         self._submit_workflow_selection(
@@ -12596,6 +13290,8 @@ class MainWindow(QMainWindow):
         ]
         self._muon_generation_view.set_sites(rows)
         self._muon_generation_view.set_uep_cluster_sources(self._uep_cluster_source_rows())
+        self._refresh_workflow_stage_icons()
+        self._sync_project_home_trail()
 
     @staticmethod
     def _natural_label_sort_key(label: str) -> tuple[tuple[int, object], ...]:

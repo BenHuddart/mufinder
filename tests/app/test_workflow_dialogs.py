@@ -50,10 +50,28 @@ def test_quantum_corrections_config_dialog_locks_task_and_tracks_pseudopotential
     dialog = QuantumCorrectionsConfigDialog(
         specs=_quantum_specs(),
         pseudopotential_family="norm_conserving",
+        num_farms=6,
     )
 
     assert dialog.collect_values()["task"] == "PHONON"
     assert dialog.pseudopotential_family() == "norm_conserving"
+    assert dialog.num_farms() == 6
+
+
+def test_quantum_corrections_config_dialog_can_lock_parameters_but_keep_farms_editable(qapp) -> None:
+    dialog = QuantumCorrectionsConfigDialog(
+        specs=_quantum_specs(),
+        num_farms=5,
+        editable_param_names=(),
+        pseudopotential_editable=False,
+        num_farms_editable=True,
+    )
+
+    assert dialog._rows["phonon_method"].editor is not None
+    assert dialog._rows["phonon_method"].editor.isEnabled() is False
+    assert dialog._pseudo_combo.isEnabled() is False
+    assert dialog._num_farms_spin.isEnabled() is True
+    assert dialog._add_advanced_button.isEnabled() is False
 
 
 def test_atomic_structure_viewer_line_overlays_extend_scene(qapp) -> None:

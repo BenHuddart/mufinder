@@ -1559,6 +1559,9 @@ class ProjectService:
             relative_output = str(output_directory)
 
         snapshot = to_jsonable(parameters)
+        singlepoint_job_ids_by_label = snapshot.get("singlepoint_job_ids_by_label", {})
+        phonon_job_ids_by_label = snapshot.get("phonon_job_ids_by_label", {})
+        job_seed_names_by_label = snapshot.get("job_seed_names_by_label", {})
         definition = CalculationDefinition(
             workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
             calc_type="castep_quantum_phonon_set",
@@ -1566,6 +1569,15 @@ class ProjectService:
                 "configuration": snapshot,
                 "output_directory": relative_output,
                 "job_ids_by_label": dict(job_ids_by_label or {}),
+                "singlepoint_job_ids_by_label": (
+                    dict(singlepoint_job_ids_by_label) if isinstance(singlepoint_job_ids_by_label, dict) else {}
+                ),
+                "phonon_job_ids_by_label": (
+                    dict(phonon_job_ids_by_label) if isinstance(phonon_job_ids_by_label, dict) else {}
+                ),
+                "job_seed_names_by_label": (
+                    dict(job_seed_names_by_label) if isinstance(job_seed_names_by_label, dict) else {}
+                ),
             },
             input_structure_ids=list(input_structure_ids),
             input_site_ids=list(input_site_ids),

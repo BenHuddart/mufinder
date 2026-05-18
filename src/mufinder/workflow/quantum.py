@@ -1,4 +1,4 @@
-"""Quantum-corrections CASTEP phonon workflow expansion."""
+"""Quantum-corrections CASTEP workflow expansion."""
 
 from __future__ import annotations
 
@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Sequence
 from uuid import UUID
 
-from mufinder.castep_io.types import BlockSection, KeywordAssignment
+from mufinder.castep_io.schema import canonical_keyword_name
+from mufinder.castep_io.types import BlockSection, KeywordAssignment, ValueWithUnit
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 
@@ -17,10 +18,12 @@ from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate
 QuantumPhononMethod = Literal["finite_displacement", "dfpt", "linear_response"]
 PseudopotentialFamily = Literal["unknown", "norm_conserving", "ultrasoft"]
 
+QUANTUM_SINGLEPOINT_CALC_TYPE = "castep_quantum_singlepoint"
 QUANTUM_PHONON_CALC_TYPE = "castep_quantum_phonon"
 QUANTUM_PHONON_SET_CALC_TYPE = "castep_quantum_phonon_set"
 MUON_MASS_AMU = 0.11342892566
 MUON_GAMMA_RAD_S_T = 851586494.1
+QUANTUM_DEFAULT_NONSCF_EIGENVALUE_TOL = ValueWithUnit(1e-9, "eV")
 
 _METHOD_TO_CASTEP = {
     "finite_displacement": "FINITEDISPLACEMENT",
@@ -45,12 +48,13 @@ class QuantumPhononSource:
 
 @dataclass(frozen=True, slots=True)
 class QuantumPhononJobConfig:
-    """Configuration shared by one generated phonon job."""
+    """Configuration shared by one generated Quantum Corrections job."""
 
     source: QuantumPhononSource
     method: QuantumPhononMethod = "finite_displacement"
     muon_species: str = "H:mu"
     pseudopotential_family: PseudopotentialFamily = "unknown"
+    num_farms: int = 1
     cell_overrides: CellTemplate | None = None
     param_overrides: ParamTemplate | None = None
 
@@ -129,6 +133,61 @@ def quantum_source_eligibility(
     return QuantumSourceEligibility(True)
 
 
+def expand_quantum_singlepoint_jobs(
+    *,
+    jobs: Sequence[QuantumPhononJobConfig],
+    name_prefix: str,
+    global_defaults: InputTemplate | None = None,
+    workflow_defaults: InputTemplate | None = None,
+    user_overrides: InputTemplate | None = None,
+    tags: tuple[str, ...] = (),
+) -> list[JobSpec]:
+    """Expand quantum-corrections singlepoint configurations into CASTEP jobs."""
+
+    if not jobs:
+        raise ValueError("At least one quantum singlepoint job must be configured.")
+
+    resolved: list[JobSpec] = []
+    for config in jobs:
+        label = config.source.label.strip()
+        if not label:
+            raise ValueError("Quantum singlepoint source labels must not be empty.")
+
+        patch = JobPatch(
+            label_suffix=label,
+            structure=config.source.structure,
+            cell=config.cell_overrides,
+            param=_singlepoint_param_template(config),
+        )
+        resolved.append(
+            resolve_job(
+                name=job_name(name_prefix, label),
+                base_structure=config.source.structure,
+                workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+                global_defaults=global_defaults,
+                workflow_defaults=workflow_defaults,
+                patch=patch,
+                user_overrides=user_overrides,
+                tags=("quantum_corrections", "singlepoint", *tags),
+                provenance={
+                    "workflow": "quantum_corrections",
+                    "calc_type": QUANTUM_SINGLEPOINT_CALC_TYPE,
+                    "label": label,
+                    "source_site_id": str(config.source.source_site_id),
+                    "source_relaxation_run_id": str(config.source.source_relaxation_run_id),
+                    "source_relaxation_job_id": (
+                        str(config.source.source_relaxation_job_id)
+                        if config.source.source_relaxation_job_id is not None
+                        else None
+                    ),
+                    "charge_state": config.source.charge_state,
+                    **dict(config.source.provenance),
+                },
+            )
+        )
+    return resolved
+
+
 def expand_quantum_phonon_jobs(
     *,
     jobs: Sequence[QuantumPhononJobConfig],
@@ -180,6 +239,7 @@ def expand_quantum_phonon_jobs(
                     "muon_species": config.muon_species,
                     "muon_mass_amu": MUON_MASS_AMU,
                     "muon_gamma_rad_s_T": MUON_GAMMA_RAD_S_T,
+                    "num_farms": max(1, int(config.num_farms)),
                     "source_site_id": str(config.source.source_site_id),
                     "source_relaxation_run_id": str(config.source.source_relaxation_run_id),
                     "source_relaxation_job_id": (
@@ -214,7 +274,11 @@ def _param_template(config: QuantumPhononJobConfig) -> ParamTemplate:
     keywords = [
         KeywordAssignment("task", "PHONON"),
         KeywordAssignment("phonon_method", method_to_castep(config.method)),
+        KeywordAssignment("continuation", "DEFAULT"),
+        KeywordAssignment("nonscf_eigenvalue_tol", _phonon_nonscf_eigenvalue_tol(config)),
     ]
+    if int(config.num_farms) > 1:
+        keywords.append(KeywordAssignment("num_farms", max(1, int(config.num_farms))))
     if config.source.charge_state:
         charge = 1 if config.source.charge_state == "positive_muon" else 0
         keywords.append(KeywordAssignment("charge", charge))
@@ -223,3 +287,42 @@ def _param_template(config: QuantumPhononJobConfig) -> ParamTemplate:
         return base
     merged = merge_templates(InputTemplate(param=base), InputTemplate(param=config.param_overrides))
     return merged.param or base
+
+
+def _singlepoint_param_template(config: QuantumPhononJobConfig) -> ParamTemplate:
+    keywords = [KeywordAssignment("task", "SINGLEPOINT")]
+    if config.source.charge_state:
+        charge = 1 if config.source.charge_state == "positive_muon" else 0
+        keywords.append(KeywordAssignment("charge", charge))
+    base = ParamTemplate(keywords=tuple(keywords))
+    if config.param_overrides is None:
+        return base
+    merged = merge_templates(InputTemplate(param=base), InputTemplate(param=config.param_overrides))
+    return merged.param or base
+
+
+def _phonon_nonscf_eigenvalue_tol(config: QuantumPhononJobConfig) -> ValueWithUnit:
+    elec_energy_tol = _param_keyword_value(config.param_overrides, "elec_energy_tol")
+    if isinstance(elec_energy_tol, ValueWithUnit):
+        normalized_unit = elec_energy_tol.unit.strip().lower().replace(" ", "")
+        if normalized_unit == "ev":
+            return ValueWithUnit(
+                min(float(elec_energy_tol.value), float(QUANTUM_DEFAULT_NONSCF_EIGENVALUE_TOL.value)),
+                "eV",
+            )
+    if isinstance(elec_energy_tol, (int, float)) and not isinstance(elec_energy_tol, bool):
+        return ValueWithUnit(
+            min(float(elec_energy_tol), float(QUANTUM_DEFAULT_NONSCF_EIGENVALUE_TOL.value)),
+            "eV",
+        )
+    return QUANTUM_DEFAULT_NONSCF_EIGENVALUE_TOL
+
+
+def _param_keyword_value(template: ParamTemplate | None, name: str) -> object | None:
+    if template is None:
+        return None
+    target = canonical_keyword_name("param", name)
+    for assignment in template.keywords:
+        if canonical_keyword_name("param", assignment.name) == target:
+            return assignment.value
+    return None

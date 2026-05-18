@@ -74,8 +74,7 @@ _require_installed_modules(
     "vtkmodules",
 )
 
-datas = collect_data_files("PySide6")
-datas += collect_data_files("mufinder.assets")
+datas = collect_data_files("mufinder.assets")
 datas += collect_data_files("mufinder.data")
 # Expose the source tree's mufinder.egg-info to importlib.metadata so PyInstaller
 # can copy runtime package metadata even when CI builds from an editable checkout.
@@ -85,6 +84,8 @@ datas += copy_metadata("mufinder")
 datas += collect_data_files("ase")
 # muesr ships core lookup data alongside its Python modules.
 datas += _optional_collect_data_files("muesr")
+# Soprano resolves static chemistry tables via pkgutil.get_data at runtime.
+datas += _optional_collect_data_files("soprano")
 datas += collect_data_files("pyvista")
 datas += collect_data_files("vtkmodules")
 # The UEP clustering dialog imports Soprano's phylogenetic clustering stack lazily
@@ -103,8 +104,7 @@ hiddenimports = optional_hiddenimports + [
     "mufinder.branding",
     "mufinder.castep_setup",
 ] + (
-    collect_submodules("PySide6")
-    + collect_submodules("ase.io")
+    collect_submodules("ase.io")
     + collect_submodules("mufinder.app")
     + collect_submodules("paramiko")
     + collect_submodules("pyvista")
@@ -114,7 +114,7 @@ hiddenimports = optional_hiddenimports + [
 
 # PyVista/VTK is imported lazily in the viewer stack, so static analysis does not
 # reliably discover VTK's native libraries during preview builds on Windows.
-binaries = collect_dynamic_libs("PySide6") + collect_dynamic_libs("vtkmodules")
+binaries = collect_dynamic_libs("vtkmodules")
 
 a = Analysis(
     [str(src_root / "mufinder" / "main.py")],

@@ -550,6 +550,23 @@ def _build_schema() -> tuple[dict[str, KeywordSpec], dict[str, KeywordSpec], dic
             spec = _base_spec(file, base_entry, aliases=tuple(sorted(set(alias_groups.get(canonical, ())))))
             specs[canonical] = spec
 
+        extra_names = [name for name in _starter_canonical_names(file) if name not in specs]
+        for index, name in enumerate(extra_names, start=len(canonical_order)):
+            specs[name] = _starter_spec(
+                file=file,
+                name=name,
+                source_order=index,
+                aliases=tuple(
+                    sorted(
+                        alias
+                        for alias, canonical in MANUAL_ALIAS_MAP.get(file, {}).items()
+                        if canonical == name
+                    )
+                ),
+            )
+        if extra_names:
+            source_names[file] = tuple((*source_names[file], *extra_names))
+
         schema_by_file[file] = specs
 
     return schema_by_file["cell"], schema_by_file["param"], source_names

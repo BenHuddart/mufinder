@@ -1212,6 +1212,9 @@ def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Pat
             "method": "finite_displacement",
             "pseudopotential_family": "unknown",
             "sources": [{"site_id": str(site.id), "label": "siteA"}],
+            "singlepoint_job_ids_by_label": {str(site.id): "sp-job"},
+            "phonon_job_ids_by_label": {str(site.id): "ph-job"},
+            "job_seed_names_by_label": {str(site.id): "quantum_siteA"},
         },
         output_directory=root / "files" / "quantum_corrections",
     )
@@ -1221,6 +1224,9 @@ def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Pat
     assert doc.calculations[definition.id].input_site_ids == [site.id]
     assert doc.calculations[definition.id].parameters["configuration"]["method"] == "finite_displacement"
     assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
+    assert doc.calculations[definition.id].parameters["singlepoint_job_ids_by_label"] == {str(site.id): "sp-job"}
+    assert doc.calculations[definition.id].parameters["phonon_job_ids_by_label"] == {str(site.id): "ph-job"}
+    assert doc.calculations[definition.id].parameters["job_seed_names_by_label"] == {str(site.id): "quantum_siteA"}
     assert doc.provenance[-1].action == "configure_quantum_corrections"
 
     service.save_project(doc)
@@ -1228,6 +1234,7 @@ def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Pat
     loaded_definition = loaded.calculations[definition.id]
     assert loaded_definition.input_site_ids == [site.id]
     assert loaded_definition.parameters["configuration"]["sources"][0]["label"] == "siteA"
+    assert loaded_definition.parameters["phonon_job_ids_by_label"] == {str(site.id): "ph-job"}
 
 
 def test_register_transition_state_search_definition_persists_configuration(tmp_path: Path) -> None:

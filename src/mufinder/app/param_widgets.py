@@ -107,7 +107,7 @@ class FloatParamEditor(ParamEditorBase):
     def __init__(self, spec: KeywordSpec, parent: QWidget | None = None) -> None:
         super().__init__(spec, parent)
         self._spin = DecimalLineEdit()
-        self._spin.setDecimals(8)
+        self._spin.setDecimals(12)
         self._spin.setRange(
             float(spec.min_value if spec.min_value is not None else -1_000_000_000.0),
             float(spec.max_value if spec.max_value is not None else 1_000_000_000.0),

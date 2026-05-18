@@ -52,6 +52,9 @@ class ClusterJobSubmission:
     retrieve_phonon: bool = False
     retrieve_ts: bool = False
     reuse_existing_files: bool = False
+    allow_existing_remote_directory: bool = False
+    task_farming_enabled: bool = False
+    num_farms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +164,7 @@ class JobExecutionController:
         castep_executable: str,
         mpirun_path: str,
         eligible_statuses: set[JobStatus] | None = None,
+        task_farming_for_job: Callable[[Job], tuple[bool, int | None]] | None = None,
     ) -> SubmissionOutcome:
         """Submit eligible jobs to the local runner and create tracked runs."""
 
@@ -183,6 +187,9 @@ class JobExecutionController:
                 missing_paths.append(job.label)
                 continue
             seed_name = self._job_seed_name(job)
+            task_farming_enabled, num_farms = (
+                task_farming_for_job(job) if task_farming_for_job is not None else (False, None)
+            )
 
             try:
                 job.execution_target = "local"
@@ -202,6 +209,8 @@ class JobExecutionController:
                     castep_executable=castep_executable,
                     mpirun_path=mpirun_path,
                     num_cores=num_cores,
+                    task_farming_enabled=task_farming_enabled,
+                    num_farms=num_farms,
                 )
             except Exception as exc:  # noqa: BLE001
                 failed_messages.append(f"- {job.label}: {exc}")
@@ -263,6 +272,9 @@ class JobExecutionController:
                 retrieve_ts=request.retrieve_ts,
                 remote_directory=request.remote_target,
                 reuse_existing_files=request.reuse_existing_files,
+                allow_existing_remote_directory=request.allow_existing_remote_directory,
+                task_farming_enabled=request.task_farming_enabled,
+                num_farms=request.num_farms,
             )
         except Exception as exc:  # noqa: BLE001
             message = str(exc)

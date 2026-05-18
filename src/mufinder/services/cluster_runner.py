@@ -37,6 +37,8 @@ class _TrackedClusterJob:
     retrieve_out_cell: bool = False
     retrieve_phonon: bool = False
     retrieve_ts: bool = False
+    task_farming_enabled: bool = False
+    num_farms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +160,9 @@ class ClusterJobRunner(QObject):
         retrieve_ts: bool = False,
         remote_directory: str | None = None,
         reuse_existing_files: bool = False,
+        allow_existing_remote_directory: bool = False,
+        task_farming_enabled: bool = False,
+        num_farms: int | None = None,
     ) -> str:
         """Upload files, submit scheduler script, and start tracking the remote job."""
 
@@ -269,6 +274,8 @@ class ClusterJobRunner(QObject):
             retrieve_out_cell=bool(retrieve_out_cell),
             retrieve_phonon=bool(retrieve_phonon),
             retrieve_ts=bool(retrieve_ts),
+            task_farming_enabled=bool(task_farming_enabled),
+            num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
         )
 
         self.status_changed.emit(job_id, JobStatus.QUEUED.value)
@@ -322,6 +329,8 @@ class ClusterJobRunner(QObject):
         retrieve_out_cell: bool = False,
         retrieve_phonon: bool = False,
         retrieve_ts: bool = False,
+        task_farming_enabled: bool = False,
+        num_farms: int | None = None,
     ) -> None:
         """Register a persisted cluster job for queue polling and retrieval."""
 
@@ -343,6 +352,8 @@ class ClusterJobRunner(QObject):
             retrieve_out_cell=bool(retrieve_out_cell),
             retrieve_phonon=bool(retrieve_phonon),
             retrieve_ts=bool(retrieve_ts),
+            task_farming_enabled=bool(task_farming_enabled),
+            num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
         )
         self._tracked_jobs[job_id] = tracked
         if (
@@ -485,11 +496,13 @@ class ClusterJobRunner(QObject):
 
         self.status_changed.emit(entry.job_id, JobStatus.RETRIEVING.value)
         remote_castep = posixpath.join(entry.remote_dir, f"{entry.seed_name}.castep")
+        remote_farm_castep = posixpath.join(entry.remote_dir, f"{entry.seed_name}_farm001.castep")
         remote_den_fmt = posixpath.join(entry.remote_dir, f"{entry.seed_name}.den_fmt")
         remote_out_cell = posixpath.join(entry.remote_dir, f"{entry.seed_name}-out.cell")
         remote_phonon = posixpath.join(entry.remote_dir, f"{entry.seed_name}.phonon")
         remote_ts = posixpath.join(entry.remote_dir, f"{entry.seed_name}.ts")
         local_castep = entry.local_output_dir / f"{entry.seed_name}.castep"
+        local_farm_castep = entry.local_output_dir / f"{entry.seed_name}_farm001.castep"
         local_den_fmt = entry.local_output_dir / f"{entry.seed_name}.den_fmt"
         local_out_cell = entry.local_output_dir / f"{entry.seed_name}-out.cell"
         local_phonon = entry.local_output_dir / f"{entry.seed_name}.phonon"
@@ -497,7 +510,14 @@ class ClusterJobRunner(QObject):
 
         try:
             self._retrieve_error_files(entry)
-            ssh.get(remote_castep, local_castep)
+            if entry.task_farming_enabled and (entry.num_farms or 1) > 1 and ssh.exists(remote_farm_castep):
+                if ssh.exists(remote_castep):
+                    ssh.get(remote_castep, local_castep)
+                ssh.get(remote_farm_castep, local_farm_castep)
+                primary_output = local_farm_castep
+            else:
+                ssh.get(remote_castep, local_castep)
+                primary_output = local_castep
             if entry.retrieve_den_fmt and ssh.exists(remote_den_fmt):
                 ssh.get(remote_den_fmt, local_den_fmt)
             if entry.retrieve_out_cell and ssh.exists(remote_out_cell):
@@ -506,7 +526,7 @@ class ClusterJobRunner(QObject):
                 ssh.get(remote_phonon, local_phonon)
             if entry.retrieve_ts and ssh.exists(remote_ts):
                 ssh.get(remote_ts, local_ts)
-            parsed = parse_castep_output(local_castep)
+            parsed = parse_castep_output(primary_output)
         except Exception as exc:  # noqa: BLE001
             entry.terminal = True
             self.job_failed.emit(entry.job_id, f"Failed to retrieve or parse remote output: {exc}")

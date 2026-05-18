@@ -1,8 +1,8 @@
 # MuFinder Product and Architecture Specification
 
 - Spec ID: MUFINDER-SPEC
-- Spec Version: 1.15.0
-- Last Updated: 2026-05-09
+- Spec Version: 1.16.0
+- Last Updated: 2026-05-16
 - Status: Active
 - Scope: PySide6 desktop rebuild
 
@@ -26,6 +26,7 @@
 | 1.13.0 | 2026-04-29 | Expanded MCIF magnetic import requirements to preserve atom labels, multiple propagation vectors, label-to-atom mappings, and phase-corrected magnetic-model promotion. |
 | 1.14.0 | 2026-05-09 | Refined Energy Barriers UX to require explicit initial/final site selection before path generation and added a plotted NEB reaction-coordinate profile in the inline inspector. |
 | 1.15.0 | 2026-05-09 | Split the Energy Barriers workflow across dedicated tabs for path generation, transition-state jobs, and NEB analysis to improve usability on smaller displays. |
+| 1.16.0 | 2026-05-16 | Refined Quantum Corrections into an explicit two-stage singlepoint-to-phonon workflow with per-row stage/task-farming metadata and continuation-aware cluster submission. |
 
 ## 1. Executive Summary
 
@@ -389,12 +390,23 @@ Relaxation staging:
 
 - quantum phonon calculations must start only from completed structural muon relaxation results
 - UEP candidates, generated sites, pristine relaxations, failed jobs, and manual sites without structural-relaxation provenance are not valid sources
-- CASTEP phonon jobs are Gamma-point only and must write `PHONON_KPOINT_MP_GRID 1 1 1`
-- generated inputs must include `TASK : PHONON`, a selected `PHONON_METHOD`, and explicit `H:mu` mass/gamma cell blocks
+- the workflow is row-driven and stage-aware: each eligible relaxed site must run a required stage-1 singlepoint job before the stage-2 phonon continuation becomes ready
+- the source table must expose per-row `Displacements`, `Stage`, and `Farms` metadata, where `Displacements = 3 x atom count` for the relaxed source structure
+- once stage 1 completes, shared Quantum Corrections parameters for that row must be frozen so only the stage-2 farm count remains editable before phonon-job materialization
+- the workflow must provide an explicit reset-to-stage-1 action that clears staged Quantum Corrections job records and shared outputs for a row so the singlepoint can be rerun with updated parameters
+- stage-1 generated inputs must write `TASK : SINGLEPOINT`
+- CASTEP stage-2 phonon jobs are Gamma-point only and must write `TASK : PHONON`, `CONTINUATION : DEFAULT`, `PHONON_KPOINT_MP_GRID 1 1 1`, a selected `PHONON_METHOD`, and explicit `H:mu` mass/gamma cell blocks
+- stage-2 task farming is user-configurable per row through `num_farms`; when greater than one, generated inputs must include `NUM_FARMS`
 - finite displacement is the default method; DFPT/linear-response workflows must reject known ultrasoft pseudopotentials and warn for unknown pseudopotential family metadata
+- only completed stage-2 phonon jobs produce persisted Quantum Corrections result rows
 - `.phonon` files are expected outputs for quantum phonon jobs and must be retrieved from cluster runs
+- when task farming is active, local and cluster retrieval must accept `*_farm001.castep` as the primary CASTEP output alongside the usual phonon artifacts
+- same-cluster stage-2 submissions must be able to reuse the completed stage-1 remote directory without prompting for directory deletion, while still uploading refreshed inputs and submission scripts
 - parsed results must persist selected muon-dominated modes, per-mode and total ZPE, witness metrics, output files, and source relaxation provenance
-- single-particle quantum approximations should be implemented as a later analysis layer using directional effective potentials; PIMD is out of scope
+- completed result rows must provide a `Launch Analysis` action that opens an interactive phonon-analysis window for the selected job
+- the analysis window must expose a `Phonon Modes` tab that lists all Gamma-point modes, highlights the selected muon-dominated subset, synchronizes one selected mode to a muonated-structure viewer, and supports amplitude-controlled playback animation with play/pause, reset, cycle-time, and vector-visibility controls
+- the analysis window must expose the single-particle adiabatic solver for selected muon-dominated Gamma modes, support Gomilsek-style energy plots including square-root energy scaling, and calculate covariance/correlation tensors plus pairwise `w2` witnesses
+- PIMD is out of scope
 
 ### 12.7 Energy Barriers
 

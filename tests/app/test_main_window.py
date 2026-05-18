@@ -14,13 +14,52 @@ import mufinder.app.main_window as main_window_module
 from mufinder.app import theme as theme_module
 import mufinder.castep_io.schema as schema_module
 from mufinder.app.main_window import MainWindow
+from mufinder.app.workflow_dialogs import QuantumCorrectionsConfigDialog
+from mufinder.castep_io.types import ValueWithUnit
 from mufinder.castep_io.ts_parser import TransitionStateImage, TransitionStatePath
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure
 from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE
-from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
+from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
 from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel, build_collinear_component
 from mufinder.services.project_service import ProjectService
+
+
+PHONON_TEXT = """ BEGIN header
+ Number of ions         2
+ Number of branches     6
+ Number of wavevectors  1
+ Frequencies in         cm-1
+ Unit cell vectors (A)
+    1.000000    0.000000    0.000000
+    0.000000    1.000000    0.000000
+    0.000000    0.000000    1.000000
+ Fractional Co-ordinates
+     1     0.000000    0.000000    0.000000   N        14.006740
+     2     0.500000    0.500000    0.500000   H:mu      0.113429
+ END header
+     q-pt=    1    0.000000  0.000000  0.000000      1.0000000000
+       1     100.000000
+       2     400.000000
+       3     900.000000
+       4    1600.000000
+       5    2500.000000
+       6    3600.000000
+                        Phonon Eigenvectors
+Mode Ion                X                                   Y                                   Z
+   1   1  0.408248000000  0.000000000000      0.408248000000  0.000000000000      0.408248000000  0.000000000000
+   1   2  0.408248000000  0.000000000000      0.408248000000  0.000000000000      0.408248000000  0.000000000000
+   2   1 -0.336650000000  0.000000000000      0.019803000000  0.000000000000      0.138621000000  0.000000000000
+   2   2 -0.693103000000  0.000000000000      0.376256000000  0.000000000000      0.495074000000  0.000000000000
+   3   1 -0.080432200000  0.000000000000     -0.350117000000  0.000000000000      0.230257000000  0.000000000000
+   3   2  0.189252000000  0.000000000000     -0.619801000000  0.000000000000      0.630841000000  0.000000000000
+   4   1 -0.501570000000  0.000000000000     -0.324961000000  0.000000000000     -0.339089000000  0.000000000000
+   4   2  0.536891000000  0.000000000000      0.459183000000  0.000000000000      0.169545000000  0.000000000000
+   5   1  0.583042000000  0.000000000000     -0.144467000000  0.000000000000     -0.701203000000  0.000000000000
+   5   2 -0.145760000000  0.000000000000      0.057786700000  0.000000000000      0.350601000000  0.000000000000
+   6   1 -0.349315000000  0.000000000000      0.764127000000  0.000000000000     -0.392979000000  0.000000000000
+   6   2  0.087328800000  0.000000000000     -0.305651000000  0.000000000000      0.196490000000  0.000000000000
+"""
 
 
 def _find_item_by_route(parent: QTreeWidgetItem, route: str) -> QTreeWidgetItem | None:
@@ -467,6 +506,120 @@ def test_main_window_routes_to_quantum_view_and_construction_placeholders(qapp, 
     window.close()
 
 
+def test_main_window_launches_quantum_phonon_analysis_for_result(
+    qapp,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    window = MainWindow()
+
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_analysis_doc.mufinder", "Quantum Analysis")
+    window._document = doc
+
+    phonon_path = doc.project_root / "files" / "quantum_corrections" / "site.phonon"
+    phonon_path.parent.mkdir(parents=True, exist_ok=True)
+    phonon_path.write_text("phonon", encoding="utf-8")
+
+    job = Job(
+        label="quantum_phonon_siteA",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_PHONON_CALC_TYPE,
+        status=JobStatus.COMPLETED,
+    )
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=QUANTUM_PHONON_CALC_TYPE,
+        data={"phonon_file": str(phonon_path), "muon_zpe_total_eV": 0.1},
+    )
+    run.result_id = result.id
+    doc.jobs[job.id] = job
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+
+    constructed: list[dict[str, object]] = []
+
+    class _Signal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class _FakeDialog:
+        destroyed = _Signal()
+
+        def __init__(self, **kwargs) -> None:
+            constructed.append(kwargs)
+            self.shown = False
+
+        def isVisible(self) -> bool:
+            return self.shown
+
+        def show(self) -> None:
+            self.shown = True
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_window_module, "QuantumPhononAnalysisDialog", _FakeDialog)
+
+    window._on_launch_quantum_phonon_analysis(str(result.id))
+
+    assert len(constructed) == 1
+    assert constructed[0]["phonon_path"] == str(phonon_path)
+    assert constructed[0]["job_label"] == "quantum_phonon_siteA"
+    assert constructed[0]["result_data"] == result.data
+    assert window._quantum_analysis_dialogs[result.id].shown is True
+
+    window.close()
+
+
+def test_main_window_quantum_completed_results_show_phonon_eigenvalues(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_results_doc.mufinder", "Quantum Results")
+    window._document = doc
+
+    phonon_path = doc.project_root / "files" / "quantum_corrections" / "site.phonon"
+    phonon_path.parent.mkdir(parents=True, exist_ok=True)
+    phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
+
+    job = Job(
+        label="quantum_phonon_siteA",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_PHONON_CALC_TYPE,
+        status=JobStatus.COMPLETED,
+    )
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=QUANTUM_PHONON_CALC_TYPE,
+        data={
+            "phonon_file": str(phonon_path),
+            "muon_zpe_total_eV": 0.1,
+            "w1_entanglement_witness": -0.25,
+            "phonon_mode_eigenvalues_cm": [100.0, 400.0, 900.0, 1600.0, 2500.0, 3600.0],
+        },
+    )
+    run.result_id = result.id
+    doc.jobs[job.id] = job
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+
+    window._refresh_quantum_corrections_view()
+
+    assert window._quantum_corrections_view._results_table.item(0, 0).text() == "quantum_phonon_siteA"
+    assert window._quantum_corrections_view._results_table.item(0, 2).text() == (
+        "1:100.0, 2:400.0, 3:900.0, 4:1600.0, 5:2500.0, 6:3600.0"
+    )
+    assert window._quantum_corrections_view._results_table.item(0, 3).text() == "-0.25"
+
+    window.close()
+
+
 def test_main_window_close_tolerates_missing_relaxation_analysis_view(qapp) -> None:
     window = MainWindow()
 
@@ -477,10 +630,95 @@ def test_main_window_close_tolerates_missing_relaxation_analysis_view(qapp) -> N
     assert window._shutting_down is True
 
 
-def test_main_window_materializes_quantum_phonon_jobs_from_relaxed_sources(qapp, tmp_path: Path) -> None:
+def test_main_window_materializes_quantum_singlepoint_jobs_from_relaxed_sources(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "quantum_doc.mufinder", "Quantum")
+    window._document = doc
+    doc.project.recommended_cutoff_energy = 620.0
+    doc.project.recommended_kpoint_grid = (2, 2, 1)
+
+    relaxed_structure = Structure(
+        label="site relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_structure.id] = relaxed_structure
+
+    source_job = Job(
+        label="mu-site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[source_job.id] = source_job
+    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=source_job.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_structure.id],
+    )
+    run.result_id = result.id
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    doc.sites[site.id] = site
+    source_dir = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / source_job.label
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / f"{source_job.label}.cell").write_text(
+        "\n".join(
+            [
+                "%BLOCK LATTICE_CART",
+                "ang",
+                "5.0 0.0 0.0",
+                "0.0 5.0 0.0",
+                "0.0 0.0 5.0",
+                "%ENDBLOCK LATTICE_CART",
+                "",
+                "%BLOCK POSITIONS_FRAC",
+                "Si 0.0 0.0 0.0",
+                "H:mu 0.25 0.25 0.25",
+                "%ENDBLOCK POSITIONS_FRAC",
+                "",
+                "KPOINT_MP_GRID 4 1 1",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_dir / f"{source_job.label}.param").write_text(
+        "TASK : GEOMETRYOPTIMIZATION\nCUT_OFF_ENERGY : 700 eV\n",
+        encoding="utf-8",
+    )
+
+    jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+
+    assert len(jobs) == 1
+    assert jobs[0].calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
+    assert jobs[0].label == "quantum_singlepoint_siteA"
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    assert output_dir.name == "quantum_siteA"
+    cell_text = (output_dir / "quantum_siteA.cell").read_text(encoding="utf-8")
+    param_text = (output_dir / "quantum_siteA.param").read_text(encoding="utf-8")
+    assert "PHONON_KPOINT_MP_GRID 1 1 1" not in cell_text
+    assert "KPOINT_MP_GRID 4 1 1" in cell_text
+    assert "KPOINT_MP_GRID 2 2 1" not in cell_text
+    assert "TASK : SINGLEPOINT" in param_text
+    assert "CUT_OFF_ENERGY : 700 eV" in param_text
+    assert "CUT_OFF_ENERGY : 620" not in param_text
+    assert "ELEC_ENERGY_TOL : 1e-09 eV" in param_text
+    assert "PHONON_METHOD" not in param_text
+
+
+def test_main_window_materializes_quantum_phonon_continuation_after_singlepoint(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_stage2_doc.mufinder", "QuantumStage2")
     window._document = doc
 
     relaxed_structure = Structure(
@@ -512,18 +750,60 @@ def test_main_window_materializes_quantum_phonon_jobs_from_relaxed_sources(qapp,
     doc.results[result.id] = result
     site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
     doc.sites[site.id] = site
+    source_dir = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / source_job.label
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / f"{source_job.label}.cell").write_text(
+        "%BLOCK LATTICE_CART\nang\n5.0 0.0 0.0\n0.0 5.0 0.0\n0.0 0.0 5.0\n%ENDBLOCK LATTICE_CART\n\n"
+        "%BLOCK POSITIONS_FRAC\nSi 0.0 0.0 0.0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n\n"
+        "KPOINT_MP_GRID 4 1 1\n",
+        encoding="utf-8",
+    )
+    (source_dir / f"{source_job.label}.param").write_text(
+        "TASK : GEOMETRYOPTIMIZATION\nCUT_OFF_ENERGY : 700 eV\n",
+        encoding="utf-8",
+    )
 
-    jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+    definition = window._ensure_quantum_corrections_definition([str(site.id)])
+    assert definition is not None
+    definition.parameters["configuration"]["row_settings"] = {
+        str(site.id): {
+            "parameter_values": {
+                "phonon_method": "DFPT",
+                "cut_off_energy": {"value": 650.0, "unit": "eV"},
+                "kpoint_mp_grid": [2, 2, 2],
+            },
+            "pseudopotential_family": "norm_conserving",
+            "num_farms": 4,
+        }
+    }
 
-    assert len(jobs) == 1
-    assert jobs[0].calc_type == QUANTUM_PHONON_CALC_TYPE
-    output_dir = window._job_output_directory(jobs[0])
+    singlepoint_jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+    assert len(singlepoint_jobs) == 1
+    singlepoint_job = singlepoint_jobs[0]
+    assert singlepoint_job.calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
+    singlepoint_job.status = JobStatus.COMPLETED
+    window._refresh_quantum_corrections_view()
+    assert window._quantum_corrections_view._sources_table.item(0, 3).text() == "6"
+    assert window._quantum_corrections_view._sources_table.item(0, 5).text() == "phonon"
+    assert window._quantum_corrections_view._sources_table.item(0, 6).text() == "4"
+    assert window._quantum_corrections_view._sources_table.item(0, 7).text() == "ready"
+
+    phonon_jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+
+    assert len(phonon_jobs) == 1
+    assert phonon_jobs[0].calc_type == QUANTUM_PHONON_CALC_TYPE
+    assert phonon_jobs[0].label == "quantum_phonon_siteA"
+    output_dir = window._job_output_directory(phonon_jobs[0])
     assert output_dir is not None
-    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
-    param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
+    assert output_dir.name == "quantum_siteA"
+    cell_text = (output_dir / "quantum_siteA.cell").read_text(encoding="utf-8")
+    param_text = (output_dir / "quantum_siteA.param").read_text(encoding="utf-8")
     assert "PHONON_KPOINT_MP_GRID 1 1 1" in cell_text
+    assert "KPOINT_MP_GRID 2 2 2" in cell_text
+    assert "PHONON_METHOD : DFPT" in param_text
+    assert "CONTINUATION : DEFAULT" in param_text
+    assert "NUM_FARMS : 4" in param_text
     assert "TASK : PHONON" in param_text
-    assert "PHONON_METHOD : FINITEDISPLACEMENT" in param_text
 
 
 def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp, tmp_path: Path) -> None:
@@ -561,6 +841,33 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp,
     doc.results[result.id] = result
     site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
     doc.sites[site.id] = site
+    source_dir = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / source_job.label
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / f"{source_job.label}.cell").write_text(
+        "\n".join(
+            [
+                "%BLOCK LATTICE_CART",
+                "ang",
+                "5.0 0.0 0.0",
+                "0.0 5.0 0.0",
+                "0.0 0.0 5.0",
+                "%ENDBLOCK LATTICE_CART",
+                "",
+                "%BLOCK POSITIONS_FRAC",
+                "Si 0.0 0.0 0.0",
+                "H:mu 0.25 0.25 0.25",
+                "%ENDBLOCK POSITIONS_FRAC",
+                "",
+                "KPOINT_MP_GRID 4 4 1",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source_dir / f"{source_job.label}.param").write_text(
+        "TASK : GEOMETRYOPTIMIZATION\nCUT_OFF_ENERGY : 710 eV\n",
+        encoding="utf-8",
+    )
 
     definition = window._ensure_quantum_corrections_definition([str(site.id)])
     assert definition is not None
@@ -570,14 +877,14 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp,
                 "phonon_method": "DFPT",
                 "cut_off_energy": {"value": 650.0, "unit": "eV"},
                 "kpoint_mp_grid": [2, 2, 2],
-                "phonon_kpoint_mp_grid": [2, 2, 1],
             },
             "pseudopotential_family": "norm_conserving",
+            "num_farms": 3,
         }
     }
 
     window._refresh_quantum_corrections_view()
-    configure_button = window._quantum_corrections_view._sources_table.cellWidget(0, 5)
+    configure_button = window._quantum_corrections_view._sources_table.cellWidget(0, 8)
     assert configure_button.text() == "Configured..."
 
     jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
@@ -585,12 +892,217 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp,
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
     assert output_dir is not None
-    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
-    param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
-    assert "PHONON_METHOD : DFPT" in param_text
+    cell_text = (output_dir / "quantum_siteA.cell").read_text(encoding="utf-8")
+    param_text = (output_dir / "quantum_siteA.param").read_text(encoding="utf-8")
+    assert "PHONON_METHOD" not in param_text
     assert "CUT_OFF_ENERGY : 650" in param_text
+    assert "CUT_OFF_ENERGY : 710" not in param_text
     assert "KPOINT_MP_GRID 2 2 2" in cell_text
-    assert "PHONON_KPOINT_MP_GRID 2 2 1" in cell_text
+    assert "KPOINT_MP_GRID 4 4 1" not in cell_text
+    assert "TASK : SINGLEPOINT" in param_text
+
+
+def test_main_window_quantum_corrections_hides_fine_cutoff_from_default_rows(qapp) -> None:
+    window = MainWindow()
+
+    dialog = QuantumCorrectionsConfigDialog(specs=window._quantum_parameter_specs())
+
+    assert "fine_cut_off_energy" not in dialog._visible_names()
+    assert "fine_cut_off_energy" in {spec.name for spec in dialog._available_advanced_specs()}
+    assert dialog.collect_values()["elec_energy_tol"] == ValueWithUnit(1e-09, "eV")
+
+    dialog.close()
+    window.close()
+
+
+def test_main_window_quantum_corrections_uses_numeric_suffixes_for_duplicate_site_labels(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_duplicate_labels_doc.mufinder", "Quantum Duplicates")
+    window._document = doc
+
+    for index, muon_x in enumerate((0.25, 0.75), start=1):
+        relaxed_structure = Structure(
+            label=f"site relaxed {index}",
+            origin="muon_relaxation",
+            lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+            species=["Si", "H:mu"],
+            fractional_positions=[[0.0, 0.0, 0.0], [muon_x, 0.25, 0.25]],
+            properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+        )
+        doc.structures[relaxed_structure.id] = relaxed_structure
+
+        source_job = Job(
+            label=f"mu-site-{index}",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_positivemuon_relaxation",
+            status=JobStatus.COMPLETED,
+        )
+        doc.jobs[source_job.id] = source_job
+        run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+        result = Result(
+            calculation_run_id=run.id,
+            result_type=source_job.calc_type,
+            data={"total_energy": -1.0 - index},
+            derived_structure_ids=[relaxed_structure.id],
+        )
+        run.result_id = result.id
+        doc.runs[run.id] = run
+        doc.results[result.id] = result
+        site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0 - index)
+        doc.sites[site.id] = site
+
+        source_dir = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / source_job.label
+        source_dir.mkdir(parents=True, exist_ok=True)
+        (source_dir / f"{source_job.label}.cell").write_text(
+            "\n".join(
+                [
+                    "%BLOCK LATTICE_CART",
+                    "ang",
+                    "5.0 0.0 0.0",
+                    "0.0 5.0 0.0",
+                    "0.0 0.0 5.0",
+                    "%ENDBLOCK LATTICE_CART",
+                    "",
+                    "%BLOCK POSITIONS_FRAC",
+                    "Si 0.0 0.0 0.0",
+                    f"H:mu {muon_x} 0.25 0.25",
+                    "%ENDBLOCK POSITIONS_FRAC",
+                    "",
+                    "KPOINT_MP_GRID 2 2 1",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (source_dir / f"{source_job.label}.param").write_text(
+            "TASK : GEOMETRYOPTIMIZATION\nCUT_OFF_ENERGY : 650 eV\n",
+            encoding="utf-8",
+        )
+
+    labels = [window._quantum_source_label(candidate) for candidate in window._eligible_quantum_source_candidates()]
+
+    assert labels == ["siteA", "siteA_2"]
+
+    jobs = window._materialize_quantum_corrections_jobs(
+        [candidate.key for candidate in window._eligible_quantum_source_candidates()]
+    )
+
+    assert [job.label for job in jobs] == ["quantum_singlepoint_siteA", "quantum_singlepoint_siteA_2"]
+
+    window.close()
+
+
+def test_main_window_materialize_quantum_corrections_repairs_stale_suffixed_job_labels(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_stale_label_doc.mufinder", "Quantum Stale Label")
+    window._document = doc
+
+    relaxed_structure = Structure(
+        label="site relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_structure.id] = relaxed_structure
+
+    source_job = Job(
+        label="mu-site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[source_job.id] = source_job
+    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=source_job.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_structure.id],
+    )
+    run.result_id = result.id
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    doc.sites[site.id] = site
+
+    definition = window._ensure_quantum_corrections_definition([str(site.id)])
+    assert definition is not None
+    stale_job = service.add_job(
+        doc,
+        label=f"quantum_singlepoint_siteA_{str(site.id)[:8]}",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
+    )
+    definition.parameters["singlepoint_job_ids_by_label"] = {str(site.id): str(stale_job.id)}
+
+    jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+
+    assert [job.id for job in jobs] == [stale_job.id]
+    assert stale_job.label == "quantum_singlepoint_siteA"
+    assert definition.parameters["singlepoint_job_ids_by_label"][str(site.id)] == str(stale_job.id)
+    output_dir = window._job_output_directory(stale_job)
+    assert output_dir is not None
+    assert output_dir.name == "quantum_siteA"
+
+    window.close()
+
+
+def test_main_window_quantum_corrections_allows_editing_eligible_site_name(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_rename_doc.mufinder", "Quantum Rename")
+    window._document = doc
+
+    relaxed_structure = Structure(
+        label="site relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_structure.id] = relaxed_structure
+
+    source_job = Job(
+        label="mu-site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[source_job.id] = source_job
+    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=source_job.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_structure.id],
+    )
+    run.result_id = result.id
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    doc.sites[site.id] = site
+
+    window._refresh_quantum_corrections_view()
+    item = window._quantum_corrections_view._sources_table.item(0, 0)
+
+    assert item is not None
+    item.setText("Renamed Site")
+
+    assert doc.sites[site.id].label == "Renamed Site"
+    assert window._quantum_corrections_view._sources_table.item(0, 0).text() == "Renamed Site"
+
+    window.close()
 
 
 def test_main_window_materializes_energy_barrier_jobs_from_relaxed_sources(qapp, tmp_path: Path) -> None:
@@ -598,6 +1110,8 @@ def test_main_window_materializes_energy_barrier_jobs_from_relaxed_sources(qapp,
     service = ProjectService()
     doc = service.create_project(tmp_path / "barrier_doc.mufinder", "Barriers")
     window._document = doc
+    doc.project.recommended_cutoff_energy = 700.0
+    doc.project.recommended_kpoint_grid = (3, 1, 1)
 
     host = Structure(
         label="host",
@@ -686,7 +1200,9 @@ def test_main_window_materializes_energy_barrier_jobs_from_relaxed_sources(qapp,
     cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
     param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
     assert "%BLOCK POSITIONS_FRAC_PRODUCT" in cell_text
+    assert "KPOINT_MP_GRID 3 1 1" in cell_text
     assert "TASK : TRANSITIONSTATESEARCH" in param_text
+    assert "CUT_OFF_ENERGY : 700" in param_text
     assert "TSSEARCH_METHOD : LSTQST" in param_text
 
 
@@ -1054,6 +1570,7 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
     service = ProjectService()
     doc = service.create_project(tmp_path / "barrier_neb_row_config_doc.mufinder", "BarrierNebRowConfig")
     window._document = doc
+    doc.project.recommended_cutoff_energy = 680.0
 
     host = Structure(
         label="host",
@@ -1205,6 +1722,7 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
     cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
     param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
     assert "KPOINT_MP_GRID 1 1 2" in cell_text
+    assert "CUT_OFF_ENERGY : 680" in param_text
     assert "TSSEARCH_NEB_MAX_ITER : 24" in param_text
 
 
@@ -1516,6 +2034,54 @@ def test_main_window_workflow_completion_roles_track_project_defaults(
     assert "project default cutoff" in str(cutoff_item.data(0, window._WORKFLOW_GOAL_ROLE)).lower()
     assert "project default k-point" in str(kpoint_item.data(0, window._WORKFLOW_GOAL_ROLE)).lower()
     assert "comparison table" in str(pristine_item.data(0, window._WORKFLOW_GOAL_ROLE)).lower()
+
+    window.close()
+
+
+def test_main_window_refreshes_uep_and_muon_site_completion_from_live_document(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    window = MainWindow()
+
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "ui_uep_muon_progress_doc.mufinder", "UEP Progress")
+    window._document = doc
+    window._refresh_ui_after_project_change()
+
+    uep_item = _find_tree_item_by_route(window, "uep")
+    muon_item = _find_tree_item_by_route(window, "muon_candidates")
+
+    assert uep_item is not None
+    assert muon_item is not None
+    assert uep_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is False
+    assert muon_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is False
+
+    doc.jobs[uuid4()] = Job(
+        label="uep_PBE",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+        status=JobStatus.COMPLETED,
+    )
+    doc.sites[uuid4()] = MuonSite(
+        label="UEP Cluster 1",
+        generation_method="uep_cluster",
+        status="staged",
+    )
+
+    window._refresh_jobs_table()
+    window._refresh_muon_generation_table()
+
+    uep_item = _find_tree_item_by_route(window, "uep")
+    muon_item = _find_tree_item_by_route(window, "muon_candidates")
+    assert uep_item is not None
+    assert muon_item is not None
+    assert uep_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is True
+    assert muon_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is True
+
+    destinations = {destination.route: destination for destination in window._project_home_destinations()}
+    assert destinations["uep"].completed is True
+    assert destinations["muon_candidates"].completed is True
 
     window.close()
 

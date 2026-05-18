@@ -512,6 +512,16 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
             "unit": "eV",
             "min_value": 0.0,
         },
+        "nonscf_eigenvalue_tol": {
+            "label": "Response Eigenvalue Tolerance",
+            "description": "Diagonalization tolerance for response-property calculations such as phonons.",
+            "category": "scf",
+            "widget_hint": "physical",
+            "advanced_workflows": ("quantum_corrections",),
+            "default_value": 1e-9,
+            "unit": "eV",
+            "min_value": 0.0,
+        },
         "spin_polarized": {
             "label": "Spin Polarized",
             "description": "Enable spin-polarized treatment.",

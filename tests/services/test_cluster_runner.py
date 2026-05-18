@@ -595,6 +595,40 @@ def test_cluster_runner_retrieve_downloads_optional_phonon(
     assert (tmp_path / "seed.phonon").read_bytes() == b"phonon output"
 
 
+def test_cluster_runner_retrieve_uses_task_farm_primary_output(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="125",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+        retrieve_phonon=True,
+        task_farming_enabled=True,
+        num_farms=4,
+    )
+    runner._ssh.remote_files["/remote/job/seed.castep"] = b"minimal output"
+    runner._ssh.remote_files["/remote/job/seed_farm001.castep"] = b"farmed output"
+    runner._ssh.remote_files["/remote/job/seed.phonon"] = b"phonon output"
+
+    seen_paths: list[Path] = []
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda path: (seen_paths.append(Path(path)), CastepResult(completed=True, total_energy=-1.0))[1],
+    )
+
+    runner._retrieve_results(entry)
+
+    assert seen_paths == [tmp_path / "seed_farm001.castep"]
+    assert (tmp_path / "seed_farm001.castep").read_bytes() == b"farmed output"
+
+
 def test_cluster_runner_retrieve_downloads_optional_ts_file(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -575,6 +575,24 @@ keywords:
       default_value: 1.0e-6
       basic_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
 
+  - name: NONSCF_EIGENVALUE_TOL
+    canonical_name: nonscf_eigenvalue_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: NONSCF_EIGENVALUE_TOL : 1e-9 eV
+    notes: Response-property diagonalization tolerance used by workflows such as phonons.
+    gui:
+      label: Response Eigenvalue Tolerance
+      category: scf
+      widget_hint: unit_float
+      default_value: 1.0e-9
+      advanced_workflows: [quantum_corrections]
+
   - name: GEOM_ENERGY_TOL
     canonical_name: geom_energy_tol
     file: param

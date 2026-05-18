@@ -2022,6 +2022,62 @@ def test_atomic_structure_viewer_reuses_pyvista_camera_snapshot_on_redraw(qapp, 
     widget.close()
 
 
+def test_atomic_structure_viewer_set_structure_preserving_view_keeps_camera_limits_and_spin_toggle(qapp) -> None:
+    viewer = AtomicStructureViewer()
+    viewer.set_structure(_sample_structure())
+    viewer._camera_state = _CameraState(17.0, 38.0, 9.0)
+    viewer._axis.set_from_state(viewer._camera_state)
+    viewer._view = (17.0, 38.0)
+    viewer._view_roll = 9.0
+    viewer._limits = ((0.0, 4.0), (0.0, 5.0), (0.0, 6.0))
+    viewer._show_spins.setChecked(False)
+    viewer.select_atoms([1])
+
+    updated = Structure(
+        label="Host shifted",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 7.0]],
+        species=["Si", "O"],
+        fractional_positions=[[0.05, 0.0, 0.0], [0.30, 0.5, 0.75]],
+        properties={"pbc": [True, True, True], "atomic_spins": [1.0, -1.5]},
+    )
+
+    viewer.set_structure_preserving_view(updated)
+
+    assert viewer._camera_state == _CameraState(17.0, 38.0, 9.0)
+    assert viewer._limits == ((0.0, 4.0), (0.0, 5.0), (0.0, 6.0))
+    assert not viewer._show_spins.isChecked()
+    assert viewer.selected_atom_indices() == (1,)
+    viewer.close()
+
+
+def test_atomic_structure_viewer_update_structure_geometry_preserving_view_keeps_camera_and_updates_positions(qapp) -> None:
+    viewer = AtomicStructureViewer()
+    viewer.set_structure(_sample_structure())
+    viewer._camera_state = _CameraState(19.0, 44.0, 7.0)
+    viewer._axis.set_from_state(viewer._camera_state)
+    viewer._view = (19.0, 44.0)
+    viewer._view_roll = 7.0
+    viewer._limits = ((0.0, 4.0), (0.0, 5.0), (0.0, 6.0))
+    viewer.select_atoms([1])
+
+    updated = Structure(
+        label="Host shifted",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 7.0]],
+        species=["Si", "O"],
+        fractional_positions=[[0.10, 0.0, 0.0], [0.35, 0.5, 0.75]],
+        properties={"pbc": [True, True, True], "atomic_spins": [1.0, -1.5]},
+    )
+
+    viewer.update_structure_geometry_preserving_view(updated)
+
+    assert viewer._camera_state == _CameraState(19.0, 44.0, 7.0)
+    assert viewer._limits == ((0.0, 4.0), (0.0, 5.0), (0.0, 6.0))
+    assert viewer.selected_atom_indices() == (1,)
+    assert viewer._atoms is not None
+    assert np.allclose(viewer._atoms.get_scaled_positions(wrap=True), np.asarray(updated.fractional_positions, dtype=float))
+    viewer.close()
+
+
 def test_atomic_structure_viewer_pyvista_zoom_only_poll_updates_camera_snapshot(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:

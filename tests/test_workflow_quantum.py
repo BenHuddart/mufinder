@@ -11,9 +11,11 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 from mufinder.workflow.bridge import structure_to_spec
 from mufinder.workflow.quantum import (
+    QUANTUM_SINGLEPOINT_CALC_TYPE,
     QUANTUM_PHONON_CALC_TYPE,
     QuantumPhononJobConfig,
     QuantumPhononSource,
+    expand_quantum_singlepoint_jobs,
     expand_quantum_phonon_jobs,
     phonon_method_compatibility,
     quantum_source_eligibility,
@@ -43,15 +45,36 @@ def _source() -> QuantumPhononSource:
     )
 
 
-def test_expand_quantum_phonon_jobs_writes_gamma_phonon_inputs() -> None:
-    jobs = expand_quantum_phonon_jobs(
+def test_expand_quantum_singlepoint_jobs_writes_singlepoint_inputs() -> None:
+    jobs = expand_quantum_singlepoint_jobs(
         jobs=(QuantumPhononJobConfig(source=_source()),),
-        name_prefix="quantum",
+        name_prefix="quantum_singlepoint",
     )
 
     assert len(jobs) == 1
     job = jobs[0]
-    assert job.name == "quantum_site1"
+    assert job.name == "quantum_singlepoint_site1"
+    assert job.workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS
+    assert job.provenance["calc_type"] == QUANTUM_SINGLEPOINT_CALC_TYPE
+
+    cell_text = write_cell(job.cell_file)
+    param_text = write_param(job.param_file)
+    assert "PHONON_KPOINT_MP_GRID 1 1 1" not in cell_text
+    assert "TASK : SINGLEPOINT" in param_text
+    assert "PHONON_METHOD" not in param_text
+    assert "CONTINUATION" not in param_text
+    assert "CHARGE : 1" in param_text
+
+
+def test_expand_quantum_phonon_jobs_writes_gamma_phonon_inputs() -> None:
+    jobs = expand_quantum_phonon_jobs(
+        jobs=(QuantumPhononJobConfig(source=_source(), num_farms=4),),
+        name_prefix="quantum_phonon",
+    )
+
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.name == "quantum_phonon_site1"
     assert job.workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS
     assert job.provenance["calc_type"] == QUANTUM_PHONON_CALC_TYPE
 
@@ -63,6 +86,9 @@ def test_expand_quantum_phonon_jobs_writes_gamma_phonon_inputs() -> None:
     assert "%BLOCK SPECIES_GAMMA" in cell_text
     assert "TASK : PHONON" in param_text
     assert "PHONON_METHOD : FINITEDISPLACEMENT" in param_text
+    assert "CONTINUATION : DEFAULT" in param_text
+    assert "NONSCF_EIGENVALUE_TOL : 1e-09 eV" in param_text
+    assert "NUM_FARMS : 4" in param_text
     assert "CHARGE : 1" in param_text
 
 

@@ -178,13 +178,25 @@ Current behavior includes:
 
 - listing structurally relaxed MuFinder muon sites that are eligible phonon
   sources;
+- showing per-row displacement counts, current stage, and stage-2 farm-count
+  metadata directly in the source table;
 - rejecting generated, UEP-only, pristine-relaxation, failed, and
   provenance-free sources;
-- expanding Gamma-only CASTEP phonon ``JobSpec`` objects with ``TASK : PHONON``,
-  ``PHONON_METHOD``, ``PHONON_KPOINT_MP_GRID 1 1 1``, and explicit ``H:mu``
-  mass/gamma cell blocks;
+- running Quantum Corrections as a two-stage workflow: a required
+  singlepoint job first, then a manual phonon continuation step once the
+  singlepoint has completed;
+- locking shared Quantum Corrections parameters after the completed
+  singlepoint so only the stage-2 farm count remains editable before phonon
+  submission, with an explicit workflow action to reset a row back to stage 1;
+- expanding stage-1 CASTEP ``JobSpec`` objects with ``TASK : SINGLEPOINT``;
+- expanding Gamma-only stage-2 CASTEP phonon ``JobSpec`` objects with
+  ``TASK : PHONON``, ``CONTINUATION : DEFAULT``, ``PHONON_METHOD``,
+  ``PHONON_KPOINT_MP_GRID 1 1 1``, optional ``NUM_FARMS``, and explicit
+  ``H:mu`` mass/gamma cell blocks;
 - submitting selected eligible sites through the shared local and cluster
   CASTEP job runners;
+- reusing same-cluster stage-1 remote directories for stage-2 continuation
+  submissions without prompting to delete the directory first;
 - finite displacement as the default phonon method, with DFPT/linear-response
   compatibility checks for known pseudopotential restrictions;
 - parsing CASTEP ``.phonon`` files into typed q-point, atom, frequency, and
@@ -194,12 +206,16 @@ Current behavior includes:
   legacy-style ``w1``/``w2`` witnesses;
 - solving one-dimensional single-particle effective potentials for
   Gomilsek-style weakly-bound and imported strongly-bound adiabatic analyses;
+- launching an interactive analysis window from each completed phonon result,
+  with single-particle mode plots, square-root energy scaling, covariance and
+  correlation tensor inspection, and pairwise ``w2`` evaluation;
 - retrieving ``.phonon`` files from cluster jobs and listing them with other
-  job outputs;
+  job outputs, while accepting task-farmed ``*_farm001.castep`` outputs as the
+  primary CASTEP text output when present;
 - persisting completed quantum phonon analysis summaries into ``Result``
   entities.
 - exposing a curated parameter dialog with searchable advanced CASTEP controls
-  for each row.
+  for each row, including stage-2 ``num_farms`` configuration.
 
 See :doc:`quantum_corrections` for method assumptions and the planned
 Gomilsek-style single-particle approximation layer.

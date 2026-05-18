@@ -10,6 +10,8 @@ from typing import Iterable
 
 import numpy as np
 
+from mufinder.domain.models import Structure
+
 
 class PhononParseError(ValueError):
     """Raised when a CASTEP ``.phonon`` file cannot be interpreted."""
@@ -137,6 +139,102 @@ def parse_phonon_text(text: str) -> PhononCalculation:
     )
 
 
+def structure_from_phonon_calculation(
+    calculation: PhononCalculation,
+    *,
+    label: str = "Muonated phonon structure",
+) -> Structure:
+    """Build a MuFinder structure from a parsed CASTEP phonon calculation."""
+
+    return Structure(
+        label=label,
+        origin="phonon",
+        lattice_vectors=[[float(value) for value in vector] for vector in calculation.lattice_vectors],
+        species=[str(atom.species) for atom in calculation.atoms],
+        fractional_positions=[
+            [float(value) for value in atom.fractional_coordinates]
+            for atom in calculation.atoms
+        ],
+        properties={"pbc": [True, True, True]},
+    )
+
+
+def muon_mode_participations(
+    calculation: PhononCalculation,
+    *,
+    muon_species: str = "H:mu",
+) -> tuple[float, ...]:
+    """Return muon participation for every Gamma-point mode."""
+
+    gamma = calculation.gamma_point()
+    muon_index = calculation.atom_index_for_species(muon_species) - 1
+    muon_vectors = np.asarray(gamma.eigenvectors[:, muon_index, :], dtype=complex)
+    participation = np.sum(np.abs(muon_vectors) ** 2, axis=1).real
+    return tuple(float(value) for value in participation.tolist())
+
+
+def real_mode_displacements(
+    calculation: PhononCalculation,
+    mode_index: int,
+    *,
+    muon_species: str = "H:mu",
+) -> np.ndarray:
+    """Return one Gamma-point mode as deterministic real-valued cartesian vectors."""
+
+    gamma = calculation.gamma_point()
+    zero_based_mode_index = int(mode_index) - 1
+    if zero_based_mode_index < 0 or zero_based_mode_index >= len(gamma.frequencies_cm):
+        raise PhononParseError(f"Mode index {mode_index} is not present in the Gamma-point phonon data.")
+
+    mode_vectors = np.asarray(gamma.eigenvectors[zero_based_mode_index, :, :], dtype=complex)
+    if mode_vectors.shape != (len(calculation.atoms), 3):
+        raise PhononParseError(
+            f"Expected mode {mode_index} to have shape ({len(calculation.atoms)}, 3); "
+            f"found {tuple(mode_vectors.shape)}."
+        )
+
+    muon_index = calculation.atom_index_for_species(muon_species) - 1
+    muon_vector = np.asarray(mode_vectors[muon_index], dtype=complex).reshape(-1)
+    pivot = int(np.argmax(np.abs(muon_vector)))
+    pivot_value = complex(muon_vector[pivot]) if muon_vector.size else 0.0j
+    if abs(pivot_value) <= 0.0:
+        flattened = np.asarray(mode_vectors, dtype=complex).reshape(-1)
+        global_pivot = int(np.argmax(np.abs(flattened))) if flattened.size else 0
+        pivot_value = complex(flattened[global_pivot]) if flattened.size else 0.0j
+    phase = np.exp(-1j * np.angle(pivot_value)) if abs(pivot_value) > 0.0 else 1.0 + 0.0j
+    aligned = mode_vectors * phase
+    real_vectors = np.real_if_close(aligned, tol=1000)
+    if np.iscomplexobj(real_vectors):
+        return np.asarray(np.real(real_vectors), dtype=float)
+    return np.asarray(real_vectors, dtype=float)
+
+
+def scaled_mode_displacements(
+    calculation: PhononCalculation,
+    mode_index: int,
+    amplitude_ang: float,
+    *,
+    muon_species: str = "H:mu",
+) -> np.ndarray:
+    """Scale a mode so its largest atomic displacement norm equals ``amplitude_ang`` in Å."""
+
+    try:
+        amplitude = float(amplitude_ang)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Amplitude must be a finite number.") from exc
+    if not np.isfinite(amplitude):
+        raise ValueError("Amplitude must be finite.")
+    if amplitude < 0.0:
+        raise ValueError("Amplitude must be non-negative.")
+
+    displacements = real_mode_displacements(calculation, mode_index, muon_species=muon_species)
+    norms = np.linalg.norm(displacements, axis=1)
+    maximum = float(np.max(norms)) if norms.size else 0.0
+    if maximum <= 0.0:
+        return np.zeros_like(displacements, dtype=float)
+    return np.asarray(displacements, dtype=float) * (amplitude / maximum)
+
+
 def select_muon_modes(
     calculation: PhononCalculation,
     *,
@@ -148,9 +246,7 @@ def select_muon_modes(
     if count <= 0:
         raise ValueError("At least one muon mode must be selected.")
     gamma = calculation.gamma_point()
-    muon_index = calculation.atom_index_for_species(muon_species) - 1
-    muon_vectors = gamma.eigenvectors[:, muon_index, :]
-    participation = np.sum(np.abs(muon_vectors) ** 2, axis=1).real
+    participation = np.asarray(muon_mode_participations(calculation, muon_species=muon_species), dtype=float)
     selected = np.argsort(participation)[-count:]
     frequencies = np.asarray(gamma.frequencies_cm, dtype=float)
     selected = selected[np.argsort(frequencies[selected])]

@@ -27,6 +27,7 @@ from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.services.project_service import ProjectService
 from mufinder.services.ssh_client import SSHAuthenticationError
+from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
 
 
 def _find_item_by_route(parent: QTreeWidgetItem, route: str) -> QTreeWidgetItem | None:
@@ -3005,6 +3006,161 @@ def test_main_window_submit_jobs_on_cluster_existing_remote_dir_yes_deletes(
     window.close()
 
 
+def test_main_window_submit_jobs_on_cluster_reuses_quantum_continuation_directory(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_quantum_continuation.mufinder", "ClusterQuantumContinuation")
+    window._document = doc
+
+    relaxed_structure = Structure(
+        label="site relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_structure.id] = relaxed_structure
+
+    source_job = Job(
+        label="mu-site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[source_job.id] = source_job
+    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=source_job.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_structure.id],
+    )
+    run.result_id = result.id
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    doc.sites[site.id] = site
+
+    definition = window._ensure_quantum_corrections_definition([str(site.id)])
+    assert definition is not None
+    definition.parameters["singlepoint_job_ids_by_label"] = {}
+    definition.parameters["phonon_job_ids_by_label"] = {}
+    definition.parameters["job_seed_names_by_label"] = {str(site.id): "quantum_siteA"}
+    config = definition.parameters.setdefault("configuration", {})
+    assert isinstance(config, dict)
+    row_settings = config.setdefault("row_settings", {})
+    assert isinstance(row_settings, dict)
+    row_settings[str(site.id)] = {
+        "parameter_values": {},
+        "added_advanced": [],
+        "pseudopotential_family": "norm_conserving",
+        "num_farms": 4,
+    }
+
+    singlepoint_job = service.add_job(
+        doc,
+        label="quantum_singlepoint_siteA",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
+    )
+    singlepoint_job.status = JobStatus.COMPLETED
+    singlepoint_job.execution_target = "alpha"
+    singlepoint_job.remote_directory = "/remote/work/quantum_siteA"
+    definition.parameters["singlepoint_job_ids_by_label"][str(site.id)] = str(singlepoint_job.id)
+
+    phonon_job = service.add_job(
+        doc,
+        label="quantum_phonon_siteA",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_PHONON_CALC_TYPE,
+    )
+    definition.parameters["phonon_job_ids_by_label"][str(site.id)] = str(phonon_job.id)
+    definition.parameters["job_ids_by_label"] = definition.parameters["phonon_job_ids_by_label"]
+
+    quantum_dir = doc.project_root / "files" / "quantum_corrections" / "quantum_siteA"
+    quantum_dir.mkdir(parents=True, exist_ok=True)
+
+    cluster = ClusterConfig(
+        name="alpha",
+        hostname="alpha.example",
+        username="alice",
+        auth_method="key",
+        key_path="/tmp/key",
+        default_working_directory="/remote/work",
+        queue_system="slurm",
+        cores_per_node=64,
+        default_walltime="01:00:00",
+        template_script_path="/templates/slurm.sh",
+    )
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 1
+
+        def config(self):
+            return SimpleNamespace(
+                cluster_name="alpha",
+                working_directory="/remote/work",
+                username="alice",
+                job_name_prefix="quantum",
+                num_processes=16,
+                walltime="01:00:00",
+            )
+
+        def password(self) -> str:
+            return ""
+
+    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
+    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "remote_job_directory",
+        lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
+    )
+
+    checked_paths: list[str] = []
+    deleted: list[str] = []
+    submit_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "remote_directory_exists",
+        lambda path: checked_paths.append(path) or False,
+    )
+    monkeypatch.setattr(window._cluster_runner, "remove_remote_directory", lambda path: deleted.append(path))
+    monkeypatch.setattr(window._cluster_runner, "submit", lambda **kwargs: submit_calls.append(kwargs) or "99123")
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda *_args: pytest.fail("continuation submissions should not prompt to delete the remote directory"),
+    )
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+
+    window._submit_jobs_on_cluster([phonon_job])
+
+    assert checked_paths == []
+    assert deleted == []
+    assert len(submit_calls) == 1
+    assert submit_calls[0]["remote_directory"] == "/remote/work/quantum_siteA"
+    assert submit_calls[0]["reuse_existing_files"] is False
+    assert submit_calls[0]["task_farming_enabled"] is True
+    assert submit_calls[0]["num_farms"] == 4
+    assert phonon_job.remote_directory == "/remote/work/quantum_siteA"
+    assert phonon_job.execution_target == "alpha"
+
+    window.close()
+
+
 def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5511,6 +5667,95 @@ def test_main_window_reset_failed_jobs_no_failed_shows_info(
     window.close()
 
 
+def test_main_window_reset_quantum_corrections_to_stage_one_clears_shared_job_state(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_stage_reset.mufinder", "QuantumStageReset")
+    window._document = doc
+
+    relaxed_structure = Structure(
+        label="site relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_structure.id] = relaxed_structure
+
+    source_job = Job(
+        label="mu-site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[source_job.id] = source_job
+    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=source_job.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_structure.id],
+    )
+    run.result_id = result.id
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    doc.sites[site.id] = site
+
+    definition = window._ensure_quantum_corrections_definition([str(site.id)])
+    assert definition is not None
+    definition.parameters["job_seed_names_by_label"] = {str(site.id): "quantum_siteA"}
+    config = definition.parameters.setdefault("configuration", {})
+    assert isinstance(config, dict)
+    row_settings = config.setdefault("row_settings", {})
+    assert isinstance(row_settings, dict)
+    row_settings[str(site.id)] = {
+        "parameter_values": {"cut_off_energy": {"value": 650.0, "unit": "eV"}},
+        "added_advanced": [],
+        "pseudopotential_family": "norm_conserving",
+        "num_farms": 4,
+    }
+
+    singlepoint_job = service.add_job(
+        doc,
+        label="quantum_singlepoint_siteA",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
+    )
+    singlepoint_job.status = JobStatus.COMPLETED
+    definition.parameters["singlepoint_job_ids_by_label"] = {str(site.id): str(singlepoint_job.id)}
+
+    output_dir = doc.project_root / "files" / "quantum_corrections" / "quantum_siteA"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "quantum_siteA.check").write_text("stale", encoding="utf-8")
+    (output_dir / "quantum_siteA.param").write_text("stale", encoding="utf-8")
+
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "exec",
+        lambda self: main_window_module.QMessageBox.StandardButton.Yes,
+    )
+
+    window._on_reset_quantum_corrections_to_stage_one([str(site.id)])
+
+    assert singlepoint_job.id not in doc.jobs
+    assert definition.parameters["singlepoint_job_ids_by_label"] == {}
+    assert definition.parameters["job_seed_names_by_label"] == {}
+    assert row_settings[str(site.id)]["num_farms"] == 4
+    assert output_dir.exists() is False
+
+    candidate = window._quantum_source_candidate_by_key(str(site.id))
+    assert candidate is not None
+    stage_state = window._quantum_stage_state(definition, candidate)
+    assert stage_state.stage == "singlepoint"
+    assert stage_state.status == "ready"
+
+    window.close()
+
+
 def test_main_window_reset_failed_jobs_accepts_cancelled_jobs(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -7612,6 +7857,82 @@ def test_main_window_pristine_form_edit_hides_stale_definition_status(
     window._refresh_ui_after_project_change()
 
     assert window._pristine_relaxation_view._table.item(0, window._pristine_relaxation_view._STATUS_COLUMN).text() == "ready"
+    window.close()
+
+
+def test_main_window_pristine_form_edit_preserves_matching_row_statuses(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "pristine_form_partial_status.mufinder", "PristineFormPartialStatus")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    spinpol_row = main_window_module.PristineRelaxationRow(
+        label="spinpol",
+        parameter_values={"spin_polarized": True},
+    )
+    nospin_row = main_window_module.PristineRelaxationRow(label="nospin", parameter_values={})
+    definition = service.register_pristine_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_pristine_relaxation_config(
+            main_window_module.PristineRelaxationConfig(
+                name_prefix="pristine_relax",
+                rows=(spinpol_row, nospin_row),
+            )
+        ),
+        output_directory=doc.project_root / "files" / "pristine_relaxation",
+    )
+    completed_job = service.add_job(
+        doc,
+        label="pristine_relax_spinpol",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    completed_job.status = JobStatus.COMPLETED
+    reset_job = service.add_job(
+        doc,
+        label="pristine_relax_nospin",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    reset_job.status = JobStatus.DEFINED
+    definition.parameters["job_ids_by_label"] = {
+        "spinpol": str(completed_job.id),
+        "nospin": str(reset_job.id),
+    }
+    doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    doc.ui_state["pristine_relaxation_form"] = {
+        "name_prefix": "pristine_relax",
+        "rows": [
+            {
+                "label": "spinpol",
+                "fix_all_cell": False,
+                "params": {"spin_polarized": True},
+                "added_advanced": [],
+            },
+            {
+                "label": "nospin",
+                "fix_all_cell": False,
+                "params": {"nextra_bands": 17},
+                "added_advanced": ["nextra_bands"],
+            },
+        ],
+    }
+
+    window._refresh_ui_after_project_change()
+
+    assert window._pristine_relaxation_view._table.item(0, window._pristine_relaxation_view._STATUS_COLUMN).text() == "completed"
+    assert window._pristine_relaxation_view._table.item(1, window._pristine_relaxation_view._STATUS_COLUMN).text() == "ready"
     window.close()
 
 

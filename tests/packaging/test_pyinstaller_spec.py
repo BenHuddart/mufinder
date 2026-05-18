@@ -66,9 +66,6 @@ def test_pyinstaller_spec_bundles_ase_spacegroup_data() -> None:
 def test_pyinstaller_spec_bundles_pyvista_and_vtk_runtime_assets() -> None:
     spec_text = _pyinstaller_spec_text()
 
-    assert 'collect_data_files("PySide6")' in spec_text
-    assert 'collect_submodules("PySide6")' in spec_text
-    assert 'collect_dynamic_libs("PySide6")' in spec_text
     assert 'collect_data_files("pyvista")' in spec_text
     assert 'collect_data_files("vtkmodules")' in spec_text
     assert 'collect_dynamic_libs("vtkmodules")' in spec_text
@@ -80,6 +77,7 @@ def test_pyinstaller_spec_bundles_pyvista_and_vtk_runtime_assets() -> None:
 def test_pyinstaller_spec_bundles_soprano_clustering_modules() -> None:
     spec_text = _pyinstaller_spec_text()
 
+    assert '_optional_collect_data_files("soprano")' in spec_text
     assert '_optional_collect_submodules("soprano")' in spec_text
 
 

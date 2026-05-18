@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QLabel, QHBoxLayout, QVBoxLayout
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QLabel, QHBoxLayout, QSpinBox, QVBoxLayout
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.param_dialog import ParameterDialog
@@ -28,8 +28,12 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
         *,
         specs: list[KeywordSpec],
         pseudopotential_family: str = "unknown",
+        num_farms: int = 1,
         intro_text: str | None = None,
         read_only: bool = False,
+        editable_param_names: Iterable[str] | None = None,
+        pseudopotential_editable: bool = True,
+        num_farms_editable: bool = True,
         species_options: Sequence[str] = (),
         parent=None,
     ) -> None:
@@ -39,6 +43,7 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
             locked_values={"task": "PHONON"},
             intro_text=intro_text,
             read_only=read_only,
+            editable_names=editable_param_names,
             species_options=species_options,
             parent=parent,
         )
@@ -46,15 +51,32 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
         for label, value in self._PSEUDOPOTENTIAL_OPTIONS:
             self._pseudo_combo.addItem(label, value)
         self.set_pseudopotential_family(pseudopotential_family)
-        self._pseudo_combo.setEnabled(not read_only)
+        self._pseudo_combo.setEnabled(bool(pseudopotential_editable and not read_only))
+        self._num_farms_spin = QSpinBox(self)
+        self._num_farms_spin.setRange(1, 9999)
+        self._num_farms_spin.setValue(max(1, int(num_farms)))
+        self._num_farms_spin.setEnabled(bool(num_farms_editable and not read_only))
 
         row = QHBoxLayout()
         row.addWidget(QLabel("Pseudopotentials", self))
         row.addWidget(self._pseudo_combo, 1)
 
+        farms_row = QHBoxLayout()
+        farms_row.addWidget(QLabel("Stage 2 farms", self))
+        farms_row.addWidget(self._num_farms_spin)
+        farms_row.addWidget(
+            QLabel(
+                "Used only for the phonon continuation stage. "
+                "A value of 1 disables task farming.",
+                self,
+            ),
+            1,
+        )
+
         root = self.layout()
         assert root is not None
         root.insertLayout(2, row)
+        root.insertLayout(3, farms_row)
 
     def pseudopotential_family(self) -> str:
         data = self._pseudo_combo.currentData()
@@ -67,6 +89,9 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
                 self._pseudo_combo.setCurrentIndex(index)
                 return
         self._pseudo_combo.setCurrentIndex(0)
+
+    def num_farms(self) -> int:
+        return max(1, int(self._num_farms_spin.value()))
 
 
 class EnergyBarrierPathViewerDialog(QDialog):

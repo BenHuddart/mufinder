@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from copy import deepcopy
 import math
 
 from ase import Atoms
@@ -1557,6 +1558,7 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_point_overlay_actors: list[object] = []
         self._pyvista_line_overlay_actors: list[object] = []
         self._pyvista_selection_actor = None
+        self._pyvista_pick_actor = None
         self._pyvista_bond_actors: list[object] = []
         self._pyvista_spin_actors: list[object] = []
         self._pyvista_last_camera_signature: tuple[float, ...] | None = None
@@ -1846,10 +1848,79 @@ class AtomicStructureViewer(QWidget):
         self._limits = None
         self._pyvista_camera_snapshot = None
         self._pyvista_selection_actor = None
+        self._pyvista_pick_actor = None
         self._pyvista_bond_actors = []
         self._pyvista_spin_actors = []
         self._selection_label.setText("Selected atom: -")
         self._render()
+
+    def set_structure_preserving_view(self, structure: Structure | None) -> None:
+        """Load a new structure while preserving camera, zoom, and spin visibility."""
+
+        if structure is None:
+            self.set_structure(None)
+            return
+
+        previous_camera = deepcopy(getattr(self, "_camera_state", None))
+        previous_limits = deepcopy(getattr(self, "_limits", None))
+        previous_show_spins = bool(self._show_spins.isChecked())
+        previous_selected = list(getattr(self, "_selected_indexes", []))
+        live_pyvista_snapshot = self._current_pyvista_camera_snapshot()
+        previous_pyvista_snapshot = deepcopy(
+            live_pyvista_snapshot if live_pyvista_snapshot is not None else getattr(self, "_pyvista_camera_snapshot", None)
+        )
+        had_existing_structure = self._structure is not None and self._atoms is not None and len(self._atoms) > 0
+
+        self.set_structure(structure)
+
+        if self._show_spins.isChecked() != previous_show_spins:
+            blocked = self._show_spins.blockSignals(True)
+            self._show_spins.setChecked(previous_show_spins)
+            self._show_spins.blockSignals(blocked)
+
+        max_atom_index = len(structure.species)
+        normalized_selection = [
+            int(index)
+            for index in previous_selected
+            if 0 <= int(index) < max_atom_index
+        ]
+        self._selected_indexes = normalized_selection
+        self._selected_index = None if not normalized_selection else int(normalized_selection[-1])
+        self._update_selection_label()
+
+        if not had_existing_structure or previous_camera is None:
+            return
+        self._camera_state = previous_camera
+        self._limits = previous_limits
+        self._axis.set_from_state(previous_camera)
+        if self._triad_axis is not None:
+            self._triad_axis.set_from_state(previous_camera)
+        self._view = (previous_camera.elev, previous_camera.azim)
+        self._view_roll = previous_camera.roll
+        self._pyvista_camera_snapshot = previous_pyvista_snapshot
+        self._render()
+
+    def update_structure_geometry_preserving_view(self, structure: Structure | None) -> None:
+        """Update atom positions for a structurally equivalent model without resetting the current view."""
+
+        if structure is None:
+            self.set_structure(None)
+            return
+        if not self._can_update_structure_geometry_in_place(structure):
+            self.set_structure_preserving_view(structure)
+            return
+
+        self._structure = structure
+        self._atoms = self._to_atoms(structure)
+        self._spins = self._extract_spins(structure)
+        max_atom_index = len(structure.species)
+        self._selected_indexes = [index for index in self._selected_indexes if 0 <= int(index) < max_atom_index]
+        self._selected_index = None if not self._selected_indexes else int(self._selected_indexes[-1])
+        self._update_selection_label()
+
+        if self._try_update_pyvista_atom_geometry():
+            return
+        self.set_structure_preserving_view(structure)
 
     def set_spins(self, spins: list[float] | tuple[float, ...] | np.ndarray | None) -> None:
         """Replace current per-atom scalar spins or vector moments and redraw."""
@@ -2260,6 +2331,17 @@ class AtomicStructureViewer(QWidget):
             parsed.extend([0.0] * (count - len(parsed)))
         return np.asarray(parsed, dtype=float)
 
+    def _can_update_structure_geometry_in_place(self, structure: Structure) -> bool:
+        if self._structure is None or self._atoms is None:
+            return False
+        if len(self._structure.species) != len(structure.species):
+            return False
+        if list(self._structure.species) != list(structure.species):
+            return False
+        current_lattice = np.asarray(self._structure.lattice_vectors, dtype=float)
+        updated_lattice = np.asarray(structure.lattice_vectors, dtype=float)
+        return current_lattice.shape == (3, 3) and updated_lattice.shape == (3, 3) and np.allclose(current_lattice, updated_lattice)
+
     def _redraw_preserving_view(self) -> None:
         self._store_view()
         if self._try_update_pyvista_visibility_overlay():
@@ -2546,6 +2628,7 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_point_overlay_actors = []
         self._pyvista_line_overlay_actors = []
         self._pyvista_selection_actor = None
+        self._pyvista_pick_actor = None
         self._pyvista_bond_actors = []
         self._pyvista_spin_actors = []
         plotter.clear()
@@ -2614,7 +2697,7 @@ class AtomicStructureViewer(QWidget):
 
         pick_points = pv.PolyData(draw_positions)
         pick_points["pick_radius"] = np.maximum(1.8 * draw_radii, 0.45)
-        plotter.add_mesh(
+        self._pyvista_pick_actor = plotter.add_mesh(
             pick_points,
             color="#000000",
             opacity=0.01,
@@ -3127,6 +3210,20 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_line_overlay_actors = []
         return removed
 
+    def _remove_pyvista_pick_actor(self) -> bool:
+        if self._backend_name != "pyvista":
+            return False
+        plotter = getattr(self._canvas, "plotter", None)
+        actor = getattr(self, "_pyvista_pick_actor", None)
+        if plotter is None or actor is None:
+            return False
+        try:
+            plotter.remove_actor(actor, render=False)
+        except Exception:  # noqa: BLE001
+            return False
+        self._pyvista_pick_actor = None
+        return True
+
     def _try_update_pyvista_point_overlay(self) -> bool:
         if self._backend_name != "pyvista" or self._shutting_down or self._atoms is None or len(self._atoms) == 0:
             return False
@@ -3217,6 +3314,90 @@ class AtomicStructureViewer(QWidget):
 
         self._remove_pyvista_selection_overlay()
         self._draw_pyvista_selection(plotter, pv, self._pyvista_all_atom_positions, self._pyvista_all_atom_radii)
+        self._canvas.draw_idle()
+        return True
+
+    def _try_update_pyvista_atom_geometry(self) -> bool:
+        if self._backend_name != "pyvista" or self._shutting_down or self._atoms is None or len(self._atoms) == 0:
+            return False
+        plotter = getattr(self._canvas, "plotter", None)
+        if plotter is None:
+            return False
+        pv, _qt_interactor = _pyvista_modules()
+        if pv is None:
+            return False
+
+        positions, _numbers, _symbols, colors, radii, _extra_points = self._scene_geometry()
+        scene_center = np.mean(positions, axis=0) if len(positions) else np.zeros(3, dtype=float)
+        self._configure_pyvista_lighting(plotter, pv, focal_point=scene_center)
+        self._pyvista_all_atom_positions = positions.copy()
+        self._pyvista_all_atom_radii = radii.copy()
+        self._pyvista_all_atom_colors = colors.copy()
+        visible_mask = self._visible_atom_mask(positions)
+        visible_indices = np.flatnonzero(visible_mask)
+        visible_spins = self._filtered_spin_values(self._spins, visible_mask)
+        self._pyvista_atom_lookup_indices = visible_indices.copy()
+        draw_positions = positions[visible_indices]
+        draw_radii = radii[visible_indices]
+        draw_colors = colors[visible_indices]
+        self._pyvista_atom_positions = draw_positions.copy()
+        self._pyvista_atom_radii = draw_radii.copy()
+        self._pyvista_atom_colors = draw_colors.copy()
+        if len(draw_positions) == 0:
+            return False
+
+        self._remove_pyvista_selection_overlay()
+        self._remove_pyvista_pick_actor()
+        if self._pyvista_atom_actor is not None:
+            try:
+                plotter.remove_actor(self._pyvista_atom_actor, render=False)
+            except Exception:  # noqa: BLE001
+                pass
+            self._pyvista_atom_actor = None
+
+        atom_alpha = 0.5 if self._show_spins.isChecked() and self._spins is not None else 1.0
+        atom_subdivisions = _atom_pyvista_sphere_subdivisions(len(draw_positions))
+        atom_glyphs = _build_pyvista_atom_glyph_mesh(
+            pv,
+            positions=draw_positions,
+            radii=draw_radii,
+            colors=draw_colors,
+            subdivisions=atom_subdivisions,
+        )
+        self._pyvista_atom_actor = plotter.add_mesh(
+            atom_glyphs,
+            scalars="atom_rgb",
+            rgb=True,
+            opacity=float(atom_alpha),
+            smooth_shading=True,
+            ambient=0.74,
+            diffuse=0.22,
+            specular=0.0,
+            specular_power=1.0,
+            pbr=False,
+        )
+
+        pick_points = pv.PolyData(draw_positions)
+        pick_points["pick_radius"] = np.maximum(1.8 * draw_radii, 0.45)
+        self._pyvista_pick_actor = plotter.add_mesh(
+            pick_points,
+            color="#000000",
+            opacity=0.01,
+            point_size=float(max(16.0, np.max(np.maximum(32.0 * draw_radii, 18.0)))),
+            render_points_as_spheres=True,
+            pickable=True,
+            name="atom-pick-points",
+        )
+
+        self._try_update_pyvista_spin_overlay() if self._show_spins.isChecked() and visible_spins is not None else self._remove_pyvista_actor_group(self._pyvista_spin_actors)
+        if not (self._show_spins.isChecked() and visible_spins is not None):
+            self._pyvista_spin_actors = []
+        self._try_update_pyvista_bond_overlay() if self._show_bonds.isChecked() else self._remove_pyvista_actor_group(self._pyvista_bond_actors)
+        if not self._show_bonds.isChecked():
+            self._pyvista_bond_actors = []
+        if self._selected_indexes:
+            self._try_update_pyvista_selection_overlay()
+        self._pyvista_last_camera_signature = self._pyvista_camera_signature()
         self._canvas.draw_idle()
         return True
 

@@ -8,7 +8,7 @@ from uuid import uuid4
 from ase.data import atomic_numbers
 from ase.data.colors import jmol_colors
 from matplotlib import colors as mcolors
-from PySide6.QtWidgets import QFrame, QSplitter, QTabWidget, QTreeWidget
+from PySide6.QtWidgets import QCheckBox, QFrame, QSplitter, QTabWidget, QTreeWidget
 
 from mufinder.app.relaxation_analysis_widget import (
     CompletedRelaxationAnalysisSource,
@@ -361,6 +361,143 @@ def test_displacement_plot_uses_transparent_surround_species_colours_and_boxed_l
     assert mcolors.to_hex(fe_collection.get_facecolors()[0]) == mcolors.to_hex(jmol_colors[atomic_numbers["Fe"]])
 
     dialog.close()
+
+
+def test_displacement_view_does_not_overlay_second_muon_when_relaxed_structure_contains_one(qapp) -> None:
+    comparison_id = uuid4()
+    relaxed_id = uuid4()
+    comparison = Structure(
+        id=comparison_id,
+        label="Host",
+        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+        species=["Cu", "Cu"],
+        fractional_positions=[[0.2, 0.5, 0.5], [0.4, 0.5, 0.5]],
+    )
+    relaxed = Structure(
+        id=relaxed_id,
+        label="Relaxed",
+        lattice_vectors=comparison.lattice_vectors,
+        species=["Cu", "Cu", "H:mu"],
+        fractional_positions=[[0.22, 0.5, 0.5], [0.41, 0.5, 0.5], [0.0, 0.5, 0.5]],
+    )
+    site = RelaxedMuonSite(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=relaxed_id,
+        site_id=None,
+        folded_fractional_position=(0.0, 0.5, 0.5),
+        cartesian_position_ang=(0.0, 5.0, 5.0),
+        total_energy_ev=-10.0,
+    )
+
+    dialog = DisplacementAnalysisDialog(
+        workspace_name="Relaxation analysis",
+        sites=[site],
+        structures_by_id={comparison_id: comparison, relaxed_id: relaxed},
+        comparison_options=[(comparison_id, "Host", False)],
+    )
+
+    assert len(dialog._viewer._point_overlay_specs) == 1
+    assert dialog._viewer._point_overlay_specs[0].positions.shape == (2, 3)
+
+    dialog.close()
+
+
+def test_relaxation_analysis_widget_opens_displacements_without_clustering(qapp, monkeypatch) -> None:
+    host = _host_structure()
+    relaxed_id = uuid4()
+    source = CompletedRelaxationAnalysisSource(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=relaxed_id,
+        site_id=None,
+        folded_fractional_position=(0.0, 0.5, 0.5),
+        total_energy_ev=-10.0,
+    )
+    relaxed = Structure(
+        id=relaxed_id,
+        label="Relaxed",
+        lattice_vectors=host.lattice_vectors,
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.02, 0.0, 0.0], [0.5, 0.5, 0.5], [0.0, 0.5, 0.5]],
+    )
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[source.job_id],
+    )
+
+    opened: dict[str, object] = {}
+
+    class _FakeDialog:
+        def __init__(self, *, workspace_name, sites, structures_by_id, comparison_options, parent=None):
+            opened["workspace_name"] = workspace_name
+            opened["site_count"] = len(sites)
+            opened["comparison_options"] = list(comparison_options)
+
+        def exec(self):
+            opened["shown"] = True
+            return 0
+
+    widget = RelaxationAnalysisWidget()
+    widget.set_context(
+        workspaces=[workspace],
+        sources=[source],
+        structures={host.id: host, relaxed_id: relaxed},
+        host_structure=host,
+        comparison_options=[(host.id, "Host", False)],
+    )
+    monkeypatch.setattr("mufinder.app.relaxation_analysis_widget.DisplacementAnalysisDialog", _FakeDialog)
+
+    widget._open_displacements(str(workspace["id"]))
+
+    assert opened["workspace_name"] == "Relaxation analysis"
+    assert opened["site_count"] == 1
+    assert opened["comparison_options"] == [(host.id, "Host", False)]
+    assert opened["shown"] is True
+
+    widget.close()
+
+
+def test_relaxation_analysis_workspace_show_shifted_checkbox_uses_transparent_background(qapp) -> None:
+    host = _host_structure()
+    source = CompletedRelaxationAnalysisSource(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=uuid4(),
+        site_id=None,
+        folded_fractional_position=(0.0, 0.5, 0.5),
+        total_energy_ev=-10.0,
+    )
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[source.job_id],
+    )
+
+    widget = RelaxationAnalysisWidget()
+    widget.set_context(
+        workspaces=[workspace],
+        sources=[source],
+        structures={host.id: host},
+        host_structure=host,
+        comparison_options=[(host.id, "Host", False)],
+    )
+
+    checkbox = next(
+        child
+        for child in widget.findChildren(QCheckBox)
+        if child.text() == "Show shifted positions"
+    )
+
+    assert "background: transparent;" in checkbox.styleSheet()
+
+    widget.close()
 
 
 def test_relaxation_clustering_dialog_show_does_not_warn_about_collapsed_layout(qapp) -> None:

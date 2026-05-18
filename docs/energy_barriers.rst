@@ -119,6 +119,12 @@ Both dialogs also expose the workflow-supported advanced parameter surface via
 the searchable ``Add Parameter`` flow so expert users can opt into additional
 CASTEP controls without overwhelming the default view.
 
+When the project defines default convergence settings, both the transition-state
+and NEB workflows inherit ``CUT_OFF_ENERGY`` and ``KPOINT_MP_GRID`` from the
+project automatically. Row-level configuration remains authoritative, so a
+specific path can still override those defaults without affecting the rest of
+the project.
+
 Outputs and interpretation
 --------------------------
 

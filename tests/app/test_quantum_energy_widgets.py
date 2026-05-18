@@ -3,13 +3,14 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
+from mufinder.app.theme import status_brush
 from mufinder.app.energy_barriers_widget import (
     EnergyBarrierPreviewImageRow,
     EnergyBarrierResultRow,
     EnergyBarrierSourceRow,
     EnergyBarriersWidget,
 )
-from mufinder.app.quantum_corrections_widget import QuantumCorrectionsWidget, QuantumSourceRow
+from mufinder.app.quantum_corrections_widget import QuantumCorrectionsWidget, QuantumResultRow, QuantumSourceRow
 from mufinder.domain.models import Structure
 
 
@@ -32,7 +33,10 @@ def test_quantum_widget_emits_configure_for_source_row(qapp) -> None:
                 label="Site A",
                 charge_state="Muonium",
                 relative_energy="0.0 eV",
+                displacements="9",
                 source_job="relax_a",
+                stage="singlepoint",
+                num_farms_display="",
                 status="ready",
             )
         ]
@@ -41,13 +45,94 @@ def test_quantum_widget_emits_configure_for_source_row(qapp) -> None:
     configured: list[str] = []
     widget.configure_requested.connect(configured.append)
 
-    button = widget._sources_table.cellWidget(0, 5)
+    button = widget._sources_table.cellWidget(0, 8)
     assert isinstance(button, QPushButton)
     assert button.text() == "Configure..."
 
     button.click()
 
     assert configured == ["site-a"]
+
+
+def test_quantum_widget_uses_shared_status_text_colors(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources(
+        [
+            QuantumSourceRow(
+                key="site-a",
+                label="Site A",
+                charge_state="Muonium",
+                relative_energy="0.0 eV",
+                displacements="9",
+                source_job="relax_a",
+                stage="phonon",
+                num_farms_display="4",
+                status="running",
+            )
+        ]
+    )
+
+    status_item = widget._sources_table.item(0, 7)
+
+    assert status_item is not None
+    assert status_item.foreground().color().name() == status_brush("running").color().name()
+
+
+def test_quantum_widget_emits_reset_to_stage_one_for_selected_rows(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources(
+        [
+            QuantumSourceRow(
+                key="site-a",
+                label="Site A",
+                charge_state="Muonium",
+                relative_energy="0.0 eV",
+                displacements="9",
+                source_job="relax_a",
+                stage="phonon",
+                num_farms_display="4",
+                status="ready",
+                resettable=True,
+            )
+        ]
+    )
+    widget._sources_table.selectRow(0)
+
+    reset: list[list[str]] = []
+    widget.reset_stage_requested.connect(reset.append)
+
+    widget._reset_stage_button.click()
+
+    assert reset == [["site-a"]]
+
+
+def test_quantum_widget_emits_analysis_for_completed_result(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_results(
+        [
+            QuantumResultRow(
+                key="result-a",
+                label="phonon_a",
+                zpe="0.1 eV",
+                eigenvalues="1:100.0, 2:400.0",
+                witness="-0.1",
+            )
+        ]
+    )
+
+    launched: list[str] = []
+    widget.analysis_requested.connect(launched.append)
+
+    assert widget._results_table.horizontalHeaderItem(2).text() == "Eigenvalues (cm⁻¹)"
+    assert widget._results_table.columnWidth(2) >= widget._results_table.columnWidth(3)
+
+    button = widget._results_table.cellWidget(0, 4)
+    assert isinstance(button, QPushButton)
+    assert button.text() == "Launch Analysis"
+
+    button.click()
+
+    assert launched == ["result-a"]
 
 
 def test_energy_barriers_widget_emits_configure_and_view_for_source_row(qapp) -> None:

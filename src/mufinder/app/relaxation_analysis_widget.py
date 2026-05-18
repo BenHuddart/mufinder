@@ -1044,7 +1044,7 @@ class RelaxationClusteringDialog(QDialog):
 
 
 class DisplacementAnalysisDialog(QDialog):
-    """Inspect host-ion displacements around a clustered muon site."""
+    """Inspect host-ion displacements around a relaxed muon site."""
 
     def __init__(
         self,
@@ -1151,7 +1151,7 @@ class DisplacementAnalysisDialog(QDialog):
         site = self._selected_site()
         comparison = self._selected_comparison()
         if site is None or comparison is None:
-            self._message.setText("Choose a clustered muon site and a comparison structure.")
+            self._message.setText("Choose a muon site and a comparison structure.")
             return
         relaxed = self._structures.get(site.structure_id)
         if relaxed is None:
@@ -1171,26 +1171,32 @@ class DisplacementAnalysisDialog(QDialog):
         self._render_viewer(relaxed, result.comparison_structure, site)
         self._render_plot(result)
 
+    @staticmethod
+    def _structure_contains_muon(structure: Structure) -> bool:
+        return any(str(species).strip().casefold().endswith(":mu") for species in structure.species)
+
     def _render_viewer(self, relaxed: Structure, comparison: Structure, site: RelaxedMuonSite) -> None:
         self._viewer.set_structure(relaxed)
         comp_lattice = np.asarray(comparison.lattice_vectors, dtype=float)
         comparison_positions = (np.asarray(comparison.fractional_positions, dtype=float) @ comp_lattice).tolist()
-        self._viewer.set_point_overlays(
-            [
-                {
-                    "positions": comparison_positions,
-                    "colors": [current_palette().text_muted] * len(comparison_positions),
-                    "radii": [0.16] * len(comparison_positions),
-                    "alpha": 0.26,
-                },
+        overlays = [
+            {
+                "positions": comparison_positions,
+                "colors": [current_palette().text_muted] * len(comparison_positions),
+                "radii": [0.16] * len(comparison_positions),
+                "alpha": 0.26,
+            }
+        ]
+        if not self._structure_contains_muon(relaxed):
+            overlays.append(
                 {
                     "positions": [site.cartesian_position_ang],
                     "colors": [current_palette().accent],
                     "radii": [MUON_VIEWER_RADIUS_ANG * 1.25],
                     "alpha": 0.98,
-                },
-            ]
-        )
+                }
+            )
+        self._viewer.set_point_overlays(overlays)
 
     def _render_plot(self, result: DisplacementAnalysisResult) -> None:
         self._figure.clear()
@@ -1370,6 +1376,7 @@ class RelaxationAnalysisWidget(QWidget):
         displacement_button = QPushButton("Analyse displacements", header)
         displacement_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self._open_displacements(wid))
         show_shifted = QCheckBox("Show shifted positions", header)
+        show_shifted.setStyleSheet("background: transparent;")
         show_shifted.setChecked(bool(workspace.get("show_shifted_positions", False)))
         show_shifted.toggled.connect(lambda checked, wid=_workspace_id(workspace): self._set_show_shifted(wid, checked))
         header_layout.addWidget(QLabel("Workspace", header), 0, 0)
@@ -1597,9 +1604,12 @@ class RelaxationAnalysisWidget(QWidget):
         if workspace is None:
             return
         sites = self._workspace_sites(workspace)
-        labels = self._cluster_labels(workspace, sites)
-        if not sites or not any(labels):
-            QMessageBox.information(self, "Cluster first", "Run clustering before analysing displacements.")
+        if not sites:
+            QMessageBox.information(
+                self,
+                "No sites",
+                "This workspace does not contain any completed relaxations.",
+            )
             return
         dialog = DisplacementAnalysisDialog(
             workspace_name=_workspace_name(workspace),
