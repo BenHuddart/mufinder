@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 import math
 from typing import Sequence
 
@@ -357,6 +358,36 @@ def delta_threshold_force(
     )
 
 
+def _apply_kpoint_label(
+    result: ConvergenceResult,
+    point_labels: Mapping[float, str],
+    *,
+    quantity: str,
+    delta_unit: str,
+) -> ConvergenceResult:
+    """Rewrite the details string of a converged result to use a grid label.
+
+    Called only for k-point sweeps where the raw converged_value is a k-point
+    count (e.g. 27) that should be displayed as a grid string (e.g. "3 x 3 x 3")
+    rather than a bare number followed by "eV".
+    """
+    if not result.converged or result.converged_value is None:
+        return result
+    grid_label = point_labels.get(float(result.converged_value))
+    if grid_label is None:
+        return result
+    converged_delta = next(
+        (d for v, d in (result.deltas or ()) if v == result.converged_value),
+        None,
+    )
+    method_label = result.method.replace("-", " ").title() if result.method else "Delta-Threshold"
+    details = f"{quantity} converged by {method_label} at {grid_label}"
+    if converged_delta is not None:
+        details += f" (delta={converged_delta:.6g} {delta_unit})"
+    details += "."
+    return replace(result, details=details)
+
+
 def analyze_kpoint_convergence(
     *,
     kpoint_counts: Sequence[float],
@@ -365,8 +396,15 @@ def analyze_kpoint_convergence(
     num_atoms: int,
     energy_threshold: float,
     force_threshold: float,
+    point_labels: Mapping[float, str] | None = None,
 ) -> tuple[ConvergenceResult, ConvergenceResult]:
-    """Run k-point convergence using delta-threshold only over k-point counts."""
+    """Run k-point convergence using delta-threshold only over k-point counts.
+
+    When *point_labels* is supplied (mapping each k-point count to its grid
+    string, e.g. ``{27.0: "3 x 3 x 3"}``), the ``details`` fields of the
+    returned results are rewritten to reference the grid label instead of the
+    raw numeric count.
+    """
 
     energy = delta_threshold_energy(
         kpoint_counts,
@@ -375,6 +413,11 @@ def analyze_kpoint_convergence(
         threshold=energy_threshold,
     )
     force = delta_threshold_force(kpoint_counts, max_forces, threshold=force_threshold)
+
+    if point_labels is not None:
+        energy = _apply_kpoint_label(energy, point_labels, quantity="Energy", delta_unit="eV/atom")
+        force = _apply_kpoint_label(force, point_labels, quantity="Force", delta_unit="eV/Ang")
+
     return energy, force
 
 

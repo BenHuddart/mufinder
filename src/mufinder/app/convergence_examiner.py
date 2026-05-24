@@ -701,6 +701,7 @@ class ConvergenceExaminerDialog(QDialog):
                     num_atoms=self._num_atoms,
                     energy_threshold=energy_threshold,
                     force_threshold=force_threshold,
+                    point_labels=self._point_labels,
                 )
             else:
                 energy_result, force_result = analyze_convergence(

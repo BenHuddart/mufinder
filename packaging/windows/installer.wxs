@@ -41,10 +41,6 @@
       <Directory Id="AppStartMenuDir" Name="MuFinder" />
     </StandardDirectory>
 
-    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
-      <Files Source="$(var.AppDir)\**" />
-    </ComponentGroup>
-
     <Component Id="Shortcuts" Directory="INSTALLFOLDER" Guid="{1A2B3C4D-5E6F-7089-A1B2-C3D4E5F60718}">
       <Shortcut Id="DesktopShortcut"
                 Directory="DesktopFolder"

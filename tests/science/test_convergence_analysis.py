@@ -155,3 +155,36 @@ def test_analyze_kpoint_convergence_uses_delta_threshold_only() -> None:
     assert energy_result.converged is True
     assert force_result.converged is True
     assert recommended_cutoff(energy_result, force_result) == pytest.approx(27.0)
+
+
+def test_analyze_kpoint_convergence_details_use_grid_label_when_labels_provided() -> None:
+    energy_result, force_result = analyze_kpoint_convergence(
+        kpoint_counts=[1.0, 8.0, 27.0],
+        energies=[-100.0, -100.02, -100.0205],
+        max_forces=[0.20, 0.16, 0.159],
+        num_atoms=8,
+        energy_threshold=0.001,
+        force_threshold=0.01,
+        point_labels={1.0: "1 x 1 x 1", 8.0: "2 x 2 x 2", 27.0: "3 x 3 x 3"},
+    )
+
+    assert "at 3 x 3 x 3" in energy_result.details
+    assert "at 3 x 3 x 3" in force_result.details
+    # Raw count must not appear as the convergence point
+    assert "at 27" not in energy_result.details
+    assert "at 27" not in force_result.details
+
+
+def test_analyze_kpoint_convergence_details_keep_numeric_without_labels() -> None:
+    energy_result, force_result = analyze_kpoint_convergence(
+        kpoint_counts=[1.0, 8.0, 27.0],
+        energies=[-100.0, -100.02, -100.0205],
+        max_forces=[0.20, 0.16, 0.159],
+        num_atoms=8,
+        energy_threshold=0.001,
+        force_threshold=0.01,
+    )
+
+    # Without point_labels the original numeric details are preserved unchanged.
+    assert "27" in energy_result.details
+    assert "27" in force_result.details
