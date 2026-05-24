@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.active_host_badge import ActiveHostBadge
 from mufinder.app.convergence_display import format_cutoff_energy, format_kpoint_grid
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.workflow_parameters import reorder_workflow_parameter_specs
@@ -231,6 +232,7 @@ class MuonRelaxationWidget(QWidget):
         self._supercell_options: list[tuple[str, SupercellMatrix]] = []
         self._parameter_species_options: tuple[str, ...] = ()
 
+        self._active_host_badge = ActiveHostBadge()
         self._project_default_cutoff = QLabel("Not set")
         self._project_default_kpoint = QLabel("Not set")
         self._kpoint_message = QLabel("")
@@ -355,6 +357,7 @@ class MuonRelaxationWidget(QWidget):
         header_row.addLayout(title_column, 1)
         header_row.addWidget(defaults_group)
         layout.addLayout(header_row)
+        layout.addWidget(self._active_host_badge)
         layout.addWidget(self._kpoint_message)
 
         table_group = QGroupBox("Relaxation Jobs")
@@ -535,6 +538,11 @@ class MuonRelaxationWidget(QWidget):
         self._default_params = self._drop_default_conflicts(self._default_params, locked_names={"task"})
         self._normalize_all_row_parameter_values()
         self._refresh_all_rows()
+
+    def set_active_host(self, structure: object | None) -> None:
+        """Update the active-host badge."""
+        from mufinder.domain.models import Structure as _Structure
+        self._active_host_badge.set_active_host(structure if isinstance(structure, _Structure) else None)
 
     def set_host_lattice(self, lattice_vectors: list[list[float]] | None) -> None:
         self._host_lattice = [list(row) for row in lattice_vectors] if lattice_vectors is not None else None

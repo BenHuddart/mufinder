@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.active_host_badge import ActiveHostBadge
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIEWER_RADIUS_ANG
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.theme import refresh_widget_style, style_section_subtitle, style_section_title
@@ -144,9 +145,11 @@ class MuonGenerationWidget(QWidget):
         self._method_combo.addItem("Custom coordinates", "manual")
         self._method_combo.addItem("UEP clusters", "uep_clusters")
         self._host_structure: Structure | None = None
+        self._active_host: Structure | None = None
         self._site_rows: list[dict[str, Any]] = []
         self._uep_cluster_rows: list[dict[str, Any]] = []
         self._restoring_form_state = False
+        self._active_host_badge = ActiveHostBadge()
 
         self._param_stack = QStackedWidget()
         self._param_stack.setObjectName("muonGenerationParamStack")
@@ -258,6 +261,7 @@ class MuonGenerationWidget(QWidget):
         style_section_subtitle(subtitle)
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
+        layout.addWidget(self._active_host_badge)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.setChildrenCollapsible(False)
@@ -788,10 +792,37 @@ class MuonGenerationWidget(QWidget):
                 item = QTableWidgetItem(f"{float(value):.4f}")
                 item.setData(Qt.ItemDataRole.UserRole, row_data)
                 self._site_table.setItem(row, offset, item)
+        self._apply_stale_row_styling()
         self._update_delete_button_state()
         self._update_cluster_button_state()
         self._update_create_jobs_button_state()
         self._sync_viewer_overlays()
+
+    def _apply_stale_row_styling(self) -> None:
+        """Dim rows whose source_structure_id doesn't match the active host."""
+        active_host_id = str(self._active_host.id) if self._active_host is not None else None
+        muted_color = self.palette().color(self.palette().ColorRole.PlaceholderText)
+        default_color = self.palette().color(self.palette().ColorRole.Text)
+        for row in range(self._site_table.rowCount()):
+            item0 = self._site_table.item(row, 0)
+            if item0 is None:
+                continue
+            row_data = item0.data(Qt.ItemDataRole.UserRole)
+            source_id = str(row_data.get("source_structure_id", "")) if isinstance(row_data, dict) else ""
+            stale = active_host_id is not None and source_id and source_id != active_host_id
+            for col in range(self._site_table.columnCount()):
+                item = self._site_table.item(row, col)
+                if item is None:
+                    continue
+                item.setForeground(muted_color if stale else default_color)
+                if col == 0 and stale:
+                    original_label = str(row_data.get("label", ""))
+                    if not original_label.endswith(" (stale)"):
+                        item.setText(original_label + " (stale)")
+                    item.setToolTip("Generated for a different host structure. Regenerate or switch active host.")
+                elif col == 0:
+                    item.setText(str(row_data.get("label", "")))
+                    item.setToolTip("")
 
     def select_site_ids(self, site_ids: list[str]) -> None:
         """Restore selection for generated-site table rows by id."""
@@ -821,6 +852,12 @@ class MuonGenerationWidget(QWidget):
         self._update_cluster_button_state()
         self._update_delete_button_state()
         self._update_create_jobs_button_state()
+
+    def set_active_host(self, structure: Structure | None) -> None:
+        """Update the active-host badge and re-apply stale-row styling."""
+        self._active_host = structure
+        self._active_host_badge.set_active_host(structure)
+        self._apply_stale_row_styling()
 
     def set_host_structure(self, structure: Structure | None) -> None:
         """Render the active host structure in the preview viewer."""

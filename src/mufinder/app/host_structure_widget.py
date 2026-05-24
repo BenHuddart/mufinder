@@ -9,6 +9,7 @@ from typing import Any
 from PySide6.QtCore import QItemSelectionModel, QMargins, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -26,6 +27,7 @@ from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.theme import style_section_subtitle, style_section_title
 from mufinder.domain.models import Structure
+from mufinder.services.project_service import PromotableHost
 
 
 class HostStructureWidget(QWidget):
@@ -36,6 +38,7 @@ class HostStructureWidget(QWidget):
     load_requested = Signal()
     magnetic_configuration_changed = Signal(object)
     supercell_editor_requested = Signal()
+    active_host_change_requested = Signal(str)  # emits structure_id as str
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -87,6 +90,10 @@ class HostStructureWidget(QWidget):
         self._supercell_button.setEnabled(False)
         self._supercell_button.clicked.connect(self._on_supercell_preview_requested)
 
+        self._active_host_combo = QComboBox()
+        self._active_host_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._active_host_combo.currentIndexChanged.connect(self._on_active_host_combo_changed)
+
         self._build_layout()
 
     def _build_layout(self) -> None:
@@ -96,6 +103,12 @@ class HostStructureWidget(QWidget):
         style_section_subtitle(subtitle)
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
+
+        host_selector_row = QHBoxLayout()
+        host_selector_label = QLabel("Active host structure:")
+        host_selector_row.addWidget(host_selector_label)
+        host_selector_row.addWidget(self._active_host_combo, 1)
+        layout.addLayout(host_selector_row)
 
         action_row = QHBoxLayout()
         action_row.addWidget(self._load_button)
@@ -226,6 +239,32 @@ class HostStructureWidget(QWidget):
         self._lock_table_width()
         self._viewer.set_spins(self._atomic_spins)
         self._updating = False
+
+    def set_promotable_hosts(
+        self,
+        hosts: list[PromotableHost],
+        active_id: object | None,
+    ) -> None:
+        """Repopulate the active-host dropdown without triggering spurious signals."""
+        self._active_host_combo.blockSignals(True)
+        try:
+            self._active_host_combo.clear()
+            active_str = str(active_id) if active_id is not None else None
+            current_index = 0
+            for i, host in enumerate(hosts):
+                self._active_host_combo.addItem(host.label, userData=str(host.structure_id))
+                self._active_host_combo.setItemData(i, host.provenance_hint, Qt.ItemDataRole.ToolTipRole)
+                if active_str and str(host.structure_id) == active_str:
+                    current_index = i
+            if hosts:
+                self._active_host_combo.setCurrentIndex(current_index)
+        finally:
+            self._active_host_combo.blockSignals(False)
+
+    def _on_active_host_combo_changed(self, index: int) -> None:
+        structure_id_str = self._active_host_combo.itemData(index)
+        if structure_id_str:
+            self.active_host_change_requested.emit(structure_id_str)
 
     def _on_table_selection_changed(self, *args) -> None:
         if self._syncing_selection:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 import re
 import shutil
@@ -97,6 +98,35 @@ class WorkflowStructureResolution:
     selected_asset: WorkflowSupercellAsset | None = None
     status_message: str = ""
     source_workflow_stage: WorkflowStage | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class PromotableHost:
+    """A structure eligible to serve as the project's active host."""
+
+    structure_id: UUID
+    label: str
+    provenance_hint: str
+    kind: str  # "imported" or "relaxed"
+    created_at: datetime | None
+
+
+@dataclass(slots=True)
+class SiteHostMismatch:
+    """Sites whose source structure differs from the active host."""
+
+    active_host_id: UUID
+    active_host_label: str
+    offenders: list[tuple[UUID, str, UUID | None, str]]  # (site_id, label, source_host_id, source_host_label)
+
+
+@dataclass(slots=True)
+class StructureHostMismatch:
+    """Structures whose provenance chain doesn't resolve to the active host."""
+
+    active_host_id: UUID
+    active_host_label: str
+    offenders: list[tuple[UUID, str, UUID | None, str]]  # (struct_id, label, resolved_host_id, host_label)
 
 
 class ProjectService:
@@ -2253,6 +2283,213 @@ class ProjectService:
     def active_host_structure(self, document: ProjectDocument) -> Structure | None:
         """Return the current host structure, if one is selected."""
         return self._active_host_structure(document)
+
+    def list_promotable_host_structures(self, document: ProjectDocument) -> list[PromotableHost]:
+        """Return structures eligible to be the active host, ordered for display.
+
+        Includes imported structures and successfully completed pristine relaxation
+        results. Excludes supercell assets and all other derived structure origins.
+        """
+        # Build set of structure IDs produced by a completed pristine relaxation run.
+        completed_ids: set[UUID] = set()
+        result_created_at: dict[UUID, datetime | None] = {}
+        for result in document.results.values():
+            if not result.calculation_run_id:
+                continue
+            run = document.runs.get(result.calculation_run_id)
+            if run is None or run.status != JobStatus.COMPLETED or run.convergence_achieved is False:
+                continue
+            for struct_id in result.derived_structure_ids:
+                completed_ids.add(struct_id)
+                result_created_at[struct_id] = result.created_at
+
+        promotable: list[PromotableHost] = []
+        for structure in document.structures.values():
+            if self._supercell_asset(structure) is not None:
+                continue
+            if structure.origin == "imported":
+                hint = f"Imported from {structure.source_file}" if structure.source_file else "Imported structure"
+                promotable.append(PromotableHost(
+                    structure_id=structure.id,
+                    label=f"Original — {structure.label}",
+                    provenance_hint=hint,
+                    kind="imported",
+                    created_at=None,
+                ))
+            elif structure.origin == "pristine_relaxation" and structure.id in completed_ids:
+                created_at = result_created_at.get(structure.id)
+                date_str = created_at.strftime("%Y-%m-%d") if created_at else ""
+                job_label = structure.label
+                source_job_id_str = structure.properties.get("source_job_id")
+                if source_job_id_str:
+                    try:
+                        job = document.jobs.get(UUID(str(source_job_id_str)))
+                        if job:
+                            job_label = job.label
+                    except (ValueError, AttributeError):
+                        pass
+                label = f"Relaxed — {job_label}"
+                if date_str:
+                    label += f" ({date_str})"
+                hint = f"Result of pristine relaxation '{job_label}'"
+                if date_str:
+                    hint += f" completed {date_str}"
+                promotable.append(PromotableHost(
+                    structure_id=structure.id,
+                    label=label,
+                    provenance_hint=hint,
+                    kind="relaxed",
+                    created_at=created_at,
+                ))
+
+        def _sort_key(h: PromotableHost) -> tuple:
+            if h.created_at is None:
+                return (1, 0.0)
+            return (0, -h.created_at.timestamp())
+
+        imported = sorted(
+            [h for h in promotable if h.kind == "imported"],
+            key=lambda h: h.label.casefold(),
+        )
+        relaxed = sorted(
+            [h for h in promotable if h.kind == "relaxed"],
+            key=_sort_key,
+        )
+        return imported + relaxed
+
+    def set_active_host_structure(
+        self,
+        document: ProjectDocument,
+        structure_id: UUID,
+        *,
+        actor: str = "user",
+    ) -> Structure:
+        """Switch the project's active host to a promotable structure.
+
+        Updates host_structure_id and rebinds magnetic_structure to the new
+        host's properties (pristine-relaxation outputs typically carry no spins,
+        so the field becomes None and the user re-enters spins as needed).
+        """
+        promotable_ids = {h.structure_id for h in self.list_promotable_host_structures(document)}
+        if structure_id not in promotable_ids:
+            raise ValueError("Structure is not eligible as an active host.")
+
+        structure = document.structures[structure_id]
+        previous_id = document.project.host_structure_id
+        if previous_id == structure_id:
+            return structure
+
+        previous = document.structures.get(previous_id) if previous_id else None
+        prev_label = previous.label if previous else "(none)"
+
+        document.project.host_structure_id = structure_id
+        document.project.magnetic_structure = structure.properties.get("magnetic_structure")
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="set_active_host_structure",
+                actor=actor,
+                description=f"Changed active host from '{prev_label}' to '{structure.label}'",
+                parameters={
+                    "previous_host_structure_id": str(previous_id) if previous_id else None,
+                    "new_host_structure_id": str(structure_id),
+                },
+                input_entity_ids=[previous_id] if previous_id else [],
+                output_entity_ids=[structure_id],
+            ),
+        )
+        return structure
+
+    def resolve_underlying_host(self, document: ProjectDocument, structure_id: UUID) -> UUID | None:
+        """Walk the parent_structure_id chain to find the host root.
+
+        Returns the id of the first ancestor (inclusive) whose origin is
+        'imported' or 'pristine_relaxation', or None if the chain is broken
+        or contains a cycle.
+        """
+        _HOST_ORIGINS = {"imported", "pristine_relaxation"}
+        visited: set[UUID] = set()
+        current_id: UUID | None = structure_id
+        while current_id is not None:
+            if current_id in visited:
+                return None
+            visited.add(current_id)
+            structure = document.structures.get(current_id)
+            if structure is None:
+                return None
+            if structure.origin in _HOST_ORIGINS:
+                return structure.id
+            current_id = structure.parent_structure_id
+        return None
+
+    def validate_sites_match_active_host(
+        self,
+        document: ProjectDocument,
+        site_ids: Sequence[UUID],
+    ) -> SiteHostMismatch | None:
+        """Return mismatch info if any site was generated for a different host.
+
+        Sites carry source_structure_id stamped at generation time; this check
+        ensures none of them target a structure other than the active host.
+        Returns None when all sites are consistent with the active host.
+        """
+        host = self._active_host_structure(document)
+        if host is None:
+            return None
+        offenders: list[tuple[UUID, str, UUID | None, str]] = []
+        for site_id in site_ids:
+            site = document.sites.get(site_id)
+            if site is None:
+                continue
+            if site.source_structure_id != host.id:
+                source = (
+                    document.structures.get(site.source_structure_id)
+                    if site.source_structure_id
+                    else None
+                )
+                source_label = source.label if source else "(unknown)"
+                offenders.append((site.id, site.label, site.source_structure_id, source_label))
+        if not offenders:
+            return None
+        return SiteHostMismatch(
+            active_host_id=host.id,
+            active_host_label=host.label,
+            offenders=offenders,
+        )
+
+    def validate_structures_match_active_host(
+        self,
+        document: ProjectDocument,
+        structure_ids: Sequence[UUID],
+    ) -> StructureHostMismatch | None:
+        """Return mismatch info if any structure's provenance chain leads to a different host.
+
+        Used for downstream workflows (quantum corrections, energy barriers, NEB) that
+        consume muoniated relaxed structures rather than pristine sites. Walks the
+        parent_structure_id chain to find the underlying host for each structure.
+        Returns None when all structures resolve to the active host.
+        """
+        host = self._active_host_structure(document)
+        if host is None:
+            return None
+        offenders: list[tuple[UUID, str, UUID | None, str]] = []
+        for struct_id in structure_ids:
+            structure = document.structures.get(struct_id)
+            if structure is None:
+                continue
+            resolved_host_id = self.resolve_underlying_host(document, struct_id)
+            if resolved_host_id != host.id:
+                resolved_host = document.structures.get(resolved_host_id) if resolved_host_id else None
+                resolved_label = resolved_host.label if resolved_host else "(unknown)"
+                offenders.append((struct_id, structure.label, resolved_host_id, resolved_label))
+        if not offenders:
+            return None
+        return StructureHostMismatch(
+            active_host_id=host.id,
+            active_host_label=host.label,
+            offenders=offenders,
+        )
 
     def _copy_import_file(self, project_root: Path, source_path: Path) -> Path:
         """Copy imported source file into the project imports directory."""

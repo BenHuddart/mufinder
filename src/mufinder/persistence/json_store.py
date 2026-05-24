@@ -63,8 +63,9 @@ class ProjectStore:
     @staticmethod
     def _is_dataless_file(path: Path) -> bool:
         try:
-            return bool(path.stat().st_flags & _DARWIN_SF_DATALESS)
-        except OSError:
+            flags = path.stat().st_flags  # type: ignore[attr-defined]
+            return bool(flags & _DARWIN_SF_DATALESS)
+        except (OSError, AttributeError):
             return False
 
     def read_json(self, path: Path) -> dict[str, Any]:

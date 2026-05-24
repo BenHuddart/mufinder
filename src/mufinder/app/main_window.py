@@ -136,6 +136,7 @@ from mufinder.app.uep_adapter import expand_uep_jobs
 from mufinder.app.uep_types import UepConfig, UepRunState, UepSourceRow
 from mufinder.app.uep_wizard import UepAnalysisDialog
 from mufinder.app.uep_widget import UEPWidget
+from mufinder.app.active_host_badge import ActiveHostBadge
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.app.icons import icon, workflow_stage_icon
 from mufinder.app.journal_widget import JournalWidget
@@ -1644,6 +1645,7 @@ class MainWindow(QMainWindow):
             self._on_host_magnetic_configuration_changed
         )
         self._host_structure_view.supercell_editor_requested.connect(self._on_host_supercell_editor_requested)
+        self._host_structure_view.active_host_change_requested.connect(self._on_active_host_change_requested)
         self._supercell_editor_page = self._build_supercell_editor_page()
         self._convergence_overview_view = ConvergenceOverviewWidget()
         self._convergence_overview_view.open_cutoff_requested.connect(
@@ -2161,6 +2163,9 @@ class MainWindow(QMainWindow):
         subtitle.setWordWrap(True)
         style_section_subtitle(subtitle)
         layout.addWidget(subtitle)
+
+        self._supercell_editor_host_badge = ActiveHostBadge()
+        layout.addWidget(self._supercell_editor_host_badge)
 
         open_button = QPushButton("Open Supercell Editor")
         open_button.clicked.connect(self._on_host_supercell_editor_requested)
@@ -7243,6 +7248,7 @@ class MainWindow(QMainWindow):
         self._refresh_journal_view()
         self._refresh_jobs_table()
         self._refresh_pristine_relaxation_rows()
+        self._refresh_host_structure_view()
         self._refresh_muon_relaxation_rows()
         self._refresh_muon_generation_table()
         self._refresh_quantum_corrections_view()
@@ -7896,6 +7902,13 @@ class MainWindow(QMainWindow):
                 continue
         if not site_ids:
             return
+        mismatch = self._project_service.validate_sites_match_active_host(self._document, site_ids)
+        if mismatch is not None:
+            if not self._handle_site_host_mismatch(mismatch):
+                return
+            mismatch = self._project_service.validate_sites_match_active_host(self._document, site_ids)
+            if mismatch is not None:
+                return
         dialog = MuonChargeStateDialog(site_count=len(site_ids), parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -11460,6 +11473,8 @@ class MainWindow(QMainWindow):
         )
 
     def _on_submit_local_from_muon_relaxation(self, labels: list[str]) -> None:
+        if not self._check_staged_muon_relaxation_host():
+            return
         self._submit_workflow_selection(
             labels,
             normalize=str,
@@ -11472,6 +11487,8 @@ class MainWindow(QMainWindow):
         )
 
     def _on_submit_cluster_from_muon_relaxation(self, labels: list[str]) -> None:
+        if not self._check_staged_muon_relaxation_host():
+            return
         self._submit_workflow_selection(
             labels,
             normalize=str,
@@ -12944,6 +12961,8 @@ class MainWindow(QMainWindow):
         return jobs
 
     def _on_submit_local_from_quantum_corrections(self, keys: list[str]) -> None:
+        if not self._check_definition_host(self._active_quantum_corrections_definition()):
+            return
         self._submit_workflow_selection(
             keys,
             normalize=str,
@@ -12956,6 +12975,8 @@ class MainWindow(QMainWindow):
         )
 
     def _on_submit_cluster_from_quantum_corrections(self, keys: list[str]) -> None:
+        if not self._check_definition_host(self._active_quantum_corrections_definition()):
+            return
         self._submit_workflow_selection(
             keys,
             normalize=str,
@@ -13102,6 +13123,8 @@ class MainWindow(QMainWindow):
         dialog.activateWindow()
 
     def _on_submit_local_from_energy_barriers(self, keys: list[str]) -> None:
+        if not self._check_definition_host(self._active_energy_barriers_definition()):
+            return
         self._submit_workflow_selection(
             keys,
             normalize=str,
@@ -13114,6 +13137,8 @@ class MainWindow(QMainWindow):
         )
 
     def _on_submit_cluster_from_energy_barriers(self, keys: list[str]) -> None:
+        if not self._check_definition_host(self._active_energy_barriers_definition()):
+            return
         self._submit_workflow_selection(
             keys,
             normalize=str,
@@ -13257,6 +13282,8 @@ class MainWindow(QMainWindow):
         )
 
     def _on_submit_local_neb_from_energy_barriers(self, keys: list[str]) -> None:
+        if not self._check_definition_host(self._active_energy_barrier_neb_definition()):
+            return
         self._submit_workflow_selection(
             keys,
             normalize=str,
@@ -13269,6 +13296,8 @@ class MainWindow(QMainWindow):
         )
 
     def _on_submit_cluster_neb_from_energy_barriers(self, keys: list[str]) -> None:
+        if not self._check_definition_host(self._active_energy_barrier_neb_definition()):
+            return
         self._submit_workflow_selection(
             keys,
             normalize=str,
@@ -13692,6 +13721,7 @@ class MainWindow(QMainWindow):
                 "status": site.status,
                 "fractional": site.fractional_position,
                 "cartesian": site.cartesian_position,
+                "source_structure_id": str(site.source_structure_id) if site.source_structure_id else "",
             }
             for site in candidates
         ]
@@ -13716,14 +13746,187 @@ class MainWindow(QMainWindow):
         if self._document is None:
             self._host_structure_view.set_structure(None)
             self._host_structure_view.set_project_supercell_matrix(None)
+            self._host_structure_view.set_promotable_hosts([], None)
             self._refresh_magnetic_field_view()
+            self._refresh_active_host_badges()
             return
 
         host_id = self._document.project.host_structure_id
         host: Structure | None = self._document.structures.get(host_id) if host_id else None
         self._host_structure_view.set_project_supercell_matrix(self._document.project.supercell_matrix)
+        promotable = self._project_service.list_promotable_host_structures(self._document)
+        self._host_structure_view.set_promotable_hosts(promotable, host_id)
         self._host_structure_view.set_structure(host)
         self._refresh_magnetic_field_view()
+        self._refresh_active_host_badges()
+
+    def _refresh_active_host_badges(self) -> None:
+        """Update all embedded active-host badges in workflow tabs."""
+        host: Structure | None = None
+        if self._document is not None:
+            host_id = self._document.project.host_structure_id
+            host = self._document.structures.get(host_id) if host_id else None
+        self._muon_generation_view.set_active_host(host)
+        self._muon_relaxation_view.set_active_host(host)
+        self._supercell_editor_host_badge.set_active_host(host)
+
+    def _on_active_host_change_requested(self, structure_id_str: str) -> None:
+        if self._document is None:
+            return
+        try:
+            structure_id = UUID(structure_id_str)
+        except (ValueError, AttributeError):
+            return
+        try:
+            self._project_service.set_active_host_structure(self._document, structure_id)
+        except ValueError:
+            return
+        self._refresh_host_structure_view()
+        self._refresh_muon_generation_table()
+        self._refresh_muon_relaxation_rows()
+        self._persist_document_ui_state(
+            failure_message="Active host changed, but autosave failed.",
+        )
+
+    def _handle_site_host_mismatch(self, mismatch: object) -> bool:
+        """Show a dialog when sites were generated for a different host.
+
+        Returns True if the user resolved the mismatch by switching to the
+        source host and the caller should re-run the validation.  Returns
+        False if the user cancelled.
+        """
+        from mufinder.services.project_service import SiteHostMismatch
+        if not isinstance(mismatch, SiteHostMismatch):
+            return False
+
+        unique_source_ids = {offender[2] for offender in mismatch.offenders}
+        unique_source_labels = {offender[3] for offender in mismatch.offenders}
+        active_label = mismatch.active_host_label
+
+        if len(unique_source_ids) == 1:
+            source_id = next(iter(unique_source_ids))
+            source_label = next(iter(unique_source_labels))
+            msg = (
+                f"The selected sites were generated for a different host structure "
+                f"({source_label!r}) than the current active host ({active_label!r}).\n\n"
+                f"Would you like to switch the active host to {source_label!r} "
+                f"and proceed?"
+            )
+            result = QMessageBox.question(
+                self,
+                "Host structure mismatch",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if result == QMessageBox.StandardButton.Yes and source_id is not None and self._document is not None:
+                try:
+                    self._project_service.set_active_host_structure(self._document, source_id)
+                    self._refresh_host_structure_view()
+                    self._refresh_muon_generation_table()
+                    self._refresh_muon_relaxation_rows()
+                    return True
+                except ValueError:
+                    pass
+            return False
+
+        source_labels_str = ", ".join(repr(label) for label in sorted(unique_source_labels))
+        QMessageBox.warning(
+            self,
+            "Host structure mismatch",
+            f"The selected sites were generated for multiple different host structures "
+            f"({source_labels_str}), which cannot all match the active host "
+            f"({active_label!r}) simultaneously.\n\n"
+            f"Please regenerate the sites for the current active host, or select only "
+            f"sites that share a single source host.",
+        )
+        return False
+
+    def _handle_structure_host_mismatch(self, mismatch: object) -> bool:
+        """Show a dialog when structures resolve to a different host via their provenance chain."""
+        from mufinder.services.project_service import StructureHostMismatch
+        if not isinstance(mismatch, StructureHostMismatch):
+            return False
+
+        unique_source_ids = {offender[2] for offender in mismatch.offenders}
+        unique_source_labels = {offender[3] for offender in mismatch.offenders}
+        active_label = mismatch.active_host_label
+
+        if len(unique_source_ids) == 1:
+            source_id = next(iter(unique_source_ids))
+            source_label = next(iter(unique_source_labels))
+            msg = (
+                f"The selected structures were relaxed in a supercell derived from a different host "
+                f"({source_label!r}) than the current active host ({active_label!r}).\n\n"
+                f"Would you like to switch the active host to {source_label!r} and proceed?"
+            )
+            result = QMessageBox.question(
+                self,
+                "Host structure mismatch",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if result == QMessageBox.StandardButton.Yes and source_id is not None and self._document is not None:
+                try:
+                    self._project_service.set_active_host_structure(self._document, source_id)
+                    self._refresh_host_structure_view()
+                    self._refresh_muon_generation_table()
+                    self._refresh_muon_relaxation_rows()
+                    return True
+                except ValueError:
+                    pass
+            return False
+
+        source_labels_str = ", ".join(repr(label) for label in sorted(unique_source_labels))
+        QMessageBox.warning(
+            self,
+            "Host structure mismatch",
+            f"The selected structures trace back to multiple different host structures "
+            f"({source_labels_str}), which cannot all match the active host "
+            f"({active_label!r}) simultaneously.\n\n"
+            f"Please select only structures that share a single source host.",
+        )
+        return False
+
+    def _check_staged_muon_relaxation_host(self) -> bool:
+        """Validate all staged muon-relaxation sites match the active host.
+
+        Returns True if the submission should proceed (no mismatch, or the
+        user resolved the mismatch by switching hosts).  Returns False if
+        the user cancelled or the mismatch could not be resolved.
+        """
+        if self._document is None:
+            return True
+        definition = self._active_muon_relaxation_definition()
+        if definition is None or not definition.input_site_ids:
+            return True
+        mismatch = self._project_service.validate_sites_match_active_host(
+            self._document, definition.input_site_ids
+        )
+        return mismatch is None or self._handle_site_host_mismatch(mismatch)
+
+    def _check_definition_host(self, definition) -> bool:
+        """Validate a QC / energy-barriers / NEB definition against the active host.
+
+        Checks structures first (via parent_structure_id chain walk), then
+        sites as a defence-in-depth layer.  Returns True if ok to proceed.
+        """
+        if self._document is None or definition is None:
+            return True
+        if definition.input_structure_ids:
+            struct_mismatch = self._project_service.validate_structures_match_active_host(
+                self._document, definition.input_structure_ids
+            )
+            if struct_mismatch is not None:
+                return self._handle_structure_host_mismatch(struct_mismatch)
+        if definition.input_site_ids:
+            site_mismatch = self._project_service.validate_sites_match_active_host(
+                self._document, definition.input_site_ids
+            )
+            if site_mismatch is not None:
+                return self._handle_site_host_mismatch(site_mismatch)
+        return True
 
     def _refresh_magnetic_field_view(self) -> None:
         self._magnetic_field_view.set_document(self._document)
