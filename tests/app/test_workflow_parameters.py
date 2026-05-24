@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import mufinder.app.workflow_parameters as workflow_parameters_module
 from mufinder.app.param_dialog import ParameterDialog
-from mufinder.app.workflow_parameters import build_workflow_parameter_surface
+from mufinder.app.workflow_parameters import (
+    COMMON_WORKFLOW_PARAMETER_NAMES,
+    build_workflow_parameter_surface,
+    reorder_workflow_parameter_specs,
+    workflow_basic_parameter_names,
+)
 from mufinder.castep_io.schema import KeywordSpec
 
 
@@ -62,6 +67,33 @@ def test_build_workflow_parameter_surface_promotes_basic_names(monkeypatch) -> N
     assert "quantum_corrections" in specs[0].basic_workflows
     assert "quantum_corrections" in specs[0].advanced_workflows
     assert "quantum_corrections" in specs[1].advanced_workflows
+
+
+def test_workflow_basic_parameter_names_prefixes_common_parameters() -> None:
+    names = workflow_basic_parameter_names("tssearch_lstqst_protocol", "tssearch_qst_max_iter")
+
+    assert names[: len(COMMON_WORKFLOW_PARAMETER_NAMES)] == COMMON_WORKFLOW_PARAMETER_NAMES
+    assert names[-2:] == ("tssearch_lstqst_protocol", "tssearch_qst_max_iter")
+
+
+def test_reorder_workflow_parameter_specs_moves_common_parameters_to_shared_positions() -> None:
+    specs = [
+        _spec("tssearch_qst_max_iter", value_type="int"),
+        _spec("kpoint_mp_grid", value_type="int_triplet"),
+        _spec("cut_off_energy", value_type="number"),
+        _spec("basis_precision"),
+        _spec("elec_energy_tol", value_type="number"),
+    ]
+
+    reordered = reorder_workflow_parameter_specs(specs)
+
+    assert [spec.name for spec in reordered] == [
+        "basis_precision",
+        "cut_off_energy",
+        "elec_energy_tol",
+        "kpoint_mp_grid",
+        "tssearch_qst_max_iter",
+    ]
 
 
 def test_parameter_dialog_with_workflow_surface_shows_basic_and_allows_advanced(qapp, monkeypatch) -> None:

@@ -353,8 +353,9 @@ def test_relaxation_widget_positions_kpoint_below_basis_controls(qapp) -> None:
 
     assert "basis_precision" in names
     assert "cut_off_energy" in names
+    assert "elec_energy_tol" in names
     assert "kpoint_mp_grid" in names
-    assert names.index("kpoint_mp_grid") == max(names.index("basis_precision"), names.index("cut_off_energy")) + 1
+    assert names.index("basis_precision") < names.index("cut_off_energy") < names.index("elec_energy_tol") < names.index("kpoint_mp_grid")
 
 
 def test_relaxation_widget_uses_project_default_kpoint_in_configure_values(qapp) -> None:

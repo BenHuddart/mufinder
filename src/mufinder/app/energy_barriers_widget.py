@@ -5,13 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QKeySequence, QMouseEvent, QPainter, QPainterPath, QPen, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSlider,
     QSplitter,
@@ -216,12 +218,13 @@ class EnergyBarriersWidget(QWidget):
     """Display eligible path sources and completed transition-state results."""
 
     endpoint_selection_changed = Signal(str, str)
-    generate_paths_requested = Signal(str, str)
-    configure_source_requested = Signal(str)
+    generate_paths_requested = Signal(str, str, str)
+    remove_sources_requested = Signal(list)
+    configure_source_requested = Signal(object)
     view_source_requested = Signal(str)
     submit_local_requested = Signal(list)
     submit_cluster_requested = Signal(list)
-    configure_result_requested = Signal(str)
+    configure_result_requested = Signal(object)
     submit_neb_local_requested = Signal(list)
     submit_neb_cluster_requested = Signal(list)
     neb_result_selected = Signal(str)
@@ -301,6 +304,13 @@ class EnergyBarriersWidget(QWidget):
         self._product_combo = QComboBox(self)
         self._product_combo.currentIndexChanged.connect(self._emit_endpoint_selection_changed)
         endpoint_form.addRow("Final", self._product_combo)
+        self._max_path_length_input = QLineEdit(self)
+        self._max_path_length_input.setPlaceholderText("Auto")
+        self._max_path_length_input.setClearButtonEnabled(True)
+        self._max_path_length_input.setToolTip(
+            "Optional maximum path length in angstrom. Leave blank to use MuFinder's automatic cutoff."
+        )
+        endpoint_form.addRow("Max path length (ang)", self._max_path_length_input)
         endpoint_layout.addLayout(endpoint_form)
 
         endpoint_actions = QHBoxLayout()
@@ -330,18 +340,25 @@ class EnergyBarriersWidget(QWidget):
             ("Reactant", "Product", "Charge", "Path Length", "Source Jobs", "Status", "Parameters", "View"),
             resize_to_contents_columns=(6, 7),
         )
+        self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.itemSelectionChanged.connect(self._update_actions)
         sources_layout.addWidget(self._sources_table, 1)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
+        self._batch_configure_sources_button = QPushButton("Configure Selected Parameters...")
+        self._remove_sources_button = QPushButton("Delete Selected Paths")
         self._submit_local_button = QPushButton("Run Local Calculations")
         self._submit_cluster_button = QPushButton("Run on Cluster")
+        self._batch_configure_sources_button.clicked.connect(self._emit_batch_configure_sources)
+        self._remove_sources_button.clicked.connect(self._delete_selected_sources)
         self._submit_local_button.clicked.connect(self._emit_submit_local)
         self._submit_cluster_button.clicked.connect(self._emit_submit_cluster)
+        actions.addWidget(self._remove_sources_button)
         actions.addWidget(self._submit_local_button)
         actions.addWidget(self._submit_cluster_button)
         actions.addStretch(1)
+        actions.addWidget(self._batch_configure_sources_button)
         sources_layout.addLayout(actions)
         paths_layout.addWidget(sources_group, 1)
         self._tabs.addTab(paths_tab, "Paths")
@@ -376,18 +393,22 @@ class EnergyBarriersWidget(QWidget):
             ("Job", "Barrier", "Images", "TS File", "NEB Status", "Parameters"),
             resize_to_contents_columns=(5,),
         )
+        self._results_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._results_table.itemSelectionChanged.connect(self._update_actions)
         results_layout.addWidget(self._results_table, 1)
 
         neb_actions = QHBoxLayout()
         neb_actions.setSpacing(8)
+        self._batch_configure_results_button = QPushButton("Configure Selected Parameters...")
         self._submit_neb_local_button = QPushButton("Build NEB Locally")
         self._submit_neb_cluster_button = QPushButton("Build NEB on Cluster")
+        self._batch_configure_results_button.clicked.connect(self._emit_batch_configure_results)
         self._submit_neb_local_button.clicked.connect(self._emit_submit_neb_local)
         self._submit_neb_cluster_button.clicked.connect(self._emit_submit_neb_cluster)
         neb_actions.addWidget(self._submit_neb_local_button)
         neb_actions.addWidget(self._submit_neb_cluster_button)
         neb_actions.addStretch(1)
+        neb_actions.addWidget(self._batch_configure_results_button)
         results_layout.addLayout(neb_actions)
         tss_layout.addWidget(results_group, 1)
         self._tabs.addTab(tss_tab, "Transition States")
@@ -486,6 +507,12 @@ class EnergyBarriersWidget(QWidget):
 
         self.clear_neb_preview()
         self._apply_responsive_layout()
+        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
+        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._delete_shortcut.activated.connect(self._delete_selected_sources)
+        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._backspace_shortcut.activated.connect(self._delete_selected_sources)
 
     def _apply_responsive_layout(self) -> None:
         if not hasattr(self, "_preview_splitter"):
@@ -500,12 +527,15 @@ class EnergyBarriersWidget(QWidget):
         *,
         reactant_key: str = "",
         product_key: str = "",
+        max_path_length_text: str = "",
     ) -> None:
         self._endpoint_rows = list(rows)
         reactant_key = reactant_key.strip()
         product_key = product_key.strip()
         current_reactant = reactant_key or self.selected_endpoint_keys()[0]
         current_product = product_key or self.selected_endpoint_keys()[1]
+        if self._max_path_length_input.text().strip() != max_path_length_text.strip():
+            self._max_path_length_input.setText(max_path_length_text.strip())
 
         self._reactant_combo.blockSignals(True)
         self._product_combo.blockSignals(True)
@@ -621,6 +651,11 @@ class EnergyBarriersWidget(QWidget):
     def _emit_submit_cluster(self) -> None:
         self.submit_cluster_requested.emit(self.selected_source_keys())
 
+    def _emit_batch_configure_sources(self) -> None:
+        keys = self.selected_source_keys()
+        if keys:
+            self.configure_source_requested.emit(keys)
+
     def _emit_endpoint_selection_changed(self) -> None:
         reactant_key, product_key = self.selected_endpoint_keys()
         self.endpoint_selection_changed.emit(reactant_key, product_key)
@@ -628,7 +663,15 @@ class EnergyBarriersWidget(QWidget):
 
     def _emit_generate_paths(self) -> None:
         reactant_key, product_key = self.selected_endpoint_keys()
-        self.generate_paths_requested.emit(reactant_key, product_key)
+        self.generate_paths_requested.emit(reactant_key, product_key, self._max_path_length_input.text().strip())
+
+    def _delete_selected_sources(self) -> None:
+        keys = self.selected_source_keys()
+        if not keys:
+            return
+        removed = set(keys)
+        self.set_sources([row for row in self._source_rows if row.key not in removed])
+        self.remove_sources_requested.emit(keys)
 
     def selected_result_keys(self) -> list[str]:
         indexes = sorted({index.row() for index in self._results_table.selectedIndexes()})
@@ -640,6 +683,11 @@ class EnergyBarriersWidget(QWidget):
 
     def _emit_submit_neb_local(self) -> None:
         self.submit_neb_local_requested.emit(self.selected_result_keys())
+
+    def _emit_batch_configure_results(self) -> None:
+        keys = self.selected_result_keys()
+        if keys:
+            self.configure_result_requested.emit(keys)
 
     def _emit_submit_neb_cluster(self) -> None:
         self.submit_neb_cluster_requested.emit(self.selected_result_keys())
@@ -708,10 +756,13 @@ class EnergyBarriersWidget(QWidget):
         reactant_key, product_key = self.selected_endpoint_keys()
         source_enabled = bool(self.selected_source_keys())
         result_enabled = bool(self.selected_result_keys())
-        can_generate = bool(reactant_key and product_key and reactant_key != product_key and len(self._endpoint_rows) >= 2)
+        can_generate = bool(reactant_key and product_key and len(self._endpoint_rows) >= 1)
         self._generate_paths_button.setEnabled(can_generate)
+        self._batch_configure_sources_button.setEnabled(source_enabled)
+        self._remove_sources_button.setEnabled(source_enabled)
         self._submit_local_button.setEnabled(source_enabled)
         self._submit_cluster_button.setEnabled(source_enabled)
+        self._batch_configure_results_button.setEnabled(result_enabled)
         self._submit_neb_local_button.setEnabled(result_enabled)
         self._submit_neb_cluster_button.setEnabled(result_enabled)
 

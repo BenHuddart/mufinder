@@ -92,21 +92,37 @@ def enumerate_distinct_muon_paths(
     rotations = symmetry["rotations"]
 
     unique: dict[tuple[int, int, int], MuonPath] = {}
-    for start in start_positions:
-        for end in end_positions:
-            delta = _wrapped_fractional_delta(np.asarray(start, dtype=float), np.asarray(end, dtype=float))
-            length = float(np.linalg.norm(delta @ reactant.cell.array))
-            if length <= tol or length > float(max_distance_ang):
-                continue
+    if not start_positions or not end_positions:
+        return ()
+
+    start_array = np.asarray(start_positions, dtype=float)
+    end_array = np.asarray(end_positions, dtype=float)
+    deltas = _wrapped_fractional_delta(start_array[:, None, :], end_array[None, :, :])
+    lengths = np.linalg.norm(deltas @ reactant.cell.array, axis=2)
+    mask = (lengths > tol) & (lengths <= float(max_distance_ang))
+    start_indexes, end_indexes = np.nonzero(mask)
+    if start_indexes.size == 0:
+        return ()
+
+    ordered_indexes = np.argsort(lengths[start_indexes, end_indexes], kind="stable")
+    canonical_by_delta: dict[tuple[int, int, int], tuple[int, int, int]] = {}
+    for ordered_index in ordered_indexes.tolist():
+        start_index = int(start_indexes[ordered_index])
+        end_index = int(end_indexes[ordered_index])
+        delta = np.asarray(deltas[start_index, end_index], dtype=float)
+        delta_key = tuple(int(value) for value in np.rint(delta / tol).astype(int))
+        key = canonical_by_delta.get(delta_key)
+        if key is None:
             key = _canonical_delta_key(delta, rotations=rotations, tol=tol)
-            candidate = MuonPath(
-                start_fractional=tuple(float(value % 1.0) for value in start),
-                end_fractional=tuple(float(value % 1.0) for value in end),
-                length_ang=length,
-            )
-            existing = unique.get(key)
-            if existing is None or candidate.length_ang < existing.length_ang:
-                unique[key] = candidate
+            canonical_by_delta[delta_key] = key
+        candidate = MuonPath(
+            start_fractional=tuple(float(value % 1.0) for value in start_array[start_index]),
+            end_fractional=tuple(float(value % 1.0) for value in end_array[end_index]),
+            length_ang=float(lengths[start_index, end_index]),
+        )
+        existing = unique.get(key)
+        if existing is None or candidate.length_ang < existing.length_ang:
+            unique[key] = candidate
 
     return tuple(sorted(unique.values(), key=lambda path: (path.length_ang, path.end_fractional, path.start_fractional)))
 
@@ -283,17 +299,17 @@ def _symmetry_equivalent_muon_positions(
     )
     if symmetry is None:
         return ()
-    seen: set[tuple[int, int, int]] = set()
-    positions: list[tuple[float, float, float]] = []
-    for rotation, translation in zip(symmetry["rotations"], symmetry["translations"], strict=False):
-        transformed = _apply_symmetry_operation(muon_position.reshape(1, 3), rotation, translation).reshape(3)
-        wrapped = np.mod(transformed, 1.0)
-        key = tuple(int(value) for value in np.round(wrapped / tol).astype(int))
-        if key in seen:
-            continue
-        seen.add(key)
-        positions.append(tuple(float(value) for value in wrapped))
-    return tuple(positions)
+    rotations = np.asarray(symmetry["rotations"], dtype=float)
+    translations = np.asarray(symmetry["translations"], dtype=float)
+    transformed = (rotations @ np.asarray(muon_position, dtype=float).reshape(3, 1)).reshape(-1, 3) + translations
+    wrapped = np.mod(transformed, 1.0)
+    keys = np.rint(wrapped / tol).astype(int)
+    _unique_keys, unique_indexes = np.unique(keys, axis=0, return_index=True)
+    ordered_indexes = sorted(int(index) for index in unique_indexes.tolist())
+    return tuple(
+        tuple(float(value) for value in wrapped[index])
+        for index in ordered_indexes
+    )
 
 
 def _make_supercell_like(pristine: Atoms, target: Atoms) -> Atoms:

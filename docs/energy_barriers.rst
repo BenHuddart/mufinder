@@ -31,7 +31,7 @@ NEB analysis:
 ``Paths``
   Select the initial and final relaxed endpoints, generate symmetry-distinct
   paths for that pair, preview the path inside the shared structure viewer, and
-  configure the transition-state search rows.
+  configure or delete the transition-state search rows.
 
 ``Transition States``
   Review completed transition-state search jobs and configure any downstream NEB
@@ -45,9 +45,14 @@ The intended user flow is:
 
 - complete structural relaxation for the two sites of interest;
 - choose the initial and final relaxed structures in the ``Paths`` tab;
+- optionally set ``Max path length`` to cap the allowed hop length for that
+  generation pass;
 - click ``Generate Paths`` to enumerate symmetry-distinct muon paths for that
-  ordered pair only;
+  ordered pair only, including symmetry-equivalent hops of the same relaxed
+  site when the same endpoint is selected twice;
 - optionally inspect a path with ``View...`` before submission;
+- delete generated paths that are no longer relevant with ``Delete Selected
+  Paths`` or the ``Delete`` / ``Backspace`` shortcuts;
 - configure and submit one or more transition-state search rows;
 - once a TSS job completes, configure and build NEB jobs from the rows that
   should be refined further;
@@ -65,10 +70,17 @@ structures to enumerate distinct muon paths. The current implementation:
 - requires exactly one muon in each endpoint structure;
 - constructs a pristine supercell matching the relaxed endpoint cell;
 - enumerates symmetry-equivalent muon start and end positions in that supercell;
+- optionally filters candidates by a user-specified maximum path length;
+- discards zero-length self-maps before returning any same-site or cross-site
+  path candidates;
 - groups equivalent paths by symmetry and keeps the shortest representative.
 
 If no valid symmetry-distinct path can be constructed, the workflow does not
 generate a row.
+
+Generated transition-state rows remain in the table after the endpoint
+selectors change, so previously generated hops stay available for inspection
+and submission while the user prepares another pair.
 
 Path preview
 ------------
@@ -123,7 +135,10 @@ When the project defines default convergence settings, both the transition-state
 and NEB workflows inherit ``CUT_OFF_ENERGY`` and ``KPOINT_MP_GRID`` from the
 project automatically. Row-level configuration remains authoritative, so a
 specific path can still override those defaults without affecting the rest of
-the project.
+the project. When the selected path uses a supercell-sized relaxed endpoint,
+MuFinder remaps the inherited k-point grid to preserve equivalent
+reciprocal-space sampling density relative to the project's recommended
+reference lattice.
 
 Outputs and interpretation
 --------------------------

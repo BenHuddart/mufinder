@@ -58,7 +58,7 @@ class QuantumResultRow:
 class QuantumCorrectionsWidget(QWidget):
     """Display eligible relaxed muon sources and completed phonon analyses."""
 
-    configure_requested = Signal(str)
+    configure_requested = Signal(object)
     source_label_renamed = Signal(str, str)
     submit_local_requested = Signal(list)
     submit_cluster_requested = Signal(list)
@@ -118,6 +118,7 @@ class QuantumCorrectionsWidget(QWidget):
             ("Site", "Charge", "Relative Energy", "Displacements", "Source Job", "Stage", "Farms", "Status", "Parameters"),
             resize_to_contents_columns=(8,),
         )
+        self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed
         )
@@ -127,9 +128,11 @@ class QuantumCorrectionsWidget(QWidget):
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
+        self._batch_configure_button = QPushButton("Configure Selected Parameters...")
         self._submit_local_button = QPushButton("Run Local Calculations")
         self._submit_cluster_button = QPushButton("Run on Cluster")
         self._reset_stage_button = QPushButton("Reset to Stage 1")
+        self._batch_configure_button.clicked.connect(self._emit_batch_configure)
         self._submit_local_button.clicked.connect(self._emit_submit_local)
         self._submit_cluster_button.clicked.connect(self._emit_submit_cluster)
         self._reset_stage_button.clicked.connect(self._emit_reset_stage)
@@ -137,6 +140,7 @@ class QuantumCorrectionsWidget(QWidget):
         actions.addWidget(self._submit_cluster_button)
         actions.addWidget(self._reset_stage_button)
         actions.addStretch(1)
+        actions.addWidget(self._batch_configure_button)
         sources_layout.addLayout(actions)
         layout.addWidget(sources_group)
 
@@ -212,6 +216,11 @@ class QuantumCorrectionsWidget(QWidget):
     def _emit_submit_local(self) -> None:
         self.submit_local_requested.emit(self.selected_source_keys())
 
+    def _emit_batch_configure(self) -> None:
+        keys = self.selected_source_keys()
+        if keys:
+            self.configure_requested.emit(keys)
+
     def _emit_submit_cluster(self) -> None:
         self.submit_cluster_requested.emit(self.selected_source_keys())
 
@@ -221,6 +230,7 @@ class QuantumCorrectionsWidget(QWidget):
     def _update_actions(self) -> None:
         keys = self.selected_source_keys()
         enabled = bool(keys)
+        self._batch_configure_button.setEnabled(enabled)
         self._submit_local_button.setEnabled(enabled)
         self._submit_cluster_button.setEnabled(enabled)
         selected_rows = [

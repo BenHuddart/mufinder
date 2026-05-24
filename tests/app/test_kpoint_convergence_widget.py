@@ -462,8 +462,9 @@ def test_kpoint_widget_parameter_dialog_places_kpoint_below_basis_controls(
     assert isinstance(names, list)
     assert "basis_precision" in names
     assert "cut_off_energy" in names
+    assert "elec_energy_tol" in names
     assert "kpoint_mp_grid" in names
-    assert names.index("kpoint_mp_grid") == max(names.index("basis_precision"), names.index("cut_off_energy")) + 1
+    assert names.index("basis_precision") < names.index("cut_off_energy") < names.index("elec_energy_tol") < names.index("kpoint_mp_grid")
 
 
 def test_kpoint_widget_remove_grids_prunes_configs(qapp) -> None:

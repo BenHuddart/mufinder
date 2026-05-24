@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QPushButton
 
 from mufinder.app.theme import status_brush
 from mufinder.app.energy_barriers_widget import (
+    EnergyBarrierEndpointRow,
     EnergyBarrierPreviewImageRow,
     EnergyBarrierResultRow,
     EnergyBarrierSourceRow,
@@ -52,6 +54,44 @@ def test_quantum_widget_emits_configure_for_source_row(qapp) -> None:
     button.click()
 
     assert configured == ["site-a"]
+
+
+def test_quantum_widget_batch_configure_emits_selected_source_keys(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources(
+        [
+            QuantumSourceRow(
+                key="site-a",
+                label="Site A",
+                charge_state="Muonium",
+                relative_energy="0.0 eV",
+                displacements="9",
+                source_job="relax_a",
+                stage="singlepoint",
+                num_farms_display="",
+                status="ready",
+            ),
+            QuantumSourceRow(
+                key="site-b",
+                label="Site B",
+                charge_state="Muonium",
+                relative_energy="0.1 eV",
+                displacements="12",
+                source_job="relax_b",
+                stage="singlepoint",
+                num_farms_display="",
+                status="ready",
+            ),
+        ]
+    )
+    configured: list[object] = []
+    widget.configure_requested.connect(configured.append)
+
+    widget._sources_table.selectRow(0)
+    widget._sources_table.selectRow(1)
+    widget._emit_batch_configure()
+
+    assert configured == [["site-b"]]
 
 
 def test_quantum_widget_uses_shared_status_text_colors(qapp) -> None:
@@ -170,6 +210,107 @@ def test_energy_barriers_widget_emits_configure_and_view_for_source_row(qapp) ->
     assert viewed == ["path-a"]
 
 
+def test_energy_barriers_widget_batch_configure_emits_selected_source_keys(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_sources(
+        [
+            EnergyBarrierSourceRow(
+                key="path-a",
+                reactant="A",
+                product="B",
+                charge_state="Muonium",
+                path_length="1.2 ang",
+                source_jobs="relax_a -> relax_b",
+                status="ready",
+            ),
+            EnergyBarrierSourceRow(
+                key="path-b",
+                reactant="B",
+                product="C",
+                charge_state="Muonium",
+                path_length="1.4 ang",
+                source_jobs="relax_b -> relax_c",
+                status="ready",
+            ),
+        ]
+    )
+    configured: list[object] = []
+    widget.configure_source_requested.connect(configured.append)
+
+    widget._sources_table.selectRow(0)
+    widget._emit_batch_configure_sources()
+
+    assert configured == [["path-a"]]
+
+
+def test_energy_barriers_widget_emits_generate_paths_with_max_length(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_endpoint_options(
+        [
+            EnergyBarrierEndpointRow("site-a", "A", "Muonium", "relax_a", "0.0 eV"),
+            EnergyBarrierEndpointRow("site-b", "B", "Muonium", "relax_b", "0.1 eV"),
+        ],
+        reactant_key="site-a",
+        product_key="site-b",
+        max_path_length_text="2.5",
+    )
+    widget._max_path_length_input.setText("2.5")
+
+    generated: list[tuple[str, str, str]] = []
+    widget.generate_paths_requested.connect(lambda reactant, product, max_length: generated.append((reactant, product, max_length)))
+
+    widget._emit_generate_paths()
+
+    assert generated == [("site-a", "site-b", "2.5")]
+
+
+def test_energy_barriers_widget_delete_shortcuts_include_child_focus(qapp) -> None:
+    widget = EnergyBarriersWidget()
+
+    assert widget._delete_shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    assert widget._backspace_shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+
+
+def test_energy_barriers_widget_delete_key_removes_selected_source_from_child_focus(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_sources(
+        [
+            EnergyBarrierSourceRow(
+                key="path-a",
+                reactant="A",
+                product="A",
+                charge_state="Muonium",
+                path_length="1.2 ang",
+                source_jobs="relax_a -> relax_a",
+                status="ready",
+            ),
+            EnergyBarrierSourceRow(
+                key="path-b",
+                reactant="A",
+                product="B",
+                charge_state="Muonium",
+                path_length="1.8 ang",
+                source_jobs="relax_a -> relax_b",
+                status="ready",
+            ),
+        ]
+    )
+    removed: list[list[str]] = []
+    widget.remove_sources_requested.connect(lambda keys: removed.append(list(keys)))
+    configure_button = widget._sources_table.cellWidget(0, 6)
+    assert isinstance(configure_button, QPushButton)
+
+    widget.show()
+    widget._sources_table.selectRow(0)
+    configure_button.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(configure_button, Qt.Key.Key_Delete)
+
+    assert removed == [["path-a"]]
+    assert widget._sources_table.rowCount() == 1
+    assert widget._source_rows[0].key == "path-b"
+
+
 def test_energy_barriers_widget_marks_configured_result_row(qapp) -> None:
     widget = EnergyBarriersWidget()
     widget.set_results(
@@ -196,6 +337,37 @@ def test_energy_barriers_widget_marks_configured_result_row(qapp) -> None:
     configure_button.click()
 
     assert configured == ["ts-a"]
+
+
+def test_energy_barriers_widget_batch_configure_emits_selected_result_keys(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_results(
+        [
+            EnergyBarrierResultRow(
+                key="ts-a",
+                label="TS A",
+                barrier_height="0.1 eV",
+                images="5",
+                transition_state_file="barrier.ts",
+                neb_status="ready",
+            ),
+            EnergyBarrierResultRow(
+                key="ts-b",
+                label="TS B",
+                barrier_height="0.2 eV",
+                images="6",
+                transition_state_file="barrier_b.ts",
+                neb_status="ready",
+            ),
+        ]
+    )
+    configured: list[object] = []
+    widget.configure_result_requested.connect(configured.append)
+
+    widget._results_table.selectRow(1)
+    widget._emit_batch_configure_results()
+
+    assert configured == [["ts-b"]]
 
 
 def test_energy_barriers_widget_switches_preview_splitter_for_narrow_widths(qapp) -> None:

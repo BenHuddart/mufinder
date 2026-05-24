@@ -365,8 +365,9 @@ def test_convergence_widget_parameter_dialog_places_kpoint_below_basis_controls(
     names = observed.get("names")
     assert isinstance(names, list)
     assert "cut_off_energy" in names
+    assert "elec_energy_tol" in names
     assert "kpoint_mp_grid" in names
-    assert names.index("kpoint_mp_grid") == names.index("cut_off_energy") + 1
+    assert names.index("cut_off_energy") < names.index("elec_energy_tol") < names.index("kpoint_mp_grid")
 
 
 def test_convergence_widget_add_cutoff_fallback_on_invalid_previous(qapp) -> None:

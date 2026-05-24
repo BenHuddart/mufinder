@@ -17,6 +17,7 @@ from mufinder.app.main_window import MainWindow
 from mufinder.app.workflow_dialogs import QuantumCorrectionsConfigDialog
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.castep_io.ts_parser import TransitionStateImage, TransitionStatePath
+from mufinder.app.param_dialog import ParameterDialog
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure
 from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE
@@ -909,9 +910,51 @@ def test_main_window_quantum_corrections_hides_fine_cutoff_from_default_rows(qap
 
     assert "fine_cut_off_energy" not in dialog._visible_names()
     assert "fine_cut_off_energy" in {spec.name for spec in dialog._available_advanced_specs()}
+    assert dialog._visible_names()[:4] == [
+        "basis_precision",
+        "cut_off_energy",
+        "elec_energy_tol",
+        "kpoint_mp_grid",
+    ]
     assert dialog.collect_values()["elec_energy_tol"] == ValueWithUnit(1e-09, "eV")
 
     dialog.close()
+    window.close()
+
+
+def test_main_window_energy_barriers_hides_fine_cutoff_from_default_rows(qapp) -> None:
+    window = MainWindow()
+
+    source_dialog = ParameterDialog(
+        specs=window._energy_barrier_source_parameter_specs(),
+        workflow_stage="energy_barriers",
+        locked_values={"task": "TRANSITIONSTATESEARCH", "tssearch_method": "LSTQST"},
+    )
+    neb_dialog = ParameterDialog(
+        specs=window._energy_barrier_neb_parameter_specs(),
+        workflow_stage="energy_barriers",
+        locked_values={"task": "TRANSITIONSTATESEARCH", "tssearch_method": "NEB"},
+    )
+
+    assert "fine_cut_off_energy" not in source_dialog._visible_names()
+    assert "fine_cut_off_energy" not in neb_dialog._visible_names()
+    assert "fine_cut_off_energy" in {spec.name for spec in source_dialog._available_advanced_specs()}
+    assert "fine_cut_off_energy" in {spec.name for spec in neb_dialog._available_advanced_specs()}
+    assert source_dialog._visible_names()[:4] == [
+        "basis_precision",
+        "cut_off_energy",
+        "elec_energy_tol",
+        "kpoint_mp_grid",
+    ]
+    assert neb_dialog._visible_names()[:4] == [
+        "basis_precision",
+        "cut_off_energy",
+        "elec_energy_tol",
+        "kpoint_mp_grid",
+    ]
+
+    source_dialog.close()
+    neb_dialog.close()
     window.close()
 
 
@@ -1333,6 +1376,894 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
     assert opened["structure"].origin == "energy_barriers_path_preview"
     assert opened["start_fractional"] == candidate.path.start_fractional
     assert opened["end_fractional"] == candidate.path.end_fractional
+
+
+def test_main_window_applies_energy_barrier_batch_configuration(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_batch_config_doc.mufinder", "BarrierBatchConfig")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    job_a = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    job_b = Job(
+        label="mu-site-b",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job_a.id] = job_a
+    doc.jobs[job_b.id] = job_b
+    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result_a = Result(
+        calculation_run_id=run_a.id,
+        result_type=job_a.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_a.id],
+    )
+    result_b = Result(
+        calculation_run_id=run_b.id,
+        result_type=job_b.calc_type,
+        data={"total_energy": -0.9},
+        derived_structure_ids=[relaxed_b.id],
+    )
+    run_a.result_id = result_a.id
+    run_b.result_id = result_b.id
+    doc.runs[run_a.id] = run_a
+    doc.runs[run_b.id] = run_b
+    doc.results[result_a.id] = result_a
+    doc.results[result_b.id] = result_b
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
+    candidates = window._eligible_energy_barrier_source_candidates()[:2]
+    assert len(candidates) == 2
+
+    monkeypatch.setattr(
+        main_window_module.ParameterDialog,
+        "exec",
+        lambda _self: main_window_module.QDialog.DialogCode.Accepted,
+    )
+    monkeypatch.setattr(
+        main_window_module.ParameterDialog,
+        "collect_values",
+        lambda _self: {"task": "TRANSITIONSTATESEARCH", "tssearch_qst_max_iter": 14},
+    )
+    monkeypatch.setattr(main_window_module.ParameterDialog, "advanced_names", lambda _self: ())
+
+    window._on_configure_energy_barrier_source([candidate.key for candidate in candidates])
+
+    definition = window._active_energy_barriers_definition()
+    assert definition is not None
+    row_settings = definition.parameters["configuration"]["row_settings"]
+    for candidate in candidates:
+        assert row_settings[candidate.key]["parameter_values"]["tssearch_qst_max_iter"] == 14
+    window.close()
+
+
+def test_main_window_energy_barrier_paths_persist_when_endpoint_selection_changes(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_persist_doc.mufinder", "BarrierPersist")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    job_a = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    job_b = Job(
+        label="mu-site-b",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job_a.id] = job_a
+    doc.jobs[job_b.id] = job_b
+    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result_a = Result(
+        calculation_run_id=run_a.id,
+        result_type=job_a.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_a.id],
+    )
+    result_b = Result(
+        calculation_run_id=run_b.id,
+        result_type=job_b.calc_type,
+        data={"total_energy": -0.9},
+        derived_structure_ids=[relaxed_b.id],
+    )
+    run_a.result_id = result_a.id
+    run_b.result_id = result_b.id
+    doc.runs[run_a.id] = run_a
+    doc.runs[run_b.id] = run_b
+    doc.results[result_a.id] = result_a
+    doc.results[result_b.id] = result_b
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id), "")
+    generated_before = window._eligible_energy_barrier_source_candidates()
+
+    assert generated_before
+
+    window._on_energy_barrier_endpoint_selection_changed(str(site_b.id), str(site_a.id))
+    generated_after = window._eligible_energy_barrier_source_candidates()
+
+    assert [candidate.key for candidate in generated_after] == [candidate.key for candidate in generated_before]
+    window.close()
+
+
+def test_main_window_energy_barrier_defaults_apply_equivalent_density_kpoints_for_supercell(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_supercell_kpoints_doc.mufinder", "BarrierSupercellKPoints")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+    doc.project.recommended_kpoint_grid = (4, 4, 4)
+    doc.project.recommended_kpoint_lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+
+    supercell_species = ["Si"] * 8 + ["H:mu"]
+    supercell_positions_a = [
+        [0.0, 0.0, 0.0],
+        [0.5, 0.0, 0.0],
+        [0.0, 0.5, 0.0],
+        [0.5, 0.5, 0.0],
+        [0.0, 0.0, 0.5],
+        [0.5, 0.0, 0.5],
+        [0.0, 0.5, 0.5],
+        [0.5, 0.5, 0.5],
+        [0.125, 0.125, 0.125],
+    ]
+    supercell_positions_b = [
+        [0.0, 0.0, 0.0],
+        [0.5, 0.0, 0.0],
+        [0.0, 0.5, 0.0],
+        [0.5, 0.5, 0.0],
+        [0.0, 0.0, 0.5],
+        [0.5, 0.0, 0.5],
+        [0.0, 0.5, 0.5],
+        [0.5, 0.5, 0.5],
+        [0.375, 0.125, 0.125],
+    ]
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        species=supercell_species,
+        fractional_positions=supercell_positions_a,
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        species=supercell_species,
+        fractional_positions=supercell_positions_b,
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    job_a = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    job_b = Job(
+        label="mu-site-b",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job_a.id] = job_a
+    doc.jobs[job_b.id] = job_b
+    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result_a = Result(
+        calculation_run_id=run_a.id,
+        result_type=job_a.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_a.id],
+    )
+    result_b = Result(
+        calculation_run_id=run_b.id,
+        result_type=job_b.calc_type,
+        data={"total_energy": -0.9},
+        derived_structure_ids=[relaxed_b.id],
+    )
+    run_a.result_id = result_a.id
+    run_b.result_id = result_b.id
+    doc.runs[run_a.id] = run_a
+    doc.runs[run_b.id] = run_b
+    doc.results[result_a.id] = result_a
+    doc.results[result_b.id] = result_b
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
+    candidate = window._eligible_energy_barrier_source_candidates()[0]
+
+    jobs = window._materialize_energy_barriers_jobs([candidate.key])
+
+    assert len(jobs) == 1
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
+    assert "KPOINT_MP_GRID 2 2 2" in cell_text
+    window.close()
+
+
+def test_main_window_energy_barriers_view_loads_with_existing_state(qapp, tmp_path: Path) -> None:
+    """Navigating to energy barriers with pre-existing generated sources and max_path_length works."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_existing_state.mufinder", "BarrierExistingState")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    job_a = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    job_b = Job(
+        label="mu-site-b",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job_a.id] = job_a
+    doc.jobs[job_b.id] = job_b
+    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result_a = Result(
+        calculation_run_id=run_a.id,
+        result_type=job_a.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_a.id],
+    )
+    result_b = Result(
+        calculation_run_id=run_b.id,
+        result_type=job_b.calc_type,
+        data={"total_energy": -0.9},
+        derived_structure_ids=[relaxed_b.id],
+    )
+    run_a.result_id = result_a.id
+    run_b.result_id = result_b.id
+    doc.runs[run_a.id] = run_a
+    doc.runs[run_b.id] = run_b
+    doc.results[result_a.id] = result_a
+    doc.results[result_b.id] = result_b
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    # Generate paths first so state has generated_sources and max_path_length_ang.
+    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id), "4.0")
+    assert doc.ui_state.get("energy_barriers_form", {}).get("generated_sources")
+
+    # Simulate re-opening the project: create a fresh window that only has the document.
+    window2 = MainWindow()
+    window2._document = doc
+
+    # Navigate to energy barriers — this is what happens when the user opens the section.
+    view = window2._ensure_energy_barriers_view()
+    window2._refresh_energy_barriers_view()  # Must not raise
+
+    # The view should show the generated paths.
+    candidates = window2._eligible_energy_barrier_source_candidates()
+    assert len(candidates) > 0
+
+    # Configure dialog values must be gettable without error.
+    definition = window2._active_energy_barriers_definition()
+    for candidate in candidates:
+        values, _advanced, _extras = window2._energy_barrier_row_configuration_with_source_defaults(
+            definition,
+            candidate.key,
+            target_lattice=candidate.reactant.structure.lattice_vectors,
+        )
+        assert isinstance(values, dict)
+
+    window.close()
+    window2.close()
+
+
+def test_main_window_energy_barrier_strips_legacy_tss_params_from_stored_config(qapp, tmp_path: Path) -> None:
+    """Legacy projects with zero-value tolerance params and tssearch_lst_max_iter open cleanly."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_legacy_doc.mufinder", "BarrierLegacy")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    job_a = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    job_b = Job(
+        label="mu-site-b",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job_a.id] = job_a
+    doc.jobs[job_b.id] = job_b
+    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result_a = Result(
+        calculation_run_id=run_a.id,
+        result_type=job_a.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_a.id],
+    )
+    result_b = Result(
+        calculation_run_id=run_b.id,
+        result_type=job_b.calc_type,
+        data={"total_energy": -0.9},
+        derived_structure_ids=[relaxed_b.id],
+    )
+    run_a.result_id = result_a.id
+    run_b.result_id = result_b.id
+    doc.runs[run_a.id] = run_a
+    doc.runs[run_b.id] = run_b
+    doc.results[result_a.id] = result_a
+    doc.results[result_b.id] = result_b
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
+    candidate = window._eligible_energy_barrier_source_candidates()[0]
+
+    # Simulate legacy stored config as it would have been written by the old TSS dialog:
+    # tssearch_force/disp/energy_tol stored as 0 with cross-reference unit strings,
+    # and tssearch_lst_max_iter present as an obsolete keyword.
+    definition = window._ensure_energy_barriers_definition([candidate.key])
+    assert definition is not None
+    definition.parameters["configuration"]["row_settings"] = {
+        candidate.key: {
+            "parameter_values": {
+                "cut_off_energy": {"value": 700.0, "unit": "eV"},
+                "fine_cut_off_energy": {"value": 0.0, "unit": "FINE_GMAX"},
+                "tssearch_lst_max_iter": 20,
+                "tssearch_force_tol": {"value": 0.0, "unit": "GEOM_FORCE_TOL"},
+                "tssearch_disp_tol": {"value": 0.0, "unit": "GEOM_DISP_TOL"},
+                "tssearch_energy_tol": {"value": 0.0, "unit": "GEOM_ENERGY_TOL"},
+            }
+        }
+    }
+
+    jobs = window._materialize_energy_barriers_jobs([candidate.key])
+
+    assert len(jobs) == 1
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
+    # Legacy zero-value tolerances and obsolete keyword must not appear in the output.
+    assert "FINE_CUT_OFF_ENERGY" not in param_text
+    assert "TSSEARCH_FORCE_TOL" not in param_text
+    assert "TSSEARCH_DISP_TOL" not in param_text
+    assert "TSSEARCH_ENERGY_TOL" not in param_text
+    assert "TSSEARCH_LST_MAX_ITER" not in param_text
+    # Valid user-configured value must still be written.
+    assert "CUT_OFF_ENERGY : 700" in param_text
+    window.close()
+
+
+def test_main_window_energy_barrier_defaults_read_kpoints_from_reactant_job_cell_file(qapp, tmp_path: Path) -> None:
+    """Equivalent k-point density is taken from the reactant relaxation job's output cell file."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_cell_kpoints_doc.mufinder", "BarrierCellKPoints")
+    window._document = doc
+
+    doc.project.recommended_kpoint_grid = (4, 4, 4)
+    # Deliberately omit recommended_kpoint_lattice so the project-default scaling path cannot work.
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    supercell_species = ["Si"] * 8 + ["H:mu"]
+    supercell_positions_a = [
+        [0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.5, 0.5, 0.0],
+        [0.0, 0.0, 0.5], [0.5, 0.0, 0.5], [0.0, 0.5, 0.5], [0.5, 0.5, 0.5],
+        [0.125, 0.125, 0.125],
+    ]
+    supercell_positions_b = [
+        [0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.5, 0.5, 0.0],
+        [0.0, 0.0, 0.5], [0.5, 0.0, 0.5], [0.0, 0.5, 0.5], [0.5, 0.5, 0.5],
+        [0.375, 0.125, 0.125],
+    ]
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        species=supercell_species,
+        fractional_positions=supercell_positions_a,
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        species=supercell_species,
+        fractional_positions=supercell_positions_b,
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    job_a = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    job_b = Job(
+        label="mu-site-b",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job_a.id] = job_a
+    doc.jobs[job_b.id] = job_b
+    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result_a = Result(
+        calculation_run_id=run_a.id,
+        result_type=job_a.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_a.id],
+    )
+    result_b = Result(
+        calculation_run_id=run_b.id,
+        result_type=job_b.calc_type,
+        data={"total_energy": -0.9},
+        derived_structure_ids=[relaxed_b.id],
+    )
+    run_a.result_id = result_a.id
+    run_b.result_id = result_b.id
+    doc.runs[run_a.id] = run_a
+    doc.runs[run_b.id] = run_b
+    doc.results[result_a.id] = result_a
+    doc.results[result_b.id] = result_b
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    # Write the reactant job's output cell file with the supercell k-point grid.
+    source_dir_a = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / job_a.label
+    source_dir_a.mkdir(parents=True, exist_ok=True)
+    (source_dir_a / f"{job_a.label}.cell").write_text(
+        "\n".join([
+            "%BLOCK LATTICE_CART",
+            "ang",
+            "8.0 0.0 0.0",
+            "0.0 8.0 0.0",
+            "0.0 0.0 8.0",
+            "%ENDBLOCK LATTICE_CART",
+            "%BLOCK POSITIONS_FRAC",
+            "Si 0.0 0.0 0.0",
+            "H:mu 0.125 0.125 0.125",
+            "%ENDBLOCK POSITIONS_FRAC",
+            "KPOINT_MP_GRID 2 2 2",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
+    candidate = window._eligible_energy_barrier_source_candidates()[0]
+    jobs = window._materialize_energy_barriers_jobs([candidate.key])
+
+    assert len(jobs) == 1
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
+    # Must use supercell grid from reactant job's cell file, not the raw project default (4 4 4).
+    assert "KPOINT_MP_GRID 2 2 2" in cell_text
+    assert "KPOINT_MP_GRID 4 4 4" not in cell_text
+    window.close()
+
+
+def test_main_window_generates_same_site_energy_barrier_paths(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_same_site_doc.mufinder", "BarrierSameSite")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed.id] = relaxed
+
+    job = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job.id] = job
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=job.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed.id],
+    )
+    run.result_id = result.id
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    doc.sites[site.id] = site
+
+    window._on_generate_energy_barrier_paths(str(site.id), str(site.id), "")
+    generated = window._eligible_energy_barrier_source_candidates()
+
+    assert generated
+    assert all(candidate.path.length_ang > 0.0 for candidate in generated)
+    assert all(candidate.reactant.site.id == site.id for candidate in generated)
+    assert all(candidate.product.site.id == site.id for candidate in generated)
+    window.close()
+
+
+def test_main_window_generates_energy_barrier_paths_with_user_max_length(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_max_length_doc.mufinder", "BarrierMaxLength")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    job_a = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    job_b = Job(
+        label="mu-site-b",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job_a.id] = job_a
+    doc.jobs[job_b.id] = job_b
+    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result_a = Result(
+        calculation_run_id=run_a.id,
+        result_type=job_a.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_a.id],
+    )
+    result_b = Result(
+        calculation_run_id=run_b.id,
+        result_type=job_b.calc_type,
+        data={"total_energy": -0.9},
+        derived_structure_ids=[relaxed_b.id],
+    )
+    run_a.result_id = result_a.id
+    run_b.result_id = result_b.id
+    doc.runs[run_a.id] = run_a
+    doc.runs[run_b.id] = run_b
+    doc.results[result_a.id] = result_a
+    doc.results[result_b.id] = result_b
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id), "1.9")
+
+    assert window._eligible_energy_barrier_source_candidates() == []
+    assert window._document.ui_state["energy_barriers_form"]["max_path_length_ang"] == 1.9
+    window.close()
+
+
+def test_main_window_removes_energy_barrier_generated_path(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_remove_doc.mufinder", "BarrierRemove")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    job_a = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    job_b = Job(
+        label="mu-site-b",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job_a.id] = job_a
+    doc.jobs[job_b.id] = job_b
+    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result_a = Result(
+        calculation_run_id=run_a.id,
+        result_type=job_a.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_a.id],
+    )
+    result_b = Result(
+        calculation_run_id=run_b.id,
+        result_type=job_b.calc_type,
+        data={"total_energy": -0.9},
+        derived_structure_ids=[relaxed_b.id],
+    )
+    run_a.result_id = result_a.id
+    run_b.result_id = result_b.id
+    doc.runs[run_a.id] = run_a
+    doc.runs[run_b.id] = run_b
+    doc.results[result_a.id] = result_a
+    doc.results[result_b.id] = result_b
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id), "")
+    candidate = window._eligible_energy_barrier_source_candidates()[0]
+    definition = window._ensure_energy_barriers_definition([candidate.key])
+
+    assert definition is not None
+
+    window._on_remove_energy_barrier_sources([candidate.key])
+
+    assert candidate.key not in {
+        str(source.get("key", "")).strip()
+        for source in window._energy_barrier_generated_sources()
+    }
+    assert candidate.key not in {
+        str(source.get("key", "")).strip()
+        for source in definition.parameters["configuration"].get("sources", [])
+        if isinstance(source, dict)
+    }
+    window.close()
 
 
 def test_main_window_records_energy_barrier_result_from_ts_file(

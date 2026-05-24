@@ -58,3 +58,18 @@ def test_prepare_transition_state_structures_aligns_product_to_path() -> None:
     assert prepared.product.species == product.species
     assert prepared.product.fractional_positions[-1] == [0.75, 0.25, 0.25]
     assert prepared.reactant.properties["atomic_spins"] == [1.0, -1.0, 0.0]
+
+
+def test_enumerate_distinct_muon_paths_respects_max_distance() -> None:
+    pristine = _host_structure()
+    reactant = _relaxed_structure("siteA", [0.25, 0.25, 0.25])
+    product = _relaxed_structure("siteB", [0.75, 0.25, 0.25])
+
+    paths = enumerate_distinct_muon_paths(
+        pristine_structure=pristine,
+        reactant_structure=reactant,
+        product_structure=product,
+        max_distance_ang=1.9,
+    )
+
+    assert paths == ()

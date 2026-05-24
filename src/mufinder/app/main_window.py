@@ -167,7 +167,7 @@ from mufinder.app.theme import (
     use_square_top_table_corners,
 )
 from mufinder.app.workflow_dialogs import EnergyBarrierPathViewerDialog, QuantumCorrectionsConfigDialog
-from mufinder.app.workflow_parameters import build_workflow_parameter_surface
+from mufinder.app.workflow_parameters import build_workflow_parameter_surface, workflow_basic_parameter_names
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
     sweep_point_state_is_ready,
@@ -197,7 +197,7 @@ from mufinder.science.energy_barriers import (
     enumerate_distinct_muon_paths,
     prepare_transition_state_structures,
 )
-from mufinder.science.kpoint_grids import lattice_parameters
+from mufinder.science.kpoint_grids import equivalent_grid_for_supercell, lattice_parameters
 from mufinder.science.quantum_phonons import PhononParseError, muon_zpe, parse_phonon_path, w1_entanglement_witness
 from mufinder.science.relaxation_analysis import folded_muon_position_from_structure
 from mufinder.science.site_generation import SiteGenerationError, lattice_cart_to_frac, lattice_frac_to_cart
@@ -245,36 +245,14 @@ _VISIBLE_DASHBOARD_STATES = _ACTIVE_LOCAL_JOB_STATES | {JobStatus.STOPPED} | _RE
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _WorkflowKey = TypeVar("_WorkflowKey")
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {"lattice_cart", "lattice_abc", "positions_frac", "positions_abs"}
-_QUANTUM_CONFIG_KEYWORD_NAMES = (
-    "basis_precision",
-    "cut_off_energy",
-    "elec_energy_tol",
-    "kpoint_mp_grid",
-)
-_ENERGY_BARRIER_TSS_KEYWORD_NAMES = (
-    "basis_precision",
-    "cut_off_energy",
-    "fine_cut_off_energy",
-    "elec_energy_tol",
-    "kpoint_mp_grid",
+_QUANTUM_CONFIG_KEYWORD_NAMES = workflow_basic_parameter_names()
+_ENERGY_BARRIER_TSS_KEYWORD_NAMES = workflow_basic_parameter_names(
     "tssearch_lstqst_protocol",
     "tssearch_qst_max_iter",
-    "tssearch_lst_max_iter",
     "tssearch_cg_max_iter",
     "tssearch_max_path_points",
-    "tssearch_force_tol",
-    "tssearch_disp_tol",
-    "tssearch_energy_tol",
 )
-_ENERGY_BARRIER_NEB_KEYWORD_NAMES = (
-    "basis_precision",
-    "cut_off_energy",
-    "fine_cut_off_energy",
-    "elec_energy_tol",
-    "kpoint_mp_grid",
-    "tssearch_force_tol",
-    "tssearch_disp_tol",
-    "tssearch_energy_tol",
+_ENERGY_BARRIER_NEB_KEYWORD_NAMES = workflow_basic_parameter_names(
     "tssearch_neb_spring_constant",
     "tssearch_neb_tangent_mode",
     "tssearch_neb_method",
@@ -299,6 +277,18 @@ def _structure_species_options(structure: Structure | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(species for item in structure.species if (species := str(item).strip())))
 
 
+def _merge_species_options(structures: list[Structure | None]) -> tuple[str, ...]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for structure in structures:
+        for species in _structure_species_options(structure):
+            if species in seen:
+                continue
+            seen.add(species)
+            values.append(species)
+    return tuple(values)
+
+
 def _format_energy(value: object) -> str:
     if value is None:
         return ""
@@ -306,6 +296,26 @@ def _format_energy(value: object) -> str:
         return f"{float(value):.6g} eV"
     except (TypeError, ValueError):
         return ""
+
+
+def _ordered_string_list(payload: object) -> list[str]:
+    if payload is None:
+        return []
+    if isinstance(payload, str):
+        values = [payload]
+    elif isinstance(payload, (list, tuple)):
+        values = list(payload)
+    else:
+        values = [payload]
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = str(value).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
 
 
 def _format_phonon_eigenvalues(value: object) -> str:
@@ -345,6 +355,60 @@ def _merge_serialized_sources(
             order.append(key)
         merged_by_key[key] = dict(source)
     return [merged_by_key[key] for key in order]
+
+
+def _replace_serialized_sources_for_pair(
+    existing_sources: object,
+    *,
+    reactant_site_id: str,
+    product_site_id: str,
+    new_sources: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    filtered: list[dict[str, object]] = []
+    for source in tuple(existing_sources) if isinstance(existing_sources, list) else ():
+        if not isinstance(source, dict):
+            continue
+        if (
+            str(source.get("reactant_site_id", "")).strip() == reactant_site_id
+            and str(source.get("product_site_id", "")).strip() == product_site_id
+        ):
+            continue
+        filtered.append(dict(source))
+    return _merge_serialized_sources(filtered, new_sources, key_field="key")
+
+
+_LEGACY_ENERGY_BARRIER_OBSOLETE_PARAMS: frozenset[str] = frozenset({"tssearch_lst_max_iter"})
+_LEGACY_ENERGY_BARRIER_ZERO_DEFAULT_PARAMS: frozenset[str] = frozenset({
+    "fine_cut_off_energy",
+    "tssearch_force_tol",
+    "tssearch_disp_tol",
+    "tssearch_energy_tol",
+})
+
+
+def _strip_legacy_energy_barrier_params(params: dict[str, object]) -> dict[str, object]:
+    """Drop params that were stored by the old TSS dialog but are now invalid.
+
+    tssearch_lst_max_iter is obsolete.  The three tolerance keywords default to
+    their GEOM_* counterparts in CASTEP; the old dialog exposed them with a
+    cross-reference default that rendered as 0, so any stored value ≤ 0 is a
+    legacy placeholder that should be omitted so CASTEP uses its own defaults.
+    fine_cut_off_energy was also persisted as a zero-value placeholder when the
+    Energy Barriers surface briefly exposed it as a regular physical editor row.
+    """
+    result: dict[str, object] = {}
+    for name, value in params.items():
+        if name in _LEGACY_ENERGY_BARRIER_OBSOLETE_PARAMS:
+            continue
+        if name in _LEGACY_ENERGY_BARRIER_ZERO_DEFAULT_PARAMS:
+            numeric = value.value if isinstance(value, ValueWithUnit) else value
+            try:
+                if float(numeric) <= 0:
+                    continue
+            except (TypeError, ValueError):
+                pass
+        result[name] = value
+    return result
 
 
 def _input_template_from_keyword_values(values: Mapping[str, object]) -> InputTemplate:
@@ -4201,7 +4265,11 @@ class MainWindow(QMainWindow):
         }
         return restored_params, added_advanced, extras
 
-    def _project_convergence_parameter_values(self) -> dict[str, object]:
+    def _project_convergence_parameter_values(
+        self,
+        *,
+        target_lattice: list[list[float]] | None = None,
+    ) -> dict[str, object]:
         if self._document is None:
             return {}
         values: dict[str, object] = {}
@@ -4210,21 +4278,35 @@ class MainWindow(QMainWindow):
             values["cut_off_energy"] = ValueWithUnit(value=float(cutoff), unit="eV")
         grid = self._document.project.recommended_kpoint_grid
         if grid is not None:
-            values["kpoint_mp_grid"] = tuple(int(component) for component in grid)
+            resolved_grid = tuple(int(component) for component in grid)
+            reference_lattice = self._document.project.recommended_kpoint_lattice
+            if (
+                target_lattice is not None
+                and isinstance(reference_lattice, list)
+                and len(reference_lattice) == 3
+            ):
+                resolved_grid = equivalent_grid_for_supercell(reference_lattice, resolved_grid, target_lattice)
+            values["kpoint_mp_grid"] = resolved_grid
         return values
 
     def _workflow_row_configuration_with_project_defaults(
         self,
         definition,
         key: str,
+        *,
+        target_lattice: list[list[float]] | None = None,
     ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
         params, advanced, extras = self._workflow_row_configuration(definition, key)
-        values = self._project_convergence_parameter_values()
+        values = self._project_convergence_parameter_values(target_lattice=target_lattice)
         values.update(params)
         return values, advanced, extras
 
-    def _project_convergence_input_defaults(self) -> InputTemplate | None:
-        values = self._project_convergence_parameter_values()
+    def _project_convergence_input_defaults(
+        self,
+        *,
+        target_lattice: list[list[float]] | None = None,
+    ) -> InputTemplate | None:
+        values = self._project_convergence_parameter_values(target_lattice=target_lattice)
         if not values:
             return None
         return _input_template_from_keyword_values(values)
@@ -4415,6 +4497,23 @@ class MainWindow(QMainWindow):
             for spec in specs
         ]
 
+    def _energy_barrier_row_configuration_with_source_defaults(
+        self,
+        definition,
+        key: str,
+        *,
+        target_lattice: list[list[float]] | None = None,
+    ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
+        params, advanced, extras = self._workflow_row_configuration(definition, key)
+        params = _strip_legacy_energy_barrier_params(params)
+        values = self._project_convergence_parameter_values(target_lattice=target_lattice)
+        candidate = self._energy_barrier_source_candidate_by_key(key)
+        if candidate is not None:
+            source_defaults = self._quantum_source_default_parameter_values(candidate.reactant)
+            values.update(source_defaults)
+        values.update(params)
+        return values, advanced, extras
+
     def _energy_barrier_source_parameter_specs(self) -> list[KeywordSpec]:
         return build_workflow_parameter_surface(
             workflow_stage="energy_barriers",
@@ -4501,6 +4600,9 @@ class MainWindow(QMainWindow):
         )
         energy_barriers_view.generate_paths_requested.connect(
             self._on_generate_energy_barrier_paths
+        )
+        energy_barriers_view.remove_sources_requested.connect(
+            self._on_remove_energy_barrier_sources
         )
         energy_barriers_view.configure_source_requested.connect(self._on_configure_energy_barrier_source)
         energy_barriers_view.view_source_requested.connect(self._on_view_energy_barrier_source)
@@ -6417,6 +6519,7 @@ class MainWindow(QMainWindow):
             endpoint_rows,
             reactant_key=reactant_key,
             product_key=product_key,
+            max_path_length_text=self._energy_barrier_max_path_length_text(),
         )
 
         source_rows: list[EnergyBarrierSourceRow] = []
@@ -6531,6 +6634,16 @@ class MainWindow(QMainWindow):
         raw = self._document.ui_state.get("energy_barriers_form", {})
         return dict(raw) if isinstance(raw, dict) else {}
 
+    def _energy_barrier_max_path_length_text(self) -> str:
+        state = self._energy_barrier_form_state()
+        raw = state.get("max_path_length_ang")
+        if raw in (None, ""):
+            return ""
+        try:
+            return f"{float(raw):.6g}"
+        except (TypeError, ValueError):
+            return ""
+
     def _selected_energy_barrier_endpoint_keys(self) -> tuple[str, str]:
         state = self._energy_barrier_form_state()
         reactant_key = str(state.get("selected_reactant_key", "")).strip()
@@ -6588,10 +6701,33 @@ class MainWindow(QMainWindow):
             )
         return serialized
 
+    def _energy_barrier_generated_sources_from_state(self) -> list[dict[str, object]]:
+        state = self._energy_barrier_form_state()
+        raw_sources = state.get("generated_sources", [])
+        return [dict(source) for source in raw_sources if isinstance(source, dict)] if isinstance(raw_sources, list) else []
+
+    def _energy_barrier_generated_sources(self) -> list[dict[str, object]]:
+        sources = self._energy_barrier_generated_sources_from_state()
+        for definition in self._energy_barriers_definitions():
+            config = definition.parameters.get("configuration", {})
+            if not isinstance(config, dict):
+                continue
+            raw_sources = config.get("sources", [])
+            if not isinstance(raw_sources, list):
+                continue
+            sources = _merge_serialized_sources(
+                sources,
+                [dict(source) for source in raw_sources if isinstance(source, dict)],
+                key_field="key",
+            )
+        return sources
+
     def _enumerate_energy_barrier_source_candidates(
         self,
         reactant_key: str,
         product_key: str,
+        *,
+        max_distance_ang: float | None = None,
     ) -> list[_EnergyBarrierSourceCandidate]:
         if self._document is None:
             return []
@@ -6599,7 +6735,7 @@ class MainWindow(QMainWindow):
         host = self._document.structures.get(host_id) if host_id is not None else None
         reactant = self._quantum_source_candidate_by_key(reactant_key)
         product = self._quantum_source_candidate_by_key(product_key)
-        if host is None or reactant is None or product is None or reactant.key == product.key:
+        if host is None or reactant is None or product is None:
             return []
         if self._charge_state_for_job(reactant.job) != self._charge_state_for_job(product.job):
             return []
@@ -6610,6 +6746,7 @@ class MainWindow(QMainWindow):
                 pristine_structure=host,
                 reactant_structure=reactant.structure,
                 product_structure=product.structure,
+                max_distance_ang=max_distance_ang,
             )
         except EnergyBarrierError:
             return []
@@ -6627,12 +6764,8 @@ class MainWindow(QMainWindow):
     def _eligible_energy_barrier_source_candidates(self) -> list[_EnergyBarrierSourceCandidate]:
         if self._document is None:
             return []
-        state = self._energy_barrier_form_state()
-        raw_sources = state.get("generated_sources", [])
-        if not isinstance(raw_sources, list):
-            return []
         candidates: list[_EnergyBarrierSourceCandidate] = []
-        for raw_source in raw_sources:
+        for raw_source in self._energy_barrier_generated_sources():
             if not isinstance(raw_source, dict):
                 continue
             reactant_site_id = self._uuid_from_source(raw_source, "reactant_site_id")
@@ -11683,6 +11816,131 @@ class MainWindow(QMainWindow):
             ]
         )
 
+    def _remove_energy_barrier_sources_from_ui_state(self, keys: set[str]) -> None:
+        if self._document is None:
+            return
+        state = self._document.ui_state.get("energy_barriers_form", {})
+        if not isinstance(state, dict):
+            return
+        raw_sources = state.get("generated_sources", [])
+        if isinstance(raw_sources, list):
+            state["generated_sources"] = [
+                source
+                for source in raw_sources
+                if not isinstance(source, dict) or str(source.get("key", "")).strip() not in keys
+            ]
+
+    def _remove_energy_barrier_sources_from_definition(self, definition, keys: set[str]) -> None:
+        config = definition.parameters.get("configuration", {})
+        if isinstance(config, dict):
+            raw_sources = config.get("sources", [])
+            if isinstance(raw_sources, list):
+                config["sources"] = [
+                    source
+                    for source in raw_sources
+                    if not isinstance(source, dict) or str(source.get("key", "")).strip() not in keys
+                ]
+            row_settings = config.get("row_settings", {})
+            if isinstance(row_settings, dict):
+                for key in keys:
+                    row_settings.pop(key, None)
+                if not row_settings:
+                    config.pop("row_settings", None)
+        mapping = definition.parameters.get("job_ids_by_label", {})
+        if isinstance(mapping, dict):
+            for key in keys:
+                mapping.pop(key, None)
+        self._remove_energy_barrier_definition_if_no_sources(definition)
+
+    def _remove_energy_barrier_neb_sources_from_definition(self, definition, keys: set[str]) -> None:
+        config = definition.parameters.get("configuration", {})
+        if isinstance(config, dict):
+            raw_sources = config.get("sources", [])
+            if isinstance(raw_sources, list):
+                config["sources"] = [
+                    source
+                    for source in raw_sources
+                    if not isinstance(source, dict) or str(source.get("key", "")).strip() not in keys
+                ]
+            row_settings = config.get("row_settings", {})
+            if isinstance(row_settings, dict):
+                for key in keys:
+                    row_settings.pop(key, None)
+                if not row_settings:
+                    config.pop("row_settings", None)
+        mapping = definition.parameters.get("job_ids_by_label", {})
+        if isinstance(mapping, dict):
+            for key in keys:
+                mapping.pop(key, None)
+        self._remove_energy_barrier_definition_if_no_sources(definition)
+
+    def _remove_energy_barrier_definition_if_no_sources(self, definition) -> None:
+        if self._document is None:
+            return
+        config = definition.parameters.get("configuration", {})
+        if not isinstance(config, dict):
+            return
+        raw_sources = config.get("sources", [])
+        if isinstance(raw_sources, list) and raw_sources:
+            return
+        self._document.calculations.pop(definition.id, None)
+
+    def _cleanup_energy_barrier_source_jobs(self, keys: set[str]) -> bool:
+        if self._document is None:
+            return True
+        targets: list[tuple[object, Job]] = []
+        seen: set[UUID] = set()
+        for definitions in (self._energy_barriers_definitions(), self._energy_barrier_neb_definitions()):
+            for definition in definitions:
+                mapping = definition.parameters.get("job_ids_by_label", {})
+                if not isinstance(mapping, dict):
+                    continue
+                for key in keys:
+                    raw_job_id = mapping.get(key)
+                    if not isinstance(raw_job_id, str):
+                        continue
+                    try:
+                        job_id = UUID(raw_job_id)
+                    except ValueError:
+                        continue
+                    job = self._document.jobs.get(job_id)
+                    if job is None or job.id in seen:
+                        continue
+                    targets.append((definition, job))
+                    seen.add(job.id)
+
+        shared_file_disposition: str | None = None
+        multi = len(targets) > 1
+        for definition, job in targets:
+            job_dir = self._job_output_directory(job)
+            if job_dir is not None and job_dir.exists():
+                disposition = shared_file_disposition
+                if disposition is None:
+                    disposition = self._prompt_job_file_disposition(
+                        title="Remove energy-barrier path with files",
+                        text=f"Energy-barrier job '{job.label}' has associated files.\n\n{job_dir}",
+                        keep_text="or Cancel to keep the generated path.",
+                        include_apply_all=multi,
+                    )
+                if disposition is None:
+                    return False
+                try:
+                    if disposition in {"delete", "delete_all"}:
+                        self._delete_path(job_dir)
+                    else:
+                        self._archive_cutoff_directory(job_dir, self._definition_output_directory(definition))
+                except OSError as exc:
+                    QMessageBox.warning(
+                        self,
+                        "File cleanup failed",
+                        f"Could not update files for job '{job.label}':\n{exc}",
+                    )
+                    return False
+                if disposition in {"delete_all", "archive_all"}:
+                    shared_file_disposition = disposition
+            self._delete_job_records(job.id)
+        return True
+
     def _energy_barrier_neb_source_candidates(self) -> list[_EnergyBarrierNebCandidate]:
         if self._document is None:
             return []
@@ -11968,9 +12226,10 @@ class MainWindow(QMainWindow):
                 product_spec = structure_to_spec(prepared.product)
             except (EnergyBarrierError, StructureBridgeError):
                 continue
-            values, _advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(
+            values, _advanced_names, _extras = self._energy_barrier_row_configuration_with_source_defaults(
                 definition,
                 key,
+                target_lattice=candidate.reactant.structure.lattice_vectors,
             )
             values = {name: value for name, value in values.items() if name != "task"}
             try:
@@ -12093,7 +12352,9 @@ class MainWindow(QMainWindow):
             values, _advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(
                 definition,
                 key,
+                target_lattice=reactant_structure.lattice_vectors,
             )
+            values = _strip_legacy_energy_barrier_params(values)
             values = {name: value for name, value in values.items() if name != "task"}
             try:
                 overrides = _input_template_from_keyword_values(values)
@@ -12249,34 +12510,74 @@ class MainWindow(QMainWindow):
             return None
         return max(intermediate, key=lambda image: image.energy)
 
-    def _on_configure_quantum_corrections_source(self, key: str) -> None:
+    def _on_configure_quantum_corrections_source(self, payload: object) -> None:
         if self._document is None:
             return
-        candidate = self._quantum_source_candidate_by_key(key)
-        if candidate is None:
+        keys = _ordered_string_list(payload)
+        if not keys:
+            return
+        candidates = [
+            candidate
+            for key in keys
+            if (candidate := self._quantum_source_candidate_by_key(key)) is not None
+        ]
+        if not candidates:
             return
         definition = self._active_quantum_corrections_definition()
-        values, pseudopotential_family = self._quantum_runtime_configuration(definition, key)
-        _params, advanced_names, extras = self._workflow_row_configuration(definition, key)
-        stage_state = self._quantum_stage_state(definition, candidate)
-        farms_only = self._quantum_allows_farms_only_edit(definition, candidate)
-        fully_editable = stage_state.stage == _QUANTUM_STAGE_SINGLEPOINT and stage_state.status == "ready"
+        key_list = [candidate.key for candidate in candidates]
+        values_by_key: list[dict[str, object]] = []
+        advanced_names: set[str] = set()
+        stage_states = []
+        pseudopotential_families: list[str | None] = []
+        farms_only_values: list[bool] = []
+        for candidate in candidates:
+            values, pseudopotential_family = self._quantum_runtime_configuration(definition, candidate.key)
+            _params, row_advanced_names, extras = self._workflow_row_configuration(definition, candidate.key)
+            values_by_key.append(values)
+            advanced_names.update(row_advanced_names)
+            stage_states.append(self._quantum_stage_state(definition, candidate))
+            pseudopotential_families.append(pseudopotential_family)
+            farms_only_values.append(self._quantum_allows_farms_only_edit(definition, candidate))
+        common_values = dict(values_by_key[0])
+        for row_values in values_by_key[1:]:
+            common_values = {
+                name: value for name, value in common_values.items() if name in row_values and row_values[name] == value
+            }
+        first_candidate = candidates[0]
+        first_stage_state = stage_states[0]
+        farms_only = len(set(farms_only_values)) == 1 and farms_only_values[0]
+        fully_editable = all(
+            stage_state.stage == _QUANTUM_STAGE_SINGLEPOINT and stage_state.status == "ready"
+            for stage_state in stage_states
+        )
         read_only = not fully_editable and not farms_only
+        common_pseudopotential_family = (
+            pseudopotential_families[0]
+            if pseudopotential_families and all(value == pseudopotential_families[0] for value in pseudopotential_families)
+            else ""
+        )
+        num_farms_values = [
+            self._quantum_num_farms_from_extras(self._workflow_row_configuration(definition, candidate.key)[2])
+            for candidate in candidates
+        ]
+        common_num_farms = (
+            num_farms_values[0] if num_farms_values and all(value == num_farms_values[0] for value in num_farms_values) else 1
+        )
 
         dialog = QuantumCorrectionsConfigDialog(
             specs=self._quantum_parameter_specs(),
-            pseudopotential_family=pseudopotential_family,
-            num_farms=self._quantum_num_farms_from_extras(extras),
+            pseudopotential_family=common_pseudopotential_family or "unknown",
+            num_farms=common_num_farms,
             intro_text=(
-                f"Source: {candidate.site.label or candidate.job.label}\n"
-                f"Current stage: {stage_state.stage}\n"
-                f"Displacements required for the phonon stage: {3 * len(candidate.structure.species)}"
+                f"Selected sources: {len(candidates)}\n"
+                f"Current stage: {first_stage_state.stage if len(candidates) == 1 else 'mixed/selected'}\n"
+                f"Displacements required for the phonon stage: {3 * len(first_candidate.structure.species)}"
             ),
             read_only=read_only,
             editable_param_names=() if farms_only else None,
             pseudopotential_editable=fully_editable,
             num_farms_editable=(fully_editable or farms_only),
-            species_options=_structure_species_options(candidate.structure),
+            species_options=_merge_species_options([candidate.structure for candidate in candidates]),
             parent=self,
         )
         if read_only:
@@ -12285,25 +12586,26 @@ class MainWindow(QMainWindow):
             dialog.setWindowTitle("Configure Quantum Corrections Stage 2 Farms")
         else:
             dialog.setWindowTitle("Configure Quantum Corrections Parameters")
-        dialog.set_values(values)
-        dialog.set_advanced_names(advanced_names)
+        dialog.set_values(common_values)
+        dialog.set_advanced_names(tuple(sorted(advanced_names)))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if read_only:
             return
 
         pseudopotential_family = dialog.pseudopotential_family()
-        payload = self._workflow_dialog_payload(
+        dialog_payload = self._workflow_dialog_payload(
             dialog,
             extra_payload={
                 "pseudopotential_family": pseudopotential_family,
                 "num_farms": dialog.num_farms(),
             },
         )
-        definition = self._ensure_quantum_corrections_definition([key])
+        definition = self._ensure_quantum_corrections_definition(key_list)
         if definition is None:
             return
-        self._store_workflow_row_configuration(definition, key, payload)
+        for key in key_list:
+            self._store_workflow_row_configuration(definition, key, dialog_payload)
         self._refresh_quantum_corrections_view()
         self._persist_document_ui_state(
             failure_message="Quantum Corrections configuration was updated, but autosave failed."
@@ -12326,15 +12628,36 @@ class MainWindow(QMainWindow):
             failure_message="Quantum Corrections site label was updated, but autosave failed."
         )
 
-    def _on_configure_energy_barrier_source(self, key: str) -> None:
+    def _on_configure_energy_barrier_source(self, payload: object) -> None:
         if self._document is None:
             return
-        candidate = self._energy_barrier_source_candidate_by_key(key)
-        if candidate is None:
+        keys = _ordered_string_list(payload)
+        if not keys:
+            return
+        candidates = [
+            candidate
+            for key in keys
+            if (candidate := self._energy_barrier_source_candidate_by_key(key)) is not None
+        ]
+        if not candidates:
             return
         definition = self._active_energy_barriers_definition()
-        values, advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(definition, key)
-        read_only = not workflow_row_state_is_ready(self._build_energy_barriers_states(), key)
+        values_by_key: list[dict[str, object]] = []
+        advanced_names: set[str] = set()
+        for candidate in candidates:
+            values, row_advanced_names, _extras = self._energy_barrier_row_configuration_with_source_defaults(
+                definition,
+                candidate.key,
+                target_lattice=candidate.reactant.structure.lattice_vectors,
+            )
+            values_by_key.append(values)
+            advanced_names.update(row_advanced_names)
+        common_values = dict(values_by_key[0])
+        for row_values in values_by_key[1:]:
+            common_values = {
+                name: value for name, value in common_values.items() if name in row_values and row_values[name] == value
+            }
+        read_only = any(not workflow_row_state_is_ready(self._build_energy_barriers_states(), candidate.key) for candidate in candidates)
 
         dialog = ParameterDialog(
             specs=self._energy_barrier_source_parameter_specs(),
@@ -12343,41 +12666,73 @@ class MainWindow(QMainWindow):
                 "task": "TRANSITIONSTATESEARCH",
                 "tssearch_method": "LSTQST",
             },
-            intro_text=f"Path: {self._energy_barrier_source_label(candidate)}",
+            intro_text=(
+                f"Path: {self._energy_barrier_source_label(candidates[0])}"
+                if len(candidates) == 1
+                else f"Selected paths: {len(candidates)}"
+            ),
             read_only=read_only,
-            species_options=_structure_species_options(candidate.reactant.structure),
+            species_options=_merge_species_options([candidate.reactant.structure for candidate in candidates]),
             parent=self,
         )
         dialog.setWindowTitle(
             "Inspect Energy Barriers Parameters" if read_only else "Configure Energy Barriers Parameters"
         )
-        dialog.set_values(values)
-        dialog.set_advanced_names(advanced_names)
+        dialog.set_values(common_values)
+        dialog.set_advanced_names(tuple(sorted(advanced_names)))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if read_only:
             return
 
-        payload = self._workflow_dialog_payload(dialog)
-        definition = self._ensure_energy_barriers_definition([key])
+        row_payload = self._workflow_dialog_payload(dialog)
+        definition = self._ensure_energy_barriers_definition([candidate.key for candidate in candidates])
         if definition is None:
             return
-        self._store_workflow_row_configuration(definition, key, payload)
+        for candidate in candidates:
+            self._store_workflow_row_configuration(definition, candidate.key, row_payload)
         self._refresh_energy_barriers_view()
         self._persist_document_ui_state(
             failure_message="Energy Barriers configuration was updated, but autosave failed."
         )
 
-    def _on_configure_energy_barrier_result(self, key: str) -> None:
+    def _on_configure_energy_barrier_result(self, payload: object) -> None:
         if self._document is None:
             return
-        candidate = self._energy_barrier_neb_source_candidate_by_key(key)
-        if candidate is None:
+        keys = _ordered_string_list(payload)
+        if not keys:
+            return
+        candidates = [
+            candidate
+            for key in keys
+            if (candidate := self._energy_barrier_neb_source_candidate_by_key(key)) is not None
+        ]
+        if not candidates:
             return
         definition = self._active_energy_barrier_neb_definition()
-        values, advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(definition, key)
-        read_only = not workflow_row_state_is_ready(self._build_energy_barrier_neb_states(), key)
-        reactant_structure = self._document.structures.get(self._uuid_from_source(candidate.source, "reactant_structure_id"))
+        values_by_key: list[dict[str, object]] = []
+        advanced_names: set[str] = set()
+        reactant_structures: list[Structure | None] = []
+        for candidate in candidates:
+            reactant_structure = self._document.structures.get(self._uuid_from_source(candidate.source, "reactant_structure_id"))
+            reactant_structures.append(reactant_structure)
+            values, row_advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(
+                definition,
+                candidate.key,
+                target_lattice=reactant_structure.lattice_vectors if reactant_structure is not None else None,
+            )
+            values = _strip_legacy_energy_barrier_params(values)
+            values_by_key.append(values)
+            advanced_names.update(row_advanced_names)
+        common_values = dict(values_by_key[0])
+        for row_values in values_by_key[1:]:
+            common_values = {
+                name: value for name, value in common_values.items() if name in row_values and row_values[name] == value
+            }
+        read_only = any(
+            not workflow_row_state_is_ready(self._build_energy_barrier_neb_states(), candidate.key)
+            for candidate in candidates
+        )
 
         dialog = ParameterDialog(
             specs=self._energy_barrier_neb_parameter_specs(),
@@ -12386,26 +12741,31 @@ class MainWindow(QMainWindow):
                 "task": "TRANSITIONSTATESEARCH",
                 "tssearch_method": "NEB",
             },
-            intro_text=f"Transition-state source: {candidate.transition_state_job.label}",
+            intro_text=(
+                f"Transition-state source: {candidates[0].transition_state_job.label}"
+                if len(candidates) == 1
+                else f"Selected transition-state sources: {len(candidates)}"
+            ),
             read_only=read_only,
-            species_options=_structure_species_options(reactant_structure),
+            species_options=_merge_species_options(reactant_structures),
             parent=self,
         )
         dialog.setWindowTitle(
             "Inspect NEB Parameters" if read_only else "Configure NEB Parameters"
         )
-        dialog.set_values(values)
-        dialog.set_advanced_names(advanced_names)
+        dialog.set_values(common_values)
+        dialog.set_advanced_names(tuple(sorted(advanced_names)))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if read_only:
             return
 
-        payload = self._workflow_dialog_payload(dialog)
-        definition = self._ensure_energy_barrier_neb_definition([key])
+        row_payload = self._workflow_dialog_payload(dialog)
+        definition = self._ensure_energy_barrier_neb_definition([candidate.key for candidate in candidates])
         if definition is None:
             return
-        self._store_workflow_row_configuration(definition, key, payload)
+        for candidate in candidates:
+            self._store_workflow_row_configuration(definition, candidate.key, row_payload)
         self._refresh_energy_barriers_view()
         self._persist_document_ui_state(
             failure_message="Energy Barriers NEB configuration was updated, but autosave failed."
@@ -12769,25 +13129,34 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
         state = self._energy_barrier_form_state()
-        previous = (
-            str(state.get("selected_reactant_key", "")).strip(),
-            str(state.get("selected_product_key", "")).strip(),
-        )
         state["selected_reactant_key"] = reactant_key
         state["selected_product_key"] = product_key
-        if previous != (reactant_key, product_key):
-            state.pop("generated_sources", None)
         self._document.ui_state["energy_barriers_form"] = state
         self._refresh_energy_barriers_view()
 
-    def _on_generate_energy_barrier_paths(self, reactant_key: str, product_key: str) -> None:
+    @staticmethod
+    def _parse_energy_barrier_max_path_length(text: str) -> float | None:
+        normalized = str(text).strip()
+        if not normalized:
+            return None
+        value = float(normalized)
+        if value <= 0.0:
+            raise ValueError("Maximum path length must be greater than zero.")
+        return value
+
+    def _on_generate_energy_barrier_paths(
+        self,
+        reactant_key: str,
+        product_key: str,
+        max_path_length_text: str = "",
+    ) -> None:
         if self._document is None:
             return
-        if not reactant_key or not product_key or reactant_key == product_key:
+        if not reactant_key or not product_key:
             QMessageBox.information(
                 self,
                 "Select endpoints",
-                "Choose distinct initial and final relaxed structures before generating paths.",
+                "Choose initial and final relaxed structures before generating paths.",
             )
             return
         reactant = self._quantum_source_candidate_by_key(reactant_key)
@@ -12801,15 +13170,53 @@ class MainWindow(QMainWindow):
                 "Initial and final structures must use the same muon charge state.",
             )
             return
-        candidates = self._enumerate_energy_barrier_source_candidates(reactant_key, product_key)
+        try:
+            max_distance_ang = self._parse_energy_barrier_max_path_length(max_path_length_text)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid path length", str(exc))
+            return
+        candidates = self._enumerate_energy_barrier_source_candidates(
+            reactant_key,
+            product_key,
+            max_distance_ang=max_distance_ang,
+        )
         state = self._energy_barrier_form_state()
         state["selected_reactant_key"] = reactant_key
         state["selected_product_key"] = product_key
-        state["generated_sources"] = self._serialize_energy_barrier_source_candidates(candidates)
+        if max_distance_ang is None:
+            state.pop("max_path_length_ang", None)
+        else:
+            state["max_path_length_ang"] = max_distance_ang
+        state["generated_sources"] = _replace_serialized_sources_for_pair(
+            self._energy_barrier_generated_sources_from_state(),
+            reactant_site_id=str(reactant.site.id),
+            product_site_id=str(product.site.id),
+            new_sources=self._serialize_energy_barrier_source_candidates(candidates),
+        )
         self._document.ui_state["energy_barriers_form"] = state
         self._refresh_energy_barriers_view()
         self._persist_document_ui_state(
             failure_message="Energy Barriers paths were generated, but autosave failed."
+        )
+
+    def _on_remove_energy_barrier_sources(self, payload: object) -> None:
+        keys = self._removed_row_labels(payload)
+        if self._document is None or not keys:
+            return
+        if not self._cleanup_energy_barrier_source_jobs(keys):
+            self._refresh_energy_barriers_view()
+            return
+        self._remove_energy_barrier_sources_from_ui_state(keys)
+        for definition in self._energy_barriers_definitions():
+            self._remove_energy_barrier_sources_from_definition(definition, keys)
+        for definition in self._energy_barrier_neb_definitions():
+            self._remove_energy_barrier_neb_sources_from_definition(definition, keys)
+        self._refresh_energy_barriers_view()
+        self._refresh_jobs_table()
+        self._refresh_journal_view()
+        self.statusBar().showMessage(f"Deleted {len(keys)} energy-barrier path(s)")
+        self._persist_document_ui_state(
+            failure_message="Energy Barriers paths were removed, but autosave failed."
         )
 
     def _on_energy_barrier_neb_result_selected(self, key: str) -> None:

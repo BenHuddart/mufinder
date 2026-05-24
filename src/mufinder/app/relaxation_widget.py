@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.convergence_display import format_cutoff_energy, format_kpoint_grid
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_adapter import suggested_grid_for_row
+from mufinder.app.workflow_parameters import reorder_workflow_parameter_specs
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.castep_io.gui_metadata import (
@@ -52,7 +53,6 @@ _EXTRA_GEOMETRY_PARAMETER_NAMES = (
     "geom_max_iter",
     "geom_stress_tol",
 )
-_KPOINT_SORT_ANCHOR_NAMES = ("basis_precision", "cut_off_energy")
 _PREFERRED_DEFAULT_PARAMETER_NAMES = (
     "cut_off_energy",
     "kpoint_mp_grid",
@@ -95,28 +95,7 @@ def _clone_spec_for_pristine_workflow(
 
 
 def _reorder_pristine_specs(specs: list[KeywordSpec]) -> list[KeywordSpec]:
-    kpoint_name = "kpoint_mp_grid"
-    kpoint_index = next((index for index, spec in enumerate(specs) if spec.name == kpoint_name), None)
-    if kpoint_index is None:
-        return specs
-
-    anchor_indices = [
-        index
-        for index, spec in enumerate(specs)
-        if spec.name in _KPOINT_SORT_ANCHOR_NAMES
-    ]
-    if not anchor_indices:
-        return specs
-
-    target_index = max(anchor_indices) + 1
-    if kpoint_index == target_index:
-        return specs
-
-    kpoint_spec = specs.pop(kpoint_index)
-    if kpoint_index < target_index:
-        target_index -= 1
-    specs.insert(target_index, kpoint_spec)
-    return specs
+    return reorder_workflow_parameter_specs(specs)
 
 
 class PristineRelaxationWidget(QWidget):

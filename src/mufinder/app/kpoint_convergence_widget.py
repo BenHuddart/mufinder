@@ -39,6 +39,7 @@ from mufinder.app.convergence_display import (
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.workflow_parameters import reorder_workflow_parameter_specs
 from mufinder.app.theme import (
     status_brush,
     style_section_subtitle,
@@ -63,7 +64,6 @@ _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
     "positions_frac",
     "positions_abs",
 }
-_KPOINT_SORT_ANCHOR_NAMES = ("basis_precision", "cut_off_energy")
 _ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
 _PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
 _LOCKED_GRID_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"cancelled"}
@@ -71,28 +71,7 @@ _DEFAULT_KPOINT_SPACING = 0.02
 
 
 def _reorder_specs_with_kpoint_anchor(specs: list[KeywordSpec]) -> list[KeywordSpec]:
-    kpoint_name = "kpoint_mp_grid"
-    kpoint_index = next((index for index, spec in enumerate(specs) if spec.name == kpoint_name), None)
-    if kpoint_index is None:
-        return specs
-
-    anchor_indices = [
-        index
-        for index, spec in enumerate(specs)
-        if spec.name in _KPOINT_SORT_ANCHOR_NAMES
-    ]
-    if not anchor_indices:
-        return specs
-
-    target_index = max(anchor_indices) + 1
-    if kpoint_index == target_index:
-        return specs
-
-    kpoint_spec = specs.pop(kpoint_index)
-    if kpoint_index < target_index:
-        target_index -= 1
-    specs.insert(target_index, kpoint_spec)
-    return specs
+    return reorder_workflow_parameter_specs(specs)
 
 
 class KPointSpacingDialog(QDialog):

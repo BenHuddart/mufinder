@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import stat
 from typing import Any
+
+
+_DARWIN_SF_DATALESS = 0x40000000
 
 
 class ProjectStore:
@@ -56,9 +60,24 @@ class ProjectStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
+    @staticmethod
+    def _is_dataless_file(path: Path) -> bool:
+        try:
+            return bool(path.stat().st_flags & _DARWIN_SF_DATALESS)
+        except OSError:
+            return False
+
     def read_json(self, path: Path) -> dict[str, Any]:
         """Read JSON payload from disk."""
-        return json.loads(path.read_text(encoding="utf-8"))
+        if self._is_dataless_file(path):
+            raise TimeoutError(
+                "Project file is stored as a cloud-only placeholder and is not available locally: "
+                f"{path}"
+            )
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except TimeoutError as exc:
+            raise TimeoutError(f"Timed out reading project file: {path}") from exc
 
     def write_entity(self, entity_type: str, entity_id: str, payload: dict[str, Any]) -> Path:
         """Persist an entity in its type-specific directory."""

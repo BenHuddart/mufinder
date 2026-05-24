@@ -83,3 +83,25 @@ policy, move the reusable part into the appropriate shared layer:
 
 The preferred outcome is code that future agents can navigate by package name,
 not by remembering where a previous implementation happened to grow.
+
+Workflow parameter surface policy
+---------------------------------
+
+Workflow configuration dialogs should present shared CASTEP parameters first,
+in a stable cross-workflow order, before any workflow-specific controls.
+
+The shared prefix lives in ``mufinder.app.workflow_parameters`` and currently
+orders the common rows as:
+
+- ``basis_precision``
+- ``cut_off_energy``
+- ``elec_energy_tol``
+- ``kpoint_mp_grid``
+
+Workflow-specific rows should follow after that common prefix. Advanced or
+rarely adjusted controls such as ``fine_cut_off_energy`` should remain advanced
+unless a workflow has a strong reason to expose them by default.
+
+When adding a new workflow parameter surface, use the shared helper in
+``mufinder.app.workflow_parameters`` instead of encoding another local ordering
+rule in an individual widget.

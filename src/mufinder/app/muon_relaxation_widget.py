@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.convergence_display import format_cutoff_energy, format_kpoint_grid
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.workflow_parameters import reorder_workflow_parameter_specs
 from mufinder.app.relaxation_adapter import (
     MUONIUM_CHARGE_STATE,
     POSITIVE_MUON_CHARGE_STATE,
@@ -436,7 +437,7 @@ class MuonRelaxationWidget(QWidget):
             )
             seen_names.add(spec.name)
 
-        return specs
+        return reorder_workflow_parameter_specs(specs)
 
     @staticmethod
     def _spec_is_blocked_by_locked(spec: KeywordSpec, locked_names: set[str]) -> bool:

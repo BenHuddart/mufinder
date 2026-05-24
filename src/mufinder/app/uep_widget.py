@@ -31,6 +31,7 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_adapter import suggested_grid_for_row
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.uep_types import SupercellMatrix, UepConfig, UepRunState, UepSourceRow
+from mufinder.app.workflow_parameters import reorder_workflow_parameter_specs
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     normalize_gui_value,
@@ -46,7 +47,6 @@ _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
     "positions_frac",
     "positions_abs",
 }
-_KPOINT_SORT_ANCHOR_NAMES = ("basis_precision", "cut_off_energy")
 _PREFERRED_DEFAULT_PARAMETER_NAMES = (
     "cut_off_energy",
     "kpoint_mp_grid",
@@ -89,24 +89,7 @@ def _clone_spec_for_uep_workflow(
 
 
 def _reorder_specs(specs: list[KeywordSpec]) -> list[KeywordSpec]:
-    kpoint_name = "kpoint_mp_grid"
-    kpoint_index = next((index for index, spec in enumerate(specs) if spec.name == kpoint_name), None)
-    if kpoint_index is None:
-        return specs
-
-    anchor_indices = [index for index, spec in enumerate(specs) if spec.name in _KPOINT_SORT_ANCHOR_NAMES]
-    if not anchor_indices:
-        return specs
-
-    target_index = max(anchor_indices) + 1
-    if kpoint_index == target_index:
-        return specs
-
-    spec = specs.pop(kpoint_index)
-    if kpoint_index < target_index:
-        target_index -= 1
-    specs.insert(target_index, spec)
-    return specs
+    return reorder_workflow_parameter_specs(specs)
 
 
 class UEPWidget(QWidget):

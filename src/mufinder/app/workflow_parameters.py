@@ -8,6 +8,14 @@ from mufinder.castep_io.gui_metadata import get_gui_keyword_specs_for_files
 from mufinder.castep_io.schema import KeywordSpec, get_keyword_spec
 
 
+COMMON_WORKFLOW_PARAMETER_NAMES = (
+    "basis_precision",
+    "cut_off_energy",
+    "elec_energy_tol",
+    "kpoint_mp_grid",
+)
+
+
 def _append_workflow_stage(values: tuple[str, ...], workflow_stage: str) -> tuple[str, ...]:
     if workflow_stage in values:
         return values
@@ -36,6 +44,51 @@ def _clone_spec_for_workflow_surface(
     )
 
 
+def workflow_basic_parameter_names(*workflow_specific_names: str) -> tuple[str, ...]:
+    """Return the shared common workflow rows followed by workflow-specific rows.
+
+    Project policy: workflow dialogs present common parameters first, in a
+    stable order, so users can find them in the same place across workflows.
+    Workflow-specific rows follow after the common prefix.
+    """
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for name in (*COMMON_WORKFLOW_PARAMETER_NAMES, *workflow_specific_names):
+        if name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+    return tuple(ordered)
+
+
+def reorder_workflow_parameter_specs(
+    specs: list[KeywordSpec],
+    *,
+    ordered_names: tuple[str, ...] = COMMON_WORKFLOW_PARAMETER_NAMES,
+) -> list[KeywordSpec]:
+    """Return specs ordered by a shared workflow prefix and then original order."""
+
+    ordered_specs: list[KeywordSpec] = []
+    seen: set[str] = set()
+
+    for name in ordered_names:
+        for spec in specs:
+            if spec.name != name or spec.name in seen:
+                continue
+            ordered_specs.append(spec)
+            seen.add(spec.name)
+            break
+
+    for spec in specs:
+        if spec.name in seen:
+            continue
+        ordered_specs.append(spec)
+        seen.add(spec.name)
+
+    return ordered_specs
+
+
 def build_workflow_parameter_surface(
     *,
     workflow_stage: str,
@@ -43,7 +96,7 @@ def build_workflow_parameter_surface(
     files: tuple[str, ...] = ("param", "cell"),
     excluded_names: tuple[str, ...] = ("task",),
 ) -> list[KeywordSpec]:
-    """Return dialog specs with curated basic rows and searchable advanced rows."""
+    """Return dialog specs with common-first basic rows and searchable advanced rows."""
 
     visible_specs = get_gui_keyword_specs_for_files(
         files=files,
@@ -82,4 +135,4 @@ def build_workflow_parameter_surface(
             )
         )
         seen.add(name)
-    return specs
+    return reorder_workflow_parameter_specs(specs, ordered_names=basic_names)

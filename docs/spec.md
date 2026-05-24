@@ -411,6 +411,10 @@ Relaxation staging:
 ### 12.7 Energy Barriers
 
 - path generation is explicit and pair-scoped: users select initial and final confirmed relaxed sites, then generate distinct paths for that pair on demand
+- selecting the same relaxed site for both endpoints must be allowed so symmetry-equivalent same-site hops can be generated, with zero-length self-maps excluded from the resulting path list
+- path generation must expose an optional maximum path-length limit that filters candidate hops before the final distinct-path list is shown
+- generated transition-state path rows must remain available after the endpoint selectors change so previously prepared hops are not discarded while the user explores another pair
+- generated transition-state path rows must be removable from the workflow, including via Delete and Backspace shortcuts when the path table has focus
 - TSS and NEB support
 - the workflow is split across dedicated tabs for path generation, transition-state results, and NEB analysis so the interface remains usable on smaller displays
 - completed NEB jobs expose an inline path inspector with image-by-image geometry preview in the shared structure viewer

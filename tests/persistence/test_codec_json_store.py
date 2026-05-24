@@ -55,3 +55,41 @@ def test_project_store_entity_and_provenance_io(tmp_path: Path) -> None:
     store.provenance_path.write_text(store.provenance_path.read_text(encoding="utf-8") + "{bad\n", encoding="utf-8")
     events = store.load_provenance()
     assert [row["event"] for row in events] == [1, 2]
+
+
+def test_project_store_read_json_reports_dataless_cloud_placeholder(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "store.mufinder"
+    store = ProjectStore(root)
+    store.initialize_layout()
+
+    path = store.project_manifest_path
+    path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(ProjectStore, "_is_dataless_file", staticmethod(lambda _path: True))
+
+    try:
+        store.read_json(path)
+    except TimeoutError as exc:
+        assert "cloud-only placeholder" in str(exc)
+        assert str(path) in str(exc)
+    else:
+        raise AssertionError("Expected read_json to raise for dataless files")
+
+
+def test_project_store_read_json_wraps_timeouts_with_path(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "store.mufinder"
+    store = ProjectStore(root)
+    store.initialize_layout()
+
+    path = store.project_manifest_path
+    path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(ProjectStore, "_is_dataless_file", staticmethod(lambda _path: False))
+    monkeypatch.setattr(Path, "read_text", lambda self, encoding="utf-8": (_ for _ in ()).throw(TimeoutError("boom")))
+
+    try:
+        store.read_json(path)
+    except TimeoutError as exc:
+        assert str(path) in str(exc)
+    else:
+        raise AssertionError("Expected read_json to wrap TimeoutError")
