@@ -54,6 +54,11 @@ from mufinder.castep_io.gui_metadata import (
 )
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
+from mufinder.app.selection_snapshot import (
+    SelectionSnapshotPushButton,
+    SelectionSnapshotToolButton,
+    resolve_target_keys,
+)
 
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
     "lattice_cart",
@@ -546,19 +551,21 @@ class CutoffConvergenceWidget(QWidget):
             self._make_table_item("", editable=False),
         )
 
-        configure_button = QPushButton(self._cutoff_table)
+        configure_button = SelectionSnapshotPushButton(self._cutoff_table)
+        configure_button.selection_snapshot_key = value
         self._style_configure_button(configure_button)
         configure_button.clicked.connect(
-            lambda _checked=False, button=configure_button: self._configure_cutoff_button_clicked(button)
+            lambda _checked=False, btn=configure_button: self._configure_cutoff_button_clicked(btn)
         )
         self._cutoff_table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
 
-        remove_button = QToolButton(self._cutoff_table)
+        remove_button = SelectionSnapshotToolButton(self._cutoff_table)
+        remove_button.selection_snapshot_key = value
         remove_button.setText("x")
         remove_button.setAutoRaise(True)
         remove_button.setToolTip("Remove this cutoff")
         remove_button.clicked.connect(
-            lambda _checked=False, button=remove_button: self._remove_cutoff_button_clicked(button)
+            lambda _checked=False, btn=remove_button: self._remove_cutoff_button_clicked(btn)
         )
         self._cutoff_table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
         self._refresh_cutoff_row(row)
@@ -609,13 +616,25 @@ class CutoffConvergenceWidget(QWidget):
     def _format_cutoff_list(self, cutoffs: tuple[float, ...]) -> str:
         return ", ".join(f"{value:.8g} eV" for value in cutoffs)
 
-    def _configure_cutoff_button_clicked(self, button: QPushButton) -> None:
-        for row in range(self._cutoff_table.rowCount()):
-            if self._cutoff_table.cellWidget(row, self._CONFIGURE_COLUMN) is button:
-                cutoff = self._cutoff_value_at_row(row, strict=False)
-                if cutoff is not None:
-                    self._open_cutoff_parameter_dialog((cutoff,))
-                return
+    def _configure_cutoff_button_clicked(self, button: SelectionSnapshotPushButton) -> None:
+        clicked_cutoff = button.selection_snapshot_key
+        if not isinstance(clicked_cutoff, float):
+            return
+        snapshot_keys = [
+            self._cutoff_value_at_row(r, strict=False)
+            for r in button.selection_snapshot_rows
+        ]
+        cutoffs = resolve_target_keys(
+            button,
+            clicked_key=clicked_cutoff,
+            snapshot_keys=[c for c in snapshot_keys if c is not None],
+            eligibility=lambda c: True,
+            parent=self,
+            title="Configure parameters for selected cutoffs?",
+            message="Open a shared parameter dialog for all selected cutoff rows?",
+        )
+        if cutoffs:
+            self._open_cutoff_parameter_dialog(cutoffs)
 
     def _configure_selected_cutoffs(self) -> None:
         cutoffs = self._selected_cutoffs()
@@ -729,11 +748,30 @@ class CutoffConvergenceWidget(QWidget):
                 return True
         return False
 
-    def _remove_cutoff_button_clicked(self, button: QToolButton) -> None:
-        for row in range(self._cutoff_table.rowCount()):
-            if self._cutoff_table.cellWidget(row, self._REMOVE_COLUMN) is button:
-                self._request_cutoff_removals((row,))
-                return
+    def _remove_cutoff_button_clicked(self, button: SelectionSnapshotToolButton) -> None:
+        clicked_cutoff = button.selection_snapshot_key
+        if not isinstance(clicked_cutoff, float):
+            return
+        snapshot_keys = [
+            self._cutoff_value_at_row(r, strict=False)
+            for r in button.selection_snapshot_rows
+        ]
+        cutoffs = resolve_target_keys(
+            button,
+            clicked_key=clicked_cutoff,
+            snapshot_keys=[c for c in snapshot_keys if c is not None],
+            eligibility=lambda c: True,
+            parent=self,
+            title="Remove selected cutoffs?",
+            message="Remove all selected cutoff rows?",
+        )
+        rows = tuple(
+            r
+            for r in range(self._cutoff_table.rowCount())
+            if self._cutoff_value_at_row(r, strict=False) in cutoffs
+        )
+        if rows:
+            self._request_cutoff_removals(rows)
 
     def _request_cutoff_removal(self, row: int) -> None:
         self._request_cutoff_removals((row,))

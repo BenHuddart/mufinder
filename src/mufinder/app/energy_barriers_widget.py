@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSlider,
     QSplitter,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
+from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.app.theme import current_palette, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.workflow_table_utils import (
     create_workflow_table,
@@ -785,22 +787,41 @@ def _fill_source_table(
     view_requested,
 ) -> None:
     table.setRowCount(len(rows))
+    key_by_row: dict[int, str] = {i: row.key for i, row in enumerate(rows)}
     for row_index, row in enumerate(rows):
         for column, value in enumerate((row.reactant, row.product, row.charge_state, row.path_length, row.source_jobs, row.status)):
             set_workflow_table_item(table, row_index, column, value)
-        configure_button = QPushButton(table)
+        configure_button = SelectionSnapshotPushButton(table)
+        configure_button.selection_snapshot_key = row.key
         style_workflow_configure_button(
             configure_button,
             workflow_label="Energy Barriers",
             configured=row.configured,
             locked=workflow_row_is_locked(row.status),
         )
-        configure_button.clicked.connect(lambda _checked=False, key=row.key: configure_requested(key))
+        configure_button.clicked.connect(
+            lambda _checked=False, key=row.key, btn=configure_button: configure_requested(
+                list(resolve_target_keys(
+                    btn,
+                    clicked_key=key,
+                    snapshot_keys=[key_by_row[r] for r in btn.selection_snapshot_rows if r in key_by_row],
+                    eligibility=lambda k: True,
+                    parent=table,
+                    title="Configure Energy Barriers",
+                    message=None,
+                ))
+            )
+        )
         table.setCellWidget(row_index, 6, configure_button)
 
-        view_button = QPushButton("View...", table)
+        view_button = SelectionSnapshotPushButton("View...", table)
+        view_button.selection_snapshot_key = row.key
         view_button.setToolTip("Open the path viewer for this transition-state path.")
-        view_button.clicked.connect(lambda _checked=False, key=row.key: view_requested(key))
+        view_button.clicked.connect(
+            lambda _checked=False, key=row.key, btn=view_button: _open_view_single_row(
+                btn, key, key_by_row, view_requested, table
+            )
+        )
         table.setCellWidget(row_index, 7, view_button)
     table.resizeRowsToContents()
 
@@ -812,19 +833,56 @@ def _fill_result_table(
     configure_requested,
 ) -> None:
     table.setRowCount(len(rows))
+    key_by_row: dict[int, str] = {i: row.key for i, row in enumerate(rows)}
     for row_index, row in enumerate(rows):
         for column, value in enumerate((row.label, row.barrier_height, row.images, row.transition_state_file, row.neb_status)):
             set_workflow_table_item(table, row_index, column, value)
-        configure_button = QPushButton(table)
+        configure_button = SelectionSnapshotPushButton(table)
+        configure_button.selection_snapshot_key = row.key
         style_workflow_configure_button(
             configure_button,
             workflow_label="Energy Barriers",
             configured=row.configured,
             locked=workflow_row_is_locked(row.neb_status),
         )
-        configure_button.clicked.connect(lambda _checked=False, key=row.key: configure_requested(key))
+        configure_button.clicked.connect(
+            lambda _checked=False, key=row.key, btn=configure_button: configure_requested(
+                list(resolve_target_keys(
+                    btn,
+                    clicked_key=key,
+                    snapshot_keys=[key_by_row[r] for r in btn.selection_snapshot_rows if r in key_by_row],
+                    eligibility=lambda k: True,
+                    parent=table,
+                    title="Configure Energy Barriers",
+                    message=None,
+                ))
+            )
+        )
         table.setCellWidget(row_index, 5, configure_button)
     table.resizeRowsToContents()
+
+
+def _open_view_single_row(
+    btn: SelectionSnapshotPushButton,
+    key: str,
+    key_by_row: dict[int, str],
+    view_requested,
+    table: QTableWidget,
+) -> None:
+    snapshot_keys = [key_by_row[r] for r in btn.selection_snapshot_rows if r in key_by_row]
+    btn.selection_snapshot_rows = ()
+    btn.selection_snapshot_key = None
+    if key in snapshot_keys and len(snapshot_keys) > 1:
+        response = QMessageBox.question(
+            table,
+            "View path",
+            "The path viewer opens one row at a time. Open the viewer for this row?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            return
+    view_requested(key)
 
 
 def _fill_table(table: QTableWidget, rows: list[tuple[str, ...]]) -> None:

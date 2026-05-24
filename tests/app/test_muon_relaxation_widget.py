@@ -636,6 +636,8 @@ def test_muon_relaxation_widget_supercell_selection_can_apply_to_selected_rows(
         )
     combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
     assert isinstance(combo, QComboBox)
+    # Simulate the press snapshot (real interaction captures this via mousePressEvent).
+    combo.selection_snapshot_rows = (0, 1)
     combo.setCurrentIndex(combo.findText("Shared 2x2x1"))
 
     expected = ((2, 0, 0), (0, 2, 0), (0, 0, 1))

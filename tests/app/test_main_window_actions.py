@@ -5345,6 +5345,92 @@ def test_main_window_dashboard_uses_row_buttons_and_no_context_menu(
     window.close()
 
 
+def test_main_window_dashboard_cancel_applies_to_snapshot_rows(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the clicked row is in a multi-row snapshot, prompt and apply to all selected rows."""
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "snap_cancel.mufinder", "SnapCancel")
+    job0 = service.add_job(doc, label="j0", workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF, calc_type="castep_convergence_cutoff")
+    job1 = service.add_job(doc, label="j1", workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF, calc_type="castep_convergence_cutoff")
+    job0.status = JobStatus.RUNNING
+    job1.status = JobStatus.RUNNING
+    window._document = doc
+    cancelled: list[list[object]] = []
+    monkeypatch.setattr(window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids)))
+    monkeypatch.setattr(main_window_module.QMessageBox, "question", staticmethod(lambda *a, **kw: main_window_module.QMessageBox.StandardButton.Yes))
+    window._refresh_jobs_table()
+
+    cancel_btn = window._jobs_table.cellWidget(0, window._JOB_CANCEL_COLUMN)
+    assert isinstance(cancel_btn, SelectionSnapshotPushButton)
+    cancel_btn.selection_snapshot_rows = (0, 1)
+    cancel_btn.clicked.emit()
+
+    assert len(cancelled) == 1
+    assert set(cancelled[0]) == {job0.id, job1.id}
+    window.close()
+
+
+def test_main_window_dashboard_cancel_single_row_no_prompt(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "snap_cancel_single.mufinder", "SnapCancelSingle")
+    job0 = service.add_job(doc, label="j0", workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF, calc_type="castep_convergence_cutoff")
+    job0.status = JobStatus.RUNNING
+    window._document = doc
+    cancelled: list[list[object]] = []
+    monkeypatch.setattr(window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids)))
+    prompted: list[bool] = []
+    monkeypatch.setattr(main_window_module.QMessageBox, "question", staticmethod(lambda *a, **kw: prompted.append(True) or main_window_module.QMessageBox.StandardButton.Yes))
+    window._refresh_jobs_table()
+
+    cancel_btn = window._jobs_table.cellWidget(0, window._JOB_CANCEL_COLUMN)
+    assert isinstance(cancel_btn, SelectionSnapshotPushButton)
+    cancel_btn.selection_snapshot_rows = (0,)
+    cancel_btn.clicked.emit()
+
+    assert cancelled == [[job0.id]]
+    assert prompted == []
+    window.close()
+
+
+def test_main_window_dashboard_cancel_unselected_row_no_prompt(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "snap_cancel_unsel.mufinder", "SnapCancelUnsel")
+    job0 = service.add_job(doc, label="j0", workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF, calc_type="castep_convergence_cutoff")
+    job1 = service.add_job(doc, label="j1", workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF, calc_type="castep_convergence_cutoff")
+    job0.status = JobStatus.RUNNING
+    job1.status = JobStatus.RUNNING
+    window._document = doc
+    cancelled: list[list[object]] = []
+    monkeypatch.setattr(window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids)))
+    prompted: list[bool] = []
+    monkeypatch.setattr(main_window_module.QMessageBox, "question", staticmethod(lambda *a, **kw: prompted.append(True) or main_window_module.QMessageBox.StandardButton.Yes))
+    window._refresh_jobs_table()
+
+    # Snapshot only contains row 0; click Cancel on row 1 (not in snapshot)
+    cancel_btn = window._jobs_table.cellWidget(1, window._JOB_CANCEL_COLUMN)
+    assert isinstance(cancel_btn, SelectionSnapshotPushButton)
+    cancel_btn.selection_snapshot_rows = (0,)
+    cancel_btn.clicked.emit()
+
+    assert cancelled == [[job1.id]]
+    assert prompted == []
+    window.close()
+
+
 def test_main_window_dashboard_status_uses_color_cues(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5917,6 +6003,12 @@ def test_main_window_failure_diagnostics_and_inspect_dialog(
 
         def setDetailedText(self, details: str) -> None:
             self._details = details
+
+        def setSizeGripEnabled(self, *_args, **_kwargs) -> None:
+            return None
+
+        def setWindowFlag(self, *_args, **_kwargs) -> None:
+            return None
 
         def exec(self) -> int:
             captured_details.append(self._details)

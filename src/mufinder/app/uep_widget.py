@@ -39,6 +39,12 @@ from mufinder.castep_io.gui_metadata import (
 )
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
+from mufinder.app.selection_snapshot import (
+    SelectionSnapshotComboBox,
+    SelectionSnapshotPushButton,
+    SelectionSnapshotToolButton,
+    resolve_target_keys,
+)
 
 
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
@@ -483,13 +489,14 @@ class UEPWidget(QWidget):
         label_item.setData(Qt.ItemDataRole.UserRole, row_id)
         self._table.setItem(row, self._LABEL_COLUMN, label_item)
 
-        supercell_combo = QComboBox(self._table)
+        supercell_combo = SelectionSnapshotComboBox(self._table)
+        supercell_combo.selection_snapshot_key = row_id
         supercell_combo.addItem("Unit cell", None)
         for option_label, matrix in self._supercell_options:
             supercell_combo.addItem(option_label, matrix)
         supercell_combo.addItem("Manage Supercells...", "__create__")
         supercell_combo.currentIndexChanged.connect(
-            lambda _index, row_id=row_id, combo=supercell_combo: self._on_supercell_changed(row_id, combo)
+            lambda _index, rid=row_id, combo=supercell_combo: self._on_supercell_changed(rid, combo)
         )
         self._table.setCellWidget(row, self._SUPERCELL_COLUMN, supercell_combo)
 
@@ -497,17 +504,26 @@ class UEPWidget(QWidget):
         self._table.setItem(row, self._TOTAL_ENERGY_COLUMN, QTableWidgetItem(""))
         self._table.setItem(row, self._POTENTIAL_GRID_COLUMN, QTableWidgetItem(""))
 
-        configure_button = QPushButton("Configure...")
-        configure_button.clicked.connect(lambda _checked=False, row_id=row_id: self._configure_row(row_id))
+        configure_button = SelectionSnapshotPushButton("Configure...", self._table)
+        configure_button.selection_snapshot_key = row_id
+        configure_button.clicked.connect(
+            lambda _checked=False, rid=row_id, btn=configure_button: self._dispatch_row_action(btn, rid, "configure")
+        )
         self._table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
 
-        wizard_button = QPushButton("Open Wizard")
-        wizard_button.clicked.connect(lambda _checked=False, row_id=row_id: self._emit_wizard_for_row(row_id))
+        wizard_button = SelectionSnapshotPushButton("Open Wizard", self._table)
+        wizard_button.selection_snapshot_key = row_id
+        wizard_button.clicked.connect(
+            lambda _checked=False, rid=row_id, btn=wizard_button: self._dispatch_row_action(btn, rid, "wizard")
+        )
         self._table.setCellWidget(row, self._WIZARD_COLUMN, wizard_button)
 
-        remove_button = QToolButton(self._table)
+        remove_button = SelectionSnapshotToolButton(self._table)
+        remove_button.selection_snapshot_key = row_id
         remove_button.setText("×")
-        remove_button.clicked.connect(lambda _checked=False, row_id=row_id: self._remove_row(row_id))
+        remove_button.clicked.connect(
+            lambda _checked=False, rid=row_id, btn=remove_button: self._dispatch_row_action(btn, rid, "remove")
+        )
         self._table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
 
         self._apply_row_state(row_id)
@@ -518,16 +534,86 @@ class UEPWidget(QWidget):
                 return row
         return None
 
-    def _on_supercell_changed(self, row_id: int, combo: QComboBox) -> None:
+    def _on_supercell_changed(self, row_id: int, combo: SelectionSnapshotComboBox) -> None:
         data = combo.currentData()
         if data == "__create__":
             self.row_supercell_edit_requested.emit(row_id)
             current = self._row_supercells.get(row_id)
             self._set_combo_to_supercell(combo, current)
             return
-        self._row_supercells[row_id] = data if isinstance(data, tuple) else None
+        matrix = data if isinstance(data, tuple) else None
+        snapshot_keys = [
+            self._row_id_at(r)
+            for r in combo.selection_snapshot_rows
+        ]
+        target_row_ids = resolve_target_keys(
+            combo,
+            clicked_key=row_id,
+            snapshot_keys=[k for k in snapshot_keys if k is not None],
+            eligibility=lambda rid: True,
+            parent=self,
+            title="Apply supercell to selected rows?",
+            message="Apply this supercell choice to all selected UEP rows?",
+        )
+        for target_row_id in target_row_ids:
+            self._row_supercells[target_row_id] = matrix
         self._refresh_table_rows()
         self._emit_state()
+
+    def _dispatch_row_action(
+        self,
+        widget: SelectionSnapshotPushButton | SelectionSnapshotToolButton,
+        row_id: int,
+        kind: str,
+    ) -> None:
+        snapshot_keys = [
+            self._row_id_at(r)
+            for r in widget.selection_snapshot_rows
+        ]
+        if kind == "wizard":
+            # Wizard is single-row only; if multi-row selected, confirm we run it for just this row.
+            if row_id in [k for k in snapshot_keys if k is not None] and len([k for k in snapshot_keys if k is not None]) > 1:
+                from PySide6.QtWidgets import QMessageBox as _QMB
+                response = _QMB.question(
+                    self,
+                    "Open wizard for this row?",
+                    "The wizard runs on one row at a time. Open the wizard for just this row?",
+                    _QMB.StandardButton.Yes | _QMB.StandardButton.No,
+                    _QMB.StandardButton.Yes,
+                )
+                widget.selection_snapshot_rows = ()
+                widget.selection_snapshot_key = None
+                if response != _QMB.StandardButton.Yes:
+                    return
+            else:
+                widget.selection_snapshot_rows = ()
+                widget.selection_snapshot_key = None
+            self._emit_wizard_for_row(row_id)
+        elif kind == "configure":
+            target_row_ids = resolve_target_keys(
+                widget,
+                clicked_key=row_id,
+                snapshot_keys=[k for k in snapshot_keys if k is not None],
+                eligibility=lambda rid: True,
+                parent=self,
+                title="Configure selected rows?",
+                message="Open a shared parameter dialog for all selected UEP rows?",
+            )
+            if len(target_row_ids) == 1:
+                self._configure_row(target_row_ids[0])
+            else:
+                self._configure_rows(target_row_ids)
+        elif kind == "remove":
+            target_row_ids = resolve_target_keys(
+                widget,
+                clicked_key=row_id,
+                snapshot_keys=[k for k in snapshot_keys if k is not None],
+                eligibility=lambda rid: True,
+                parent=self,
+                title="Remove selected rows?",
+                message="Remove all selected UEP rows?",
+            )
+            self._remove_rows_by_id(target_row_ids)
 
     @staticmethod
     def _runtime_controls_locked(status: str) -> bool:
@@ -582,6 +668,48 @@ class UEPWidget(QWidget):
         resolved["task"] = "SINGLEPOINT"
         self._row_parameter_values[row_id] = resolved
         self._row_added_advanced[row_id] = set(dialog.advanced_names())
+        self._emit_state()
+
+    def _configure_rows(self, row_ids: tuple[int, ...]) -> None:
+        if not row_ids:
+            return
+        values = self._common_params_for_rows(row_ids)
+        read_only = any(
+            self._runtime_controls_locked(self._runtime_state_for_row(row_id).status)
+            for row_id in row_ids
+        )
+        dialog_kwargs = {
+            "specs": self._specs,
+            "workflow_stage": "uep",
+            "locked_values": {
+                "task": "SINGLEPOINT",
+                "write_formatted_density": "TRUE (required for UEP source analysis)",
+            },
+            "species_options": self._parameter_species_options,
+            "parent": self,
+        }
+        if read_only:
+            dialog_kwargs["read_only"] = True
+        dialog = ParameterDialog(**dialog_kwargs)
+        if hasattr(dialog, "setWindowTitle"):
+            dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
+        dialog.set_values(values)
+        names: set[str] = set()
+        for row_id in row_ids:
+            names.update(self._row_added_advanced.get(row_id, set()))
+        dialog.set_advanced_names(names)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        if read_only:
+            return
+        collected = self._sanitize_parameter_mapping(dialog.collect_values())
+        for row_id in row_ids:
+            row_values = dict(self._effective_params_for_row(row_id))
+            row_values.update(collected)
+            row_values["write_formatted_density"] = True
+            row_values["task"] = "SINGLEPOINT"
+            self._row_parameter_values[row_id] = row_values
+            self._row_added_advanced.setdefault(row_id, set()).update(dialog.advanced_names())
         self._emit_state()
 
     def _on_batch_configure_clicked(self) -> None:

@@ -199,7 +199,7 @@ keywords:
       widget_hint: int_triplet
       default_value: [4, 4, 4]
       basic_workflows: [convergence_kpoint]
-      advanced_workflows: [convergence_cutoff, muon_relaxation]
+      advanced_workflows: [convergence_cutoff, muon_relaxation, uep]
 
   - name: KPOINT_MP_SPACING
     canonical_name: kpoint_mp_spacing
@@ -236,7 +236,7 @@ keywords:
       widget_hint: flag
       default_value: true
       basic_workflows: [convergence_cutoff, convergence_kpoint]
-      advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation, uep]
 
   - name: FIX_ALL_CELL
     canonical_name: fix_all_cell
@@ -471,7 +471,7 @@ keywords:
       widget_hint: unit_float
       default_value: 340.0
       basic_workflows: [convergence_cutoff]
-      advanced_workflows: [convergence_kpoint, muon_relaxation]
+      advanced_workflows: [convergence_kpoint, muon_relaxation, uep]
 
   - name: SPIN_POLARIZED
     canonical_name: spin_polarized
@@ -663,6 +663,42 @@ keywords:
       category: geometry
       widget_hint: spinbox_int
       default_value: 30
+      advanced_workflows: [muon_relaxation]
+
+  - name: GEOM_DISP_TOL
+    canonical_name: geom_disp_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK=GEOMETRYOPTIMIZATION]
+    example: GEOM_DISP_TOL : 0.001 ang
+    notes: Ionic displacement convergence threshold for geometry optimization.
+    gui:
+      label: Geometry Displacement Tolerance
+      category: geometry
+      widget_hint: unit_float
+      default_value: 0.001
+      advanced_workflows: [muon_relaxation]
+
+  - name: GEOM_FREQUENCY_EST
+    canonical_name: geom_frequency_est
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: cm-1
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK=GEOMETRYOPTIMIZATION]
+    example: GEOM_FREQUENCY_EST : 1668 cm-1
+    notes: Estimated curvature used to size the initial trust radius.
+    gui:
+      label: Geometry Frequency Estimate
+      category: geometry
+      widget_hint: unit_float
+      default_value: 1668.0
       advanced_workflows: [muon_relaxation]
 
   - name: MD_DELTA_T

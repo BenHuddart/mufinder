@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.workflow_table_utils import (
     create_workflow_table,
@@ -258,6 +259,7 @@ def _fill_source_table(
 ) -> None:
     previous = table.blockSignals(True)
     table.setRowCount(len(rows))
+    key_by_row: dict[int, str] = {i: row.key for i, row in enumerate(rows)}
     for row_index, row in enumerate(rows):
         for column, value in enumerate(
             (
@@ -278,14 +280,27 @@ def _fill_source_table(
         label_item = table.item(row_index, 0)
         if label_item is not None:
             label_item.setFlags(label_item.flags() | Qt.ItemFlag.ItemIsEditable)
-        configure_button = QPushButton(table)
+        configure_button = SelectionSnapshotPushButton(table)
+        configure_button.selection_snapshot_key = row.key
         style_workflow_configure_button(
             configure_button,
             workflow_label="Quantum Corrections",
             configured=row.configured,
             locked=workflow_row_is_locked(row.status),
         )
-        configure_button.clicked.connect(lambda _checked=False, key=row.key: configure_requested(key))
+        configure_button.clicked.connect(
+            lambda _checked=False, key=row.key, btn=configure_button: configure_requested(
+                list(resolve_target_keys(
+                    btn,
+                    clicked_key=key,
+                    snapshot_keys=[key_by_row[r] for r in btn.selection_snapshot_rows if r in key_by_row],
+                    eligibility=lambda k: True,
+                    parent=table,
+                    title="Configure Quantum Corrections",
+                    message=None,
+                ))
+            )
+        )
         table.setCellWidget(row_index, 8, configure_button)
     table.resizeRowsToContents()
     table.blockSignals(previous)

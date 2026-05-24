@@ -68,6 +68,8 @@ _STARTER_SOURCE_ORDER_OVERRIDES: dict[FileKind, tuple[str, ...]] = {
         "geom_energy_tol",
         "geom_force_tol",
         "geom_stress_tol",
+        "geom_disp_tol",
+        "geom_frequency_est",
         "md_delta_t",
         "md_num_iter",
         "md_temperature",

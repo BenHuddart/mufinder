@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QComboBox, QHeaderView, QMessageBox, QPushButton, 
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.relaxation_types import RelaxationRunState
+from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, SelectionSnapshotToolButton
 from mufinder.castep_io.types import ValueWithUnit
 
 
@@ -161,6 +162,8 @@ def test_relaxation_widget_supercell_selection_can_apply_to_selected_rows(
         )
     combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
     assert isinstance(combo, QComboBox)
+    # Simulate the press snapshot (real interaction captures it via mousePressEvent).
+    combo.selection_snapshot_rows = (0, 1)
     combo.setCurrentIndex(combo.findText("convergence_cutoff 2x2x1"))
 
     expected = ((2, 0, 0), (0, 2, 0), (0, 0, 1))
@@ -204,6 +207,8 @@ def test_relaxation_widget_supercell_selection_can_stay_on_current_row(
         )
     combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
     assert isinstance(combo, QComboBox)
+    # Simulate the press snapshot.
+    combo.selection_snapshot_rows = (0, 1)
     combo.setCurrentIndex(combo.findText("convergence_cutoff 2x2x1"))
 
     assert widget.row_supercell_matrix(first_id) == ((2, 0, 0), (0, 2, 0), (0, 0, 1))
@@ -487,3 +492,179 @@ def test_relaxation_widget_keeps_explicit_cutoff_override_when_project_defaults_
     effective = widget._effective_params_for_row(row_id)
     assert effective["cut_off_energy"] == ValueWithUnit(350.0, "eV")
     assert effective["kpoint_mp_grid"] == (4, 4, 4)
+
+
+# ---------------------------------------------------------------------------
+# Multi-row snapshot tests (Windows selection-collapse simulation)
+# ---------------------------------------------------------------------------
+
+
+def _select_rows(widget: PristineRelaxationWidget, rows: list[int]) -> None:
+    selection = widget._table.selectionModel()
+    assert selection is not None
+    selection.clearSelection()
+    for row in rows:
+        selection.select(
+            widget._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+
+def test_relaxation_supercell_uses_snapshot_when_selection_collapsed(qapp, monkeypatch):
+    """Windows: selection collapses to one row before the slot fires.
+    The handler must apply to the snapshot rows, not the live selection."""
+    widget = PristineRelaxationWidget()
+    widget.set_supercell_options(
+        [{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}]
+    )
+    widget._add_row()
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    third_id = widget._row_id_at(2)
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
+
+    _select_rows(widget, [0, 1, 2])
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    # Simulate the press snapshot (before Windows collapses the selection)
+    combo.selection_snapshot_rows = (0, 1, 2)
+    # Simulate Windows collapsing the selection to just row 0 BEFORE slot fires
+    _select_rows(widget, [0])
+
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+
+    expected = ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert widget.row_supercell_matrix(first_id) == expected
+    assert widget.row_supercell_matrix(second_id) == expected
+    assert widget.row_supercell_matrix(third_id) == expected
+
+
+def test_relaxation_supercell_single_row_no_prompt(qapp, monkeypatch):
+    widget = PristineRelaxationWidget()
+    widget.set_supercell_options(
+        [{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}]
+    )
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+
+    prompts: list = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: prompts.append(1))
+
+    _select_rows(widget, [0])
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    combo.selection_snapshot_rows = (0,)
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+
+    assert prompts == []
+    assert widget.row_supercell_matrix(first_id) == ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert widget.row_supercell_matrix(second_id) is None
+
+
+def test_relaxation_supercell_click_unselected_row_no_prompt(qapp, monkeypatch):
+    """Clicking a button in a row that is NOT in the selection → single-row only."""
+    widget = PristineRelaxationWidget()
+    widget.set_supercell_options(
+        [{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}]
+    )
+    widget._add_row()
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    third_id = widget._row_id_at(2)
+
+    prompts: list = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: prompts.append(1))
+
+    _select_rows(widget, [0, 1])  # rows 0, 1 selected
+    combo = widget._table.cellWidget(2, widget._SUPERCELL_COLUMN)  # click row 2 (unselected)
+    assert isinstance(combo, QComboBox)
+    combo.selection_snapshot_rows = (0, 1)  # snapshot captured rows 0,1
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+
+    assert prompts == []
+    assert widget.row_supercell_matrix(third_id) == ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert widget.row_supercell_matrix(first_id) is None
+    assert widget.row_supercell_matrix(second_id) is None
+
+
+def test_relaxation_configure_button_applies_to_snapshot_rows(qapp, monkeypatch):
+    """Configure button: prompt then open dialog for all snapshot rows."""
+    opened_for: list = []
+
+    def _fake_dialog(row_ids, _widget=None):
+        opened_for.extend(row_ids)
+
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    third_id = widget._row_id_at(2)
+
+    monkeypatch.setattr(widget, "_open_row_parameter_dialog", _fake_dialog)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
+
+    btn = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(btn, SelectionSnapshotPushButton)
+    btn.selection_snapshot_rows = (0, 1, 2)
+
+    btn.clicked.emit()
+
+    assert set(opened_for) == {first_id, second_id, third_id}
+
+
+def test_relaxation_configure_button_single_row_no_prompt(qapp, monkeypatch):
+    opened_for: list = []
+    monkeypatch.setattr(
+        PristineRelaxationWidget,
+        "_open_row_parameter_dialog",
+        lambda self, row_ids: opened_for.extend(row_ids),
+    )
+    prompts: list = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: prompts.append(1))
+
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+
+    btn = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(btn, SelectionSnapshotPushButton)
+    btn.selection_snapshot_rows = (0,)
+
+    btn.clicked.emit()
+
+    assert prompts == []
+    assert first_id in opened_for
+
+
+def test_relaxation_remove_button_applies_to_snapshot_rows(qapp, monkeypatch):
+    removed: list = []
+    monkeypatch.setattr(
+        PristineRelaxationWidget,
+        "_remove_rows_by_id",
+        lambda self, row_ids: removed.extend(row_ids),
+    )
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
+
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+
+    btn = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    assert isinstance(btn, SelectionSnapshotToolButton)
+    btn.selection_snapshot_rows = (0, 1)
+
+    btn.clicked.emit()
+
+    assert set(removed) == {first_id, second_id}

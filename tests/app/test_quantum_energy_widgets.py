@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QMessageBox, QPushButton
 
 from mufinder.app.theme import status_brush
 from mufinder.app.energy_barriers_widget import (
@@ -53,7 +54,7 @@ def test_quantum_widget_emits_configure_for_source_row(qapp) -> None:
 
     button.click()
 
-    assert configured == ["site-a"]
+    assert configured == [["site-a"]]
 
 
 def test_quantum_widget_batch_configure_emits_selected_source_keys(qapp) -> None:
@@ -206,7 +207,7 @@ def test_energy_barriers_widget_emits_configure_and_view_for_source_row(qapp) ->
     configure_button.click()
     view_button.click()
 
-    assert configured == ["path-a"]
+    assert configured == [["path-a"]]
     assert viewed == ["path-a"]
 
 
@@ -336,7 +337,7 @@ def test_energy_barriers_widget_marks_configured_result_row(qapp) -> None:
 
     configure_button.click()
 
-    assert configured == ["ts-a"]
+    assert configured == [["ts-a"]]
 
 
 def test_energy_barriers_widget_batch_configure_emits_selected_result_keys(qapp) -> None:
@@ -403,3 +404,100 @@ def test_energy_barriers_widget_uses_slider_only_for_neb_preview_navigation(qapp
     widget._preview_slider.setValue(1)
 
     assert "TST" in widget._preview_summary.text()
+
+
+def test_energy_barriers_source_configure_applies_to_snapshot_rows(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    widget = EnergyBarriersWidget()
+    widget.set_sources(
+        [
+            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", source_jobs="j", status="ready"),
+            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", source_jobs="j", status="ready"),
+        ]
+    )
+    configured: list[object] = []
+    widget.configure_source_requested.connect(configured.append)
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Yes))
+
+    btn = widget._sources_table.cellWidget(0, 6)
+    assert isinstance(btn, SelectionSnapshotPushButton)
+    btn.selection_snapshot_rows = (0, 1)
+    btn.clicked.emit()
+
+    assert len(configured) == 1
+    assert set(configured[0]) == {"path-a", "path-b"}
+
+
+def test_energy_barriers_source_configure_single_row_no_prompt(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    widget = EnergyBarriersWidget()
+    widget.set_sources(
+        [EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", source_jobs="j", status="ready")]
+    )
+    configured: list[object] = []
+    widget.configure_source_requested.connect(configured.append)
+    prompted: list[bool] = []
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: prompted.append(True) or QMessageBox.StandardButton.Yes))
+
+    btn = widget._sources_table.cellWidget(0, 6)
+    assert isinstance(btn, SelectionSnapshotPushButton)
+    btn.selection_snapshot_rows = (0,)
+    btn.clicked.emit()
+
+    assert configured == [["path-a"]]
+    assert prompted == []
+
+
+def test_energy_barriers_view_shows_confirm_for_multi_row_snapshot(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    widget = EnergyBarriersWidget()
+    widget.set_sources(
+        [
+            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", source_jobs="j", status="ready"),
+            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", source_jobs="j", status="ready"),
+        ]
+    )
+    viewed: list[str] = []
+    widget.view_source_requested.connect(viewed.append)
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Yes))
+
+    btn = widget._sources_table.cellWidget(0, 7)
+    assert isinstance(btn, SelectionSnapshotPushButton)
+    btn.selection_snapshot_rows = (0, 1)
+    btn.clicked.emit()
+
+    assert viewed == ["path-a"]
+
+
+def test_quantum_source_configure_applies_to_snapshot_rows(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources(
+        [
+            QuantumSourceRow(key="site-a", label="A", charge_state="M", relative_energy="0 eV", displacements="9", source_job="j", stage="sp", num_farms_display="", status="ready"),
+            QuantumSourceRow(key="site-b", label="B", charge_state="M", relative_energy="0.1 eV", displacements="9", source_job="j", stage="sp", num_farms_display="", status="ready"),
+        ]
+    )
+    configured: list[object] = []
+    widget.configure_requested.connect(configured.append)
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Yes))
+
+    btn = widget._sources_table.cellWidget(0, 8)
+    assert isinstance(btn, SelectionSnapshotPushButton)
+    btn.selection_snapshot_rows = (0, 1)
+    btn.clicked.emit()
+
+    assert len(configured) == 1
+    assert set(configured[0]) == {"site-a", "site-b"}

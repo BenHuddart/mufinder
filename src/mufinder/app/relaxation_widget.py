@@ -8,6 +8,13 @@ from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
+from mufinder.app.selection_snapshot import (
+    SelectionSnapshotComboBox,
+    SelectionSnapshotPushButton,
+    SelectionSnapshotToolButton,
+    resolve_target_keys,
+)
+
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -489,9 +496,10 @@ class PristineRelaxationWidget(QWidget):
         label_item.setData(Qt.ItemDataRole.UserRole, row_id)
         self._table.setItem(row, self._LABEL_COLUMN, label_item)
 
-        supercell_combo = QComboBox(self._table)
+        supercell_combo = SelectionSnapshotComboBox(self._table)
+        supercell_combo.selection_snapshot_key = row_id
         supercell_combo.currentIndexChanged.connect(
-            lambda _index, rid=row_id: self._on_supercell_combo_changed(rid)
+            lambda _index, rid=row_id, combo=supercell_combo: self._on_supercell_combo_changed(rid, combo)
         )
         self._table.setCellWidget(row, self._SUPERCELL_COLUMN, supercell_combo)
 
@@ -509,17 +517,21 @@ class PristineRelaxationWidget(QWidget):
         self._table.setItem(row, self._LATTICE_B_COLUMN, self._make_item("", editable=False))
         self._table.setItem(row, self._LATTICE_C_COLUMN, self._make_item("", editable=False))
 
-        configure_button = QPushButton("Configure...", self._table)
+        configure_button = SelectionSnapshotPushButton("Configure...", self._table)
+        configure_button.selection_snapshot_key = row_id
         configure_button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         configure_button.clicked.connect(
-            lambda _checked=False, rid=row_id: self._open_row_parameter_dialog((rid,))
+            lambda _checked=False, rid=row_id, btn=configure_button: self._dispatch_row_action(btn, rid, "configure")
         )
         self._table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
 
-        remove_button = QToolButton(self._table)
+        remove_button = SelectionSnapshotToolButton(self._table)
+        remove_button.selection_snapshot_key = row_id
         remove_button.setText("x")
         remove_button.setAutoRaise(True)
-        remove_button.clicked.connect(lambda _checked=False, rid=row_id: self._remove_rows_by_id((rid,)))
+        remove_button.clicked.connect(
+            lambda _checked=False, rid=row_id, btn=remove_button: self._dispatch_row_action(btn, rid, "remove")
+        )
         self._table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
 
         self._refresh_row(row)
@@ -613,11 +625,10 @@ class PristineRelaxationWidget(QWidget):
         combo.setCurrentIndex(selected_index)
         combo.blockSignals(previous)
 
-    def _on_supercell_combo_changed(self, row_id: int) -> None:
+    def _on_supercell_combo_changed(self, row_id: int, combo: SelectionSnapshotComboBox) -> None:
         row = self._row_index_for_id(row_id)
         if row is None:
             return
-        combo = self._table.cellWidget(row, self._SUPERCELL_COLUMN)
         if not isinstance(combo, QComboBox):
             return
 
@@ -632,7 +643,19 @@ class PristineRelaxationWidget(QWidget):
             self._refresh_row(row)
             return
 
-        target_row_ids = self._supercell_target_row_ids(row_id)
+        snapshot_keys = [
+            self._row_id_at(r)
+            for r in combo.selection_snapshot_rows
+        ]
+        target_row_ids = resolve_target_keys(
+            combo,
+            clicked_key=row_id,
+            snapshot_keys=[k for k in snapshot_keys if k is not None],
+            eligibility=self._row_supercell_is_editable,
+            parent=self,
+            title="Apply supercell to selected rows?",
+            message="Apply this supercell choice to all selected editable relaxation rows?",
+        )
         for target_row_id in target_row_ids:
             self._row_supercells[target_row_id] = matrix
             self._row_parameter_values[target_row_id] = self._strip_implicit_row_defaults(
@@ -645,25 +668,38 @@ class PristineRelaxationWidget(QWidget):
         self._set_kpoint_message_for_row(row_id)
         self._emit_state()
 
-    def _supercell_target_row_ids(self, row_id: int) -> tuple[int, ...]:
-        selected = tuple(
-            target_id
-            for target_id in self._selected_row_ids()
-            if self._row_supercell_is_editable(target_id)
-        )
-        if row_id not in selected or len(selected) <= 1:
-            return (row_id,)
-
-        response = QMessageBox.question(
-            self,
-            "Apply supercell to selected rows?",
-            "Apply this supercell choice to all selected editable relaxation rows?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if response == QMessageBox.StandardButton.Yes:
-            return selected
-        return (row_id,)
+    def _dispatch_row_action(
+        self,
+        widget: SelectionSnapshotPushButton | SelectionSnapshotToolButton,
+        row_id: int,
+        kind: str,
+    ) -> None:
+        snapshot_keys = [
+            self._row_id_at(r)
+            for r in widget.selection_snapshot_rows
+        ]
+        if kind == "configure":
+            target_row_ids = resolve_target_keys(
+                widget,
+                clicked_key=row_id,
+                snapshot_keys=[k for k in snapshot_keys if k is not None],
+                eligibility=lambda rid: True,
+                parent=self,
+                title="Configure selected rows?",
+                message="Open a shared parameter dialog for all selected relaxation rows?",
+            )
+            self._open_row_parameter_dialog(target_row_ids)
+        elif kind == "remove":
+            target_row_ids = resolve_target_keys(
+                widget,
+                clicked_key=row_id,
+                snapshot_keys=[k for k in snapshot_keys if k is not None],
+                eligibility=lambda rid: True,
+                parent=self,
+                title="Remove selected rows?",
+                message="Remove all selected relaxation rows?",
+            )
+            self._remove_rows_by_id(target_row_ids)
 
     def _row_supercell_is_editable(self, row_id: int) -> bool:
         row = self._row_index_for_id(row_id)

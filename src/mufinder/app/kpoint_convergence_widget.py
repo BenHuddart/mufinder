@@ -57,6 +57,11 @@ from mufinder.castep_io.gui_metadata import (
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.science.kpoint_grids import generate_kpoint_grids, lattice_matches
+from mufinder.app.selection_snapshot import (
+    SelectionSnapshotPushButton,
+    SelectionSnapshotToolButton,
+    resolve_target_keys,
+)
 
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
     "lattice_cart",
@@ -610,19 +615,21 @@ class KPointConvergenceWidget(QWidget):
         self._table.setItem(row, self._TOTAL_ENERGY_COLUMN, self._make_item("", editable=False))
         self._table.setItem(row, self._MAX_FORCE_COLUMN, self._make_item("", editable=False))
 
-        configure_button = QPushButton(self._table)
+        configure_button = SelectionSnapshotPushButton(self._table)
+        configure_button.selection_snapshot_key = grid
         self._style_configure_button(configure_button)
         configure_button.clicked.connect(
-            lambda _checked=False, button=configure_button: self._configure_grid_button_clicked(button)
+            lambda _checked=False, btn=configure_button: self._configure_grid_button_clicked(btn)
         )
         self._table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
 
-        remove_button = QToolButton(self._table)
+        remove_button = SelectionSnapshotToolButton(self._table)
+        remove_button.selection_snapshot_key = grid
         remove_button.setText("x")
         remove_button.setAutoRaise(True)
         remove_button.setToolTip("Remove this k-point grid")
         remove_button.clicked.connect(
-            lambda _checked=False, button=remove_button: self._remove_grid_button_clicked(button)
+            lambda _checked=False, btn=remove_button: self._remove_grid_button_clicked(btn)
         )
         self._table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
         self._refresh_row(row)
@@ -735,13 +742,25 @@ class KPointConvergenceWidget(QWidget):
             return
         self._open_grid_parameter_dialog(grids)
 
-    def _configure_grid_button_clicked(self, button: QPushButton) -> None:
-        for row in range(self._table.rowCount()):
-            if self._table.cellWidget(row, self._CONFIGURE_COLUMN) is button:
-                grid = self._grid_value_at_row(row, strict=False)
-                if grid is not None:
-                    self._open_grid_parameter_dialog((grid,))
-                return
+    def _configure_grid_button_clicked(self, button: SelectionSnapshotPushButton) -> None:
+        clicked_grid = button.selection_snapshot_key
+        if not isinstance(clicked_grid, tuple):
+            return
+        snapshot_keys = [
+            self._grid_value_at_row(r, strict=False)
+            for r in button.selection_snapshot_rows
+        ]
+        grids = resolve_target_keys(
+            button,
+            clicked_key=clicked_grid,
+            snapshot_keys=[g for g in snapshot_keys if g is not None],
+            eligibility=lambda g: True,
+            parent=self,
+            title="Configure parameters for selected grids?",
+            message="Open a shared parameter dialog for all selected k-point grid rows?",
+        )
+        if grids:
+            self._open_grid_parameter_dialog(grids)
 
     def _open_grid_parameter_dialog(self, grids: tuple[tuple[int, int, int], ...]) -> None:
         if not grids:
@@ -838,11 +857,30 @@ class KPointConvergenceWidget(QWidget):
                 return True
         return False
 
-    def _remove_grid_button_clicked(self, button: QToolButton) -> None:
-        for row in range(self._table.rowCount()):
-            if self._table.cellWidget(row, self._REMOVE_COLUMN) is button:
-                self._request_grid_removals((row,))
-                return
+    def _remove_grid_button_clicked(self, button: SelectionSnapshotToolButton) -> None:
+        clicked_grid = button.selection_snapshot_key
+        if not isinstance(clicked_grid, tuple):
+            return
+        snapshot_keys = [
+            self._grid_value_at_row(r, strict=False)
+            for r in button.selection_snapshot_rows
+        ]
+        grids = resolve_target_keys(
+            button,
+            clicked_key=clicked_grid,
+            snapshot_keys=[g for g in snapshot_keys if g is not None],
+            eligibility=lambda g: True,
+            parent=self,
+            title="Remove selected grids?",
+            message="Remove all selected k-point grid rows?",
+        )
+        rows = tuple(
+            r
+            for r in range(self._table.rowCount())
+            if self._grid_value_at_row(r, strict=False) in grids
+        )
+        if rows:
+            self._request_grid_removals(rows)
 
     def _request_grid_removals(self, rows: tuple[int, ...]) -> None:
         if not rows:

@@ -186,6 +186,7 @@ from mufinder.persistence.codec import to_jsonable
 from mufinder.services.cluster_runner import ClusterJobRunner
 from mufinder.services.job_execution_controller import ClusterJobSubmission, JobExecutionController
 from mufinder.services.local_runner import LocalJobRunner
+from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
@@ -3279,42 +3280,29 @@ class MainWindow(QMainWindow):
             can_inspect = job.status in {JobStatus.FAILED, JobStatus.STOPPED}
             can_reset = job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
 
-            self._jobs_table.setCellWidget(
-                row,
-                self._JOB_SUBMIT_COLUMN,
-                self._make_job_action_button(
-                    "Resubmit",
-                    enabled=can_resubmit,
-                    callback=lambda _checked=False, job_id=job.id: self._on_resubmit_from_dashboard([job_id]),
-                ),
+            resubmit_btn = self._make_job_action_button("Resubmit", job_id=job.id, enabled=can_resubmit)
+            resubmit_btn.clicked.connect(
+                lambda _checked=False, jid=job.id, btn=resubmit_btn: self._dispatch_dashboard_action(btn, jid, "resubmit")
             )
-            self._jobs_table.setCellWidget(
-                row,
-                self._JOB_CANCEL_COLUMN,
-                self._make_job_action_button(
-                    "Cancel",
-                    enabled=can_cancel,
-                    callback=lambda _checked=False, job_id=job.id: self._on_cancel_from_dashboard([job_id]),
-                ),
+            self._jobs_table.setCellWidget(row, self._JOB_SUBMIT_COLUMN, resubmit_btn)
+
+            cancel_btn = self._make_job_action_button("Cancel", job_id=job.id, enabled=can_cancel)
+            cancel_btn.clicked.connect(
+                lambda _checked=False, jid=job.id, btn=cancel_btn: self._dispatch_dashboard_action(btn, jid, "cancel")
             )
-            self._jobs_table.setCellWidget(
-                row,
-                self._JOB_INSPECT_COLUMN,
-                self._make_job_action_button(
-                    "Inspect",
-                    enabled=can_inspect,
-                    callback=lambda _checked=False, job_id=job.id: self._on_inspect_failed_from_dashboard([job_id]),
-                ),
+            self._jobs_table.setCellWidget(row, self._JOB_CANCEL_COLUMN, cancel_btn)
+
+            inspect_btn = self._make_job_action_button("Inspect", job_id=job.id, enabled=can_inspect)
+            inspect_btn.clicked.connect(
+                lambda _checked=False, jid=job.id, btn=inspect_btn: self._dispatch_dashboard_action(btn, jid, "inspect")
             )
-            self._jobs_table.setCellWidget(
-                row,
-                self._JOB_RESET_COLUMN,
-                self._make_job_action_button(
-                    "Reset",
-                    enabled=can_reset,
-                    callback=lambda _checked=False, job_id=job.id: self._on_reset_failed_from_dashboard([job_id]),
-                ),
+            self._jobs_table.setCellWidget(row, self._JOB_INSPECT_COLUMN, inspect_btn)
+
+            reset_btn = self._make_job_action_button("Reset", job_id=job.id, enabled=can_reset)
+            reset_btn.clicked.connect(
+                lambda _checked=False, jid=job.id, btn=reset_btn: self._dispatch_dashboard_action(btn, jid, "reset")
             )
+            self._jobs_table.setCellWidget(row, self._JOB_RESET_COLUMN, reset_btn)
 
         self._configure_jobs_table_columns()
         self._sync_job_runtime_timer()
@@ -3407,10 +3395,10 @@ class MainWindow(QMainWindow):
             self._jobs_table.resizeColumnToContents(column)
 
     @staticmethod
-    def _make_job_action_button(text: str, *, enabled: bool, callback) -> QPushButton:
-        button = QPushButton(text)
+    def _make_job_action_button(text: str, *, job_id: UUID, enabled: bool) -> SelectionSnapshotPushButton:
+        button = SelectionSnapshotPushButton(text)
+        button.selection_snapshot_key = job_id
         button.setEnabled(enabled)
-        button.clicked.connect(callback)
         return button
 
     @staticmethod
@@ -4015,6 +4003,59 @@ class MainWindow(QMainWindow):
                 reuse_existing_remote_files=True,
                 success_message=lambda count, cluster: f"Resubmitted {count} cluster job(s) on {cluster}",
             )
+
+    def _dispatch_dashboard_action(
+        self, button: SelectionSnapshotPushButton, job_id: UUID, kind: str
+    ) -> None:
+        if self._document is None:
+            return
+
+        snapshot_keys: list[UUID] = []
+        for row in button.selection_snapshot_rows:
+            label_item = self._jobs_table.item(row, self._JOB_LABEL_COLUMN)
+            if label_item is None:
+                continue
+            try:
+                sid = UUID(str(label_item.data(Qt.ItemDataRole.UserRole)))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            snapshot_keys.append(sid)
+
+        eligible_statuses = {
+            "resubmit": _RESUBMITTABLE_JOB_STATES,
+            "cancel": _ACTIVE_LOCAL_JOB_STATES,
+            "inspect": {JobStatus.FAILED, JobStatus.STOPPED},
+            "reset": {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
+        }[kind]
+
+        def eligibility(uid: UUID) -> bool:
+            job = self._document.jobs.get(uid)  # type: ignore[union-attr]
+            return job is not None and job.status in eligible_statuses
+
+        titles = {
+            "resubmit": "Resubmit jobs",
+            "cancel": "Cancel jobs",
+            "inspect": "Inspect jobs",
+            "reset": "Reset jobs",
+        }
+
+        target_ids = resolve_target_keys(
+            button,
+            clicked_key=job_id,
+            snapshot_keys=snapshot_keys,
+            eligibility=eligibility,
+            parent=self,
+            title=titles[kind],
+            message=None,
+        )
+
+        handlers = {
+            "resubmit": self._on_resubmit_from_dashboard,
+            "cancel": self._on_cancel_from_dashboard,
+            "inspect": self._on_inspect_failed_from_dashboard,
+            "reset": self._on_reset_failed_from_dashboard,
+        }
+        handlers[kind](list(target_ids))
 
     def _on_cancel_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:
