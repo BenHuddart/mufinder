@@ -318,6 +318,25 @@ keywords:
     example: CALCULATE_POLARIZATION : TRUE
     notes: American spelling for the polarization toggle.
 
+  - name: CALCULATE_STRESS
+    canonical_name: calculate_stress
+    file: param
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: []
+    requires: []
+    example: CALCULATE_STRESS : TRUE
+    notes: Compute the stress tensor at each SCF step. Required to feed max stress into cutoff and k-point convergence analysis.
+    gui:
+      label: Calculate Stress
+      category: electronic
+      widget_hint: flag
+      default_value: false
+      basic_workflows: [convergence_cutoff, convergence_kpoint]
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, uep, muon_relaxation]
+
   - name: CHARGE
     canonical_name: charge
     file: param

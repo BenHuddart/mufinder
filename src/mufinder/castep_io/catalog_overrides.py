@@ -531,6 +531,18 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
             "advanced_workflows": ALL_WORKFLOWS,
             "default_value": False,
         },
+        "calculate_stress": {
+            "label": "Calculate Stress",
+            "description": (
+                "Compute the stress tensor at each SCF step. Required to feed max "
+                "stress into cutoff and k-point convergence analysis."
+            ),
+            "category": "electronic",
+            "widget_hint": "flag",
+            "basic_workflows": ("convergence_cutoff", "convergence_kpoint"),
+            "advanced_workflows": ALL_WORKFLOWS,
+            "default_value": False,
+        },
         "metals_method": {
             "label": "Metals Method",
             "description": "Electronic minimization method used for metals or finite-temperature occupations.",

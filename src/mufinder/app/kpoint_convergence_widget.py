@@ -463,6 +463,7 @@ class KPointConvergenceWidget(QWidget):
         kpoint_method: str | None,
         energy_threshold: float | None,
         force_threshold: float | None,
+        stress_threshold: float | None = None,
     ) -> None:
         self._project_default_grid.setText(format_kpoint_grid(kpoint_grid))
         self._project_default_method.setText(format_convergence_method(kpoint_method))
@@ -470,6 +471,7 @@ class KPointConvergenceWidget(QWidget):
             format_convergence_criteria(
                 energy_threshold=energy_threshold,
                 force_threshold=force_threshold,
+                stress_threshold=stress_threshold,
             )
         )
 

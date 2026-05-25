@@ -358,6 +358,59 @@ def delta_threshold_force(
     )
 
 
+def delta_threshold_stress(
+    cutoffs: Sequence[float],
+    max_stresses: Sequence[float],
+    *,
+    threshold: float,
+) -> ConvergenceResult:
+    """Check stress convergence from successive absolute max-stress deltas.
+
+    Mirrors :func:`delta_threshold_force`. The threshold and delta are expressed
+    in GPa, matching CASTEP's ``GEOM_STRESS_TOL`` convention.
+    """
+    x, y = _clean_series(cutoffs, max_stresses)
+    if len(x) < 2:
+        return ConvergenceResult(
+            converged=False,
+            method="stress-delta-threshold",
+            details="Need at least two completed max-stress points for stress convergence analysis.",
+            fallback_suggestion="Run more sweep points with CALCULATE_STRESS=true and retry.",
+        )
+
+    deltas: list[tuple[float, float]] = []
+    converged_value: float | None = None
+    converged_delta: float | None = None
+    for index in range(len(x) - 1):
+        delta = abs(y[index + 1] - y[index])
+        deltas.append((x[index + 1], delta))
+        if converged_value is None and delta <= threshold:
+            converged_value = x[index + 1]
+            converged_delta = delta
+
+    if converged_value is None:
+        return ConvergenceResult(
+            converged=False,
+            method="stress-delta-threshold",
+            details=(
+                "Stress variation did not reach the threshold "
+                f"({threshold:.6g} GPa)."
+            ),
+            deltas=tuple(deltas),
+        )
+
+    return ConvergenceResult(
+        converged=True,
+        method="stress-delta-threshold",
+        converged_value=converged_value,
+        details=(
+            "Stress converged by Delta-Threshold at "
+            f"{converged_value:.8g} eV (delta={float(converged_delta):.6g} GPa)."
+        ),
+        deltas=tuple(deltas),
+    )
+
+
 def _apply_kpoint_label(
     result: ConvergenceResult,
     point_labels: Mapping[float, str],
@@ -386,6 +439,15 @@ def _apply_kpoint_label(
         details += f" (delta={converged_delta:.6g} {delta_unit})"
     details += "."
     return replace(result, details=details)
+
+
+def apply_kpoint_label_to_stress_result(
+    result: ConvergenceResult,
+    point_labels: Mapping[float, str],
+) -> ConvergenceResult:
+    """Rewrite a stress :class:`ConvergenceResult` to use a k-point grid label."""
+
+    return _apply_kpoint_label(result, point_labels, quantity="Stress", delta_unit="GPa")
 
 
 def analyze_kpoint_convergence(
@@ -449,12 +511,18 @@ def analyze_convergence(
 def recommended_value(
     energy_result: ConvergenceResult,
     force_result: ConvergenceResult,
+    stress_result: ConvergenceResult | None = None,
 ) -> float | None:
-    """Return the combined recommendation from energy and force convergence results."""
+    """Return the combined recommendation from energy, force and (optionally) stress.
+
+    When ``stress_result`` is supplied it is treated as a co-equal criterion: the
+    returned value is the maximum converged value among all supplied results.
+    """
+    results: tuple[ConvergenceResult | None, ...] = (energy_result, force_result, stress_result)
     candidates = [
         result.converged_value
-        for result in (energy_result, force_result)
-        if result.converged and result.converged_value is not None
+        for result in results
+        if result is not None and result.converged and result.converged_value is not None
     ]
     if not candidates:
         return None
@@ -464,7 +532,8 @@ def recommended_value(
 def recommended_cutoff(
     energy_result: ConvergenceResult,
     force_result: ConvergenceResult,
+    stress_result: ConvergenceResult | None = None,
 ) -> float | None:
     """Backward-compatible helper name for cutoff workflows."""
 
-    return recommended_value(energy_result, force_result)
+    return recommended_value(energy_result, force_result, stress_result)

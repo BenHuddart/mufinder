@@ -22,10 +22,16 @@ def format_convergence_criteria(
     *,
     energy_threshold: float | None,
     force_threshold: float | None,
+    stress_threshold: float | None = None,
 ) -> str:
-    """Return formatted convergence criteria text."""
+    """Return formatted convergence criteria text.
 
-    if energy_threshold is None and force_threshold is None:
+    The ``stress_threshold`` argument is optional. When supplied it is appended
+    as a ``dS <= X GPa`` clause, matching the convention used by CASTEP's
+    ``GEOM_STRESS_TOL`` keyword.
+    """
+
+    if energy_threshold is None and force_threshold is None and stress_threshold is None:
         return "Not set"
 
     energy_text = (
@@ -38,7 +44,10 @@ def format_convergence_criteria(
         if force_threshold is not None
         else "dF <= n/a"
     )
-    return f"{energy_text}, {force_text}"
+    parts = [energy_text, force_text]
+    if stress_threshold is not None:
+        parts.append(f"dS <= {float(stress_threshold):.6g} GPa")
+    return ", ".join(parts)
 
 
 def format_cutoff_energy(cutoff_energy: float | None) -> str:

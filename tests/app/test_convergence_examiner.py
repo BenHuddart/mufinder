@@ -100,10 +100,10 @@ def test_convergence_examiner_emits_cutoff_adopted_signal(qapp) -> None:
     )
     dialog._run_analysis()
 
-    adopted: list[tuple[float, str, float, float]] = []
+    adopted: list[tuple[float, str, float, float, object]] = []
     dialog.cutoff_adopted.connect(
-        lambda value, method, energy_threshold, force_threshold: adopted.append(
-            (value, method, energy_threshold, force_threshold)
+        lambda value, method, energy_threshold, force_threshold, stress_threshold: adopted.append(
+            (value, method, energy_threshold, force_threshold, stress_threshold)
         )
     )
 
@@ -114,6 +114,7 @@ def test_convergence_examiner_emits_cutoff_adopted_signal(qapp) -> None:
     assert adopted[-1][1] == "delta-threshold"
     assert adopted[-1][2] == pytest.approx(0.001)
     assert adopted[-1][3] == pytest.approx(0.05)
+    assert adopted[-1][4] is None
 
 
 def test_convergence_examiner_disables_asymptotic_when_points_insufficient(qapp) -> None:
@@ -200,10 +201,10 @@ def test_convergence_examiner_kpoint_mode_uses_delta_only_and_emits_default(qapp
     dialog._run_analysis()
     assert "Recommended k-point grid" in dialog._results.toPlainText()
 
-    adopted: list[tuple[float, str, float, float]] = []
+    adopted: list[tuple[float, str, float, float, object]] = []
     dialog.default_adopted.connect(
-        lambda value, method, energy_threshold, force_threshold: adopted.append(
-            (float(value), method, float(energy_threshold), float(force_threshold))
+        lambda value, method, energy_threshold, force_threshold, stress_threshold: adopted.append(
+            (float(value), method, float(energy_threshold), float(force_threshold), stress_threshold)
         )
     )
     dialog._emit_adopted_cutoff()
@@ -352,12 +353,75 @@ def test_convergence_examiner_emit_adopted_uses_current_thresholds_when_not_cach
     dialog._energy_threshold.setValue(0.002)
     dialog._force_threshold.setValue(0.07)
 
-    defaults: list[tuple[float, str, float, float]] = []
-    cutoffs: list[tuple[float, str, float, float]] = []
-    dialog.default_adopted.connect(lambda value, method, et, ft: defaults.append((value, method, et, ft)))
-    dialog.cutoff_adopted.connect(lambda value, method, et, ft: cutoffs.append((value, method, et, ft)))
+    defaults: list[tuple] = []
+    cutoffs: list[tuple] = []
+    dialog.default_adopted.connect(lambda value, method, et, ft, st: defaults.append((value, method, et, ft, st)))
+    dialog.cutoff_adopted.connect(lambda value, method, et, ft, st: cutoffs.append((value, method, et, ft, st)))
 
     dialog._emit_adopted_cutoff()
 
-    assert defaults == [(400.0, "delta-threshold", pytest.approx(0.002), pytest.approx(0.07))]
-    assert cutoffs == [(400.0, "delta-threshold", pytest.approx(0.002), pytest.approx(0.07))]
+    assert defaults == [(400.0, "delta-threshold", pytest.approx(0.002), pytest.approx(0.07), None)]
+    assert cutoffs == [(400.0, "delta-threshold", pytest.approx(0.002), pytest.approx(0.07), None)]
+
+
+def _completed_state_with_stress(energy: float, force: float, stress: float | None) -> CutoffRunState:
+    return CutoffRunState(
+        status="completed", total_energy=energy, max_force=force, max_stress=stress
+    )
+
+
+def test_convergence_examiner_stress_tickbox_disabled_when_any_row_lacks_stress(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state_with_stress(-10.0, 0.30, 1.5),
+            400.0: _completed_state_with_stress(-10.01, 0.20, None),
+            500.0: _completed_state_with_stress(-10.0105, 0.19, 0.4),
+        },
+        num_atoms=2,
+    )
+
+    assert dialog._include_stress.isEnabled() is False
+    assert dialog._stress_threshold.isEnabled() is False
+    assert "CALCULATE_STRESS" in dialog._include_stress.toolTip()
+
+
+def test_convergence_examiner_stress_tickbox_enables_when_all_rows_have_stress(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state_with_stress(-10.0, 0.30, 1.5),
+            400.0: _completed_state_with_stress(-10.01, 0.20, 0.5),
+            500.0: _completed_state_with_stress(-10.0105, 0.19, 0.42),
+        },
+        num_atoms=2,
+    )
+
+    assert dialog._include_stress.isEnabled() is True
+    assert dialog._stress_threshold.isEnabled() is False  # off until ticked
+    dialog._include_stress.setChecked(True)
+    assert dialog._stress_threshold.isEnabled() is True
+
+
+def test_convergence_examiner_runs_stress_and_passes_through_signal(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state_with_stress(-10.0, 0.30, 1.5),
+            400.0: _completed_state_with_stress(-10.01, 0.20, 0.5),
+            500.0: _completed_state_with_stress(-10.0105, 0.19, 0.42),
+        },
+        num_atoms=2,
+    )
+    dialog._include_stress.setChecked(True)
+    dialog._stress_threshold.setValue(0.1)
+    dialog._method_combo.setCurrentText("Delta-Threshold")
+
+    dialog._run_analysis()
+
+    assert dialog._stress_result is not None
+    assert "Stress result" in dialog._results.toPlainText()
+
+    adopted: list[tuple] = []
+    dialog.cutoff_adopted.connect(lambda *args: adopted.append(args))
+    dialog._emit_adopted_cutoff()
+
+    assert adopted
+    assert adopted[-1][-1] == pytest.approx(0.1)

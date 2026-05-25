@@ -977,3 +977,20 @@ def test_convergence_widget_displays_project_defaults(qapp) -> None:
     assert widget._project_default_cutoff.text() == "550 eV"
     assert widget._project_default_method.text() == "Asymptotic Extrapolation"
     assert widget._project_default_criteria.text() == "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang"
+
+
+def test_convergence_widget_project_defaults_include_stress_threshold(qapp) -> None:
+    widget = ConvergenceWidget()
+
+    widget.set_project_defaults(
+        cutoff_energy=550.0,
+        cutoff_method="asymptotic",
+        energy_threshold=0.001,
+        force_threshold=0.05,
+        stress_threshold=0.1,
+    )
+
+    assert (
+        widget._project_default_criteria.text()
+        == "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang, dS <= 0.1 GPa"
+    )

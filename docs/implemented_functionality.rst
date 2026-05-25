@@ -519,6 +519,14 @@ The convergence stage now includes a cutoff convergence panel with:
 - A dedicated convergence-examiner dialog with configurable thresholds and energy-method selection.
 - Supported energy methods include Delta-threshold (successive per-atom energy differences), derivative-based analysis (``dE/dE_cutoff``), and asymptotic extrapolation toward ``E_inf`` with fit-quality safeguards.
 - Force convergence analysis using delta-threshold checks on successive ``max_force`` values.
+- Optional max-stress convergence analysis (delta-threshold over ``max_stress`` values, default
+  threshold ``0.1 GPa`` to mirror ``GEOM_STRESS_TOL``). Exposed in the examiner via an
+  ``Include stress`` tickbox that is hard-disabled until every completed sweep row reports a
+  stress (i.e. every job was run with ``CALCULATE_STRESS=true``). When enabled, max stress is
+  plotted on a secondary y-axis sharing the force subplot, and the stress converged value
+  participates in the combined ``recommended_value`` alongside energy and force.
+- ``CALCULATE_STRESS`` exposed as a per-workflow ``flag`` parameter in both the cutoff and
+  k-point convergence parameter dialogs (basic visibility), defaulting to ``false``.
 - Method help text available directly in the examiner dialog via an info action.
 - Persisted examiner state (selected method, thresholds, text output, and plot inputs) so results and plots can be reopened without recomputation.
 - Project-default cutoff display inside the convergence panel, including both the stored default cutoff value and the method used to determine that default.
@@ -541,7 +549,9 @@ The convergence stage now also includes a dedicated k-point convergence panel wi
 - Cell-sensitive generation tracking: the panel records the simulation cell used for grid generation and warns if the simulation cell changes afterwards.
 - Shared CASTEP parameter form with per-grid override support, equivalent to cutoff convergence behavior.
 - Automatic propagation of project default cutoff energy into k-point convergence defaults when available.
-- K-point convergence examiner plotting total energy and max force vs number of k-points.
+- K-point convergence examiner plotting total energy and max force vs number of k-points,
+  with optional max-stress secondary axis on the force subplot when ``CALCULATE_STRESS`` was
+  enabled across every grid in the sweep.
 - Hover tooltips on plotted points that show the originating Monkhorst-Pack grid.
 - Delta-threshold-only convergence decision for k-point studies (no derivative/asymptotic method selection).
 - Persisted project defaults for adopted k-point recommendations, including method, thresholds, and the cell identifier used for the recommendation.

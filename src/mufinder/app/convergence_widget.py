@@ -412,6 +412,7 @@ class CutoffConvergenceWidget(QWidget):
         cutoff_method: str | None,
         energy_threshold: float | None,
         force_threshold: float | None,
+        stress_threshold: float | None = None,
     ) -> None:
         """Display project-level default cutoff settings in the convergence panel."""
         self._project_default_cutoff.setText(format_cutoff_energy(cutoff_energy))
@@ -420,6 +421,7 @@ class CutoffConvergenceWidget(QWidget):
             format_convergence_criteria(
                 energy_threshold=energy_threshold,
                 force_threshold=force_threshold,
+                stress_threshold=stress_threshold,
             )
         )
 

@@ -9,6 +9,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -32,8 +33,17 @@ from mufinder.science.convergence_analysis import (
     ConvergenceResult,
     analyze_convergence,
     analyze_kpoint_convergence,
+    apply_kpoint_label_to_stress_result,
+    delta_threshold_stress,
     recommended_value,
 )
+
+
+_STRESS_DISABLED_TOOLTIP = (
+    "All completed sweep jobs must have CALCULATE_STRESS=true (and report a max stress) "
+    "to enable stress convergence analysis."
+)
+_STRESS_COLOR = "#d97706"
 
 
 _METHOD_OPTIONS = {
@@ -62,8 +72,8 @@ _METHOD_DOCS = {
 class ConvergenceExaminerDialog(QDialog):
     """Analyze completed runs and recommend a converged sweep value."""
 
-    default_adopted = Signal(object, str, float, float)
-    cutoff_adopted = Signal(float, str, float, float)
+    default_adopted = Signal(object, str, float, float, object)
+    cutoff_adopted = Signal(float, str, float, float, object)
     state_changed = Signal(dict)
 
     @property
@@ -104,10 +114,12 @@ class ConvergenceExaminerDialog(QDialog):
         self._completed = self._collect_completed(sweep_data)
         self._energy_result: ConvergenceResult | None = None
         self._force_result: ConvergenceResult | None = None
+        self._stress_result: ConvergenceResult | None = None
         self._recommended_value: float | None = None
         self._selected_method_for_recommendation: str | None = None
         self._energy_threshold_for_recommendation: float | None = None
         self._force_threshold_for_recommendation: float | None = None
+        self._stress_threshold_for_recommendation: float | None = None
         self._last_plot_data: dict[str, Any] | None = None
 
         self._energy_threshold = DecimalLineEdit(self)
@@ -121,6 +133,20 @@ class ConvergenceExaminerDialog(QDialog):
         self._force_threshold.setDecimals(6)
         self._force_threshold.setSingleStep(0.01)
         self._force_threshold.setValue(0.05)
+
+        self._include_stress = QCheckBox("Stress threshold (GPa)", self)
+        self._include_stress.setChecked(False)
+        # Match the surrounding QGroupBox frame so the checkbox label does not
+        # render with a different (default widget) background colour.
+        self._include_stress.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._include_stress.setAutoFillBackground(False)
+        self._include_stress.setStyleSheet("QCheckBox { background: transparent; }")
+        self._stress_threshold = DecimalLineEdit(self)
+        self._stress_threshold.setRange(0.0001, 100.0)
+        self._stress_threshold.setDecimals(6)
+        self._stress_threshold.setSingleStep(0.05)
+        self._stress_threshold.setValue(0.1)
+        self._stress_threshold.setEnabled(False)
 
         self._method_combo = QComboBox(self)
         for label in _METHOD_OPTIONS:
@@ -180,6 +206,8 @@ class ConvergenceExaminerDialog(QDialog):
         criteria_form.setVerticalSpacing(12)
         criteria_form.addRow("Energy threshold (eV/atom)", self._energy_threshold)
         criteria_form.addRow("Force threshold (eV/Ang)", self._force_threshold)
+        criteria_form.addRow(self._include_stress, self._stress_threshold)
+        self._stress_threshold.setToolTip("Stress convergence threshold (GPa). Mirrors GEOM_STRESS_TOL.")
         layout.addWidget(criteria_group)
 
         method_row = QHBoxLayout()
@@ -203,6 +231,11 @@ class ConvergenceExaminerDialog(QDialog):
         self._adopt_button.clicked.connect(self._emit_adopted_cutoff)
         self._canvas.mpl_connect("motion_notify_event", self._on_plot_hover)
         self._canvas.mpl_connect("figure_leave_event", self._on_plot_leave)
+        self._include_stress.toggled.connect(self._on_include_stress_toggled)
+
+    def _on_include_stress_toggled(self, checked: bool) -> None:
+        self._stress_threshold.setEnabled(bool(checked))
+        self._emit_state_changed()
 
     def _sweep_point_tooltip(self, x_value: float) -> str:
         if self._sweep_kind == "cutoff":
@@ -260,14 +293,16 @@ class ConvergenceExaminerDialog(QDialog):
         cutoffs = list(self._last_plot_data.get("cutoffs", []))
         energies = list(self._last_plot_data.get("energies", []))
         forces = list(self._last_plot_data.get("forces", []))
+        stresses = list(self._last_plot_data.get("stresses", []) or [])
         if not cutoffs:
             return
 
         x_range = max(cutoffs) - min(cutoffs) if len(cutoffs) > 1 else max(abs(cutoffs[0]), 1.0)
         x_tol = max(x_range * 0.03, 0.5)
 
+        axis_label = event.inaxes.get_ylabel()
         points: list[tuple[float, float, str]] = []
-        if event.inaxes.get_ylabel() == "Energy (eV)":
+        if axis_label == "Energy (eV)":
             if self._sweep_kind == "kpoint":
                 points = [
                     (x_value, y_value, self._sweep_point_tooltip(x_value))
@@ -278,6 +313,11 @@ class ConvergenceExaminerDialog(QDialog):
                     (x_value, y_value, f"{self._sweep_point_tooltip(x_value)}\nEnergy: {y_value:.12g} eV")
                     for x_value, y_value in zip(cutoffs, energies, strict=False)
                 ]
+        elif axis_label == "Max stress (GPa)" and stresses and len(stresses) == len(cutoffs):
+            points = [
+                (x_value, y_value, f"{self._sweep_point_tooltip(x_value)}\nMax stress: {y_value:.6g} GPa")
+                for x_value, y_value in zip(cutoffs, stresses, strict=False)
+            ]
         else:
             if self._sweep_kind == "kpoint":
                 points = [
@@ -355,6 +395,21 @@ class ConvergenceExaminerDialog(QDialog):
             forces.append(float(state.max_force))
         return cutoffs, forces
 
+    def _stress_series(self) -> tuple[list[float], list[float]]:
+        cutoffs: list[float] = []
+        stresses: list[float] = []
+        for cutoff, state in self._completed:
+            if state.max_stress is None:
+                continue
+            cutoffs.append(cutoff)
+            stresses.append(float(state.max_stress))
+        return cutoffs, stresses
+
+    def _stress_available_for_all_completed(self) -> bool:
+        if not self._completed:
+            return False
+        return all(state.max_stress is not None for _cutoff, state in self._completed)
+
     def _update_method_availability(self) -> None:
         cutoffs, energies = self._energy_series()
         count = len(cutoffs)
@@ -392,6 +447,13 @@ class ConvergenceExaminerDialog(QDialog):
         can_run = len(cutoffs) >= 2 and len(force_cutoffs) >= 2 and self._num_atoms > 0
         self._run_button.setEnabled(can_run)
 
+        stress_enabled = self._stress_available_for_all_completed() and len(cutoffs) >= 2
+        if not stress_enabled and self._include_stress.isChecked():
+            self._include_stress.setChecked(False)
+        self._include_stress.setEnabled(stress_enabled)
+        self._include_stress.setToolTip("" if stress_enabled else _STRESS_DISABLED_TOOLTIP)
+        self._stress_threshold.setEnabled(stress_enabled and self._include_stress.isChecked())
+
         if not can_run:
             self._adopt_button.setEnabled(False)
             self._adopt_button.setText(
@@ -403,11 +465,13 @@ class ConvergenceExaminerDialog(QDialog):
     def _write_initial_summary(self) -> None:
         energy_cutoffs, _energies = self._energy_series()
         force_cutoffs, _forces = self._force_series()
+        stress_cutoffs, _stresses = self._stress_series()
 
         lines = [
             f"Completed points: {len(self._completed)}",
             f"Energy datapoints available: {len(energy_cutoffs)}",
             f"Force datapoints available: {len(force_cutoffs)}",
+            f"Stress datapoints available: {len(stress_cutoffs)}",
             f"Host atoms used for per-atom normalization: {self._num_atoms}",
         ]
 
@@ -539,6 +603,8 @@ class ConvergenceExaminerDialog(QDialog):
         return {
             "energy_threshold": float(self._energy_threshold.value()),
             "force_threshold": float(self._force_threshold.value()),
+            "stress_threshold": float(self._stress_threshold.value()),
+            "include_stress": bool(self._include_stress.isChecked()),
             "method": self._selected_method(),
             "sweep_kind": self._sweep_kind,
             "results_text": self._results.toPlainText(),
@@ -547,8 +613,10 @@ class ConvergenceExaminerDialog(QDialog):
             "selected_method_for_recommendation": self._selected_method_for_recommendation,
             "energy_threshold_for_recommendation": self._energy_threshold_for_recommendation,
             "force_threshold_for_recommendation": self._force_threshold_for_recommendation,
+            "stress_threshold_for_recommendation": self._stress_threshold_for_recommendation,
             "energy_result": self._serialize_result(self._energy_result),
             "force_result": self._serialize_result(self._force_result),
+            "stress_result": self._serialize_result(self._stress_result),
             "plot_data": dict(self._last_plot_data or {}),
         }
 
@@ -561,6 +629,7 @@ class ConvergenceExaminerDialog(QDialog):
 
         energy_threshold_raw = state.get("energy_threshold")
         force_threshold_raw = state.get("force_threshold")
+        stress_threshold_raw = state.get("stress_threshold")
         if energy_threshold_raw is not None:
             try:
                 self._energy_threshold.setValue(float(energy_threshold_raw))
@@ -571,6 +640,16 @@ class ConvergenceExaminerDialog(QDialog):
                 self._force_threshold.setValue(float(force_threshold_raw))
             except (TypeError, ValueError):
                 pass
+        if stress_threshold_raw is not None:
+            try:
+                self._stress_threshold.setValue(float(stress_threshold_raw))
+            except (TypeError, ValueError):
+                pass
+
+        include_stress_raw = state.get("include_stress")
+        if isinstance(include_stress_raw, bool) and self._include_stress.isEnabled():
+            self._include_stress.setChecked(include_stress_raw)
+            self._stress_threshold.setEnabled(include_stress_raw)
 
         method_raw = state.get("method")
         if isinstance(method_raw, str) and method_raw.strip():
@@ -578,6 +657,7 @@ class ConvergenceExaminerDialog(QDialog):
 
         self._energy_result = self._deserialize_result(state.get("energy_result"))
         self._force_result = self._deserialize_result(state.get("force_result"))
+        self._stress_result = self._deserialize_result(state.get("stress_result"))
 
         recommended_raw = state.get("recommended_value", state.get("recommended_cutoff"))
         if recommended_raw is not None:
@@ -613,6 +693,15 @@ class ConvergenceExaminerDialog(QDialog):
         else:
             self._force_threshold_for_recommendation = None
 
+        stress_threshold_for_rec_raw = state.get("stress_threshold_for_recommendation")
+        if stress_threshold_for_rec_raw is not None:
+            try:
+                self._stress_threshold_for_recommendation = float(stress_threshold_for_rec_raw)
+            except (TypeError, ValueError):
+                self._stress_threshold_for_recommendation = None
+        else:
+            self._stress_threshold_for_recommendation = None
+
         text_raw = state.get("results_text")
         if isinstance(text_raw, str) and text_raw.strip():
             self._results.setPlainText(text_raw)
@@ -623,22 +712,41 @@ class ConvergenceExaminerDialog(QDialog):
                 cutoffs = [float(value) for value in plot_data.get("cutoffs", [])]
                 energies = [float(value) for value in plot_data.get("energies", [])]
                 forces = [float(value) for value in plot_data.get("forces", [])]
+                stresses_raw = plot_data.get("stresses", []) or []
+                stresses = [float(value) for value in stresses_raw]
                 energy_threshold = float(plot_data.get("energy_threshold", self._energy_threshold.value()))
                 force_threshold = float(plot_data.get("force_threshold", self._force_threshold.value()))
+                stress_threshold_raw = plot_data.get("stress_threshold")
+                stress_threshold = (
+                    float(stress_threshold_raw) if stress_threshold_raw is not None else None
+                )
             except (TypeError, ValueError):
                 cutoffs = []
                 energies = []
                 forces = []
+                stresses = []
+                stress_threshold = None
 
             if cutoffs and len(cutoffs) == len(energies) == len(forces):
+                use_stress = bool(stresses) and len(stresses) == len(cutoffs) and stress_threshold is not None
                 self._last_plot_data = {
                     "cutoffs": list(cutoffs),
                     "energies": list(energies),
                     "forces": list(forces),
+                    "stresses": list(stresses) if use_stress else [],
                     "energy_threshold": energy_threshold,
                     "force_threshold": force_threshold,
+                    "stress_threshold": stress_threshold if use_stress else None,
                 }
-                self._update_plot(cutoffs, energies, forces, energy_threshold, force_threshold)
+                self._update_plot(
+                    cutoffs,
+                    energies,
+                    forces,
+                    energy_threshold,
+                    force_threshold,
+                    stresses=stresses if use_stress else None,
+                    stress_threshold=stress_threshold if use_stress else None,
+                )
 
         if self._recommended_value is not None:
             self._adopt_button.setEnabled(True)
@@ -692,6 +800,20 @@ class ConvergenceExaminerDialog(QDialog):
         energy_threshold = float(self._energy_threshold.value())
         force_threshold = float(self._force_threshold.value())
 
+        include_stress = self._include_stress.isEnabled() and self._include_stress.isChecked()
+        stresses: list[float] = []
+        stress_threshold: float | None = None
+        if include_stress:
+            stress_by_cutoff = {cutoff: stress for cutoff, stress in zip(*self._stress_series(), strict=False)}
+            try:
+                stresses = [stress_by_cutoff[cutoff] for cutoff in cutoffs]
+            except KeyError:
+                # A completed row used for energy/force does not have stress; fall back to no-stress run.
+                include_stress = False
+                stresses = []
+            else:
+                stress_threshold = float(self._stress_threshold.value())
+
         try:
             if self._sweep_kind == "kpoint":
                 energy_result, force_result = analyze_kpoint_convergence(
@@ -717,24 +839,40 @@ class ConvergenceExaminerDialog(QDialog):
             QMessageBox.warning(self, "Convergence analysis failed", str(exc))
             return
 
+        stress_result: ConvergenceResult | None = None
+        if include_stress and stress_threshold is not None:
+            stress_result = delta_threshold_stress(cutoffs, stresses, threshold=stress_threshold)
+            if self._sweep_kind == "kpoint":
+                stress_result = apply_kpoint_label_to_stress_result(stress_result, self._point_labels)
+
         self._energy_result = energy_result
         self._force_result = force_result
-        self._recommended_value = recommended_value(energy_result, force_result)
+        self._stress_result = stress_result
+        self._recommended_value = recommended_value(energy_result, force_result, stress_result)
         self._selected_method_for_recommendation = method
         self._energy_threshold_for_recommendation = energy_threshold
         self._force_threshold_for_recommendation = force_threshold
+        self._stress_threshold_for_recommendation = stress_threshold if include_stress else None
 
         lines = [
             f"Energy method: {method}",
             f"Energy threshold: {energy_threshold:.6g} eV/atom",
             f"Force threshold: {force_threshold:.6g} eV/Ang",
-            "",
-            "Energy result:",
-            energy_result.details,
-            "",
-            "Force result:",
-            force_result.details,
         ]
+        if include_stress and stress_threshold is not None:
+            lines.append(f"Stress threshold: {stress_threshold:.6g} GPa")
+        lines.extend(
+            [
+                "",
+                "Energy result:",
+                energy_result.details,
+                "",
+                "Force result:",
+                force_result.details,
+            ]
+        )
+        if stress_result is not None:
+            lines.extend(["", "Stress result:", stress_result.details])
 
         if energy_result.fallback_suggestion:
             lines.extend(["", f"Energy method fallback suggestion: {energy_result.fallback_suggestion}"])
@@ -756,10 +894,20 @@ class ConvergenceExaminerDialog(QDialog):
             "cutoffs": list(cutoffs),
             "energies": list(energies),
             "forces": list(forces),
+            "stresses": list(stresses) if include_stress else [],
             "energy_threshold": energy_threshold,
             "force_threshold": force_threshold,
+            "stress_threshold": stress_threshold,
         }
-        self._update_plot(cutoffs, energies, forces, energy_threshold, force_threshold)
+        self._update_plot(
+            cutoffs,
+            energies,
+            forces,
+            energy_threshold,
+            force_threshold,
+            stresses=stresses if include_stress else None,
+            stress_threshold=stress_threshold if include_stress else None,
+        )
 
         if self._recommended_value is None:
             self._adopt_button.setEnabled(False)
@@ -790,6 +938,9 @@ class ConvergenceExaminerDialog(QDialog):
         forces: list[float],
         energy_threshold: float,
         force_threshold: float,
+        *,
+        stresses: list[float] | None = None,
+        stress_threshold: float | None = None,
     ) -> None:
         palette = current_palette()
         recommended_line = palette.text_muted
@@ -828,15 +979,22 @@ class ConvergenceExaminerDialog(QDialog):
         self._apply_axis_theme(energy_ax)
         self._apply_legend_theme(energy_ax)
 
-        force_ax.plot(cutoffs, forces, marker="o", linestyle="-", color="#b91c1c", label="Max force")
+        force_line, = force_ax.plot(
+            cutoffs, forces, marker="o", linestyle="-", color="#b91c1c", label="Max force"
+        )
+        force_handles = [force_line]
         if self._force_result and self._force_result.converged_value is not None:
-            force_ax.axvline(
+            line = force_ax.axvline(
                 self._force_result.converged_value,
                 color="#059669",
                 linestyle="--",
                 label="Force convergence",
             )
-        force_ax.axhline(force_threshold, color=threshold_line, linestyle=":", label="Force threshold")
+            force_handles.append(line)
+        threshold_handle = force_ax.axhline(
+            force_threshold, color=threshold_line, linestyle=":", label="Force threshold"
+        )
+        force_handles.append(threshold_handle)
         if self._recommended_value is not None:
             force_ax.axvline(self._recommended_value, color=recommended_line, linestyle="-", alpha=0.55)
 
@@ -845,13 +1003,69 @@ class ConvergenceExaminerDialog(QDialog):
             labelpad=8,
         )
         force_ax.set_ylabel("Max force (eV/Ang)")
-        force_ax.legend(loc="best")
+        force_ax.yaxis.label.set_color("#b91c1c")
+        force_ax.tick_params(axis="y", colors="#b91c1c", labelcolor="#b91c1c")
         self._apply_axis_theme(force_ax)
+        # The shared theme repaints the y-axis label; re-apply force color afterwards.
+        force_ax.yaxis.label.set_color("#b91c1c")
+        force_ax.tick_params(axis="y", colors="#b91c1c", labelcolor="#b91c1c")
+
+        stress_handles: list[Any] = []
+        if stresses:
+            stress_ax = force_ax.twinx()
+            stress_line, = stress_ax.plot(
+                cutoffs,
+                stresses,
+                marker="s",
+                linestyle="-",
+                color=_STRESS_COLOR,
+                label="Max stress",
+            )
+            stress_handles.append(stress_line)
+            if self._stress_result and self._stress_result.converged_value is not None:
+                stress_handles.append(
+                    stress_ax.axvline(
+                        self._stress_result.converged_value,
+                        color="#15803d",
+                        linestyle="--",
+                        alpha=0.85,
+                        label="Stress convergence",
+                    )
+                )
+            if stress_threshold is not None:
+                stress_handles.append(
+                    stress_ax.axhline(
+                        stress_threshold,
+                        color=_STRESS_COLOR,
+                        linestyle=":",
+                        alpha=0.85,
+                        label="Stress threshold",
+                    )
+                )
+            stress_ax.set_ylabel("Max stress (GPa)")
+            stress_ax.yaxis.label.set_color(_STRESS_COLOR)
+            stress_ax.tick_params(axis="y", colors=_STRESS_COLOR, labelcolor=_STRESS_COLOR)
+            for spine in stress_ax.spines.values():
+                spine.set_color(current_palette().border)
+            stress_ax.spines["right"].set_color(_STRESS_COLOR)
+
+        handles = force_handles + stress_handles
+        labels = [handle.get_label() for handle in handles]
+        force_ax.legend(handles, labels, loc="best")
         self._apply_legend_theme(force_ax)
 
         # Mention the active thresholds in the axes titles for quick scanning.
         energy_ax.set_title(f"Energy convergence (threshold {energy_threshold:.3g} eV/atom)", pad=10)
-        force_ax.set_title(f"Force convergence (delta threshold {force_threshold:.3g} eV/Ang)", pad=10)
+        if stresses and stress_threshold is not None:
+            force_ax.set_title(
+                "Force / stress convergence "
+                f"(dF ≤ {force_threshold:.3g} eV/Ang, dS ≤ {stress_threshold:.3g} GPa)",
+                pad=10,
+            )
+        else:
+            force_ax.set_title(
+                f"Force convergence (delta threshold {force_threshold:.3g} eV/Ang)", pad=10
+            )
 
         self._canvas.draw_idle()
 
@@ -865,7 +1079,12 @@ class ConvergenceExaminerDialog(QDialog):
         force_threshold = self._force_threshold_for_recommendation
         if force_threshold is None:
             force_threshold = float(self._force_threshold.value())
+        stress_threshold = self._stress_threshold_for_recommendation
         self._emit_state_changed()
-        self.default_adopted.emit(float(self._recommended_value), method, energy_threshold, force_threshold)
+        self.default_adopted.emit(
+            float(self._recommended_value), method, energy_threshold, force_threshold, stress_threshold
+        )
         if self._sweep_kind == "cutoff":
-            self.cutoff_adopted.emit(float(self._recommended_value), method, energy_threshold, force_threshold)
+            self.cutoff_adopted.emit(
+                float(self._recommended_value), method, energy_threshold, force_threshold, stress_threshold
+            )

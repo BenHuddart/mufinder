@@ -2572,12 +2572,14 @@ class MainWindow(QMainWindow):
             cutoff_method=self._document.project.recommended_cutoff_method,
             energy_threshold=self._document.project.recommended_cutoff_energy_threshold,
             force_threshold=self._document.project.recommended_cutoff_force_threshold,
+            stress_threshold=self._document.project.recommended_cutoff_stress_threshold,
         )
         self._kpoint_convergence_view.set_project_defaults(
             kpoint_grid=self._document.project.recommended_kpoint_grid,
             kpoint_method=self._document.project.recommended_kpoint_method,
             energy_threshold=self._document.project.recommended_kpoint_energy_threshold,
             force_threshold=self._document.project.recommended_kpoint_force_threshold,
+            stress_threshold=self._document.project.recommended_kpoint_stress_threshold,
         )
         self._kpoint_convergence_view.set_cutoff_default(
             self._document.project.recommended_cutoff_energy
@@ -3502,6 +3504,7 @@ class MainWindow(QMainWindow):
         energy_threshold: float,
         force_threshold: float,
         simulation_cell_structure_id: str | None,
+        stress_threshold: float | None = None,
     ) -> dict[str, object] | None:
         if self._document is None:
             return None
@@ -3516,7 +3519,7 @@ class MainWindow(QMainWindow):
         if not isinstance(plot_data, Mapping):
             return None
 
-        return {
+        snapshot: dict[str, object] = {
             "host_structure_id": host_structure_id,
             "simulation_cell_structure_id": simulation_cell_structure_id,
             "default_value": float(cutoff_energy),
@@ -3525,6 +3528,9 @@ class MainWindow(QMainWindow):
             "force_threshold": float(force_threshold),
             "plot_data": dict(plot_data),
         }
+        if stress_threshold is not None:
+            snapshot["stress_threshold"] = float(stress_threshold)
+        return snapshot
 
     def _build_kpoint_overview_snapshot(
         self,
@@ -3535,6 +3541,7 @@ class MainWindow(QMainWindow):
         force_threshold: float,
         simulation_cell_structure_id: str | None,
         labels: Mapping[float, str],
+        stress_threshold: float | None = None,
     ) -> dict[str, object] | None:
         if self._document is None:
             return None
@@ -3550,7 +3557,7 @@ class MainWindow(QMainWindow):
             return None
 
         serialized_labels = {str(float(key)): value for key, value in labels.items()}
-        return {
+        snapshot: dict[str, object] = {
             "host_structure_id": host_structure_id,
             "simulation_cell_structure_id": simulation_cell_structure_id,
             "default_value": [int(grid[0]), int(grid[1]), int(grid[2])],
@@ -3560,6 +3567,9 @@ class MainWindow(QMainWindow):
             "plot_data": dict(plot_data),
             "point_labels": serialized_labels,
         }
+        if stress_threshold is not None:
+            snapshot["stress_threshold"] = float(stress_threshold)
+        return snapshot
 
     def _on_tree_selection_changed(self) -> None:
         selected_items = self._project_tree.selectedItems()
@@ -5230,6 +5240,7 @@ class MainWindow(QMainWindow):
         method: str,
         energy_threshold: float,
         force_threshold: float,
+        stress_threshold: float | None = None,
     ) -> None:
         if self._document is None:
             return
@@ -5243,6 +5254,7 @@ class MainWindow(QMainWindow):
             method=method,
             energy_threshold=energy_threshold,
             force_threshold=force_threshold,
+            stress_threshold=stress_threshold,
             cell_id=(
                 definition_cell_id
                 if definition_cell_id is not None
@@ -5253,6 +5265,10 @@ class MainWindow(QMainWindow):
         self._document.ui_state["default_cut_off_energy_method"] = method
         self._document.ui_state["default_cut_off_energy_threshold"] = float(energy_threshold)
         self._document.ui_state["default_cut_off_force_threshold"] = float(force_threshold)
+        if stress_threshold is None:
+            self._document.ui_state.pop("default_cut_off_stress_threshold", None)
+        else:
+            self._document.ui_state["default_cut_off_stress_threshold"] = float(stress_threshold)
         self._store_convergence_overview_snapshot(
             "cutoff",
             self._build_cutoff_overview_snapshot(
@@ -5261,6 +5277,7 @@ class MainWindow(QMainWindow):
                 energy_threshold=float(energy_threshold),
                 force_threshold=float(force_threshold),
                 simulation_cell_structure_id=definition_cell_id,
+                stress_threshold=float(stress_threshold) if stress_threshold is not None else None,
             ),
         )
         self._convergence_view.set_project_defaults(
@@ -5268,6 +5285,7 @@ class MainWindow(QMainWindow):
             cutoff_method=method,
             energy_threshold=float(energy_threshold),
             force_threshold=float(force_threshold),
+            stress_threshold=float(stress_threshold) if stress_threshold is not None else None,
         )
         self._kpoint_convergence_view.set_cutoff_default(float(cutoff_energy))
         self._refresh_convergence_overview()
@@ -8445,6 +8463,7 @@ class MainWindow(QMainWindow):
                 status=status_value,
                 total_energy=self._total_energy_for_job(job.id),
                 max_force=self._max_force_for_job(job.id),
+                max_stress=self._max_stress_for_job(job.id),
                 job_id=job.id,
                 job_label=job.label,
             )
@@ -8843,7 +8862,9 @@ class MainWindow(QMainWindow):
             initial_state=persisted_state,
             parent=self,
         )
-        dialog.default_adopted.connect(lambda value, method, et, ft: self._on_kpoint_default_adopted(value, method, et, ft, labels))
+        dialog.default_adopted.connect(
+            lambda value, method, et, ft, st: self._on_kpoint_default_adopted(value, method, et, ft, labels, st)
+        )
         dialog.state_changed.connect(self._on_kpoint_examiner_state_changed)
         dialog.exec()
         self._on_kpoint_examiner_state_changed(dialog.state_snapshot())
@@ -8865,6 +8886,7 @@ class MainWindow(QMainWindow):
         energy_threshold: float,
         force_threshold: float,
         labels: Mapping[float, str],
+        stress_threshold: float | None = None,
     ) -> None:
         if self._document is None:
             return
@@ -8894,17 +8916,23 @@ class MainWindow(QMainWindow):
             method=method,
             energy_threshold=energy_threshold,
             force_threshold=force_threshold,
+            stress_threshold=stress_threshold,
             cell_id=(
                 definition_cell_id
                 if definition_cell_id is not None
                 else (str(self._document.project.host_structure_id) if self._document.project.host_structure_id else None)
             ),
         )
+        if stress_threshold is None:
+            self._document.ui_state.pop("default_kpoint_stress_threshold", None)
+        else:
+            self._document.ui_state["default_kpoint_stress_threshold"] = float(stress_threshold)
         self._kpoint_convergence_view.set_project_defaults(
             kpoint_grid=grid,
             kpoint_method=method,
             energy_threshold=energy_threshold,
             force_threshold=force_threshold,
+            stress_threshold=float(stress_threshold) if stress_threshold is not None else None,
         )
         self._refresh_pristine_relaxation_defaults()
         self._refresh_muon_relaxation_defaults()
@@ -8918,6 +8946,7 @@ class MainWindow(QMainWindow):
                 force_threshold=float(force_threshold),
                 simulation_cell_structure_id=definition_cell_id,
                 labels=labels,
+                stress_threshold=float(stress_threshold) if stress_threshold is not None else None,
             ),
         )
         self._refresh_convergence_overview()
@@ -14260,6 +14289,7 @@ class MainWindow(QMainWindow):
                 status=status_value,
                 total_energy=self._total_energy_for_job(job.id),
                 max_force=self._max_force_for_job(job.id),
+                max_stress=self._max_stress_for_job(job.id),
                 job_id=job.id,
                 job_label=job.label,
             )
@@ -14297,6 +14327,22 @@ class MainWindow(QMainWindow):
         if result is None:
             return None
         return self._extract_max_force(result.data)
+
+    def _max_stress_for_job(self, job_id: UUID) -> float | None:
+        if self._document is None:
+            return None
+
+        runs = [run for run in self._document.runs.values() if run.job_id == job_id]
+        if not runs:
+            return None
+
+        latest_run = max(runs, key=lambda run: run.run_index)
+        if latest_run.result_id is None:
+            return None
+        result = self._document.results.get(latest_run.result_id)
+        if result is None:
+            return None
+        return self._extract_max_stress(result.data)
 
     @staticmethod
     def _extract_total_energy(payload: object) -> float | None:
@@ -14355,6 +14401,37 @@ class MainWindow(QMainWindow):
         if isinstance(forces, dict):
             for key in ("max", "max_force", "maximum"):
                 value = parse_numeric(forces.get(key))
+                if value is not None:
+                    return value
+
+        return None
+
+    @staticmethod
+    def _extract_max_stress(payload: object) -> float | None:
+        def parse_numeric(candidate: object) -> float | None:
+            if isinstance(candidate, bool):
+                return None
+            if isinstance(candidate, (int, float)):
+                numeric = float(candidate)
+                if isnan(numeric):
+                    return None
+                return numeric
+            if isinstance(candidate, dict):
+                return parse_numeric(candidate.get("value"))
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        for key in ("max_stress", "maximum_stress", "max_stress_gpa"):
+            value = parse_numeric(payload.get(key))
+            if value is not None:
+                return value
+
+        stress = payload.get("stress")
+        if isinstance(stress, dict):
+            for key in ("max", "max_stress", "maximum"):
+                value = parse_numeric(stress.get(key))
                 if value is not None:
                     return value
 

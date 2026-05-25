@@ -58,6 +58,7 @@ class SweepPointRunState:
     status: str = ""
     total_energy: float | None = None
     max_force: float | None = None
+    max_stress: float | None = None
     job_id: UUID | None = None
     job_label: str | None = None
 

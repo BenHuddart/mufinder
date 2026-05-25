@@ -1764,6 +1764,7 @@ class ProjectService:
         method: str | None = None,
         energy_threshold: float | None = None,
         force_threshold: float | None = None,
+        stress_threshold: float | None = None,
         cell_id: str | None = None,
     ) -> None:
         """Persist a project-wide recommended cutoff energy for future workflows."""
@@ -1776,6 +1777,9 @@ class ProjectService:
         )
         document.project.recommended_cutoff_force_threshold = (
             float(force_threshold) if force_threshold is not None else None
+        )
+        document.project.recommended_cutoff_stress_threshold = (
+            float(stress_threshold) if stress_threshold is not None else None
         )
         document.project.recommended_cutoff_cell_id = (
             str(cell_id).strip() if cell_id is not None and str(cell_id).strip() else None
@@ -1801,6 +1805,7 @@ class ProjectService:
                     "recommended_cutoff_method": document.project.recommended_cutoff_method,
                     "recommended_cutoff_energy_threshold": document.project.recommended_cutoff_energy_threshold,
                     "recommended_cutoff_force_threshold": document.project.recommended_cutoff_force_threshold,
+                    "recommended_cutoff_stress_threshold": document.project.recommended_cutoff_stress_threshold,
                     "recommended_cutoff_cell_id": document.project.recommended_cutoff_cell_id,
                 },
             ),
@@ -1815,6 +1820,7 @@ class ProjectService:
         method: str | None = None,
         energy_threshold: float | None = None,
         force_threshold: float | None = None,
+        stress_threshold: float | None = None,
         cell_id: str | None = None,
     ) -> None:
         """Persist a project-wide recommended k-point grid for future workflows."""
@@ -1838,6 +1844,9 @@ class ProjectService:
         document.project.recommended_kpoint_force_threshold = (
             float(force_threshold) if force_threshold is not None else None
         )
+        document.project.recommended_kpoint_stress_threshold = (
+            float(stress_threshold) if stress_threshold is not None else None
+        )
         document.project.recommended_kpoint_cell_id = (
             str(cell_id).strip() if cell_id is not None and str(cell_id).strip() else None
         )
@@ -1858,6 +1867,7 @@ class ProjectService:
                     "recommended_kpoint_method": document.project.recommended_kpoint_method,
                     "recommended_kpoint_energy_threshold": document.project.recommended_kpoint_energy_threshold,
                     "recommended_kpoint_force_threshold": document.project.recommended_kpoint_force_threshold,
+                    "recommended_kpoint_stress_threshold": document.project.recommended_kpoint_stress_threshold,
                     "recommended_kpoint_cell_id": document.project.recommended_kpoint_cell_id,
                 },
             ),
@@ -2656,6 +2666,14 @@ class ProjectService:
         except (TypeError, ValueError):
             recommended_force_threshold = None
 
+        raw_stress_threshold = payload.get("recommended_cutoff_stress_threshold")
+        try:
+            recommended_stress_threshold = (
+                float(raw_stress_threshold) if raw_stress_threshold is not None else None
+            )
+        except (TypeError, ValueError):
+            recommended_stress_threshold = None
+
         raw_recommended_cutoff_cell_id = payload.get("recommended_cutoff_cell_id")
         recommended_cutoff_cell_id = None
         if isinstance(raw_recommended_cutoff_cell_id, str) and raw_recommended_cutoff_cell_id.strip():
@@ -2711,6 +2729,14 @@ class ProjectService:
         except (TypeError, ValueError):
             recommended_kpoint_force_threshold = None
 
+        raw_kpoint_stress_threshold = payload.get("recommended_kpoint_stress_threshold")
+        try:
+            recommended_kpoint_stress_threshold = (
+                float(raw_kpoint_stress_threshold) if raw_kpoint_stress_threshold is not None else None
+            )
+        except (TypeError, ValueError):
+            recommended_kpoint_stress_threshold = None
+
         raw_recommended_kpoint_cell_id = payload.get("recommended_kpoint_cell_id")
         recommended_kpoint_cell_id = None
         if isinstance(raw_recommended_kpoint_cell_id, str) and raw_recommended_kpoint_cell_id.strip():
@@ -2730,12 +2756,14 @@ class ProjectService:
             recommended_cutoff_method=recommended_method,
             recommended_cutoff_energy_threshold=recommended_energy_threshold,
             recommended_cutoff_force_threshold=recommended_force_threshold,
+            recommended_cutoff_stress_threshold=recommended_stress_threshold,
             recommended_cutoff_cell_id=recommended_cutoff_cell_id,
             recommended_kpoint_grid=recommended_kpoint_grid,
             recommended_kpoint_lattice=recommended_kpoint_lattice,
             recommended_kpoint_method=recommended_kpoint_method,
             recommended_kpoint_energy_threshold=recommended_kpoint_energy_threshold,
             recommended_kpoint_force_threshold=recommended_kpoint_force_threshold,
+            recommended_kpoint_stress_threshold=recommended_kpoint_stress_threshold,
             recommended_kpoint_cell_id=recommended_kpoint_cell_id,
             notes=payload.get("notes", ""),
         )
