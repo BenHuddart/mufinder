@@ -6,11 +6,14 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from math import isnan
+import os
 from pathlib import Path
 import posixpath
 import re
 import shlex
 import shutil
+import stat
+import time
 from typing import TypeVar
 from uuid import UUID, uuid4
 
@@ -5506,12 +5509,51 @@ class MainWindow(QMainWindow):
             if self._document.ui_state.get(self._ACTIVE_CONVERGENCE_DEFINITION_KEY) == str(definition.id):
                 self._document.ui_state.pop(self._ACTIVE_CONVERGENCE_DEFINITION_KEY, None)
 
+    _FILESYSTEM_RETRY_DELAYS: tuple[float, ...] = (0.1, 0.25, 0.5, 1.0)
+
     @staticmethod
-    def _delete_path(path: Path) -> None:
+    def _force_writable_and_retry(func, path, exc_info) -> None:
+        # shutil.rmtree onexc handler: Windows refuses to delete read-only files
+        # (CASTEP often marks output read-only) and raises PermissionError. Clear
+        # the read-only attribute and retry the failed primitive once. Anything
+        # else — including a second failure — propagates so the outer retry loop
+        # or the UI sees it.
+        exc = exc_info[1] if isinstance(exc_info, tuple) else exc_info
+        if not isinstance(exc, PermissionError):
+            raise exc
+        try:
+            os.chmod(path, stat.S_IWRITE)
+        except OSError:
+            raise exc
+        func(path)
+
+    @classmethod
+    def _retry_filesystem_op(cls, op) -> None:
+        # OneDrive sync, antivirus scanners, and the Windows search indexer hold
+        # transient handles that produce PermissionError / [WinError 5]. Retry
+        # with short backoff (~2 s total) so the common case clears silently;
+        # re-raise the last error otherwise so the existing UI dialog fires.
+        for delay in cls._FILESYSTEM_RETRY_DELAYS:
+            try:
+                op()
+                return
+            except FileNotFoundError:
+                return
+            except PermissionError:
+                time.sleep(delay)
+        try:
+            op()
+        except FileNotFoundError:
+            pass
+
+    @classmethod
+    def _delete_path(cls, path: Path) -> None:
         if path.is_dir():
-            shutil.rmtree(path)
+            cls._retry_filesystem_op(
+                lambda: shutil.rmtree(path, onexc=cls._force_writable_and_retry)
+            )
             return
-        path.unlink()
+        cls._retry_filesystem_op(path.unlink)
 
     @staticmethod
     def _unique_destination(path: Path) -> Path:
@@ -5528,7 +5570,8 @@ class MainWindow(QMainWindow):
         archive_root = (output_root if output_root is not None else source.parent) / "removed_from_workflow"
         archive_root.mkdir(parents=True, exist_ok=True)
         destination = self._unique_destination(archive_root / source.name)
-        return source.rename(destination)
+        self._retry_filesystem_op(lambda: source.rename(destination))
+        return destination
 
     def _prompt_cutoff_file_disposition(
         self,

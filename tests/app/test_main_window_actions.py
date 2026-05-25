@@ -7062,6 +7062,33 @@ def test_main_window_file_helpers_cover_file_prompt_and_unique_archive(qapp, tmp
     window.close()
 
 
+def test_main_window_delete_path_retries_transient_permission_error(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    target_dir = tmp_path / "transient_dir"
+    target_dir.mkdir()
+    (target_dir / "inner.txt").write_text("x", encoding="utf-8")
+
+    real_rmtree = main_window_module.shutil.rmtree
+    calls = {"n": 0}
+
+    def flaky_rmtree(path, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError(13, "Access is denied", str(path))
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(main_window_module.shutil, "rmtree", flaky_rmtree)
+    monkeypatch.setattr(main_window_module.time, "sleep", lambda _delay: None)
+
+    window._delete_path(target_dir)
+
+    assert calls["n"] >= 2
+    assert not target_dir.exists()
+    window.close()
+
+
 def test_main_window_error_file_candidates_handles_missing_directory(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
