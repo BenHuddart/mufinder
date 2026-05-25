@@ -8904,6 +8904,7 @@ class MainWindow(QMainWindow):
             num_atoms=len(host.species),
             sweep_kind="kpoint",
             point_labels=labels,
+            lattice_vectors=host.lattice_vectors,
             initial_state=persisted_state,
             parent=self,
         )

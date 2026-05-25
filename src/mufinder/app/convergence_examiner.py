@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -37,6 +37,7 @@ from mufinder.science.convergence_analysis import (
     delta_threshold_stress,
     recommended_value,
 )
+from mufinder.science.kpoint_grids import kpoint_count_for_spacing, spacing_from_grid
 
 
 _STRESS_DISABLED_TOOLTIP = (
@@ -44,6 +45,13 @@ _STRESS_DISABLED_TOOLTIP = (
     "to enable stress convergence analysis."
 )
 _STRESS_COLOR = "#d97706"
+
+# Mantissa values combined with each decade form the "nice" candidate
+# spacings rendered on the secondary k-point spacing axis. The axis filters
+# these down to the ones whose CASTEP-equivalent k-point count falls inside
+# the current plot's x-range.
+_SPACING_TICK_MANTISSAS = (0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 1.0)
+_SPACING_TICK_DECADES = (-3, -2, -1, 0)
 
 
 _METHOD_OPTIONS = {
@@ -91,6 +99,7 @@ class ConvergenceExaminerDialog(QDialog):
         num_atoms: int,
         sweep_kind: str = "cutoff",
         point_labels: Mapping[float, str] | None = None,
+        lattice_vectors: Sequence[Sequence[float]] | None = None,
         initial_state: Mapping[str, object] | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -100,7 +109,27 @@ class ConvergenceExaminerDialog(QDialog):
 
         self._sweep_kind = sweep_kind
         self._point_labels = {float(key): str(value) for key, value in (point_labels or {}).items()}
+        self._lattice_vectors: tuple[tuple[float, float, float], ...] | None = (
+            tuple(tuple(float(component) for component in vector) for vector in lattice_vectors)
+            if lattice_vectors is not None
+            else None
+        )
+        self._point_grids: dict[float, tuple[int, int, int]] = {}
+        self._point_spacings: dict[float, float] = {}
+        if self._sweep_kind == "kpoint":
+            self._point_grids = self._parse_grids_from_labels(self._point_labels)
+            if self._lattice_vectors is not None:
+                self._point_spacings = self._compute_spacings(
+                    self._lattice_vectors, self._point_grids
+                )
         self._hover_annotation = None
+        # Axis references are populated in _update_plot. Twin axes sit on
+        # top of their primary axis and capture mouse events, so the hover
+        # handler needs to route those back to the logical subplot.
+        self._energy_ax = None
+        self._force_ax = None
+        self._spacing_ax = None
+        self._stress_ax = None
 
         self.setWindowTitle(
             "Examine Cutoff Convergence"
@@ -284,7 +313,11 @@ class ConvergenceExaminerDialog(QDialog):
             self._canvas.draw_idle()
 
     def _on_plot_hover(self, event) -> None:
-        if self._last_plot_data is None:
+        if (
+            self._last_plot_data is None
+            or self._energy_ax is None
+            or self._force_ax is None
+        ):
             return
         if event.inaxes is None or event.xdata is None or event.ydata is None:
             self._on_plot_leave(event)
@@ -297,12 +330,22 @@ class ConvergenceExaminerDialog(QDialog):
         if not cutoffs:
             return
 
-        x_range = max(cutoffs) - min(cutoffs) if len(cutoffs) > 1 else max(abs(cutoffs[0]), 1.0)
-        x_tol = max(x_range * 0.03, 0.5)
+        # Twin axes (spacing on energy, stress on force) sit on top of their
+        # primary axis and capture the mouse event. Route them back to the
+        # logical subplot the user is hovering over, and anchor the annotation
+        # on the primary axis so the y-coordinate is in the right data frame.
+        energy_axes = {self._energy_ax}
+        if self._spacing_ax is not None:
+            energy_axes.add(self._spacing_ax)
+        force_axes = {self._force_ax}
+        if self._stress_ax is not None:
+            force_axes.add(self._stress_ax)
 
-        axis_label = event.inaxes.get_ylabel()
+        has_stress = bool(stresses) and len(stresses) == len(cutoffs)
+
         points: list[tuple[float, float, str]] = []
-        if axis_label == "Energy (eV)":
+        if event.inaxes in energy_axes:
+            anchor_ax = self._energy_ax
             if self._sweep_kind == "kpoint":
                 points = [
                     (x_value, y_value, self._sweep_point_tooltip(x_value))
@@ -313,22 +356,53 @@ class ConvergenceExaminerDialog(QDialog):
                     (x_value, y_value, f"{self._sweep_point_tooltip(x_value)}\nEnergy: {y_value:.12g} eV")
                     for x_value, y_value in zip(cutoffs, energies, strict=False)
                 ]
-        elif axis_label == "Max stress (GPa)" and stresses and len(stresses) == len(cutoffs):
-            points = [
-                (x_value, y_value, f"{self._sweep_point_tooltip(x_value)}\nMax stress: {y_value:.6g} GPa")
-                for x_value, y_value in zip(cutoffs, stresses, strict=False)
-            ]
-        else:
-            if self._sweep_kind == "kpoint":
-                points = [
-                    (x_value, y_value, self._sweep_point_tooltip(x_value))
-                    for x_value, y_value in zip(cutoffs, forces, strict=False)
-                ]
+        elif event.inaxes in force_axes:
+            # In cutoff mode, hovering the stress twin should anchor the
+            # annotation on the stress axis so the arrow points at the
+            # stress data point (not at the force line at that x).
+            on_stress_twin = (
+                self._sweep_kind == "cutoff"
+                and event.inaxes is self._stress_ax
+                and self._stress_ax is not None
+                and has_stress
+            )
+            if on_stress_twin:
+                anchor_ax = self._stress_ax
+                for idx, (x_value, stress_y) in enumerate(
+                    zip(cutoffs, stresses, strict=False)
+                ):
+                    text = (
+                        f"{self._sweep_point_tooltip(x_value)}"
+                        f"\nMax stress: {stress_y:.6g} GPa"
+                    )
+                    if idx < len(forces):
+                        text += f"\nMax force: {forces[idx]:.12g} eV/Ang"
+                    points.append((x_value, stress_y, text))
             else:
-                points = [
-                    (x_value, y_value, f"{self._sweep_point_tooltip(x_value)}\nMax force: {y_value:.12g} eV/Ang")
-                    for x_value, y_value in zip(cutoffs, forces, strict=False)
-                ]
+                anchor_ax = self._force_ax
+                if self._sweep_kind == "kpoint":
+                    points = [
+                        (x_value, y_value, self._sweep_point_tooltip(x_value))
+                        for x_value, y_value in zip(cutoffs, forces, strict=False)
+                    ]
+                else:
+                    # Cutoff mode on primary force axis: surface both metrics
+                    # in one tooltip.
+                    for idx, (x_value, y_value) in enumerate(
+                        zip(cutoffs, forces, strict=False)
+                    ):
+                        text = (
+                            f"{self._sweep_point_tooltip(x_value)}"
+                            f"\nMax force: {y_value:.12g} eV/Ang"
+                        )
+                        if has_stress and idx < len(stresses):
+                            text += f"\nMax stress: {stresses[idx]:.6g} GPa"
+                        points.append((x_value, y_value, text))
+        else:
+            return
+
+        x_range = max(cutoffs) - min(cutoffs) if len(cutoffs) > 1 else max(abs(cutoffs[0]), 1.0)
+        x_tol = max(x_range * 0.03, 0.5)
 
         nearest = min(points, key=lambda point: abs(point[0] - float(event.xdata)))
         if abs(nearest[0] - float(event.xdata)) > x_tol:
@@ -336,7 +410,7 @@ class ConvergenceExaminerDialog(QDialog):
             return
 
         if self._hover_annotation is None:
-            self._hover_annotation = event.inaxes.annotate(
+            self._hover_annotation = anchor_ax.annotate(
                 nearest[2],
                 xy=(nearest[0], nearest[1]),
                 xytext=(10, 10),
@@ -352,9 +426,9 @@ class ConvergenceExaminerDialog(QDialog):
             self._hover_annotation.set_figure(self._figure)
             self._hover_annotation.set_bbox(self._annotation_box_style())
             self._hover_annotation.set_color(self._annotation_text_color())
-            if self._hover_annotation.axes is not event.inaxes:
+            if self._hover_annotation.axes is not anchor_ax:
                 self._hover_annotation.remove()
-                self._hover_annotation = event.inaxes.annotate(
+                self._hover_annotation = anchor_ax.annotate(
                     nearest[2],
                     xy=(nearest[0], nearest[1]),
                     xytext=(10, 10),
@@ -374,6 +448,126 @@ class ConvergenceExaminerDialog(QDialog):
             completed.append((float(cutoff), state))
         completed.sort(key=lambda item: item[0])
         return completed
+
+    @staticmethod
+    def _parse_grids_from_labels(
+        point_labels: Mapping[float, str],
+    ) -> dict[float, tuple[int, int, int]]:
+        grids: dict[float, tuple[int, int, int]] = {}
+        for x_value, label in point_labels.items():
+            if not label.startswith("Grid:"):
+                continue
+            payload = label.split(":", maxsplit=1)[1].strip().replace(" ", "")
+            parts = payload.split("x")
+            if len(parts) != 3:
+                continue
+            try:
+                grid = (int(parts[0]), int(parts[1]), int(parts[2]))
+            except ValueError:
+                continue
+            if grid[0] <= 0 or grid[1] <= 0 or grid[2] <= 0:
+                continue
+            grids[float(x_value)] = grid
+        return grids
+
+    @staticmethod
+    def _compute_spacings(
+        lattice_vectors: Sequence[Sequence[float]],
+        grids: Mapping[float, tuple[int, int, int]],
+    ) -> dict[float, float]:
+        spacings: dict[float, float] = {}
+        for x_value, grid in grids.items():
+            # (1,1,1) is Gamma-only sampling; any spacing larger than the cell's
+            # coarsest reciprocal-space spacing produces the same grid, so the
+            # boundary value from spacing_from_grid is meaningless. Skip it so
+            # the annotation machinery never exposes it to the UI.
+            if grid == (1, 1, 1):
+                continue
+            try:
+                spacings[float(x_value)] = spacing_from_grid(lattice_vectors, grid)
+            except ValueError:
+                continue
+        return spacings
+
+    @staticmethod
+    def _format_spacing_label(spacing: float) -> str:
+        # Trim trailing zeros from a fixed-precision format so 0.1, 0.05 etc.
+        # render naturally without leaking float imprecision (0.0500000…).
+        text = f"{spacing:.4f}".rstrip("0").rstrip(".")
+        return text or "0"
+
+    @classmethod
+    def _candidate_spacings(cls) -> list[float]:
+        seen: set[float] = set()
+        candidates: list[float] = []
+        for decade in _SPACING_TICK_DECADES:
+            scale = 10.0 ** decade
+            for mantissa in _SPACING_TICK_MANTISSAS:
+                value = round(mantissa * scale, 12)
+                if value <= 0.0 or value in seen:
+                    continue
+                seen.add(value)
+                candidates.append(value)
+        candidates.sort()
+        return candidates
+
+    def _regular_spacing_ticks(
+        self,
+        x_min: float,
+        x_max: float,
+    ) -> tuple[list[float], list[str]]:
+        """Build the spacing-axis (position, label) pairs for the current xlim.
+
+        Positions come from :func:`kpoint_count_for_spacing` so each labelled
+        spacing lands at the x-coordinate where CASTEP would place the
+        corresponding grid. Larger spacings -> smaller n_kpoints, so on the
+        log x-axis they fall to the left, mirroring the cost-ordered reading.
+        """
+        if self._lattice_vectors is None or x_max <= x_min:
+            return [], []
+
+        positions: list[float] = []
+        labels: list[str] = []
+        last_label: str | None = None
+        for spacing in self._candidate_spacings():
+            try:
+                position = kpoint_count_for_spacing(
+                    self._lattice_vectors, spacing
+                )
+            except ValueError:
+                continue
+            if not (x_min <= position <= x_max):
+                continue
+            label = self._format_spacing_label(spacing)
+            if label == last_label:
+                # Avoid emitting two ticks that would render with identical
+                # text (can happen at extreme decades where the format
+                # collapses two values onto the same string).
+                continue
+            positions.append(position)
+            labels.append(label)
+            last_label = label
+
+        # _candidate_spacings is ascending in spacing -> n_kpoints is
+        # descending, so reverse to get left-to-right (small n -> large n)
+        # ordering that matches the underlying axis.
+        positions.reverse()
+        labels.reverse()
+
+        # A second consecutive-duplicate pass is needed after the reversal:
+        # the range filter above can remove spacings that previously separated
+        # two identical-label candidates, making them adjacent only after
+        # the list is flipped.
+        deduped_positions: list[float] = []
+        deduped_labels: list[str] = []
+        last_after_reverse: str | None = None
+        for pos, lbl in zip(positions, labels, strict=True):
+            if lbl == last_after_reverse:
+                continue
+            deduped_positions.append(pos)
+            deduped_labels.append(lbl)
+            last_after_reverse = lbl
+        return deduped_positions, deduped_labels
 
     def _energy_series(self) -> tuple[list[float], list[float]]:
         cutoffs: list[float] = []
@@ -491,6 +685,10 @@ class ConvergenceExaminerDialog(QDialog):
         self._figure.clear()
         energy_ax = self._figure.add_subplot(2, 1, 1)
         force_ax = self._figure.add_subplot(2, 1, 2, sharex=energy_ax)
+        self._energy_ax = energy_ax
+        self._force_ax = force_ax
+        self._spacing_ax = None
+        self._stress_ax = None
 
         if energy_cutoffs:
             energy_ax.plot(energy_cutoffs, energies, marker="o", linestyle="-", color="#1d4ed8", label="Total energy")
@@ -737,6 +935,7 @@ class ConvergenceExaminerDialog(QDialog):
                     "energy_threshold": energy_threshold,
                     "force_threshold": force_threshold,
                     "stress_threshold": stress_threshold if use_stress else None,
+                    "point_spacings": dict(self._point_spacings) if self._point_spacings else {},
                 }
                 self._update_plot(
                     cutoffs,
@@ -824,6 +1023,7 @@ class ConvergenceExaminerDialog(QDialog):
                     energy_threshold=energy_threshold,
                     force_threshold=force_threshold,
                     point_labels=self._point_labels,
+                    point_spacings=self._point_spacings or None,
                 )
             else:
                 energy_result, force_result = analyze_convergence(
@@ -843,7 +1043,11 @@ class ConvergenceExaminerDialog(QDialog):
         if include_stress and stress_threshold is not None:
             stress_result = delta_threshold_stress(cutoffs, stresses, threshold=stress_threshold)
             if self._sweep_kind == "kpoint":
-                stress_result = apply_kpoint_label_to_stress_result(stress_result, self._point_labels)
+                stress_result = apply_kpoint_label_to_stress_result(
+                    stress_result,
+                    self._point_labels,
+                    point_spacings=self._point_spacings or None,
+                )
 
         self._energy_result = energy_result
         self._force_result = force_result
@@ -885,7 +1089,12 @@ class ConvergenceExaminerDialog(QDialog):
                     float(self._recommended_value),
                     f"{self._recommended_value:.8g} k-points",
                 )
-                lines.extend(["", f"Recommended k-point grid: {label}"])
+                recommended_line = f"Recommended k-point grid: {label}"
+                grid = self._point_grids.get(float(self._recommended_value))
+                spacing = self._point_spacings.get(float(self._recommended_value))
+                if spacing is not None and grid is not None and grid != (1, 1, 1):
+                    recommended_line += f" (spacing {spacing:.4g} 1/Ang)"
+                lines.extend(["", recommended_line])
         else:
             lines.extend(["", "No combined convergence recommendation available yet."])
 
@@ -898,6 +1107,7 @@ class ConvergenceExaminerDialog(QDialog):
             "energy_threshold": energy_threshold,
             "force_threshold": force_threshold,
             "stress_threshold": stress_threshold,
+            "point_spacings": dict(self._point_spacings) if self._point_spacings else {},
         }
         self._update_plot(
             cutoffs,
@@ -947,9 +1157,25 @@ class ConvergenceExaminerDialog(QDialog):
         threshold_line = palette.warning
 
         self._figure.set_facecolor(palette.bg_surface)
+        # matplotlib's Axes.clear() resets the xlim to (0, 1), which is
+        # invalid on a log axis. When we re-render after a previous kpoint
+        # plot, the existing axes (including the twiny spacing axis) are
+        # log-scaled, so the upcoming figure.clear() would emit a
+        # "non-positive xlim on log axis" warning. Reset every axis back to
+        # linear first so the internal teardown reset is well-defined.
+        for axis in list(self._figure.axes):
+            try:
+                if axis.get_xscale() != "linear":
+                    axis.set_xscale("linear")
+            except Exception:
+                pass
         self._figure.clear()
         energy_ax = self._figure.add_subplot(2, 1, 1)
         force_ax = self._figure.add_subplot(2, 1, 2, sharex=energy_ax)
+        self._energy_ax = energy_ax
+        self._force_ax = force_ax
+        self._spacing_ax = None
+        self._stress_ax = None
 
         energy_ax.plot(cutoffs, energies, marker="o", linestyle="-", color="#1d4ed8", label="Total energy")
         if self._energy_result and self._energy_result.fitted_curve:
@@ -978,6 +1204,35 @@ class ConvergenceExaminerDialog(QDialog):
         energy_ax.legend(loc="best")
         self._apply_axis_theme(energy_ax)
         self._apply_legend_theme(energy_ax)
+
+        if self._sweep_kind == "kpoint":
+            # n_kpoints grows as ~n^3 across a typical grid sweep, so small
+            # grids collapse into the leftmost sliver of a linear axis. Log
+            # scale spreads the cheap-grid region out so the spacing labels
+            # (and the data points themselves) stop overlapping.
+            energy_ax.set_xscale("log")
+            # set_xscale only *requests* a view-limit rescale; without
+            # autoscale_view the existing (linear) xlim can include a
+            # non-positive lower margin, which then triggers a matplotlib
+            # UserWarning when handed to set_xlim on the log-scaled twin.
+            energy_ax.relim()
+            energy_ax.autoscale_view()
+            if self._lattice_vectors is not None:
+                x_min, x_max = energy_ax.get_xlim()
+                positions, labels = self._regular_spacing_ticks(x_min, x_max)
+                if positions:
+                    spacing_ax = energy_ax.twiny()
+                    self._spacing_ax = spacing_ax
+                    spacing_ax.set_xscale("log")
+                    spacing_ax.set_xlim(x_min, x_max)
+                    spacing_ax.set_xticks(positions)
+                    spacing_ax.set_xticklabels(labels)
+                    spacing_ax.minorticks_off()
+                    spacing_ax.set_xlabel("K-point spacing (1/Ang)", labelpad=8)
+                    self._apply_axis_theme(spacing_ax)
+                    # twiny axes inherit the energy axis's grid; suppress to avoid
+                    # double-drawn vertical gridlines from the spacing tick positions.
+                    spacing_ax.grid(False)
 
         force_line, = force_ax.plot(
             cutoffs, forces, marker="o", linestyle="-", color="#b91c1c", label="Max force"
@@ -1013,6 +1268,7 @@ class ConvergenceExaminerDialog(QDialog):
         stress_handles: list[Any] = []
         if stresses:
             stress_ax = force_ax.twinx()
+            self._stress_ax = stress_ax
             stress_line, = stress_ax.plot(
                 cutoffs,
                 stresses,

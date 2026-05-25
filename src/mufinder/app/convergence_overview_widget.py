@@ -89,6 +89,15 @@ class _PinnedPlotWidget(QWidget):
             self.show_placeholder(placeholder_message)
             return
 
+        point_spacings: dict[float, float] = {}
+        raw_spacings = plot_data.get("point_spacings")
+        if isinstance(raw_spacings, Mapping):
+            for key, value in raw_spacings.items():
+                try:
+                    point_spacings[float(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+
         stresses: list[float] = []
         stress_threshold: float | None = None
         try:
@@ -146,6 +155,7 @@ class _PinnedPlotWidget(QWidget):
             force_threshold=force_threshold,
             recommended_value=recommended_value,
             point_labels=point_labels,
+            point_spacings=point_spacings,
             stresses=stresses or None,
             stress_threshold=stress_threshold,
         )
@@ -173,6 +183,7 @@ class _PinnedPlotWidget(QWidget):
         force_threshold: float,
         recommended_value: float | None,
         point_labels: Mapping[float, str],
+        point_spacings: Mapping[float, float] | None = None,
         stresses: list[float] | None = None,
         stress_threshold: float | None = None,
     ) -> None:
@@ -215,14 +226,37 @@ class _PinnedPlotWidget(QWidget):
         if self._sweep_kind == "cutoff":
             force_ax.set_xlabel("Cutoff energy (eV)", labelpad=6, fontsize=9)
         else:
-            ordered_labels = [
+            grid_labels = [
                 point_labels.get(value, str(int(value)))
                 .replace("Grid:", "")
                 .replace(" x ", "x")
                 .strip()
                 for value in x_values
             ]
-            force_ax.set_xlabel("K-point grid", labelpad=6, fontsize=9)
+            # Gamma-only (1x1x1) has no unique k-point spacing; treat those
+            # ticks as exempt from the "all grids have spacings" requirement
+            # and suppress their sub-label so the overview is consistent with
+            # the examiner's tooltip which also omits the spacing for 1x1x1.
+            has_spacings = bool(point_spacings) and all(
+                grid == "1x1x1" or value in point_spacings
+                for grid, value in zip(grid_labels, x_values, strict=True)
+            ) and any(
+                grid != "1x1x1" and value in point_spacings
+                for grid, value in zip(grid_labels, x_values, strict=True)
+            )
+            if has_spacings:
+                ordered_labels = [
+                    f"{grid}\n{point_spacings[value]:.3g}"
+                    if grid != "1x1x1" and value in point_spacings
+                    else grid
+                    for grid, value in zip(grid_labels, x_values, strict=True)
+                ]
+                force_ax.set_xlabel(
+                    "K-point grid (spacing, 1/Ang)", labelpad=6, fontsize=9
+                )
+            else:
+                ordered_labels = grid_labels
+                force_ax.set_xlabel("K-point grid", labelpad=6, fontsize=9)
             force_ax.set_xticks(x_values, ordered_labels, rotation=15, ha="right")
 
         badge_box = {

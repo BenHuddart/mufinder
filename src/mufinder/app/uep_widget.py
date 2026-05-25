@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.convergence_display import format_cutoff_energy
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_adapter import suggested_grid_for_row
+from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.uep_types import SupercellMatrix, UepConfig, UepRunState, UepSourceRow
 from mufinder.app.workflow_parameters import reorder_workflow_parameter_specs
@@ -291,6 +292,13 @@ class UEPWidget(QWidget):
             if spec.file == "cell" and spec.name in _STRUCTURE_CONTROLLED_CELL_KEYWORDS:
                 continue
             if spec.name == "write_formatted_density":
+                adjusted.append(_clone_spec_for_uep_workflow(spec, basic=True, advanced=True))
+                continue
+            # kpoint_mp_grid / kpoint_mp_spacing render as a mutually-exclusive
+            # radio pair in the configure-parameters dialog. Force both into
+            # the basic view so the toggle is visible without expanding the
+            # advanced section, matching pristine/muon relaxation.
+            if spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing"):
                 adjusted.append(_clone_spec_for_uep_workflow(spec, basic=True, advanced=True))
                 continue
             adjusted.append(spec)
@@ -767,12 +775,66 @@ class UEPWidget(QWidget):
             first = values_by_row[0][name]
             if all(values.get(name) == first for values in values_by_row[1:]):
                 common[name] = first
+        # Dialog-only pre-fill of the inactive half of the kpoint pair so
+        # the radio toggle shows a sensible value when the user switches.
+        # The param dialog drops the inactive choice in collect_values(),
+        # so this hint never reaches validation or the rendered .cell.
+        has_grid = "kpoint_mp_grid" in common
+        has_spacing = "kpoint_mp_spacing" in common
+        if has_grid and not has_spacing and row_ids:
+            suggested_spacing = self._suggested_spacing_for_row(row_ids[0])
+            if suggested_spacing is not None:
+                common["kpoint_mp_spacing"] = suggested_spacing
+        elif has_spacing and not has_grid and row_ids:
+            suggested_grid = self._suggested_grid_for_row(row_ids[0])
+            if suggested_grid is not None:
+                common["kpoint_mp_grid"] = suggested_grid
         return common
 
+    def _suggested_grid_for_row(
+        self, row_id: int
+    ) -> tuple[int, int, int] | None:
+        if self._host_lattice is None or self._reference_grid is None:
+            return None
+        return suggested_grid_for_row(
+            host_lattice=self._host_lattice,
+            row_matrix=self._row_supercells.get(row_id),
+            reference_lattice=self._reference_lattice,
+            reference_grid=self._reference_grid,
+        )
+
+    def _suggested_spacing_for_row(self, row_id: int) -> ValueWithUnit | None:
+        # Mirror the project's adopted k-point grid as a spacing so the
+        # configure-parameters dialog has a sensible default when the user
+        # toggles to "Use spacing".
+        if self._reference_grid is None or self._reference_lattice is None:
+            return None
+        if tuple(int(v) for v in self._reference_grid) == (1, 1, 1):
+            return None
+        try:
+            spacing = spacing_from_grid(self._reference_lattice, self._reference_grid)
+        except ValueError:
+            return None
+        return ValueWithUnit(float(spacing), "1/ang")
+
     def _effective_params_for_row(self, row_id: int) -> dict[str, object]:
+        # The row's effective values reflect what would land in the rendered
+        # .cell: only ONE of kpoint_mp_grid / kpoint_mp_spacing, never both.
+        # The configure-parameters dialog renders both rows with a radio
+        # toggle and drops the inactive choice in collect_values(), so the
+        # row's stored parameter_values is also single-choice. If the user
+        # explicitly chose spacing, drop the grid inherited from
+        # _default_params to avoid a CASTEP mutual-exclusion conflict.
         effective = dict(self._default_params)
-        effective.update(self._row_parameter_values.get(row_id, {}))
-        if (
+        row_values = self._row_parameter_values.get(row_id, {})
+        effective.update(row_values)
+        if "kpoint_mp_spacing" in row_values:
+            # User explicitly chose spacing: drop any grid inherited from defaults.
+            effective.pop("kpoint_mp_grid", None)
+        elif "kpoint_mp_grid" in row_values:
+            # User explicitly chose grid: drop any spacing inherited from defaults.
+            effective.pop("kpoint_mp_spacing", None)
+        elif (
             self._host_lattice is not None
             and (matrix := self._row_supercells.get(row_id)) is not None
             and self._reference_grid is not None
@@ -783,7 +845,7 @@ class UEPWidget(QWidget):
                 reference_lattice=self._reference_lattice,
                 reference_grid=self._reference_grid,
             )
-            if suggested is not None and "kpoint_mp_grid" not in self._row_parameter_values.get(row_id, {}):
+            if suggested is not None:
                 effective["kpoint_mp_grid"] = suggested
         effective["task"] = "SINGLEPOINT"
         effective["write_formatted_density"] = True

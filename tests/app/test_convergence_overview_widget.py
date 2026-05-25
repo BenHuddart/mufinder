@@ -106,6 +106,93 @@ def test_convergence_overview_widget_renders_pinned_snapshots(qapp) -> None:
     widget.close()
 
 
+def test_convergence_overview_widget_pinned_kpoint_plot_shows_spacing_on_tick_labels(qapp) -> None:
+    widget = ConvergenceOverviewWidget()
+    widget.set_kpoint_panel(
+        summary_rows=[("Project default", "3 x 3 x 3")],
+        snapshot={
+            "default_value": [3, 3, 3],
+            "point_labels": {"8.0": "Grid: 2 x 2 x 2", "27.0": "Grid: 3 x 3 x 3"},
+            "plot_data": {
+                "cutoffs": [8.0, 27.0],
+                "energies": [-10.0, -10.01],
+                "forces": [0.10, 0.04],
+                "energy_threshold": 0.001,
+                "force_threshold": 0.05,
+                "point_spacings": {"8.0": 0.2, "27.0": 0.1},
+            },
+        },
+        placeholder_message="unused",
+    )
+
+    _energy_ax, force_ax = widget._kpoint_card._plot._figure.axes
+    tick_texts = [tick.get_text() for tick in force_ax.get_xticklabels()]
+    assert tick_texts == ["2x2x2\n0.2", "3x3x3\n0.1"]
+    assert force_ax.get_xlabel() == "K-point grid (spacing, 1/Ang)"
+    widget.close()
+
+
+def test_convergence_overview_widget_pinned_kpoint_plot_falls_back_without_spacings(qapp) -> None:
+    widget = ConvergenceOverviewWidget()
+    widget.set_kpoint_panel(
+        summary_rows=[("Project default", "2 x 2 x 2")],
+        snapshot={
+            "default_value": [2, 2, 2],
+            "point_labels": {"8.0": "Grid: 2 x 2 x 2", "27.0": "Grid: 3 x 3 x 3"},
+            "plot_data": {
+                "cutoffs": [8.0, 27.0],
+                "energies": [-10.0, -10.01],
+                "forces": [0.10, 0.04],
+                "energy_threshold": 0.001,
+                "force_threshold": 0.05,
+            },
+        },
+        placeholder_message="unused",
+    )
+
+    _energy_ax, force_ax = widget._kpoint_card._plot._figure.axes
+    tick_texts = [tick.get_text() for tick in force_ax.get_xticklabels()]
+    assert tick_texts == ["2x2x2", "3x3x3"]
+    assert force_ax.get_xlabel() == "K-point grid"
+    widget.close()
+
+
+def test_convergence_overview_widget_pinned_kpoint_plot_omits_spacing_for_gamma_only_grid(qapp) -> None:
+    # Sweeps starting at (1,1,1) must not show a spacing sub-label for that
+    # tick because spacing_from_grid returns a "coarsest-boundary" value that
+    # is physically meaningless for Gamma-only sampling.
+    widget = ConvergenceOverviewWidget()
+    widget.set_kpoint_panel(
+        summary_rows=[("Project default", "2 x 2 x 2")],
+        snapshot={
+            "default_value": [2, 2, 2],
+            "point_labels": {
+                "1.0": "Grid: 1 x 1 x 1",
+                "8.0": "Grid: 2 x 2 x 2",
+                "27.0": "Grid: 3 x 3 x 3",
+            },
+            "plot_data": {
+                "cutoffs": [1.0, 8.0, 27.0],
+                "energies": [-10.0, -10.01, -10.011],
+                "forces": [0.30, 0.10, 0.04],
+                "energy_threshold": 0.001,
+                "force_threshold": 0.05,
+                # point_spacings deliberately omits 1.0 (the 1x1x1 entry is
+                # absent because _compute_spacings now skips (1,1,1)).
+                "point_spacings": {"8.0": 0.2, "27.0": 0.1},
+            },
+        },
+        placeholder_message="unused",
+    )
+
+    _energy_ax, force_ax = widget._kpoint_card._plot._figure.axes
+    tick_texts = [tick.get_text() for tick in force_ax.get_xticklabels()]
+    # (1,1,1) must have no spacing sub-label; others get one normally.
+    assert tick_texts == ["1x1x1", "2x2x2\n0.2", "3x3x3\n0.1"]
+    assert force_ax.get_xlabel() == "K-point grid (spacing, 1/Ang)"
+    widget.close()
+
+
 def test_convergence_overview_widget_skips_stress_when_data_absent(qapp) -> None:
     widget = ConvergenceOverviewWidget()
 

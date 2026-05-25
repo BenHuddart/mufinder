@@ -48,6 +48,7 @@ from mufinder.app.theme import (
     style_section_title,
     use_tabbed_table_corners,
 )
+from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     infer_task,
@@ -420,7 +421,7 @@ class MuonRelaxationWidget(QWidget):
                 spec,
                 basic=(
                     basic_in_convergence
-                    or spec.name == "kpoint_mp_grid"
+                    or spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing")
                     or spec.name in _EXTRA_GEOMETRY_PARAMETER_NAMES
                 ),
                 advanced=keyword_visible_in_workflow(
@@ -517,7 +518,11 @@ class MuonRelaxationWidget(QWidget):
         for spec in self._specs:
             if spec.default_value is None:
                 continue
-            if spec.name == "kpoint_mp_grid":
+            # kpoint_mp_grid and kpoint_mp_spacing are project-default-aware:
+            # _effective_params_for_row injects them from the adopted project
+            # grid (and its equivalent spacing) so the dialog reflects the
+            # user's project default rather than the bare schema default.
+            if spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing"):
                 continue
             if not keyword_visible_in_workflow(spec, workflow_stage=_WORKFLOW_STAGE, include_advanced=False):
                 continue
@@ -911,13 +916,35 @@ class MuonRelaxationWidget(QWidget):
         )
         self._kpoint_message.show()
 
+    def _suggested_spacing_for_row(self, row_id: int) -> ValueWithUnit | None:
+        # Mirror the project's adopted k-point grid as a k-point spacing so
+        # the configure-parameters dialog has a sensible default when the
+        # user toggles to "Use spacing".
+        if self._reference_grid is None or self._reference_lattice is None:
+            return None
+        if tuple(int(v) for v in self._reference_grid) == (1, 1, 1):
+            return None
+        try:
+            spacing = spacing_from_grid(self._reference_lattice, self._reference_grid)
+        except ValueError:
+            return None
+        return ValueWithUnit(float(spacing), "1/ang")
+
     def _effective_params_for_row(self, row_id: int) -> dict[str, object]:
+        # See PristineRelaxationWidget._effective_params_for_row for the
+        # rationale: kpoint_mp_grid and kpoint_mp_spacing are mutually
+        # exclusive, so the row carries only one of them. The dialog
+        # seeding path (_common_params_for_rows) layers the other half in
+        # as a UX-only hint.
         values = dict(self._default_params)
         row_values = self._row_parameter_values.get(row_id, {})
         values.update(row_values)
         self._drop_conflicts_with_explicit_values(values, explicit_names=set(row_values))
         values["task"] = infer_task(_WORKFLOW_STAGE)
-        if "kpoint_mp_grid" not in values:
+        if (
+            "kpoint_mp_grid" not in values
+            and "kpoint_mp_spacing" not in values
+        ):
             suggested = self._suggested_grid_for_row(row_id)
             if suggested is not None:
                 values["kpoint_mp_grid"] = suggested
@@ -1101,6 +1128,18 @@ class MuonRelaxationWidget(QWidget):
         for candidate in maps[1:]:
             common = {name: value for name, value in common.items() if name in candidate and candidate[name] == value}
         common["task"] = infer_task(_WORKFLOW_STAGE)
+        # Dialog-only pre-fill of the inactive half of the kpoint pair. See
+        # PristineRelaxationWidget._common_params_for_rows for the rationale.
+        has_grid = "kpoint_mp_grid" in common
+        has_spacing = "kpoint_mp_spacing" in common
+        if has_grid and not has_spacing:
+            suggested_spacing = self._suggested_spacing_for_row(row_ids[0])
+            if suggested_spacing is not None:
+                common["kpoint_mp_spacing"] = suggested_spacing
+        elif has_spacing and not has_grid:
+            suggested_grid = self._suggested_grid_for_row(row_ids[0])
+            if suggested_grid is not None:
+                common["kpoint_mp_grid"] = suggested_grid
         return common
 
     def _advanced_names_for_rows(self, row_ids: tuple[int, ...]) -> set[str]:

@@ -40,6 +40,7 @@ from mufinder.app.relaxation_adapter import suggested_grid_for_row
 from mufinder.app.workflow_parameters import reorder_workflow_parameter_specs
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
+from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     infer_task,
@@ -310,7 +311,7 @@ class PristineRelaxationWidget(QWidget):
                 spec,
                 basic=(
                     basic_in_convergence
-                    or spec.name == "kpoint_mp_grid"
+                    or spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing")
                     or spec.name in _EXTRA_GEOMETRY_PARAMETER_NAMES
                 ),
                 advanced=keyword_visible_in_workflow(
@@ -358,7 +359,11 @@ class PristineRelaxationWidget(QWidget):
         for spec in self._specs:
             if spec.default_value is None:
                 continue
-            if spec.name == "kpoint_mp_grid":
+            # kpoint_mp_grid and kpoint_mp_spacing are project-default-aware:
+            # _effective_params_for_row injects them from the adopted project
+            # grid (and its equivalent spacing) so the dialog reflects the
+            # user's project default rather than the bare schema default.
+            if spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing"):
                 continue
             if not keyword_visible_in_workflow(
                 spec,
@@ -749,11 +754,35 @@ class PristineRelaxationWidget(QWidget):
     def _runtime_controls_locked(status: str) -> bool:
         return str(status).strip().casefold() not in _UNLOCKED_RUNTIME_STATUSES
 
+    def _suggested_spacing_for_row(self, row_id: int) -> ValueWithUnit | None:
+        # When the project has adopted a k-point grid, mirror it as a k-point
+        # spacing so the configure-parameters dialog's spacing field gets a
+        # sensible default when the user toggles to "Use spacing".
+        if self._reference_grid is None or self._reference_lattice is None:
+            return None
+        if tuple(int(v) for v in self._reference_grid) == (1, 1, 1):
+            return None
+        try:
+            spacing = spacing_from_grid(self._reference_lattice, self._reference_grid)
+        except ValueError:
+            return None
+        return ValueWithUnit(float(spacing), "1/ang")
+
     def _effective_params_for_row(self, row_id: int) -> dict[str, object]:
+        # The row's "effective" values reflect what would land in the rendered
+        # .cell: only ONE of kpoint_mp_grid / kpoint_mp_spacing, never both,
+        # since they are mutually exclusive at the CASTEP level. The
+        # configure-parameters dialog renders both rows with a radio toggle
+        # and drops the inactive choice in collect_values(), so the row's
+        # stored parameter_values is also single-choice. When neither has
+        # been set yet we default to grid (matching the radio default).
         values = dict(self._default_params)
         values.update(self._row_parameter_values.get(row_id, {}))
         values.setdefault("task", infer_task("pristine_relaxation"))
-        if "kpoint_mp_grid" not in values:
+        if (
+            "kpoint_mp_grid" not in values
+            and "kpoint_mp_spacing" not in values
+        ):
             suggested = self._suggested_grid_for_row(row_id)
             if suggested is not None:
                 values["kpoint_mp_grid"] = suggested
@@ -762,9 +791,14 @@ class PristineRelaxationWidget(QWidget):
     def _implicit_params_for_row(self, row_id: int) -> dict[str, object]:
         implicit = dict(self._default_params)
         implicit.setdefault("task", infer_task("pristine_relaxation"))
-        suggested = self._suggested_grid_for_row(row_id)
-        if suggested is not None:
-            implicit["kpoint_mp_grid"] = suggested
+        # Mirror _effective_params_for_row's single-choice contract: only
+        # inject kpoint_mp_grid as the implicit default when the row has not
+        # been explicitly configured to use kpoint_mp_spacing instead.
+        row_values = self._row_parameter_values.get(row_id, {})
+        if "kpoint_mp_spacing" not in row_values:
+            suggested = self._suggested_grid_for_row(row_id)
+            if suggested is not None:
+                implicit["kpoint_mp_grid"] = suggested
         return implicit
 
     def _strip_implicit_row_defaults(self, row_id: int, values: dict[str, object]) -> dict[str, object]:
@@ -904,6 +938,22 @@ class PristineRelaxationWidget(QWidget):
             }
         if "task" not in common:
             common["task"] = infer_task("pristine_relaxation")
+        # Configure-parameters dialog seeding only: pre-fill the inactive
+        # half of the kpoint_mp_grid / kpoint_mp_spacing pair so the editor
+        # for whichever radio the user toggles to shows a sensible value
+        # derived from the project default. The dialog drops the inactive
+        # choice in collect_values(), so this never reaches the rendered
+        # .cell or the validation path.
+        has_grid = "kpoint_mp_grid" in common
+        has_spacing = "kpoint_mp_spacing" in common
+        if has_grid and not has_spacing:
+            suggested_spacing = self._suggested_spacing_for_row(row_ids[0])
+            if suggested_spacing is not None:
+                common["kpoint_mp_spacing"] = suggested_spacing
+        elif has_spacing and not has_grid:
+            suggested_grid = self._suggested_grid_for_row(row_ids[0])
+            if suggested_grid is not None:
+                common["kpoint_mp_grid"] = suggested_grid
         return common
 
     def _advanced_names_for_rows(self, row_ids: tuple[int, ...]) -> set[str]:

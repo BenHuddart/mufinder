@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QHeaderView, QMessageBox, QPushButton, QToolButton
@@ -379,6 +380,113 @@ def test_relaxation_widget_uses_project_default_kpoint_in_configure_values(qapp)
     params = widget._common_params_for_rows((row_id,))
 
     assert params["kpoint_mp_grid"] == (4, 4, 4)
+
+
+def test_relaxation_widget_pre_fills_spacing_equivalent_of_project_default_grid(qapp) -> None:
+    # When the project has adopted a (4,4,4) grid on a cubic cell, the
+    # configure-parameters dialog should pre-fill the kpoint_mp_spacing field
+    # with the equivalent value (1/(a*(n-1)) for cubic) so the user can
+    # toggle to Use spacing and see a sensible starting value, mirroring how
+    # the basis_precision / cut_off_energy radio pair works.
+    a = 4.026
+    widget = PristineRelaxationWidget()
+    widget.set_host_lattice([[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]])
+    widget.set_project_defaults(
+        cutoff_energy=600.0,
+        kpoint_grid=(4, 4, 4),
+        kpoint_reference_lattice=[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]],
+    )
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+
+    # Dialog seeding pre-fills both fields so the radio toggle has a
+    # sensible value to show when the user switches modes.
+    seed = widget._common_params_for_rows((row_id,))
+    assert seed["kpoint_mp_grid"] == (4, 4, 4)
+    spacing = seed.get("kpoint_mp_spacing")
+    assert spacing is not None
+    expected_value = 1.0 / (a * 3.0)  # cubic spacing for (4,4,4)
+    assert spacing.value == pytest.approx(expected_value)
+    assert spacing.unit == "1/ang"
+
+    # The row's effective values (used at validation/persistence time)
+    # carry only ONE of the pair so the CASTEP mutual-exclusion check
+    # doesn't fire when the row has not been explicitly configured yet.
+    effective = widget._effective_params_for_row(row_id)
+    assert effective["kpoint_mp_grid"] == (4, 4, 4)
+    assert "kpoint_mp_spacing" not in effective
+
+
+def test_relaxation_widget_does_not_pre_fill_spacing_when_no_project_grid(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget.set_host_lattice([[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]])
+    widget.set_project_defaults(
+        cutoff_energy=None,
+        kpoint_grid=None,
+        kpoint_reference_lattice=None,
+    )
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+
+    seed = widget._common_params_for_rows((row_id,))
+    assert "kpoint_mp_spacing" not in seed
+    effective = widget._effective_params_for_row(row_id)
+    assert "kpoint_mp_spacing" not in effective
+
+
+def test_relaxation_widget_does_not_pre_fill_spacing_for_gamma_only(qapp) -> None:
+    # Gamma-only (1,1,1) has no meaningful equivalent spacing, so the
+    # spacing field stays unpopulated and the user can fill it themselves
+    # if they want to toggle modes.
+    widget = PristineRelaxationWidget()
+    widget.set_host_lattice([[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]])
+    widget.set_project_defaults(
+        cutoff_energy=None,
+        kpoint_grid=(1, 1, 1),
+        kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+    )
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+
+    seed = widget._common_params_for_rows((row_id,))
+    assert "kpoint_mp_spacing" not in seed
+    effective = widget._effective_params_for_row(row_id)
+    assert "kpoint_mp_spacing" not in effective
+
+
+def test_relaxation_widget_effective_params_never_emit_both_kpoint_keywords(qapp) -> None:
+    # Regression: _effective_params_for_row is fed through validate_gui_values
+    # at submit time, and the CASTEP validator flags kpoint_mp_grid and
+    # kpoint_mp_spacing as mutually exclusive. Even with the project's
+    # spacing-equivalent pre-fill enabled for dialog UX, the row's effective
+    # values must never carry both simultaneously.
+    a = 4.026
+    widget = PristineRelaxationWidget()
+    widget.set_host_lattice([[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]])
+    widget.set_project_defaults(
+        cutoff_energy=600.0,
+        kpoint_grid=(4, 4, 4),
+        kpoint_reference_lattice=[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]],
+    )
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+
+    effective = widget._effective_params_for_row(row_id)
+    assert not (
+        "kpoint_mp_grid" in effective and "kpoint_mp_spacing" in effective
+    )
+
+    # When the user has explicitly chosen spacing via the dialog, only
+    # spacing remains in effective_values — never grid alongside it.
+    widget._row_parameter_values[row_id] = {
+        "kpoint_mp_spacing": ValueWithUnit(0.07, "1/ang"),
+    }
+    effective = widget._effective_params_for_row(row_id)
+    assert "kpoint_mp_spacing" in effective
+    assert "kpoint_mp_grid" not in effective
 
 
 def test_relaxation_widget_uses_exact_project_kpoint_for_unit_cell_when_reference_lattice_differs(

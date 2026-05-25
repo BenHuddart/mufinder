@@ -9,6 +9,7 @@ from typing import Any, Iterable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QDialog,
     QDialogButtonBox,
     QGridLayout,
@@ -40,7 +41,7 @@ from mufinder.castep_io.gui_metadata import (
 from mufinder.castep_io.schema import KeywordSpec, keyword_catalog_source_info
 
 _ALWAYS_VISIBLE_ADVANCED_NAMES = ("spin_polarized",)
-_PREFERRED_EXCLUSIVE_NAMES = ("cut_off_energy",)
+_PREFERRED_EXCLUSIVE_NAMES = ("cut_off_energy", "kpoint_mp_grid")
 
 
 @dataclass(slots=True)
@@ -173,6 +174,11 @@ class ParameterDialog(QDialog):
         self._row_default_values: dict[str, object] = {}
         self._exclusive_groups: dict[tuple[str, ...], set[str]] = {}
         self._exclusive_selection: dict[tuple[str, ...], str] = {}
+        # QButtonGroups handle Qt-level mutual exclusion across radios that
+        # live in different parent widgets (each row's radio is parented to
+        # its own label container, so Qt's auto-exclusivity does not span
+        # rows by itself). Keyed by the same group_key used for selection.
+        self._exclusive_button_groups: dict[tuple[str, ...], QButtonGroup] = {}
 
         root = QVBoxLayout(self)
 
@@ -478,6 +484,12 @@ class ParameterDialog(QDialog):
 
         self._rows.clear()
         self._row_default_values.clear()
+        # Detach and discard any prior button groups; new ones are created
+        # below as rows are rebuilt. Reparenting to None lets Qt clean them
+        # up alongside the rest of the row widgets.
+        for button_group in self._exclusive_button_groups.values():
+            button_group.setParent(None)
+        self._exclusive_button_groups.clear()
         visible_names = self._visible_names()
         self._build_exclusive_groups(visible_names)
 
@@ -512,6 +524,16 @@ class ParameterDialog(QDialog):
                 radio.toggled.connect(
                     lambda checked, g=group_key, n=name: self._on_exclusive_toggled(g, n, checked)
                 )
+                # Each row's radio lives under its own label container; Qt
+                # only auto-excludes siblings of the same parent, so we
+                # explicitly register every radio in this group's
+                # QButtonGroup to get cross-row mutual exclusion.
+                button_group = self._exclusive_button_groups.get(group_key)
+                if button_group is None:
+                    button_group = QButtonGroup(self)
+                    button_group.setExclusive(True)
+                    self._exclusive_button_groups[group_key] = button_group
+                button_group.addButton(radio)
                 label_layout.addWidget(radio)
                 label_layout.addWidget(QLabel(label_text, label_widget))
                 label_layout.addStretch(1)

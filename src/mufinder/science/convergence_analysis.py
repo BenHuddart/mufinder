@@ -411,18 +411,50 @@ def delta_threshold_stress(
     )
 
 
+def _spacing_annotation(
+    grid_label: str,
+    converged_value: float,
+    point_spacings: Mapping[float, float] | None,
+) -> str:
+    """Build a ``"spacing X 1/Ang"`` fragment, or ``""`` if not applicable.
+
+    The (1,1,1) "Gamma-only" grid has no well-defined k-point spacing — any
+    spacing larger than ``|b|/(2*pi)`` produces it — so we suppress the
+    annotation rather than report a misleading boundary value.
+    """
+    if point_spacings is None:
+        return ""
+    spacing = point_spacings.get(float(converged_value))
+    if spacing is None:
+        return ""
+    # Strip the "Grid: " prefix and parse the n_i tuple. A grid where every
+    # n_i is 1 represents Gamma-only sampling; skip the spacing annotation.
+    grid_text = grid_label.split(":", maxsplit=1)[-1].strip().replace(" ", "")
+    parts = grid_text.split("x")
+    if len(parts) == 3:
+        try:
+            ints = tuple(int(p) for p in parts)
+        except ValueError:
+            ints = None
+        if ints == (1, 1, 1):
+            return ""
+    return f"spacing {spacing:.4g} 1/Ang"
+
+
 def _apply_kpoint_label(
     result: ConvergenceResult,
     point_labels: Mapping[float, str],
     *,
     quantity: str,
     delta_unit: str,
+    point_spacings: Mapping[float, float] | None = None,
 ) -> ConvergenceResult:
     """Rewrite the details string of a converged result to use a grid label.
 
     Called only for k-point sweeps where the raw converged_value is a k-point
     count (e.g. 27) that should be displayed as a grid string (e.g. "3 x 3 x 3")
-    rather than a bare number followed by "eV".
+    rather than a bare number followed by "eV". When ``point_spacings`` is
+    supplied, the corresponding k-point spacing is appended in parentheses.
     """
     if not result.converged or result.converged_value is None:
         return result
@@ -435,8 +467,15 @@ def _apply_kpoint_label(
     )
     method_label = result.method.replace("-", " ").title() if result.method else "Delta-Threshold"
     details = f"{quantity} converged by {method_label} at {grid_label}"
+
+    annotations: list[str] = []
+    spacing_text = _spacing_annotation(grid_label, result.converged_value, point_spacings)
+    if spacing_text:
+        annotations.append(spacing_text)
     if converged_delta is not None:
-        details += f" (delta={converged_delta:.6g} {delta_unit})"
+        annotations.append(f"delta={converged_delta:.6g} {delta_unit}")
+    if annotations:
+        details += f" ({', '.join(annotations)})"
     details += "."
     return replace(result, details=details)
 
@@ -444,10 +483,18 @@ def _apply_kpoint_label(
 def apply_kpoint_label_to_stress_result(
     result: ConvergenceResult,
     point_labels: Mapping[float, str],
+    *,
+    point_spacings: Mapping[float, float] | None = None,
 ) -> ConvergenceResult:
     """Rewrite a stress :class:`ConvergenceResult` to use a k-point grid label."""
 
-    return _apply_kpoint_label(result, point_labels, quantity="Stress", delta_unit="GPa")
+    return _apply_kpoint_label(
+        result,
+        point_labels,
+        quantity="Stress",
+        delta_unit="GPa",
+        point_spacings=point_spacings,
+    )
 
 
 def analyze_kpoint_convergence(
@@ -459,13 +506,15 @@ def analyze_kpoint_convergence(
     energy_threshold: float,
     force_threshold: float,
     point_labels: Mapping[float, str] | None = None,
+    point_spacings: Mapping[float, float] | None = None,
 ) -> tuple[ConvergenceResult, ConvergenceResult]:
     """Run k-point convergence using delta-threshold only over k-point counts.
 
     When *point_labels* is supplied (mapping each k-point count to its grid
     string, e.g. ``{27.0: "3 x 3 x 3"}``), the ``details`` fields of the
     returned results are rewritten to reference the grid label instead of the
-    raw numeric count.
+    raw numeric count. When *point_spacings* is also supplied, the
+    corresponding spacing (in 1/Ang) is appended to the details string.
     """
 
     energy = delta_threshold_energy(
@@ -477,8 +526,20 @@ def analyze_kpoint_convergence(
     force = delta_threshold_force(kpoint_counts, max_forces, threshold=force_threshold)
 
     if point_labels is not None:
-        energy = _apply_kpoint_label(energy, point_labels, quantity="Energy", delta_unit="eV/atom")
-        force = _apply_kpoint_label(force, point_labels, quantity="Force", delta_unit="eV/Ang")
+        energy = _apply_kpoint_label(
+            energy,
+            point_labels,
+            quantity="Energy",
+            delta_unit="eV/atom",
+            point_spacings=point_spacings,
+        )
+        force = _apply_kpoint_label(
+            force,
+            point_labels,
+            quantity="Force",
+            delta_unit="eV/Ang",
+            point_spacings=point_spacings,
+        )
 
     return energy, force
 

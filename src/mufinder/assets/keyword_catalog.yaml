@@ -217,7 +217,7 @@ keywords:
       category: kpoints
       widget_hint: unit_float
       default_value: 0.05
-      advanced_workflows: [convergence_cutoff, muon_relaxation]
+      advanced_workflows: [convergence_cutoff, muon_relaxation, uep]
 
   - name: SYMMETRY_GENERATE
     canonical_name: symmetry_generate

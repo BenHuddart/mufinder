@@ -8,6 +8,7 @@ import pytest
 
 from mufinder.science.convergence_analysis import (
     ConvergenceResult,
+    _apply_kpoint_label,
     analyze_convergence,
     analyze_kpoint_convergence,
     apply_kpoint_label_to_stress_result,
@@ -280,3 +281,62 @@ def test_apply_kpoint_label_to_stress_result_rewrites_grid_label() -> None:
     assert "Stress converged by" in labeled.details
     assert "3 x 3 x 3" in labeled.details
     assert "at 27 " not in labeled.details
+
+
+def test_analyze_kpoint_convergence_details_include_spacing_for_non_gamma_grid() -> None:
+    energy_result, force_result = analyze_kpoint_convergence(
+        kpoint_counts=[1.0, 8.0, 27.0],
+        energies=[-100.0, -100.02, -100.0205],
+        max_forces=[0.20, 0.16, 0.159],
+        num_atoms=8,
+        energy_threshold=0.001,
+        force_threshold=0.01,
+        point_labels={1.0: "Grid: 1 x 1 x 1", 8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3"},
+        point_spacings={1.0: 0.25, 8.0: 0.25, 27.0: 0.124},
+    )
+
+    assert "Grid: 3 x 3 x 3" in energy_result.details
+    assert "spacing 0.124 1/Ang" in energy_result.details
+    assert "delta=" in energy_result.details
+    assert "Grid: 3 x 3 x 3" in force_result.details
+    assert "spacing 0.124 1/Ang" in force_result.details
+
+
+def test_apply_kpoint_label_omits_spacing_for_gamma_only_grid() -> None:
+    # When the converged point is (1,1,1) the spacing is ill-defined, so the
+    # details string should not advertise the boundary value as if it were
+    # the "right" spacing. The standard delta-threshold algorithm never
+    # actually returns (1,1,1) as converged (convergence is always the
+    # second-or-later point), but a synthetic result lets us exercise the
+    # Gamma-only branch directly.
+    result = ConvergenceResult(
+        converged=True,
+        method="delta-threshold",
+        details="",
+        converged_value=1.0,
+        deltas=((1.0, 1.0e-6),),
+    )
+    labeled = _apply_kpoint_label(
+        result,
+        {1.0: "Grid: 1 x 1 x 1"},
+        quantity="Energy",
+        delta_unit="eV/atom",
+        point_spacings={1.0: 0.25},
+    )
+    assert "Grid: 1 x 1 x 1" in labeled.details
+    assert "spacing" not in labeled.details
+
+
+def test_apply_kpoint_label_to_stress_result_includes_spacing_when_supplied() -> None:
+    stress = delta_threshold_stress(
+        [1.0, 8.0, 27.0],
+        [1.0, 0.3, 0.25],
+        threshold=0.1,
+    )
+    labeled = apply_kpoint_label_to_stress_result(
+        stress,
+        {1.0: "Grid: 1 x 1 x 1", 8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3"},
+        point_spacings={1.0: 0.25, 8.0: 0.25, 27.0: 0.124},
+    )
+    assert "Grid: 3 x 3 x 3" in labeled.details
+    assert "spacing 0.124 1/Ang" in labeled.details

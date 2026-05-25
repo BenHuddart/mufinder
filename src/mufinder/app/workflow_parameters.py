@@ -13,6 +13,7 @@ COMMON_WORKFLOW_PARAMETER_NAMES = (
     "cut_off_energy",
     "elec_energy_tol",
     "kpoint_mp_grid",
+    "kpoint_mp_spacing",
 )
 
 

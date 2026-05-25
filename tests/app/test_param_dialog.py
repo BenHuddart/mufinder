@@ -143,6 +143,40 @@ def test_parameter_dialog_exclusive_choice_collects_one_value(qapp) -> None:
     assert "cut_off_energy" not in switched
 
 
+def test_parameter_dialog_exclusive_radios_are_mutually_exclusive(qapp) -> None:
+    # Regression: each row's radio is parented to its own label container,
+    # so Qt's per-parent auto-exclusivity does not span rows. The dialog
+    # registers every radio in a shared QButtonGroup so checking one
+    # always unchecks the others in the same exclusive_group.
+    dialog = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_kpoint",
+    )
+    dialog.set_advanced_names({"basis_precision", "cut_off_energy"})
+    dialog.set_values(
+        {
+            "basis_precision": "PRECISE",
+            "cut_off_energy": ValueWithUnit(420.0, "eV"),
+        }
+    )
+
+    bp_radio = dialog._rows["basis_precision"].radio
+    ce_radio = dialog._rows["cut_off_energy"].radio
+    assert bp_radio is not None and ce_radio is not None
+
+    # Whichever was selected at construction stays selected; the other is off.
+    assert bp_radio.isChecked() ^ ce_radio.isChecked()
+
+    # Checking the inactive one must auto-uncheck the active one.
+    bp_radio.setChecked(True)
+    assert bp_radio.isChecked() is True
+    assert ce_radio.isChecked() is False
+
+    ce_radio.setChecked(True)
+    assert ce_radio.isChecked() is True
+    assert bp_radio.isChecked() is False
+
+
 def test_parameter_dialog_set_advanced_names_keeps_active_advanced_values_visible(qapp) -> None:
     dialog = ParameterDialog(
         specs=_dialog_specs(),

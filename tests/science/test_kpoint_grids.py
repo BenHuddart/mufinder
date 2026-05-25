@@ -10,6 +10,7 @@ from mufinder.science.kpoint_grids import (
     generate_kpoint_grids,
     grid_from_spacing,
     kpoint_count,
+    kpoint_count_for_spacing,
     lattice_parameters,
     lattice_matches,
     reciprocal_lattice_vectors,
@@ -117,3 +118,49 @@ def test_spacing_from_grid_roundtrip_for_nontrivial_grid() -> None:
     regenerated = grid_from_spacing(lattice, spacing)
 
     assert regenerated == grid
+
+
+def test_kpoint_count_for_spacing_matches_grid_product_at_integer_grids() -> None:
+    # For a cubic cell with a = 4.0 the reciprocal magnitude is 2*pi / a, so
+    # spacing = 1/a should map to n_i_cont = 2 in every direction and a
+    # continuous k-point count of 8.0, matching the discrete (2,2,2) grid.
+    a = 4.0
+    lattice = [[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]
+    assert kpoint_count_for_spacing(lattice, 1.0 / a) == pytest.approx(8.0)
+    # spacing 1/(2a) -> n_i_cont = 3 in each direction -> 27.
+    assert kpoint_count_for_spacing(lattice, 1.0 / (2.0 * a)) == pytest.approx(27.0)
+
+
+def test_kpoint_count_for_spacing_is_monotone_decreasing() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]]
+    spacings = [0.5, 0.3, 0.2, 0.15, 0.1, 0.07, 0.05, 0.03, 0.02]
+    counts = [kpoint_count_for_spacing(lattice, s) for s in spacings]
+    # Smaller spacing -> denser grid -> larger continuous count.
+    assert counts == sorted(counts)
+
+
+def test_kpoint_count_for_spacing_tends_to_one_for_huge_spacing() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    # Spacing >> max |b_i| / (2*pi) makes every n_i_cont approach 1; the
+    # continuous count then approaches 1.
+    assert kpoint_count_for_spacing(lattice, 100.0) == pytest.approx(1.0, abs=0.05)
+
+
+def test_kpoint_count_for_spacing_rejects_nonpositive_spacing() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    with pytest.raises(ValueError):
+        kpoint_count_for_spacing(lattice, 0.0)
+    with pytest.raises(ValueError):
+        kpoint_count_for_spacing(lattice, -0.1)
+
+
+def test_kpoint_count_for_spacing_agrees_with_grid_from_spacing_at_castep_boundary() -> None:
+    # CASTEP uses floor((|b|/(2*pi*s)) + 1, so at the exact boundary s = 1/a
+    # the discrete grid is (2,2,2). The continuous helper should report
+    # exactly 8 there too (no floor difference at the integer).
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    grid = grid_from_spacing(lattice, 0.25)
+    assert grid == (2, 2, 2)
+    assert kpoint_count_for_spacing(lattice, 0.25) == pytest.approx(
+        float(grid[0] * grid[1] * grid[2])
+    )

@@ -212,6 +212,126 @@ def test_convergence_examiner_kpoint_mode_uses_delta_only_and_emits_default(qapp
     assert adopted
 
 
+def test_convergence_examiner_kpoint_mode_adds_spacing_axis_when_lattice_provided(qapp) -> None:
+    from mufinder.science.kpoint_grids import spacing_from_grid
+
+    lattice = [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]]
+    grids = [(1, 1, 1), (2, 2, 2), (3, 3, 3)]
+    counts = [float(grid[0] * grid[1] * grid[2]) for grid in grids]
+    sweep_data = {
+        counts[0]: _completed_state(-10.0, 0.30),
+        counts[1]: _completed_state(-10.02, 0.18),
+        counts[2]: _completed_state(-10.025, 0.17),
+    }
+    labels = {
+        counts[i]: f"Grid: {grids[i][0]} x {grids[i][1]} x {grids[i][2]}"
+        for i in range(3)
+    }
+
+    dialog = ConvergenceExaminerDialog(
+        sweep_data,
+        num_atoms=2,
+        sweep_kind="kpoint",
+        point_labels=labels,
+        lattice_vectors=lattice,
+    )
+
+    assert dialog._point_grids == {counts[i]: grids[i] for i in range(3)}
+    for count, grid in zip(counts, grids, strict=True):
+        if grid == (1, 1, 1):
+            # Gamma-only grids are excluded from _point_spacings because their
+            # spacing is a meaningless boundary value, not a unique mapping.
+            assert count not in dialog._point_spacings
+            continue
+        expected = spacing_from_grid(lattice, grid)
+        assert dialog._point_spacings[count] == pytest.approx(expected)
+
+    dialog._run_analysis()
+
+    spacing_axes = [
+        ax for ax in dialog._figure.axes if ax.get_xlabel() == "K-point spacing (1/Ang)"
+    ]
+    assert len(spacing_axes) == 1
+    spacing_ax = spacing_axes[0]
+
+    # Ticks are no longer pinned to data points; they sit at "nice" spacing
+    # values (e.g. 0.1, 0.07, 0.05) placed via continuous interpolation of
+    # CASTEP's spacing -> grid formula. Verify the axis exists with sensible
+    # ticks within the data range and that the implied spacings decrease
+    # monotonically as n_kpoints grows.
+    tick_positions = list(spacing_ax.get_xticks())
+    tick_labels = [tick.get_text() for tick in spacing_ax.get_xticklabels()]
+    assert tick_positions, "expected at least one spacing tick"
+    assert all(label for label in tick_labels), "expected non-empty tick labels"
+    x_min, x_max = spacing_ax.get_xlim()
+    for position in tick_positions:
+        assert x_min <= position <= x_max
+    # Tick positions read left-to-right; spacings read large-to-small.
+    parsed = [float(label) for label in tick_labels]
+    assert parsed == sorted(parsed, reverse=True)
+
+    # The bottom n_kpoints axis and the spacing twin both use log scale so
+    # small grids stop collapsing into the leftmost sliver of the plot.
+    energy_ax = next(
+        ax for ax in dialog._figure.axes if ax.get_ylabel() == "Energy (eV)"
+    )
+    assert energy_ax.get_xscale() == "log"
+    assert spacing_ax.get_xscale() == "log"
+
+
+def test_convergence_examiner_kpoint_mode_omits_spacing_axis_without_lattice(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            8.0: _completed_state(-10.0, 0.30),
+            27.0: _completed_state(-10.01, 0.20),
+            64.0: _completed_state(-10.011, 0.19),
+        },
+        num_atoms=2,
+        sweep_kind="kpoint",
+        point_labels={8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3", 64.0: "Grid: 4 x 4 x 4"},
+    )
+    assert dialog._point_spacings == {}
+
+    dialog._run_analysis()
+
+    spacing_axes = [
+        ax for ax in dialog._figure.axes if ax.get_xlabel() == "K-point spacing (1/Ang)"
+    ]
+    assert spacing_axes == []
+    # Log scale applies even without lattice vectors — it's the n_kpoints
+    # crowding fix, independent of whether spacing labels are drawn.
+    energy_ax = next(
+        ax for ax in dialog._figure.axes if ax.get_ylabel() == "Energy (eV)"
+    )
+    assert energy_ax.get_xscale() == "log"
+
+
+def test_convergence_examiner_cutoff_mode_has_no_spacing_axis(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.30),
+            400.0: _completed_state(-10.01, 0.20),
+            500.0: _completed_state(-10.011, 0.19),
+        },
+        num_atoms=2,
+        sweep_kind="cutoff",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+    )
+
+    dialog._run_analysis()
+
+    spacing_axes = [
+        ax for ax in dialog._figure.axes if ax.get_xlabel() == "K-point spacing (1/Ang)"
+    ]
+    assert spacing_axes == []
+    assert dialog._point_spacings == {}
+    # Cutoff sweeps keep the historical linear x-axis.
+    energy_ax = next(
+        ax for ax in dialog._figure.axes if ax.get_ylabel() == "Energy (eV)"
+    )
+    assert energy_ax.get_xscale() == "linear"
+
+
 def test_convergence_examiner_rejects_invalid_sweep_kind(qapp) -> None:
     with pytest.raises(ValueError, match="sweep_kind"):
         ConvergenceExaminerDialog({}, num_atoms=1, sweep_kind="invalid")
@@ -281,6 +401,75 @@ def test_convergence_examiner_requires_matching_energy_and_force_rows(qapp) -> N
 
     assert "Need at least two matching completed rows" in dialog._results.toPlainText()
     assert dialog._adopt_button.isEnabled() is False
+
+
+def test_convergence_examiner_hover_routes_twin_axes_to_logical_subplot(qapp) -> None:
+    # Regression: with a spacing twiny on the energy subplot and a stress
+    # twinx on the force subplot, hovering on either subplot used to dispatch
+    # to whichever twin captured the event (e.g. stress would always fire on
+    # the force region). Twin-axis hovers should now route to the underlying
+    # subplot and show the matching tooltip.
+    lattice = [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]]
+    sweep_data = {
+        1.0: CutoffRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=2.0),
+        8.0: CutoffRunState(status="completed", total_energy=-10.02, max_force=0.18, max_stress=0.50),
+        27.0: CutoffRunState(status="completed", total_energy=-10.025, max_force=0.17, max_stress=0.05),
+    }
+    dialog = ConvergenceExaminerDialog(
+        sweep_data,
+        num_atoms=2,
+        sweep_kind="kpoint",
+        point_labels={1.0: "Grid: 1 x 1 x 1", 8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3"},
+        lattice_vectors=lattice,
+    )
+    dialog._include_stress.setChecked(True)
+    dialog._run_analysis()
+
+    assert dialog._spacing_ax is not None
+    assert dialog._stress_ax is not None
+
+    # Hover on the spacing twin (top of the energy subplot) — should still
+    # report an energy-subplot tooltip anchored on the energy axis.
+    dialog._on_plot_hover(
+        SimpleNamespace(inaxes=dialog._spacing_ax, xdata=8.0, ydata=-10.02)
+    )
+    assert dialog._hover_annotation is not None
+    assert "Grid: 2 x 2 x 2" in dialog._hover_annotation.get_text()
+    assert dialog._hover_annotation.axes is dialog._energy_ax
+
+    # Hover on the stress twin (top of the force subplot) — should still
+    # report a force-subplot tooltip anchored on the force axis (kpoint
+    # mode shows just the grid label).
+    dialog._on_plot_hover(
+        SimpleNamespace(inaxes=dialog._stress_ax, xdata=27.0, ydata=0.05)
+    )
+    assert "Grid: 3 x 3 x 3" in dialog._hover_annotation.get_text()
+    assert dialog._hover_annotation.axes is dialog._force_ax
+
+
+def test_convergence_examiner_hover_combines_force_and_stress_in_cutoff_mode(qapp) -> None:
+    # When the cursor is over the stress twin axis in cutoff mode, the
+    # annotation should be anchored on the stress axis (so the arrow points
+    # at the stress data point, not the force line) and show both metrics.
+    sweep_data = {
+        300.0: CutoffRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=1.5),
+        400.0: CutoffRunState(status="completed", total_energy=-10.01, max_force=0.20, max_stress=0.4),
+        500.0: CutoffRunState(status="completed", total_energy=-10.011, max_force=0.05, max_stress=0.08),
+    }
+    dialog = ConvergenceExaminerDialog(sweep_data, num_atoms=2, sweep_kind="cutoff")
+    dialog._include_stress.setChecked(True)
+    dialog._run_analysis()
+
+    assert dialog._stress_ax is not None
+    dialog._on_plot_hover(
+        SimpleNamespace(inaxes=dialog._stress_ax, xdata=400.0, ydata=0.4)
+    )
+    text = dialog._hover_annotation.get_text()
+    assert "Cutoff: 400" in text
+    assert "Max force" in text
+    assert "Max stress" in text
+    # Anchored on stress axis so the arrow points at the stress data point.
+    assert dialog._hover_annotation.axes is dialog._stress_ax
 
 
 def test_convergence_examiner_hover_tooltip_and_leave(qapp) -> None:

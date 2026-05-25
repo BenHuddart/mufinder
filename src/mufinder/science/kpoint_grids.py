@@ -77,6 +77,32 @@ def grid_from_spacing(
     return (grid[0], grid[1], grid[2])
 
 
+def kpoint_count_for_spacing(
+    lattice_vectors: Sequence[Sequence[float]],
+    spacing: float,
+) -> float:
+    """Continuous interpolation of CASTEP's spacing -> n_kpoints relation.
+
+    Drops the ``floor`` from :func:`grid_from_spacing` so the mapping is
+    smooth, letting us position spacing-labelled tick marks on a convergence
+    plot whose primary x-axis is the integer number of k-points. At integer
+    grids the continuous value agrees with the discrete CASTEP grid.
+    """
+
+    spacing_value = float(spacing)
+    if not math.isfinite(spacing_value) or spacing_value <= 0.0:
+        raise ValueError("spacing must be a positive finite value in 1/Ang.")
+
+    reciprocal = reciprocal_lattice_vectors(lattice_vectors)
+    denominator = 2.0 * math.pi * spacing_value
+
+    product = 1.0
+    for vector in reciprocal:
+        magnitude = _norm(vector)
+        product *= (magnitude / denominator) + 1.0
+    return product
+
+
 def generate_kpoint_grids(
     lattice_vectors: Sequence[Sequence[float]],
     spacing: float,

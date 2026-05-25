@@ -8862,11 +8862,22 @@ def test_main_window_examine_kpoint_convergence_launches_dialog(
     captured: dict[str, object] = {}
 
     class _FakeDialog:
-        def __init__(self, cutoff_data, *, num_atoms, sweep_kind, point_labels, initial_state=None, parent=None) -> None:
+        def __init__(
+            self,
+            cutoff_data,
+            *,
+            num_atoms,
+            sweep_kind,
+            point_labels,
+            lattice_vectors=None,
+            initial_state=None,
+            parent=None,
+        ) -> None:
             captured["cutoff_data"] = cutoff_data
             captured["num_atoms"] = num_atoms
             captured["sweep_kind"] = sweep_kind
             captured["point_labels"] = point_labels
+            captured["lattice_vectors"] = lattice_vectors
             captured["initial_state"] = initial_state
             captured["parent"] = parent
             self.default_adopted = SimpleNamespace(connect=lambda _cb: None)
@@ -8887,6 +8898,7 @@ def test_main_window_examine_kpoint_convergence_launches_dialog(
     assert captured["num_atoms"] == 2
     assert captured["sweep_kind"] == "kpoint"
     assert captured["point_labels"][8.0] == "Grid: 2 x 2 x 2"
+    assert captured["lattice_vectors"] == host.lattice_vectors
     assert captured["initial_state"] == {}
     assert captured["parent"] is window
     assert captured["opened"] is True
