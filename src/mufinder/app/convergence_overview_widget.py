@@ -89,6 +89,25 @@ class _PinnedPlotWidget(QWidget):
             self.show_placeholder(placeholder_message)
             return
 
+        stresses: list[float] = []
+        stress_threshold: float | None = None
+        try:
+            raw_stresses = plot_data.get("stresses") or []
+            stresses = [float(value) for value in raw_stresses]
+            raw_stress_threshold = plot_data.get("stress_threshold")
+            if raw_stress_threshold is not None:
+                stress_threshold = float(raw_stress_threshold)
+        except (TypeError, ValueError):
+            stresses = []
+            stress_threshold = None
+
+        # Only honour stress when the series matches the x-axis 1:1 and a
+        # threshold was actually adopted. The examiner enforces this when
+        # building the snapshot; this is a defensive check for partial payloads.
+        if not stresses or len(stresses) != len(x_values) or stress_threshold is None:
+            stresses = []
+            stress_threshold = None
+
         point_labels_raw = snapshot.get("point_labels")
         point_labels: dict[float, str] = {}
         if isinstance(point_labels_raw, Mapping):
@@ -127,6 +146,8 @@ class _PinnedPlotWidget(QWidget):
             force_threshold=force_threshold,
             recommended_value=recommended_value,
             point_labels=point_labels,
+            stresses=stresses or None,
+            stress_threshold=stress_threshold,
         )
         self._placeholder.hide()
         self._canvas.show()
@@ -152,6 +173,8 @@ class _PinnedPlotWidget(QWidget):
         force_threshold: float,
         recommended_value: float | None,
         point_labels: Mapping[float, str],
+        stresses: list[float] | None = None,
+        stress_threshold: float | None = None,
     ) -> None:
         palette = current_palette()
         self._figure.set_facecolor(palette.bg_surface_alt)
@@ -172,6 +195,22 @@ class _PinnedPlotWidget(QWidget):
         energy_ax.tick_params(axis="y", labelsize=8)
         force_ax.set_ylabel("Max force\n(eV/Ang)", fontsize=9)
         force_ax.tick_params(axis="both", labelsize=8)
+
+        # Stress overlay: secondary y-axis on the force subplot, mirroring the
+        # examiner dialog (see _STRESS_COLOR / amber #d97706 in convergence_examiner.py).
+        # The colour literal is intentional and theme-independent so force (red) and
+        # stress (amber) remain visually distinct regardless of palette.
+        show_stress = bool(stresses) and stress_threshold is not None
+        if show_stress:
+            stress_ax = force_ax.twinx()
+            stress_ax.plot(x_values, stresses, marker="s", linestyle="-", color="#d97706")
+            stress_ax.axhline(stress_threshold, color="#d97706", linestyle=":", alpha=0.85)
+            stress_ax.set_ylabel("Max stress\n(GPa)", fontsize=9)
+            stress_ax.yaxis.label.set_color("#d97706")
+            stress_ax.tick_params(axis="y", colors="#d97706", labelcolor="#d97706", labelsize=8)
+            for spine in stress_ax.spines.values():
+                spine.set_color(palette.border)
+            stress_ax.spines["right"].set_color("#d97706")
 
         if self._sweep_kind == "cutoff":
             force_ax.set_xlabel("Cutoff energy (eV)", labelpad=6, fontsize=9)
@@ -200,20 +239,67 @@ class _PinnedPlotWidget(QWidget):
             ha="right",
             va="bottom",
             fontsize=8,
-            color=palette.text_muted,
+            # Match the energy line/marker colour so each badge maps visually
+            # onto the series it describes (parallels the amber dS badge).
+            color="#1d4ed8",
             bbox=badge_box,
         )
-        force_ax.text(
-            0.99,
-            1.01,
-            f"dF <= {force_threshold:.3g} eV/Ang",
-            transform=force_ax.transAxes,
-            ha="right",
-            va="bottom",
-            fontsize=8,
-            color=palette.text_muted,
-            bbox=badge_box,
-        )
+        # Force-subplot badges: when stress is absent, dF sits in its historical
+        # top-right corner. When stress is present, dF moves left to make room
+        # for dS on the right (so each badge sits above the axis it describes,
+        # with both right-anchored and separated by a small measured gap).
+        if show_stress:
+            dF_text = f"dF <= {force_threshold:.3g} eV/Ang"
+            dS_text = f"dS <= {stress_threshold:.3g} GPa"
+            dS_badge = force_ax.text(
+                0.99,
+                1.01,
+                dS_text,
+                transform=force_ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=8,
+                color="#d97706",
+                bbox=badge_box,
+            )
+            # Measure dS extent so dF can sit immediately to its left with a small gap.
+            self._canvas.draw_idle()
+            renderer = self._canvas.get_renderer()
+            try:
+                bbox_pixels = dS_badge.get_window_extent(renderer=renderer)
+                bbox_axes = force_ax.transAxes.inverted().transform_bbox(bbox_pixels)
+                dS_width_axes = float(bbox_axes.width)
+            except Exception:
+                # Fall back to a fixed offset if the renderer can't size the text yet.
+                dS_width_axes = 0.30
+            # ~5% of axes width gives a clear visual separation between the
+            # two right-anchored badges; tighten if it pushes dF off-axis.
+            gap = 0.05
+            dF_anchor_x = max(0.0, 0.99 - dS_width_axes - gap)
+            force_ax.text(
+                dF_anchor_x,
+                1.01,
+                dF_text,
+                transform=force_ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=8,
+                color="#b91c1c",
+                bbox=badge_box,
+            )
+        else:
+            force_ax.text(
+                0.99,
+                1.01,
+                f"dF <= {force_threshold:.3g} eV/Ang",
+                transform=force_ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=8,
+                # Match the force line/marker colour for visual association.
+                color="#b91c1c",
+                bbox=badge_box,
+            )
         self._apply_axis_theme(energy_ax)
         self._apply_axis_theme(force_ax)
         self._canvas.draw_idle()

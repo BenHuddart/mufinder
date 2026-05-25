@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from matplotlib.colors import to_hex
 from PySide6.QtWidgets import QScrollArea
+from pytest import approx as pytest_approx
 
 from mufinder.app import theme as theme_module
 from mufinder.app.convergence_overview_widget import ConvergenceOverviewWidget
@@ -105,6 +106,133 @@ def test_convergence_overview_widget_renders_pinned_snapshots(qapp) -> None:
     widget.close()
 
 
+def test_convergence_overview_widget_skips_stress_when_data_absent(qapp) -> None:
+    widget = ConvergenceOverviewWidget()
+
+    widget.set_cutoff_panel(
+        summary_rows=[
+            ("Project default", "550 eV"),
+            ("Method", "Delta-Threshold"),
+            ("Criteria", "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang"),
+        ],
+        snapshot={
+            "default_value": 550.0,
+            "plot_data": {
+                "cutoffs": [300.0, 400.0, 550.0],
+                "energies": [-10.0, -10.1, -10.15],
+                "forces": [0.30, 0.18, 0.05],
+                "energy_threshold": 0.001,
+                "force_threshold": 0.05,
+            },
+        },
+        placeholder_message="unused",
+    )
+
+    # Two axes only (energy + force) — no twinx for stress.
+    assert len(widget._cutoff_card._plot._figure.axes) == 2
+
+    # The dF badge should sit in the historical top-right corner (x≈0.99, ha="right").
+    energy_ax, force_ax = widget._cutoff_card._plot._figure.axes
+    badges = [t for t in force_ax.texts if "dF" in t.get_text()]
+    assert badges, "expected a dF badge on the force subplot"
+    assert badges[0].get_position()[0] == pytest_approx(0.99)
+    assert badges[0].get_ha() == "right"
+    # Badge colours match their respective series for visual association.
+    assert badges[0].get_color().lower() == "#b91c1c"
+    dE_badges = [t for t in energy_ax.texts if "dE" in t.get_text()]
+    assert dE_badges and dE_badges[0].get_color().lower() == "#1d4ed8"
+    assert not any("dS" in t.get_text() for t in force_ax.texts)
+    widget.close()
+
+
+def test_convergence_overview_widget_renders_stress_overlay_when_present(qapp) -> None:
+    widget = ConvergenceOverviewWidget()
+
+    widget.set_cutoff_panel(
+        summary_rows=[
+            ("Project default", "550 eV"),
+            ("Method", "Delta-Threshold"),
+            ("Criteria", "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang, dS <= 0.1 GPa"),
+        ],
+        snapshot={
+            "default_value": 550.0,
+            "stress_threshold": 0.1,
+            "plot_data": {
+                "cutoffs": [300.0, 400.0, 550.0],
+                "energies": [-10.0, -10.1, -10.15],
+                "forces": [0.30, 0.18, 0.05],
+                "stresses": [1.50, 0.40, 0.08],
+                "energy_threshold": 0.001,
+                "force_threshold": 0.05,
+                "stress_threshold": 0.1,
+            },
+        },
+        placeholder_message="unused",
+    )
+
+    # Three axes: energy, force, and the twinx stress axis sharing the force subplot.
+    axes = widget._cutoff_card._plot._figure.axes
+    assert len(axes) == 3
+    stress_ax = axes[-1]
+    assert "Max stress" in stress_ax.get_ylabel()
+    assert stress_ax.yaxis.label.get_color().lower() == "#d97706"
+
+    # Force subplot now has both dF and dS badges, both right-anchored.
+    force_ax = axes[1]
+    dF_badges = [t for t in force_ax.texts if "dF" in t.get_text()]
+    dS_badges = [t for t in force_ax.texts if "dS" in t.get_text()]
+    assert dF_badges and dS_badges
+    assert dS_badges[0].get_position()[0] == pytest_approx(0.99)
+    assert dS_badges[0].get_ha() == "right"
+    assert dF_badges[0].get_ha() == "right"
+    # dF should sit strictly to the left of dS once stress is enabled.
+    assert dF_badges[0].get_position()[0] < dS_badges[0].get_position()[0]
+    widget.close()
+
+
+def test_convergence_overview_widget_ignores_partial_stress_payload(qapp) -> None:
+    widget = ConvergenceOverviewWidget()
+
+    # stresses provided but stress_threshold missing → must be skipped.
+    widget.set_cutoff_panel(
+        summary_rows=[("Project default", "550 eV"), ("Method", "Delta-Threshold"), ("Criteria", "...")],
+        snapshot={
+            "default_value": 550.0,
+            "plot_data": {
+                "cutoffs": [300.0, 400.0, 550.0],
+                "energies": [-10.0, -10.1, -10.15],
+                "forces": [0.30, 0.18, 0.05],
+                "stresses": [1.50, 0.40, 0.08],
+                "energy_threshold": 0.001,
+                "force_threshold": 0.05,
+                # stress_threshold intentionally omitted
+            },
+        },
+        placeholder_message="unused",
+    )
+    assert len(widget._cutoff_card._plot._figure.axes) == 2
+
+    # stresses length mismatched with cutoffs → must be skipped.
+    widget.set_cutoff_panel(
+        summary_rows=[("Project default", "550 eV"), ("Method", "Delta-Threshold"), ("Criteria", "...")],
+        snapshot={
+            "default_value": 550.0,
+            "plot_data": {
+                "cutoffs": [300.0, 400.0, 550.0],
+                "energies": [-10.0, -10.1, -10.15],
+                "forces": [0.30, 0.18, 0.05],
+                "stresses": [1.50, 0.40],  # length 2 vs 3
+                "energy_threshold": 0.001,
+                "force_threshold": 0.05,
+                "stress_threshold": 0.1,
+            },
+        },
+        placeholder_message="unused",
+    )
+    assert len(widget._cutoff_card._plot._figure.axes) == 2
+    widget.close()
+
+
 def test_convergence_overview_widget_plot_colors_follow_active_theme(qapp) -> None:
     theme_module.apply_theme(qapp, theme_module.THEME_DARK)
     try:
@@ -136,7 +264,9 @@ def test_convergence_overview_widget_plot_colors_follow_active_theme(qapp) -> No
         assert energy_ax.yaxis.label.get_color().lower() == palette.text_primary.lower()
         assert force_ax.xaxis.label.get_color().lower() == palette.text_primary.lower()
         assert energy_ax.texts
-        assert energy_ax.texts[-1].get_color().lower() == palette.text_muted.lower()
+        # The dE badge now adopts the energy line/marker colour (matches the
+        # dF/dS pattern), so it is intentionally theme-independent.
+        assert energy_ax.texts[-1].get_color().lower() == "#1d4ed8"
         widget.close()
     finally:
         theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)

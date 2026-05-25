@@ -2697,6 +2697,7 @@ class MainWindow(QMainWindow):
                 format_convergence_criteria(
                     energy_threshold=self._document.project.recommended_cutoff_energy_threshold,
                     force_threshold=self._document.project.recommended_cutoff_force_threshold,
+                    stress_threshold=self._document.project.recommended_cutoff_stress_threshold,
                 ),
             ),
         ]
@@ -2718,6 +2719,7 @@ class MainWindow(QMainWindow):
                 format_convergence_criteria(
                     energy_threshold=self._document.project.recommended_kpoint_energy_threshold,
                     force_threshold=self._document.project.recommended_kpoint_force_threshold,
+                    stress_threshold=self._document.project.recommended_kpoint_stress_threshold,
                 ),
             ),
         ]
