@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import math
 from typing import Any
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -476,7 +477,9 @@ class ConvergenceExaminerDialog(QDialog):
         grids: Mapping[float, tuple[int, int, int]],
     ) -> dict[float, float]:
         spacings: dict[float, float] = {}
-        for x_value, grid in grids.items():
+        last_spacing: float | None = None
+        for x_value in sorted(grids):
+            grid = grids[x_value]
             # (1,1,1) is Gamma-only sampling; any spacing larger than the cell's
             # coarsest reciprocal-space spacing produces the same grid, so the
             # boundary value from spacing_from_grid is meaningless. Skip it so
@@ -484,10 +487,61 @@ class ConvergenceExaminerDialog(QDialog):
             if grid == (1, 1, 1):
                 continue
             try:
-                spacings[float(x_value)] = spacing_from_grid(lattice_vectors, grid)
+                spacing = spacing_from_grid(lattice_vectors, grid)
             except ValueError:
                 continue
+            # Skip duplicate spacings: when a frozen n_i = 1 direction
+            # dominates the max, successive grids can report the same value
+            # even as other axes grow.  Once a plateau starts, every subsequent
+            # repeat is suppressed so the annotation series stays strictly
+            # decreasing and does not mislead the user about convergence status.
+            if last_spacing is not None and math.isclose(
+                spacing, last_spacing, rel_tol=1e-9
+            ):
+                continue
+            spacings[float(x_value)] = spacing
+            last_spacing = spacing
         return spacings
+
+    @staticmethod
+    def recompute_spacings_in_snapshot(
+        snapshot: Mapping[str, object],
+        lattice_vectors: Sequence[Sequence[float]],
+    ) -> dict[str, object]:
+        """Return a copy of *snapshot* with ``point_spacings`` recomputed.
+
+        Re-derives spacing values from *lattice_vectors* and the grid labels
+        stored in the snapshot, so that stale values persisted with an older
+        formula are replaced without mutating the caller's dict.
+
+        Returns the original dict (as a shallow copy) unchanged when the
+        snapshot lacks ``point_labels`` or ``plot_data``, or if recomputation
+        raises an unexpected error.
+        """
+        raw_labels = snapshot.get("point_labels")
+        plot_data = snapshot.get("plot_data")
+        if not isinstance(raw_labels, Mapping) or not isinstance(plot_data, Mapping):
+            return dict(snapshot)
+
+        float_labels: dict[float, str] = {}
+        for k, v in raw_labels.items():
+            try:
+                float_labels[float(k)] = str(v)
+            except (TypeError, ValueError):
+                continue
+
+        grids = ConvergenceExaminerDialog._parse_grids_from_labels(float_labels)
+        try:
+            fresh_spacings = ConvergenceExaminerDialog._compute_spacings(
+                lattice_vectors, grids
+            )
+        except Exception:
+            return dict(snapshot)
+
+        return {
+            **dict(snapshot),
+            "plot_data": {**dict(plot_data), "point_spacings": fresh_spacings},
+        }
 
     @staticmethod
     def _format_spacing_label(spacing: float) -> str:

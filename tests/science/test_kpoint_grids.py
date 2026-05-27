@@ -110,14 +110,43 @@ def test_equivalent_grid_for_supercell_rounds_up_to_avoid_undersampling() -> Non
     assert equivalent == (2, 2, 2)
 
 
-def test_spacing_from_grid_roundtrip_for_nontrivial_grid() -> None:
+def test_spacing_from_grid_uses_castep_max_formula() -> None:
+    # CASTEP convention: spacing = max_i( |b_i| / (2*pi * N_i) ).
+    # For orthorhombic a=4, b=6, c=8 with grid (3, 2, 2):
+    #   max( 1/(4*3), 1/(6*2), 1/(8*2) ) = max(1/12, 1/12, 1/16) = 1/12.
     lattice = [[4.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 8.0]]
-    grid = (3, 2, 2)
+    assert spacing_from_grid(lattice, (3, 2, 2)) == pytest.approx(1.0 / 12.0)
 
-    spacing = spacing_from_grid(lattice, grid)
-    regenerated = grid_from_spacing(lattice, spacing)
 
-    assert regenerated == grid
+def test_spacing_from_grid_cubic_lif_5x5x5() -> None:
+    # Cubic LiF (a=4.0834 Ang), 5x5x5 grid: spacing = 1/(a*5).
+    a = 4.0834
+    lattice = [[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]
+    assert spacing_from_grid(lattice, (5, 5, 5)) == pytest.approx(1.0 / (a * 5.0))
+
+
+def test_spacing_from_grid_hexagonal_alf3_3x3x3() -> None:
+    # Hexagonal AlF3 (a=4.872, c=12.466 Ang), 3x3x3 grid.
+    # |b_ab| = 4*pi/(a*sqrt(3)); spacing = |b_ab|/(2*pi*3) = 2/(3*a*sqrt(3)).
+    import math as _math
+
+    a, c = 4.872, 12.466
+    lattice = [[a, 0.0, 0.0], [-a / 2.0, a * _math.sqrt(3) / 2.0, 0.0], [0.0, 0.0, c]]
+    expected = 2.0 / (3.0 * a * _math.sqrt(3))  # ≈ 0.0790 1/Ang
+    assert spacing_from_grid(lattice, (3, 3, 3)) == pytest.approx(expected, rel=1e-4)
+
+
+def test_spacing_from_grid_hexagonal_alf3_anisotropic_grids_decrease() -> None:
+    # Previously 6x6x5, 7x7x5, 12x12x5 all reported the same spacing because
+    # the old formula ignored the in-plane direction.  They must now differ.
+    import math as _math
+
+    a, c = 4.872, 12.466
+    lattice = [[a, 0.0, 0.0], [-a / 2.0, a * _math.sqrt(3) / 2.0, 0.0], [0.0, 0.0, c]]
+    s6 = spacing_from_grid(lattice, (6, 6, 5))
+    s7 = spacing_from_grid(lattice, (7, 7, 5))
+    s12 = spacing_from_grid(lattice, (12, 12, 5))
+    assert s6 > s7 > s12
 
 
 def test_kpoint_count_for_spacing_matches_grid_product_at_integer_grids() -> None:

@@ -187,9 +187,11 @@ def spacing_from_grid(
     lattice_vectors: Sequence[Sequence[float]],
     grid: tuple[int, int, int],
 ) -> float:
-    """Infer a reciprocal-space spacing from one Monkhorst-Pack grid.
+    """Return the CASTEP KPOINT_MP_SPACING for a Monkhorst-Pack grid.
 
-    This inverts the CASTEP relation used by :func:`grid_from_spacing`.
+    Follows the CASTEP convention: ``spacing = max_i( |b_i| / (2*pi * N_i) )``,
+    where ``|b_i|`` are the reciprocal lattice vector magnitudes in 1/Ang and
+    ``N_i`` is the number of k-points along each direction.
     """
 
     n1 = int(grid[0])
@@ -200,20 +202,12 @@ def spacing_from_grid(
 
     reciprocal = reciprocal_lattice_vectors(lattice_vectors)
     magnitudes = (_norm(reciprocal[0]), _norm(reciprocal[1]), _norm(reciprocal[2]))
-    denominators = (n1 - 1, n2 - 1, n3 - 1)
+    counts = (n1, n2, n3)
 
-    finite_spacings: list[float] = []
-    for magnitude, denominator in zip(magnitudes, denominators, strict=True):
-        if denominator <= 0:
-            continue
-        finite_spacings.append(magnitude / (2.0 * math.pi * float(denominator)))
-
-    if finite_spacings:
-        return min(finite_spacings)
-
-    # ``(1, 1, 1)`` has no unique inverse; choose the coarsest spacing
-    # that still reproduces a valid single-point grid.
-    return max(magnitudes) / (2.0 * math.pi)
+    return max(
+        magnitude / (2.0 * math.pi * float(count))
+        for magnitude, count in zip(magnitudes, counts, strict=True)
+    )
 
 
 def supercell_lattice_vectors(

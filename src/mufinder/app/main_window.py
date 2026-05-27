@@ -2680,6 +2680,20 @@ class MainWindow(QMainWindow):
         current_grid = self._document.project.recommended_kpoint_grid
         if current_grid is None or snapshot_grid != current_grid:
             return None
+
+        # Recompute point_spacings from the current host structure's lattice
+        # vectors so that stale values persisted with an older formula are
+        # always refreshed on load — even for projects adopted before the fix.
+        host_id = self._document.project.host_structure_id
+        host = self._document.structures.get(host_id) if host_id is not None else None
+        if host is not None:
+            try:
+                snapshot = ConvergenceExaminerDialog.recompute_spacings_in_snapshot(
+                    snapshot, host.lattice_vectors
+                )
+            except Exception:
+                pass  # Safety: fall back to stored spacings on any unexpected error
+
         return snapshot
 
     def _cutoff_overview_summary_rows(self) -> list[tuple[str, str]]:

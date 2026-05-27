@@ -614,3 +614,85 @@ def test_convergence_examiner_runs_stress_and_passes_through_signal(qapp) -> Non
 
     assert adopted
     assert adopted[-1][-1] == pytest.approx(0.1)
+
+
+# ---------------------------------------------------------------------------
+# _compute_spacings — duplicate spacing suppression (frozen n=1 direction)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_spacings_suppresses_duplicate_spacings_from_frozen_direction() -> None:
+    # Hexagonal AlF3 (a=4.872, c=12.466 Å) at s≈0.072 1/Å produces max_grid
+    # (4,4,1): the long c axis gets only one k-point. Grids (3,3,1) and (4,4,1)
+    # both report the same spacing because the frozen c direction (n=1) dominates
+    # the max for both. The first occurrence — (3,3,1) — represents a genuine
+    # change in sampling and should be kept. The duplicate — (4,4,1) — should
+    # be suppressed to avoid a non-decreasing series that misleads about convergence.
+    import math as _math
+
+    a, c = 4.872, 12.466
+    lattice = [[a, 0.0, 0.0], [-a / 2.0, a * _math.sqrt(3) / 2.0, 0.0], [0.0, 0.0, c]]
+    # x_values are k-point counts; keys drive iteration order in _compute_spacings.
+    # (2,2,1) → 4 k-pts, (3,3,1) → 9 k-pts, (4,4,1) → 16 k-pts
+    grids = {4.0: (2, 2, 1), 9.0: (3, 3, 1), 16.0: (4, 4, 1)}
+
+    spacings = ConvergenceExaminerDialog._compute_spacings(lattice, grids)
+
+    # (2,2,1): ab dominates → unique value → include
+    assert 4.0 in spacings
+    # (3,3,1): c barely dominates, but spacing differs from (2,2,1) → include
+    assert 9.0 in spacings
+    # (4,4,1): c still dominates → same spacing as (3,3,1) → suppress
+    assert 16.0 not in spacings
+    # Remaining spacings must decrease strictly
+    assert spacings[4.0] > spacings[9.0]
+
+
+# ---------------------------------------------------------------------------
+# recompute_spacings_in_snapshot — stale value replacement
+# ---------------------------------------------------------------------------
+
+
+def test_recompute_spacings_in_snapshot_replaces_stale_values() -> None:
+    from mufinder.science.kpoint_grids import spacing_from_grid
+
+    a = 4.0
+    lattice = [[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]
+    snapshot: dict = {
+        "point_labels": {"8.0": "Grid: 2 x 2 x 2", "27.0": "Grid: 3 x 3 x 3"},
+        "plot_data": {
+            "cutoffs": [8.0, 27.0],
+            "energies": [-10.0, -10.01],
+            # Deliberately wrong ("stale") spacing values:
+            "point_spacings": {"8.0": 999.0, "27.0": 999.0},
+        },
+    }
+
+    refreshed = ConvergenceExaminerDialog.recompute_spacings_in_snapshot(
+        snapshot, lattice
+    )
+
+    expected_8 = spacing_from_grid(lattice, (2, 2, 2))
+    expected_27 = spacing_from_grid(lattice, (3, 3, 3))
+    assert refreshed["plot_data"]["point_spacings"][8.0] == pytest.approx(expected_8)
+    assert refreshed["plot_data"]["point_spacings"][27.0] == pytest.approx(expected_27)
+    # Original snapshot must not be mutated.
+    assert snapshot["plot_data"]["point_spacings"] == {"8.0": 999.0, "27.0": 999.0}
+
+
+def test_recompute_spacings_in_snapshot_falls_back_without_point_labels() -> None:
+    # Snapshots that pre-date point_labels (or cutoff snapshots) are returned
+    # as-is so the caller can still display them.
+    snapshot: dict = {
+        "plot_data": {
+            "cutoffs": [300.0, 400.0],
+            "point_spacings": {"300.0": 0.5},
+        },
+    }
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+
+    result = ConvergenceExaminerDialog.recompute_spacings_in_snapshot(snapshot, lattice)
+
+    # No point_labels → unchanged (but a copy, not the same object).
+    assert result["plot_data"]["point_spacings"] == {"300.0": 0.5}
+    assert result is not snapshot
