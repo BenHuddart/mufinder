@@ -103,38 +103,28 @@ jobs:
       - name: Build PyInstaller bundle
         run: pyinstaller --noconfirm packaging/pyinstaller/mufinder.spec
 
-      - name: Install WiX
-        run: dotnet tool install --global wix --version 4.0.6
+      - name: Install NSIS
+        run: choco install nsis -y
 
-      - name: Add WiX UI extension
-        run: wix extension add --global WixToolset.UI.wixext/4.0.6
-
-      - name: Harvest PyInstaller bundle for WiX
-        shell: pwsh
-        run: |
-          $appDir = "$env:GITHUB_WORKSPACE\dist\MuFinder"
-          python scripts/generate_wix_fragment.py $appDir --output packaging\windows\AppFiles.wxs
-
-      - name: Build MSI installer
+      - name: Build installer
         shell: pwsh
         run: |
           $version = $env:RELEASE_TAG.TrimStart('v')
           $appDir = "$env:GITHUB_WORKSPACE\dist\MuFinder"
           $iconFile = "$env:GITHUB_WORKSPACE\packaging\build\mufinder.ico"
-          $output = "dist\MuFinder-$env:RELEASE_TAG-windows-x64.msi"
-          wix build packaging\windows\installer.wxs packaging\windows\AppFiles.wxs `
-            -d Version=$version `
-            -d AppDir=$appDir `
-            -d IconFile=$iconFile `
-            -o $output `
-            -arch x64 `
-            -ext WixToolset.UI.wixext
+          $output = "$env:GITHUB_WORKSPACE\dist\MuFinder-$env:RELEASE_TAG-windows-x64.exe"
+          makensis `
+            "/DVERSION=$version" `
+            "/DAPP_DIR=$appDir" `
+            "/DICON_FILE=$iconFile" `
+            "/DOUTPUT_FILE=$output" `
+            packaging\windows\mufinder.nsi
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v6
         with:
           name: windows-installer
-          path: dist/MuFinder-${{ env.RELEASE_TAG }}-windows-x64.msi
+          path: dist/MuFinder-${{ env.RELEASE_TAG }}-windows-x64.exe
 
   build-macos:
     needs: detect-release
