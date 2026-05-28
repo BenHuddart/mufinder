@@ -1,0 +1,41 @@
+name: Claude Code
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          base_branch: develop
+          claude_args: |
+            --allowedTools "Bash(python*),Bash(git*),Bash(pip*)"
+            --system-prompt "You are working on MuFinder, a PySide6 desktop GUI for muon stopping-site calculations. Always read CLAUDE.md before making non-trivial changes. Key constraints: (1) Package dependencies flow inward only — app → services/workflow/science → domain/castep_io/persistence; lower layers must never import higher ones. (2) All changes must pass the quality gates: tests (python -m pytest), coverage ≥ 85%, and Sphinx docs without warnings (python -m sphinx -W -b html docs docs/_build/html). (3) Install the full dev environment with: python -m pip install -e \".[dev]\". (4) New branches should target develop, not main."
