@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QComboBox, QHeaderView, QMessageBox, QPushButton, 
 
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
+from mufinder.app.workflow_parameters import kpoint_exclusive_hint
 from mufinder.app.relaxation_types import RelaxationRunState
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, SelectionSnapshotToolButton
 from mufinder.castep_io.types import ValueWithUnit
@@ -455,6 +456,61 @@ def test_relaxation_widget_does_not_pre_fill_spacing_for_gamma_only(qapp) -> Non
     assert "kpoint_mp_spacing" not in seed
     effective = widget._effective_params_for_row(row_id)
     assert "kpoint_mp_spacing" not in effective
+
+
+def test_relaxation_widget_inspect_dialog_shows_spacing_when_spacing_is_active(qapp) -> None:
+    # Regression: when a row was configured with kpoint_mp_spacing, the
+    # inspect/configure dialog must show spacing as the active exclusive
+    # choice.  Before the fix the pre-fill of the inactive grid half caused
+    # _default_selection_for_group to prefer kpoint_mp_grid (it was in
+    # _PREFERRED_EXCLUSIVE_NAMES), making the dialog misleadingly show grid
+    # as the active selection even though the files used spacing.
+    a = 4.026
+    widget = PristineRelaxationWidget()
+    widget.set_host_lattice([[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]])
+    widget.set_project_defaults(
+        cutoff_energy=600.0,
+        kpoint_grid=(4, 4, 4),
+        kpoint_reference_lattice=[[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]],
+    )
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+
+    # Simulate the user having configured the row with spacing.
+    widget._row_parameter_values[row_id] = {
+        "kpoint_mp_spacing": ValueWithUnit(0.07, "1/ang"),
+    }
+
+    # Reproduce what the inspect/configure dialog open path does.
+    common = widget._common_params_for_rows((row_id,))
+    # The pre-fill adds kpoint_mp_grid as well; both are present.
+    assert "kpoint_mp_spacing" in common
+    assert "kpoint_mp_grid" in common
+
+    kpoint_hint = kpoint_exclusive_hint(
+        widget._effective_params_for_row(r) for r in (row_id,)
+    )
+
+    dialog = ParameterDialog(
+        specs=widget._specs,
+        workflow_stage="pristine_relaxation",
+        locked_values={"task": "GEOMETRYOPTIMIZATION"},
+    )
+    dialog.set_values(common, preferred_exclusive=kpoint_hint)
+
+    # The dialog must select spacing, not grid.
+    spacing_row = dialog._rows.get("kpoint_mp_spacing")
+    grid_row = dialog._rows.get("kpoint_mp_grid")
+    assert spacing_row is not None and spacing_row.radio is not None
+    assert grid_row is not None and grid_row.radio is not None
+    assert spacing_row.radio.isChecked(), "spacing radio should be active"
+    assert not grid_row.radio.isChecked(), "grid radio should not be active"
+
+    # collect_values must return spacing but not grid.
+    values = dialog.collect_values()
+    assert "kpoint_mp_spacing" in values
+    assert "kpoint_mp_grid" not in values
 
 
 def test_relaxation_widget_effective_params_never_emit_both_kpoint_keywords(qapp) -> None:

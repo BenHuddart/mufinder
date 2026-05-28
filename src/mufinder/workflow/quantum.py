@@ -8,6 +8,7 @@ from uuid import UUID
 
 from mufinder.castep_io.schema import canonical_keyword_name
 from mufinder.castep_io.types import BlockSection, KeywordAssignment, ValueWithUnit
+from mufinder.domain.constants import MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 
@@ -21,8 +22,6 @@ PseudopotentialFamily = Literal["unknown", "norm_conserving", "ultrasoft"]
 QUANTUM_SINGLEPOINT_CALC_TYPE = "castep_quantum_singlepoint"
 QUANTUM_PHONON_CALC_TYPE = "castep_quantum_phonon"
 QUANTUM_PHONON_SET_CALC_TYPE = "castep_quantum_phonon_set"
-MUON_MASS_AMU = 0.11342892566
-MUON_GAMMA_RAD_S_T = 851586494.1
 QUANTUM_DEFAULT_NONSCF_EIGENVALUE_TOL = ValueWithUnit(1e-9, "eV")
 
 _METHOD_TO_CASTEP = {

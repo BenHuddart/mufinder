@@ -10,6 +10,7 @@ from typing import Iterable
 
 import numpy as np
 
+from mufinder.domain.constants import MUON_MASS_AMU
 from mufinder.domain.models import Structure
 
 
@@ -100,7 +101,6 @@ ATOMIC_MASS_KG = 1.66053906660e-27
 BOLTZMANN_J_K = 1.380649e-23
 CM_INV_TO_EV = PLANCK_CONSTANT_J_S * LIGHT_SPEED_M_S * 100.0 / ELEMENTARY_CHARGE_C
 CM_INV_ZPE_TO_EV = 0.5 * CM_INV_TO_EV
-MUON_MASS_AMU = 0.11342892566
 
 _QPOINT_RE = re.compile(
     r"^\s*q-pt=\s*(?P<number>\d+)\s+"

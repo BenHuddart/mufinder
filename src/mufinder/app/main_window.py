@@ -171,7 +171,7 @@ from mufinder.app.theme import (
     use_square_top_table_corners,
 )
 from mufinder.app.workflow_dialogs import EnergyBarrierPathViewerDialog, QuantumCorrectionsConfigDialog
-from mufinder.app.workflow_parameters import build_workflow_parameter_surface, workflow_basic_parameter_names
+from mufinder.app.workflow_parameters import build_workflow_parameter_surface, kpoint_exclusive_hint, workflow_basic_parameter_names
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
     sweep_point_state_is_ready,
@@ -12733,7 +12733,7 @@ class MainWindow(QMainWindow):
             dialog.setWindowTitle("Configure Quantum Corrections Stage 2 Farms")
         else:
             dialog.setWindowTitle("Configure Quantum Corrections Parameters")
-        dialog.set_values(common_values)
+        dialog.set_values(common_values, preferred_exclusive=kpoint_exclusive_hint(values_by_key))
         dialog.set_advanced_names(tuple(sorted(advanced_names)))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -12825,7 +12825,7 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle(
             "Inspect Energy Barriers Parameters" if read_only else "Configure Energy Barriers Parameters"
         )
-        dialog.set_values(common_values)
+        dialog.set_values(common_values, preferred_exclusive=kpoint_exclusive_hint(values_by_key))
         dialog.set_advanced_names(tuple(sorted(advanced_names)))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -12900,7 +12900,7 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle(
             "Inspect NEB Parameters" if read_only else "Configure NEB Parameters"
         )
-        dialog.set_values(common_values)
+        dialog.set_values(common_values, preferred_exclusive=kpoint_exclusive_hint(values_by_key))
         dialog.set_advanced_names(tuple(sorted(advanced_names)))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return

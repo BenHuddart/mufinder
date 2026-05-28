@@ -35,6 +35,8 @@ from mufinder.science.kpoint_grids import (
 from mufinder.science.supercell import build_supercell_structure
 from mufinder.workflow import StructureBridgeError, structure_to_spec
 from mufinder.workflow.naming import job_name
+from mufinder.domain.constants import MUON_MASS_AMU
+from mufinder.workflow.merge import merge_templates
 from mufinder.workflow.relaxation import RelaxationJobConfig, expand_relaxation_jobs
 from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamTemplate
 
@@ -515,7 +517,11 @@ def expand_muon_relaxation_jobs(
     }
     if project_cutoff_energy is not None:
         workflow_defaults_values["cut_off_energy"] = float(project_cutoff_energy)
-    workflow_defaults = _template_from_values(workflow_defaults_values)
+    species_mass_block = BlockSection("species_mass", (("H:mu", MUON_MASS_AMU),), unit="AMU")
+    workflow_defaults = merge_templates(
+        _template_from_values(workflow_defaults_values),
+        InputTemplate(cell=CellTemplate(extra_blocks=(species_mass_block,))),
+    )
 
     reference_lattice = (
         project_kpoint_reference_lattice

@@ -177,6 +177,32 @@ def test_parameter_dialog_exclusive_radios_are_mutually_exclusive(qapp) -> None:
     assert bp_radio.isChecked() is False
 
 
+def test_parameter_dialog_preferred_exclusive_overrides_default_preference(qapp) -> None:
+    # Regression: when both halves of a mutually exclusive pair are pre-filled
+    # (for UX toggle convenience), preferred_exclusive must select the named
+    # member even when _PREFERRED_EXCLUSIVE_NAMES would otherwise pick the other.
+    # Here basis_precision is NOT in _PREFERRED_EXCLUSIVE_NAMES but cut_off_energy
+    # IS. With preferred_exclusive="basis_precision", basis_precision should win.
+    dialog = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_kpoint",
+    )
+    dialog.set_advanced_names({"basis_precision", "cut_off_energy"})
+    dialog.set_values(
+        {
+            "basis_precision": "PRECISE",
+            "cut_off_energy": ValueWithUnit(420.0, "eV"),
+        },
+        preferred_exclusive="basis_precision",
+    )
+
+    assert dialog._rows["basis_precision"].radio.isChecked()  # type: ignore[union-attr]
+    assert not dialog._rows["cut_off_energy"].radio.isChecked()  # type: ignore[union-attr]
+    values = dialog.collect_values()
+    assert values["basis_precision"] == "PRECISE"
+    assert "cut_off_energy" not in values
+
+
 def test_parameter_dialog_set_advanced_names_keeps_active_advanced_values_visible(qapp) -> None:
     dialog = ParameterDialog(
         specs=_dialog_specs(),

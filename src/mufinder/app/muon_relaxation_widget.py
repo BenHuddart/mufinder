@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.active_host_badge import ActiveHostBadge
 from mufinder.app.convergence_display import format_cutoff_energy, format_kpoint_grid
 from mufinder.app.param_dialog import ParameterDialog
-from mufinder.app.workflow_parameters import reorder_workflow_parameter_specs
+from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.relaxation_adapter import (
     MUONIUM_CHARGE_STATE,
     POSITIVE_MUON_CHARGE_STATE,
@@ -1226,7 +1226,10 @@ class MuonRelaxationWidget(QWidget):
         dialog.setWindowTitle(
             "Inspect Muon Relaxation Parameters" if read_only else "Configure Muon Relaxation Parameters"
         )
-        dialog.set_values(self._common_params_for_rows(row_ids))
+        kpoint_hint = kpoint_exclusive_hint(
+            self._effective_params_for_row(r) for r in row_ids
+        )
+        dialog.set_values(self._common_params_for_rows(row_ids), preferred_exclusive=kpoint_hint)
         dialog.set_advanced_names(self._advanced_names_for_rows(row_ids))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return

@@ -2,10 +2,33 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 
 from mufinder.castep_io.gui_metadata import get_gui_keyword_specs_for_files
 from mufinder.castep_io.schema import KeywordSpec, get_keyword_spec
+
+
+def kpoint_exclusive_hint(
+    effective_params_sequence: Iterable[Mapping[str, object]],
+) -> str | None:
+    """Return the preferred_exclusive hint for the kpoint grid/spacing pair.
+
+    Returns ``"kpoint_mp_spacing"`` when every dict in the sequence contains
+    ``kpoint_mp_spacing``, indicating the user's active kpoint choice is spacing
+    across all rows/cutoffs.  Returns ``None`` for grid mode, mixed rows, or an
+    empty sequence.
+
+    Pass the effective (pre-prefill) params for each row so the hint reflects
+    the user's stored choice rather than the pre-filled inactive half added for
+    UX toggle convenience.
+    """
+    params = list(effective_params_sequence)
+    if not params:
+        return None
+    if all("kpoint_mp_spacing" in p for p in params):
+        return "kpoint_mp_spacing"
+    return None
 
 
 COMMON_WORKFLOW_PARAMETER_NAMES = (

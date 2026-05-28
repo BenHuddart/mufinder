@@ -5,6 +5,7 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.workflow_parameters import (
     COMMON_WORKFLOW_PARAMETER_NAMES,
     build_workflow_parameter_surface,
+    kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     workflow_basic_parameter_names,
 )
@@ -67,6 +68,27 @@ def test_build_workflow_parameter_surface_promotes_basic_names(monkeypatch) -> N
     assert "quantum_corrections" in specs[0].basic_workflows
     assert "quantum_corrections" in specs[0].advanced_workflows
     assert "quantum_corrections" in specs[1].advanced_workflows
+
+
+def test_kpoint_exclusive_hint_returns_spacing_when_all_rows_have_spacing() -> None:
+    params = [{"kpoint_mp_spacing": 0.07}, {"kpoint_mp_spacing": 0.05}]
+    assert kpoint_exclusive_hint(params) == "kpoint_mp_spacing"
+
+
+def test_kpoint_exclusive_hint_returns_none_for_empty_sequence() -> None:
+    assert kpoint_exclusive_hint([]) is None
+
+
+def test_kpoint_exclusive_hint_returns_none_when_any_row_lacks_spacing() -> None:
+    params = [{"kpoint_mp_spacing": 0.07}, {"kpoint_mp_grid": (4, 4, 4)}]
+    assert kpoint_exclusive_hint(params) is None
+
+
+def test_kpoint_exclusive_hint_returns_spacing_even_when_grid_also_present() -> None:
+    # When project defaults inject kpoint_mp_grid alongside user-saved spacing
+    # (as in the energy-barrier path), spacing presence is still the signal.
+    params = [{"kpoint_mp_spacing": 0.07, "kpoint_mp_grid": (4, 4, 4)}]
+    assert kpoint_exclusive_hint(params) == "kpoint_mp_spacing"
 
 
 def test_workflow_basic_parameter_names_prefixes_common_parameters() -> None:

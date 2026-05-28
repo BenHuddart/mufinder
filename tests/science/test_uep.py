@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+_soprano_required = pytest.mark.skipif(
+    importlib.util.find_spec("soprano") is None,
+    reason="soprano optional dependency not installed",
+)
 
 from mufinder.science.uep import (
     StationaryPointClassification,
@@ -454,6 +460,7 @@ def _fake_optimization(
     )
 
 
+@_soprano_required
 def test_soprano_backed_clustering_collapses_symmetry_equivalent_sites() -> None:
     result = cluster_uep_optimizations(
         [
@@ -471,6 +478,7 @@ def test_soprano_backed_clustering_collapses_symmetry_equivalent_sites() -> None
     assert result.asymmetric_fractional_positions[0] == pytest.approx(result.asymmetric_fractional_positions[1])
 
 
+@_soprano_required
 def test_soprano_backed_clustering_merges_periodic_boundary_equivalents() -> None:
     result = cluster_uep_optimizations(
         [
@@ -485,6 +493,7 @@ def test_soprano_backed_clustering_merges_periodic_boundary_equivalents() -> Non
     assert result.asymmetric_fractional_positions[0] == pytest.approx(result.asymmetric_fractional_positions[1])
 
 
+@_soprano_required
 def test_soprano_backed_hierarchical_clustering_and_stats() -> None:
     optimizations = [
         _fake_optimization((0.24, 0.24, 0.24), total=-1.00),
@@ -519,6 +528,7 @@ def test_soprano_backed_hierarchical_clustering_and_stats() -> None:
     assert result.summary.similarities[0].distance > 0.0
 
 
+@_soprano_required
 def test_soprano_backed_kmeans_clustering_uses_same_features() -> None:
     result = cluster_uep_optimizations(
         [
@@ -539,6 +549,7 @@ def test_soprano_backed_kmeans_clustering_uses_same_features() -> None:
     assert len(result.normalized_genome_vectors) == 4
 
 
+@_soprano_required
 def test_prepared_uep_clustering_dataset_supports_replayable_hier_and_kmeans_modes() -> None:
     prepared = prepare_uep_clustering_dataset(
         [

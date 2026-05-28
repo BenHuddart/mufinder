@@ -41,6 +41,11 @@ from mufinder.castep_io.gui_metadata import (
 from mufinder.castep_io.schema import KeywordSpec, keyword_catalog_source_info
 
 _ALWAYS_VISIBLE_ADVANCED_NAMES = ("spin_polarized",)
+# Fallback preference order when the caller has not supplied a
+# preferred_exclusive hint via set_values.  When both halves of an exclusive
+# pair are pre-filled for UX toggle convenience, callers must pass the hint;
+# this constant is consulted only when they do not (e.g. neither member has
+# been configured yet and the dialog should default to a sensible choice).
 _PREFERRED_EXCLUSIVE_NAMES = ("cut_off_energy", "kpoint_mp_grid")
 
 
@@ -179,6 +184,9 @@ class ParameterDialog(QDialog):
         # its own label container, so Qt's auto-exclusivity does not span
         # rows by itself). Keyed by the same group_key used for selection.
         self._exclusive_button_groups: dict[tuple[str, ...], QButtonGroup] = {}
+        # Name that should take priority in exclusive-group selection when
+        # set by the caller via set_values(..., preferred_exclusive=...).
+        self._preferred_exclusive: str | None = None
 
         root = QVBoxLayout(self)
 
@@ -261,8 +269,21 @@ class ParameterDialog(QDialog):
 
         self._rebuild_rows()
 
-    def set_values(self, values: dict[str, Any]) -> None:
-        """Apply externally supplied values to known rows."""
+    def set_values(
+        self,
+        values: dict[str, Any],
+        *,
+        preferred_exclusive: str | None = None,
+    ) -> None:
+        """Apply externally supplied values to known rows.
+
+        ``preferred_exclusive`` names the member of an exclusive group that
+        should be selected, overriding the built-in preference order.  Use
+        this when the caller has pre-filled both halves of a mutually exclusive
+        pair for UX toggling convenience and needs to preserve which half was
+        the true active choice (e.g. ``"kpoint_mp_spacing"`` vs
+        ``"kpoint_mp_grid"``).
+        """
 
         for name, value in values.items():
             if name == "task":
@@ -277,6 +298,7 @@ class ParameterDialog(QDialog):
                 self._added_advanced.add(name)
 
         # Recompute exclusive defaults from newly provided values.
+        self._preferred_exclusive = preferred_exclusive
         self._exclusive_selection.clear()
         self._rebuild_rows(preserve_current=False)
 
@@ -689,6 +711,20 @@ class ParameterDialog(QDialog):
             self._exclusive_selection[group_key] = selected
 
     def _default_selection_for_group(self, group_key: tuple[str, ...]) -> str:
+        # Caller-provided hint takes priority. When both halves of a mutually
+        # exclusive pair are pre-filled for UX toggling convenience, the caller
+        # uses preferred_exclusive to name the true active choice so that the
+        # built-in preference order (kpoint_mp_grid over kpoint_mp_spacing)
+        # does not override the user's actual selection.
+        hint = self._preferred_exclusive
+        if (
+            hint is not None
+            and hint in group_key
+            and hint in self._values
+            and gui_value_is_active(self._specs_by_name[hint], self._values[hint])
+        ):
+            return hint
+
         for preferred in _PREFERRED_EXCLUSIVE_NAMES:
             if preferred not in group_key or preferred not in self._values:
                 continue

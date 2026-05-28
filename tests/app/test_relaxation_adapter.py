@@ -326,6 +326,30 @@ def test_expand_muon_relaxation_jobs_places_muon_in_origin_supercell_image() -> 
     assert expansion.jobs[0].cell_file.kpoint_mp_grid == (2, 2, 4)
 
 
+def test_expand_muon_relaxation_jobs_writes_species_mass_block() -> None:
+    config = MuonRelaxationConfig(
+        rows=(
+            MuonRelaxationRow(
+                site_id=uuid4(),
+                label="site_a",
+                initial_fractional_position=(0.2, 0.4, 0.6),
+                charge_state="positive_muon",
+            ),
+        )
+    )
+
+    expansion = expand_muon_relaxation_jobs(
+        host_structure=_host_structure(),
+        config=config,
+        project_cutoff_energy=None,
+        project_kpoint_grid=None,
+        project_kpoint_reference_lattice=None,
+    )
+
+    rendered_cell = write_cell(expansion.jobs[0].cell_file)
+    assert "H:mu 0.11342892566" in rendered_cell
+
+
 def test_expand_muon_relaxation_jobs_rejects_sanitized_seed_name_collisions() -> None:
     config = MuonRelaxationConfig(
         rows=(

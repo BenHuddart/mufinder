@@ -39,7 +39,7 @@ from mufinder.app.convergence_display import (
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.param_dialog import ParameterDialog
-from mufinder.app.workflow_parameters import reorder_workflow_parameter_specs
+from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.theme import (
     status_brush,
     style_section_subtitle,
@@ -787,7 +787,10 @@ class KPointConvergenceWidget(QWidget):
             dialog_kwargs["read_only"] = True
         dialog = ParameterDialog(**dialog_kwargs)
         dialog.setWindowTitle("Inspect K-Point Parameters" if read_only else "Configure K-Point Parameters")
-        dialog.set_values(self._common_parameter_values_for_grids(grids))
+        kpoint_hint = kpoint_exclusive_hint(
+            self._effective_params_for_grid(g) for g in grids
+        )
+        dialog.set_values(self._common_parameter_values_for_grids(grids), preferred_exclusive=kpoint_hint)
         dialog.set_advanced_names(self._advanced_names_for_grids(grids))
 
         if dialog.exec() != QDialog.DialogCode.Accepted:

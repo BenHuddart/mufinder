@@ -32,7 +32,7 @@ from mufinder.app.relaxation_adapter import suggested_grid_for_row
 from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.uep_types import SupercellMatrix, UepConfig, UepRunState, UepSourceRow
-from mufinder.app.workflow_parameters import reorder_workflow_parameter_specs
+from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     normalize_gui_value,
@@ -664,7 +664,8 @@ class UEPWidget(QWidget):
         if hasattr(dialog, "setWindowTitle"):
             dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
         values = self._effective_params_for_row(row_id)
-        dialog.set_values(values)
+        kpoint_hint = kpoint_exclusive_hint([values])
+        dialog.set_values(values, preferred_exclusive=kpoint_hint)
         dialog.set_advanced_names(self._row_added_advanced.get(row_id, set()))
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
@@ -682,6 +683,9 @@ class UEPWidget(QWidget):
         if not row_ids:
             return
         values = self._common_params_for_rows(row_ids)
+        kpoint_hint = kpoint_exclusive_hint(
+            self._effective_params_for_row(r) for r in row_ids
+        )
         read_only = any(
             self._runtime_controls_locked(self._runtime_state_for_row(row_id).status)
             for row_id in row_ids
@@ -701,7 +705,7 @@ class UEPWidget(QWidget):
         dialog = ParameterDialog(**dialog_kwargs)
         if hasattr(dialog, "setWindowTitle"):
             dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
-        dialog.set_values(values)
+        dialog.set_values(values, preferred_exclusive=kpoint_hint)
         names: set[str] = set()
         for row_id in row_ids:
             names.update(self._row_added_advanced.get(row_id, set()))
@@ -725,6 +729,9 @@ class UEPWidget(QWidget):
         if not row_ids:
             return
         values = self._common_params_for_rows(row_ids)
+        kpoint_hint = kpoint_exclusive_hint(
+            self._effective_params_for_row(r) for r in row_ids
+        )
         read_only = any(
             self._runtime_controls_locked(self._runtime_state_for_row(row_id).status)
             for row_id in row_ids
@@ -744,7 +751,7 @@ class UEPWidget(QWidget):
         dialog = ParameterDialog(**dialog_kwargs)
         if hasattr(dialog, "setWindowTitle"):
             dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
-        dialog.set_values(values)
+        dialog.set_values(values, preferred_exclusive=kpoint_hint)
         names: set[str] = set()
         for row_id in row_ids:
             names.update(self._row_added_advanced.get(row_id, set()))
