@@ -480,21 +480,21 @@ class ConvergenceExaminerDialog(QDialog):
         last_spacing: float | None = None
         for x_value in sorted(grids):
             grid = grids[x_value]
-            # (1,1,1) is Gamma-only sampling; any spacing larger than the cell's
-            # coarsest reciprocal-space spacing produces the same grid, so the
-            # boundary value from spacing_from_grid is meaningless. Skip it so
-            # the annotation machinery never exposes it to the UI.
+            # (1,1,1) is Gamma-only sampling; no single spacing characterises
+            # it (every spacing above the cell's coarsest reciprocal transition
+            # produces it) so spacing_from_grid raises. Skip explicitly so the
+            # annotation machinery never exposes it to the UI.
             if grid == (1, 1, 1):
                 continue
             try:
                 spacing = spacing_from_grid(lattice_vectors, grid)
             except ValueError:
                 continue
-            # Skip duplicate spacings: when a frozen n_i = 1 direction
-            # dominates the max, successive grids can report the same value
-            # even as other axes grow.  Once a plateau starts, every subsequent
-            # repeat is suppressed so the annotation series stays strictly
-            # decreasing and does not mislead the user about convergence status.
+            # Skip duplicate spacings: when one axis dominates the round-trip
+            # bound, successive grids can report the same value even as other
+            # axes grow. Once a plateau starts, every subsequent repeat is
+            # suppressed so the annotation series stays strictly decreasing
+            # and does not mislead the user about convergence status.
             if last_spacing is not None and math.isclose(
                 spacing, last_spacing, rel_tol=1e-9
             ):

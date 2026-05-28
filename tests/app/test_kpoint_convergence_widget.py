@@ -45,7 +45,7 @@ def test_kpoint_widget_generates_grids_from_spacing(qapp, monkeypatch: pytest.Mo
 
     widget._open_spacing_dialog()
 
-    assert _table_grids(widget) == [(1, 1, 1), (2, 2, 2), (3, 2, 2)]
+    assert _table_grids(widget) == [(1, 1, 1), (2, 1, 1), (2, 2, 1), (3, 2, 2)]
     state = widget.collect_state()
     assert state["generated_for_cell_id"] == "11111111-1111-1111-1111-111111111111"
 

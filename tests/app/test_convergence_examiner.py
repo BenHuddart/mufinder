@@ -621,31 +621,26 @@ def test_convergence_examiner_runs_stress_and_passes_through_signal(qapp) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_compute_spacings_suppresses_duplicate_spacings_from_frozen_direction() -> None:
-    # Hexagonal AlF3 (a=4.872, c=12.466 Å) at s≈0.072 1/Å produces max_grid
-    # (4,4,1): the long c axis gets only one k-point. Grids (3,3,1) and (4,4,1)
-    # both report the same spacing because the frozen c direction (n=1) dominates
-    # the max for both. The first occurrence — (3,3,1) — represents a genuine
-    # change in sampling and should be kept. The duplicate — (4,4,1) — should
-    # be suppressed to avoid a non-decreasing series that misleads about convergence.
+def test_compute_spacings_suppresses_duplicate_spacings_from_dominant_axis() -> None:
+    # Hexagonal AlF3 (a=4.872, c=12.466 Å). Under the round-trip formula the
+    # c-axis at N_c=3 contributes 1/(2*c)*1/(N_c-1)·|b_c| ≈ 0.0401, while the
+    # ab axes only beat that bound once N_ab ≥ 7. So (2,2,3), (3,3,3), (4,4,3)
+    # all report the same spacing — c dominates the min for each. The first
+    # occurrence is kept; the rest are suppressed to avoid a non-decreasing
+    # annotation series that would mislead about convergence.
     import math as _math
 
     a, c = 4.872, 12.466
     lattice = [[a, 0.0, 0.0], [-a / 2.0, a * _math.sqrt(3) / 2.0, 0.0], [0.0, 0.0, c]]
-    # x_values are k-point counts; keys drive iteration order in _compute_spacings.
-    # (2,2,1) → 4 k-pts, (3,3,1) → 9 k-pts, (4,4,1) → 16 k-pts
-    grids = {4.0: (2, 2, 1), 9.0: (3, 3, 1), 16.0: (4, 4, 1)}
+    grids = {12.0: (2, 2, 3), 27.0: (3, 3, 3), 48.0: (4, 4, 3)}
 
     spacings = ConvergenceExaminerDialog._compute_spacings(lattice, grids)
 
-    # (2,2,1): ab dominates → unique value → include
-    assert 4.0 in spacings
-    # (3,3,1): c barely dominates, but spacing differs from (2,2,1) → include
-    assert 9.0 in spacings
-    # (4,4,1): c still dominates → same spacing as (3,3,1) → suppress
-    assert 16.0 not in spacings
-    # Remaining spacings must decrease strictly
-    assert spacings[4.0] > spacings[9.0]
+    # (2,2,3): first occurrence of the c-dominated bound → include
+    assert 12.0 in spacings
+    # (3,3,3) and (4,4,3): same bound, c still dominates → suppress
+    assert 27.0 not in spacings
+    assert 48.0 not in spacings
 
 
 # ---------------------------------------------------------------------------

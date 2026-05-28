@@ -159,8 +159,9 @@ def test_convergence_overview_widget_pinned_kpoint_plot_falls_back_without_spaci
 
 def test_convergence_overview_widget_pinned_kpoint_plot_omits_spacing_for_gamma_only_grid(qapp) -> None:
     # Sweeps starting at (1,1,1) must not show a spacing sub-label for that
-    # tick because spacing_from_grid returns a "coarsest-boundary" value that
-    # is physically meaningless for Gamma-only sampling.
+    # tick because no single spacing characterises Gamma-only sampling
+    # (every spacing larger than the cell's coarsest reciprocal transition
+    # produces it).
     widget = ConvergenceOverviewWidget()
     widget.set_kpoint_panel(
         summary_rows=[("Project default", "2 x 2 x 2")],

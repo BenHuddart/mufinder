@@ -418,9 +418,10 @@ def _spacing_annotation(
 ) -> str:
     """Build a ``"spacing X 1/Ang"`` fragment, or ``""`` if not applicable.
 
-    The (1,1,1) "Gamma-only" grid has no well-defined k-point spacing — any
-    spacing larger than ``|b|/(2*pi)`` produces it — so we suppress the
-    annotation rather than report a misleading boundary value.
+    The (1,1,1) "Gamma-only" grid has no well-defined k-point spacing — every
+    spacing above the cell's coarsest reciprocal transition produces it — so
+    we suppress the annotation rather than emit a value that could not be
+    used to reproduce the grid in CASTEP.
     """
     if point_spacings is None:
         return ""

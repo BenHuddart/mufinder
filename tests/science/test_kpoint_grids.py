@@ -41,12 +41,54 @@ def test_grid_from_spacing_uses_reciprocal_magnitudes_formula() -> None:
     assert grid == (3, 2, 2)
 
 
-def test_generate_kpoint_grids_increases_density_up_to_max_grid() -> None:
+def test_generate_kpoint_grids_walks_castep_spacing_trajectory() -> None:
     lattice = [[4.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 8.0]]
 
     grids = generate_kpoint_grids(lattice, 0.1)
 
-    assert grids == ((1, 1, 1), (2, 2, 2), (3, 2, 2))
+    # Each axis transitions at |b_i|/(2*pi*n) independently, so the sweep
+    # follows CASTEP's spacing curve rather than an isotropic level ramp.
+    assert grids == ((1, 1, 1), (2, 1, 1), (2, 2, 1), (3, 2, 2))
+    assert grids[-1] == grid_from_spacing(lattice, 0.1)
+
+
+def test_generate_kpoint_grids_emits_only_castep_reachable_grids() -> None:
+    import math as _math
+
+    a = 4.872
+    c = 12.466
+    lattice = [
+        [a, 0.0, 0.0],
+        [-0.5 * a, a * _math.sqrt(3.0) / 2.0, 0.0],
+        [0.0, 0.0, c],
+    ]
+
+    grids = generate_kpoint_grids(lattice, 0.02)
+
+    magnitudes = tuple(
+        _math.sqrt(sum(component ** 2 for component in vector))
+        for vector in reciprocal_lattice_vectors(lattice)
+    )
+    two_pi = 2.0 * _math.pi
+
+    for grid in grids:
+        lo = max(magnitude / (two_pi * n) for magnitude, n in zip(magnitudes, grid))
+        hi_candidates = [
+            magnitude / (two_pi * (n - 1))
+            for magnitude, n in zip(magnitudes, grid)
+            if n > 1
+        ]
+        hi = min(hi_candidates) if hi_candidates else _math.inf
+        assert lo < hi, f"grid {grid} not reachable from any CASTEP spacing"
+
+
+def test_generate_kpoint_grids_isotropic_cell_matches_naive_ramp() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+
+    grids = generate_kpoint_grids(lattice, 0.1)
+
+    # CASTEP's curve and an isotropic level ramp coincide for cubic cells.
+    assert grids == ((1, 1, 1), (2, 2, 2), (3, 3, 3))
 
 
 def test_kpoint_helpers_format_and_count() -> None:
@@ -110,43 +152,97 @@ def test_equivalent_grid_for_supercell_rounds_up_to_avoid_undersampling() -> Non
     assert equivalent == (2, 2, 2)
 
 
-def test_spacing_from_grid_uses_castep_max_formula() -> None:
-    # CASTEP convention: spacing = max_i( |b_i| / (2*pi * N_i) ).
+def test_spacing_from_grid_returns_round_trip_upper_bound() -> None:
+    # Return value is min_i( |b_i| / (2*pi * (N_i - 1)) ) so feeding it to
+    # CASTEP's floor+1 formula reproduces the grid exactly.
     # For orthorhombic a=4, b=6, c=8 with grid (3, 2, 2):
-    #   max( 1/(4*3), 1/(6*2), 1/(8*2) ) = max(1/12, 1/12, 1/16) = 1/12.
+    #   min( 1/(4*2), 1/(6*1), 1/(8*1) ) = min(0.125, 0.1667, 0.125) = 0.125.
     lattice = [[4.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 8.0]]
-    assert spacing_from_grid(lattice, (3, 2, 2)) == pytest.approx(1.0 / 12.0)
+    assert spacing_from_grid(lattice, (3, 2, 2)) == pytest.approx(0.125)
+
+
+def test_spacing_from_grid_round_trips_through_castep_formula() -> None:
+    # Every spacing, fed back to grid_from_spacing, must reproduce its grid.
+    # Use the sweep generator so we only test CASTEP-reachable grids — the
+    # bounds of an unreachable grid (e.g. (2,2,2) on a 4x6x8 cell) are not
+    # consistent with each other and could not round-trip with any value.
+    lattice = [[4.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 8.0]]
+    for grid in generate_kpoint_grids(lattice, 0.05):
+        if grid == (1, 1, 1):
+            continue
+        spacing = spacing_from_grid(lattice, grid)
+        assert grid_from_spacing(lattice, spacing) == grid
+
+
+def test_grid_from_spacing_round_trips_lif_high_n() -> None:
+    # LiF cubic (a=4.0834 Ang) with fine spacings reaching N=8 through N=12.
+    # Previously, two-step floating-point division made |b|/(2π·s) evaluate to
+    # N-1-ε (e.g. 6.9999…9991 instead of 7.0), causing floor to snap down by
+    # one and the recovered grid component to be N-1 instead of N.
+    a = 4.0834
+    lattice = [[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]
+    for n in range(2, 14):
+        grid = (n, n, n)
+        spacing = spacing_from_grid(lattice, grid)
+        assert grid_from_spacing(lattice, spacing) == grid, (
+            f"round-trip failed for ({n},{n},{n}): spacing={spacing}"
+        )
 
 
 def test_spacing_from_grid_cubic_lif_5x5x5() -> None:
-    # Cubic LiF (a=4.0834 Ang), 5x5x5 grid: spacing = 1/(a*5).
+    # Cubic LiF (a=4.0834 Ang), 5x5x5 grid: round-trip spacing = 1/(a*4).
     a = 4.0834
     lattice = [[a, 0.0, 0.0], [0.0, a, 0.0], [0.0, 0.0, a]]
-    assert spacing_from_grid(lattice, (5, 5, 5)) == pytest.approx(1.0 / (a * 5.0))
+    assert spacing_from_grid(lattice, (5, 5, 5)) == pytest.approx(1.0 / (a * 4.0))
 
 
 def test_spacing_from_grid_hexagonal_alf3_3x3x3() -> None:
     # Hexagonal AlF3 (a=4.872, c=12.466 Ang), 3x3x3 grid.
-    # |b_ab| = 4*pi/(a*sqrt(3)); spacing = |b_ab|/(2*pi*3) = 2/(3*a*sqrt(3)).
+    # Smallest |b|/(2*pi*(N-1)) is along c with N-1 = 2: spacing = 1/(2*c).
     import math as _math
 
     a, c = 4.872, 12.466
     lattice = [[a, 0.0, 0.0], [-a / 2.0, a * _math.sqrt(3) / 2.0, 0.0], [0.0, 0.0, c]]
-    expected = 2.0 / (3.0 * a * _math.sqrt(3))  # ≈ 0.0790 1/Ang
+    expected = 1.0 / (2.0 * c)  # ≈ 0.0401 1/Ang
     assert spacing_from_grid(lattice, (3, 3, 3)) == pytest.approx(expected, rel=1e-4)
 
 
-def test_spacing_from_grid_hexagonal_alf3_anisotropic_grids_decrease() -> None:
-    # Previously 6x6x5, 7x7x5, 12x12x5 all reported the same spacing because
-    # the old formula ignored the in-plane direction.  They must now differ.
+def test_spacing_from_grid_strictly_decreasing_along_castep_reachable_sweep() -> None:
+    # For the CASTEP-reachable grids produced by generate_kpoint_grids, the
+    # spacing annotation must be strictly decreasing so users can read
+    # convergence progress from the labels. Previously this was tested with
+    # the old isotropic-ramp grids (6x6x5, 7x7x5, 12x12x5) on hexagonal
+    # AlF3, but those grids are NOT CASTEP-reachable (no single
+    # KPOINT_MP_SPACING reproduces them) and all return the same spacing
+    # under min/(N-1). The new test uses the actual new-convention sweep.
     import math as _math
 
     a, c = 4.872, 12.466
     lattice = [[a, 0.0, 0.0], [-a / 2.0, a * _math.sqrt(3) / 2.0, 0.0], [0.0, 0.0, c]]
-    s6 = spacing_from_grid(lattice, (6, 6, 5))
-    s7 = spacing_from_grid(lattice, (7, 7, 5))
-    s12 = spacing_from_grid(lattice, (12, 12, 5))
-    assert s6 > s7 > s12
+    reachable_grids = [g for g in generate_kpoint_grids(lattice, 0.02) if g != (1, 1, 1)]
+    spacings = [spacing_from_grid(lattice, g) for g in reachable_grids]
+
+    for i in range(1, len(spacings)):
+        assert spacings[i] < spacings[i - 1], (
+            f"spacing not strictly decreasing: {reachable_grids[i]} gives {spacings[i]:.6f} "
+            f"but {reachable_grids[i-1]} gives {spacings[i-1]:.6f}"
+        )
+
+
+def test_spacing_from_grid_rejects_gamma_only_grid() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    with pytest.raises(ValueError, match="Gamma-only"):
+        spacing_from_grid(lattice, (1, 1, 1))
+
+
+def test_spacing_from_grid_handles_partial_gamma_axes() -> None:
+    # Slab-like grid with one frozen axis: the spacing only depends on the
+    # non-frozen axes that contribute to the round-trip bound.
+    lattice = [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 30.0]]
+    spacing = spacing_from_grid(lattice, (5, 5, 1))
+    # |b_a|/(2*pi*4) = 1/(3*4); the c axis with N=1 does not contribute.
+    assert spacing == pytest.approx(1.0 / (3.0 * 4.0))
+    assert grid_from_spacing(lattice, spacing) == (5, 5, 1)
 
 
 def test_kpoint_count_for_spacing_matches_grid_product_at_integer_grids() -> None:

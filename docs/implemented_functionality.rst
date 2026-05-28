@@ -545,7 +545,11 @@ The convergence stage now also includes a dedicated k-point convergence panel wi
 	- ``n_i = floor(|b_i| / (2*pi*spacing)) + 1``
 	- ``|b_i|`` are reciprocal-lattice-vector magnitudes from the active simulation cell.
 
-- Generated sweep series from ``(1,1,1)`` up to the spacing-derived maximum grid.
+- Generated sweep enumerates the distinct CASTEP grids from ``(1,1,1)`` up to
+  the spacing-derived maximum grid by walking CASTEP's spacing trajectory; every
+  emitted grid is reproducible from some ``KPOINT_MP_SPACING``. For anisotropic
+  cells this typically produces more grids than an isotropic level ramp (each
+  axis transitions independently at its own spacing thresholds).
 - Cell-sensitive generation tracking: the panel records the simulation cell used for grid generation and warns if the simulation cell changes afterwards.
 - Shared CASTEP parameter form with per-grid override support, equivalent to cutoff convergence behavior.
 - Automatic propagation of project default cutoff energy into k-point convergence defaults when available.
@@ -554,6 +558,11 @@ The convergence stage now also includes a dedicated k-point convergence panel wi
   enabled across every grid in the sweep.
 - Hover tooltips on plotted points that show the originating Monkhorst-Pack grid.
 - Delta-threshold-only convergence decision for k-point studies (no derivative/asymptotic method selection).
+- Displayed k-point spacing for a grid is the inclusive upper bound of the
+  CASTEP-valid range, ``min_i(|b_i|/(2*pi*(N_i-1)))`` over axes with
+  ``N_i >= 2``. Feeding this value to CASTEP as ``KPOINT_MP_SPACING``
+  reproduces the displayed grid exactly. The (1, 1, 1) Gamma-only grid has
+  no single representative spacing and is shown without an annotation.
 - Persisted project defaults for adopted k-point recommendations, including method, thresholds, and the cell identifier used for the recommendation.
 - Adopting a k-point recommendation also freezes a parent-overview pinned snapshot, including persisted grid-label metadata for compact redraw on the parent convergence page.
 

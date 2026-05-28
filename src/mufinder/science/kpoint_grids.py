@@ -71,7 +71,12 @@ def grid_from_spacing(
     grid: list[int] = []
     for vector in reciprocal:
         magnitude = _norm(vector)
-        count = int(math.floor(magnitude / denominator)) + 1
+        # 1e-9 corrects ULP-level rounding errors when the ratio is the
+        # result of spacing_from_grid's exact boundary formula (|b|/(2π·(N-1))),
+        # where two-step floating-point division can yield N-1 - ε instead of
+        # exactly N-1, causing floor to snap down by one.  The epsilon is well
+        # below 1 so it never advances a genuinely non-integer ratio.
+        count = int(math.floor(magnitude / denominator + 1e-9)) + 1
         grid.append(max(1, count))
 
     return (grid[0], grid[1], grid[2])
@@ -107,25 +112,45 @@ def generate_kpoint_grids(
     lattice_vectors: Sequence[Sequence[float]],
     spacing: float,
 ) -> tuple[tuple[int, int, int], ...]:
-    """Generate an increasing sweep from (1,1,1) up to the spacing-derived maximum grid."""
+    """Enumerate the distinct CASTEP grids from ``(1,1,1)`` up to the spacing-derived cap.
+
+    Walks CASTEP's spacing trajectory through ``(n_1, n_2, n_3)`` space so that
+    every emitted grid is reproducible by some ``KPOINT_MP_SPACING`` via
+    :func:`grid_from_spacing`. CASTEP's spacing-to-grid mapping is piecewise
+    constant with breakpoints at ``|b_i|/(2*pi*n)`` for axis ``i`` and integer
+    ``n``; probing at each breakpoint enumerates every reachable grid between
+    ``(1, 1, 1)`` and ``grid_from_spacing(lattice_vectors, spacing)``.
+    """
 
     max_grid = grid_from_spacing(lattice_vectors, spacing)
-    max_level = max(max_grid)
+    reciprocal = reciprocal_lattice_vectors(lattice_vectors)
+    magnitudes = tuple(_norm(vector) for vector in reciprocal)
+    two_pi = 2.0 * math.pi
 
-    values: list[tuple[int, int, int]] = []
-    seen: set[tuple[int, int, int]] = set()
-    for level in range(1, max_level + 1):
-        grid = (
-            min(level, max_grid[0]),
-            min(level, max_grid[1]),
-            min(level, max_grid[2]),
-        )
-        if grid in seen:
+    cap = max(max_grid)
+    thresholds: set[float] = set()
+    for magnitude in magnitudes:
+        if magnitude <= 0.0:
             continue
-        seen.add(grid)
-        values.append(grid)
+        for index in range(1, cap + 1):
+            thresholds.add(magnitude / (two_pi * index))
 
-    return tuple(values)
+    grids: list[tuple[int, int, int]] = [(1, 1, 1)]
+    seen: set[tuple[int, int, int]] = {(1, 1, 1)}
+    for threshold in sorted(thresholds, reverse=True):
+        candidate = grid_from_spacing(lattice_vectors, threshold)
+        clamped = (
+            min(candidate[0], max_grid[0]),
+            min(candidate[1], max_grid[1]),
+            min(candidate[2], max_grid[2]),
+        )
+        if clamped not in seen:
+            seen.add(clamped)
+            grids.append(clamped)
+        if clamped == max_grid:
+            break
+
+    return tuple(grids)
 
 
 def kpoint_count(grid: tuple[int, int, int]) -> int:
@@ -187,11 +212,16 @@ def spacing_from_grid(
     lattice_vectors: Sequence[Sequence[float]],
     grid: tuple[int, int, int],
 ) -> float:
-    """Return the CASTEP KPOINT_MP_SPACING for a Monkhorst-Pack grid.
+    """Return a ``KPOINT_MP_SPACING`` that CASTEP rounds back to this grid.
 
-    Follows the CASTEP convention: ``spacing = max_i( |b_i| / (2*pi * N_i) )``,
-    where ``|b_i|`` are the reciprocal lattice vector magnitudes in 1/Ang and
-    ``N_i`` is the number of k-points along each direction.
+    Returns ``min_i( |b_i| / (2*pi * (N_i - 1)) )`` over axes with ``N_i >= 2``
+    — the inclusive upper boundary of CASTEP's valid input range for ``grid``.
+    Any value at or just below this boundary reproduces ``grid`` exactly via
+    CASTEP's ``n_i = floor(|b_i|/(2*pi*s)) + 1`` formula.
+
+    Raises ``ValueError`` for ``(1, 1, 1)`` — Gamma-only sampling is reached
+    by any spacing above the coarsest reciprocal-space transition, so no
+    single value characterises the grid.
     """
 
     n1 = int(grid[0])
@@ -204,10 +234,14 @@ def spacing_from_grid(
     magnitudes = (_norm(reciprocal[0]), _norm(reciprocal[1]), _norm(reciprocal[2]))
     counts = (n1, n2, n3)
 
-    return max(
-        magnitude / (2.0 * math.pi * float(count))
+    candidates = [
+        magnitude / (2.0 * math.pi * float(count - 1))
         for magnitude, count in zip(magnitudes, counts, strict=True)
-    )
+        if count >= 2
+    ]
+    if not candidates:
+        raise ValueError("No spacing represents the (1, 1, 1) Gamma-only grid.")
+    return min(candidates)
 
 
 def supercell_lattice_vectors(

@@ -95,6 +95,11 @@ class KPointSpacingDialog(QDialog):
         self._spacing.setRange(0.001, 10.0)
         self._spacing.setSingleStep(0.01)
         self._spacing.setValue(spacing)
+        self._spacing.setToolTip(
+            "Minimum KPOINT_MP_SPACING for the sweep, in 1/Ang. The generator "
+            "walks CASTEP's spacing curve and emits every distinct grid from "
+            "(1, 1, 1) up to the grid CASTEP would produce at this spacing."
+        )
 
         self._replace_existing = QCheckBox("Replace existing grid list", self)
         self._replace_existing.setChecked(replace_existing)

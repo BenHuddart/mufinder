@@ -10,6 +10,10 @@ For detailed context, read these docs before making non-trivial changes:
 - `docs/quality_and_automation.rst` — local commands, CI gates, and validation loops
 - `docs/compatibility_policy.rst` — compatibility aliases and expiry rules
 - `docs/implemented_functionality.rst` — current feature surface
+- `docs/castep/kpoint_spacing_convention.md` — conventions and round-trip
+  guarantees for the spacing↔grid mapping (read before touching
+  `science/kpoint_grids.py`, `app/convergence_examiner.py`,
+  `app/kpoint_convergence_widget.py`, or any "Use spacing" toggle)
 
 ## Agent workflow
 
