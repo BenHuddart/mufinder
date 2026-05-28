@@ -31,6 +31,8 @@ Icon "${APP_ICON}"
 !define MUI_ICON "${APP_ICON}"
 !define MUI_UNICON "${APP_ICON}"
 
+!define MUI_ABORTWARNING
+!insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
@@ -71,9 +73,10 @@ Section "Main" SEC_MAIN
   Call RemoveOrphanedMsiEntry
   Call CheckDowngrade
 
-  ; Close any running instance so the directory wipe does not leave stale locked files
-  ExecWait '"taskkill" /im "${EXECUTABLE_NAME}"'
-  Sleep 1000
+  ; Force-terminate any running instance so the directory wipe does not leave stale locked files.
+  ; /f is required: without it, taskkill only sends WM_CLOSE and returns before the process exits.
+  ExecWait '"taskkill" /f /im "${EXECUTABLE_NAME}"'
+  Sleep 500
 
   RMDir /r "$INSTDIR"
   SetOutPath "$INSTDIR"
@@ -92,7 +95,7 @@ Section "Main" SEC_MAIN
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "Publisher" "${PUBLISHER}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayIcon" "$INSTDIR\${INSTALLED_ICON_NAME}"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "UninstallString" "$INSTDIR\Uninstall.exe"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "InstallLocation" "$INSTDIR"
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "NoRepair" 1

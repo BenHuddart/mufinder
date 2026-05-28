@@ -78,7 +78,13 @@ datas = collect_data_files("mufinder.assets")
 datas += collect_data_files("mufinder.data")
 # Expose the source tree's mufinder.egg-info to importlib.metadata so PyInstaller
 # can copy runtime package metadata even when CI builds from an editable checkout.
-datas += copy_metadata("mufinder")
+_mufinder_metadata = copy_metadata("mufinder")
+if not _mufinder_metadata:
+    raise RuntimeError(
+        "copy_metadata('mufinder') returned no files — the package has no dist-info. "
+        "Run 'pip install -e .' before building so that a .dist-info directory exists."
+    )
+datas += _mufinder_metadata
 # ASE's CIF reader resolves symmetry data relative to ase.spacegroup.__file__.
 # Bundle ASE package data so frozen macOS apps can load spacegroup.dat.
 datas += collect_data_files("ase")

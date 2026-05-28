@@ -112,7 +112,11 @@ jobs:
           fi
 
       - name: Push release branch
-        run: git push --set-upstream origin "${{ steps.version.outputs.release_branch }}"
+        id: push
+        shell: bash
+        run: |
+          git push --set-upstream origin "${{ steps.version.outputs.release_branch }}"
+          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Open or update release PR
         id: release-pr
@@ -135,4 +139,4 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         shell: bash
-        run: gh pr merge "${{ steps.release-pr.outputs.pr_number }}" --auto --merge --match-head-commit "$(git rev-parse HEAD)"
+        run: gh pr merge "${{ steps.release-pr.outputs.pr_number }}" --auto --merge --match-head-commit "${{ steps.push.outputs.head_sha }}"

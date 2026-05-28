@@ -110,11 +110,13 @@ Once the release PR merges, the publish workflow tags and publishes from `main`,
 
 ## Binary Distributions
 
-GitHub Releases will publish:
+GitHub Releases publish:
 
 - Windows installers built from PyInstaller `onedir` bundles and wrapped with NSIS
-- macOS `.app` bundles packaged into drag-to-Applications DMGs
+- macOS `.app` bundles packaged into drag-to-Applications DMGs (**Apple Silicon / arm64 only**)
 
 These binaries ship MuFinder itself, but CASTEP and MPI remain external user-supplied dependencies.
+
+> **Intel Mac (x86_64) users:** pre-built binaries are not provided for Intel Macs. Install from source instead — see the [Install From Source](#install-from-source) section above.
 
 For ad hoc validation on `develop` or a release branch, use the `Preview Build` workflow to produce downloadable artifacts without publishing a release.

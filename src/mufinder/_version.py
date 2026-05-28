@@ -27,10 +27,9 @@ def _read_pyproject_version() -> str | None:
 def current_version() -> str:
     """Return the installed package version, falling back to pyproject metadata."""
 
-    if (source_version := _read_pyproject_version()) is not None:
-        return source_version
-
     try:
         return installed_version("mufinder")
     except PackageNotFoundError:
+        if (source_version := _read_pyproject_version()) is not None:
+            return source_version
         return "0.0.0"
