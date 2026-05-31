@@ -8,7 +8,7 @@ from copy import deepcopy
 import math
 
 from ase import Atoms
-from ase.data import covalent_radii
+from ase.data import atomic_numbers, covalent_radii
 from ase.data.colors import jmol_colors
 from ase.neighborlist import NeighborList
 import numpy as np
@@ -253,6 +253,34 @@ def _get_atom_style(numbers: np.ndarray, symbols: np.ndarray) -> tuple[np.ndarra
     if np.any(muon_mask):
         radii[muon_mask] = np.maximum(radii[muon_mask], MUON_VIEWER_RADIUS_ANG)
     return colors, radii
+
+
+def _viewer_species_symbols(species: Iterable[object]) -> list[str]:
+    symbols: list[str] = []
+    for species_label in species:
+        label = str(species_label).strip()
+        lowered = label.casefold()
+        if lowered == "h:mu" or lowered.endswith(":mu"):
+            symbols.append("X")
+        elif ":" in label:
+            symbols.append(label.split(":", 1)[0] or "X")
+        else:
+            symbols.append(label or "X")
+    return symbols
+
+
+def viewer_atom_style_for_species(species: Iterable[object]) -> tuple[np.ndarray, np.ndarray]:
+    """Return the viewer color/radius arrays for structure species labels."""
+
+    symbols = np.asarray(_viewer_species_symbols(species), dtype=object)
+    numbers = np.zeros((len(symbols),), dtype=int)
+    for index, symbol in enumerate(symbols):
+        lookup_key = str(symbol)
+        number = atomic_numbers.get(lookup_key)
+        if number is None:
+            number = atomic_numbers.get(lookup_key.capitalize())
+        numbers[index] = 0 if number is None else int(number)
+    return _get_atom_style(numbers, symbols)
 
 
 def _atom_color_overrides(structure: Structure | None, atom_count: int) -> np.ndarray | None:
@@ -2292,16 +2320,7 @@ class AtomicStructureViewer(QWidget):
         pbc = structure.properties.get("pbc", [True, True, True])
         if not isinstance(pbc, Iterable):
             pbc = [True, True, True]
-        symbols = []
-        for species in structure.species:
-            label = str(species).strip()
-            lowered = label.casefold()
-            if lowered == "h:mu" or lowered.endswith(":mu"):
-                symbols.append("X")
-            elif ":" in label:
-                symbols.append(label.split(":", 1)[0] or "X")
-            else:
-                symbols.append(label or "X")
+        symbols = _viewer_species_symbols(structure.species)
         return Atoms(
             symbols=symbols,
             scaled_positions=structure.fractional_positions,

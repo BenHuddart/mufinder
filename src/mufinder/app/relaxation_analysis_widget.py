@@ -39,7 +39,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIEWER_RADIUS_ANG
+from mufinder.app.atomic_structure_viewer import (
+    AtomicStructureViewer,
+    MUON_VIEWER_RADIUS_ANG,
+    viewer_atom_style_for_species,
+)
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.theme import (
     current_palette,
@@ -1179,11 +1183,12 @@ class DisplacementAnalysisDialog(QDialog):
         self._viewer.set_structure(relaxed)
         comp_lattice = np.asarray(comparison.lattice_vectors, dtype=float)
         comparison_positions = (np.asarray(comparison.fractional_positions, dtype=float) @ comp_lattice).tolist()
+        comparison_colors, comparison_radii = viewer_atom_style_for_species(comparison.species)
         overlays = [
             {
                 "positions": comparison_positions,
-                "colors": [current_palette().text_muted] * len(comparison_positions),
-                "radii": [0.16] * len(comparison_positions),
+                "colors": comparison_colors.tolist(),
+                "radii": comparison_radii.tolist(),
                 "alpha": 0.26,
             }
         ]

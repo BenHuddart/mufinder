@@ -169,6 +169,65 @@ def test_displacement_analysis_matches_host_atoms_and_reports_radial_motion() ->
     assert result.points[0].radial_displacement_ang == pytest.approx(0.5)
 
 
+def test_displacement_analysis_converts_host_frame_muon_position_for_supercells() -> None:
+    comparison = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["K"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    comparison_supercell = Structure(
+        label="Host supercell",
+        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+        species=["K"] * 8,
+        fractional_positions=[
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.5],
+            [0.0, 0.5, 0.0],
+            [0.0, 0.5, 0.5],
+            [0.5, 0.0, 0.0],
+            [0.5, 0.0, 0.5],
+            [0.5, 0.5, 0.0],
+            [0.5, 0.5, 0.5],
+        ],
+    )
+    relaxed = Structure(
+        label="Relaxed supercell",
+        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+        species=["K"] * 8 + ["H:mu"],
+        fractional_positions=[
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.5],
+            [0.0, 0.5, 0.0],
+            [0.0, 0.5, 0.5],
+            [0.5, 0.0, 0.0],
+            [0.5, 0.0, 0.5],
+            [0.5, 0.5, 0.0],
+            [0.5, 0.5, 0.5],
+            [0.1, 0.1, 0.1],
+        ],
+    )
+
+    host_frame_muon = (0.2, 0.2, 0.2)
+    supercell_frame_muon = (0.1, 0.1, 0.1)
+
+    primitive_host_result = analyze_displacements(
+        relaxed_structure=relaxed,
+        comparison_structure=comparison,
+        muon_fractional_position=host_frame_muon,
+    )
+    supercell_host_result = analyze_displacements(
+        relaxed_structure=relaxed,
+        comparison_structure=comparison_supercell,
+        muon_fractional_position=supercell_frame_muon,
+    )
+
+    assert len(primitive_host_result.points) == 8
+    assert primitive_host_result.points[0].distance_from_muon_ang == pytest.approx(supercell_host_result.points[0].distance_from_muon_ang)
+    assert primitive_host_result.points[0].distance_from_muon_ang == pytest.approx(10.0 * (3.0 ** 0.5) * 0.1)
+    assert primitive_host_result.points[0].comparison_index == supercell_host_result.points[0].comparison_index
+
+
 def test_wyckoff_assignment_finds_high_symmetry_site_for_cluster() -> None:
     host = _bcc_host_structure()
     sites = [

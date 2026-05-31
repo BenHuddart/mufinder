@@ -5,9 +5,10 @@ from __future__ import annotations
 import warnings
 from uuid import uuid4
 
-from ase.data import atomic_numbers
+from ase.data import atomic_numbers, covalent_radii
 from ase.data.colors import jmol_colors
 from matplotlib import colors as mcolors
+import numpy as np
 from PySide6.QtWidgets import QCheckBox, QFrame, QSplitter, QTabWidget, QTreeWidget
 
 from mufinder.app.relaxation_analysis_widget import (
@@ -400,6 +401,11 @@ def test_displacement_view_does_not_overlay_second_muon_when_relaxed_structure_c
 
     assert len(dialog._viewer._point_overlay_specs) == 1
     assert dialog._viewer._point_overlay_specs[0].positions.shape == (2, 3)
+    expected_numbers = np.asarray([atomic_numbers["Cu"], atomic_numbers["Cu"]], dtype=int)
+    expected_radii = np.clip(0.9 * covalent_radii[expected_numbers], 0.2, 1.15)
+    expected_colors = np.asarray(jmol_colors[expected_numbers], dtype=float)
+    assert np.allclose(dialog._viewer._point_overlay_specs[0].radii, expected_radii)
+    assert np.allclose(dialog._viewer._point_overlay_specs[0].colors, expected_colors)
 
     dialog.close()
 

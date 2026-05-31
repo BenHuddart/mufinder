@@ -138,6 +138,23 @@ def _pbc_delta_cartesian(
     return np.asarray(lattice_frac_to_cart(delta.tolist(), lattice_vectors), dtype=float)
 
 
+def _muon_position_in_normalized_frame(
+    muon_fractional_position: Sequence[float],
+    supercell_matrix: Sequence[Sequence[int]],
+    *,
+    is_supercell: bool,
+) -> tuple[float, float, float]:
+    muon = _wrap_fractional(muon_fractional_position)
+    if not is_supercell:
+        return muon
+    matrix = np.asarray(supercell_matrix, dtype=float)
+    try:
+        normalized = np.asarray(muon, dtype=float) @ np.linalg.inv(matrix)
+    except np.linalg.LinAlgError:
+        return muon
+    return _wrap_fractional(normalized.tolist())
+
+
 def _minimum_energy(sites: Sequence[RelaxedMuonSite]) -> float | None:
     finite = [
         float(site.total_energy_ev)
@@ -548,7 +565,13 @@ def analyze_displacements(
     comparison_structure: Structure,
     muon_fractional_position: Sequence[float],
 ) -> DisplacementAnalysisResult:
-    """Match ions and compute radial displacements relative to the muon."""
+    """Match ions and compute radial displacements relative to the muon.
+
+    The muon position is interpreted in the comparison-structure fractional
+    frame. When the comparison structure is tiled into a supercell for matching,
+    the muon position is converted into that normalized supercell frame before
+    distances are evaluated.
+    """
 
     relaxed_host = host_only_structure(relaxed_structure)
     normalized = normalize_for_comparison(
@@ -557,7 +580,11 @@ def analyze_displacements(
     )
     matching = match_structures(normalized.experimental, normalized.dft)
     lattice = normalized.dft.lattice_vectors
-    muon = _wrap_fractional(muon_fractional_position)
+    muon = _muon_position_in_normalized_frame(
+        muon_fractional_position,
+        normalized.supercell_matrix,
+        is_supercell=normalized.is_supercell,
+    )
     points: list[DisplacementPoint] = []
     for pair in matching.pairs:
         comparison_frac = normalized.experimental.fractional_positions[pair.experimental_index]
