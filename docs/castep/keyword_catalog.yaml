@@ -139,6 +139,22 @@ keywords:
       %ENDBLOCK SPECIES_POT
     notes: Starter implementation handles one species/pseudopotential pair per row.
 
+  - name: SPECIES_MASS
+    canonical_name: species_mass
+    file: cell
+    kind: block
+    value_type: species_mass_block
+    unit: AMU
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK SPECIES_MASS
+      AMU
+      H:mu 0.1134
+      %ENDBLOCK SPECIES_MASS
+    notes: Optional first line stores the mass unit (AMU). Each row assigns a mass to a species label; muon relaxation and quantum-correction workflows set the H:mu pseudo-species mass.
+
   - name: HUBBARD_U
     canonical_name: hubbard_u
     file: cell
@@ -201,6 +217,18 @@ keywords:
       basic_workflows: [convergence_kpoint]
       advanced_workflows: [convergence_cutoff, muon_relaxation, uep]
 
+  - name: PHONON_KPOINT_MP_GRID
+    canonical_name: phonon_kpoint_mp_grid
+    file: cell
+    kind: scalar
+    value_type: int_triplet
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: PHONON_KPOINT_MP_GRID 1 1 1
+    notes: Monkhorst-Pack grid for phonon q-point sampling. Alias forms like `PHONON_KPOINTS_MP_GRID` are normalized internally.
+
   - name: KPOINT_MP_SPACING
     canonical_name: kpoint_mp_spacing
     file: cell
@@ -255,6 +283,18 @@ keywords:
       widget_hint: checkbox
       default_value: false
       basic_workflows: [pristine_relaxation]
+
+  - name: FIX_COM
+    canonical_name: fix_com
+    file: cell
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: []
+    requires: []
+    example: 'FIX_COM : FALSE'
+    notes: Fix the centre of mass during geometry optimization when TRUE. Energy-barrier workflows emit FALSE so the centre of mass stays free.
 
   - name: UNIT_CELL
     canonical_name: unit_cell
@@ -773,3 +813,166 @@ keywords:
       widget_hint: unit_float
       default_value: 300.0
       advanced_workflows: [muon_relaxation]
+
+  - name: CELL_CONSTRAINTS
+    canonical_name: cell_constraints
+    file: cell
+    kind: block
+    value_type: block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK CELL_CONSTRAINTS
+      1 2 3
+      0 0 0
+      %ENDBLOCK CELL_CONSTRAINTS
+    notes: Two-row block of lattice length and angle constraint indices. Treated as a free-form constraint block by MuFinder.
+
+  - name: SPECIES_GAMMA
+    canonical_name: species_gamma
+    file: cell
+    kind: block
+    value_type: block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK SPECIES_GAMMA
+      H:mu 851615456.5524
+      %ENDBLOCK SPECIES_GAMMA
+    notes: Per-species gyromagnetic ratios. Muon workflows set the H:mu pseudo-species value.
+
+  - name: SYMMETRY_TOL
+    canonical_name: symmetry_tol
+    file: cell
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: SYMMETRY_TOL : 0.001 ang
+    notes: Distance tolerance used when regenerating symmetry from the structure.
+
+  - name: FINE_CUT_OFF_ENERGY
+    canonical_name: fine_cut_off_energy
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: FINE_CUT_OFF_ENERGY : 340 eV
+    notes: Cutoff energy for the fine FFT grid used by response-property calculations.
+
+  - name: NEXTRA_BANDS
+    canonical_name: nextra_bands
+    file: param
+    kind: scalar
+    value_type: non_negative_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: NEXTRA_BANDS : 0
+    notes: Number of extra conduction bands included in the calculation.
+
+  - name: PHONON_METHOD
+    canonical_name: phonon_method
+    file: param
+    kind: scalar
+    value_type: text
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: PHONON_METHOD : FINITEDISPLACEMENT
+    notes: Phonon evaluation method, for example FINITEDISPLACEMENT or DFPT.
+
+  - name: TSSEARCH_ENERGY_TOL
+    canonical_name: tssearch_energy_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_ENERGY_TOL : 1e-05 eV
+    notes: Energy convergence tolerance for transition-state searches.
+
+  - name: TSSEARCH_FORCE_TOL
+    canonical_name: tssearch_force_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV/ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_FORCE_TOL : 0.05 eV/ang
+    notes: Force convergence tolerance for transition-state searches.
+
+  - name: TSSEARCH_DISP_TOL
+    canonical_name: tssearch_disp_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_DISP_TOL : 0.001 ang
+    notes: Displacement convergence tolerance for transition-state searches.
+
+  - name: TSSEARCH_LST_MAX_ITER
+    canonical_name: tssearch_lst_max_iter
+    file: param
+    kind: scalar
+    value_type: non_negative_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_LST_MAX_ITER : 20
+    notes: Legacy LST iteration cap retained so older stored configurations still parse.
+
+  - name: TSSEARCH_QST_MAX_ITER
+    canonical_name: tssearch_qst_max_iter
+    file: param
+    kind: scalar
+    value_type: non_negative_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_QST_MAX_ITER : 20
+    notes: Maximum QST optimization cycles for transition-state searches.
+
+  - name: TSSEARCH_NEB_MAX_ITER
+    canonical_name: tssearch_neb_max_iter
+    file: param
+    kind: scalar
+    value_type: non_negative_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_NEB_MAX_ITER : 20
+    notes: Maximum NEB optimization cycles for transition-state searches.
+
+  - name: NUM_FARMS
+    canonical_name: num_farms
+    file: param
+    kind: scalar
+    value_type: positive_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: NUM_FARMS : 1
+    notes: Number of parallel CASTEP farms used to distribute independent calculations.
