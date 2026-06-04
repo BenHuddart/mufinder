@@ -18,6 +18,10 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   APP_NAME: MuFinder
 
