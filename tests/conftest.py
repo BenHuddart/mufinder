@@ -10,7 +10,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QWidget
 
 from mufinder.app.theme import cleanup_theme_runtime
@@ -48,6 +48,7 @@ def qapp() -> Generator[QApplication, None, None]:
             continue
     app.processEvents()
     QCoreApplication.sendPostedEvents(None, 0)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
     gc.collect()
     app.quit()
@@ -75,6 +76,12 @@ def _cleanup_qt_state_per_test(request: pytest.FixtureRequest):
         except (RuntimeError, SystemError):
             continue
     QCoreApplication.sendPostedEvents(None, 0)
+    # Qt special-cases DeferredDelete: a plain sendPostedEvents/processEvents does
+    # not flush it (it only runs when the event loop unwinds to a lower nesting
+    # level). Without this explicit flush the deleteLater'd widgets above survive
+    # the fixture, so each MainWindow leaks ~700 widgets and theme re-polish grows
+    # O(n^2) across the GUI suite — eventually stalling CI.
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
     gc.collect()
 

@@ -182,7 +182,9 @@ def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkey
             ) -> None:
                 del specs, workflow_stage, locked_values, intro_text, species_options, parent
 
-        def set_values(self, values: Mapping[str, object]) -> None:
+        def set_values(
+            self, values: Mapping[str, object], *, preferred_exclusive: str | None = None
+        ) -> None:
             calls.append(("set_values", dict(values)))
 
         def set_advanced_names(self, names: set[str]) -> None:
@@ -239,7 +241,9 @@ def test_uep_widget_reopens_dialog_with_saved_row_values(qapp, monkeypatch) -> N
                 del specs, workflow_stage, locked_values, intro_text, species_options, parent
                 self._payload = next(dialog_payloads)
 
-        def set_values(self, values: Mapping[str, object]) -> None:
+        def set_values(
+            self, values: Mapping[str, object], *, preferred_exclusive: str | None = None
+        ) -> None:
             seen_values.append(dict(values))
 
         def set_advanced_names(self, names: set[str]) -> None:

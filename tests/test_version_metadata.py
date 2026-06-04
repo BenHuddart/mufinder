@@ -94,16 +94,40 @@ def test_optional_scientific_backends_are_not_required_base_dependencies() -> No
     ]
 
 
-def test_current_version_prefers_source_tree_pyproject(
+def test_current_version_prefers_installed_dist_info(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    """Installed dist-info takes priority over the source-tree pyproject."""
+
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text('[project]\nversion = "9.9.9"\n', encoding="utf-8")
 
     version_module.current_version.cache_clear()
     monkeypatch.setattr(version_module, "_PYPROJECT", pyproject)
     monkeypatch.setattr(version_module, "installed_version", lambda _name: "0.1.2")
+
+    try:
+        assert current_version() == "0.1.2"
+    finally:
+        version_module.current_version.cache_clear()
+
+
+def test_current_version_falls_back_to_source_tree_pyproject(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """When the package is not installed, fall back to the source-tree pyproject."""
+
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nversion = "9.9.9"\n', encoding="utf-8")
+
+    def _not_installed(_name: str) -> str:
+        raise version_module.PackageNotFoundError(_name)
+
+    version_module.current_version.cache_clear()
+    monkeypatch.setattr(version_module, "_PYPROJECT", pyproject)
+    monkeypatch.setattr(version_module, "installed_version", _not_installed)
 
     try:
         assert current_version() == "9.9.9"
