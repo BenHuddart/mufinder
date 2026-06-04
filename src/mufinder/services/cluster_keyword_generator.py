@@ -20,8 +20,8 @@ from mufinder.services.scheduler import SchedulerSubmitRequest, create_scheduler
 from mufinder.services.ssh_client import SSHConnection
 
 
-type ProgressCallback = Callable[[str, int | None], None]
-type CancelCheck = Callable[[], bool]
+ProgressCallback = Callable[[str, int | None], None]
+CancelCheck = Callable[[], bool]
 
 _HELP_OPTION_RE = re.compile(r"((?<=^ )[A-Z_\d]{2,}|(?<=^)[A-Z_\d]{2,})", re.MULTILINE)
 _TYPE_DOC_RE = re.compile(
