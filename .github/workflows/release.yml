@@ -2,86 +2,64 @@ name: Release Publish
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       git_ref:
-        description: "Branch, tag, or SHA to publish from"
-        required: false
-        default: "main"
+        description: "Tag to publish from (e.g. v1.2.3)"
+        required: true
         type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   APP_NAME: MuFinder
 
 jobs:
-  detect-release:
+  resolve-release:
     runs-on: ubuntu-latest
     outputs:
-      release_tag: ${{ steps.version.outputs.release_tag }}
-      should_release: ${{ steps.version.outputs.should_release }}
-      source_sha: ${{ steps.version.outputs.source_sha }}
-      version: ${{ steps.version.outputs.version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      version: ${{ steps.meta.outputs.version }}
+      source_sha: ${{ steps.meta.outputs.source_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.git_ref || github.sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.git_ref || github.ref }}
 
-      - name: Determine whether a new release is needed
-        id: version
+      - name: Resolve release metadata from tag
+        id: meta
         shell: bash
         run: |
-          latest_tag="$(git tag --list 'v*' --sort=-version:refname | head -n 1)"
-          latest_version="${latest_tag#v}"
-          export LATEST_VERSION="$latest_version"
-          readarray -t version_info < <(python - <<'PY'
-          from pathlib import Path
-          import os
-          import re
-
-          text = Path("pyproject.toml").read_text(encoding="utf-8")
-          match = re.search(r'^version = "([^"]+)"$', text, re.MULTILINE)
-          if not match:
-              raise SystemExit("Could not find project.version in pyproject.toml")
-
-          version = match.group(1)
-          latest = os.environ.get("LATEST_VERSION", "").strip()
-
-          def parse(raw: str) -> tuple[int, ...]:
-              return tuple(int(part) for part in raw.split("."))
-
-          should_release = not latest or parse(version) > parse(latest)
-          print(version)
-          print("true" if should_release else "false")
-          PY
-          )
-          version="${version_info[0]}"
-          should_release="${version_info[1]}"
-
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.git_ref || github.ref_name }}"
+          case "$tag" in
+            v*) ;;
+            *) echo "Release tag '$tag' must start with 'v'."; exit 1 ;;
+          esac
           {
-            echo "version=$version"
-            echo "release_tag=v$version"
-            echo "should_release=$should_release"
+            echo "release_tag=$tag"
+            echo "version=${tag#v}"
             echo "source_sha=$(git rev-parse HEAD)"
           } >> "$GITHUB_OUTPUT"
 
   build-windows:
-    needs: detect-release
-    if: needs.detect-release.outputs.should_release == 'true'
+    needs: resolve-release
     runs-on: windows-latest
     env:
-      RELEASE_TAG: ${{ needs.detect-release.outputs.release_tag }}
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          ref: ${{ needs.detect-release.outputs.source_sha }}
+          ref: ${{ needs.resolve-release.outputs.source_sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -127,16 +105,15 @@ jobs:
           path: dist/MuFinder-${{ env.RELEASE_TAG }}-windows-x64.exe
 
   build-macos:
-    needs: detect-release
-    if: needs.detect-release.outputs.should_release == 'true'
+    needs: resolve-release
     runs-on: macos-latest
     env:
-      RELEASE_TAG: ${{ needs.detect-release.outputs.release_tag }}
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          ref: ${{ needs.detect-release.outputs.source_sha }}
+          ref: ${{ needs.resolve-release.outputs.source_sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -180,39 +157,23 @@ jobs:
       actions: write
       contents: write
     needs:
-      - detect-release
+      - resolve-release
       - build-windows
       - build-macos
-    if: needs.detect-release.outputs.should_release == 'true'
     env:
-      RELEASE_TAG: ${{ needs.detect-release.outputs.release_tag }}
-      SOURCE_SHA: ${{ needs.detect-release.outputs.source_sha }}
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ needs.detect-release.outputs.source_sha }}
+          ref: ${{ needs.resolve-release.outputs.source_sha }}
 
       - name: Download release artifacts
         uses: actions/download-artifact@v7
         with:
           path: release-assets
-
-      - name: Create git tag if needed
-        shell: bash
-        run: |
-          if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Tag $RELEASE_TAG already exists locally."
-          else
-            git tag "$RELEASE_TAG" "$SOURCE_SHA"
-          fi
-
-          if git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | grep -q "$RELEASE_TAG"; then
-            echo "Tag $RELEASE_TAG already exists on origin."
-          else
-            git push origin "refs/tags/$RELEASE_TAG"
-          fi
 
       - name: Publish GitHub release
         env:
@@ -255,119 +216,3 @@ jobs:
               echo "Deleted Actions artifact ${artifact_name} (${artifact_id})."
             done <<< "$artifact_ids"
           done
-
-  sync-develop:
-    runs-on: ubuntu-latest
-    needs:
-      - publish
-    if: always() && github.event_name == 'push' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
-    steps:
-      - name: Ensure release app credentials are configured
-        env:
-          RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
-          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-        run: |
-          if [ -z "$RELEASE_APP_ID" ] || [ -z "$RELEASE_APP_PRIVATE_KEY" ]; then
-            echo "RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY are required to sync main back into develop."
-            exit 1
-          fi
-
-      - name: Create GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-
-      - name: Get GitHub App bot user ID
-        id: app-user
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: echo "user-id=$(gh api "/users/${{ steps.app-token.outputs.app-slug }}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout develop
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-          ref: develop
-          token: ${{ steps.app-token.outputs.token }}
-
-      - name: Merge main back into develop
-        shell: bash
-        run: |
-          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
-          git config user.email "${{ steps.app-user.outputs.user-id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
-          git fetch origin main develop
-
-          if git merge-base --is-ancestor origin/main HEAD; then
-            echo "develop already contains main."
-            exit 0
-          fi
-
-          git merge --no-ff --no-edit origin/main
-          git push origin HEAD:develop
-
-  delete-release-branch:
-    runs-on: ubuntu-latest
-    needs:
-      - publish
-      - sync-develop
-    if: github.event_name == 'push' && needs.publish.result == 'success' && needs.sync-develop.result == 'success'
-    steps:
-      - name: Ensure release app credentials are configured
-        env:
-          RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
-          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-        run: |
-          if [ -z "$RELEASE_APP_ID" ] || [ -z "$RELEASE_APP_PRIVATE_KEY" ]; then
-            echo "RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY are required to delete merged release branches."
-            exit 1
-          fi
-
-      - name: Create GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-          permission-pull-requests: read
-
-      - name: Find merged release branch
-        id: release-branch
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        shell: bash
-        run: |
-          branch_name="$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
-            --jq '[.[] | select(.merged_at != null and .base.ref == "main" and (.head.ref | startswith("release/")))] | first | .head.ref // ""')"
-
-          if [ -z "$branch_name" ]; then
-            echo "No merged release branch is associated with $GITHUB_SHA."
-            exit 0
-          fi
-
-          echo "branch_name=$branch_name" >> "$GITHUB_OUTPUT"
-
-      - name: Delete merged release branch
-        if: steps.release-branch.outputs.branch_name != ''
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          BRANCH_NAME: ${{ steps.release-branch.outputs.branch_name }}
-        shell: bash
-        run: |
-          encoded_branch="${BRANCH_NAME//\//%2F}"
-
-          if gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/${encoded_branch}" >/dev/null 2>&1; then
-            gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/git/refs/heads/${encoded_branch}"
-            echo "Deleted merged release branch ${BRANCH_NAME}."
-          else
-            echo "Release branch ${BRANCH_NAME} was already deleted."
-          fi

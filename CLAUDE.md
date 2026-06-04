@@ -92,9 +92,15 @@ Before removing or renaming any persisted field, import alias, or public helper,
 
 ## Branch workflow
 
-1. Day-to-day development on `develop`.
-2. Manual preview builds from `develop` for distributable artifact validation.
-3. Cut `release/vX.Y.Z` from `develop` once stable.
-4. Release PR auto-merges into `main` once tests and docs build pass.
-5. Publish workflow tags and releases from `main`.
-6. `main` merges back into `develop`; release branch is deleted automatically.
+The project follows GitHub Flow: `main` is the single long-lived branch.
+
+1. Branch short-lived `feature/*` (or `fix/*`) branches off `main`. Aim to merge
+   small features within about a week; longer-lived branches are allowed when a
+   feature genuinely needs it.
+2. Open a pull request **directly into `main`**. CI runs the full quality gates on
+   every PR; merges are blocked until they pass.
+3. Use the `Preview Build` workflow to produce downloadable artifacts from any
+   branch for ad hoc validation, without publishing a release.
+4. Release by pushing a `vX.Y.Z` tag (bump the version and stamp the changelog
+   locally with `semantic-release version`). The `Release Publish` workflow builds
+   the Windows and macOS binaries and publishes the GitHub release from the tag.

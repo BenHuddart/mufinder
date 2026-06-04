@@ -83,7 +83,7 @@ python -m mufinder.main
 
 ## Development Checks
 
-Daily work is expected to land on `develop`. Full quality gates are reserved for the final release PR into `main`.
+The project follows GitHub Flow. Branch short-lived `feature/*` branches off `main` and open pull requests **directly into `main`**; CI runs the full quality gates on every PR and merges are blocked until they pass.
 
 Run the full test suite manually when needed:
 
@@ -97,16 +97,16 @@ Build the Sphinx documentation:
 python -m sphinx -W -b html docs docs/_build/html
 ```
 
-Prepare a release branch once `develop` is stable:
+Cut a release by bumping the version and pushing a tag from `main`:
 
 ```bash
-git checkout develop
+git checkout main
 git pull
+semantic-release version          # stamps pyproject.toml + CHANGELOG.md, tags vX.Y.Z
+git push --follow-tags
 ```
 
-Then use the `Prepare Release` GitHub Actions workflow to create `release/vX.Y.Z`, stamp the version, open the PR to `main`, and enable auto-merge once the required checks pass.
-That workflow expects a repository variable named `RELEASE_APP_ID` and a repository secret named `RELEASE_APP_PRIVATE_KEY`.
-Once the release PR merges, the publish workflow tags and publishes from `main`, merges `main` back into `develop`, and deletes the merged `release/vX.Y.Z` branch automatically.
+Pushing the `vX.Y.Z` tag triggers the `Release Publish` workflow, which builds the Windows and macOS binaries and publishes the GitHub release from the tag.
 
 ## Binary Distributions
 
@@ -119,4 +119,4 @@ These binaries ship MuFinder itself, but CASTEP and MPI remain external user-sup
 
 > **Intel Mac (x86_64) users:** pre-built binaries are not provided for Intel Macs. Install from source instead — see the [Install From Source](#install-from-source) section above.
 
-For ad hoc validation on `develop` or a release branch, use the `Preview Build` workflow to produce downloadable artifacts without publishing a release.
+For ad hoc validation on any branch, use the `Preview Build` workflow to produce downloadable artifacts without publishing a release.

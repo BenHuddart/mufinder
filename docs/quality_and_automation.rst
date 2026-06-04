@@ -103,32 +103,24 @@ The harness tests currently verify:
 Automation policy
 -----------------
 
-The repository automation is split across development, release preparation,
-and final publishing:
+The repository follows GitHub Flow, and its automation is split across
+continuous integration and tag-driven publishing:
 
-- Pull requests into ``main`` run the full quality gates:
+- Pull requests into ``main`` (and pushes to ``main`` after merge) run the full
+  quality gates:
 
   - ``pytest`` with coverage threshold enforcement
   - ``sphinx`` HTML build with ``-W`` enabled
 
 - ``Preview Build`` is a manual GitHub Actions workflow that builds Windows
-  and macOS artifacts from ``develop`` or a ``release/*`` branch without
-  publishing a release and without running the full suite.
+  and macOS artifacts from any branch, tag, or SHA without publishing a release
+  and without running the full suite.
 
-- ``Prepare Release`` is a manual workflow that cuts ``release/vX.Y.Z`` from
-  ``develop``, applies the semantic version bump, updates ``CHANGELOG.md``,
-  opens the pull request to ``main``, and enables auto-merge with a merge
-  commit so the release lands as soon as the required checks pass. It expects a
-  repository variable named ``RELEASE_APP_ID`` and a repository secret named
-  ``RELEASE_APP_PRIVATE_KEY`` so the workflow can mint a short-lived GitHub App
-  installation token.
-
-- Pushes to ``main`` publish releases only when ``pyproject.toml`` contains a
-  version newer than the latest ``v*`` tag. The publish flow creates the tag,
-  uploads Windows and macOS binaries, and then merges ``main`` back into
-  ``develop`` to keep version metadata aligned between the two branches. Once
-  that sync succeeds, the merged ``release/vX.Y.Z`` branch is deleted
-  automatically.
+- ``Release Publish`` is triggered by pushing a ``vX.Y.Z`` tag (it can also be
+  dispatched manually against an existing tag). It derives the version from the
+  tag, builds the Windows and macOS binaries, and publishes the GitHub release.
+  Bump the version and stamp ``CHANGELOG.md`` locally with
+  ``semantic-release version`` before pushing the tag.
 
 Merges should be blocked when either gate fails.
 
@@ -137,12 +129,12 @@ Branch workflow
 
 The expected branch lifecycle is:
 
-1. Day-to-day development on ``develop``.
-2. Manual preview builds from ``develop`` whenever distributable artifacts are
-   needed for validation.
-3. Cut ``release/vX.Y.Z`` from ``develop`` once the branch is stable.
-4. Let the release PR auto-merge into ``main`` once the full tests plus docs
-   build pass.
-5. Let the publish workflow tag and release from ``main``.
-6. Merge ``main`` back into ``develop`` immediately after publish.
-7. Let the publish workflow delete the merged ``release/vX.Y.Z`` branch.
+1. Branch short-lived ``feature/*`` (or ``fix/*``) branches off ``main``. Small
+   features should merge within about a week; longer-lived branches are allowed
+   when a feature genuinely needs it.
+2. Open a pull request directly into ``main`` and let CI run the full quality
+   gates; merges are blocked until they pass.
+3. Use ``Preview Build`` to produce distributable artifacts from any branch when
+   validation is needed.
+4. Release by pushing a ``vX.Y.Z`` tag from ``main``; the ``Release Publish``
+   workflow builds the binaries and publishes the GitHub release.
