@@ -66,14 +66,6 @@ version_toml = ["pyproject.toml:project.version"]
 match = "^main$"
 prerelease = false
 
-[tool.semantic_release.branches.develop]
-match = "^develop$"
-prerelease = false
-
-[tool.semantic_release.branches.release]
-match = "^release/v\\d+\\.\\d+\\.\\d+$"
-prerelease = false
-
 [tool.semantic_release.commit_parser_options]
 ignore_merge_commits = true
 minor_tags = ["feat"]

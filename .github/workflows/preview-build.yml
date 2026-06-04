@@ -6,7 +6,7 @@ on:
       git_ref:
         description: "Branch, tag, or SHA to build"
         required: true
-        default: "develop"
+        default: "main"
         type: string
 
 permissions:
