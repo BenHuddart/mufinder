@@ -82,7 +82,7 @@ keywords:
     unit:
     allowed_values: []
     mutually_exclusive_with: []
-    requires: [TASK = TRANSITIONSTATESEARCH]
+    requires: []
     example: |
       %BLOCK POSITIONS_FRAC_PRODUCT
       Fe 0 0 0 SPIN=2
@@ -98,7 +98,7 @@ keywords:
     unit: ang
     allowed_values: []
     mutually_exclusive_with: []
-    requires: [TASK = TRANSITIONSTATESEARCH]
+    requires: []
     example: |
       %BLOCK POSITIONS_ABS_PRODUCT
       ang
@@ -115,7 +115,7 @@ keywords:
     unit: ang
     allowed_values: []
     mutually_exclusive_with: []
-    requires: [TASK = TRANSITIONSTATESEARCH]
+    requires: []
     example: |
       %BLOCK POSITIONS_ABS_INTERMEDIATE
       ang
@@ -484,7 +484,7 @@ keywords:
       - LSTQST
       - NEB
     mutually_exclusive_with: []
-    requires: [TASK = TRANSITIONSTATESEARCH]
+    requires: []
     example: TSSEARCH_METHOD : LSTQST
     notes: Transition-state search method used by MuFinder Energy Barriers jobs. Supported values are limited to the CASTEP runtime metadata verified during development.
     gui:
