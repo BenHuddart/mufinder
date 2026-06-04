@@ -202,7 +202,6 @@ class _TableCornerStyler(QObject):
     }
     def __init__(self, app: QApplication) -> None:
         super().__init__(app)
-        self._bar_owner: dict[QScrollBar, QWidget] = {}
 
     @staticmethod
     def _is_supported_item_view(widget: object) -> bool:
@@ -236,16 +235,30 @@ class _TableCornerStyler(QObject):
         bar = table.verticalScrollBar()
         bar.installEventFilter(self)
         bar.rangeChanged.connect(self._on_scrollbar_range_changed)
-        self._bar_owner[bar] = table
 
         self._sync_table_corner_property(table)
+
+    def _table_for_bar(self, bar: object) -> QWidget | None:
+        # Walk up from the scroll bar to its owning item view rather than caching
+        # the (bar -> table) pair in a dict. Caching Qt wrappers keeps them alive
+        # past their C++ objects' lifetime, and releasing such a stale wrapper
+        # during QWidget teardown segfaults shiboken (notably on Linux).
+        try:
+            widget = bar.parentWidget()
+            while widget is not None:
+                if self._is_supported_item_view(widget):
+                    return widget
+                widget = widget.parentWidget()
+        except (RuntimeError, SystemError):
+            return None
+        return None
 
     def _on_scrollbar_range_changed(self, _minimum: int, _maximum: int) -> None:
         try:
             sender = self.sender()
             if not self._is_scrollbar(sender):
                 return
-            table = self._bar_owner.get(sender)
+            table = self._table_for_bar(sender)
             if table is None:
                 return
             self._sync_table_corner_property(table)
@@ -259,7 +272,7 @@ class _TableCornerStyler(QObject):
                 if event.type() in self._TABLE_WATCH_EVENTS:
                     self._sync_table_corner_property(watched)
             elif self._is_scrollbar(watched):
-                table = self._bar_owner.get(watched)
+                table = self._table_for_bar(watched)
                 if table is not None and event.type() in self._BAR_WATCH_EVENTS:
                     self._sync_table_corner_property(table)
         except (RuntimeError, SystemError):
@@ -290,26 +303,20 @@ class _TableCornerStyler(QObject):
     def shutdown(self) -> None:
         """Detach event filters and signal hooks before app teardown."""
 
-        for bar in list(self._bar_owner):
-            try:
-                bar.removeEventFilter(self)
-            except (RuntimeError, SystemError):
-                pass
-            try:
-                bar.rangeChanged.disconnect(self._on_scrollbar_range_changed)
-            except (RuntimeError, SystemError, TypeError):
-                pass
-        self._bar_owner.clear()
-
         app = QApplication.instance()
         if app is None:
             return
 
         for widget in app.allWidgets():
-            if not self._is_supported_item_view(widget):
-                continue
             try:
-                widget.removeEventFilter(self)
+                if self._is_supported_item_view(widget):
+                    widget.removeEventFilter(self)
+                elif self._is_scrollbar(widget):
+                    widget.removeEventFilter(self)
+                    try:
+                        widget.rangeChanged.disconnect(self._on_scrollbar_range_changed)
+                    except (RuntimeError, SystemError, TypeError):
+                        pass
             except (RuntimeError, SystemError):
                 pass
 
