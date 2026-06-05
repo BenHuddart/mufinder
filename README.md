@@ -24,7 +24,7 @@ MuFinder is a PySide6 desktop application for muon stopping-site workflows, CAST
 
 ## Workflow Coverage
 
-MuFinder now supports the core end-to-end workflow from relaxed muon-site
+MuFinder supports the core end-to-end workflow from relaxed muon-site
 analysis into higher-level follow-on calculations.
 
 - Quantum Corrections turns completed relaxed muon sites into Gamma-point
@@ -72,8 +72,7 @@ Install with development tooling:
 python -m pip install -e ".[dev]"
 ```
 
-The structure viewer uses the PyVista/VTK + `pyvistaqt` stack. The legacy
-Matplotlib atom-viewer backend has been removed.
+The structure viewer uses the PyVista/VTK + `pyvistaqt` stack.
 
 Run the app:
 
@@ -112,7 +111,7 @@ Pushing the `vX.Y.Z` tag triggers the `Release Publish` workflow, which builds t
 
 GitHub Releases publish:
 
-- Windows installers built from PyInstaller `onedir` bundles and wrapped with NSIS
+- Windows installers built from PyInstaller `onedir` bundles and wrapped with Inno Setup
 - macOS `.app` bundles packaged into drag-to-Applications DMGs (**Apple Silicon / arm64 only**)
 
 These binaries ship MuFinder itself, but CASTEP and MPI remain external user-supplied dependencies.
