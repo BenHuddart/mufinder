@@ -101,6 +101,15 @@ The project follows GitHub Flow: `main` is the single long-lived branch.
    every PR; merges are blocked until they pass.
 3. Use the `Preview Build` workflow to produce downloadable artifacts from any
    branch for ad hoc validation, without publishing a release.
-4. Release by pushing a `vX.Y.Z` tag (bump the version and stamp the changelog
-   locally with `semantic-release version`). The `Release Publish` workflow builds
-   the Windows and macOS binaries and publishes the GitHub release from the tag.
+4. Release by pushing a `vX.Y.Z` tag. Branch protection prevents pushing the
+   version bump commit directly to `main`, so the process is:
+   ```
+   git checkout main && git pull
+   uvx "python-semantic-release>=10.5,<11" version   # bumps pyproject.toml + CHANGELOG.md, commits + tags locally
+   git checkout -b release/vX.Y.Z                    # branch off the version bump commit
+   git checkout main && git reset --hard origin/main  # restore local main
+   git push origin release/vX.Y.Z                    # open a PR, wait for CI + merge
+   git push origin vX.Y.Z                            # push the tag — triggers Release Publish
+   ```
+   The `Release Publish` workflow builds the Windows and macOS binaries and
+   publishes the GitHub release from the tag.

@@ -96,13 +96,15 @@ Build the Sphinx documentation:
 python -m sphinx -W -b html docs docs/_build/html
 ```
 
-Cut a release by bumping the version and pushing a tag from `main`:
+Cut a release from `main` (branch protection requires a PR for the version bump commit):
 
 ```bash
-git checkout main
-git pull
-semantic-release version          # stamps pyproject.toml + CHANGELOG.md, tags vX.Y.Z
-git push --follow-tags
+git checkout main && git pull
+uvx "python-semantic-release>=10.5,<11" version   # bumps pyproject.toml + CHANGELOG.md, commits + tags locally (push fails — expected)
+git checkout -b release/vX.Y.Z                    # branch off the version bump commit
+git checkout main && git reset --hard origin/main  # restore local main
+git push origin release/vX.Y.Z                    # open a PR, wait for CI + merge
+git push origin vX.Y.Z                            # push the tag — triggers the Release Publish workflow
 ```
 
 Pushing the `vX.Y.Z` tag triggers the `Release Publish` workflow, which builds the Windows and macOS binaries and publishes the GitHub release from the tag.
