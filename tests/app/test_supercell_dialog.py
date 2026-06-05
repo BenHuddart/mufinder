@@ -260,16 +260,22 @@ def test_supercell_editor_suggest_writes_scaling_to_matrix(qapp, tmp_path, monke
     dialog.close()
 
 
-def test_supercell_editor_spinbox_range_allows_n_20(qapp, tmp_path) -> None:
+def test_supercell_editor_spinbox_range_allows_n_20(qapp, tmp_path, monkeypatch) -> None:
     # Regression: spinbox range was (1,12) so setValue(20) would silently clamp to 12.
+    # _generate_preview is patched out to avoid rendering a 20³-cell structure in CI.
     dialog = _make_editor(tmp_path)
+    monkeypatch.setattr(dialog, "_generate_preview", lambda: None)
     dialog._apply_matrix([[20, 0, 0], [0, 20, 0], [0, 0, 20]])
     assert dialog.matrix() == [[20, 0, 0], [0, 20, 0], [0, 0, 20]]
     dialog.close()
 
 
-def test_supercell_editor_spinbox_range_allows_n_64(qapp, tmp_path) -> None:
+def test_supercell_editor_spinbox_range_allows_n_64(qapp, tmp_path, monkeypatch) -> None:
+    # Regression: spinbox range must accommodate suggestions up to n=64.
+    # _generate_preview is patched out to avoid rendering a 64³-cell structure in CI,
+    # which causes a fatal VTK abort (524,288 atoms exceeds the offscreen renderer limit).
     dialog = _make_editor(tmp_path)
+    monkeypatch.setattr(dialog, "_generate_preview", lambda: None)
     dialog._apply_matrix([[64, 0, 0], [0, 64, 0], [0, 0, 64]])
     assert dialog.matrix() == [[64, 0, 0], [0, 64, 0], [0, 0, 64]]
     dialog.close()
