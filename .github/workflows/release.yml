@@ -18,10 +18,6 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   APP_NAME: MuFinder
 
@@ -54,6 +50,20 @@ jobs:
             echo "source_sha=$(git rev-parse HEAD)"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Validate tag version matches pyproject.toml
+        run: |
+          tag_version="${{ steps.meta.outputs.version }}"
+          pyproject_version=$(python3 -c "
+          import re, pathlib
+          m = re.search(r'^version = \"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(), re.MULTILINE)
+          print(m.group(1) if m else '')
+          ")
+          if [ "$tag_version" != "$pyproject_version" ]; then
+            echo "ERROR: tag version ($tag_version) does not match pyproject.toml version ($pyproject_version)"
+            exit 1
+          fi
+          echo "Version check passed: $tag_version"
+
   build-windows:
     needs: resolve-release
     runs-on: windows-latest
@@ -85,8 +95,8 @@ jobs:
       - name: Build PyInstaller bundle
         run: pyinstaller --noconfirm packaging/pyinstaller/mufinder.spec
 
-      - name: Install NSIS
-        run: choco install nsis -y
+      - name: Install Inno Setup
+        run: choco install innosetup -y
 
       - name: Build installer
         shell: pwsh
@@ -94,13 +104,13 @@ jobs:
           $version = $env:RELEASE_TAG.TrimStart('v')
           $appDir = "$env:GITHUB_WORKSPACE\dist\MuFinder"
           $iconFile = "$env:GITHUB_WORKSPACE\packaging\build\mufinder.ico"
-          $output = "$env:GITHUB_WORKSPACE\dist\MuFinder-$env:RELEASE_TAG-windows-x64.exe"
-          makensis `
-            "/DVERSION=$version" `
-            "/DAPP_DIR=$appDir" `
-            "/DICON_FILE=$iconFile" `
-            "/DOUTPUT_FILE=$output" `
-            packaging\windows\mufinder.nsi
+          $outputDir = "$env:GITHUB_WORKSPACE\dist"
+          iscc `
+            "/DAppVersion=$version" `
+            "/DAppDir=$appDir" `
+            "/DIconFile=$iconFile" `
+            "/DOutputDir=$outputDir" `
+            packaging\windows\mufinder.iss
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v6
