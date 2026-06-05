@@ -99,15 +99,11 @@ def test_pyinstaller_spec_builds_windows_icon() -> None:
 
 
 def test_windows_installer_uses_application_icon() -> None:
-    nsi_path = _repo_root() / "packaging" / "windows" / "mufinder.nsi"
-    nsi_text = nsi_path.read_text(encoding="utf-8")
+    iss_text = (_repo_root() / "packaging" / "windows" / "mufinder.iss").read_text(
+        encoding="utf-8"
+    )
 
-    assert "!ifdef ICON_FILE" in nsi_text
-    assert '!define APP_ICON "${ICON_FILE}"' in nsi_text
-    assert '!define APP_ICON "packaging\\build\\mufinder.ico"' in nsi_text
-    assert '!define INSTALLED_ICON_NAME "mufinder.ico"' in nsi_text
-    assert 'Icon "${APP_ICON}"' in nsi_text
-    assert '!define MUI_ICON "${APP_ICON}"' in nsi_text
-    assert 'File /oname="${INSTALLED_ICON_NAME}" "${APP_ICON}"' in nsi_text
-    assert '"$INSTDIR\\${EXECUTABLE_NAME}" "" "$INSTDIR\\${INSTALLED_ICON_NAME}" 0' in nsi_text
-    assert 'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${APP_NAME}" "DisplayIcon" "$INSTDIR\\${INSTALLED_ICON_NAME}"' in nsi_text
+    assert "SetupIconFile={#IconFile}" in iss_text
+    assert 'UninstallDisplayIcon={app}\\mufinder.ico' in iss_text
+    assert 'Source: "{#IconFile}"; DestDir: "{app}"; DestName: "mufinder.ico"' in iss_text
+    assert 'IconFilename: "{app}\\mufinder.ico"' in iss_text
