@@ -45,22 +45,24 @@ jobs:
       - name: Build PyInstaller bundle
         run: pyinstaller --noconfirm packaging/pyinstaller/mufinder.spec
 
-      - name: Install NSIS
-        run: choco install nsis -y
+      - name: Install Inno Setup
+        run: choco install innosetup -y
 
       - name: Build installer
         shell: pwsh
         run: |
-          $nsisVersion = "0.0.$($env:GITHUB_RUN_NUMBER)"
+          $previewVersion = "0.0.$($env:GITHUB_RUN_NUMBER)"
           $appDir = "$env:GITHUB_WORKSPACE\dist\MuFinder"
           $iconFile = "$env:GITHUB_WORKSPACE\packaging\build\mufinder.ico"
-          $output = "$env:GITHUB_WORKSPACE\dist\MuFinder-$env:BUILD_LABEL-windows-x64.exe"
-          makensis `
-            "/DVERSION=$nsisVersion" `
-            "/DAPP_DIR=$appDir" `
-            "/DICON_FILE=$iconFile" `
-            "/DOUTPUT_FILE=$output" `
-            packaging\windows\mufinder.nsi
+          $outputDir = "$env:GITHUB_WORKSPACE\dist"
+          $outputName = "MuFinder-$env:BUILD_LABEL-windows-x64"
+          iscc `
+            "/DAppVersion=$previewVersion" `
+            "/DAppDir=$appDir" `
+            "/DIconFile=$iconFile" `
+            "/DOutputDir=$outputDir" `
+            "/DOutputName=$outputName" `
+            packaging\windows\mufinder.iss
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v6
