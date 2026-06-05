@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import QPoint, QItemSelectionModel, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QMessageBox, QPushButton, QToolButton
 
 import mufinder.app.convergence_widget as convergence_widget_module
@@ -245,6 +246,65 @@ def test_convergence_widget_single_cutoff_parameter_dialog_updates_row(
     assert configure_button.text() == "Configured..."
 
 
+def test_convergence_widget_queued_cutoff_parameter_dialog_is_read_only(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    widget._cutoff_parameter_values[300.0] = {"max_scf_cycles": 50}
+    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="queued")})
+
+    observed: dict[str, object] = {}
+
+    def fake_exec(dialog) -> int:
+        observed["read_only"] = dialog._read_only
+        observed["title"] = dialog.windowTitle()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(
+        convergence_widget_module.ParameterDialog,
+        "collect_values",
+        lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
+    )
+
+    widget._open_cutoff_parameter_dialog((300.0,))
+
+    assert observed == {"read_only": True, "title": "Inspect Parameters: 300 eV"}
+    assert widget._cutoff_parameter_values[300.0]["max_scf_cycles"] == 50
+    configure_button = widget._cutoff_table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+    assert configure_button.text() == "Configured..."
+
+
+def test_convergence_widget_cancelled_cutoff_parameters_are_editable(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    widget._cutoff_parameter_values[300.0] = {"max_scf_cycles": 50}
+    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="cancelled")})
+
+    observed: dict[str, object] = {}
+
+    def fake_exec(dialog) -> int:
+        observed["read_only"] = dialog._read_only
+        observed["title"] = dialog.windowTitle()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(
+        convergence_widget_module.ParameterDialog,
+        "collect_values",
+        lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
+    )
+
+    widget._open_cutoff_parameter_dialog((300.0,))
+
+    assert observed == {"read_only": False, "title": "Configure Parameters: 300 eV"}
+    assert widget._cutoff_parameter_values[300.0]["max_scf_cycles"] == 99
+
+
 def test_convergence_widget_batch_configure_selected_cutoffs(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -305,8 +365,9 @@ def test_convergence_widget_parameter_dialog_places_kpoint_below_basis_controls(
     names = observed.get("names")
     assert isinstance(names, list)
     assert "cut_off_energy" in names
+    assert "elec_energy_tol" in names
     assert "kpoint_mp_grid" in names
-    assert names.index("kpoint_mp_grid") == names.index("cut_off_energy") + 1
+    assert names.index("cut_off_energy") < names.index("elec_energy_tol") < names.index("kpoint_mp_grid")
 
 
 def test_convergence_widget_add_cutoff_fallback_on_invalid_previous(qapp) -> None:
@@ -515,6 +576,49 @@ def test_convergence_widget_remove_selected_or_current_cutoffs_uses_selection(qa
     widget._remove_selected_or_current_cutoffs()
 
     assert requested_rows == [(0, 1)]
+
+
+def test_convergence_widget_delete_shortcut_requests_selected_cutoff_removal(qapp) -> None:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    widget._add_cutoff(360.0)
+    requested: list[list[float]] = []
+    widget.remove_cutoff_requested.connect(lambda cutoffs: requested.append(list(cutoffs)))
+
+    widget._cutoff_table.selectRow(1)
+    widget._delete_shortcut.activated.emit()
+
+    assert requested == [[360.0]]
+
+
+def test_convergence_widget_backspace_shortcut_requests_current_cutoff_removal(qapp) -> None:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    requested: list[list[float]] = []
+    widget.remove_cutoff_requested.connect(lambda cutoffs: requested.append(list(cutoffs)))
+
+    widget._cutoff_table.setCurrentCell(0, widget._CUTOFF_COLUMN)
+    widget._backspace_shortcut.activated.emit()
+
+    assert requested == [[300.0]]
+
+
+def test_convergence_widget_delete_key_requests_selected_cutoff_from_child_focus(qapp) -> None:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    widget._add_cutoff(360.0)
+    requested: list[list[float]] = []
+    widget.remove_cutoff_requested.connect(lambda cutoffs: requested.append(list(cutoffs)))
+    configure_button = widget._cutoff_table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    widget.show()
+    widget._cutoff_table.selectRow(0)
+    configure_button.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(configure_button, Qt.Key.Key_Delete)
+
+    assert requested == [[300.0]]
 
 
 def test_convergence_widget_batch_confirm_uses_yes_to_all_for_progressed_rows(
@@ -873,3 +977,20 @@ def test_convergence_widget_displays_project_defaults(qapp) -> None:
     assert widget._project_default_cutoff.text() == "550 eV"
     assert widget._project_default_method.text() == "Asymptotic Extrapolation"
     assert widget._project_default_criteria.text() == "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang"
+
+
+def test_convergence_widget_project_defaults_include_stress_threshold(qapp) -> None:
+    widget = ConvergenceWidget()
+
+    widget.set_project_defaults(
+        cutoff_energy=550.0,
+        cutoff_method="asymptotic",
+        energy_threshold=0.001,
+        force_threshold=0.05,
+        stress_threshold=0.1,
+    )
+
+    assert (
+        widget._project_default_criteria.text()
+        == "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang, dS <= 0.1 GPa"
+    )

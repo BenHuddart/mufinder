@@ -74,6 +74,56 @@ keywords:
       %ENDBLOCK POSITIONS_ABS
     notes: Optional first line stores the Cartesian unit. MuFinder treats this as structure-controlled and does not expose it in parameter dialogs.
 
+  - name: POSITIONS_FRAC_PRODUCT
+    canonical_name: positions_frac_product
+    file: cell
+    kind: block
+    value_type: positions_block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK POSITIONS_FRAC_PRODUCT
+      Fe 0 0 0 SPIN=2
+      Fe 0.5 0.5 0.5 SPIN=-2
+      %ENDBLOCK POSITIONS_FRAC_PRODUCT
+    notes: Product-state fractional positions for CASTEP transition-state searches. MuFinder generates this from the selected product relaxed structure and does not expose it in parameter dialogs.
+
+  - name: POSITIONS_ABS_PRODUCT
+    canonical_name: positions_abs_product
+    file: cell
+    kind: block
+    value_type: positions_block
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK POSITIONS_ABS_PRODUCT
+      ang
+      Fe 0 0 0 SPIN=2
+      Fe 2.5 2.5 2.5 SPIN=-2
+      %ENDBLOCK POSITIONS_ABS_PRODUCT
+    notes: Product-state Cartesian positions for CASTEP transition-state searches. MuFinder uses this form for NEB jobs generated from completed transition-state searches.
+
+  - name: POSITIONS_ABS_INTERMEDIATE
+    canonical_name: positions_abs_intermediate
+    file: cell
+    kind: block
+    value_type: positions_block
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK POSITIONS_ABS_INTERMEDIATE
+      ang
+      Fe 0 0 0 SPIN=2
+      Fe 1.25 2.5 2.5 SPIN=-2
+      %ENDBLOCK POSITIONS_ABS_INTERMEDIATE
+    notes: Intermediate Cartesian positions for CASTEP transition-state searches. MuFinder Phase 2 Energy Barriers NEB jobs populate this from the highest-energy image in the completed `.ts` path.
+
   - name: SPECIES_POT
     canonical_name: species_pot
     file: cell
@@ -88,6 +138,46 @@ keywords:
       Si Si_00.recpot
       %ENDBLOCK SPECIES_POT
     notes: Starter implementation handles one species/pseudopotential pair per row.
+
+  - name: SPECIES_MASS
+    canonical_name: species_mass
+    file: cell
+    kind: block
+    value_type: species_mass_block
+    unit: AMU
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK SPECIES_MASS
+      AMU
+      H:mu 0.1134
+      %ENDBLOCK SPECIES_MASS
+    notes: Optional first line stores the mass unit (AMU). Each row assigns a mass to a species label; muon relaxation and quantum-correction workflows set the H:mu pseudo-species mass.
+
+  - name: HUBBARD_U
+    canonical_name: hubbard_u
+    file: cell
+    kind: block
+    value_type: hubbard_u_block
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK HUBBARD_U
+      eV
+      Sm f: 6.1
+      Ni d: 2.4
+      U d: 1.2
+      U f: 2.1
+      %ENDBLOCK HUBBARD_U
+    notes: Optional first line stores the Hubbard U unit, currently eV or Ha. The guided editor writes one row per species/orbital target, using `s:`, `p:`, `d:`, or `f:` values for all atoms of that species.
+    gui:
+      label: Hubbard U
+      category: electronic
+      widget_hint: hubbard_u
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, uep, muon_generation, muon_relaxation, site_analysis, magnetic_field, quantum_corrections, energy_barriers]
 
   - name: KPOINTS_LIST
     canonical_name: kpoints_list
@@ -125,7 +215,19 @@ keywords:
       widget_hint: int_triplet
       default_value: [4, 4, 4]
       basic_workflows: [convergence_kpoint]
-      advanced_workflows: [convergence_cutoff, muon_relaxation]
+      advanced_workflows: [convergence_cutoff, muon_relaxation, uep]
+
+  - name: PHONON_KPOINT_MP_GRID
+    canonical_name: phonon_kpoint_mp_grid
+    file: cell
+    kind: scalar
+    value_type: int_triplet
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: PHONON_KPOINT_MP_GRID 1 1 1
+    notes: Monkhorst-Pack grid for phonon q-point sampling. Alias forms like `PHONON_KPOINTS_MP_GRID` are normalized internally.
 
   - name: KPOINT_MP_SPACING
     canonical_name: kpoint_mp_spacing
@@ -143,7 +245,7 @@ keywords:
       category: kpoints
       widget_hint: unit_float
       default_value: 0.05
-      advanced_workflows: [convergence_cutoff, muon_relaxation]
+      advanced_workflows: [convergence_cutoff, muon_relaxation, uep]
 
   - name: SYMMETRY_GENERATE
     canonical_name: symmetry_generate
@@ -162,7 +264,7 @@ keywords:
       widget_hint: flag
       default_value: true
       basic_workflows: [convergence_cutoff, convergence_kpoint]
-      advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation, uep]
 
   - name: FIX_ALL_CELL
     canonical_name: fix_all_cell
@@ -181,6 +283,18 @@ keywords:
       widget_hint: checkbox
       default_value: false
       basic_workflows: [pristine_relaxation]
+
+  - name: FIX_COM
+    canonical_name: fix_com
+    file: cell
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: []
+    requires: []
+    example: 'FIX_COM : FALSE'
+    notes: Fix the centre of mass during geometry optimization when TRUE. Energy-barrier workflows emit FALSE so the centre of mass stays free.
 
   - name: UNIT_CELL
     canonical_name: unit_cell
@@ -212,6 +326,26 @@ keywords:
       default_value: false
       advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, muon_relaxation]
 
+  - name: WRITE_FORMATTED_DENSITY
+    canonical_name: write_formatted_density
+    file: param
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: []
+    requires: []
+    example: WRITE_FORMATTED_DENSITY : TRUE
+    notes: Must be TRUE for UEP source jobs so CASTEP writes the `.den_fmt` density required for analysis.
+    gui:
+      label: Write Formatted Density
+      category: io
+      widget_hint: checkbox
+      default_value: false
+      basic_workflows: [uep]
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, uep, muon_relaxation]
+      locked_in_workflows: [uep]
+
   - name: CALCULATE_POLARIZATION
     canonical_name: calculate_polarization
     file: param
@@ -223,6 +357,43 @@ keywords:
     requires: []
     example: CALCULATE_POLARIZATION : TRUE
     notes: American spelling for the polarization toggle.
+
+  - name: CALCULATE_STRESS
+    canonical_name: calculate_stress
+    file: param
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: []
+    requires: []
+    example: CALCULATE_STRESS : TRUE
+    notes: Compute the stress tensor at each SCF step. Required to feed max stress into cutoff and k-point convergence analysis.
+    gui:
+      label: Calculate Stress
+      category: electronic
+      widget_hint: flag
+      default_value: false
+      basic_workflows: [convergence_cutoff, convergence_kpoint]
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, uep, muon_relaxation]
+
+  - name: CHARGE
+    canonical_name: charge
+    file: param
+    kind: scalar
+    value_type: int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: CHARGE : +1
+    notes: Total system charge. Muon relaxation locks this to +1 for positive muon and 0 for muonium.
+    gui:
+      label: Charge
+      category: electronic
+      widget_hint: spinbox_int
+      default_value: 0
+      advanced_workflows: [muon_relaxation]
 
   - name: TASK
     canonical_name: task
@@ -302,7 +473,26 @@ keywords:
       category: electronic
       widget_hint: dropdown
       default_value: LDA
-      basic_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+
+  - name: TSSEARCH_METHOD
+    canonical_name: tssearch_method
+    file: param
+    kind: scalar
+    value_type: enum
+    unit:
+    allowed_values:
+      - LSTQST
+      - NEB
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_METHOD : LSTQST
+    notes: Transition-state search method used by MuFinder Energy Barriers jobs. Supported values are limited to the CASTEP runtime metadata verified during development.
+    gui:
+      label: TS Search Method
+      category: workflow
+      widget_hint: dropdown
+      basic_workflows: [energy_barriers]
+      advanced_workflows: [energy_barriers]
 
   - name: BASIS_PRECISION
     canonical_name: basis_precision
@@ -340,7 +530,7 @@ keywords:
       widget_hint: unit_float
       default_value: 340.0
       basic_workflows: [convergence_cutoff]
-      advanced_workflows: [convergence_kpoint, muon_relaxation]
+      advanced_workflows: [convergence_kpoint, muon_relaxation, uep]
 
   - name: SPIN_POLARIZED
     canonical_name: spin_polarized
@@ -444,6 +634,24 @@ keywords:
       default_value: 1.0e-6
       basic_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
 
+  - name: NONSCF_EIGENVALUE_TOL
+    canonical_name: nonscf_eigenvalue_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: NONSCF_EIGENVALUE_TOL : 1e-9 eV
+    notes: Response-property diagonalization tolerance used by workflows such as phonons.
+    gui:
+      label: Response Eigenvalue Tolerance
+      category: scf
+      widget_hint: unit_float
+      default_value: 1.0e-9
+      advanced_workflows: [quantum_corrections]
+
   - name: GEOM_ENERGY_TOL
     canonical_name: geom_energy_tol
     file: param
@@ -516,6 +724,42 @@ keywords:
       default_value: 30
       advanced_workflows: [muon_relaxation]
 
+  - name: GEOM_DISP_TOL
+    canonical_name: geom_disp_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK=GEOMETRYOPTIMIZATION]
+    example: GEOM_DISP_TOL : 0.001 ang
+    notes: Ionic displacement convergence threshold for geometry optimization.
+    gui:
+      label: Geometry Displacement Tolerance
+      category: geometry
+      widget_hint: unit_float
+      default_value: 0.001
+      advanced_workflows: [muon_relaxation]
+
+  - name: GEOM_FREQUENCY_EST
+    canonical_name: geom_frequency_est
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: cm-1
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: [TASK=GEOMETRYOPTIMIZATION]
+    example: GEOM_FREQUENCY_EST : 1668 cm-1
+    notes: Estimated curvature used to size the initial trust radius.
+    gui:
+      label: Geometry Frequency Estimate
+      category: geometry
+      widget_hint: unit_float
+      default_value: 1668.0
+      advanced_workflows: [muon_relaxation]
+
   - name: MD_DELTA_T
     canonical_name: md_delta_t
     file: param
@@ -569,3 +813,220 @@ keywords:
       widget_hint: unit_float
       default_value: 300.0
       advanced_workflows: [muon_relaxation]
+
+  - name: CELL_CONSTRAINTS
+    canonical_name: cell_constraints
+    file: cell
+    kind: block
+    value_type: block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK CELL_CONSTRAINTS
+      1 2 3
+      0 0 0
+      %ENDBLOCK CELL_CONSTRAINTS
+    notes: Two-row block of lattice length and angle constraint indices. Treated as a free-form constraint block by MuFinder.
+
+  - name: SPECIES_GAMMA
+    canonical_name: species_gamma
+    file: cell
+    kind: block
+    value_type: block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK SPECIES_GAMMA
+      H:mu 851615456.5524
+      %ENDBLOCK SPECIES_GAMMA
+    notes: Per-species gyromagnetic ratios. Muon workflows set the H:mu pseudo-species value.
+
+  - name: SYMMETRY_TOL
+    canonical_name: symmetry_tol
+    file: cell
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: SYMMETRY_TOL : 0.001 ang
+    notes: Distance tolerance used when regenerating symmetry from the structure.
+
+  - name: FINE_CUT_OFF_ENERGY
+    canonical_name: fine_cut_off_energy
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: FINE_CUT_OFF_ENERGY : 340 eV
+    notes: Cutoff energy for the fine FFT grid used by response-property calculations.
+
+  - name: NEXTRA_BANDS
+    canonical_name: nextra_bands
+    file: param
+    kind: scalar
+    value_type: non_negative_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: NEXTRA_BANDS : 0
+    notes: Number of extra conduction bands included in the calculation.
+
+  - name: PHONON_METHOD
+    canonical_name: phonon_method
+    file: param
+    kind: scalar
+    value_type: text
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: PHONON_METHOD : FINITEDISPLACEMENT
+    notes: Phonon evaluation method, for example FINITEDISPLACEMENT or DFPT.
+
+  - name: TSSEARCH_ENERGY_TOL
+    canonical_name: tssearch_energy_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_ENERGY_TOL : 1e-05 eV
+    notes: Energy convergence tolerance for transition-state searches.
+
+  - name: TSSEARCH_FORCE_TOL
+    canonical_name: tssearch_force_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: eV/ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_FORCE_TOL : 0.05 eV/ang
+    notes: Force convergence tolerance for transition-state searches.
+
+  - name: TSSEARCH_DISP_TOL
+    canonical_name: tssearch_disp_tol
+    file: param
+    kind: scalar
+    value_type: positive_float_with_optional_unit
+    unit: ang
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_DISP_TOL : 0.001 ang
+    notes: Displacement convergence tolerance for transition-state searches.
+
+  - name: TSSEARCH_LST_MAX_ITER
+    canonical_name: tssearch_lst_max_iter
+    file: param
+    kind: scalar
+    value_type: non_negative_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_LST_MAX_ITER : 20
+    notes: Legacy LST iteration cap retained so older stored configurations still parse.
+
+  - name: TSSEARCH_QST_MAX_ITER
+    canonical_name: tssearch_qst_max_iter
+    file: param
+    kind: scalar
+    value_type: non_negative_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_QST_MAX_ITER : 20
+    notes: Maximum QST optimization cycles for transition-state searches.
+
+  - name: TSSEARCH_NEB_MAX_ITER
+    canonical_name: tssearch_neb_max_iter
+    file: param
+    kind: scalar
+    value_type: non_negative_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_NEB_MAX_ITER : 20
+    notes: Maximum NEB optimization cycles for transition-state searches.
+
+  - name: NUM_FARMS
+    canonical_name: num_farms
+    file: param
+    kind: scalar
+    value_type: positive_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: NUM_FARMS : 1
+    notes: Number of parallel CASTEP farms used to distribute independent calculations.
+
+  - name: IPRINT
+    canonical_name: iprint
+    file: param
+    kind: scalar
+    value_type: int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: IPRINT : 1
+    notes: Output verbosity level for the CASTEP run.
+
+  - name: LENGTH_UNIT
+    canonical_name: length_unit
+    file: param
+    kind: scalar
+    value_type: text
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: LENGTH_UNIT : ang
+    notes: Default length unit used when reporting results.
+
+  - name: DEVEL_CODE
+    canonical_name: devel_code
+    file: param
+    kind: block
+    value_type: block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK DEVEL_CODE
+      foo=1
+      %ENDBLOCK DEVEL_CODE
+    notes: Free-form developer control block; rows are passed through verbatim.
+
+  - name: XC_DEFINITION
+    canonical_name: xc_definition
+    file: param
+    kind: block
+    value_type: block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK XC_DEFINITION
+      PBE 1.0
+      %ENDBLOCK XC_DEFINITION
+    notes: Composite exchange-correlation definition; rows pair a functional with a weight.

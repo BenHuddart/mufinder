@@ -34,6 +34,22 @@ class SSHTransportError(ConnectionError):
     """Raised when the SSH transport or session cannot be established."""
 
 
+class SSHProtocolBannerError(SSHTransportError):
+    """Raised when the remote endpoint does not present an SSH banner."""
+
+    def __init__(self, *, hostname: str, port: int, details: str) -> None:
+        self.hostname = hostname
+        self.port = int(port)
+        self.details = details.strip()
+        message = (
+            f"The server at {hostname}:{port} accepted the connection but did not send "
+            "a valid SSH protocol banner."
+        )
+        if self.details:
+            message = f"{message}\n\nTechnical detail: {self.details}"
+        super().__init__(message)
+
+
 class SSHUnknownHostKeyError(ConnectionError):
     """Raised when the remote host key is not yet trusted."""
 
@@ -114,6 +130,18 @@ def save_trusted_host_key(settings, config: ClusterConfig, *, algorithm: str, ke
     settings.setValue(f"{prefix}/key_base64", key_base64.strip())
 
 
+def _is_protocol_banner_error(exc: BaseException) -> bool:
+    detail = _format_exception_detail(exc).casefold()
+    return "error reading ssh protocol banner" in detail or "ssh protocol banner" in detail
+
+
+def _format_exception_detail(exc: BaseException) -> str:
+    text = str(exc).strip()
+    if text:
+        return text
+    return exc.__class__.__name__
+
+
 class SSHConnection:
     """Manage one SSH transport and SFTP session for a cluster."""
 
@@ -134,6 +162,7 @@ class SSHConnection:
         """Open SSH and SFTP connections."""
 
         paramiko = self._import_paramiko()
+        ssh_exception_type = getattr(paramiko, "SSHException", RuntimeError)
 
         if self.is_connected:
             return
@@ -152,6 +181,8 @@ class SSHConnection:
             "port": int(self._config.port),
             "username": self._config.username.strip(),
             "timeout": 20,
+            "banner_timeout": 30,
+            "auth_timeout": 30,
         }
 
         key_path = self._config.key_path.strip()
@@ -201,10 +232,24 @@ class SSHConnection:
             ) from exc
         except paramiko.AuthenticationException as exc:
             raise SSHAuthenticationError(f"SSH authentication failed: {exc}") from exc
+        except ssh_exception_type as exc:
+            if _is_protocol_banner_error(exc):
+                raise SSHProtocolBannerError(
+                    hostname=hostname,
+                    port=int(self._config.port),
+                    details=str(exc),
+                ) from exc
+            raise SSHTransportError(f"SSH transport negotiation failed: {exc}") from exc
         except ConnectionError:
             raise
         except Exception as exc:  # noqa: BLE001
-            raise SSHTransportError(f"SSH connection failed: {exc}") from exc
+            if _is_protocol_banner_error(exc):
+                raise SSHProtocolBannerError(
+                    hostname=hostname,
+                    port=int(self._config.port),
+                    details=str(exc),
+                ) from exc
+            raise SSHTransportError(f"SSH connection failed: {_format_exception_detail(exc)}") from exc
 
         transport = client.get_transport()
         if transport is not None:

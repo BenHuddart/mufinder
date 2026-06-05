@@ -14,9 +14,16 @@ from .gui_metadata import (
     make_keyword_assignment,
     normalize_gui_value,
 )
-from .output_parser import CastepResult, parse_castep_output
+from .output_parser import CastepResult, parse_castep_mulliken_atomic_spins, parse_castep_output
 from .param_writer import write_param
 from .presets import geometry_optimization, molecular_dynamics, single_point
+from .ts_parser import (
+    TransitionStateImage,
+    TransitionStateParseError,
+    TransitionStatePath,
+    parse_transition_state_file,
+    parse_transition_state_text,
+)
 from .types import (
     AtomicPosition,
     BlockSection,
@@ -59,6 +66,9 @@ __all__ = [
     "ParamFile",
     "PositionBlock",
     "SpeciesPotential",
+    "TransitionStateImage",
+    "TransitionStateParseError",
+    "TransitionStatePath",
     "UnknownKeywordError",
     "ValueWithUnit",
     "geometry_optimization",
@@ -67,6 +77,9 @@ __all__ = [
     "validate_cell_file",
     "validate_param_file",
     "parse_castep_output",
+    "parse_castep_mulliken_atomic_spins",
+    "parse_transition_state_file",
+    "parse_transition_state_text",
     "parse_cell_file",
     "parse_cell_text",
     "write_cell",

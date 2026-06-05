@@ -6,8 +6,10 @@ from collections.abc import Sequence
 from collections import Counter
 from typing import Any
 
-from PySide6.QtCore import QMargins, Qt, Signal
+from PySide6.QtCore import QItemSelectionModel, QMargins, Qt, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -23,9 +25,9 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.decimal_input import DecimalLineEdit
-from mufinder.app.supercell_dialog import SupercellPreviewDialog
 from mufinder.app.theme import style_section_subtitle, style_section_title
 from mufinder.domain.models import Structure
+from mufinder.services.project_service import PromotableHost
 
 
 class HostStructureWidget(QWidget):
@@ -35,6 +37,8 @@ class HostStructureWidget(QWidget):
 
     load_requested = Signal()
     magnetic_configuration_changed = Signal(object)
+    supercell_editor_requested = Signal()
+    active_host_change_requested = Signal(str)  # emits structure_id as str
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -62,7 +66,9 @@ class HostStructureWidget(QWidget):
         self._atom_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._atom_table.horizontalHeader().setStretchLastSection(True)
         self._atom_table.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Expanding)
-        self._atom_table.currentCellChanged.connect(self._on_table_selection_changed)
+        self._atom_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._atom_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._atom_table.itemSelectionChanged.connect(self._on_table_selection_changed)
         self._atom_table.cellChanged.connect(self._on_table_cell_changed)
 
         self._propagation_x = DecimalLineEdit()
@@ -75,14 +81,18 @@ class HostStructureWidget(QWidget):
             widget.valueChanged.connect(lambda *_: self._on_propagation_changed())
 
         self._viewer = AtomicStructureViewer()
-        self._viewer.atom_selected.connect(self._on_viewer_atom_selected)
+        self._viewer.selected_atoms_changed.connect(self._on_viewer_atoms_selected)
         self._syncing_selection = False
 
         self._load_button = QPushButton("Load Structure (.cif/.mcif/.cell)")
         self._load_button.clicked.connect(self.load_requested.emit)
-        self._supercell_button = QPushButton("Supercell Preview...")
+        self._supercell_button = QPushButton("Supercell Editor...")
         self._supercell_button.setEnabled(False)
         self._supercell_button.clicked.connect(self._on_supercell_preview_requested)
+
+        self._active_host_combo = QComboBox()
+        self._active_host_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._active_host_combo.currentIndexChanged.connect(self._on_active_host_combo_changed)
 
         self._build_layout()
 
@@ -93,6 +103,12 @@ class HostStructureWidget(QWidget):
         style_section_subtitle(subtitle)
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
+
+        host_selector_row = QHBoxLayout()
+        host_selector_label = QLabel("Active host structure:")
+        host_selector_row.addWidget(host_selector_label)
+        host_selector_row.addWidget(self._active_host_combo, 1)
+        layout.addLayout(host_selector_row)
 
         action_row = QHBoxLayout()
         action_row.addWidget(self._load_button)
@@ -224,16 +240,46 @@ class HostStructureWidget(QWidget):
         self._viewer.set_spins(self._atomic_spins)
         self._updating = False
 
-    def _on_table_selection_changed(
+    def set_promotable_hosts(
         self,
-        current_row: int,
-        _current_column: int,
-        _previous_row: int,
-        _previous_column: int,
+        hosts: list[PromotableHost],
+        active_id: object | None,
     ) -> None:
+        """Repopulate the active-host dropdown without triggering spurious signals."""
+        self._active_host_combo.blockSignals(True)
+        try:
+            self._active_host_combo.clear()
+            active_str = str(active_id) if active_id is not None else None
+            current_index = 0
+            for i, host in enumerate(hosts):
+                self._active_host_combo.addItem(host.label, userData=str(host.structure_id))
+                self._active_host_combo.setItemData(i, host.provenance_hint, Qt.ItemDataRole.ToolTipRole)
+                if active_str and str(host.structure_id) == active_str:
+                    current_index = i
+            if hosts:
+                self._active_host_combo.setCurrentIndex(current_index)
+        finally:
+            self._active_host_combo.blockSignals(False)
+
+    def _on_active_host_combo_changed(self, index: int) -> None:
+        structure_id_str = self._active_host_combo.itemData(index)
+        if structure_id_str:
+            self.active_host_change_requested.emit(structure_id_str)
+
+    def _on_table_selection_changed(self, *args) -> None:
         if self._syncing_selection:
             return
-        self._viewer.select_atom(current_row if current_row >= 0 else None)
+        selection_model = self._atom_table.selectionModel()
+        selected_rows = (
+            sorted({index.row() for index in selection_model.selectedRows()})
+            if selection_model is not None
+            else []
+        )
+        if not selected_rows and args:
+            current_row = int(args[0])
+            if current_row >= 0:
+                selected_rows = [current_row]
+        self._viewer.select_atoms(selected_rows)
 
     def _on_table_cell_changed(self, row: int, column: int) -> None:
         if self._updating or column != 4:
@@ -265,11 +311,33 @@ class HostStructureWidget(QWidget):
         self._emit_magnetic_configuration()
 
     def _on_viewer_atom_selected(self, atom_index: int) -> None:
-        if atom_index < 0 or atom_index >= self._atom_table.rowCount():
+        self._on_viewer_atoms_selected([] if atom_index < 0 else [atom_index])
+
+    def _on_viewer_atoms_selected(self, atom_indexes: Sequence[int]) -> None:
+        selection_model = self._atom_table.selectionModel()
+        if selection_model is None:
             return
         self._syncing_selection = True
         try:
-            self._atom_table.setCurrentCell(atom_index, 0)
+            self._atom_table.clearSelection()
+            valid_rows = [
+                int(row)
+                for row in atom_indexes
+                if 0 <= int(row) < self._atom_table.rowCount()
+            ]
+            if not valid_rows:
+                self._atom_table.setCurrentCell(-1, -1)
+                return
+            for row in valid_rows:
+                index = self._atom_table.model().index(row, 0)
+                selection_model.select(
+                    index,
+                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                )
+            selection_model.setCurrentIndex(
+                self._atom_table.model().index(valid_rows[-1], 0),
+                QItemSelectionModel.SelectionFlag.NoUpdate,
+            )
         finally:
             self._syncing_selection = False
 
@@ -364,17 +432,7 @@ class HostStructureWidget(QWidget):
     def _on_supercell_preview_requested(self) -> None:
         if self._current_structure is None:
             return
-
-        dialog = SupercellPreviewDialog(
-            structure=self._current_structure,
-            atomic_spins=self._atomic_spins,
-            propagation_vector=self._propagation_vector,
-            initial_matrix=self._supercell_matrix,
-            parent=self,
-        )
-        if dialog.exec() == dialog.DialogCode.Accepted:
-            self._supercell_matrix = dialog.matrix()
-            self._emit_magnetic_configuration()
+        self.supercell_editor_requested.emit()
 
     def set_project_supercell_matrix(self, matrix: list[list[int]] | None) -> None:
         if not isinstance(matrix, list) or len(matrix) != 3:

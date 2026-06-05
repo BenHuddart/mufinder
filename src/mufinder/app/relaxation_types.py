@@ -34,6 +34,26 @@ class PristineRelaxationConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class MuonRelaxationRow:
+    """One staged muon structural-relaxation job row."""
+
+    site_id: UUID
+    label: str
+    initial_fractional_position: tuple[float, float, float]
+    charge_state: str = "positive_muon"
+    supercell_matrix: SupercellMatrix | None = None
+    parameter_values: dict[str, object] = field(default_factory=dict)
+    added_advanced: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MuonRelaxationConfig:
+    """Structured muon-relaxation configuration payload."""
+
+    rows: tuple[MuonRelaxationRow, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class RelaxationRunState:
     """Runtime status/result information for one relaxation row."""
 
@@ -43,6 +63,7 @@ class RelaxationRunState:
     lattice_a: float | None = None
     lattice_b: float | None = None
     lattice_c: float | None = None
+    final_fractional_position: tuple[float, float, float] | None = None
     job_id: UUID | None = None
     job_label: str | None = None
     geom_converged: bool | None = None

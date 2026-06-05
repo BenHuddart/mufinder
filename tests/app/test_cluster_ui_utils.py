@@ -7,6 +7,7 @@ from mufinder.cluster_setup import ClusterConfig
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
     SSHHostKeyMismatchError,
+    SSHProtocolBannerError,
     SSHTransportError,
     SSHUnknownHostKeyError,
 )
@@ -45,6 +46,12 @@ def test_show_detailed_warning_uses_expandable_dialog_for_long_message(monkeypat
         def __init__(self, parent) -> None:
             events["parent"] = parent
 
+        def setSizeGripEnabled(self, enabled: bool) -> None:  # noqa: N802 - Qt API
+            events["size_grip"] = enabled
+
+        def setWindowFlag(self, flag, enabled: bool) -> None:  # noqa: N802 - Qt API
+            events["window_flag"] = (flag, enabled)
+
         def setIcon(self, icon) -> None:  # noqa: N802 - Qt API
             events["icon"] = icon
 
@@ -78,6 +85,8 @@ def test_show_detailed_warning_uses_expandable_dialog_for_long_message(monkeypat
     assert events["summary"] == "first line"
     assert events["info"] == "Open details for full traceback."
     assert str(events["details"]).startswith("first line")
+    assert events["size_grip"] is True
+    assert events["window_flag"] == (ui_module.Qt.WindowType.MSWindowsFixedSizeDialogHint, False)
     assert events["executed"] is True
 
 
@@ -90,6 +99,12 @@ def test_show_detailed_warning_truncates_long_single_line_summary(monkeypatch) -
 
         def __init__(self, _parent) -> None:
             pass
+
+        def setSizeGripEnabled(self, _enabled: bool) -> None:  # noqa: N802 - Qt API
+            return
+
+        def setWindowFlag(self, _flag, _enabled: bool) -> None:  # noqa: N802 - Qt API
+            return
 
         def setIcon(self, _icon) -> None:  # noqa: N802 - Qt API
             return
@@ -152,6 +167,14 @@ def test_format_cluster_connection_error_for_all_structured_errors() -> None:
         _config(),
         SSHTransportError("network down"),
     )
+    banner = ui_module.format_cluster_connection_error(
+        _config(),
+        SSHProtocolBannerError(
+            hostname="glamdring.physics.ox.ac.uk",
+            port=22,
+            details="Error reading SSH protocol banner",
+        ),
+    )
     fallback = ui_module.format_cluster_connection_error(_config(), RuntimeError(""))
 
     assert "not trusted yet" in unknown
@@ -159,12 +182,16 @@ def test_format_cluster_connection_error_for_all_structured_errors() -> None:
     assert "username/password pair" in auth_password
     assert "SSH key path" in auth_key
     assert "Could not establish an SSH session" in transport
+    assert "not answering as an SSH server" in banner
+    assert "hostname and SSH port" in banner
     assert fallback == "Unknown cluster connection failure."
 
 
 def test_prompt_to_trust_host_key_returns_boolean_from_dialog(monkeypatch) -> None:
     responses = [1, 2]
     seen_details: list[str] = []
+    size_grips: list[bool] = []
+    flags: list[tuple[object, bool]] = []
 
     class _FakePrompt:
         class Icon:
@@ -176,6 +203,12 @@ def test_prompt_to_trust_host_key_returns_boolean_from_dialog(monkeypatch) -> No
 
         def __init__(self, _parent) -> None:
             pass
+
+        def setSizeGripEnabled(self, enabled: bool) -> None:  # noqa: N802
+            size_grips.append(enabled)
+
+        def setWindowFlag(self, flag, enabled: bool) -> None:  # noqa: N802
+            flags.append((flag, enabled))
 
         def setIcon(self, _icon) -> None:  # noqa: N802
             return
@@ -213,3 +246,8 @@ def test_prompt_to_trust_host_key_returns_boolean_from_dialog(monkeypatch) -> No
     assert ui_module.prompt_to_trust_host_key(None, _config(), exc) is True
     assert ui_module.prompt_to_trust_host_key(None, _config(), exc) is False
     assert "Fingerprint: SHA256:test" in seen_details[0]
+    assert size_grips == [True, True]
+    assert flags == [
+        (ui_module.Qt.WindowType.MSWindowsFixedSizeDialogHint, False),
+        (ui_module.Qt.WindowType.MSWindowsFixedSizeDialogHint, False),
+    ]

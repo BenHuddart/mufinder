@@ -65,6 +65,10 @@ Science
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.science.demagnetization
+   :members:
+   :undoc-members:
+
 Workflow
 --------
 
@@ -104,5 +108,9 @@ UI
    :undoc-members:
 
 .. automodule:: mufinder.app.muon_generation_widget
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.app.muon_relaxation_widget
    :members:
    :undoc-members:

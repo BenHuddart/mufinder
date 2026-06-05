@@ -1,0 +1,619 @@
+"""Behavior tests for structural-relaxation analysis UI."""
+
+from __future__ import annotations
+
+import warnings
+from uuid import uuid4
+
+from ase.data import atomic_numbers, covalent_radii
+from ase.data.colors import jmol_colors
+from matplotlib import colors as mcolors
+import numpy as np
+from PySide6.QtWidgets import QCheckBox, QFrame, QSplitter, QTabWidget, QTreeWidget
+
+from mufinder.app.relaxation_analysis_widget import (
+    CompletedRelaxationAnalysisSource,
+    DisplacementAnalysisDialog,
+    RelaxationAnalysisJobDialog,
+    RelaxationAnalysisWidget,
+    RelaxationClusteringDialog,
+    default_workspace_state,
+)
+from mufinder.science.relaxation_analysis import RelaxedMuonSite
+from mufinder.domain.models import Structure
+
+
+def _host_structure() -> Structure:
+    return Structure(
+        id=uuid4(),
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+
+
+def _relaxed_site(host: Structure, fractional: tuple[float, float, float], energy: float) -> RelaxedMuonSite:
+    return RelaxedMuonSite(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=uuid4(),
+        site_id=None,
+        folded_fractional_position=fractional,
+        cartesian_position_ang=(
+            fractional[0] * host.lattice_vectors[0][0],
+            fractional[1] * host.lattice_vectors[1][1],
+            fractional[2] * host.lattice_vectors[2][2],
+        ),
+        total_energy_ev=energy,
+    )
+
+
+def test_relaxation_analysis_workspace_headers_show_wyckoff_assignments(qapp) -> None:
+    host = Structure(
+        id=uuid4(),
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    job_id = uuid4()
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[job_id],
+    )
+    workspace["clustering"] = {
+        "method": "connected",
+        "connected_tolerance_ang": 0.25,
+        "hierarchical_t": 0.3,
+        "kmeans_k": 1,
+        "wyckoff_match_tolerance_ang": 0.25,
+        "tolerance_scan": [],
+        "result": {
+            "cluster_labels": [1],
+            "clusters": [
+                {
+                    "cluster_index": 1,
+                    "size": 1,
+                    "representative_index": 0,
+                    "representative_job_id": str(job_id),
+                    "representative_fractional_position": [0.5, 0.0, 0.0],
+                    "representative_cartesian_position_ang": [2.5, 0.0, 0.0],
+                    "minimum_relative_energy_ev": 0.0,
+                    "average_relative_energy_ev": 0.0,
+                    "standard_deviation_ev": 0.0,
+                    "member_indexes": [0],
+                }
+            ],
+            "wyckoff_assignments": [
+                {
+                    "cluster_index": 1,
+                    "match": {
+                        "matched": True,
+                        "label": "6b",
+                        "fractional_position": [0.5, 0.0, 0.0],
+                        "cartesian_position_ang": [2.5, 0.0, 0.0],
+                        "multiplicity": 6,
+                        "letter": "b",
+                        "space_group_number": 229,
+                        "space_group_symbol": "Im-3m",
+                        "site_symmetry_symbol": "4/mm.m",
+                        "max_distance_ang": 0.0,
+                        "mean_distance_ang": 0.0,
+                        "occupied": False,
+                        "special": True,
+                        "warnings": [],
+                    },
+                }
+            ],
+        },
+    }
+    source = CompletedRelaxationAnalysisSource(
+        job_id=job_id,
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=uuid4(),
+        site_id=None,
+        folded_fractional_position=(0.5, 0.0, 0.0),
+        total_energy_ev=-10.0,
+    )
+    widget = RelaxationAnalysisWidget()
+
+    widget.set_context(
+        workspaces=[workspace],
+        sources=[source],
+        structures={host.id: host},
+        host_structure=host,
+        comparison_options=[],
+    )
+
+    table = widget.findChild(QTreeWidget)
+    assert table is not None
+    assert table.property("tabbedTable") == "true"
+    assert table.topLevelItem(0).text(0) == "Cluster 1: (0.5000, 0.0000, 0.0000) 6b"
+    assert table.topLevelItem(0).isFirstColumnSpanned()
+    assert table.topLevelItem(0).childCount() == 1
+
+    tabs = widget.findChild(QTabWidget, "analysisWorkspaceTabs")
+    assert tabs is not None
+    splitter = widget.findChild(QSplitter, "analysisWorkspaceContentSplitter")
+    assert splitter is not None
+    widget.resize(1890, 1120)
+    widget.show()
+    for _ in range(4):
+        qapp.processEvents()
+    sizes = splitter.sizes()
+    assert sum(sizes) > 0
+    table_share = sizes[0] / sum(sizes)
+    assert 0.45 <= table_share <= 0.55
+    widget.shutdown()
+
+
+def test_relaxation_analysis_add_dialog_shows_relative_energies(qapp) -> None:
+    included_id = uuid4()
+    lower_candidate_id = uuid4()
+    sources = [
+        CompletedRelaxationAnalysisSource(
+            job_id=included_id,
+            job_label="Included",
+            charge_state="positive_muon",
+            structure_id=uuid4(),
+            site_id=None,
+            folded_fractional_position=(0.1, 0.2, 0.3),
+            total_energy_ev=-10.0,
+        ),
+        CompletedRelaxationAnalysisSource(
+            job_id=lower_candidate_id,
+            job_label="Lower candidate",
+            charge_state="positive_muon",
+            structure_id=uuid4(),
+            site_id=None,
+            folded_fractional_position=(0.4, 0.5, 0.6),
+            total_energy_ev=-10.25,
+        ),
+    ]
+
+    dialog = RelaxationAnalysisJobDialog(
+        title="Add Structure to Analysis",
+        sources=sources,
+        excluded_job_ids={included_id},
+        reference_job_ids={included_id},
+    )
+
+    assert dialog._table.horizontalHeaderItem(dialog._ENERGY_COLUMN).text() == "dE vs workspace min (eV)"
+    assert dialog._table.item(0, dialog._ENERGY_COLUMN).text() == "0.00000"
+    assert dialog._table.item(1, dialog._ENERGY_COLUMN).text() == "-0.25000"
+
+
+def test_relaxation_clustering_dialog_close_shuts_down_viewer(qapp, monkeypatch) -> None:
+    host = _host_structure()
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[],
+    )
+    dialog = RelaxationClusteringDialog(
+        workspace=workspace,
+        host_structure=host,
+        sites=[_relaxed_site(host, (0.49, 0.01, 0.0), -10.0)],
+    )
+    calls: list[str] = []
+
+    def _shutdown() -> None:
+        calls.append("shutdown")
+
+    monkeypatch.setattr(dialog._viewer, "shutdown", _shutdown)
+
+    dialog.close()
+    qapp.processEvents()
+
+    assert calls == ["shutdown"]
+
+
+def test_relaxation_connected_graph_uses_paper_style_nodes_and_edges(qapp) -> None:
+    host = _host_structure()
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[],
+    )
+    dialog = RelaxationClusteringDialog(
+        workspace=workspace,
+        host_structure=host,
+        sites=[
+            _relaxed_site(host, (0.100, 0.100, 0.100), -10.0),
+            _relaxed_site(host, (0.112, 0.100, 0.100), -9.9),
+            _relaxed_site(host, (0.124, 0.100, 0.100), -9.8),
+            _relaxed_site(host, (0.600, 0.600, 0.600), -9.7),
+        ],
+    )
+
+    axis = dialog._graph_figure.axes[0]
+    node_collections = [
+        collection
+        for collection in axis.collections
+        if hasattr(collection, "get_offsets") and len(collection.get_offsets()) == 1
+    ]
+
+    assert axis.get_title() == ""
+    assert dialog._graph_figure.get_facecolor()[3] == 0.0
+    assert axis.get_facecolor()[3] == 0.0
+    assert len(node_collections) == 4
+    assert all(float(collection.get_linewidths()[0]) >= 3.0 for collection in node_collections)
+    assert any(float(line.get_linewidth()) >= 3.0 for line in axis.lines)
+
+    dialog.close()
+
+
+def test_relaxation_tolerance_scan_plot_uses_convergence_style(qapp) -> None:
+    host = _host_structure()
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[],
+    )
+    dialog = RelaxationClusteringDialog(
+        workspace=workspace,
+        host_structure=host,
+        sites=[
+            _relaxed_site(host, (0.100, 0.100, 0.100), -10.0),
+            _relaxed_site(host, (0.112, 0.100, 0.100), -9.9),
+        ],
+    )
+
+    axis = dialog._scan_figure.axes[0]
+
+    assert dialog._scan_figure.get_facecolor() != axis.get_facecolor()
+    assert all(spine.get_visible() for spine in axis.spines.values())
+    assert any(line.get_visible() for line in axis.get_xgridlines())
+    assert axis.lines[0].get_color() == "#b91c1c"
+
+    dialog.close()
+
+
+def test_relaxation_tolerance_scan_does_not_shrink_summary_headers(qapp) -> None:
+    host = _host_structure()
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[],
+    )
+    dialog = RelaxationClusteringDialog(
+        workspace=workspace,
+        host_structure=host,
+        sites=[
+            _relaxed_site(host, (0.100, 0.100, 0.100), -10.0),
+            _relaxed_site(host, (0.112, 0.100, 0.100), -9.9),
+            _relaxed_site(host, (0.500, 0.500, 0.500), -9.8),
+        ],
+    )
+    header = dialog._summary_table.horizontalHeader()
+    before = [header.sectionSize(column) for column in range(dialog._summary_table.columnCount())]
+
+    dialog._scan_tolerances()
+    qapp.processEvents()
+
+    after = [header.sectionSize(column) for column in range(dialog._summary_table.columnCount())]
+    assert after[0] >= before[0]
+    assert after[2] >= before[2]
+    assert after[3] >= before[3]
+    assert after[4] >= before[4]
+    assert after[5] >= before[5]
+
+    dialog.close()
+
+
+def test_displacement_plot_uses_transparent_surround_species_colours_and_boxed_legend(qapp) -> None:
+    comparison_id = uuid4()
+    relaxed_id = uuid4()
+    comparison = Structure(
+        id=comparison_id,
+        label="Host",
+        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+        species=["Fe", "O"],
+        fractional_positions=[[0.2, 0.5, 0.5], [0.4, 0.5, 0.5]],
+    )
+    relaxed = Structure(
+        id=relaxed_id,
+        label="Relaxed",
+        lattice_vectors=comparison.lattice_vectors,
+        species=["Fe", "O", "H:mu"],
+        fractional_positions=[[0.22, 0.5, 0.5], [0.41, 0.5, 0.5], [0.0, 0.5, 0.5]],
+    )
+    site = RelaxedMuonSite(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=relaxed_id,
+        site_id=None,
+        folded_fractional_position=(0.0, 0.5, 0.5),
+        cartesian_position_ang=(0.0, 5.0, 5.0),
+        total_energy_ev=-10.0,
+    )
+
+    dialog = DisplacementAnalysisDialog(
+        workspace_name="Relaxation analysis",
+        sites=[site],
+        structures_by_id={comparison_id: comparison, relaxed_id: relaxed},
+        comparison_options=[(comparison_id, "Host", False)],
+    )
+
+    axis = dialog._figure.axes[0]
+    legend = axis.get_legend()
+    fe_collection = next(
+        collection
+        for collection in axis.collections
+        if collection.get_label() == "Fe"
+    )
+
+    assert dialog._figure.get_facecolor()[3] == 0.0
+    assert axis.get_xlabel() == "Distance from muon (Å)"
+    assert axis.get_ylabel() == "Radial displacement (Å)"
+    assert legend is not None
+    assert legend.get_frame().get_visible()
+    assert legend.get_bbox_to_anchor().x0 > axis.bbox.x1
+    assert mcolors.to_hex(fe_collection.get_facecolors()[0]) == mcolors.to_hex(jmol_colors[atomic_numbers["Fe"]])
+
+    dialog.close()
+
+
+def test_displacement_view_does_not_overlay_second_muon_when_relaxed_structure_contains_one(qapp) -> None:
+    comparison_id = uuid4()
+    relaxed_id = uuid4()
+    comparison = Structure(
+        id=comparison_id,
+        label="Host",
+        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+        species=["Cu", "Cu"],
+        fractional_positions=[[0.2, 0.5, 0.5], [0.4, 0.5, 0.5]],
+    )
+    relaxed = Structure(
+        id=relaxed_id,
+        label="Relaxed",
+        lattice_vectors=comparison.lattice_vectors,
+        species=["Cu", "Cu", "H:mu"],
+        fractional_positions=[[0.22, 0.5, 0.5], [0.41, 0.5, 0.5], [0.0, 0.5, 0.5]],
+    )
+    site = RelaxedMuonSite(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=relaxed_id,
+        site_id=None,
+        folded_fractional_position=(0.0, 0.5, 0.5),
+        cartesian_position_ang=(0.0, 5.0, 5.0),
+        total_energy_ev=-10.0,
+    )
+
+    dialog = DisplacementAnalysisDialog(
+        workspace_name="Relaxation analysis",
+        sites=[site],
+        structures_by_id={comparison_id: comparison, relaxed_id: relaxed},
+        comparison_options=[(comparison_id, "Host", False)],
+    )
+
+    assert len(dialog._viewer._point_overlay_specs) == 1
+    assert dialog._viewer._point_overlay_specs[0].positions.shape == (2, 3)
+    expected_numbers = np.asarray([atomic_numbers["Cu"], atomic_numbers["Cu"]], dtype=int)
+    expected_radii = np.clip(0.9 * covalent_radii[expected_numbers], 0.2, 1.15)
+    expected_colors = np.asarray(jmol_colors[expected_numbers], dtype=float)
+    assert np.allclose(dialog._viewer._point_overlay_specs[0].radii, expected_radii)
+    assert np.allclose(dialog._viewer._point_overlay_specs[0].colors, expected_colors)
+
+    dialog.close()
+
+
+def test_relaxation_analysis_widget_opens_displacements_without_clustering(qapp, monkeypatch) -> None:
+    host = _host_structure()
+    relaxed_id = uuid4()
+    source = CompletedRelaxationAnalysisSource(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=relaxed_id,
+        site_id=None,
+        folded_fractional_position=(0.0, 0.5, 0.5),
+        total_energy_ev=-10.0,
+    )
+    relaxed = Structure(
+        id=relaxed_id,
+        label="Relaxed",
+        lattice_vectors=host.lattice_vectors,
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.02, 0.0, 0.0], [0.5, 0.5, 0.5], [0.0, 0.5, 0.5]],
+    )
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[source.job_id],
+    )
+
+    opened: dict[str, object] = {}
+
+    class _FakeDialog:
+        def __init__(self, *, workspace_name, sites, structures_by_id, comparison_options, parent=None):
+            opened["workspace_name"] = workspace_name
+            opened["site_count"] = len(sites)
+            opened["comparison_options"] = list(comparison_options)
+
+        def exec(self):
+            opened["shown"] = True
+            return 0
+
+    widget = RelaxationAnalysisWidget()
+    widget.set_context(
+        workspaces=[workspace],
+        sources=[source],
+        structures={host.id: host, relaxed_id: relaxed},
+        host_structure=host,
+        comparison_options=[(host.id, "Host", False)],
+    )
+    monkeypatch.setattr("mufinder.app.relaxation_analysis_widget.DisplacementAnalysisDialog", _FakeDialog)
+
+    widget._open_displacements(str(workspace["id"]))
+
+    assert opened["workspace_name"] == "Relaxation analysis"
+    assert opened["site_count"] == 1
+    assert opened["comparison_options"] == [(host.id, "Host", False)]
+    assert opened["shown"] is True
+
+    widget.close()
+
+
+def test_relaxation_analysis_workspace_show_shifted_checkbox_uses_transparent_background(qapp) -> None:
+    host = _host_structure()
+    source = CompletedRelaxationAnalysisSource(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=uuid4(),
+        site_id=None,
+        folded_fractional_position=(0.0, 0.5, 0.5),
+        total_energy_ev=-10.0,
+    )
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[source.job_id],
+    )
+
+    widget = RelaxationAnalysisWidget()
+    widget.set_context(
+        workspaces=[workspace],
+        sources=[source],
+        structures={host.id: host},
+        host_structure=host,
+        comparison_options=[(host.id, "Host", False)],
+    )
+
+    checkbox = next(
+        child
+        for child in widget.findChildren(QCheckBox)
+        if child.text() == "Show shifted positions"
+    )
+
+    assert "background: transparent;" in checkbox.styleSheet()
+
+    widget.close()
+
+
+def test_relaxation_clustering_dialog_show_does_not_warn_about_collapsed_layout(qapp) -> None:
+    host = _host_structure()
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[],
+    )
+    dialog = RelaxationClusteringDialog(
+        workspace=workspace,
+        host_structure=host,
+        sites=[_relaxed_site(host, (0.49, 0.01, 0.0), -10.0)],
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        dialog.show()
+        qapp.processEvents()
+
+    collapsed_layout_warnings = [
+        warning
+        for warning in caught
+        if "constrained_layout not applied because axes sizes collapsed to zero" in str(warning.message)
+    ]
+    assert collapsed_layout_warnings == []
+
+    dialog.close()
+
+
+def test_relaxation_clustering_dialog_switches_to_hierarchical_when_shown(qapp) -> None:
+    host = _host_structure()
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[],
+    )
+    dialog = RelaxationClusteringDialog(
+        workspace=workspace,
+        host_structure=host,
+        sites=[
+            _relaxed_site(host, (0.100, 0.100, 0.100), -10.0),
+            _relaxed_site(host, (0.112, 0.100, 0.100), -9.9),
+            _relaxed_site(host, (0.500, 0.500, 0.500), -9.8),
+            _relaxed_site(host, (0.520, 0.500, 0.500), -9.7),
+        ],
+    )
+    dialog.show()
+    qapp.processEvents()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        dialog._method_combo.setCurrentIndex(dialog._method_combo.findData("hier"))
+        for _ in range(3):
+            qapp.processEvents()
+
+    collapsed_layout_warnings = [
+        warning
+        for warning in caught
+        if "constrained_layout not applied because axes sizes collapsed to zero" in str(warning.message)
+    ]
+    assert collapsed_layout_warnings == []
+    assert not dialog._hier_toolbar.isHidden()
+    assert dialog._left_figure.axes
+
+    dialog.close()
+
+
+def test_relaxation_clustering_dialog_shows_only_active_method_controls(qapp) -> None:
+    host = _host_structure()
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[],
+    )
+    dialog = RelaxationClusteringDialog(
+        workspace=workspace,
+        host_structure=host,
+        sites=[_relaxed_site(host, (0.49, 0.01, 0.0), -10.0)],
+    )
+
+    assert dialog._tolerance_label.text() == "Distance tolerance (Å)"
+    assert dialog._wyckoff_tolerance_label.text() == "Wyckoff tolerance (Å)"
+    assert dialog._scan_button.parentWidget().objectName() == "connectedToleranceScanPanel"
+    assert isinstance(dialog._scan_button.parentWidget(), QFrame)
+    assert not dialog._tolerance_label.isHidden()
+    assert not dialog._tolerance_input.isHidden()
+    assert dialog._hierarchical_label.isHidden()
+    assert dialog._hierarchical_input.isHidden()
+    assert dialog._kmeans_label.isHidden()
+    assert dialog._kmeans_spin.isHidden()
+
+    dialog._method_combo.setCurrentIndex(dialog._method_combo.findData("hier"))
+    qapp.processEvents()
+
+    assert dialog._tolerance_label.isHidden()
+    assert not dialog._hierarchical_label.isHidden()
+    assert not dialog._hierarchical_input.isHidden()
+    assert not dialog._hier_toolbar.isHidden()
+    assert dialog._kmeans_label.isHidden()
+
+    dialog._method_combo.setCurrentIndex(dialog._method_combo.findData("kmeans"))
+    qapp.processEvents()
+
+    assert not dialog._kmeans_label.isHidden()
+    assert not dialog._kmeans_spin.isHidden()
+    assert dialog._hier_toolbar.isHidden()
+    assert dialog._hierarchical_label.isHidden()
+
+    dialog.close()

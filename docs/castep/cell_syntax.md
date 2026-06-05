@@ -29,9 +29,10 @@ This separation is intentional: extending support should start with schema and d
 
 - Lattice blocks: `LATTICE_CART`, `LATTICE_ABC`
 - Position blocks: `POSITIONS_FRAC`, `POSITIONS_ABS`
-- Common blocks: `SPECIES_POT`, `KPOINTS_LIST`
+- Common blocks: `SPECIES_POT`, `KPOINTS_LIST`, `HUBBARD_U`
 - Common scalars/flags: `KPOINT_MP_GRID`, `KPOINT_MP_SPACING`, `SYMMETRY_GENERATE`
 - Spin decoration (structure-driven): optional inline `SPIN=<value>` token on `POSITIONS_FRAC` rows for spin-polarized workflows
+- DFT+U setup: `HUBBARD_U` is represented as a `.cell` block, with an optional `eV` or `Ha` unit line and guided-editor rows that target all atoms of a species for one orbital, such as `Ni d: 2.4`.
 
 Anything outside this subset should be treated as unsupported until it is added to the catalog, schema, and tests.
 

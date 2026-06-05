@@ -11,6 +11,7 @@ class WorkflowStage(StrEnum):
     CONVERGENCE_CUTOFF = "convergence_cutoff"
     CONVERGENCE_KPOINT = "convergence_kpoint"
     PRISTINE_RELAXATION = "pristine_relaxation"
+    UEP = "uep"
     MUON_GENERATION = "muon_generation"
     MUON_RELAXATION = "muon_relaxation"
     SITE_ANALYSIS = "site_analysis"

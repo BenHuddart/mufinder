@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Callable
 
 from PySide6.QtCore import Signal
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.block_dialog import BlockParameterDialog, summarize_block_value
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.hubbard_u_editor import HubbardUDialog, summarize_hubbard_u
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 
@@ -105,7 +107,7 @@ class FloatParamEditor(ParamEditorBase):
     def __init__(self, spec: KeywordSpec, parent: QWidget | None = None) -> None:
         super().__init__(spec, parent)
         self._spin = DecimalLineEdit()
-        self._spin.setDecimals(8)
+        self._spin.setDecimals(12)
         self._spin.setRange(
             float(spec.min_value if spec.min_value is not None else -1_000_000_000.0),
             float(spec.max_value if spec.max_value is not None else 1_000_000_000.0),
@@ -279,6 +281,66 @@ class BlockParamEditor(ParamEditorBase):
         self._summary.setText(summarize_block_value(self.spec, self._value))
 
 
+class HubbardUParamEditor(ParamEditorBase):
+    def __init__(
+        self,
+        spec: KeywordSpec,
+        parent: QWidget | None = None,
+        *,
+        species_options: Sequence[str] = (),
+    ) -> None:
+        super().__init__(spec, parent)
+        self._value: BlockSection | None = None
+        self._species_options = tuple(species_options)
+
+        self._summary = QLabel("Not set")
+        self._edit_button = QPushButton("Edit…")
+        self._clear_button = QPushButton("Clear")
+        self._edit_button.clicked.connect(self._open_dialog)
+        self._clear_button.clicked.connect(self._clear_value)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._summary, 1)
+        layout.addWidget(self._edit_button)
+        layout.addWidget(self._clear_button)
+
+    def value(self) -> object:
+        return self._value
+
+    def set_value(self, value: object) -> None:
+        if value is None:
+            self._value = None
+        elif isinstance(value, BlockSection):
+            self._value = value
+        else:
+            raise TypeError(f"{self.spec.name} editor expects a BlockSection or None.")
+        self._refresh_summary()
+
+    def set_species_options(self, species_options: Sequence[str]) -> None:
+        self._species_options = tuple(species_options)
+
+    def _open_dialog(self) -> None:
+        dialog = HubbardUDialog(
+            initial_value=self._value,
+            species_options=self._species_options,
+            parent=self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        self._value = dialog.block_value()
+        self._refresh_summary()
+        self.value_changed.emit()
+
+    def _clear_value(self) -> None:
+        self._value = None
+        self._refresh_summary()
+        self.value_changed.emit()
+
+    def _refresh_summary(self) -> None:
+        self._summary.setText(summarize_hubbard_u(self._value))
+
+
 def _fallback_widget_hint(spec: KeywordSpec) -> str:
     if spec.kind == "flag":
         return "flag"
@@ -301,10 +363,23 @@ def _fallback_widget_hint(spec: KeywordSpec) -> str:
     return "text"
 
 
-def create_param_editor(spec: KeywordSpec, parent: QWidget | None = None) -> ParamEditorBase:
+def create_param_editor(
+    spec: KeywordSpec,
+    parent: QWidget | None = None,
+    *,
+    species_options: Sequence[str] = (),
+) -> ParamEditorBase:
     """Create a typed editor widget for the provided keyword metadata."""
 
     hint = spec.widget_hint or _fallback_widget_hint(spec)
+    if hint == "hubbard_u":
+        editor: ParamEditorBase = HubbardUParamEditor(spec, parent, species_options=species_options)
+        if spec.default_value is not None:
+            try:
+                editor.set_value(spec.default_value)
+            except (TypeError, ValueError):
+                pass
+        return editor
 
     factories: dict[str, Callable[[KeywordSpec, QWidget | None], ParamEditorBase]] = {
         "dropdown": EnumParamEditor,

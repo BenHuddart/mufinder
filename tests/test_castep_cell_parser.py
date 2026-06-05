@@ -62,6 +62,37 @@ Si 0.0 0.0 0.0
     assert parsed.fractional_positions[0] == pytest.approx((0.0, 0.0, 0.0))
 
 
+def test_parse_cell_text_preserves_hubbard_u_unit_and_rows() -> None:
+    parsed = parse_cell_text(
+        """
+%BLOCK LATTICE_CART
+ang
+5 0 0
+0 5 0
+0 0 5
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Sm 0 0 0
+Ni 0.5 0.5 0.5
+%ENDBLOCK POSITIONS_FRAC
+
+%BLOCK HUBBARD_U
+eV
+Sm 1 f: 6.1
+Ni d: 2.4
+%ENDBLOCK HUBBARD_U
+"""
+    )
+
+    assert parsed.cell_file.blocks[0].name == "hubbard_u"
+    assert parsed.cell_file.blocks[0].unit == "eV"
+    assert parsed.cell_file.blocks[0].rows == (
+        ("Sm", 1, "f:", 6.1),
+        ("Ni", "d:", 2.4),
+    )
+
+
 def test_parse_cell_text_rejects_multiple_lattice_blocks() -> None:
     text = """
 %BLOCK LATTICE_CART

@@ -6,11 +6,11 @@ from dataclasses import dataclass
 
 import numpy as np
 from ase.data import atomic_numbers
-import spglib
 
 from mufinder.domain.models import Structure
 from mufinder.science.atom_matching import AtomMatching
 from mufinder.science.bonding_analysis import connectivity_edges
+from mufinder.science.spglib_compat import get_crystal_symmetry_dataset
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +46,7 @@ def detect_space_group(structure: Structure, *, symprec: float = 1e-2) -> SpaceG
         np.asarray(structure.fractional_positions, dtype=float),
         np.asarray(numbers, dtype=int),
     )
-    dataset = spglib.get_symmetry_dataset(cell, symprec=float(symprec))
+    dataset = get_crystal_symmetry_dataset(cell, symprec=float(symprec))
     if dataset is None:
         return SpaceGroupResult(number=None, symbol=None, hall_symbol=None, available=True)
 

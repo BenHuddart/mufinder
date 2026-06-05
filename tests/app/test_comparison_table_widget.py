@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLabel, QScrollArea, QWidget
+from PySide6.QtWidgets import QLabel, QScrollArea
 
 from mufinder.app.comparison_table_widget import (
     ComparisonMetricHelpDialog,
@@ -42,12 +42,26 @@ def test_comparison_table_widget_renders_headers_and_warning(qapp) -> None:
 
     headers = [widget._grid.horizontalHeaderItem(index).text() for index in range(widget._grid.columnCount())]
 
+    assert widget._title_edit.text() == "Comparison A"
     assert headers == ["Metric", "Experimental", "DFT (pristine_relax_01)"]
     assert widget._grid.verticalHeader().isVisible() is False
     assert widget._parameter_diff_section_row == 0
     assert widget._parameter_diff_toggle is not None
     assert widget._parameter_diff_toggle.objectName() == "sectionToggleButton"
     assert widget._warning_banner.isHidden() is False
+
+
+def test_comparison_table_widget_emits_normalized_title_edits(qapp) -> None:
+    table = _table()
+    widget = ComparisonTableWidget(table)
+    emitted: list[tuple[object, str]] = []
+    widget.title_changed.connect(lambda table_id, title: emitted.append((table_id, title)))
+
+    widget._title_edit.setText("  Renamed comparison  ")
+    widget._title_edit.editingFinished.emit()
+
+    assert emitted == [(table.id, "Renamed comparison")]
+    assert widget._title_edit.text() == "Renamed comparison"
 
 
 def test_comparison_table_widget_toggles_parameter_diff_rows(qapp) -> None:

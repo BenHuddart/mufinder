@@ -6,7 +6,9 @@ from pathlib import Path
 
 from mufinder.castep_io import (
     AtomicPosition,
+    BlockSection,
     CellFile,
+    KeywordAssignment,
     KPoint,
     LatticeABC,
     LatticeCart,
@@ -40,6 +42,47 @@ def test_write_cell_serializes_basic_lattice_positions_and_scalars() -> None:
     assert "%BLOCK POSITIONS_FRAC" in rendered
     assert "KPOINT_MP_GRID 4 4 4" in rendered
     assert "SYMMETRY_GENERATE" in rendered
+    assert "SYMMETRY_GENERATE : TRUE" not in rendered
+
+
+def test_write_cell_serializes_bool_scalars_explicitly() -> None:
+    cell_file = CellFile(
+        lattice_cart=LatticeCart(
+            vectors=((5.43, 0.0, 0.0), (0.0, 5.43, 0.0), (0.0, 0.0, 5.43)),
+            unit="ang",
+        ),
+        positions_frac=PositionBlock(
+            positions=(AtomicPosition("Si", (0.0, 0.0, 0.0)),)
+        ),
+        scalars=(
+            # FIX_ALL_CELL is a valued boolean keyword, unlike presence-only
+            # flags such as SYMMETRY_GENERATE.
+            KeywordAssignment("fix_all_cell", True),
+        ),
+    )
+
+    rendered = write_cell(cell_file)
+
+    assert "FIX_ALL_CELL : TRUE" in rendered
+    assert "FIX_CELL" not in rendered
+
+
+def test_write_cell_keeps_presence_flags_bare_when_extra_scalar() -> None:
+    cell_file = CellFile(
+        lattice_cart=LatticeCart(
+            vectors=((5.43, 0.0, 0.0), (0.0, 5.43, 0.0), (0.0, 0.0, 5.43)),
+            unit="ang",
+        ),
+        positions_frac=PositionBlock(
+            positions=(AtomicPosition("Si", (0.0, 0.0, 0.0)),)
+        ),
+        scalars=(KeywordAssignment("symmetry_generate", True),),
+    )
+
+    rendered = write_cell(cell_file)
+
+    assert "SYMMETRY_GENERATE" in rendered
+    assert "SYMMETRY_GENERATE : TRUE" not in rendered
 
 
 def test_write_cell_supports_alternative_blocks() -> None:
@@ -123,6 +166,38 @@ def test_write_cell_serializes_inline_spins_in_positions_frac() -> None:
 
     assert "Fe 0 0 0 SPIN=2" in rendered
     assert "Fe 0.5 0.5 0.5 SPIN=-2" in rendered
+
+
+def test_write_cell_serializes_hubbard_u_block() -> None:
+    cell_file = CellFile(
+        lattice_cart=LatticeCart(
+            vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+            unit="ang",
+        ),
+        positions_frac=PositionBlock(
+            positions=(
+                AtomicPosition("Sm", (0.0, 0.0, 0.0)),
+                AtomicPosition("Ni", (0.5, 0.5, 0.5)),
+            )
+        ),
+        blocks=(
+            BlockSection(
+                "hubbard_u",
+                (
+                    ("Sm", 1, "f:", 6.1),
+                    ("Ni", "d:", 2.4),
+                ),
+                unit="eV",
+            ),
+        ),
+    )
+
+    rendered = write_cell(cell_file)
+
+    assert "%BLOCK HUBBARD_U" in rendered
+    assert "eV" in rendered
+    assert "Sm 1 f: 6.1" in rendered
+    assert "Ni d: 2.4" in rendered
 
 
 def test_write_cell_omits_zero_spins_and_matches_golden() -> None:

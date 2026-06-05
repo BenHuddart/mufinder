@@ -27,6 +27,10 @@ User Flow
 4. Provide a table label and confirm.
 5. Inspect the generated comparison subtab.
 
+The title shown at the top of an existing comparison table remains editable
+after creation. Editing the title updates the comparison-table subtab label in
+the project tree and is saved with the project.
+
 A table can be deleted either from the top-right ``Delete`` button in the
 comparison view or from the project-tree context action
 ``Delete Comparison Table``.

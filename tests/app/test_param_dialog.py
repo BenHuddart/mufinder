@@ -6,9 +6,10 @@ import pytest
 from PySide6.QtWidgets import QLabel, QPushButton
 
 import mufinder.app.param_dialog as param_dialog_module
+from mufinder.app.param_widgets import HubbardUParamEditor
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.castep_io.schema import KeywordSpec
-from mufinder.castep_io.types import ValueWithUnit
+from mufinder.castep_io.types import BlockSection, ValueWithUnit
 
 
 def _dialog_specs() -> list[KeywordSpec]:
@@ -93,6 +94,20 @@ def test_parameter_dialog_infers_task_and_hides_locked_value(qapp) -> None:
     assert "cut_off_energy" not in values
 
 
+def test_parameter_dialog_uses_locked_task_value_when_overridden(qapp) -> None:
+    dialog = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_cutoff",
+        locked_values={"task": "PHONON"},
+    )
+
+    if dialog._task_editor is not None:
+        assert dialog._task_editor.value() == "PHONON"
+    else:
+        assert dialog._task_display.text() == "PHONON"
+    assert dialog.collect_values()["task"] == "PHONON"
+
+
 def test_parameter_dialog_blocks_conflict_with_locked_keyword(qapp) -> None:
     dialog = ParameterDialog(
         specs=_dialog_specs(),
@@ -126,6 +141,66 @@ def test_parameter_dialog_exclusive_choice_collects_one_value(qapp) -> None:
     switched = dialog.collect_values()
     assert switched["basis_precision"] == "PRECISE"
     assert "cut_off_energy" not in switched
+
+
+def test_parameter_dialog_exclusive_radios_are_mutually_exclusive(qapp) -> None:
+    # Regression: each row's radio is parented to its own label container,
+    # so Qt's per-parent auto-exclusivity does not span rows. The dialog
+    # registers every radio in a shared QButtonGroup so checking one
+    # always unchecks the others in the same exclusive_group.
+    dialog = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_kpoint",
+    )
+    dialog.set_advanced_names({"basis_precision", "cut_off_energy"})
+    dialog.set_values(
+        {
+            "basis_precision": "PRECISE",
+            "cut_off_energy": ValueWithUnit(420.0, "eV"),
+        }
+    )
+
+    bp_radio = dialog._rows["basis_precision"].radio
+    ce_radio = dialog._rows["cut_off_energy"].radio
+    assert bp_radio is not None and ce_radio is not None
+
+    # Whichever was selected at construction stays selected; the other is off.
+    assert bp_radio.isChecked() ^ ce_radio.isChecked()
+
+    # Checking the inactive one must auto-uncheck the active one.
+    bp_radio.setChecked(True)
+    assert bp_radio.isChecked() is True
+    assert ce_radio.isChecked() is False
+
+    ce_radio.setChecked(True)
+    assert ce_radio.isChecked() is True
+    assert bp_radio.isChecked() is False
+
+
+def test_parameter_dialog_preferred_exclusive_overrides_default_preference(qapp) -> None:
+    # Regression: when both halves of a mutually exclusive pair are pre-filled
+    # (for UX toggle convenience), preferred_exclusive must select the named
+    # member even when _PREFERRED_EXCLUSIVE_NAMES would otherwise pick the other.
+    # Here basis_precision is NOT in _PREFERRED_EXCLUSIVE_NAMES but cut_off_energy
+    # IS. With preferred_exclusive="basis_precision", basis_precision should win.
+    dialog = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_kpoint",
+    )
+    dialog.set_advanced_names({"basis_precision", "cut_off_energy"})
+    dialog.set_values(
+        {
+            "basis_precision": "PRECISE",
+            "cut_off_energy": ValueWithUnit(420.0, "eV"),
+        },
+        preferred_exclusive="basis_precision",
+    )
+
+    assert dialog._rows["basis_precision"].radio.isChecked()  # type: ignore[union-attr]
+    assert not dialog._rows["cut_off_energy"].radio.isChecked()  # type: ignore[union-attr]
+    values = dialog.collect_values()
+    assert values["basis_precision"] == "PRECISE"
+    assert "cut_off_energy" not in values
 
 
 def test_parameter_dialog_set_advanced_names_keeps_active_advanced_values_visible(qapp) -> None:
@@ -188,6 +263,34 @@ def test_parameter_dialog_roundtrip_values_and_advanced_rows(qapp) -> None:
     assert set(dialog.advanced_names()) == {"basis_precision"}
 
 
+def test_parameter_dialog_uses_rich_hubbard_u_editor_when_advanced(qapp) -> None:
+    specs = [
+        *_dialog_specs(),
+        KeywordSpec(
+            name="hubbard_u",
+            file="cell",
+            kind="block",
+            value_type="hubbard_u_block",
+            widget_hint="hubbard_u",
+            advanced_workflows=("convergence_kpoint",),
+        ),
+    ]
+    dialog = ParameterDialog(
+        specs=specs,
+        workflow_stage="convergence_kpoint",
+        species_options=("La", "Mn", "O"),
+    )
+    value = BlockSection(name="hubbard_u", rows=(("Ni", "d:", 2.4),), unit="eV")
+
+    dialog.set_advanced_names({"hubbard_u"})
+    dialog.set_values({"hubbard_u": value})
+
+    assert isinstance(dialog._rows["hubbard_u"].editor, HubbardUParamEditor)
+    assert dialog._rows["hubbard_u"].editor._species_options == ("La", "Mn", "O")
+    assert dialog.collect_values()["hubbard_u"] == value
+    assert set(dialog.advanced_names()) == {"hubbard_u"}
+
+
 def test_parameter_dialog_rebuild_does_not_duplicate_headers(qapp) -> None:
     dialog = ParameterDialog(
         specs=_dialog_specs(),
@@ -230,6 +333,29 @@ def test_parameter_dialog_reset_restores_parameter_default(qapp) -> None:
     dialog._reset_parameter("xc_functional")
 
     assert dialog.collect_values()["xc_functional"] == "PBE"
+
+
+def test_parameter_dialog_read_only_disables_editing_controls(qapp) -> None:
+    dialog = ParameterDialog(
+        specs=_dialog_specs(),
+        workflow_stage="convergence_kpoint",
+        read_only=True,
+    )
+    dialog.set_advanced_names({"basis_precision", "cut_off_energy"})
+    dialog.set_values({"xc_functional": "LDA", "cut_off_energy": ValueWithUnit(420.0, "eV")})
+
+    assert dialog._read_only is True
+    assert dialog._rows["xc_functional"].editor is not None
+    assert not dialog._rows["xc_functional"].editor.isEnabled()
+    assert dialog._rows["cut_off_energy"].radio is not None
+    assert not dialog._rows["cut_off_energy"].radio.isEnabled()
+    assert not dialog._add_advanced_button.isEnabled()
+    reset_buttons = [
+        button for button in dialog._table_widget.findChildren(QPushButton) if button.text() == "Reset"
+    ]
+    assert reset_buttons
+    assert all(not button.isEnabled() for button in reset_buttons)
+    assert dialog.collect_values()["xc_functional"] == "LDA"
 
 
 def test_parameter_dialog_search_filters_by_description_and_aliases(qapp) -> None:

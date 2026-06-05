@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -63,7 +62,7 @@ class ClusterSubmissionDialog(QDialog):
         self._job_labels = list(job_labels)
         self._cluster_configs = {config.name: config for config in cluster_configs}
         self._project_name = self._sanitize_path_component(project_name)
-        self._workflow_type = self._sanitize_path_component(workflow_type)
+        self._workflow_type = self._sanitize_path_fragment(workflow_type)
         self._initial_config = initial_config
         self._connected_cluster_name = (connected_cluster_name or "").strip().casefold()
         self._connected_username = (connected_username or "").strip()
@@ -96,7 +95,7 @@ class ClusterSubmissionDialog(QDialog):
         form.addRow("Username", self._username_edit)
 
         self._job_name_prefix_edit = QLineEdit(form_group)
-        self._job_name_prefix_edit.setText("convergence")
+        self._job_name_prefix_edit.setText(self._default_job_name_prefix())
         form.addRow("Job name prefix", self._job_name_prefix_edit)
 
         self._num_processes_spin = QSpinBox(form_group)
@@ -180,7 +179,7 @@ class ClusterSubmissionDialog(QDialog):
             cluster_name=self.selected_cluster_name(),
             working_directory=self._working_directory_edit.text().strip(),
             username=self._username_edit.text().strip(),
-            job_name_prefix=self._job_name_prefix_edit.text().strip() or "convergence",
+            job_name_prefix=self._job_name_prefix_edit.text().strip() or self._default_job_name_prefix(),
             num_processes=self._num_processes_spin.value(),
             walltime=self._walltime_edit.text().strip(),
             queue_name=self._queue_name_edit.text().strip() if addqueue else "",
@@ -316,6 +315,28 @@ class ClusterSubmissionDialog(QDialog):
     def _sanitize_path_component(value: str) -> str:
         collapsed = re.sub(r"\s+", "_", value.strip())
         return re.sub(r"[^A-Za-z0-9._-]", "_", collapsed)
+
+    @classmethod
+    def _sanitize_path_fragment(cls, value: str) -> str:
+        parts = [
+            cls._sanitize_path_component(part)
+            for part in value.strip().split("/")
+            if part.strip()
+        ]
+        return "/".join(part for part in parts if part)
+
+    def _default_job_name_prefix(self) -> str:
+        normalized = self._workflow_type.strip("/")
+        workflow_defaults = {
+            "pristine_relaxation": "pristine_relax",
+            "uep": "uep",
+        }
+        if normalized in workflow_defaults:
+            return workflow_defaults[normalized]
+        last_component = normalized.rsplit("/", 1)[-1]
+        if last_component in {"positivemuon", "muonium"}:
+            return last_component
+        return "convergence"
 
     def _accept_if_valid(self) -> None:
         config = self.config()

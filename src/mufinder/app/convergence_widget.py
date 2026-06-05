@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
@@ -38,6 +38,7 @@ from mufinder.app.convergence_display import (
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.theme import (
     status_brush,
     style_section_subtitle,
@@ -53,6 +54,11 @@ from mufinder.castep_io.gui_metadata import (
 )
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
+from mufinder.app.selection_snapshot import (
+    SelectionSnapshotPushButton,
+    SelectionSnapshotToolButton,
+    resolve_target_keys,
+)
 
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
     "lattice_cart",
@@ -60,37 +66,15 @@ _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
     "positions_frac",
     "positions_abs",
 }
-_KPOINT_SORT_ANCHOR_NAMES = ("basis_precision", "cut_off_energy")
 _ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
 _PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
 _SUBMITTABLE_JOB_STATUSES = {"ready", "defined"}
 _RESETTABLE_JOB_STATUSES = {"failed", "stopped", "cancelled"}
-_LOCKED_CUTOFF_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"submitting"}
+_LOCKED_CUTOFF_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"cancelled"}
 
 
 def _reorder_specs_with_kpoint_anchor(specs: list[KeywordSpec]) -> list[KeywordSpec]:
-    kpoint_name = "kpoint_mp_grid"
-    kpoint_index = next((index for index, spec in enumerate(specs) if spec.name == kpoint_name), None)
-    if kpoint_index is None:
-        return specs
-
-    anchor_indices = [
-        index
-        for index, spec in enumerate(specs)
-        if spec.name in _KPOINT_SORT_ANCHOR_NAMES
-    ]
-    if not anchor_indices:
-        return specs
-
-    target_index = max(anchor_indices) + 1
-    if kpoint_index == target_index:
-        return specs
-
-    kpoint_spec = specs.pop(kpoint_index)
-    if kpoint_index < target_index:
-        target_index -= 1
-    specs.insert(target_index, kpoint_spec)
-    return specs
+    return reorder_workflow_parameter_specs(specs)
 
 
 class CutoffRangeDialog(QDialog):
@@ -228,6 +212,7 @@ class CutoffConvergenceWidget(QWidget):
             "step": 100.0,
             "replace_existing": False,
         }
+        self._parameter_species_options: tuple[str, ...] = ()
 
         self._cutoff_table = QTableWidget(0, 6)
         self._cutoff_table.setHorizontalHeaderLabels(
@@ -271,7 +256,7 @@ class CutoffConvergenceWidget(QWidget):
         self._simulation_cell_summary = QLabel("Using single unit cell.")
         self._simulation_cell_summary.setWordWrap(True)
         self._simulation_cell_combo = QComboBox()
-        self._simulation_cell_create_button = QPushButton("Create From Preview...")
+        self._simulation_cell_create_button = QPushButton("Manage Supercells...")
         self._simulation_cell_use_unit_button = QPushButton("Use Unit Cell")
 
         specs = get_gui_keyword_specs_for_files(
@@ -286,9 +271,11 @@ class CutoffConvergenceWidget(QWidget):
 
         self._build_layout()
         self._connect_signals()
-        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._cutoff_table)
+        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
+        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._delete_shortcut.activated.connect(self._remove_selected_or_current_cutoffs)
-        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self._cutoff_table)
+        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._backspace_shortcut.activated.connect(self._remove_selected_or_current_cutoffs)
 
     def _build_layout(self) -> None:
@@ -425,6 +412,7 @@ class CutoffConvergenceWidget(QWidget):
         cutoff_method: str | None,
         energy_threshold: float | None,
         force_threshold: float | None,
+        stress_threshold: float | None = None,
     ) -> None:
         """Display project-level default cutoff settings in the convergence panel."""
         self._project_default_cutoff.setText(format_cutoff_energy(cutoff_energy))
@@ -433,6 +421,7 @@ class CutoffConvergenceWidget(QWidget):
             format_convergence_criteria(
                 energy_threshold=energy_threshold,
                 force_threshold=force_threshold,
+                stress_threshold=stress_threshold,
             )
         )
 
@@ -466,6 +455,11 @@ class CutoffConvergenceWidget(QWidget):
             self._simulation_cell_use_unit_button.setEnabled(enabled)
         finally:
             self._updating_simulation_cell = False
+
+    def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
+        self._parameter_species_options = tuple(
+            dict.fromkeys(option for item in species_options if (option := str(item).strip()))
+        )
 
     def _on_simulation_cell_combo_changed(self, index: int) -> None:
         if self._updating_simulation_cell:
@@ -559,19 +553,21 @@ class CutoffConvergenceWidget(QWidget):
             self._make_table_item("", editable=False),
         )
 
-        configure_button = QPushButton(self._cutoff_table)
+        configure_button = SelectionSnapshotPushButton(self._cutoff_table)
+        configure_button.selection_snapshot_key = value
         self._style_configure_button(configure_button)
         configure_button.clicked.connect(
-            lambda _checked=False, button=configure_button: self._configure_cutoff_button_clicked(button)
+            lambda _checked=False, btn=configure_button: self._configure_cutoff_button_clicked(btn)
         )
         self._cutoff_table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
 
-        remove_button = QToolButton(self._cutoff_table)
+        remove_button = SelectionSnapshotToolButton(self._cutoff_table)
+        remove_button.selection_snapshot_key = value
         remove_button.setText("x")
         remove_button.setAutoRaise(True)
         remove_button.setToolTip("Remove this cutoff")
         remove_button.clicked.connect(
-            lambda _checked=False, button=remove_button: self._remove_cutoff_button_clicked(button)
+            lambda _checked=False, btn=remove_button: self._remove_cutoff_button_clicked(btn)
         )
         self._cutoff_table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
         self._refresh_cutoff_row(row)
@@ -622,13 +618,25 @@ class CutoffConvergenceWidget(QWidget):
     def _format_cutoff_list(self, cutoffs: tuple[float, ...]) -> str:
         return ", ".join(f"{value:.8g} eV" for value in cutoffs)
 
-    def _configure_cutoff_button_clicked(self, button: QPushButton) -> None:
-        for row in range(self._cutoff_table.rowCount()):
-            if self._cutoff_table.cellWidget(row, self._CONFIGURE_COLUMN) is button:
-                cutoff = self._cutoff_value_at_row(row, strict=False)
-                if cutoff is not None:
-                    self._open_cutoff_parameter_dialog((cutoff,))
-                return
+    def _configure_cutoff_button_clicked(self, button: SelectionSnapshotPushButton) -> None:
+        clicked_cutoff = button.selection_snapshot_key
+        if not isinstance(clicked_cutoff, float):
+            return
+        snapshot_keys = [
+            self._cutoff_value_at_row(r, strict=False)
+            for r in button.selection_snapshot_rows
+        ]
+        cutoffs = resolve_target_keys(
+            button,
+            clicked_key=clicked_cutoff,
+            snapshot_keys=[c for c in snapshot_keys if c is not None],
+            eligibility=lambda c: True,
+            parent=self,
+            title="Configure parameters for selected cutoffs?",
+            message="Open a shared parameter dialog for all selected cutoff rows?",
+        )
+        if cutoffs:
+            self._open_cutoff_parameter_dialog(cutoffs)
 
     def _configure_selected_cutoffs(self) -> None:
         cutoffs = self._selected_cutoffs()
@@ -646,22 +654,43 @@ class CutoffConvergenceWidget(QWidget):
             return
 
         intro_text = f"Included cutoffs: {self._format_cutoff_list(tuple(sorted(cutoffs)))}"
-        dialog = ParameterDialog(
-            specs=self._specs,
-            workflow_stage="convergence_cutoff",
-            locked_values=self._shared_locked_values(),
-            intro_text=intro_text,
-            parent=self,
-        )
+        read_only = self._cutoff_parameters_locked(cutoffs)
+        dialog_kwargs = {
+            "specs": self._specs,
+            "workflow_stage": "convergence_cutoff",
+            "locked_values": self._shared_locked_values(),
+            "intro_text": intro_text,
+            "species_options": self._parameter_species_options,
+            "parent": self,
+        }
+        if read_only:
+            dialog_kwargs["read_only"] = True
+        dialog = ParameterDialog(**dialog_kwargs)
         dialog.setWindowTitle(
-            "Configure Cutoff Parameters"
-            if len(cutoffs) > 1
-            else f"Configure Parameters: {cutoffs[0]:.8g} eV"
+            (
+                "Inspect Cutoff Parameters"
+                if len(cutoffs) > 1
+                else f"Inspect Parameters: {cutoffs[0]:.8g} eV"
+            )
+            if read_only
+            else (
+                "Configure Cutoff Parameters"
+                if len(cutoffs) > 1
+                else f"Configure Parameters: {cutoffs[0]:.8g} eV"
+            )
         )
-        dialog.set_values(self._common_parameter_values_for_cutoffs(cutoffs))
+        kpoint_hint = kpoint_exclusive_hint(
+            self._effective_params_for_cutoff(c) for c in cutoffs
+        )
+        dialog.set_values(
+            self._common_parameter_values_for_cutoffs(cutoffs),
+            preferred_exclusive=kpoint_hint,
+        )
         dialog.set_advanced_names(self._advanced_names_for_cutoffs(cutoffs))
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if read_only:
             return
 
         values = self._sanitize_parameter_mapping(dialog.collect_values())
@@ -719,11 +748,38 @@ class CutoffConvergenceWidget(QWidget):
     def _is_cutoff_customized(self, cutoff: float) -> bool:
         return cutoff in self._cutoff_parameter_values or cutoff in self._cutoff_added_advanced
 
-    def _remove_cutoff_button_clicked(self, button: QToolButton) -> None:
-        for row in range(self._cutoff_table.rowCount()):
-            if self._cutoff_table.cellWidget(row, self._REMOVE_COLUMN) is button:
-                self._request_cutoff_removals((row,))
-                return
+    def _cutoff_parameters_locked(self, cutoffs: tuple[float, ...]) -> bool:
+        for cutoff in cutoffs:
+            runtime = self._cutoff_runtime_states.get(float(cutoff))
+            status = "" if runtime is None else runtime.status.strip().lower()
+            if status in _LOCKED_CUTOFF_EDIT_STATUSES:
+                return True
+        return False
+
+    def _remove_cutoff_button_clicked(self, button: SelectionSnapshotToolButton) -> None:
+        clicked_cutoff = button.selection_snapshot_key
+        if not isinstance(clicked_cutoff, float):
+            return
+        snapshot_keys = [
+            self._cutoff_value_at_row(r, strict=False)
+            for r in button.selection_snapshot_rows
+        ]
+        cutoffs = resolve_target_keys(
+            button,
+            clicked_key=clicked_cutoff,
+            snapshot_keys=[c for c in snapshot_keys if c is not None],
+            eligibility=lambda c: True,
+            parent=self,
+            title="Remove selected cutoffs?",
+            message="Remove all selected cutoff rows?",
+        )
+        rows = tuple(
+            r
+            for r in range(self._cutoff_table.rowCount())
+            if self._cutoff_value_at_row(r, strict=False) in cutoffs
+        )
+        if rows:
+            self._request_cutoff_removals(rows)
 
     def _request_cutoff_removal(self, row: int) -> None:
         self._request_cutoff_removals((row,))
@@ -861,6 +917,8 @@ class CutoffConvergenceWidget(QWidget):
             self.remove_cutoff_requested.emit(cutoffs)
 
     def _remove_selected_or_current_cutoffs(self) -> None:
+        if self._cutoff_table.state() == QAbstractItemView.State.EditingState:
+            return
         selected_rows = self._selected_rows()
         if selected_rows:
             self._request_cutoff_removals(selected_rows)
@@ -1098,12 +1156,16 @@ class CutoffConvergenceWidget(QWidget):
         configure_button = self._cutoff_table.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
             customized = cutoff is not None and self._is_cutoff_customized(cutoff)
-            configure_button.setText("Configured..." if customized else "Configure...")
-            configure_button.setToolTip(
-                "Edit custom parameters for this cutoff."
-                if customized
-                else "Configure CASTEP parameters for this cutoff."
-            )
+            locked = status_normalized in _LOCKED_CUTOFF_EDIT_STATUSES
+            configure_button.setText("Configured..." if customized or locked else "Configure...")
+            if locked:
+                configure_button.setToolTip("Inspect the CASTEP parameters used for this cutoff.")
+            else:
+                configure_button.setToolTip(
+                    "Edit custom parameters for this cutoff."
+                    if customized
+                    else "Configure CASTEP parameters for this cutoff."
+                )
 
     def _refresh_batch_button_state(self) -> None:
         self._batch_configure_button.setEnabled(bool(self._selected_cutoffs()))

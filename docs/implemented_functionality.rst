@@ -26,6 +26,74 @@ Persistence includes:
 - Project manifest, state snapshot, and provenance JSONL stream.
 - Validation of cross-entity references before save.
 
+User-facing save behavior is intentionally split between autosave and manual
+save:
+
+- Durable project state such as imported structures, saved workflow assets,
+  generated/removed muon-site entities, calculation definitions, run tracking,
+  and results is autosaved so active work is not lost if MuFinder needs to
+  rebuild the project view.
+- Analysis-session state stays in session memory until the user explicitly
+  chooses ``Save Project`` (or accepts the save prompt when closing a modified
+  project).
+- This manual-save bucket includes exploratory UI state such as UEP wizard tab
+  choices, clustering-window state, viewer camera/orientation, bond and spin
+  visibility, and slice/isosurface display settings.
+- In practice, users should treat ``Save Project`` as the action that commits
+  their current analysis layout and visualization choices to disk for the next
+  session, while autosave mainly protects durable project and job state.
+
+Development harness
+-------------------
+
+The repository now includes an agent-legible development harness:
+
+- ``AGENTS.md`` is a short route map to durable repository docs.
+- :doc:`agent_harness` documents the expected agent workflow and feedback loop.
+- :doc:`architecture` defines package layers and dependency directions.
+- ``tests/test_agent_harness.py`` enforces the first structural guardrails for
+  docs indexing, layer imports, and tracked bytecode artifacts.
+
+Journal view
+------------
+
+The project navigator now includes a ``Journal`` page on the existing
+``provenance_log`` route.
+
+Current Journal behavior includes:
+
+- Day-grouped rendering of persisted provenance with headers such as
+  ``Tuesday 21 April 2026``.
+- A curated notebook-style narrative focused on major workflow milestones
+  rather than a raw event ledger.
+- Milestone stamps for notable states such as defaults adopted, calculations
+  completed, warnings, and failures.
+- Export controls for:
+
+  - plain text ``.txt`` output
+  - Markdown ``.md`` output
+
+- Export output that mirrors the curated Journal content.
+
+Current Journal coverage includes:
+
+- structure import
+- convergence / pristine-relaxation / UEP configuration snapshots
+- adopted project defaults
+- candidate-site generation and UEP promotion
+- calculation submission milestones
+- terminal calculation outcomes (completed, failed, stopped, cancelled, reset)
+- comparison-table creation
+
+Current Journal limitations:
+
+- It is strictly provenance-driven and does not backfill missing older history
+  from saved job metadata.
+- Intermediate runtime states such as ``queued``, ``running``, and
+  ``retrieving`` are intentionally omitted to avoid noisy logs.
+- Some analysis-only artifacts are still not represented as first-class
+  Journal milestones.
+
 Structure import
 ----------------
 
@@ -41,9 +109,19 @@ Import behavior currently includes:
 - Copying source files into project ``imports/`` for provenance.
 - Setting imported structure as active host structure by default.
 - Capturing import provenance records.
-- Extracting MCIF magnetic metadata when present (propagation vector and site moments).
+- Extracting MCIF magnetic metadata when present, including atom labels,
+  single-vector legacy tags, ``_magnetic_propagation_vector_kxkykz`` entries,
+  and atom-site moment vectors.
+- Preserving all imported propagation vectors as reciprocal-lattice-unit
+  ``propagation_vectors_rlu`` metadata while keeping the first vector mirrored
+  to the legacy ``propagation_vector`` property.
+- Mapping imported moment labels onto atom indices by exact MCIF label match or
+  the unique ``label_...`` expansion used by mag2spectra MCIF fixtures.
 - Promoting extracted MCIF magnetic metadata to project-level magnetic structure when active host is imported.
 - Deriving per-atom scalar spins from imported magnetic metadata and storing them in host structure properties.
+- Converting MCIF-derived moments into propagation-vector components with the
+  phase correction needed for the unit-cell moment at each labelled site to
+  reconstruct the imported MCIF moment.
 - Parsing inline ``SPIN=...`` tokens from ``POSITIONS_FRAC`` rows when loading ``.cell`` files.
 
 Host-structure visualization and magnetic editing
@@ -60,9 +138,145 @@ The host-structure panel now includes:
 - Spin rendering disabled by default, with automatic enablement when any edited/imported spin value is non-zero.
 - Atom transparency automatically applied when spin rendering is enabled.
 - Viewer fitting accounts for full atom sphere extents (not just atom centers), preventing unnecessary clipping at left/right boundaries.
-- Crystallographic axis triad rendered below the main viewer to maximize primary structure viewport area.
+- Crystallographic axis triad rendered below the main viewer to maximize primary structure viewport area, with viewer and triad colours refreshed from the active light/dark palette.
 - Left-clicking empty space in the viewer clears the current atom selection.
-- A supercell-preview dialog with simple diagonal controls and optional advanced full 3x3 matrix entry.
+- A project-level supercell editor with simple diagonal controls, optional
+  advanced full 3x3 matrix entry, naming, preview, save, edit, delete, and
+  workflow selection support.
+- A PyVista/VTK structure-viewer backend with camera-preserving overlay updates for bonds, spins, slice planes, point markers, and UEP isosurfaces.
+
+Magnetic-field and nuclear-relaxation analysis
+----------------------------------------------
+
+The Magnetic Fields workflow currently includes:
+
+- propagation-vector magnetic-structure editing and preview;
+- commensurate dipolar-field calculations and incommensurate field-distribution
+  sampling, including independent multi-q phase sampling with Auto, Grid, and
+  Monte Carlo controls, active phase dimensions derived from the used
+  component wavevectors, and separate lookup-resolution and distribution-sample
+  limits;
+- demagnetizing-field corrections for none, sphere, infinite plate, advanced
+  ellipsoid, and advanced rectangular-prism sample shapes, with PyVista shape
+  preview for advanced shapes, analytic rectangular-prism tensor averaging, and
+  per-phase correction for incommensurate distributions;
+- dipolar tensor calculations for selected magnetic ions;
+- selected muon-site reuse from UEP and structural-relaxation clustering;
+- native nuclear second-moment relaxation calculations for ZF/TF and
+  single-crystal/polycrystal modes;
+- bundled natural-abundance isotope data for reproducible nuclear relaxation;
+- optional muon-induced distortion corrections when a selected
+  structural-relaxation cluster site has a derived distorted structure.
+
+Quantum Corrections
+-------------------
+
+The Quantum Corrections workflow now has a project page and implemented core
+phonon analysis support.
+
+Current behavior includes:
+
+- listing structurally relaxed MuFinder muon sites that are eligible phonon
+  sources;
+- showing per-row displacement counts, current stage, and stage-2 farm-count
+  metadata directly in the source table;
+- rejecting generated, UEP-only, pristine-relaxation, failed, and
+  provenance-free sources;
+- running Quantum Corrections as a two-stage workflow: a required
+  singlepoint job first, then a manual phonon continuation step once the
+  singlepoint has completed;
+- locking shared Quantum Corrections parameters after the completed
+  singlepoint so only the stage-2 farm count remains editable before phonon
+  submission, with an explicit workflow action to reset a row back to stage 1;
+- expanding stage-1 CASTEP ``JobSpec`` objects with ``TASK : SINGLEPOINT``;
+- expanding Gamma-only stage-2 CASTEP phonon ``JobSpec`` objects with
+  ``TASK : PHONON``, ``CONTINUATION : DEFAULT``, ``PHONON_METHOD``,
+  ``PHONON_KPOINT_MP_GRID 1 1 1``, optional ``NUM_FARMS``, and explicit
+  ``H:mu`` mass/gamma cell blocks;
+- submitting selected eligible sites through the shared local and cluster
+  CASTEP job runners;
+- reusing same-cluster stage-1 remote directories for stage-2 continuation
+  submissions without prompting to delete the directory first;
+- finite displacement as the default phonon method, with DFPT/linear-response
+  compatibility checks for known pseudopotential restrictions;
+- parsing CASTEP ``.phonon`` files into typed q-point, atom, frequency, and
+  eigenvector data;
+- selecting the three Gamma modes with largest muon participation;
+- calculating per-mode and total muon ZPE, covariance/correlation tensors, and
+  legacy-style ``w1``/``w2`` witnesses;
+- solving one-dimensional single-particle effective potentials for
+  Gomilsek-style weakly-bound and imported strongly-bound adiabatic analyses;
+- launching an interactive analysis window from each completed phonon result,
+  with single-particle mode plots, square-root energy scaling, covariance and
+  correlation tensor inspection, and pairwise ``w2`` evaluation;
+- retrieving ``.phonon`` files from cluster jobs and listing them with other
+  job outputs, while accepting task-farmed ``*_farm001.castep`` outputs as the
+  primary CASTEP text output when present;
+- persisting completed quantum phonon analysis summaries into ``Result``
+  entities.
+- exposing a curated parameter dialog with searchable advanced CASTEP controls
+  for each row, including stage-2 ``num_farms`` configuration.
+
+See :doc:`quantum_corrections` for method assumptions and the planned
+Gomilsek-style single-particle approximation layer.
+
+Energy Barriers
+---------------
+
+The Energy Barriers workflow now has a dedicated project page for staged path,
+transition-state, and NEB work.
+
+Current behavior includes:
+
+- explicit selection of initial and final relaxed endpoints before path
+  generation;
+- support for generating same-site Energy Barriers hops across
+  symmetry-equivalent images, while filtering out zero-length paths;
+- an optional maximum path-length filter for Energy Barriers path generation;
+- symmetry-guided enumeration of distinct muon paths between the selected
+  endpoints;
+- generated transition-state path rows staying available after the endpoint
+  selectors change;
+- deletion of generated transition-state path rows from the Energy Barriers
+  workflow;
+- a path preview dialog that shows the undistorted matching pristine supercell
+  with initial/final muon positions and an optional path arrow;
+- curated per-row parameter dialogs for both transition-state and NEB jobs,
+  with searchable advanced CASTEP controls available on demand;
+- transition-state search job expansion with aligned reactant/product endpoint
+  structures;
+- supercell-aware Energy Barriers k-point defaults that preserve equivalent
+  reciprocal-space sampling density relative to the recommended project
+  lattice;
+- NEB job expansion from completed transition-state results, including product
+  and intermediate images when present in the parsed path file;
+- inline NEB inspection with synchronized plot, image table, slider, and
+  structure viewer.
+
+See :doc:`energy_barriers` for the user-facing workflow, assumptions, and
+current scope.
+
+Supercell editor
+----------------
+
+The project navigator and workflow tabs expose a reusable ``Supercell Editor``.
+
+Current behavior includes:
+
+- listing saved supercells for the active source structure,
+- naming saved supercells,
+- generating previews before save,
+- saving new supercells and saving copies,
+- renaming and regenerating unused saved supercells,
+- preventing deletion of supercells already frozen into configured calculations,
+- creating a new future-use copy when matrix edits are made to a frozen saved
+  supercell,
+- returning a selected saved supercell to workflow tabs opened in
+  ``Manage Supercells...`` mode.
+
+Existing configured calculations remain reproducible because their
+``CalculationDefinition.input_structure_ids`` continue to point at the original
+frozen structure snapshot.
 
 Workflow-scoped simulation-cell selection
 -----------------------------------------
@@ -78,7 +292,8 @@ Current UI support (convergence workflow) includes:
 	- ``Single unit cell``
 	- saved supercell assets derived from the currently active host structure
 
-- ``Create From Preview...`` action to open supercell preview and save a structure snapshot.
+- ``Manage Supercells...`` action to open the project supercell editor and
+  select or create a saved structure snapshot.
 - ``Use Unit Cell`` action that returns the current workflow selection to host unit-cell mode without deleting saved assets.
 
 Cross-workflow reuse behavior includes:
@@ -144,22 +359,96 @@ Muon candidate-site generation
 
 Generation methods currently implemented:
 
-- Random constrained filling in periodic cells.
-- Near-element constrained placement around host atoms.
-- Manual entry in fractional or Cartesian coordinates.
+- Random constrained filling in periodic cells. Random generation now evaluates
+  the full symmetry-equivalent orbit of each proposed position before
+  accepting it, following the MuFinder CPC initial-position algorithm. Users
+  can generate by specifying a muon-muon separation, or by specifying a target
+  number of initial positions and allowing MuFinder to estimate the spacing
+  from the free cell volume, symmetry multiplicity, and the historical
+  ``0.350`` random-filling factor.
+- Element-attached constrained placement around host atoms selected from a
+  dropdown populated by the active host structure. For every atom of the
+  selected element, the requested number of muons per atom is chosen
+  deterministically from local neighbour geometry and ranked by host-atom
+  clearance.
+- Manual entry in fractional or Cartesian coordinates, with fractional
+  coordinates as the canonical stored representation and a live viewer preview.
+- Clustered UEP batch-search results selected from saved UEP analysis state.
+- Selected generated rows can be clustered around a fractional anchor before
+  staging. MuFinder replaces each selected initial position by the
+  symmetry-equivalent representative closest to that anchor, helping users
+  avoid launching relaxations from different realizations of the same
+  symmetry-equivalent site.
+- Selected generated rows can be deleted from the generation table before
+  relaxation jobs are configured.
 
 Constraint handling currently includes:
 
-- Minimum muon-muon distance under periodic minimum-image convention.
-- Minimum muon-host distance under periodic minimum-image convention.
-- Attempt caps and optional deterministic random seed.
+- Minimum muon-muon distance under periodic minimum-image convention for
+  random filling. This is a candidate-start diversity filter: every relaxation
+  input still contains only one muon, and the spacing prevents redundant starts
+  that are likely to relax to the same final site.
+- Minimum muon-host distance under periodic minimum-image convention for
+  random and element-attached generation.
+- Attempt caps for random placement. The generation UI no longer exposes a
+  random seed, but internal seed parameters remain available for regression
+  tests.
 
 Error handling currently includes:
 
 - Explicit exceptions for unsatisfiable constraints.
 - Explicit exceptions for unknown target elements.
+- Duplicate protection for UEP cluster rows that have already been added as generated sites.
 - UI surfacing of generation failures.
 - UI surfacing of structure import failures.
+
+UEP cluster candidates are added from the muon-generation workflow rather than
+directly from the UEP wizard. The UEP stage remains responsible for probing,
+batch optimization, zero-point estimates, clustering, and visualization; the
+generation stage is where selected cluster representatives become initial
+positions for full structural relaxation.
+Cluster representatives use the optimized position of the lowest-energy member
+chosen by the clustering summary, not an averaged cluster position or centroid.
+
+When generated positions are turned into relaxation jobs, MuFinder asks whether
+to create positive-muon jobs, muonium jobs, or both. The structural-relaxation
+view separates those rows into ``Positive muon`` and ``Muonium`` tabs, while the
+CASTEP total charge remains locked by MuFinder for each tab.
+
+The symmetry-aware random method follows the initial-position generation
+algorithm described by Huddart *et al.*, ``MuFinder: A program to determine and
+analyse muon stopping sites``, *Computer Physics Communications* **280**,
+108488 (2022), DOI: ``10.1016/j.cpc.2022.108488``. The element-attached method
+is a deterministic seeding heuristic intended to provide chemically sensible
+starts near selected species; final site assignment still requires subsequent
+structural relaxation and clustering. For broader context on interstitial-site
+generation and defect-style candidate enumeration, see the
+``pymatgen-analysis-defects`` interstitial-generator documentation and the
+``pymuon-suite`` AIRSS/UEP workflow material referenced in the UEP workflow
+documentation.
+
+UEP clustering analysis
+-----------------------
+
+The UEP analysis dialog now separates relaxed-site generation from clustering.
+
+Current clustering behavior includes:
+
+- Random-start batch searches that stop after generating and relaxing candidate
+  muon sites.
+- A separate ``Calculate ZPE`` action that evaluates and stores harmonic
+  zero-point energies for the successfully optimized sites in eV.
+- A separate non-modal clustering window launched from the batch-search log.
+- Hierarchical clustering exploration through a dendrogram with a live
+  tolerance control.
+- K-means clustering exploration through a PCA projection of the normalized
+  Soprano-backed feature vectors.
+- A shared structure view that colors every relaxed muon position by its active
+  cluster assignment.
+- A shared cluster-summary bubble plot showing energy spread against average
+  cluster energy relative to the global minimum.
+- Batch-tab cluster tables that reflect the most recent separate clustering run
+  while preserving cluster-representative promotion.
 
 Calculation job framework
 -------------------------
@@ -230,6 +519,14 @@ The convergence stage now includes a cutoff convergence panel with:
 - A dedicated convergence-examiner dialog with configurable thresholds and energy-method selection.
 - Supported energy methods include Delta-threshold (successive per-atom energy differences), derivative-based analysis (``dE/dE_cutoff``), and asymptotic extrapolation toward ``E_inf`` with fit-quality safeguards.
 - Force convergence analysis using delta-threshold checks on successive ``max_force`` values.
+- Optional max-stress convergence analysis (delta-threshold over ``max_stress`` values, default
+  threshold ``0.1 GPa`` to mirror ``GEOM_STRESS_TOL``). Exposed in the examiner via an
+  ``Include stress`` tickbox that is hard-disabled until every completed sweep row reports a
+  stress (i.e. every job was run with ``CALCULATE_STRESS=true``). When enabled, max stress is
+  plotted on a secondary y-axis sharing the force subplot, and the stress converged value
+  participates in the combined ``recommended_value`` alongside energy and force.
+- ``CALCULATE_STRESS`` exposed as a per-workflow ``flag`` parameter in both the cutoff and
+  k-point convergence parameter dialogs (basic visibility), defaulting to ``false``.
 - Method help text available directly in the examiner dialog via an info action.
 - Persisted examiner state (selected method, thresholds, text output, and plot inputs) so results and plots can be reopened without recomputation.
 - Project-default cutoff display inside the convergence panel, including both the stored default cutoff value and the method used to determine that default.
@@ -248,13 +545,24 @@ The convergence stage now also includes a dedicated k-point convergence panel wi
 	- ``n_i = floor(|b_i| / (2*pi*spacing)) + 1``
 	- ``|b_i|`` are reciprocal-lattice-vector magnitudes from the active simulation cell.
 
-- Generated sweep series from ``(1,1,1)`` up to the spacing-derived maximum grid.
+- Generated sweep enumerates the distinct CASTEP grids from ``(1,1,1)`` up to
+  the spacing-derived maximum grid by walking CASTEP's spacing trajectory; every
+  emitted grid is reproducible from some ``KPOINT_MP_SPACING``. For anisotropic
+  cells this typically produces more grids than an isotropic level ramp (each
+  axis transitions independently at its own spacing thresholds).
 - Cell-sensitive generation tracking: the panel records the simulation cell used for grid generation and warns if the simulation cell changes afterwards.
 - Shared CASTEP parameter form with per-grid override support, equivalent to cutoff convergence behavior.
 - Automatic propagation of project default cutoff energy into k-point convergence defaults when available.
-- K-point convergence examiner plotting total energy and max force vs number of k-points.
+- K-point convergence examiner plotting total energy and max force vs number of k-points,
+  with optional max-stress secondary axis on the force subplot when ``CALCULATE_STRESS`` was
+  enabled across every grid in the sweep.
 - Hover tooltips on plotted points that show the originating Monkhorst-Pack grid.
 - Delta-threshold-only convergence decision for k-point studies (no derivative/asymptotic method selection).
+- Displayed k-point spacing for a grid is the inclusive upper bound of the
+  CASTEP-valid range, ``min_i(|b_i|/(2*pi*(N_i-1)))`` over axes with
+  ``N_i >= 2``. Feeding this value to CASTEP as ``KPOINT_MP_SPACING``
+  reproduces the displayed grid exactly. The (1, 1, 1) Gamma-only grid has
+  no single representative spacing and is shown without an annotation.
 - Persisted project defaults for adopted k-point recommendations, including method, thresholds, and the cell identifier used for the recommendation.
 - Adopting a k-point recommendation also freezes a parent-overview pinned snapshot, including persisted grid-label metadata for compact redraw on the parent convergence page.
 
@@ -268,7 +576,7 @@ The optional ``Pristine Relaxation`` stage now includes:
 - Per-row ``FIX_ALL_CELL`` control with deterministic CASTEP ``FIX_ALL_CELL`` serialization.
 - Per-row parameter configuration through the shared workflow-aware CASTEP parameter dialog.
 - Project-default propagation of cutoff energy and k-point grid into generated pristine-relaxation jobs.
-- Supercell-aware k-point remapping that preserves equivalent reciprocal-space sampling density relative to the recommended reference lattice.
+- Supercell-aware k-point remapping that preserves equivalent reciprocal-space sampling density relative to the recommended reference lattice by scaling each k-point component with the corresponding reciprocal-axis change and always rounding up to avoid undersampling. For example, a ``4x4x4`` default maps to ``2x2x2`` for diagonal ``2x2x2`` and ``2x2x3`` supercells.
 - Runtime status columns for each row including ``a``, ``b``, ``c`` lattice parameters extracted from relaxed outputs.
 
 Pristine-relaxation result handling now includes:
@@ -287,6 +595,7 @@ The ``Pristine Relaxation`` stage now includes a ``Generate Comparison Table`` f
 - a dialog listing completed pristine-relaxation jobs with include tickboxes,
 - support for selecting one or more DFT jobs against the active experimental host structure,
 - generation of a persisted comparison-table subtab under ``Pristine Relaxation`` in the project tree,
+- inline editing of comparison-table titles after creation, with the project-tree subtab label kept in sync,
 - deletion from either a top-right ``Delete`` button in the comparison view or a project-tree context menu,
 - metric rows with per-metric ``Info`` dialogs,
 - a collapsible ``DFT Parameter Differences`` section that shows only parameter values that differ across selected DFT jobs,
@@ -328,7 +637,7 @@ Submission entry points include:
 - Right-click context menu in cutoff convergence rows.
 - Delete/Backspace keyboard removal for the current cutoff row or a selected set of rows.
 - Per-row action buttons in the shared job dashboard table after a job has entered the queue/submission lifecycle.
-- Failed-job inspection and reset actions in the shared job dashboard.
+- Failed/cancelled-job resubmit plus failed-job inspection and reset actions in the shared job dashboard.
 
 Submission controls include:
 
@@ -358,8 +667,19 @@ Runtime behavior includes:
 
 - Resetting failed jobs back to ``ready`` for rerun, with optional cleanup
 	of output files while preserving generated input files.
+- Resubmitting failed or cancelled dashboard jobs directly, reusing existing
+	remote files for continuation runs and replacing the stored remote scheduler
+	id with the new id.
 - Save-on-close prompting for open visible projects.
 - Color-coded status text for dashboard and convergence status displays.
+
+The shared job dashboard is intended to show jobs that still need attention.
+Ready jobs are submitted from their workflow tables. Active jobs appear in the
+dashboard while they are submitting, queued, running, or retrieving outputs.
+Completed jobs leave the dashboard after successful result handling. Failed,
+stopped, and cancelled jobs remain visible so they can be inspected,
+resubmitted, or reset. See :doc:`job_lifecycle` for the full lifecycle contract
+and the current stuck-row prevention recommendations.
 
 Failure diagnostics include:
 
@@ -377,6 +697,7 @@ Status transitions across local and cluster execution now also include:
 
 - ``running``/``retrieving`` -> ``stopped`` (for walltime/time-limit stops)
 - ``failed``/``stopped``/``cancelled`` -> ``defined`` via reset for resubmission
+- ``failed``/``cancelled`` -> ``submitting`` via dashboard resubmission
 
 Output handling includes:
 
@@ -443,4 +764,7 @@ Remote lifecycle and retrieval includes:
 
 - Scheduler state mapping to MuFinder job states (queued/running/completed/failed/cancelled/stopped).
 - Automatic retrieval of completion outputs for parser ingestion.
-- ``stopped`` state support for walltime-limited runs with reset/resubmit flow.
+- ``stopped`` state support for walltime-limited runs with reset flow.
+- Shared job execution lifecycle orchestration records submissions, creates
+  calculation runs, applies local/remote status transitions, and records
+  terminal provenance events outside the Qt window layer.

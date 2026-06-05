@@ -21,12 +21,13 @@ WORKFLOW_TASK_MAP: dict[str, str] = {
     "convergence_cutoff": "SINGLEPOINT",
     "convergence_kpoint": "SINGLEPOINT",
     "pristine_relaxation": "GEOMETRYOPTIMIZATION",
+    "uep": "SINGLEPOINT",
     "muon_generation": "SINGLEPOINT",
     "muon_relaxation": "GEOMETRYOPTIMIZATION",
     "site_analysis": "SINGLEPOINT",
     "magnetic_field": "SINGLEPOINT",
     "quantum_corrections": "SINGLEPOINT",
-    "energy_barriers": "SINGLEPOINT",
+    "energy_barriers": "TRANSITIONSTATESEARCH",
 }
 
 

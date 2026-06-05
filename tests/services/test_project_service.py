@@ -10,9 +10,15 @@ from ase import Atoms
 from ase.io import write as ase_write
 
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, MuonSite, Result, Structure
+from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result, Structure
 from mufinder.castep_io.types import ValueWithUnit
-from mufinder.services.project_service import ProjectService
+from mufinder.science.site_generation import SiteGenerationError
+from mufinder.services.project_service import (
+    ProjectService,
+    PromotableHost,
+    SiteHostMismatch,
+    StructureHostMismatch,
+)
 
 
 def _host_structure() -> Structure:
@@ -46,6 +52,7 @@ def test_create_save_and_load_roundtrip(tmp_path: Path) -> None:
         },
     )
     assert len(generated) == 5
+    assert {site.status for site in generated} == {"generated"}
 
     service.save_project(doc)
 
@@ -69,8 +76,355 @@ def test_manual_generation_cartesian_conversion(tmp_path: Path) -> None:
         parameters={"coord_system": "cartesian", "x": 2.0, "y": 3.0, "z": 4.0},
     )
     site = sites[0]
+    assert site.status == "generated"
     assert site.fractional_position == pytest.approx([0.2, 0.3, 0.4])
     assert site.cartesian_position == pytest.approx([2.0, 3.0, 4.0])
+
+
+def test_random_generation_by_target_count_estimates_spacing(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "random_count.mufinder", "RandomCount")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={
+            "selection_mode": "count",
+            "count": 3,
+            "min_muon_atom": 0.8,
+            "max_attempts": 50000,
+            "seed": "7",
+            "include_symmetry_equivalents": False,
+        },
+    )
+
+    assert len(sites) == 3
+    assert sites[0].properties["selection_mode"] == "count"
+    assert sites[0].properties["target_count"] == 3
+    assert sites[0].properties["estimated_min_muon_muon"] > 0.0
+    assert sites[0].properties["min_muon_muon"] > 0.0
+
+
+def test_candidate_numbering_is_scoped_to_label_prefix(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "prefix_numbering.mufinder", "PrefixNumbering")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    for index in range(1, 5):
+        doc.sites[uuid4()] = MuonSite(
+            label=f"UEP Cluster {index}",
+            status="generated",
+            generation_method="uep_cluster",
+        )
+
+    random_sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={
+            "selection_mode": "count",
+            "count": 2,
+            "min_muon_atom": 0.8,
+            "max_attempts": 50000,
+            "seed": "7",
+            "include_symmetry_equivalents": False,
+        },
+    )
+
+    assert [site.label for site in random_sites] == ["Random Site 1", "Random Site 2"]
+
+    more_random_sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={
+            "selection_mode": "count",
+            "count": 1,
+            "min_muon_atom": 0.8,
+            "max_attempts": 50000,
+            "seed": "11",
+            "include_symmetry_equivalents": False,
+        },
+    )
+
+    assert [site.label for site in more_random_sites] == ["Random Site 3"]
+
+
+def test_random_generation_reports_project_service_progress(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "random_progress.mufinder", "RandomProgress")
+    service.add_structure(doc, _host_structure())
+    updates: list[tuple[int, int]] = []
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={
+            "selection_mode": "count",
+            "count": 2,
+            "min_muon_atom": 0.8,
+            "max_attempts": 50000,
+            "seed": "7",
+            "include_symmetry_equivalents": False,
+        },
+        progress_callback=lambda completed, total: updates.append((completed, total)),
+    )
+
+    assert len(sites) == 2
+    assert updates[0] == (0, 2)
+    assert updates[-1] == (2, 2)
+
+
+def test_random_generation_by_separation_fills_until_attempt_limit(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "random_spacing.mufinder", "RandomSpacing")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={
+            "selection_mode": "separation",
+            "min_muon_muon": 2.0,
+            "min_muon_atom": 0.8,
+            "max_attempts": 1000,
+            "seed": "11",
+            "include_symmetry_equivalents": False,
+        },
+    )
+
+    assert len(sites) > 0
+    assert all(site.properties["selection_mode"] == "separation" for site in sites)
+    assert all(site.properties["min_muon_muon"] == pytest.approx(2.0) for site in sites)
+
+
+def test_attached_element_generation_uses_muons_per_atom(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "attached_element.mufinder", "AttachedElement")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="near_element",
+        parameters={
+            "element": "O",
+            "muons_per_atom": 2,
+            "bond_distance": 1.0,
+            "min_muon_atom": 0.6,
+        },
+    )
+
+    assert len(sites) == 4
+    assert all(site.generation_method == "near_element" for site in sites)
+    assert all(site.properties["strategy"] == "attached" for site in sites)
+    assert all(site.properties["muons_per_atom"] == 2 for site in sites)
+    assert all("min_muon_muon" not in site.properties for site in sites)
+
+
+def test_uep_cluster_generation_creates_sites_and_rejects_duplicates(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_cluster_generation.mufinder", "UEPClusterGeneration")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    selection = {
+        "source_key": "job-1:cluster:1:cluster:0",
+        "label": "UEP Cluster 1",
+        "generation_method": "uep_cluster",
+        "source_structure_id": str(host.id),
+        "fractional_position": [0.1, 0.2, 0.3],
+        "cartesian_position": [1.0, 2.0, 3.0],
+        "properties": {
+            "source_job_label": "uep_row_1",
+            "source_job_id": "job-1",
+            "cluster_index": 1,
+            "cluster_size": 2,
+            "representative_index": 0,
+            "member_index": 0,
+            "selection_kind": "cluster",
+            "classification": "minimum",
+            "classical_energy_ev": -0.7,
+            "zero_point_energy_ev": 0.2,
+            "total_energy_ev": -0.5,
+            "clustering_method": "hier",
+        },
+    }
+
+    sites = service.generate_candidate_sites(doc, method="uep_clusters", parameters={"selections": [selection]})
+
+    assert len(sites) == 1
+    site = sites[0]
+    assert site.generation_method == "uep_cluster"
+    assert site.source_structure_id == host.id
+    assert site.fractional_position == pytest.approx([0.1, 0.2, 0.3])
+    assert site.properties["uep_source_key"] == "job-1:cluster:1:cluster:0"
+    assert site.properties["classification"] == "minimum"
+
+    with pytest.raises(SiteGenerationError, match="already present"):
+        service.generate_candidate_sites(doc, method="uep_clusters", parameters={"selections": [selection]})
+
+
+def test_uep_cluster_generation_creates_one_site_per_selection(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "uep_cluster_multi_generation.mufinder", "UEPClusterMultiGeneration")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    selections = [
+        {
+            "source_key": f"job-1:cluster:{index}:cluster:{index - 1}",
+            "label": f"UEP Cluster {index}",
+            "generation_method": "uep_cluster",
+            "source_structure_id": str(host.id),
+            "fractional_position": [0.1 * index, 0.2, 0.3],
+            "cartesian_position": [float(index), 2.0, 3.0],
+            "properties": {
+                "source_job_label": "uep_row_1",
+                "source_job_id": "job-1",
+                "cluster_index": index,
+                "cluster_size": index + 1,
+                "representative_index": index - 1,
+                "member_index": index - 1,
+                "selection_kind": "cluster",
+                "classification": "minimum",
+                "classical_energy_ev": -0.7 - index,
+                "clustering_method": "hier",
+            },
+        }
+        for index in (1, 2, 3)
+    ]
+
+    sites = service.generate_candidate_sites(doc, method="uep_clusters", parameters={"selections": selections})
+
+    assert len(sites) == 3
+    assert len(doc.sites) == 3
+    assert [site.properties["uep_source_key"] for site in sites] == [
+        "job-1:cluster:1:cluster:0",
+        "job-1:cluster:2:cluster:1",
+        "job-1:cluster:3:cluster:2",
+    ]
+    assert [site.label for site in sites] == ["UEP Cluster 1", "UEP Cluster 2", "UEP Cluster 3"]
+    assert [site.fractional_position[0] for site in sites] == pytest.approx([0.1, 0.2, 0.3])
+
+
+def test_remove_candidate_sites_only_deletes_generated_sites(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "remove_candidates.mufinder", "RemoveCandidates")
+    candidate = MuonSite(label="Candidate", status="generated")
+    relaxed = MuonSite(label="Relaxed", status="relaxed")
+    doc.sites[candidate.id] = candidate
+    doc.sites[relaxed.id] = relaxed
+
+    removed = service.remove_candidate_sites(doc, [candidate.id, relaxed.id, uuid4()])
+
+    assert [site.id for site in removed] == [candidate.id]
+    assert candidate.id not in doc.sites
+    assert relaxed.id in doc.sites
+    assert doc.provenance[-1].action == "delete_candidates"
+    assert doc.provenance[-1].input_entity_ids == [candidate.id]
+
+
+def test_cluster_candidate_positions_updates_selected_sites_to_anchor_orbit(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_candidates.mufinder", "ClusterCandidates")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    site = MuonSite(
+        label="Candidate",
+        status="generated",
+        fractional_position=[0.1, 0.2, 0.3],
+        cartesian_position=[0.5, 1.0, 1.5],
+    )
+    doc.sites[site.id] = site
+
+    updated = service.cluster_candidate_positions(
+        doc,
+        [site.id],
+        anchor_fractional=[0.9, 0.8, 0.7],
+    )
+
+    assert updated == [site]
+    assert site.fractional_position == pytest.approx([0.9, 0.8, 0.7])
+    assert site.cartesian_position == pytest.approx([4.5, 4.0, 3.5])
+    assert doc.provenance[-1].action == "cluster_candidate_positions"
+    assert doc.provenance[-1].parameters["anchor_fractional"] == pytest.approx([0.9, 0.8, 0.7])
+
+
+def test_cluster_candidate_positions_does_not_rewrite_staged_sites(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_staged_candidates.mufinder", "ClusterStagedCandidates")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    generated = MuonSite(
+        label="Generated",
+        status="generated",
+        fractional_position=[0.1, 0.2, 0.3],
+    )
+    staged = MuonSite(
+        label="Staged",
+        status="staged",
+        fractional_position=[0.2, 0.3, 0.4],
+    )
+    doc.sites[generated.id] = generated
+    doc.sites[staged.id] = staged
+
+    updated = service.cluster_candidate_positions(
+        doc,
+        [generated.id, staged.id],
+        anchor_fractional=[0.9, 0.8, 0.7],
+    )
+
+    assert updated == [generated]
+    assert generated.fractional_position == pytest.approx([0.9, 0.8, 0.7])
+    assert staged.fractional_position == pytest.approx([0.2, 0.3, 0.4])
+    assert doc.provenance[-1].parameters["site_labels"] == ["Generated"]
+
+
+def test_stage_generated_sites_allows_already_staged_sites(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "stage_sites.mufinder", "StageSites")
+    generated = MuonSite(label="Generated", status="generated")
+    staged = MuonSite(label="Staged", status="staged")
+    relaxed = MuonSite(label="Relaxed", status="relaxed")
+    doc.sites[generated.id] = generated
+    doc.sites[staged.id] = staged
+    doc.sites[relaxed.id] = relaxed
+
+    staged_sites = service.stage_generated_sites(doc, [generated.id, staged.id, relaxed.id])
+
+    assert [site.id for site in staged_sites] == [generated.id, staged.id]
+    assert generated.status == "staged"
+    assert staged.status == "staged"
+    assert relaxed.status == "relaxed"
+
+
+def test_load_project_normalizes_legacy_candidate_status(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "legacy_candidate_status.mufinder"
+    doc = service.create_project(root, "LegacyCandidateStatus")
+    site = MuonSite(label="Legacy", status="candidate")
+    doc.sites[site.id] = site
+    service.save_project(doc)
+
+    site_file = root / "entities" / "sites" / f"{site.id}.json"
+    text = site_file.read_text(encoding="utf-8")
+    site_file.write_text(text.replace('"status": "generated"', '"status": "candidate"'), encoding="utf-8")
+
+    loaded = service.load_project(root)
+
+    assert loaded.sites[site.id].status == "generated"
 
 
 def test_integrity_validation_detects_missing_references(tmp_path: Path) -> None:
@@ -213,6 +567,83 @@ def test_reset_failed_job_allows_stopped_jobs(tmp_path: Path) -> None:
     assert job.num_processes is None
 
 
+def test_record_job_submission_appends_one_provenance_milestone(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "job_submission_log.mufinder", "JobSubmissionLog")
+    job = service.add_job(
+        doc,
+        label="Conv300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+
+    service.submit_job(job)
+    job.remote_job_id = "12345"
+    job.remote_directory = "/remote/work/Conv300"
+    job.num_processes = 16
+    service.record_job_submission(doc, jobs=[job], execution_target="local")
+
+    assert doc.provenance[-1].action == "submit_jobs"
+    assert doc.provenance[-1].parameters["job_labels"] == ["Conv300"]
+    assert doc.provenance[-1].parameters["execution_target"] == "local"
+    assert doc.provenance[-1].parameters["jobs"] == [
+        {
+            "job_id": str(job.id),
+            "label": "Conv300",
+            "status": "submitting",
+            "execution_target": "local",
+            "remote_job_id": "12345",
+            "remote_directory": "/remote/work/Conv300",
+            "num_processes": 16,
+            "submitted_at": job.submitted_at.isoformat() if job.submitted_at else None,
+        }
+    ]
+
+
+def test_record_job_terminal_events_and_reset_append_provenance(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "job_terminal_log.mufinder", "JobTerminalLog")
+    job = service.add_job(
+        doc,
+        label="Relax1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    result = Result(
+        result_type=job.calc_type,
+        data={"total_energy": -500.0, "max_force": 0.03, "warnings": ["minor"]},
+        derived_structure_ids=[uuid4()],
+    )
+
+    service.record_job_terminal_event(doc, action="job_completed", job=job, result=result)
+    service.record_job_terminal_event(doc, action="job_failed", job=job, error_message="Submission failed")
+    service.record_job_reset(doc, job=job, cleaned_output_directory=True)
+
+    assert [record.action for record in doc.provenance[-3:]] == ["job_completed", "job_failed", "job_reset"]
+    assert doc.provenance[-3].parameters["result_total_energy"] == -500.0
+    assert doc.provenance[-3].parameters["derived_structure_count"] == 1
+    assert doc.provenance[-2].parameters["error_message"] == "Submission failed"
+    assert doc.provenance[-1].parameters["cleaned_output_directory"] is True
+
+
+def test_lifecycle_transitions_do_not_append_intermediate_provenance(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "job_transition_no_log.mufinder", "JobTransitionNoLog")
+    job = service.add_job(
+        doc,
+        label="NoJournalNoise",
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+
+    service.submit_job(job)
+    service.mark_job_queued(job, remote_job_id="123")
+    service.start_job(job)
+    service.mark_job_retrieving(job)
+
+    assert doc.provenance == []
+
+
 def test_job_num_processes_roundtrip(tmp_path: Path) -> None:
     service = ProjectService()
     root = tmp_path / "job_processes_roundtrip.mufinder"
@@ -349,6 +780,89 @@ def test_use_workflow_supercell_asset_clones_for_other_workflow(tmp_path: Path) 
     assert selected.parent_structure_id == host.id
     assert selected.properties["supercell_asset"]["owner_workflow_stage"] == "convergence_cutoff"
     assert selected.properties["supercell_asset"]["source_asset_structure_id"] == str(source_asset.id)
+
+
+def test_workflow_supercell_asset_rename_update_and_delete(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "workflow_supercell_edit.mufinder", "WorkflowEdit")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    asset = service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+        label="Initial cell",
+        reuse_existing=False,
+    )
+
+    renamed = service.rename_workflow_supercell_asset(
+        doc,
+        asset_structure_id=asset.id,
+        label="Production 2x1x1",
+    )
+    assert renamed.label == "Production 2x1x1"
+
+    updated = service.update_workflow_supercell_asset_matrix(
+        doc,
+        asset_structure_id=asset.id,
+        matrix=[[2, 0, 0], [0, 2, 0], [0, 0, 1]],
+        label="Production 2x2x1",
+    )
+    assert updated.id == asset.id
+    assert updated.label == "Production 2x2x1"
+    assert len(updated.species) == len(host.species) * 4
+    assert updated.properties["supercell_asset"]["matrix"] == [[2, 0, 0], [0, 2, 0], [0, 0, 1]]
+
+    service.use_workflow_supercell_asset(
+        doc,
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        asset_structure_id=asset.id,
+    )
+    removed = service.delete_workflow_supercell_asset(doc, asset_structure_id=asset.id)
+
+    assert removed.id == asset.id
+    assert asset.id not in doc.structures
+    assert doc.ui_state["workflow_supercells"]["pristine_relaxation"]["mode"] == "unit_cell"
+
+
+def test_workflow_supercell_asset_delete_and_matrix_update_block_frozen_definitions(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "workflow_supercell_frozen.mufinder", "WorkflowFrozen")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    asset = service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+        reuse_existing=False,
+    )
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+        input_structure_ids=[asset.id],
+    )
+    doc.calculations[definition.id] = definition
+
+    assert service.supercell_asset_is_frozen(doc, asset_structure_id=asset.id)
+    assert service.supercell_asset_references(doc, asset_structure_id=asset.id) == [
+        "convergence_cutoff calculation 'castep_convergence_cutoff'"
+    ]
+    with pytest.raises(ValueError, match="configured calculations"):
+        service.update_workflow_supercell_asset_matrix(
+            doc,
+            asset_structure_id=asset.id,
+            matrix=[[3, 0, 0], [0, 1, 0], [0, 0, 1]],
+        )
+    with pytest.raises(ValueError, match="configured calculations"):
+        service.delete_workflow_supercell_asset(doc, asset_structure_id=asset.id)
 
 
 def test_resolve_workflow_structure_falls_back_to_unit_cell_for_mismatched_host(tmp_path: Path) -> None:
@@ -544,6 +1058,9 @@ loop_
         assert structure.properties.get("propagation_vector") == pytest.approx([0.0, 0.0, 0.25])
         assert doc.project.magnetic_structure is not None
         assert doc.project.magnetic_structure["propagation_vector"] == pytest.approx([0.0, 0.0, 0.25])
+        assert len(doc.project.magnetic_structure["propagation_vectors_rlu"]) == 1
+        assert doc.project.magnetic_structure["propagation_vectors_rlu"][0] == pytest.approx([0.0, 0.0, 0.25])
+        assert doc.project.magnetic_structure["moments"][0]["atom_index"] == 0
 
         service.save_project(doc)
         loaded = service.load_project(root)
@@ -684,6 +1201,112 @@ def test_register_pristine_relaxation_definition_persists_configuration(tmp_path
     assert loaded_definition.parameters["job_ids_by_label"] == {}
 
 
+def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "quantum_definition.mufinder"
+    doc = service.create_project(root, "QuantumDefinition")
+    structure = service.import_structure_file(doc, Path("tests/golden/si_geom_opt.cell"), make_active=True)
+    site = MuonSite(label="siteA", status="relaxed", source_structure_id=structure.id)
+    doc.sites[site.id] = site
+
+    definition = service.register_quantum_phonon_definition(
+        doc,
+        input_structure_ids=[structure.id],
+        input_site_ids=[site.id],
+        parameters={
+            "method": "finite_displacement",
+            "pseudopotential_family": "unknown",
+            "sources": [{"site_id": str(site.id), "label": "siteA"}],
+            "singlepoint_job_ids_by_label": {str(site.id): "sp-job"},
+            "phonon_job_ids_by_label": {str(site.id): "ph-job"},
+            "job_seed_names_by_label": {str(site.id): "quantum_siteA"},
+        },
+        output_directory=root / "files" / "quantum_corrections",
+    )
+
+    assert definition.id in doc.calculations
+    assert doc.calculations[definition.id].workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS
+    assert doc.calculations[definition.id].input_site_ids == [site.id]
+    assert doc.calculations[definition.id].parameters["configuration"]["method"] == "finite_displacement"
+    assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
+    assert doc.calculations[definition.id].parameters["singlepoint_job_ids_by_label"] == {str(site.id): "sp-job"}
+    assert doc.calculations[definition.id].parameters["phonon_job_ids_by_label"] == {str(site.id): "ph-job"}
+    assert doc.calculations[definition.id].parameters["job_seed_names_by_label"] == {str(site.id): "quantum_siteA"}
+    assert doc.provenance[-1].action == "configure_quantum_corrections"
+
+    service.save_project(doc)
+    loaded = service.load_project(root)
+    loaded_definition = loaded.calculations[definition.id]
+    assert loaded_definition.input_site_ids == [site.id]
+    assert loaded_definition.parameters["configuration"]["sources"][0]["label"] == "siteA"
+    assert loaded_definition.parameters["phonon_job_ids_by_label"] == {str(site.id): "ph-job"}
+
+
+def test_register_transition_state_search_definition_persists_configuration(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "energy_barriers_definition.mufinder"
+    doc = service.create_project(root, "EnergyBarriersDefinition")
+    structure = service.import_structure_file(doc, Path("tests/golden/si_geom_opt.cell"), make_active=True)
+    site = MuonSite(label="siteA", status="relaxed", source_structure_id=structure.id)
+    doc.sites[site.id] = site
+
+    definition = service.register_transition_state_search_definition(
+        doc,
+        input_structure_ids=[structure.id],
+        input_site_ids=[site.id],
+        parameters={
+            "method": "LSTQST",
+            "sources": [{"site_id": str(site.id), "label": "siteA_to_siteB_path1"}],
+        },
+        output_directory=root / "files" / "energy_barriers",
+    )
+
+    assert definition.id in doc.calculations
+    assert doc.calculations[definition.id].workflow_stage == WorkflowStage.ENERGY_BARRIERS
+    assert doc.calculations[definition.id].input_site_ids == [site.id]
+    assert doc.calculations[definition.id].parameters["configuration"]["method"] == "LSTQST"
+    assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
+    assert doc.provenance[-1].action == "configure_energy_barriers"
+
+    service.save_project(doc)
+    loaded = service.load_project(root)
+    loaded_definition = loaded.calculations[definition.id]
+    assert loaded_definition.input_site_ids == [site.id]
+    assert loaded_definition.parameters["configuration"]["sources"][0]["label"] == "siteA_to_siteB_path1"
+
+
+def test_register_nudged_elastic_band_definition_persists_configuration(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "energy_barriers_neb_definition.mufinder"
+    doc = service.create_project(root, "EnergyBarriersNebDefinition")
+    structure = service.import_structure_file(doc, Path("tests/golden/si_geom_opt.cell"), make_active=True)
+    site = MuonSite(label="siteA", status="relaxed", source_structure_id=structure.id)
+    doc.sites[site.id] = site
+
+    definition = service.register_nudged_elastic_band_definition(
+        doc,
+        input_structure_ids=[structure.id],
+        input_site_ids=[site.id],
+        parameters={
+            "method": "NEB",
+            "sources": [{"site_id": str(site.id), "label": "siteA_to_siteB_path1_neb"}],
+        },
+        output_directory=root / "files" / "energy_barriers_neb",
+    )
+
+    assert definition.id in doc.calculations
+    assert doc.calculations[definition.id].workflow_stage == WorkflowStage.ENERGY_BARRIERS
+    assert doc.calculations[definition.id].calc_type == "castep_nudged_elastic_band_set"
+    assert doc.calculations[definition.id].parameters["configuration"]["method"] == "NEB"
+    assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
+    assert doc.provenance[-1].action == "configure_energy_barriers"
+
+    service.save_project(doc)
+    loaded = service.load_project(root)
+    loaded_definition = loaded.calculations[definition.id]
+    assert loaded_definition.parameters["configuration"]["sources"][0]["label"] == "siteA_to_siteB_path1_neb"
+
+
 def test_save_project_serializes_ui_state_with_value_with_unit(tmp_path: Path) -> None:
     service = ProjectService()
     root = tmp_path / "ui_state_value_with_unit.mufinder"
@@ -741,3 +1364,534 @@ def test_save_project_roundtrips_convergence_overview_snapshots(tmp_path: Path) 
 
     assert loaded.ui_state["convergence_overview_snapshots"]["cutoff"]["default_value"] == pytest.approx(550.0)
     assert loaded.ui_state["convergence_overview_snapshots"]["kpoint"]["default_value"] == [2, 2, 2]
+
+
+# ---------------------------------------------------------------------------
+# Active host structure switching
+# ---------------------------------------------------------------------------
+
+
+def _make_doc(tmp_path: Path):
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "proj.mufinder", "Test")
+    return service, doc
+
+
+def _supercell_structure(parent_id, stage: WorkflowStage = WorkflowStage.MUON_RELAXATION) -> Structure:
+    return Structure(
+        label="Supercell",
+        origin="supercell",
+        lattice_vectors=[[20.0, 0, 0], [0, 20.0, 0], [0, 0, 20.0]],
+        species=["O", "Si", "O"],
+        fractional_positions=[[0, 0, 0], [0.5, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=parent_id,
+        properties={
+            "supercell_asset": {
+                "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]],
+                "owner_workflow_stage": stage.value,
+                "source_asset_structure_id": None,
+            }
+        },
+    )
+
+
+def _completed_result(structure_id, convergence_achieved: bool | None = True) -> tuple[CalculationRun, Result]:
+    run = CalculationRun(
+        status=JobStatus.COMPLETED,
+        convergence_achieved=convergence_achieved,
+    )
+    result = Result(
+        calculation_run_id=run.id,
+        result_type="castep_pristine_relaxation",
+        derived_structure_ids=[structure_id],
+    )
+    run.result_id = result.id
+    return run, result
+
+
+# --- list_promotable_host_structures ---
+
+def test_promotable_imported_structure_included(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    promotable = service.list_promotable_host_structures(doc)
+
+    assert len(promotable) == 1
+    assert promotable[0].structure_id == host.id
+    assert promotable[0].kind == "imported"
+    assert "Original" in promotable[0].label
+
+
+def test_promotable_supercell_excluded(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    supercell = _supercell_structure(host.id)
+    doc.structures[supercell.id] = supercell
+
+    promotable = service.list_promotable_host_structures(doc)
+
+    structure_ids = {h.structure_id for h in promotable}
+    assert supercell.id not in structure_ids
+    assert host.id in structure_ids
+
+
+def test_promotable_completed_pristine_relaxation_included(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    relaxed = Structure(
+        label="Fe2O3 relaxed",
+        origin="pristine_relaxation",
+        lattice_vectors=[[10.1, 0, 0], [0, 10.1, 0], [0, 0, 10.1]],
+        species=["O", "Si", "O"],
+        fractional_positions=[[0, 0, 0], [0.5, 0.5, 0.5], [0.25, 0.25, 0.25]],
+    )
+    doc.structures[relaxed.id] = relaxed
+    run, result = _completed_result(relaxed.id)
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+
+    promotable = service.list_promotable_host_structures(doc)
+
+    structure_ids = {h.structure_id for h in promotable}
+    assert relaxed.id in structure_ids
+    assert any(h.kind == "relaxed" for h in promotable)
+
+
+def test_promotable_failed_relaxation_excluded(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    relaxed = Structure(
+        label="Relaxed",
+        origin="pristine_relaxation",
+        lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]],
+        species=["O"],
+        fractional_positions=[[0, 0, 0]],
+    )
+    doc.structures[relaxed.id] = relaxed
+    run = CalculationRun(status=JobStatus.FAILED)
+    result = Result(calculation_run_id=run.id, derived_structure_ids=[relaxed.id])
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+
+    promotable = service.list_promotable_host_structures(doc)
+
+    structure_ids = {h.structure_id for h in promotable}
+    assert relaxed.id not in structure_ids
+
+
+def test_promotable_non_converged_relaxation_excluded(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    relaxed = Structure(
+        label="Relaxed NC",
+        origin="pristine_relaxation",
+        lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]],
+        species=["O"],
+        fractional_positions=[[0, 0, 0]],
+    )
+    doc.structures[relaxed.id] = relaxed
+    run, result = _completed_result(relaxed.id, convergence_achieved=False)
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+
+    promotable = service.list_promotable_host_structures(doc)
+
+    structure_ids = {h.structure_id for h in promotable}
+    assert relaxed.id not in structure_ids
+
+
+def test_promotable_muon_relaxation_origin_excluded(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    muoniated = Structure(
+        label="Muoniated",
+        origin="muon_relaxation",
+        lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]],
+        species=["O", "H"],
+        fractional_positions=[[0, 0, 0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[muoniated.id] = muoniated
+    run, result = _completed_result(muoniated.id)
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+
+    promotable = service.list_promotable_host_structures(doc)
+
+    structure_ids = {h.structure_id for h in promotable}
+    assert muoniated.id not in structure_ids
+
+
+def test_promotable_order_imported_then_relaxed(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    relaxed = Structure(
+        label="Relaxed",
+        origin="pristine_relaxation",
+        lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]],
+        species=["O"],
+        fractional_positions=[[0, 0, 0]],
+    )
+    doc.structures[relaxed.id] = relaxed
+    run, result = _completed_result(relaxed.id)
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+
+    promotable = service.list_promotable_host_structures(doc)
+
+    assert len(promotable) == 2
+    assert promotable[0].kind == "imported"
+    assert promotable[1].kind == "relaxed"
+
+
+def test_promotable_label_includes_job_label(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    job = Job(label="Fe2O3 pristine #1", workflow_stage=WorkflowStage.PRISTINE_RELAXATION, calc_type="castep_pristine_relaxation")
+    doc.jobs[job.id] = job
+    relaxed = Structure(
+        label="Relaxed",
+        origin="pristine_relaxation",
+        lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]],
+        species=["O"],
+        fractional_positions=[[0, 0, 0]],
+        properties={"source_job_id": str(job.id)},
+    )
+    doc.structures[relaxed.id] = relaxed
+    run, result = _completed_result(relaxed.id)
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+
+    promotable = service.list_promotable_host_structures(doc)
+
+    relaxed_entry = next(h for h in promotable if h.kind == "relaxed")
+    assert "Fe2O3 pristine #1" in relaxed_entry.label
+
+
+# --- set_active_host_structure ---
+
+def test_set_active_host_switches_structure(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    original = _host_structure()
+    service.add_structure(doc, original)
+    relaxed = Structure(
+        label="Relaxed host",
+        origin="pristine_relaxation",
+        lattice_vectors=[[11.0, 0, 0], [0, 11.0, 0], [0, 0, 11.0]],
+        species=["O"],
+        fractional_positions=[[0, 0, 0]],
+    )
+    doc.structures[relaxed.id] = relaxed
+    run, result = _completed_result(relaxed.id)
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+
+    service.set_active_host_structure(doc, relaxed.id)
+
+    assert doc.project.host_structure_id == relaxed.id
+
+
+def test_set_active_host_no_op_when_already_active(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    initial_provenance_count = len(doc.provenance)
+
+    service.set_active_host_structure(doc, host.id)
+
+    assert doc.project.host_structure_id == host.id
+    assert len(doc.provenance) == initial_provenance_count  # no new provenance record
+
+
+def test_set_active_host_rejects_non_promotable(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    supercell = _supercell_structure(host.id)
+    doc.structures[supercell.id] = supercell
+
+    with pytest.raises(ValueError, match="not eligible"):
+        service.set_active_host_structure(doc, supercell.id)
+
+
+def test_set_active_host_appends_provenance(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    original = _host_structure()
+    service.add_structure(doc, original)
+    relaxed = Structure(
+        label="Relaxed",
+        origin="pristine_relaxation",
+        lattice_vectors=[[11.0, 0, 0], [0, 11.0, 0], [0, 0, 11.0]],
+        species=["O"],
+        fractional_positions=[[0, 0, 0]],
+    )
+    doc.structures[relaxed.id] = relaxed
+    run, result = _completed_result(relaxed.id)
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    before = len(doc.provenance)
+
+    service.set_active_host_structure(doc, relaxed.id)
+
+    assert len(doc.provenance) == before + 1
+    record = doc.provenance[-1]
+    assert record.action == "set_active_host_structure"
+    assert str(relaxed.id) in record.parameters.get("new_host_structure_id", "")
+
+
+def test_set_active_host_rebinds_magnetic_structure(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    original = Structure(
+        label="Magnetic host",
+        origin="imported",
+        lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]],
+        species=["Fe"],
+        fractional_positions=[[0, 0, 0]],
+        properties={"magnetic_structure": {"moments": [{"vector": [0, 0, 2.0]}]}},
+    )
+    service.add_structure(doc, original)
+    doc.project.magnetic_structure = original.properties["magnetic_structure"]
+
+    relaxed = Structure(
+        label="Relaxed",
+        origin="pristine_relaxation",
+        lattice_vectors=[[10.1, 0, 0], [0, 10.1, 0], [0, 0, 10.1]],
+        species=["Fe"],
+        fractional_positions=[[0, 0, 0]],
+    )
+    doc.structures[relaxed.id] = relaxed
+    run, result = _completed_result(relaxed.id)
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+
+    service.set_active_host_structure(doc, relaxed.id)
+
+    assert doc.project.magnetic_structure is None
+
+
+def test_set_active_host_preserves_magnetic_if_new_host_has_it(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    original = _host_structure()
+    service.add_structure(doc, original)
+    magnetic_data = {"moments": [{"vector": [0, 0, 2.0]}]}
+    relaxed = Structure(
+        label="Magnetic relaxed",
+        origin="pristine_relaxation",
+        lattice_vectors=[[10.1, 0, 0], [0, 10.1, 0], [0, 0, 10.1]],
+        species=["Fe"],
+        fractional_positions=[[0, 0, 0]],
+        properties={"magnetic_structure": magnetic_data},
+    )
+    doc.structures[relaxed.id] = relaxed
+    run, result = _completed_result(relaxed.id)
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+
+    service.set_active_host_structure(doc, relaxed.id)
+
+    assert doc.project.magnetic_structure == magnetic_data
+
+
+# --- resolve_underlying_host ---
+
+def test_resolve_host_for_imported_structure(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    assert service.resolve_underlying_host(doc, host.id) == host.id
+
+
+def test_resolve_host_for_pristine_relaxation(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    relaxed = Structure(
+        label="Relaxed",
+        origin="pristine_relaxation",
+        lattice_vectors=[[10.1, 0, 0], [0, 10.1, 0], [0, 0, 10.1]],
+        species=["O"],
+        fractional_positions=[[0, 0, 0]],
+    )
+    doc.structures[relaxed.id] = relaxed
+
+    assert service.resolve_underlying_host(doc, relaxed.id) == relaxed.id
+
+
+def test_resolve_host_through_supercell(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    supercell = _supercell_structure(host.id)
+    doc.structures[supercell.id] = supercell
+
+    assert service.resolve_underlying_host(doc, supercell.id) == host.id
+
+
+def test_resolve_host_through_muon_relaxation_output(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    supercell = _supercell_structure(host.id)
+    doc.structures[supercell.id] = supercell
+    muoniated = Structure(
+        label="Muoniated",
+        origin="muon_relaxation",
+        lattice_vectors=[[20.0, 0, 0], [0, 20.0, 0], [0, 0, 20.0]],
+        species=["O", "H"],
+        fractional_positions=[[0, 0, 0], [0.5, 0.5, 0.5]],
+        parent_structure_id=supercell.id,
+    )
+    doc.structures[muoniated.id] = muoniated
+
+    assert service.resolve_underlying_host(doc, muoniated.id) == host.id
+
+
+def test_resolve_host_broken_chain_returns_none(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    orphan_parent_id = uuid4()
+    muoniated = Structure(
+        label="Orphan",
+        origin="muon_relaxation",
+        lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]],
+        species=["O"],
+        fractional_positions=[[0, 0, 0]],
+        parent_structure_id=orphan_parent_id,
+    )
+    doc.structures[muoniated.id] = muoniated
+
+    assert service.resolve_underlying_host(doc, muoniated.id) is None
+
+
+def test_resolve_host_cycle_returns_none(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    a = Structure(label="A", origin="muon_relaxation", lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]], species=["O"], fractional_positions=[[0, 0, 0]])
+    b = Structure(label="B", origin="muon_relaxation", lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]], species=["O"], fractional_positions=[[0, 0, 0]])
+    a.parent_structure_id = b.id
+    b.parent_structure_id = a.id
+    doc.structures[a.id] = a
+    doc.structures[b.id] = b
+
+    assert service.resolve_underlying_host(doc, a.id) is None
+
+
+def test_resolve_host_unknown_structure_returns_none(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+
+    assert service.resolve_underlying_host(doc, uuid4()) is None
+
+
+# --- validate_sites_match_active_host ---
+
+def test_validate_sites_no_mismatch(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    site = MuonSite(label="S1", status="generated", source_structure_id=host.id)
+    doc.sites[site.id] = site
+
+    assert service.validate_sites_match_active_host(doc, [site.id]) is None
+
+
+def test_validate_sites_mismatch_detected(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    other_host = Structure(label="Other", origin="imported", lattice_vectors=[[5.0, 0, 0], [0, 5.0, 0], [0, 0, 5.0]], species=["C"], fractional_positions=[[0, 0, 0]])
+    doc.structures[other_host.id] = other_host
+    site = MuonSite(label="S1", status="generated", source_structure_id=other_host.id)
+    doc.sites[site.id] = site
+
+    mismatch = service.validate_sites_match_active_host(doc, [site.id])
+
+    assert isinstance(mismatch, SiteHostMismatch)
+    assert mismatch.active_host_id == host.id
+    assert len(mismatch.offenders) == 1
+    offender_site_id, _, offender_source_id, _ = mismatch.offenders[0]
+    assert offender_site_id == site.id
+    assert offender_source_id == other_host.id
+
+
+def test_validate_sites_skips_unknown_site_ids(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    assert service.validate_sites_match_active_host(doc, [uuid4()]) is None
+
+
+def test_validate_sites_no_active_host_returns_none(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    site = MuonSite(label="S1", status="generated", source_structure_id=uuid4())
+    doc.sites[site.id] = site
+
+    assert service.validate_sites_match_active_host(doc, [site.id]) is None
+
+
+# --- validate_structures_match_active_host ---
+
+def test_validate_structures_no_mismatch(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host = _host_structure()
+    service.add_structure(doc, host)
+    supercell = _supercell_structure(host.id)
+    doc.structures[supercell.id] = supercell
+    muoniated = Structure(
+        label="Muoniated",
+        origin="muon_relaxation",
+        lattice_vectors=[[20.0, 0, 0], [0, 20.0, 0], [0, 0, 20.0]],
+        species=["O", "H"],
+        fractional_positions=[[0, 0, 0], [0.5, 0.5, 0.5]],
+        parent_structure_id=supercell.id,
+    )
+    doc.structures[muoniated.id] = muoniated
+
+    assert service.validate_structures_match_active_host(doc, [muoniated.id]) is None
+
+
+def test_validate_structures_mismatch_detected(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+    host_a = _host_structure()
+    service.add_structure(doc, host_a)
+    host_b = Structure(
+        label="Host B",
+        origin="imported",
+        lattice_vectors=[[5.0, 0, 0], [0, 5.0, 0], [0, 0, 5.0]],
+        species=["C"],
+        fractional_positions=[[0, 0, 0]],
+    )
+    doc.structures[host_b.id] = host_b
+    supercell_b = _supercell_structure(host_b.id)
+    doc.structures[supercell_b.id] = supercell_b
+    muoniated_b = Structure(
+        label="Muoniated B",
+        origin="muon_relaxation",
+        lattice_vectors=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]],
+        species=["C", "H"],
+        fractional_positions=[[0, 0, 0], [0.5, 0.5, 0.5]],
+        parent_structure_id=supercell_b.id,
+    )
+    doc.structures[muoniated_b.id] = muoniated_b
+
+    mismatch = service.validate_structures_match_active_host(doc, [muoniated_b.id])
+
+    assert isinstance(mismatch, StructureHostMismatch)
+    assert mismatch.active_host_id == host_a.id
+    assert len(mismatch.offenders) == 1
+    offender_struct_id, _, resolved_host_id, _ = mismatch.offenders[0]
+    assert offender_struct_id == muoniated_b.id
+    assert resolved_host_id == host_b.id
+
+
+def test_validate_structures_no_active_host_returns_none(tmp_path: Path) -> None:
+    service, doc = _make_doc(tmp_path)
+
+    assert service.validate_structures_match_active_host(doc, [uuid4()]) is None

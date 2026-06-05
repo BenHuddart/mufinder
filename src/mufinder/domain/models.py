@@ -93,7 +93,7 @@ class MuonSite:
 
     id: UUID = field(default_factory=uuid4)
     label: str = ""
-    status: str = "candidate"
+    status: str = "generated"
     fractional_position: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     cartesian_position: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     generation_method: str | None = None
@@ -162,11 +162,13 @@ class Project:
     recommended_cutoff_method: str | None = None
     recommended_cutoff_energy_threshold: float | None = None
     recommended_cutoff_force_threshold: float | None = None
+    recommended_cutoff_stress_threshold: float | None = None
     recommended_cutoff_cell_id: str | None = None
     recommended_kpoint_grid: tuple[int, int, int] | None = None
     recommended_kpoint_lattice: list[list[float]] | None = None
     recommended_kpoint_method: str | None = None
     recommended_kpoint_energy_threshold: float | None = None
     recommended_kpoint_force_threshold: float | None = None
+    recommended_kpoint_stress_threshold: float | None = None
     recommended_kpoint_cell_id: str | None = None
     notes: str = ""

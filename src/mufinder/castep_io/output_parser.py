@@ -76,6 +76,7 @@ class CastepResult:
     error_message: str | None = None
     geom_converged: bool | None = None
     final_lattice_vectors: tuple[tuple[float, float, float], ...] | None = None
+    mulliken_atomic_spins: tuple[float, ...] | None = None
 
 
 def parse_castep_output(path: Path) -> CastepResult:
@@ -101,6 +102,7 @@ def parse_castep_output(path: Path) -> CastepResult:
         max_force = _compute_max_force_magnitude(forces)
     max_stress = _compute_max_abs_component(stress)
     final_lattice_vectors = _parse_final_lattice_vectors(lines)
+    mulliken_atomic_spins = parse_castep_mulliken_atomic_spins(output_path)
 
     geom_converged = None
     if _GEOM_SUCCESS_RE.search(text):
@@ -125,7 +127,53 @@ def parse_castep_output(path: Path) -> CastepResult:
         error_message=error_message,
         geom_converged=geom_converged,
         final_lattice_vectors=final_lattice_vectors,
+        mulliken_atomic_spins=mulliken_atomic_spins,
     )
+
+
+def parse_castep_mulliken_atomic_spins(path: Path) -> tuple[float, ...] | None:
+    """Extract per-atom Mulliken spin moments from a CASTEP output when available."""
+
+    lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+
+    header_index = None
+    for index, line in enumerate(lines):
+        if "Atomic Populations (Mulliken)" in line:
+            header_index = index
+
+    if header_index is None:
+        return None
+
+    spins: list[float] = []
+    saw_spin = False
+    for line in lines[header_index + 1 :]:
+        stripped = line.strip()
+        if not stripped:
+            if saw_spin:
+                break
+            continue
+        if stripped.startswith("Bond"):
+            break
+        if set(stripped) in ({"-"}, {"="}):
+            continue
+        if stripped.startswith("Species"):
+            continue
+        tokens = stripped.split()
+        if len(tokens) < 3:
+            continue
+        spin_channel = tokens[2].lower()
+        if spin_channel not in {"up:", "dn:"}:
+            continue
+        if spin_channel == "up:":
+            try:
+                spins.append(float(tokens[-1]))
+                saw_spin = True
+            except ValueError:
+                continue
+
+    if not saw_spin:
+        return None
+    return tuple(spins)
 
 
 def _last_numeric_match(text: str, patterns: tuple[re.Pattern[str], ...]) -> float | None:

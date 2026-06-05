@@ -10,7 +10,7 @@ from uuid import UUID
 
 from PySide6.QtCore import QObject, QProcess, Signal
 
-from mufinder.castep_io.output_parser import CastepResult, parse_castep_output
+from mufinder.castep_io.output_parser import parse_castep_output
 from mufinder.domain.enums import JobStatus
 
 
@@ -22,6 +22,8 @@ class _PendingJob:
     castep_executable: str
     mpirun_path: str
     num_cores: int
+    task_farming_enabled: bool = False
+    num_farms: int | None = None
 
 
 @dataclass(slots=True)
@@ -74,6 +76,8 @@ class LocalJobRunner(QObject):
         castep_executable: str,
         mpirun_path: str,
         num_cores: int,
+        task_farming_enabled: bool = False,
+        num_farms: int | None = None,
     ) -> None:
         """Submit one local CASTEP job for execution."""
 
@@ -84,6 +88,8 @@ class LocalJobRunner(QObject):
             castep_executable=str(castep_executable).strip(),
             mpirun_path=str(mpirun_path).strip(),
             num_cores=max(1, int(num_cores)),
+            task_farming_enabled=bool(task_farming_enabled),
+            num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
         )
 
         validation_error = self._validate_request(request)
@@ -217,7 +223,7 @@ class LocalJobRunner(QObject):
             self._start_queued_jobs()
             return
 
-        output_path = request.job_dir / f"{request.seed_name}.castep"
+        output_path = self._primary_output_path(request)
         if not output_path.exists():
             self.job_failed.emit(job_id, f"Expected CASTEP output was not found: {output_path.name}")
             self.status_changed.emit(job_id, JobStatus.FAILED.value)
@@ -244,3 +250,11 @@ class LocalJobRunner(QObject):
         self.job_finished.emit(job_id, result)
         self.status_changed.emit(job_id, JobStatus.COMPLETED.value)
         self._start_queued_jobs()
+
+    @staticmethod
+    def _primary_output_path(request: _PendingJob) -> Path:
+        if request.task_farming_enabled and (request.num_farms or 1) > 1:
+            farmed = request.job_dir / f"{request.seed_name}_farm001.castep"
+            if farmed.exists():
+                return farmed
+        return request.job_dir / f"{request.seed_name}.castep"

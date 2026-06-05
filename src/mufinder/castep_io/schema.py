@@ -52,6 +52,7 @@ _STARTER_SOURCE_ORDER_OVERRIDES: dict[FileKind, tuple[str, ...]] = {
     ),
     "param": (
         "task",
+        "write_formatted_density",
         "calculate_polarization",
         "write_cell_structure",
         "continuation",
@@ -67,6 +68,8 @@ _STARTER_SOURCE_ORDER_OVERRIDES: dict[FileKind, tuple[str, ...]] = {
         "geom_energy_tol",
         "geom_force_tol",
         "geom_stress_tol",
+        "geom_disp_tol",
+        "geom_frequency_est",
         "md_delta_t",
         "md_num_iter",
         "md_temperature",
@@ -548,6 +551,23 @@ def _build_schema() -> tuple[dict[str, KeywordSpec], dict[str, KeywordSpec], dic
                 continue
             spec = _base_spec(file, base_entry, aliases=tuple(sorted(set(alias_groups.get(canonical, ())))))
             specs[canonical] = spec
+
+        extra_names = [name for name in _starter_canonical_names(file) if name not in specs]
+        for index, name in enumerate(extra_names, start=len(canonical_order)):
+            specs[name] = _starter_spec(
+                file=file,
+                name=name,
+                source_order=index,
+                aliases=tuple(
+                    sorted(
+                        alias
+                        for alias, canonical in MANUAL_ALIAS_MAP.get(file, {}).items()
+                        if canonical == name
+                    )
+                ),
+            )
+        if extra_names:
+            source_names[file] = tuple((*source_names[file], *extra_names))
 
         schema_by_file[file] = specs
 

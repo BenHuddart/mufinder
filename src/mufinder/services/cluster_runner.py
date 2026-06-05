@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from math import ceil
 from pathlib import Path
 import posixpath
+import re
 import shlex
 import tempfile
 from uuid import UUID
@@ -32,6 +33,12 @@ class _TrackedClusterJob:
     cluster_name: str = ""
     status: JobStatus = JobStatus.QUEUED
     terminal: bool = False
+    retrieve_den_fmt: bool = False
+    retrieve_out_cell: bool = False
+    retrieve_phonon: bool = False
+    retrieve_ts: bool = False
+    task_farming_enabled: bool = False
+    num_farms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +72,7 @@ class ClusterJobRunner(QObject):
         self._password_cache: str | None = None
 
         self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(120_000)
+        self._poll_timer.setInterval(60_000)
         self._poll_timer.timeout.connect(self._poll_queue)
 
     @property
@@ -92,9 +99,10 @@ class ClusterJobRunner(QObject):
             return
 
         resolved_password = password
+        auth_method = config.auth_method.strip().lower()
         if (
             resolved_password is None
-            and config.auth_method == "password"
+            and auth_method in {"password", "key"}
             and self._config is not None
             and self._config.name.strip().casefold() == config.name.strip().casefold()
             and self._config.username.strip() == config.username.strip()
@@ -114,7 +122,7 @@ class ClusterJobRunner(QObject):
             queue_check_command_path=config.queue_check_command_path,
             cancel_command_path=config.cancel_command_path,
         )
-        self._password_cache = resolved_password if config.auth_method == "password" else None
+        self._password_cache = resolved_password if auth_method in {"password", "key"} else None
         self.connection_status_changed.emit(True)
         if self._has_active_jobs_for_connected_cluster() and not self._poll_timer.isActive():
             self._poll_timer.start()
@@ -146,6 +154,15 @@ class ClusterJobRunner(QObject):
         queue_name: str = "",
         comment: str = "",
         castep_executable: str = "",
+        retrieve_den_fmt: bool = False,
+        retrieve_out_cell: bool = False,
+        retrieve_phonon: bool = False,
+        retrieve_ts: bool = False,
+        remote_directory: str | None = None,
+        reuse_existing_files: bool = False,
+        allow_existing_remote_directory: bool = False,
+        task_farming_enabled: bool = False,
+        num_farms: int | None = None,
     ) -> str:
         """Upload files, submit scheduler script, and start tracking the remote job."""
 
@@ -157,18 +174,20 @@ class ClusterJobRunner(QObject):
             raise ConnectionError(f"Local job directory does not exist: {local_dir}")
 
         remote_root = working_directory.strip()
-        if not remote_root:
+        normalized_remote_directory = (remote_directory or "").strip()
+        if not remote_root and not normalized_remote_directory:
             raise ConnectionError("Remote working directory is required.")
         self._validate_seed_name(seed_name)
 
-        remote_dir = posixpath.join(remote_root, seed_name)
+        remote_dir = normalized_remote_directory or posixpath.join(remote_root, seed_name)
         ssh.mkdir(remote_dir, exist_ok=True)
 
-        for suffix in (".cell", ".param"):
-            source = local_dir / f"{seed_name}{suffix}"
-            if not source.exists():
-                raise ConnectionError(f"Missing local input file: {source.name}")
-            ssh.put(source, posixpath.join(remote_dir, source.name))
+        if not reuse_existing_files:
+            for suffix in (".cell", ".param"):
+                source = local_dir / f"{seed_name}{suffix}"
+                if not source.exists():
+                    raise ConnectionError(f"Missing local input file: {source.name}")
+                ssh.put(source, posixpath.join(remote_dir, source.name))
 
         cluster_name = self._config.name if self._config is not None else ""
         queue_system = self._config.queue_system if self._config is not None else ""
@@ -181,46 +200,53 @@ class ClusterJobRunner(QObject):
         remote_script = ""
         queue = queue_system.strip().lower()
         if queue != "addqueue":
-            template = load_template_for_cluster(
-                template_script_path,
-                cluster_name=cluster_name,
-                queue_system=queue_system,
-            )
-            nodes = max(1, int(ceil(max(1, int(num_processes)) / max(1, int(cores_per_node)))))
-            if queue == "slurm":
-                command = (
-                    f"srun -n {max(1, int(num_processes))} "
-                    f"{shlex.quote(resolved_castep_executable)} {seed_name}"
-                )
-            else:
-                command = (
-                    f"mpirun -np {max(1, int(num_processes))} "
-                    f"{shlex.quote(resolved_castep_executable)} {seed_name}"
-                )
-            script_content = populate_template(
-                template,
-                {
-                    "job_name": seed_name,
-                    "num_processes": str(max(1, int(num_processes))),
-                    "num_nodes": str(nodes),
-                    "cores_per_node": str(max(1, int(cores_per_node))),
-                    "walltime": walltime,
-                    "working_directory": remote_dir,
-                    "seed_name": seed_name,
-                    "castep_command": command,
-                },
-            )
-
             remote_script = posixpath.join(remote_dir, "run.sh")
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".sh", delete=False) as handle:
-                handle.write(script_content)
-                temp_path = Path(handle.name)
-            try:
-                ssh.put(temp_path, remote_script)
-            finally:
-                temp_path.unlink(missing_ok=True)
+            if not reuse_existing_files:
+                template = load_template_for_cluster(
+                    template_script_path,
+                    cluster_name=cluster_name,
+                    queue_system=queue_system,
+                )
+                nodes = max(1, int(ceil(max(1, int(num_processes)) / max(1, int(cores_per_node)))))
+                if queue == "slurm":
+                    command = (
+                        f"srun -n {max(1, int(num_processes))} "
+                        f"{shlex.quote(resolved_castep_executable)} {seed_name}"
+                    )
+                else:
+                    command = (
+                        f"mpirun -np {max(1, int(num_processes))} "
+                        f"{shlex.quote(resolved_castep_executable)} {seed_name}"
+                    )
+                script_content = populate_template(
+                    template,
+                    {
+                        "job_name": seed_name,
+                        "num_processes": str(max(1, int(num_processes))),
+                        "num_nodes": str(nodes),
+                        "cores_per_node": str(max(1, int(cores_per_node))),
+                        "walltime": walltime,
+                        "working_directory": remote_dir,
+                        "seed_name": seed_name,
+                        "castep_command": command,
+                    },
+                )
 
-            ssh.chmod(remote_script, 0o755)
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    newline="\n",
+                    suffix=".sh",
+                    delete=False,
+                ) as handle:
+                    handle.write(script_content)
+                    temp_path = Path(handle.name)
+                try:
+                    ssh.put(temp_path, remote_script)
+                finally:
+                    temp_path.unlink(missing_ok=True)
+
+                ssh.chmod(remote_script, 0o755)
         request = SchedulerSubmitRequest(
             working_dir=remote_dir,
             seed_name=seed_name,
@@ -244,6 +270,12 @@ class ClusterJobRunner(QObject):
             cluster_name=self._config.name if self._config is not None else "",
             status=JobStatus.QUEUED,
             terminal=False,
+            retrieve_den_fmt=bool(retrieve_den_fmt),
+            retrieve_out_cell=bool(retrieve_out_cell),
+            retrieve_phonon=bool(retrieve_phonon),
+            retrieve_ts=bool(retrieve_ts),
+            task_farming_enabled=bool(task_farming_enabled),
+            num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
         )
 
         self.status_changed.emit(job_id, JobStatus.QUEUED.value)
@@ -293,6 +325,12 @@ class ClusterJobRunner(QObject):
         local_output_dir: Path,
         cluster_name: str,
         status: JobStatus,
+        retrieve_den_fmt: bool = False,
+        retrieve_out_cell: bool = False,
+        retrieve_phonon: bool = False,
+        retrieve_ts: bool = False,
+        task_farming_enabled: bool = False,
+        num_farms: int | None = None,
     ) -> None:
         """Register a persisted cluster job for queue polling and retrieval."""
 
@@ -310,6 +348,12 @@ class ClusterJobRunner(QObject):
             cluster_name=cluster_name.strip(),
             status=status,
             terminal=status not in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING},
+            retrieve_den_fmt=bool(retrieve_den_fmt),
+            retrieve_out_cell=bool(retrieve_out_cell),
+            retrieve_phonon=bool(retrieve_phonon),
+            retrieve_ts=bool(retrieve_ts),
+            task_farming_enabled=bool(task_farming_enabled),
+            num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
         )
         self._tracked_jobs[job_id] = tracked
         if (
@@ -428,6 +472,7 @@ class ClusterJobRunner(QObject):
                 continue
             if mapped == JobStatus.FAILED:
                 entry.terminal = True
+                self._retrieve_error_files(entry)
                 self.job_failed.emit(entry.job_id, "Scheduler reported job failure.")
                 self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
                 continue
@@ -451,15 +496,37 @@ class ClusterJobRunner(QObject):
 
         self.status_changed.emit(entry.job_id, JobStatus.RETRIEVING.value)
         remote_castep = posixpath.join(entry.remote_dir, f"{entry.seed_name}.castep")
+        remote_farm_castep = posixpath.join(entry.remote_dir, f"{entry.seed_name}_farm001.castep")
+        remote_den_fmt = posixpath.join(entry.remote_dir, f"{entry.seed_name}.den_fmt")
         remote_out_cell = posixpath.join(entry.remote_dir, f"{entry.seed_name}-out.cell")
+        remote_phonon = posixpath.join(entry.remote_dir, f"{entry.seed_name}.phonon")
+        remote_ts = posixpath.join(entry.remote_dir, f"{entry.seed_name}.ts")
         local_castep = entry.local_output_dir / f"{entry.seed_name}.castep"
+        local_farm_castep = entry.local_output_dir / f"{entry.seed_name}_farm001.castep"
+        local_den_fmt = entry.local_output_dir / f"{entry.seed_name}.den_fmt"
         local_out_cell = entry.local_output_dir / f"{entry.seed_name}-out.cell"
+        local_phonon = entry.local_output_dir / f"{entry.seed_name}.phonon"
+        local_ts = entry.local_output_dir / f"{entry.seed_name}.ts"
 
         try:
-            ssh.get(remote_castep, local_castep)
-            if ssh.exists(remote_out_cell):
+            self._retrieve_error_files(entry)
+            if entry.task_farming_enabled and (entry.num_farms or 1) > 1 and ssh.exists(remote_farm_castep):
+                if ssh.exists(remote_castep):
+                    ssh.get(remote_castep, local_castep)
+                ssh.get(remote_farm_castep, local_farm_castep)
+                primary_output = local_farm_castep
+            else:
+                ssh.get(remote_castep, local_castep)
+                primary_output = local_castep
+            if entry.retrieve_den_fmt and ssh.exists(remote_den_fmt):
+                ssh.get(remote_den_fmt, local_den_fmt)
+            if entry.retrieve_out_cell and ssh.exists(remote_out_cell):
                 ssh.get(remote_out_cell, local_out_cell)
-            parsed = parse_castep_output(local_castep)
+            if entry.retrieve_phonon and ssh.exists(remote_phonon):
+                ssh.get(remote_phonon, local_phonon)
+            if entry.retrieve_ts and ssh.exists(remote_ts):
+                ssh.get(remote_ts, local_ts)
+            parsed = parse_castep_output(primary_output)
         except Exception as exc:  # noqa: BLE001
             entry.terminal = True
             self.job_failed.emit(entry.job_id, f"Failed to retrieve or parse remote output: {exc}")
@@ -481,6 +548,54 @@ class ClusterJobRunner(QObject):
         entry.terminal = True
         self.job_finished.emit(entry.job_id, parsed)
         self.status_changed.emit(entry.job_id, JobStatus.COMPLETED.value)
+
+    def _retrieve_error_files(self, entry: _TrackedClusterJob) -> None:
+        ssh = self._require_ssh()
+        try:
+            entry.local_output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+
+        for name in self._remote_error_file_names(entry):
+            remote_path = posixpath.join(entry.remote_dir, name)
+            local_path = entry.local_output_dir / name
+            try:
+                if ssh.exists(remote_path):
+                    ssh.get(remote_path, local_path)
+            except Exception:  # noqa: BLE001
+                continue
+
+    def _remote_error_file_names(self, entry: _TrackedClusterJob) -> list[str]:
+        names: list[str] = [f"{entry.seed_name}.err"]
+        remote_job_id = entry.remote_job_id.strip()
+        if remote_job_id and re.fullmatch(r"[A-Za-z0-9_.-]+", remote_job_id):
+            names.append(f"slurm-{remote_job_id}.out")
+        if not hasattr(self._require_ssh(), "listdir"):
+            return names
+
+        try:
+            entries = self._require_ssh().listdir(entry.remote_dir)
+        except Exception:  # noqa: BLE001
+            return names
+
+        numbered = sorted(
+            str(name)
+            for name in entries
+            if re.fullmatch(rf"{re.escape(entry.seed_name)}\.\d+\.err", str(name))
+        )
+        for name in numbered:
+            if name not in names:
+                names.append(name)
+        if remote_job_id and re.fullmatch(r"[A-Za-z0-9_.-]+", remote_job_id):
+            scheduler_outputs = sorted(
+                str(name)
+                for name in entries
+                if re.fullmatch(rf".*-{re.escape(remote_job_id)}\.out", str(name))
+            )
+            for name in scheduler_outputs:
+                if name not in names:
+                    names.append(name)
+        return names
 
     @staticmethod
     def _looks_like_walltime(parsed: CastepResult) -> bool:

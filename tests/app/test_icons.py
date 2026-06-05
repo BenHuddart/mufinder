@@ -46,14 +46,31 @@ def test_semantic_icons_render_even_without_style_icons(monkeypatch, qapp) -> No
     for name in (
         "new_project",
         "open_project",
+        "project_home",
         "save_project",
+        "save_workspace",
         "demo",
         "cluster",
         "settings",
+        "delete",
         "appearance_light",
         "appearance_dark",
         "appearance_system",
+        "help",
     ):
         rendered = icon(name)
         assert not rendered.isNull(), name
         assert not rendered.pixmap(18, 18).isNull(), name
+
+
+def test_project_home_icon_uses_mufinder_semantic_mark(monkeypatch, qapp) -> None:
+    class _StyleThatShouldNotBeUsed:
+        def standardIcon(self, _standard):
+            raise AssertionError("project_home should use the MuFinder semantic icon")
+
+    monkeypatch.setattr(qapp, "style", lambda: _StyleThatShouldNotBeUsed())
+
+    rendered = icon("project_home")
+
+    assert not rendered.isNull()
+    assert not rendered.pixmap(22, 22).isNull()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from mufinder.domain.models import Structure
+from mufinder.castep_io import write_cell, write_param
 from mufinder.workflow.bridge import structure_to_spec
 from mufinder.workflow.relaxation import RelaxationJobConfig, expand_relaxation_jobs
 
@@ -38,9 +39,13 @@ def test_expand_relaxation_jobs_sets_geometry_task_and_row_controls() -> None:
 
     task_values = [keyword.value for keyword in job.param_file.keywords if keyword.name == "task"]
     assert task_values == ["GEOMETRYOPTIMIZATION"]
+    param_values = {keyword.name: keyword.value for keyword in job.param_file.keywords}
+    assert param_values["continuation"] == "DEFAULT"
+    assert "CONTINUATION : DEFAULT" in write_param(job.param_file)
 
     scalar_map = {keyword.name: keyword.value for keyword in job.cell_file.scalars}
     assert scalar_map["fix_all_cell"] is False
+    assert "FIX_ALL_CELL : FALSE" in write_cell(job.cell_file)
     assert job.cell_file.kpoint_mp_grid == (2, 2, 2)
     assert job.provenance["label"] == "row1"
 

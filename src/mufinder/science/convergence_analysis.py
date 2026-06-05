@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 import math
 from typing import Sequence
 
@@ -357,6 +358,146 @@ def delta_threshold_force(
     )
 
 
+def delta_threshold_stress(
+    cutoffs: Sequence[float],
+    max_stresses: Sequence[float],
+    *,
+    threshold: float,
+) -> ConvergenceResult:
+    """Check stress convergence from successive absolute max-stress deltas.
+
+    Mirrors :func:`delta_threshold_force`. The threshold and delta are expressed
+    in GPa, matching CASTEP's ``GEOM_STRESS_TOL`` convention.
+    """
+    x, y = _clean_series(cutoffs, max_stresses)
+    if len(x) < 2:
+        return ConvergenceResult(
+            converged=False,
+            method="stress-delta-threshold",
+            details="Need at least two completed max-stress points for stress convergence analysis.",
+            fallback_suggestion="Run more sweep points with CALCULATE_STRESS=true and retry.",
+        )
+
+    deltas: list[tuple[float, float]] = []
+    converged_value: float | None = None
+    converged_delta: float | None = None
+    for index in range(len(x) - 1):
+        delta = abs(y[index + 1] - y[index])
+        deltas.append((x[index + 1], delta))
+        if converged_value is None and delta <= threshold:
+            converged_value = x[index + 1]
+            converged_delta = delta
+
+    if converged_value is None:
+        return ConvergenceResult(
+            converged=False,
+            method="stress-delta-threshold",
+            details=(
+                "Stress variation did not reach the threshold "
+                f"({threshold:.6g} GPa)."
+            ),
+            deltas=tuple(deltas),
+        )
+
+    return ConvergenceResult(
+        converged=True,
+        method="stress-delta-threshold",
+        converged_value=converged_value,
+        details=(
+            "Stress converged by Delta-Threshold at "
+            f"{converged_value:.8g} eV (delta={float(converged_delta):.6g} GPa)."
+        ),
+        deltas=tuple(deltas),
+    )
+
+
+def _spacing_annotation(
+    grid_label: str,
+    converged_value: float,
+    point_spacings: Mapping[float, float] | None,
+) -> str:
+    """Build a ``"spacing X 1/Ang"`` fragment, or ``""`` if not applicable.
+
+    The (1,1,1) "Gamma-only" grid has no well-defined k-point spacing — every
+    spacing above the cell's coarsest reciprocal transition produces it — so
+    we suppress the annotation rather than emit a value that could not be
+    used to reproduce the grid in CASTEP.
+    """
+    if point_spacings is None:
+        return ""
+    spacing = point_spacings.get(float(converged_value))
+    if spacing is None:
+        return ""
+    # Strip the "Grid: " prefix and parse the n_i tuple. A grid where every
+    # n_i is 1 represents Gamma-only sampling; skip the spacing annotation.
+    grid_text = grid_label.split(":", maxsplit=1)[-1].strip().replace(" ", "")
+    parts = grid_text.split("x")
+    if len(parts) == 3:
+        try:
+            ints = tuple(int(p) for p in parts)
+        except ValueError:
+            ints = None
+        if ints == (1, 1, 1):
+            return ""
+    return f"spacing {spacing:.4g} 1/Ang"
+
+
+def _apply_kpoint_label(
+    result: ConvergenceResult,
+    point_labels: Mapping[float, str],
+    *,
+    quantity: str,
+    delta_unit: str,
+    point_spacings: Mapping[float, float] | None = None,
+) -> ConvergenceResult:
+    """Rewrite the details string of a converged result to use a grid label.
+
+    Called only for k-point sweeps where the raw converged_value is a k-point
+    count (e.g. 27) that should be displayed as a grid string (e.g. "3 x 3 x 3")
+    rather than a bare number followed by "eV". When ``point_spacings`` is
+    supplied, the corresponding k-point spacing is appended in parentheses.
+    """
+    if not result.converged or result.converged_value is None:
+        return result
+    grid_label = point_labels.get(float(result.converged_value))
+    if grid_label is None:
+        return result
+    converged_delta = next(
+        (d for v, d in (result.deltas or ()) if v == result.converged_value),
+        None,
+    )
+    method_label = result.method.replace("-", " ").title() if result.method else "Delta-Threshold"
+    details = f"{quantity} converged by {method_label} at {grid_label}"
+
+    annotations: list[str] = []
+    spacing_text = _spacing_annotation(grid_label, result.converged_value, point_spacings)
+    if spacing_text:
+        annotations.append(spacing_text)
+    if converged_delta is not None:
+        annotations.append(f"delta={converged_delta:.6g} {delta_unit}")
+    if annotations:
+        details += f" ({', '.join(annotations)})"
+    details += "."
+    return replace(result, details=details)
+
+
+def apply_kpoint_label_to_stress_result(
+    result: ConvergenceResult,
+    point_labels: Mapping[float, str],
+    *,
+    point_spacings: Mapping[float, float] | None = None,
+) -> ConvergenceResult:
+    """Rewrite a stress :class:`ConvergenceResult` to use a k-point grid label."""
+
+    return _apply_kpoint_label(
+        result,
+        point_labels,
+        quantity="Stress",
+        delta_unit="GPa",
+        point_spacings=point_spacings,
+    )
+
+
 def analyze_kpoint_convergence(
     *,
     kpoint_counts: Sequence[float],
@@ -365,8 +506,17 @@ def analyze_kpoint_convergence(
     num_atoms: int,
     energy_threshold: float,
     force_threshold: float,
+    point_labels: Mapping[float, str] | None = None,
+    point_spacings: Mapping[float, float] | None = None,
 ) -> tuple[ConvergenceResult, ConvergenceResult]:
-    """Run k-point convergence using delta-threshold only over k-point counts."""
+    """Run k-point convergence using delta-threshold only over k-point counts.
+
+    When *point_labels* is supplied (mapping each k-point count to its grid
+    string, e.g. ``{27.0: "3 x 3 x 3"}``), the ``details`` fields of the
+    returned results are rewritten to reference the grid label instead of the
+    raw numeric count. When *point_spacings* is also supplied, the
+    corresponding spacing (in 1/Ang) is appended to the details string.
+    """
 
     energy = delta_threshold_energy(
         kpoint_counts,
@@ -375,6 +525,23 @@ def analyze_kpoint_convergence(
         threshold=energy_threshold,
     )
     force = delta_threshold_force(kpoint_counts, max_forces, threshold=force_threshold)
+
+    if point_labels is not None:
+        energy = _apply_kpoint_label(
+            energy,
+            point_labels,
+            quantity="Energy",
+            delta_unit="eV/atom",
+            point_spacings=point_spacings,
+        )
+        force = _apply_kpoint_label(
+            force,
+            point_labels,
+            quantity="Force",
+            delta_unit="eV/Ang",
+            point_spacings=point_spacings,
+        )
+
     return energy, force
 
 
@@ -406,12 +573,18 @@ def analyze_convergence(
 def recommended_value(
     energy_result: ConvergenceResult,
     force_result: ConvergenceResult,
+    stress_result: ConvergenceResult | None = None,
 ) -> float | None:
-    """Return the combined recommendation from energy and force convergence results."""
+    """Return the combined recommendation from energy, force and (optionally) stress.
+
+    When ``stress_result`` is supplied it is treated as a co-equal criterion: the
+    returned value is the maximum converged value among all supplied results.
+    """
+    results: tuple[ConvergenceResult | None, ...] = (energy_result, force_result, stress_result)
     candidates = [
         result.converged_value
-        for result in (energy_result, force_result)
-        if result.converged and result.converged_value is not None
+        for result in results
+        if result is not None and result.converged and result.converged_value is not None
     ]
     if not candidates:
         return None
@@ -421,7 +594,8 @@ def recommended_value(
 def recommended_cutoff(
     energy_result: ConvergenceResult,
     force_result: ConvergenceResult,
+    stress_result: ConvergenceResult | None = None,
 ) -> float | None:
     """Backward-compatible helper name for cutoff workflows."""
 
-    return recommended_value(energy_result, force_result)
+    return recommended_value(energy_result, force_result, stress_result)

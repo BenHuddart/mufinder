@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import re
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIntValidator
+from PySide6.QtGui import QIntValidator, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -39,6 +39,7 @@ from mufinder.app.convergence_display import (
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.theme import (
     status_brush,
     style_section_subtitle,
@@ -56,6 +57,11 @@ from mufinder.castep_io.gui_metadata import (
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.science.kpoint_grids import generate_kpoint_grids, lattice_matches
+from mufinder.app.selection_snapshot import (
+    SelectionSnapshotPushButton,
+    SelectionSnapshotToolButton,
+    resolve_target_keys,
+)
 
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
     "lattice_cart",
@@ -63,35 +69,14 @@ _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
     "positions_frac",
     "positions_abs",
 }
-_KPOINT_SORT_ANCHOR_NAMES = ("basis_precision", "cut_off_energy")
 _ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
 _PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
-_LOCKED_GRID_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"submitting"}
+_LOCKED_GRID_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"cancelled"}
+_DEFAULT_KPOINT_SPACING = 0.02
 
 
 def _reorder_specs_with_kpoint_anchor(specs: list[KeywordSpec]) -> list[KeywordSpec]:
-    kpoint_name = "kpoint_mp_grid"
-    kpoint_index = next((index for index, spec in enumerate(specs) if spec.name == kpoint_name), None)
-    if kpoint_index is None:
-        return specs
-
-    anchor_indices = [
-        index
-        for index, spec in enumerate(specs)
-        if spec.name in _KPOINT_SORT_ANCHOR_NAMES
-    ]
-    if not anchor_indices:
-        return specs
-
-    target_index = max(anchor_indices) + 1
-    if kpoint_index == target_index:
-        return specs
-
-    kpoint_spec = specs.pop(kpoint_index)
-    if kpoint_index < target_index:
-        target_index -= 1
-    specs.insert(target_index, kpoint_spec)
-    return specs
+    return reorder_workflow_parameter_specs(specs)
 
 
 class KPointSpacingDialog(QDialog):
@@ -102,7 +87,7 @@ class KPointSpacingDialog(QDialog):
         self.setWindowTitle("Generate K-Point Grids")
 
         defaults = defaults or {}
-        spacing = float(defaults.get("spacing", 0.1))
+        spacing = float(defaults.get("spacing", _DEFAULT_KPOINT_SPACING))
         replace_existing = bool(defaults.get("replace_existing", False))
 
         self._spacing = DecimalLineEdit(self)
@@ -110,6 +95,11 @@ class KPointSpacingDialog(QDialog):
         self._spacing.setRange(0.001, 10.0)
         self._spacing.setSingleStep(0.01)
         self._spacing.setValue(spacing)
+        self._spacing.setToolTip(
+            "Minimum KPOINT_MP_SPACING for the sweep, in 1/Ang. The generator "
+            "walks CASTEP's spacing curve and emits every distinct grid from "
+            "(1, 1, 1) up to the grid CASTEP would produce at this spacing."
+        )
 
         self._replace_existing = QCheckBox("Replace existing grid list", self)
         self._replace_existing.setChecked(replace_existing)
@@ -239,9 +229,10 @@ class KPointConvergenceWidget(QWidget):
         self._project_default_cutoff = QLabel("Not set")
 
         self._range_state: dict[str, object] = {
-            "spacing": 0.1,
+            "spacing": _DEFAULT_KPOINT_SPACING,
             "replace_existing": False,
         }
+        self._parameter_species_options: tuple[str, ...] = ()
 
         self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels(
@@ -288,7 +279,7 @@ class KPointConvergenceWidget(QWidget):
         self._simulation_cell_summary = QLabel("Using single unit cell.")
         self._simulation_cell_summary.setWordWrap(True)
         self._simulation_cell_combo = QComboBox()
-        self._simulation_cell_create_button = QPushButton("Create From Preview...")
+        self._simulation_cell_create_button = QPushButton("Manage Supercells...")
         self._simulation_cell_use_unit_button = QPushButton("Use Unit Cell")
 
         self._runtime_states: dict[tuple[int, int, int], SweepPointRunState] = {}
@@ -314,6 +305,12 @@ class KPointConvergenceWidget(QWidget):
 
         self._build_layout()
         self._connect_signals()
+        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
+        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._delete_shortcut.activated.connect(self._remove_selected_or_current_grids)
+        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._backspace_shortcut.activated.connect(self._remove_selected_or_current_grids)
 
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
@@ -471,6 +468,7 @@ class KPointConvergenceWidget(QWidget):
         kpoint_method: str | None,
         energy_threshold: float | None,
         force_threshold: float | None,
+        stress_threshold: float | None = None,
     ) -> None:
         self._project_default_grid.setText(format_kpoint_grid(kpoint_grid))
         self._project_default_method.setText(format_convergence_method(kpoint_method))
@@ -478,6 +476,7 @@ class KPointConvergenceWidget(QWidget):
             format_convergence_criteria(
                 energy_threshold=energy_threshold,
                 force_threshold=force_threshold,
+                stress_threshold=stress_threshold,
             )
         )
 
@@ -518,6 +517,11 @@ class KPointConvergenceWidget(QWidget):
             self._simulation_cell_use_unit_button.setEnabled(enabled)
         finally:
             self._updating_simulation_cell = False
+
+    def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
+        self._parameter_species_options = tuple(
+            dict.fromkeys(option for item in species_options if (option := str(item).strip()))
+        )
 
     def _on_simulation_cell_combo_changed(self, index: int) -> None:
         if self._updating_simulation_cell:
@@ -618,19 +622,21 @@ class KPointConvergenceWidget(QWidget):
         self._table.setItem(row, self._TOTAL_ENERGY_COLUMN, self._make_item("", editable=False))
         self._table.setItem(row, self._MAX_FORCE_COLUMN, self._make_item("", editable=False))
 
-        configure_button = QPushButton(self._table)
+        configure_button = SelectionSnapshotPushButton(self._table)
+        configure_button.selection_snapshot_key = grid
         self._style_configure_button(configure_button)
         configure_button.clicked.connect(
-            lambda _checked=False, button=configure_button: self._configure_grid_button_clicked(button)
+            lambda _checked=False, btn=configure_button: self._configure_grid_button_clicked(btn)
         )
         self._table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
 
-        remove_button = QToolButton(self._table)
+        remove_button = SelectionSnapshotToolButton(self._table)
+        remove_button.selection_snapshot_key = grid
         remove_button.setText("x")
         remove_button.setAutoRaise(True)
         remove_button.setToolTip("Remove this k-point grid")
         remove_button.clicked.connect(
-            lambda _checked=False, button=remove_button: self._remove_grid_button_clicked(button)
+            lambda _checked=False, btn=remove_button: self._remove_grid_button_clicked(btn)
         )
         self._table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
         self._refresh_row(row)
@@ -743,31 +749,53 @@ class KPointConvergenceWidget(QWidget):
             return
         self._open_grid_parameter_dialog(grids)
 
-    def _configure_grid_button_clicked(self, button: QPushButton) -> None:
-        for row in range(self._table.rowCount()):
-            if self._table.cellWidget(row, self._CONFIGURE_COLUMN) is button:
-                grid = self._grid_value_at_row(row, strict=False)
-                if grid is not None:
-                    self._open_grid_parameter_dialog((grid,))
-                return
+    def _configure_grid_button_clicked(self, button: SelectionSnapshotPushButton) -> None:
+        clicked_grid = button.selection_snapshot_key
+        if not isinstance(clicked_grid, tuple):
+            return
+        snapshot_keys = [
+            self._grid_value_at_row(r, strict=False)
+            for r in button.selection_snapshot_rows
+        ]
+        grids = resolve_target_keys(
+            button,
+            clicked_key=clicked_grid,
+            snapshot_keys=[g for g in snapshot_keys if g is not None],
+            eligibility=lambda g: True,
+            parent=self,
+            title="Configure parameters for selected grids?",
+            message="Open a shared parameter dialog for all selected k-point grid rows?",
+        )
+        if grids:
+            self._open_grid_parameter_dialog(grids)
 
     def _open_grid_parameter_dialog(self, grids: tuple[tuple[int, int, int], ...]) -> None:
         if not grids:
             return
 
         intro = "Included grids: " + ", ".join(self._format_grid(grid) for grid in sorted(grids))
-        dialog = ParameterDialog(
-            specs=self._specs,
-            workflow_stage="convergence_kpoint",
-            locked_values=self._shared_locked_values(),
-            intro_text=intro,
-            parent=self,
+        read_only = self._grid_parameters_locked(grids)
+        dialog_kwargs = {
+            "specs": self._specs,
+            "workflow_stage": "convergence_kpoint",
+            "locked_values": self._shared_locked_values(),
+            "intro_text": intro,
+            "species_options": self._parameter_species_options,
+            "parent": self,
+        }
+        if read_only:
+            dialog_kwargs["read_only"] = True
+        dialog = ParameterDialog(**dialog_kwargs)
+        dialog.setWindowTitle("Inspect K-Point Parameters" if read_only else "Configure K-Point Parameters")
+        kpoint_hint = kpoint_exclusive_hint(
+            self._effective_params_for_grid(g) for g in grids
         )
-        dialog.setWindowTitle("Configure K-Point Parameters")
-        dialog.set_values(self._common_parameter_values_for_grids(grids))
+        dialog.set_values(self._common_parameter_values_for_grids(grids), preferred_exclusive=kpoint_hint)
         dialog.set_advanced_names(self._advanced_names_for_grids(grids))
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if read_only:
             return
 
         values = self._sanitize_parameter_mapping(dialog.collect_values())
@@ -831,11 +859,38 @@ class KPointConvergenceWidget(QWidget):
     def _is_grid_customized(self, grid: tuple[int, int, int]) -> bool:
         return grid in self._parameter_values or grid in self._added_advanced
 
-    def _remove_grid_button_clicked(self, button: QToolButton) -> None:
-        for row in range(self._table.rowCount()):
-            if self._table.cellWidget(row, self._REMOVE_COLUMN) is button:
-                self._request_grid_removals((row,))
-                return
+    def _grid_parameters_locked(self, grids: tuple[tuple[int, int, int], ...]) -> bool:
+        for grid in grids:
+            runtime = self._runtime_states.get(tuple(grid))
+            status = "" if runtime is None else runtime.status.strip().lower()
+            if status in _LOCKED_GRID_EDIT_STATUSES:
+                return True
+        return False
+
+    def _remove_grid_button_clicked(self, button: SelectionSnapshotToolButton) -> None:
+        clicked_grid = button.selection_snapshot_key
+        if not isinstance(clicked_grid, tuple):
+            return
+        snapshot_keys = [
+            self._grid_value_at_row(r, strict=False)
+            for r in button.selection_snapshot_rows
+        ]
+        grids = resolve_target_keys(
+            button,
+            clicked_key=clicked_grid,
+            snapshot_keys=[g for g in snapshot_keys if g is not None],
+            eligibility=lambda g: True,
+            parent=self,
+            title="Remove selected grids?",
+            message="Remove all selected k-point grid rows?",
+        )
+        rows = tuple(
+            r
+            for r in range(self._table.rowCount())
+            if self._grid_value_at_row(r, strict=False) in grids
+        )
+        if rows:
+            self._request_grid_removals(rows)
 
     def _request_grid_removals(self, rows: tuple[int, ...]) -> None:
         if not rows:
@@ -849,6 +904,18 @@ class KPointConvergenceWidget(QWidget):
 
         if grids:
             self.remove_grid_requested.emit(grids)
+
+    def _remove_selected_or_current_grids(self) -> None:
+        if self._table.state() == QAbstractItemView.State.EditingState:
+            return
+        selected_rows = self._selected_rows()
+        if selected_rows:
+            self._request_grid_removals(selected_rows)
+            return
+
+        current_row = self._table.currentRow()
+        if current_row >= 0:
+            self._request_grid_removals((current_row,))
 
     def remove_grids(self, grids: list[tuple[int, int, int]] | tuple[tuple[int, int, int], ...]) -> None:
         targets = {tuple(int(component) for component in grid) for grid in grids}
@@ -928,7 +995,17 @@ class KPointConvergenceWidget(QWidget):
         configure_button = self._table.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
             customized = grid is not None and self._is_grid_customized(grid)
-            configure_button.setText("Configured..." if customized else "Configure...")
+            locked = status_normalized in _LOCKED_GRID_EDIT_STATUSES
+            configure_button.setText("Configured..." if customized or locked else "Configure...")
+            configure_button.setToolTip(
+                "Inspect the CASTEP parameters used for this grid."
+                if locked
+                else (
+                    "Edit custom parameters for this grid."
+                    if customized
+                    else "Configure CASTEP parameters for this grid."
+                )
+            )
 
     def _refresh_batch_button_state(self) -> None:
         self._batch_configure_button.setEnabled(bool(self._selected_grids()))
@@ -1036,7 +1113,7 @@ class KPointConvergenceWidget(QWidget):
         self._restoring_form_state = True
         try:
             self._range_state = {
-                "spacing": 0.1,
+                "spacing": _DEFAULT_KPOINT_SPACING,
                 "replace_existing": False,
             }
             self._parameter_values = {}

@@ -285,6 +285,8 @@ def test_generate_cluster_castep_keywords_json_scheduler_mode_downloads_and_clea
     uploaded_generator = next(
         remote_path for action, remote_path in ssh.commands if action == "put" and str(remote_path).endswith("generate_keywords.py")
     )
+    assert b"\r\n" not in ssh.remote_files[uploaded_runner]
+    assert b"\r\n" not in ssh.remote_files[uploaded_generator]
     assert "module load CASTEP" in ssh.remote_files[uploaded_runner].decode("utf-8")
     generator_text = ssh.remote_files[uploaded_generator].decode("utf-8")
     assert "from __future__ import annotations" in generator_text

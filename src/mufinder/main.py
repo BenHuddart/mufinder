@@ -27,6 +27,12 @@ def _theme_helpers():
     return apply_theme, load_theme_mode
 
 
+def _install_text_editing_shortcuts(app: QApplication) -> None:
+    from mufinder.app.text_editing import install_text_editing_shortcuts
+
+    install_text_editing_shortcuts(app)
+
+
 def _app_icon():
     from mufinder.branding import app_icon
 
@@ -101,6 +107,7 @@ def run() -> int:
     app.setApplicationName("MuFinder")
     app.setOrganizationName("MuFinder")
     app.setWindowIcon(_app_icon())
+    _install_text_editing_shortcuts(app)
 
     splash = _splash_screen_ctor()()
     splash.show()

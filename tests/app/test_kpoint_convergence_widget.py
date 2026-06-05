@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QDialog, QDialogButtonBox
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QPushButton
 
 import mufinder.app.kpoint_convergence_widget as kpoint_widget_module
 from mufinder.app.convergence_types import SweepPointRunState
@@ -43,7 +45,7 @@ def test_kpoint_widget_generates_grids_from_spacing(qapp, monkeypatch: pytest.Mo
 
     widget._open_spacing_dialog()
 
-    assert _table_grids(widget) == [(1, 1, 1), (2, 2, 2), (3, 2, 2)]
+    assert _table_grids(widget) == [(1, 1, 1), (2, 1, 1), (2, 2, 1), (3, 2, 2)]
     state = widget.collect_state()
     assert state["generated_for_cell_id"] == "11111111-1111-1111-1111-111111111111"
 
@@ -107,6 +109,18 @@ def test_kpoint_spacing_dialog_round_trip_state(qapp) -> None:
     assert dialog.spacing() == pytest.approx(0.25)
     assert dialog.replace_existing() is True
     assert dialog.defaults_state() == {"spacing": pytest.approx(0.25), "replace_existing": True}
+
+
+def test_kpoint_spacing_default_is_dense_sampling(qapp) -> None:
+    dialog = KPointSpacingDialog()
+    widget = KPointConvergenceWidget()
+
+    assert dialog.spacing() == pytest.approx(0.02)
+    assert widget.collect_state()["range"]["spacing"] == pytest.approx(0.02)
+
+    widget.set_form_state({})
+
+    assert widget.collect_state()["range"]["spacing"] == pytest.approx(0.02)
 
 
 def test_kpoint_grid_dialog_enforces_integer_triplet(qapp) -> None:
@@ -334,6 +348,65 @@ def test_kpoint_widget_open_grid_parameter_dialog_applies_to_all_selected(
     assert widget._added_advanced[(2, 2, 2)] == {"basis_precision"}
 
 
+def test_kpoint_widget_queued_grid_parameter_dialog_is_read_only(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget._parameter_values[(2, 2, 2)] = {"max_scf_cycles": 50}
+    widget.set_runtime_states({(2, 2, 2): SweepPointRunState(status="queued")})
+
+    observed: dict[str, object] = {}
+
+    def fake_exec(dialog) -> int:
+        observed["read_only"] = dialog._read_only
+        observed["title"] = dialog.windowTitle()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(kpoint_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(
+        kpoint_widget_module.ParameterDialog,
+        "collect_values",
+        lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
+    )
+
+    widget._open_grid_parameter_dialog(((2, 2, 2),))
+
+    assert observed == {"read_only": True, "title": "Inspect K-Point Parameters"}
+    assert widget._parameter_values[(2, 2, 2)]["max_scf_cycles"] == 50
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+    assert configure_button.text() == "Configured..."
+
+
+def test_kpoint_widget_cancelled_grid_parameters_are_editable(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget._parameter_values[(2, 2, 2)] = {"max_scf_cycles": 50}
+    widget.set_runtime_states({(2, 2, 2): SweepPointRunState(status="cancelled")})
+
+    observed: dict[str, object] = {}
+
+    def fake_exec(dialog) -> int:
+        observed["read_only"] = dialog._read_only
+        observed["title"] = dialog.windowTitle()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(kpoint_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(
+        kpoint_widget_module.ParameterDialog,
+        "collect_values",
+        lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
+    )
+
+    widget._open_grid_parameter_dialog(((2, 2, 2),))
+
+    assert observed == {"read_only": False, "title": "Configure K-Point Parameters"}
+    assert widget._parameter_values[(2, 2, 2)]["max_scf_cycles"] == 99
+
+
 def test_kpoint_widget_parameter_dialog_prefers_cutoff_and_shows_spin_polarized(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -389,8 +462,9 @@ def test_kpoint_widget_parameter_dialog_places_kpoint_below_basis_controls(
     assert isinstance(names, list)
     assert "basis_precision" in names
     assert "cut_off_energy" in names
+    assert "elec_energy_tol" in names
     assert "kpoint_mp_grid" in names
-    assert names.index("kpoint_mp_grid") == max(names.index("basis_precision"), names.index("cut_off_energy")) + 1
+    assert names.index("basis_precision") < names.index("cut_off_energy") < names.index("elec_energy_tol") < names.index("kpoint_mp_grid")
 
 
 def test_kpoint_widget_remove_grids_prunes_configs(qapp) -> None:
@@ -407,6 +481,49 @@ def test_kpoint_widget_remove_grids_prunes_configs(qapp) -> None:
 
     assert (2, 2, 2) not in widget._parameter_values
     assert _table_grids(widget) == [(3, 3, 2)]
+
+
+def test_kpoint_widget_delete_shortcut_requests_selected_grid_removal(qapp) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget._add_grid((3, 3, 2))
+    requested: list[list[tuple[int, int, int]]] = []
+    widget.remove_grid_requested.connect(lambda grids: requested.append(list(grids)))
+
+    widget._table.selectRow(1)
+    widget._delete_shortcut.activated.emit()
+
+    assert requested == [[(3, 3, 2)]]
+
+
+def test_kpoint_widget_backspace_shortcut_requests_current_grid_removal(qapp) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    requested: list[list[tuple[int, int, int]]] = []
+    widget.remove_grid_requested.connect(lambda grids: requested.append(list(grids)))
+
+    widget._table.setCurrentCell(0, widget._GRID_COLUMN)
+    widget._backspace_shortcut.activated.emit()
+
+    assert requested == [[(2, 2, 2)]]
+
+
+def test_kpoint_widget_delete_key_requests_selected_grid_from_child_focus(qapp) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget._add_grid((3, 3, 2))
+    requested: list[list[tuple[int, int, int]]] = []
+    widget.remove_grid_requested.connect(lambda grids: requested.append(list(grids)))
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    widget.show()
+    widget._table.selectRow(0)
+    configure_button.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(configure_button, Qt.Key.Key_Delete)
+
+    assert requested == [[(2, 2, 2)]]
 
 
 def test_kpoint_widget_build_config_warns_for_invalid_grids_and_duplicates(

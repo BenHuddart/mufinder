@@ -22,6 +22,17 @@ def _find_item_by_route(parent, route: str):
     return None
 
 
+def _find_tree_item_by_route(window: MainWindow, route: str):
+    for index in range(window._project_tree.topLevelItemCount()):
+        root = window._project_tree.topLevelItem(index)
+        if root is None:
+            continue
+        item = _find_item_by_route(root, route)
+        if item is not None:
+            return item
+    return None
+
+
 def test_main_window_adds_and_deletes_comparison_subtab(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
@@ -54,10 +65,8 @@ def test_main_window_adds_and_deletes_comparison_subtab(qapp, tmp_path: Path) ->
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    root = window._project_tree.topLevelItem(0)
-    assert root is not None
     route = window._comparison_route(table.id)
-    item = _find_item_by_route(root, route)
+    item = _find_tree_item_by_route(window, route)
     assert item is not None
 
     window._set_active_route(route)

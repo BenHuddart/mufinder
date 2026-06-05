@@ -7,7 +7,6 @@ from math import isclose
 from typing import Iterable
 
 from .schema import (
-    CELL_KEYWORDS,
     PARAM_KEYWORDS,
     BlockColumnSpec,
     FileKind,
@@ -346,9 +345,14 @@ def _validate_block_section(file: FileKind, block: BlockSection) -> None:
             raise CastepValidationError(
                 f"{spec.name.upper()} row count must be a multiple of {schema.row_group_size}."
             )
+    if spec.name == "hubbard_u" and block.unit is not None and block.unit.strip().lower() not in {"ev", "ha"}:
+        raise CastepValidationError("HUBBARD_U units must be eV or Ha.")
     for row in block.rows:
         if not row:
             raise CastepValidationError(f"{spec.name.upper()} block rows may not be empty.")
+        if spec.name == "hubbard_u":
+            _validate_hubbard_u_row(row)
+            continue
         if schema is not None and schema.columns:
             if len(row) != len(schema.columns):
                 raise CastepValidationError(
@@ -364,6 +368,48 @@ def _validate_block_section(file: FileKind, block: BlockSection) -> None:
                 f"KPOINTS_LIST weights must sum to 1.0; received {total_weight:.12g}."
             )
 
+
+def _validate_hubbard_u_row(row: tuple[ScalarPrimitive, ...]) -> None:
+    if not isinstance(row[0], str) or not row[0].strip():
+        raise CastepValidationError("HUBBARD_U rows must start with a species label.")
+
+    index = 1
+    if len(row) > 1 and ":" not in str(row[1]):
+        atom_index = row[1]
+        if not isinstance(atom_index, int) or isinstance(atom_index, bool) or atom_index <= 0:
+            raise CastepValidationError("HUBBARD_U atom indices must be positive integers.")
+        index = 2
+
+    seen_orbitals: set[str] = set()
+    while index < len(row):
+        token = row[index]
+        if not isinstance(token, str) or ":" not in token:
+            raise CastepValidationError("HUBBARD_U orbital entries must use tokens such as 'd: 2.4'.")
+        orbital, inline_value = token.split(":", maxsplit=1)
+        orbital = orbital.strip().lower()
+        if orbital not in {"s", "p", "d", "f"}:
+            raise CastepValidationError("HUBBARD_U orbitals must be one of s, p, d, or f.")
+        if orbital in seen_orbitals:
+            raise CastepValidationError(f"HUBBARD_U orbital '{orbital}' is defined more than once in a row.")
+        seen_orbitals.add(orbital)
+
+        if inline_value.strip():
+            raw_value: object = inline_value.strip()
+        else:
+            index += 1
+            if index >= len(row):
+                raise CastepValidationError(f"HUBBARD_U orbital '{orbital}' is missing a U value.")
+            raw_value = row[index]
+
+        if not isinstance(raw_value, (int, float)) or isinstance(raw_value, bool):
+            try:
+                float(str(raw_value))
+            except ValueError as exc:
+                raise CastepValidationError("HUBBARD_U values must be numeric.") from exc
+        index += 1
+
+    if not seen_orbitals:
+        raise CastepValidationError("HUBBARD_U rows must define at least one orbital U value.")
 
 def _validate_scalar_value(file: FileKind, assignment: KeywordAssignment) -> None:
     spec = get_keyword_spec(file, assignment.name)

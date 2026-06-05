@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Iterable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QDialog,
     QDialogButtonBox,
     QGridLayout,
@@ -39,7 +41,12 @@ from mufinder.castep_io.gui_metadata import (
 from mufinder.castep_io.schema import KeywordSpec, keyword_catalog_source_info
 
 _ALWAYS_VISIBLE_ADVANCED_NAMES = ("spin_polarized",)
-_PREFERRED_EXCLUSIVE_NAMES = ("cut_off_energy",)
+# Fallback preference order when the caller has not supplied a
+# preferred_exclusive hint via set_values.  When both halves of an exclusive
+# pair are pre-filled for UX toggle convenience, callers must pass the hint;
+# this constant is consulted only when they do not (e.g. neither member has
+# been configured yet and the dialog should default to a sensible choice).
+_PREFERRED_EXCLUSIVE_NAMES = ("cut_off_energy", "kpoint_mp_grid")
 
 
 @dataclass(slots=True)
@@ -131,6 +138,9 @@ class ParameterDialog(QDialog):
         workflow_stage: str,
         locked_values: dict[str, str] | None = None,
         intro_text: str | None = None,
+        read_only: bool = False,
+        editable_names: Iterable[str] | None = None,
+        species_options: Sequence[str] = (),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -138,8 +148,16 @@ class ParameterDialog(QDialog):
         self.resize(900, 720)
 
         self._workflow_stage = workflow_stage
-        self._task = infer_task(workflow_stage)
         self._locked_values = dict(locked_values or {})
+        locked_task = str(self._locked_values.get("task", "")).strip().upper()
+        self._task = locked_task or infer_task(workflow_stage)
+        self._read_only = bool(read_only)
+        self._editable_names = (
+            None
+            if editable_names is None
+            else {str(name).strip() for name in editable_names if str(name).strip()}
+        )
+        self._species_options = tuple(species_options)
         self._task_spec: KeywordSpec | None = None
         self._task_editor: ParamEditorBase | None = None
 
@@ -161,6 +179,14 @@ class ParameterDialog(QDialog):
         self._row_default_values: dict[str, object] = {}
         self._exclusive_groups: dict[tuple[str, ...], set[str]] = {}
         self._exclusive_selection: dict[tuple[str, ...], str] = {}
+        # QButtonGroups handle Qt-level mutual exclusion across radios that
+        # live in different parent widgets (each row's radio is parented to
+        # its own label container, so Qt's auto-exclusivity does not span
+        # rows by itself). Keyed by the same group_key used for selection.
+        self._exclusive_button_groups: dict[tuple[str, ...], QButtonGroup] = {}
+        # Name that should take priority in exclusive-group selection when
+        # set by the caller via set_values(..., preferred_exclusive=...).
+        self._preferred_exclusive: str | None = None
 
         root = QVBoxLayout(self)
 
@@ -185,9 +211,15 @@ class ParameterDialog(QDialog):
         task_row = QHBoxLayout()
         task_row.addWidget(QLabel("Task"))
         if self._task_spec is not None and not self._task_locked():
-            self._task_editor = create_param_editor(self._task_spec, self)
+            self._task_editor = create_param_editor(
+                self._task_spec,
+                self,
+                species_options=self._species_options,
+            )
             self._task_editor.set_value(self._task)
             self._task_editor.value_changed.connect(self._on_task_changed)
+            if self._read_only or not self._is_name_editable("task"):
+                self._task_editor.setEnabled(False)
             task_row.addWidget(self._task_editor, 1)
         else:
             self._task_display = QLineEdit(self._task)
@@ -223,18 +255,35 @@ class ParameterDialog(QDialog):
         controls_row.addStretch(1)
         root.addLayout(controls_row)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            parent=self,
-        )
-        buttons.accepted.connect(self._accept_if_valid)
-        buttons.rejected.connect(self.reject)
+        if self._read_only:
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=self)
+            buttons.rejected.connect(self.reject)
+        else:
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+                parent=self,
+            )
+            buttons.accepted.connect(self._accept_if_valid)
+            buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
         self._rebuild_rows()
 
-    def set_values(self, values: dict[str, Any]) -> None:
-        """Apply externally supplied values to known rows."""
+    def set_values(
+        self,
+        values: dict[str, Any],
+        *,
+        preferred_exclusive: str | None = None,
+    ) -> None:
+        """Apply externally supplied values to known rows.
+
+        ``preferred_exclusive`` names the member of an exclusive group that
+        should be selected, overriding the built-in preference order.  Use
+        this when the caller has pre-filled both halves of a mutually exclusive
+        pair for UX toggling convenience and needs to preserve which half was
+        the true active choice (e.g. ``"kpoint_mp_spacing"`` vs
+        ``"kpoint_mp_grid"``).
+        """
 
         for name, value in values.items():
             if name == "task":
@@ -249,6 +298,7 @@ class ParameterDialog(QDialog):
                 self._added_advanced.add(name)
 
         # Recompute exclusive defaults from newly provided values.
+        self._preferred_exclusive = preferred_exclusive
         self._exclusive_selection.clear()
         self._rebuild_rows(preserve_current=False)
 
@@ -336,6 +386,13 @@ class ParameterDialog(QDialog):
             return True
         spec = self._specs_by_name[name]
         return keyword_locked_in_workflow(spec, workflow_stage=self._workflow_stage)
+
+    def _is_name_editable(self, name: str) -> bool:
+        if self._read_only:
+            return False
+        if self._editable_names is None:
+            return True
+        return name in self._editable_names
 
     def _task_locked(self) -> bool:
         if self._task_spec is None:
@@ -449,6 +506,12 @@ class ParameterDialog(QDialog):
 
         self._rows.clear()
         self._row_default_values.clear()
+        # Detach and discard any prior button groups; new ones are created
+        # below as rows are rebuilt. Reparenting to None lets Qt clean them
+        # up alongside the rest of the row widgets.
+        for button_group in self._exclusive_button_groups.values():
+            button_group.setParent(None)
+        self._exclusive_button_groups.clear()
         visible_names = self._visible_names()
         self._build_exclusive_groups(visible_names)
 
@@ -479,9 +542,20 @@ class ParameterDialog(QDialog):
                 label_layout.setContentsMargins(0, 0, 0, 0)
                 radio = QRadioButton(label_widget)
                 radio.setChecked(self._exclusive_selection.get(group_key) == name)
+                radio.setEnabled(self._is_name_editable(name))
                 radio.toggled.connect(
                     lambda checked, g=group_key, n=name: self._on_exclusive_toggled(g, n, checked)
                 )
+                # Each row's radio lives under its own label container; Qt
+                # only auto-excludes siblings of the same parent, so we
+                # explicitly register every radio in this group's
+                # QButtonGroup to get cross-row mutual exclusion.
+                button_group = self._exclusive_button_groups.get(group_key)
+                if button_group is None:
+                    button_group = QButtonGroup(self)
+                    button_group.setExclusive(True)
+                    self._exclusive_button_groups[group_key] = button_group
+                button_group.addButton(radio)
                 label_layout.addWidget(radio)
                 label_layout.addWidget(QLabel(label_text, label_widget))
                 label_layout.addStretch(1)
@@ -497,7 +571,11 @@ class ParameterDialog(QDialog):
                 value_widget: QWidget = QLabel(value_text, self._table_widget)
                 value_widget.setEnabled(False)
             else:
-                editor = create_param_editor(spec, self._table_widget)
+                editor = create_param_editor(
+                    spec,
+                    self._table_widget,
+                    species_options=self._species_options,
+                )
                 self._row_default_values[name] = self._default_editor_value(spec)
                 if name in self._values:
                     try:
@@ -510,14 +588,16 @@ class ParameterDialog(QDialog):
                 editor.value_changed.connect(self._on_editor_changed)
                 if self._in_inactive_exclusive_choice(name):
                     editor.setEnabled(False)
+                elif not self._is_name_editable(name):
+                    editor.setEnabled(False)
                 value_widget = editor
 
             self._table_layout.addWidget(value_widget, row_index, 1)
 
             reset_button = QPushButton("Reset", self._table_widget)
             reset_button.setMaximumWidth(58)
-            reset_button.setEnabled(not locked and editor is not None)
-            if not locked and editor is not None:
+            reset_button.setEnabled(self._is_name_editable(name) and not locked and editor is not None)
+            if self._is_name_editable(name) and not locked and editor is not None:
                 reset_button.clicked.connect(lambda _checked=False, param=name: self._reset_parameter(param))
             self._table_layout.addWidget(reset_button, row_index, 2)
 
@@ -528,7 +608,12 @@ class ParameterDialog(QDialog):
 
             remove_button = QToolButton(self._table_widget)
             remove_button.setText("x")
-            can_remove = self._is_advanced_name(name) and name in self._added_advanced and not locked
+            can_remove = (
+                self._is_name_editable(name)
+                and self._is_advanced_name(name)
+                and name in self._added_advanced
+                and not locked
+            )
             remove_button.setEnabled(can_remove)
             remove_button.setVisible(can_remove)
             if can_remove:
@@ -557,7 +642,7 @@ class ParameterDialog(QDialog):
             except (TypeError, ValueError):
                 pass
 
-        probe_editor = create_param_editor(spec, self)
+        probe_editor = create_param_editor(spec, self, species_options=self._species_options)
         try:
             return probe_editor.value()
         finally:
@@ -626,6 +711,20 @@ class ParameterDialog(QDialog):
             self._exclusive_selection[group_key] = selected
 
     def _default_selection_for_group(self, group_key: tuple[str, ...]) -> str:
+        # Caller-provided hint takes priority. When both halves of a mutually
+        # exclusive pair are pre-filled for UX toggling convenience, the caller
+        # uses preferred_exclusive to name the true active choice so that the
+        # built-in preference order (kpoint_mp_grid over kpoint_mp_spacing)
+        # does not override the user's actual selection.
+        hint = self._preferred_exclusive
+        if (
+            hint is not None
+            and hint in group_key
+            and hint in self._values
+            and gui_value_is_active(self._specs_by_name[hint], self._values[hint])
+        ):
+            return hint
+
         for preferred in _PREFERRED_EXCLUSIVE_NAMES:
             if preferred not in group_key or preferred not in self._values:
                 continue
@@ -677,6 +776,8 @@ class ParameterDialog(QDialog):
         for name in sorted(self._specs_by_name, key=lambda item: self._order.get(item, 10_000)):
             if name in self._blocked_names:
                 continue
+            if not self._is_name_editable(name):
+                continue
             if not self._is_advanced_name(name):
                 continue
             if name in self._added_advanced:
@@ -695,6 +796,8 @@ class ParameterDialog(QDialog):
         return any(query in candidate.lower() for candidate in haystacks if candidate)
 
     def _on_task_changed(self) -> None:
+        if self._read_only:
+            return
         if self._task_editor is None:
             return
         self._task = str(self._task_editor.value()).strip().upper()
@@ -712,6 +815,8 @@ class ParameterDialog(QDialog):
             self._added_advanced.discard(name)
 
     def _open_add_advanced_dialog(self) -> None:
+        if self._read_only:
+            return
         available = self._available_advanced_specs()
         if not available:
             return
@@ -728,8 +833,10 @@ class ParameterDialog(QDialog):
         self._rebuild_rows()
 
     def _remove_advanced(self, name: str) -> None:
+        if self._read_only:
+            return
         self._added_advanced.discard(name)
         self._rebuild_rows()
 
     def _refresh_add_button_state(self) -> None:
-        self._add_advanced_button.setEnabled(bool(self._available_advanced_specs()))
+        self._add_advanced_button.setEnabled(not self._read_only and bool(self._available_advanced_specs()))

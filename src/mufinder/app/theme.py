@@ -8,7 +8,7 @@ import tempfile
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt
 from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QPalette
-from PySide6.QtWidgets import QApplication, QLabel, QScrollBar, QTableWidget, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QScrollBar, QTableWidget, QToolButton, QTreeWidget, QWidget
 
 THEME_LIGHT = "light"
 THEME_DARK = "dark"
@@ -125,11 +125,11 @@ def light_palette() -> MuFinderPalette:
         success="#146C43",
         warning="#A16207",
         danger="#B91C1C",
-        status_ready="#0F766E",
+        status_ready="#0369A1",
         status_defined="#4B5563",
         status_submitting="#2563EB",
-        status_queued="#1D4ED8",
-        status_running="#C2410C",
+        status_queued="#A16207",
+        status_running="#2563EB",
         status_retrieving="#7C3AED",
         status_stopped="#B45309",
         status_completed="#15803D",
@@ -156,11 +156,11 @@ def dark_palette() -> MuFinderPalette:
         success="#34D399",
         warning="#F59E0B",
         danger="#F87171",
-        status_ready="#5EEAD4",
+        status_ready="#7DD3FC",
         status_defined="#A5B4FC",
         status_submitting="#60A5FA",
-        status_queued="#93C5FD",
-        status_running="#FB923C",
+        status_queued="#FBBF24",
+        status_running="#60A5FA",
         status_retrieving="#C4B5FD",
         status_stopped="#FBBF24",
         status_completed="#4ADE80",
@@ -180,6 +180,12 @@ def _repolish_widget(widget: QWidget) -> None:
     widget.update()
 
 
+def refresh_widget_style(widget: QWidget) -> None:
+    """Refresh stylesheet-dependent state after dynamic properties change."""
+
+    _repolish_widget(widget)
+
+
 class _TableCornerStyler(QObject):
     """Toggle item-view corner styling based on scrollbar/header visibility."""
 
@@ -196,7 +202,13 @@ class _TableCornerStyler(QObject):
     }
     def __init__(self, app: QApplication) -> None:
         super().__init__(app)
-        self._bar_owner: dict[QScrollBar, QTableWidget] = {}
+
+    @staticmethod
+    def _is_supported_item_view(widget: object) -> bool:
+        try:
+            return isinstance(widget, (QTableWidget, QTreeWidget))
+        except (RuntimeError, SystemError):
+            return False
 
     @staticmethod
     def _is_scrollbar(widget: object) -> bool:
@@ -210,14 +222,10 @@ class _TableCornerStyler(QObject):
         if app is None:
             return
         for widget in app.allWidgets():
-            try:
-                supported = isinstance(widget, QTableWidget)
-            except (RuntimeError, SystemError):
-                supported = False
-            if supported:
+            if self._is_supported_item_view(widget):
                 self._attach_table(widget)
 
-    def _attach_table(self, table: QTableWidget) -> None:
+    def _attach_table(self, table: QWidget) -> None:
         if bool(table.property("_cornerStylerAttached")):
             return
 
@@ -227,16 +235,30 @@ class _TableCornerStyler(QObject):
         bar = table.verticalScrollBar()
         bar.installEventFilter(self)
         bar.rangeChanged.connect(self._on_scrollbar_range_changed)
-        self._bar_owner[bar] = table
 
         self._sync_table_corner_property(table)
+
+    def _table_for_bar(self, bar: object) -> QWidget | None:
+        # Walk up from the scroll bar to its owning item view rather than caching
+        # the (bar -> table) pair in a dict. Caching Qt wrappers keeps them alive
+        # past their C++ objects' lifetime, and releasing such a stale wrapper
+        # during QWidget teardown segfaults shiboken (notably on Linux).
+        try:
+            widget = bar.parentWidget()
+            while widget is not None:
+                if self._is_supported_item_view(widget):
+                    return widget
+                widget = widget.parentWidget()
+        except (RuntimeError, SystemError):
+            return None
+        return None
 
     def _on_scrollbar_range_changed(self, _minimum: int, _maximum: int) -> None:
         try:
             sender = self.sender()
             if not self._is_scrollbar(sender):
                 return
-            table = self._bar_owner.get(sender)
+            table = self._table_for_bar(sender)
             if table is None:
                 return
             self._sync_table_corner_property(table)
@@ -245,49 +267,41 @@ class _TableCornerStyler(QObject):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         try:
-            if isinstance(watched, QTableWidget):
+            if self._is_supported_item_view(watched):
                 self._attach_table(watched)
                 if event.type() in self._TABLE_WATCH_EVENTS:
                     self._sync_table_corner_property(watched)
             elif self._is_scrollbar(watched):
-                table = self._bar_owner.get(watched)
+                table = self._table_for_bar(watched)
                 if table is not None and event.type() in self._BAR_WATCH_EVENTS:
                     self._sync_table_corner_property(table)
         except (RuntimeError, SystemError):
             return False
         return False
 
-    def _sync_table_corner_property(self, table: QTableWidget) -> None:
+    def _sync_table_corner_property(self, table: QWidget) -> None:
         has_scrollbar = self._has_vertical_scrollbar(table)
         scrollbar_value = "true" if has_scrollbar else "false"
-        has_visible_vertical_header = table.verticalHeader().isVisible()
+        has_visible_vertical_header = self._has_visible_vertical_header(table)
         vertical_header_value = "true" if has_visible_vertical_header else "false"
+        header = self._horizontal_header(table)
 
         if table.property("hasVerticalScrollbar") != scrollbar_value:
             table.setProperty("hasVerticalScrollbar", scrollbar_value)
             _repolish_widget(table)
-            _repolish_widget(table.horizontalHeader())
+            if header is not None:
+                _repolish_widget(header)
             _repolish_widget(table.verticalScrollBar())
 
         if table.property("hasVisibleVerticalHeader") != vertical_header_value:
             table.setProperty("hasVisibleVerticalHeader", vertical_header_value)
             _repolish_widget(table)
-            _repolish_widget(table.horizontalHeader())
+            if header is not None:
+                _repolish_widget(header)
             _repolish_widget(table.verticalScrollBar())
 
     def shutdown(self) -> None:
         """Detach event filters and signal hooks before app teardown."""
-
-        for bar in list(self._bar_owner):
-            try:
-                bar.removeEventFilter(self)
-            except (RuntimeError, SystemError):
-                pass
-            try:
-                bar.rangeChanged.disconnect(self._on_scrollbar_range_changed)
-            except (RuntimeError, SystemError, TypeError):
-                pass
-        self._bar_owner.clear()
 
         app = QApplication.instance()
         if app is None:
@@ -295,19 +309,19 @@ class _TableCornerStyler(QObject):
 
         for widget in app.allWidgets():
             try:
-                supported = isinstance(widget, QTableWidget)
-            except (RuntimeError, SystemError):
-                supported = False
-            if not supported:
-                continue
-            try:
-                widget.removeEventFilter(self)
+                if self._is_supported_item_view(widget):
+                    widget.removeEventFilter(self)
+                elif self._is_scrollbar(widget):
+                    widget.removeEventFilter(self)
+                    try:
+                        widget.rangeChanged.disconnect(self._on_scrollbar_range_changed)
+                    except (RuntimeError, SystemError, TypeError):
+                        pass
             except (RuntimeError, SystemError):
                 pass
 
-
     @staticmethod
-    def _has_vertical_scrollbar(table: QTableWidget) -> bool:
+    def _has_vertical_scrollbar(table: QWidget) -> bool:
         policy = table.verticalScrollBarPolicy()
         if policy == Qt.ScrollBarPolicy.ScrollBarAlwaysOff:
             return False
@@ -316,6 +330,20 @@ class _TableCornerStyler(QObject):
 
         bar = table.verticalScrollBar()
         return bar.isVisible() or bar.maximum() > bar.minimum()
+
+    @staticmethod
+    def _has_visible_vertical_header(table: QWidget) -> bool:
+        if isinstance(table, QTableWidget):
+            return table.verticalHeader().isVisible()
+        return False
+
+    @staticmethod
+    def _horizontal_header(table: QWidget):
+        if isinstance(table, QTableWidget):
+            return table.horizontalHeader()
+        if isinstance(table, QTreeWidget):
+            return table.header()
+        return None
 
 def _ensure_table_corner_styler(app: QApplication) -> None:
     global _TABLE_CORNER_STYLER
@@ -460,13 +488,62 @@ def style_warning_text(label: QLabel) -> None:
     label.setObjectName("warningText")
 
 
-def use_square_top_table_corners(table: QTableWidget) -> None:
-    """Opt a table into square top corners for titled container layouts."""
+def style_inline_group(widget: QWidget) -> None:
+    """Tag a compact row/group widget as transparent inline UI chrome."""
+
+    widget.setObjectName("mufinderInlineGroup")
+
+
+def style_option_card(card: QWidget) -> None:
+    """Tag a frame-like widget as a selectable feature option card."""
+
+    card.setObjectName("mufinderOptionCard")
+    card.setProperty("selected", False)
+    card.setProperty("unavailable", False)
+
+
+def set_option_card_state(
+    card: QWidget,
+    *,
+    selected: bool,
+    unavailable: bool = False,
+) -> None:
+    """Update option-card state properties and refresh stylesheet polish."""
+
+    card.setProperty("selected", bool(selected))
+    card.setProperty("unavailable", bool(unavailable))
+    refresh_widget_style(card)
+
+
+def style_help_button(button: QToolButton) -> None:
+    """Tag a small help/info tool button for shared feature-dialog styling."""
+
+    button.setObjectName("mufinderHelpButton")
+
+
+def style_small_checked_tool_button(button: QToolButton) -> None:
+    """Tag a small checkable tool button for shared feature-dialog styling."""
+
+    button.setObjectName("mufinderCheckedToolButton")
+
+
+def use_square_top_table_corners(table: QTableWidget | QTreeWidget) -> None:
+    """Opt a table/tree item view into square top corners for titled container layouts."""
 
     table.setProperty("squareTopCorners", "true")
     _repolish_widget(table)
-    _repolish_widget(table.horizontalHeader())
+    if isinstance(table, QTableWidget):
+        _repolish_widget(table.horizontalHeader())
+    elif isinstance(table, QTreeWidget):
+        _repolish_widget(table.header())
     _repolish_widget(table.verticalScrollBar())
+
+
+def use_tabbed_table_corners(table: QTableWidget | QTreeWidget) -> None:
+    """Opt an item view into the square-corner treatment used inside tab panes."""
+
+    table.setProperty("tabbedTable", "true")
+    use_square_top_table_corners(table)
 
 
 def _build_palette(palette: MuFinderPalette) -> QPalette:
@@ -515,9 +592,89 @@ def _base_widget_styles(p: MuFinderPalette) -> str:
     """
 
 
+def feature_dialog_stylesheet(*, include_scroll_area: bool = False, extra: str = "") -> str:
+    """Return reusable feature-dialog stylesheet fragments for local dialog styles."""
+
+    palette = current_palette()
+    scroll_area = (
+        """
+        QScrollArea {
+            background: transparent;
+            border: none;
+        }
+        QScrollArea > QWidget > QWidget {
+            background: transparent;
+        }
+        """
+        if include_scroll_area
+        else ""
+    )
+    return (
+        f"""
+        QDialog {{
+            background: {palette.bg_primary};
+        }}
+        QGroupBox {{
+            background: {palette.bg_surface};
+            border: 1px solid {palette.border};
+            border-radius: 14px;
+            margin-top: 12px;
+            padding-top: 14px;
+            font-weight: 700;
+            color: {palette.text_primary};
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            left: 12px;
+            padding: 0 8px;
+        }}
+        QFrame#mufinderOptionCard {{
+            background: {palette.bg_surface_alt};
+            border: 1px solid {palette.border};
+            border-radius: 12px;
+        }}
+        QFrame#mufinderOptionCard[selected="true"] {{
+            background: {palette.bg_surface};
+            border: 1px solid {palette.accent};
+        }}
+        QFrame#mufinderOptionCard[unavailable="true"] {{
+            background: {palette.bg_primary};
+            border: 1px solid {palette.border};
+        }}
+        QWidget#mufinderInlineGroup,
+        QWidget#mufinderInlineGroup QLabel {{
+            background: transparent;
+        }}
+        QRadioButton {{
+            background: transparent;
+        }}
+        QCheckBox {{
+            background: transparent;
+        }}
+        QToolButton#mufinderCheckedToolButton {{
+            background: {palette.bg_surface_alt};
+            border: 1px solid {palette.border};
+            border-radius: 8px;
+            padding: 4px;
+            min-width: 24px;
+            min-height: 24px;
+        }}
+        QToolButton#mufinderCheckedToolButton:checked {{
+            background: {palette.bg_surface};
+            border: 1px solid {palette.accent};
+        }}
+        QToolButton#mufinderCheckedToolButton:hover {{
+            border: 1px solid {palette.accent_hover};
+        }}
+        {scroll_area}
+        {extra}
+        """
+    )
+
+
 def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) -> str:
     return f"""
-    QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QComboBox {{
+    QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
         border: 1px solid {p.border};
         border-radius: 6px;
         padding: 4px 8px;
@@ -545,10 +702,10 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         width: 12px;
         height: 12px;
     }}
-    QSpinBox {{
+    QSpinBox, QDoubleSpinBox {{
         padding-right: 30px;
     }}
-    QSpinBox::up-button {{
+    QSpinBox::up-button, QDoubleSpinBox::up-button {{
         subcontrol-origin: border;
         subcontrol-position: top right;
         width: 22px;
@@ -558,7 +715,7 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         border-top-right-radius: 6px;
         background: {p.bg_surface_alt};
     }}
-    QSpinBox::down-button {{
+    QSpinBox::down-button, QDoubleSpinBox::down-button {{
         subcontrol-origin: border;
         subcontrol-position: bottom right;
         width: 22px;
@@ -568,19 +725,69 @@ def _input_control_styles(p: MuFinderPalette, arrow_up: str, arrow_down: str) ->
         background: {p.bg_surface_alt};
     }}
     QSpinBox::up-button:hover,
-    QSpinBox::down-button:hover {{
+    QDoubleSpinBox::up-button:hover,
+    QSpinBox::down-button:hover,
+    QDoubleSpinBox::down-button:hover {{
         background: {p.bg_surface_alt};
         border-left-color: {p.accent};
     }}
-    QSpinBox::up-arrow {{
+    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
         image: url("{arrow_up}");
         width: 12px;
         height: 12px;
     }}
-    QSpinBox::down-arrow {{
+    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
         image: url("{arrow_down}");
         width: 12px;
         height: 12px;
+    }}
+    QSlider#uepIsosurfaceSlider {{
+        min-height: 34px;
+    }}
+    QSlider#uepIsosurfaceSlider::groove:horizontal {{
+        height: 14px;
+        border: 1px solid {p.border};
+        border-radius: 7px;
+        background: qlineargradient(
+            x1: 0, y1: 0, x2: 1, y2: 0,
+            stop: 0 {p.bg_surface_alt},
+            stop: 1 {p.bg_primary}
+        );
+    }}
+    QSlider#uepIsosurfaceSlider::sub-page:horizontal {{
+        border-radius: 7px;
+        background: qlineargradient(
+            x1: 0, y1: 0, x2: 1, y2: 0,
+            stop: 0 {p.accent},
+            stop: 1 {p.seal_gold}
+        );
+    }}
+    QSlider#uepIsosurfaceSlider::add-page:horizontal {{
+        border-radius: 7px;
+        background: {p.bg_surface_alt};
+    }}
+    QSlider#uepIsosurfaceSlider::handle:horizontal {{
+        width: 26px;
+        margin: -9px 0;
+        border: 2px solid {p.bg_surface};
+        border-radius: 13px;
+        background: {p.seal_gold};
+    }}
+    QSlider#uepIsosurfaceSlider::handle:horizontal:hover {{
+        background: {p.accent};
+    }}
+    QSlider#uepIsosurfaceSlider::handle:horizontal:pressed {{
+        background: {p.accent_hover};
+    }}
+    QSlider#uepIsosurfaceSlider:disabled::groove:horizontal {{
+        background: {p.bg_surface_alt};
+    }}
+    QSlider#uepIsosurfaceSlider:disabled::sub-page:horizontal {{
+        background: {p.border};
+    }}
+    QSlider#uepIsosurfaceSlider:disabled::handle:horizontal {{
+        background: {p.bg_surface};
+        border-color: {p.border};
     }}
     """
 
@@ -605,7 +812,15 @@ def _item_view_styles(p: MuFinderPalette) -> str:
         border-top-left-radius: 0px;
         border-top-right-radius: 0px;
     }}
+    QTreeWidget[squareTopCorners="true"] {{
+        border-top-left-radius: 0px;
+        border-top-right-radius: 0px;
+    }}
     QTableWidget[hasVerticalScrollbar="true"] {{
+        border-top-right-radius: 0px;
+        border-bottom-right-radius: 0px;
+    }}
+    QTreeWidget[hasVerticalScrollbar="true"] {{
         border-top-right-radius: 0px;
         border-bottom-right-radius: 0px;
     }}
@@ -621,13 +836,14 @@ def _panel_container_styles(p: MuFinderPalette) -> str:
         border: none;
         background: transparent;
     }}
-    QLabel#projectTreePanelTitle {{
+    QFrame#projectTreePanelHeader {{
         background: {p.bg_surface_alt};
         border: 1px solid {p.border};
         border-bottom: 1px solid {p.border};
         border-top-left-radius: 10px;
         border-top-right-radius: 10px;
-        padding: 8px 12px;
+    }}
+    QLabel#projectTreePanelTitle {{
         font-weight: 600;
     }}
     QFrame#projectTreePanelBody {{
@@ -651,6 +867,180 @@ def _panel_container_styles(p: MuFinderPalette) -> str:
         padding: 8px 12px;
         text-align: left;
         font-weight: 600;
+    }}
+    """
+
+
+def _muon_generation_styles(p: MuFinderPalette) -> str:
+    return f"""
+    QGroupBox#muonGenerationSetupCard {{
+        background: {p.bg_surface};
+    }}
+    QStackedWidget#muonGenerationParamStack {{
+        background: {p.bg_surface};
+        border: 0px;
+    }}
+    QWidget#muonGenerationRandomPage,
+    QWidget#muonGenerationNearPage,
+    QWidget#muonGenerationManualPage,
+    QWidget#muonGenerationUepPage {{
+        background: {p.bg_surface};
+    }}
+    QWidget#randomSeparationChoice,
+    QWidget#randomCountChoice {{
+        background: {p.bg_surface};
+        border: 1px solid {p.border};
+        border-radius: 6px;
+    }}
+    QWidget#randomSeparationChoice QRadioButton,
+    QWidget#randomCountChoice QRadioButton {{
+        color: {p.text_muted};
+        background: transparent;
+    }}
+    QWidget#randomSeparationChoice[active="true"],
+    QWidget#randomCountChoice[active="true"] {{
+        background: {p.bg_surface_alt};
+        border: 1px solid {p.accent};
+        border-radius: 6px;
+    }}
+    QWidget#randomSeparationChoice[active="true"] QRadioButton,
+    QWidget#randomCountChoice[active="true"] QRadioButton {{
+        color: {p.text_primary};
+        background: transparent;
+    }}
+    QWidget#randomSeparationChoice[active="true"] QLineEdit,
+    QWidget#randomCountChoice[active="true"] QSpinBox {{
+        border-color: {p.accent};
+    }}
+    QDialog#clusterPositionsDialog {{
+        background: {p.bg_primary};
+    }}
+    QWidget#clusterPositionsCard {{
+        background: {p.bg_surface};
+        border: 1px solid {p.border};
+        border-radius: 8px;
+    }}
+    QWidget#clusterPositionsCard QLabel {{
+        background: transparent;
+    }}
+    QProgressBar#muonGenerationProgress {{
+        border: 1px solid {p.border};
+        border-radius: 7px;
+        background: {p.bg_surface_alt};
+        color: {p.text_primary};
+        text-align: center;
+        min-height: 22px;
+    }}
+    QProgressBar#muonGenerationProgress::chunk {{
+        background: {p.accent};
+        border-radius: 6px;
+        margin: 1px;
+    }}
+    QProgressBar#muonGenerationProgress[generationState="complete"] {{
+        color: #FFFFFF;
+    }}
+    QProgressBar#muonGenerationProgress[generationState="complete"]::chunk {{
+        background: {p.success};
+    }}
+    """
+
+
+def _muon_relaxation_styles(p: MuFinderPalette) -> str:
+    return f"""
+    QTabWidget#muonRelaxationChargeTabs::pane,
+    QTabWidget#analysisWorkspaceTabs::pane,
+    QTabWidget#energyBarriersTabs::pane,
+    QTabWidget#quantumAnalysisTabs::pane {{
+        border: 1px solid {p.border};
+        border-radius: 8px;
+        top: -1px;
+        background: {p.bg_surface};
+    }}
+    QTabWidget#muonRelaxationChargeTabs,
+    QTabWidget#analysisWorkspaceTabs,
+    QTabWidget#energyBarriersTabs,
+    QTabWidget#quantumAnalysisTabs {{
+        background: {p.bg_surface};
+    }}
+    QTabWidget#muonRelaxationChargeTabs QTabBar,
+    QTabWidget#analysisWorkspaceTabs QTabBar,
+    QTabWidget#energyBarriersTabs QTabBar,
+    QTabWidget#quantumAnalysisTabs QTabBar {{
+        background: {p.bg_surface};
+    }}
+    QTabWidget#muonRelaxationChargeTabs QTabBar::tab,
+    QTabWidget#analysisWorkspaceTabs QTabBar::tab,
+    QTabWidget#energyBarriersTabs QTabBar::tab,
+    QTabWidget#quantumAnalysisTabs QTabBar::tab {{
+        background: {p.bg_surface_alt};
+        color: {p.text_muted};
+        border: 1px solid {p.border};
+        border-bottom: none;
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+        padding: 8px 16px;
+        margin-right: 4px;
+        font-weight: 700;
+    }}
+    QTabWidget#muonRelaxationChargeTabs QTabBar::tab:selected,
+    QTabWidget#analysisWorkspaceTabs QTabBar::tab:selected,
+    QTabWidget#energyBarriersTabs QTabBar::tab:selected {{
+        background: {p.bg_surface};
+        color: {p.text_primary};
+        border-color: {p.accent};
+    }}
+    QTabWidget#quantumAnalysisTabs QTabBar::tab:selected {{
+        background: {p.bg_primary};
+        color: {p.text_primary};
+        border-color: {p.accent};
+    }}
+    QTabWidget#muonRelaxationChargeTabs QTabBar::tab:hover:!selected,
+    QTabWidget#analysisWorkspaceTabs QTabBar::tab:hover:!selected,
+    QTabWidget#energyBarriersTabs QTabBar::tab:hover:!selected,
+    QTabWidget#quantumAnalysisTabs QTabBar::tab:hover:!selected {{
+        background: {p.bg_surface};
+        color: {p.text_primary};
+    }}
+    QDialog#quantumPhononAnalysisDialog,
+    QDialog#quantumAnalysisHelpDialog,
+    QTabWidget#quantumAnalysisTabs,
+    QTabWidget#quantumAnalysisTabs::pane,
+    QWidget#quantumAnalysisTabPage,
+    QWidget#quantumAnalysisHelpContent {{
+        background: {p.bg_primary};
+    }}
+    QToolButton#quantumAnalysisHelpButton {{
+        background: {p.bg_surface_alt};
+        color: {p.text_primary};
+        border: 1px solid {p.border};
+        border-radius: 12px;
+        min-width: 24px;
+        min-height: 24px;
+        font-weight: 800;
+    }}
+    QToolButton#quantumAnalysisHelpButton:hover {{
+        background: {p.bg_surface};
+        border-color: {p.accent};
+    }}
+    QDialog#muonChargeStateDialog {{
+        background: {p.bg_primary};
+    }}
+    QWidget#muonChargeStateCard {{
+        background: {p.bg_surface};
+        border: 1px solid {p.border};
+        border-radius: 8px;
+    }}
+    QWidget#muonChargeStateCard QLabel {{
+        background: transparent;
+    }}
+    QRadioButton[chargeStateOption="true"] {{
+        background: transparent;
+        padding: 6px;
+        color: {p.text_primary};
+    }}
+    QRadioButton[chargeStateOption="true"]:checked {{
+        color: {p.accent};
+        font-weight: 700;
     }}
     """
 
@@ -793,19 +1183,34 @@ def _header_styles(p: MuFinderPalette) -> str:
     QTableWidget[hasVisibleVerticalHeader="false"] QHeaderView::section:horizontal:first {{
         border-top-left-radius: 8px;
     }}
+    QTreeWidget QHeaderView::section:horizontal:first {{
+        border-top-left-radius: 8px;
+    }}
     QTableWidget[hasVisibleVerticalHeader="true"] QHeaderView::section:horizontal:first {{
         border-top-left-radius: 0px;
     }}
     QTableWidget[squareTopCorners="true"] QHeaderView::section:horizontal:first {{
         border-top-left-radius: 0px;
     }}
+    QTreeWidget[squareTopCorners="true"] QHeaderView::section:horizontal:first {{
+        border-top-left-radius: 0px;
+    }}
     QTableWidget QHeaderView::section:horizontal:last {{
+        border-top-right-radius: 8px;
+    }}
+    QTreeWidget QHeaderView::section:horizontal:last {{
         border-top-right-radius: 8px;
     }}
     QTableWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last {{
         border-top-right-radius: 0px;
     }}
+    QTreeWidget[hasVerticalScrollbar="true"] QHeaderView::section:horizontal:last {{
+        border-top-right-radius: 0px;
+    }}
     QTableWidget[squareTopCorners="true"] QHeaderView::section:horizontal:last {{
+        border-top-right-radius: 0px;
+    }}
+    QTreeWidget[squareTopCorners="true"] QHeaderView::section:horizontal:last {{
         border-top-right-radius: 0px;
     }}
     """
@@ -850,6 +1255,57 @@ def _button_styles(p: MuFinderPalette) -> str:
     }}
     QToolButton#sectionToggleButton:pressed {{
         color: {p.accent_hover};
+    }}
+    QToolButton#mufinderHelpButton {{
+        border: 1px solid {p.border};
+        border-radius: 8px;
+        padding: 3px;
+        min-width: 24px;
+        min-height: 24px;
+        background: {p.bg_surface};
+    }}
+    QToolButton#mufinderHelpButton:hover {{
+        border-color: {p.accent};
+        background: {p.bg_surface_alt};
+    }}
+    QToolButton#mufinderHelpButton:pressed {{
+        border-color: {p.accent_hover};
+        background: {p.bg_surface_alt};
+    }}
+    QToolButton#mufinderCheckedToolButton {{
+        border: 1px solid {p.border};
+        border-radius: 8px;
+        padding: 4px;
+        min-width: 24px;
+        min-height: 24px;
+        background: {p.bg_surface_alt};
+    }}
+    QToolButton#mufinderCheckedToolButton:checked {{
+        border-color: {p.accent};
+        background: {p.bg_surface};
+    }}
+    QToolButton#mufinderCheckedToolButton:hover {{
+        border-color: {p.accent_hover};
+    }}
+    QToolButton#projectHomeButton {{
+        border: 1px solid {p.border};
+        border-radius: 7px;
+        padding: 3px;
+        min-width: 24px;
+        min-height: 24px;
+        background: {p.bg_surface};
+    }}
+    QToolButton#projectHomeButton:hover {{
+        border-color: {p.accent};
+        background: {p.bg_surface_alt};
+    }}
+    QToolButton#projectHomeButton:pressed {{
+        border-color: {p.accent_hover};
+        background: {p.bg_surface_alt};
+    }}
+    QToolButton#projectHomeButton:disabled {{
+        border-color: {p.border};
+        background: {p.bg_surface_alt};
     }}
     """
 
@@ -907,6 +1363,51 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         color: {p.text_muted};
         font-size: 12px;
     }}
+    QLabel#uepIsosurfacePanelTitle {{
+        color: {p.text_primary};
+        font-size: 14px;
+        font-weight: 700;
+        font-family: "{heading_font}";
+    }}
+    QLabel#uepIsosurfaceMinorLabel {{
+        color: {p.text_muted};
+        font-size: 11px;
+        font-weight: 600;
+    }}
+    QLabel#uepIsosurfaceLegendTitle {{
+        color: {p.text_primary};
+        font-size: 14px;
+        font-weight: 700;
+        font-family: "{heading_font}";
+    }}
+    QLabel#uepIsosurfaceRangeValue {{
+        color: {p.text_primary};
+        font-size: 13px;
+        font-weight: 500;
+    }}
+    QLabel#uepIsosurfaceBound {{
+        color: {p.text_muted};
+        font-size: 11px;
+        font-weight: 600;
+    }}
+    QLabel#uepIsosurfaceStatusLabel {{
+        color: {p.text_muted};
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 1.35em;
+    }}
+    QLabel#uepIsosurfaceStatusLabel[statusKind="busy"] {{
+        color: {p.status_running};
+    }}
+    QLabel#uepIsosurfaceStatusLabel[statusKind="success"] {{
+        color: {p.status_completed};
+    }}
+    QLabel#uepIsosurfaceStatusLabel[statusKind="exported"] {{
+        color: {p.status_ready};
+    }}
+    QLabel#uepIsosurfaceStatusLabel[statusKind="error"] {{
+        color: {p.status_failed};
+    }}
     QLabel#expeditionTrailTitle {{
         font-size: 15px;
         font-weight: 700;
@@ -928,6 +1429,54 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
     QLabel#expeditionLegendPending {{
         color: {p.text_muted};
         font-weight: 600;
+    }}
+    QLabel#journalDayHeader {{
+        font-size: 17px;
+        font-weight: 700;
+        font-family: "{heading_font}";
+        color: {p.text_primary};
+        padding-top: 6px;
+    }}
+    QLabel#journalEntryTitle {{
+        font-size: 15px;
+        font-weight: 700;
+        font-family: "{heading_font}";
+        color: {p.text_primary};
+    }}
+    QLabel#journalWorkflowLabel {{
+        font-size: 11px;
+        font-weight: 600;
+        color: {p.text_muted};
+        text-transform: uppercase;
+    }}
+    QLabel#journalEntryBody {{
+        font-size: 12px;
+        color: {p.text_primary};
+    }}
+    QLabel#journalEmptyState {{
+        font-size: 13px;
+        color: {p.text_muted};
+        padding: 18px;
+    }}
+    QLabel#journalStamp {{
+        border-radius: 9px;
+        padding: 2px 8px;
+        font-size: 10px;
+        font-weight: 700;
+        color: #FFFFFF;
+        background: {p.border};
+    }}
+    QLabel#journalStamp[stampKind="milestone"] {{
+        background: {p.accent};
+    }}
+    QLabel#journalStamp[stampKind="success"] {{
+        background: {p.seal_gold};
+    }}
+    QLabel#journalStamp[stampKind="warning"] {{
+        background: {p.warning};
+    }}
+    QLabel#journalStamp[stampKind="danger"] {{
+        background: {p.danger};
     }}
     """
 
@@ -952,6 +1501,65 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
         border-radius: 12px;
         background: {p.bg_surface_alt};
     }}
+    QFrame#mufinderOptionCard {{
+        border: 1px solid {p.border};
+        border-radius: 12px;
+        background: {p.bg_surface_alt};
+    }}
+    QFrame#mufinderOptionCard[selected="true"] {{
+        border-color: {p.accent};
+        background: {p.bg_surface};
+    }}
+    QFrame#mufinderOptionCard[unavailable="true"] {{
+        border-color: {p.border};
+        background: {p.bg_primary};
+    }}
+    QWidget#mufinderInlineGroup,
+    QWidget#mufinderInlineGroup QLabel {{
+        background: transparent;
+    }}
+    QFrame#uepIsosurfaceSliderPanel,
+    QFrame#uepIsosurfaceInfoCard,
+    QFrame#connectedToleranceScanPanel {{
+        border: 1px solid {p.border};
+        border-radius: 12px;
+        background: {p.bg_surface};
+    }}
+    QFrame#uepIsosurfaceStatusCard {{
+        border: 1px solid {p.border};
+        border-radius: 12px;
+        background: {p.bg_surface};
+    }}
+    QFrame#uepIsosurfaceStatusCard[statusKind="busy"] {{
+        border-color: {p.status_running};
+    }}
+    QFrame#uepIsosurfaceStatusCard[statusKind="success"] {{
+        border-color: {p.status_completed};
+    }}
+    QFrame#uepIsosurfaceStatusCard[statusKind="exported"] {{
+        border-color: {p.status_ready};
+    }}
+    QFrame#uepIsosurfaceStatusCard[statusKind="error"] {{
+        border-color: {p.status_failed};
+    }}
+    QFrame#journalEntryCard {{
+        border: 1px solid {p.border};
+        border-left: 4px solid {p.border};
+        border-radius: 12px;
+        background: {p.bg_surface};
+    }}
+    QFrame#journalEntryCard[stampKind="milestone"] {{
+        border-left-color: {p.accent};
+    }}
+    QFrame#journalEntryCard[stampKind="success"] {{
+        border-left-color: {p.seal_gold};
+    }}
+    QFrame#journalEntryCard[stampKind="warning"] {{
+        border-left-color: {p.warning};
+    }}
+    QFrame#journalEntryCard[stampKind="danger"] {{
+        border-left-color: {p.danger};
+    }}
     QMenu::item:selected {{
         background: {p.accent};
         color: #FFFFFF;
@@ -971,6 +1579,8 @@ def _build_stylesheet(p: MuFinderPalette) -> str:
         _input_control_styles(p, arrow_up, arrow_down),
         _item_view_styles(p),
         _panel_container_styles(p),
+        _muon_generation_styles(p),
+        _muon_relaxation_styles(p),
         _workflow_tree_styles(
             p,
             branch_right=arrow_right,

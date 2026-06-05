@@ -74,6 +74,7 @@ def test_run_bootstraps_qt_and_returns_exit_code(monkeypatch):
     monkeypatch.setattr(main_module, "_main_window_ctor", lambda: fake_window_ctor)
     monkeypatch.setattr(main_module, "_apply_saved_castep_environment", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main_module, "_app_icon", lambda: "icon-object")
+    monkeypatch.setattr(main_module, "_install_text_editing_shortcuts", lambda _app: None)
     monkeypatch.setattr(
         main_module,
         "_theme_helpers",
@@ -100,6 +101,7 @@ def test_run_applies_saved_castep_environment(monkeypatch):
     monkeypatch.setattr(main_module, "QApplication", lambda argv: _FakeApp(argv))
     monkeypatch.setattr(main_module, "_main_window_ctor", lambda: _FakeWindow)
     monkeypatch.setattr(main_module, "_app_icon", lambda: "icon-object")
+    monkeypatch.setattr(main_module, "_install_text_editing_shortcuts", lambda _app: None)
     monkeypatch.setattr(
         main_module,
         "_theme_helpers",
@@ -128,6 +130,7 @@ def test_run_sets_windows_app_id_before_qt_startup(monkeypatch):
     monkeypatch.setattr(main_module, "_main_window_ctor", lambda: _FakeWindow)
     monkeypatch.setattr(main_module, "_apply_saved_castep_environment", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main_module, "_app_icon", lambda: "icon-object")
+    monkeypatch.setattr(main_module, "_install_text_editing_shortcuts", lambda _app: None)
     monkeypatch.setattr(
         main_module,
         "_theme_helpers",

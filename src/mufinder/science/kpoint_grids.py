@@ -71,35 +71,86 @@ def grid_from_spacing(
     grid: list[int] = []
     for vector in reciprocal:
         magnitude = _norm(vector)
-        count = int(math.floor(magnitude / denominator)) + 1
+        # 1e-9 corrects ULP-level rounding errors when the ratio is the
+        # result of spacing_from_grid's exact boundary formula (|b|/(2π·(N-1))),
+        # where two-step floating-point division can yield N-1 - ε instead of
+        # exactly N-1, causing floor to snap down by one.  The epsilon is well
+        # below 1 so it never advances a genuinely non-integer ratio.
+        count = int(math.floor(magnitude / denominator + 1e-9)) + 1
         grid.append(max(1, count))
 
     return (grid[0], grid[1], grid[2])
+
+
+def kpoint_count_for_spacing(
+    lattice_vectors: Sequence[Sequence[float]],
+    spacing: float,
+) -> float:
+    """Continuous interpolation of CASTEP's spacing -> n_kpoints relation.
+
+    Drops the ``floor`` from :func:`grid_from_spacing` so the mapping is
+    smooth, letting us position spacing-labelled tick marks on a convergence
+    plot whose primary x-axis is the integer number of k-points. At integer
+    grids the continuous value agrees with the discrete CASTEP grid.
+    """
+
+    spacing_value = float(spacing)
+    if not math.isfinite(spacing_value) or spacing_value <= 0.0:
+        raise ValueError("spacing must be a positive finite value in 1/Ang.")
+
+    reciprocal = reciprocal_lattice_vectors(lattice_vectors)
+    denominator = 2.0 * math.pi * spacing_value
+
+    product = 1.0
+    for vector in reciprocal:
+        magnitude = _norm(vector)
+        product *= (magnitude / denominator) + 1.0
+    return product
 
 
 def generate_kpoint_grids(
     lattice_vectors: Sequence[Sequence[float]],
     spacing: float,
 ) -> tuple[tuple[int, int, int], ...]:
-    """Generate an increasing sweep from (1,1,1) up to the spacing-derived maximum grid."""
+    """Enumerate the distinct CASTEP grids from ``(1,1,1)`` up to the spacing-derived cap.
+
+    Walks CASTEP's spacing trajectory through ``(n_1, n_2, n_3)`` space so that
+    every emitted grid is reproducible by some ``KPOINT_MP_SPACING`` via
+    :func:`grid_from_spacing`. CASTEP's spacing-to-grid mapping is piecewise
+    constant with breakpoints at ``|b_i|/(2*pi*n)`` for axis ``i`` and integer
+    ``n``; probing at each breakpoint enumerates every reachable grid between
+    ``(1, 1, 1)`` and ``grid_from_spacing(lattice_vectors, spacing)``.
+    """
 
     max_grid = grid_from_spacing(lattice_vectors, spacing)
-    max_level = max(max_grid)
+    reciprocal = reciprocal_lattice_vectors(lattice_vectors)
+    magnitudes = tuple(_norm(vector) for vector in reciprocal)
+    two_pi = 2.0 * math.pi
 
-    values: list[tuple[int, int, int]] = []
-    seen: set[tuple[int, int, int]] = set()
-    for level in range(1, max_level + 1):
-        grid = (
-            min(level, max_grid[0]),
-            min(level, max_grid[1]),
-            min(level, max_grid[2]),
-        )
-        if grid in seen:
+    cap = max(max_grid)
+    thresholds: set[float] = set()
+    for magnitude in magnitudes:
+        if magnitude <= 0.0:
             continue
-        seen.add(grid)
-        values.append(grid)
+        for index in range(1, cap + 1):
+            thresholds.add(magnitude / (two_pi * index))
 
-    return tuple(values)
+    grids: list[tuple[int, int, int]] = [(1, 1, 1)]
+    seen: set[tuple[int, int, int]] = {(1, 1, 1)}
+    for threshold in sorted(thresholds, reverse=True):
+        candidate = grid_from_spacing(lattice_vectors, threshold)
+        clamped = (
+            min(candidate[0], max_grid[0]),
+            min(candidate[1], max_grid[1]),
+            min(candidate[2], max_grid[2]),
+        )
+        if clamped not in seen:
+            seen.add(clamped)
+            grids.append(clamped)
+        if clamped == max_grid:
+            break
+
+    return tuple(grids)
 
 
 def kpoint_count(grid: tuple[int, int, int]) -> int:
@@ -161,9 +212,16 @@ def spacing_from_grid(
     lattice_vectors: Sequence[Sequence[float]],
     grid: tuple[int, int, int],
 ) -> float:
-    """Infer a reciprocal-space spacing from one Monkhorst-Pack grid.
+    """Return a ``KPOINT_MP_SPACING`` that CASTEP rounds back to this grid.
 
-    This inverts the CASTEP relation used by :func:`grid_from_spacing`.
+    Returns ``min_i( |b_i| / (2*pi * (N_i - 1)) )`` over axes with ``N_i >= 2``
+    — the inclusive upper boundary of CASTEP's valid input range for ``grid``.
+    Any value at or just below this boundary reproduces ``grid`` exactly via
+    CASTEP's ``n_i = floor(|b_i|/(2*pi*s)) + 1`` formula.
+
+    Raises ``ValueError`` for ``(1, 1, 1)`` — Gamma-only sampling is reached
+    by any spacing above the coarsest reciprocal-space transition, so no
+    single value characterises the grid.
     """
 
     n1 = int(grid[0])
@@ -174,20 +232,16 @@ def spacing_from_grid(
 
     reciprocal = reciprocal_lattice_vectors(lattice_vectors)
     magnitudes = (_norm(reciprocal[0]), _norm(reciprocal[1]), _norm(reciprocal[2]))
-    denominators = (n1 - 1, n2 - 1, n3 - 1)
+    counts = (n1, n2, n3)
 
-    finite_spacings: list[float] = []
-    for magnitude, denominator in zip(magnitudes, denominators, strict=True):
-        if denominator <= 0:
-            continue
-        finite_spacings.append(magnitude / (2.0 * math.pi * float(denominator)))
-
-    if finite_spacings:
-        return min(finite_spacings)
-
-    # ``(1, 1, 1)`` has no unique inverse; choose the coarsest spacing
-    # that still reproduces a valid single-point grid.
-    return max(magnitudes) / (2.0 * math.pi)
+    candidates = [
+        magnitude / (2.0 * math.pi * float(count - 1))
+        for magnitude, count in zip(magnitudes, counts, strict=True)
+        if count >= 2
+    ]
+    if not candidates:
+        raise ValueError("No spacing represents the (1, 1, 1) Gamma-only grid.")
+    return min(candidates)
 
 
 def supercell_lattice_vectors(
@@ -228,8 +282,27 @@ def equivalent_grid_for_supercell(
 ) -> tuple[int, int, int]:
     """Return a supercell grid with approximately equivalent k-point density."""
 
-    spacing = spacing_from_grid(reference_lattice, reference_grid)
-    return grid_from_spacing(supercell_lattice, spacing)
+    reference_reciprocal = reciprocal_lattice_vectors(reference_lattice)
+    supercell_reciprocal = reciprocal_lattice_vectors(supercell_lattice)
+
+    grid: list[int] = []
+    for reference_count, reference_vector, supercell_vector in zip(
+        reference_grid,
+        reference_reciprocal,
+        supercell_reciprocal,
+        strict=True,
+    ):
+        count = int(reference_count)
+        if count <= 0:
+            raise ValueError("reference_grid values must be positive integers.")
+        reference_magnitude = _norm(reference_vector)
+        if reference_magnitude <= 0.0:
+            raise ValueError("reference_lattice must define non-zero reciprocal vectors.")
+
+        ratio = _norm(supercell_vector) / reference_magnitude
+        grid.append(max(1, int(math.ceil((float(count) * ratio) - 1e-12))))
+
+    return (grid[0], grid[1], grid[2])
 
 
 def _angle_degrees(lhs: Sequence[float], rhs: Sequence[float]) -> float:

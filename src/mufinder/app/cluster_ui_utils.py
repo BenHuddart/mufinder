@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 from mufinder.cluster_setup import ClusterConfig
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
     SSHHostKeyMismatchError,
+    SSHProtocolBannerError,
     SSHTransportError,
     SSHUnknownHostKeyError,
 )
+
+
+def make_message_box_resizable(box: QMessageBox) -> QMessageBox:
+    """Allow a QMessageBox with details to be resized by the user."""
+
+    box.setSizeGripEnabled(True)
+    box.setWindowFlag(Qt.WindowType.MSWindowsFixedSizeDialogHint, False)
+    return box
 
 
 def show_detailed_warning(
@@ -32,7 +42,7 @@ def show_detailed_warning(
         QMessageBox.warning(parent, title, summary)
         return
 
-    box = QMessageBox(parent)
+    box = make_message_box_resizable(QMessageBox(parent))
     box.setIcon(QMessageBox.Icon.Warning)
     box.setWindowTitle(title)
     box.setText(summary)
@@ -70,11 +80,19 @@ def format_cluster_connection_error(config: ClusterConfig, exc: Exception) -> st
         )
         return f"Authentication failed for {config.username}@{config.hostname}.\n\n{exc}\n\n{auth_hint}"
 
+    if isinstance(exc, SSHProtocolBannerError):
+        return (
+            f"{exc}\n\n"
+            "This usually means the configured host and port are reachable, but that endpoint is not "
+            "answering as an SSH server. Check the cluster hostname and SSH port in Setup -> HPC Clusters, "
+            "confirm VPN/network access, and try again in case the login node closed the connection under load."
+        )
+
     if isinstance(exc, SSHTransportError):
         return (
             f"Could not establish an SSH session to {config.hostname}:{config.port}.\n\n"
             f"{exc}\n\n"
-            "Check VPN/network access, hostname, port, and cluster SSH availability."
+            "Check VPN/network access, hostname, port, proxy settings, and cluster SSH availability."
         )
 
     return str(exc).strip() or "Unknown cluster connection failure."
@@ -83,7 +101,7 @@ def format_cluster_connection_error(config: ClusterConfig, exc: Exception) -> st
 def prompt_to_trust_host_key(parent, config: ClusterConfig, exc: SSHUnknownHostKeyError) -> bool:
     """Prompt the user to trust an unknown SSH host key."""
 
-    message = QMessageBox(parent)
+    message = make_message_box_resizable(QMessageBox(parent))
     message.setIcon(QMessageBox.Icon.Warning)
     message.setWindowTitle("Trust SSH host key?")
     message.setText(f"Trust the SSH host key for {config.name} ({config.hostname}:{config.port})?")

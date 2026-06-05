@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,10 @@ def test_apply_saved_castep_environment_uses_settings(monkeypatch: pytest.Monkey
     assert os.environ["MUFINDER_CASTEP_KEYWORDS_JSON"] == "/tmp/generated/castep_keywords.json"
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="discover_mpirun fallback candidates are POSIX-only paths",
+)
 def test_discover_mpirun_prefers_which(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(dialog_module, "discover_mpirun", discover_mpirun)
     monkeypatch.setattr("mufinder.castep_setup.shutil.which", lambda _name: "/usr/local/bin/mpirun")
@@ -83,6 +88,10 @@ def test_discover_mpirun_prefers_which(monkeypatch: pytest.MonkeyPatch) -> None:
     assert discovered.endswith("/usr/local/bin/mpirun")
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="discover_mpirun fallback candidates are POSIX-only paths",
+)
 def test_discover_mpirun_falls_back_to_known_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

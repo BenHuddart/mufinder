@@ -1,8 +1,8 @@
 # MuFinder Product and Architecture Specification
 
 - Spec ID: MUFINDER-SPEC
-- Spec Version: 1.12.0
-- Last Updated: 2026-04-10
+- Spec Version: 1.16.0
+- Last Updated: 2026-05-16
 - Status: Active
 - Scope: PySide6 desktop rebuild
 
@@ -23,6 +23,10 @@
 | 1.10.0 | 2026-04-08 | Added a dedicated parent Convergence Testing overview page with notebook-style pinned cutoff/k-point plots, adoption-driven snapshot persistence, child-workflow action cards, and stale-snapshot fallback behavior on host/default changes. |
 | 1.11.0 | 2026-04-08 | Added startup responsiveness requirements: splash screen must be shown before heavyweight startup imports/initialization, with deferred feature imports after splash exposure. |
 | 1.12.0 | 2026-04-10 | Added pristine-relaxation requirements for per-row supercell/fixed-cell controls, project-default cutoff+k-point propagation, equivalent-density k-point scaling, `-out.cell` parsing, and geometry-convergence completion gating. |
+| 1.13.0 | 2026-04-29 | Expanded MCIF magnetic import requirements to preserve atom labels, multiple propagation vectors, label-to-atom mappings, and phase-corrected magnetic-model promotion. |
+| 1.14.0 | 2026-05-09 | Refined Energy Barriers UX to require explicit initial/final site selection before path generation and added a plotted NEB reaction-coordinate profile in the inline inspector. |
+| 1.15.0 | 2026-05-09 | Split the Energy Barriers workflow across dedicated tabs for path generation, transition-state jobs, and NEB analysis to improve usability on smaller displays. |
+| 1.16.0 | 2026-05-16 | Refined Quantum Corrections into an explicit two-stage singlepoint-to-phonon workflow with per-row stage/task-farming metadata and continuation-aware cluster submission. |
 
 ## 1. Executive Summary
 
@@ -211,6 +215,19 @@ Each significant action records:
 
 Provenance must support reconstruction of what was run, with which inputs and options.
 
+Journal presentation requirements:
+
+- the `provenance_log` workflow route must surface as a user-facing `Journal` page
+- the Journal must be derived from persisted `provenance.jsonl` records rather than inferred job history
+- Journal entries must be grouped by local calendar day with human-readable date headers and no precise times
+- the default presentation must be curated and narrative-focused rather than exposing a raw append-only ledger
+- the curated Journal must include major workflow actions, calculation submission milestones, comparison-table creation, and terminal calculation outcomes
+- intermediate runtime states such as queued, running, and retrieving must not be journalized by default
+- the Journal UI must follow MuFinder branding as a notebook-style expedition record, using existing palette and typography tokens
+- completion and warning/failure milestones may use stamp-style affordances to reinforce workflow progress
+- Journal export must support plain text by default and Markdown as a secondary format
+- export output must mirror the curated Journal rather than dumping raw JSON or JSONL provenance rows
+
 ## 11. UI Architecture
 
 Recommended architecture:
@@ -294,16 +311,28 @@ Startup responsiveness requirements:
 
 Generation methods:
 
-- random constrained filling
+- random constrained filling, either by direct muon-muon separation or by a
+  target number of initial positions with automatic spacing estimation
 - near-element placement
 - manual site entry (fractional or Cartesian)
+- UEP cluster source rows from saved UEP analysis state
 
 Current implemented generation constraints:
 
 - periodic minimum-image muon-muon distance
 - periodic minimum-image muon-atom distance
 - attempt-cap controlled sampling
-- optional deterministic seed
+- symmetry-equivalent random-position reservation
+- internal deterministic seed support for regression tests
+
+Relaxation staging:
+
+- selected generated positions must prompt for positive muon, muonium, or both
+  charge states before rows are staged
+- the relaxation table must present charge states as separate positive-muon and
+  muonium tabs rather than a per-row charge column
+- CASTEP total charge remains workflow-controlled: `+1` for positive muon and
+  `0` for muonium
 
 ### 12.4 Site Analysis and Clustering
 
@@ -331,7 +360,8 @@ Current implemented generation constraints:
    - a simple diagonal matrix mode (Nx, Ny, Nz)
    - an advanced full 3x3 integer matrix mode
    - read-only visual verification of magnetic pattern propagation across generated supercells
-- host-structure supercell preview is a generation/inspection tool and is not itself the authoritative workflow calculation-cell selector
+- host-structure supercell preview has been promoted to a Supercell Editor that can save, name, edit, delete, and select reusable project supercells
+- matrix edits to saved supercells already frozen into configured calculations must create a future-use copy rather than rewriting the frozen calculation structure
 
 ### 12.9 Workflow-Scoped Simulation Cell Selection and Supercell Assets
 
@@ -346,6 +376,7 @@ Current implemented generation constraints:
   - `properties.supercell_asset.owner_workflow_stage`
   - `properties.supercell_asset.source_asset_structure_id` (nullable clone provenance)
 - saved supercell assets must be reusable across workflows for the same host structure
+- saved supercell assets must support user-facing names that can be changed in the Supercell Editor
 - selecting a saved supercell owned by a different workflow must perform clone-on-load into the current workflow scope, with deduplication when an identical current-workflow host+matrix asset already exists
 - convergence configuration persistence must freeze the resolved simulation cell by storing:
   - the resolved structure id in `CalculationDefinition.input_structure_ids[0]`
@@ -357,13 +388,37 @@ Current implemented generation constraints:
 
 ### 12.6 Quantum Corrections
 
-- phonon workflows on confirmed sites
-- parse and persist quantum outputs
+- quantum phonon calculations must start only from completed structural muon relaxation results
+- UEP candidates, generated sites, pristine relaxations, failed jobs, and manual sites without structural-relaxation provenance are not valid sources
+- the workflow is row-driven and stage-aware: each eligible relaxed site must run a required stage-1 singlepoint job before the stage-2 phonon continuation becomes ready
+- the source table must expose per-row `Displacements`, `Stage`, and `Farms` metadata, where `Displacements = 3 x atom count` for the relaxed source structure
+- once stage 1 completes, shared Quantum Corrections parameters for that row must be frozen so only the stage-2 farm count remains editable before phonon-job materialization
+- the workflow must provide an explicit reset-to-stage-1 action that clears staged Quantum Corrections job records and shared outputs for a row so the singlepoint can be rerun with updated parameters
+- stage-1 generated inputs must write `TASK : SINGLEPOINT`
+- CASTEP stage-2 phonon jobs are Gamma-point only and must write `TASK : PHONON`, `CONTINUATION : DEFAULT`, `PHONON_KPOINT_MP_GRID 1 1 1`, a selected `PHONON_METHOD`, and explicit `H:mu` mass/gamma cell blocks
+- stage-2 task farming is user-configurable per row through `num_farms`; when greater than one, generated inputs must include `NUM_FARMS`
+- finite displacement is the default method; DFPT/linear-response workflows must reject known ultrasoft pseudopotentials and warn for unknown pseudopotential family metadata
+- only completed stage-2 phonon jobs produce persisted Quantum Corrections result rows
+- `.phonon` files are expected outputs for quantum phonon jobs and must be retrieved from cluster runs
+- when task farming is active, local and cluster retrieval must accept `*_farm001.castep` as the primary CASTEP output alongside the usual phonon artifacts
+- same-cluster stage-2 submissions must be able to reuse the completed stage-1 remote directory without prompting for directory deletion, while still uploading refreshed inputs and submission scripts
+- parsed results must persist selected muon-dominated modes, per-mode and total ZPE, witness metrics, output files, and source relaxation provenance
+- completed result rows must provide a `Launch Analysis` action that opens an interactive phonon-analysis window for the selected job
+- the analysis window must expose a `Phonon Modes` tab that lists all Gamma-point modes, highlights the selected muon-dominated subset, synchronizes one selected mode to a muonated-structure viewer, and supports amplitude-controlled playback animation with play/pause, reset, cycle-time, and vector-visibility controls
+- the analysis window must expose the single-particle adiabatic solver for selected muon-dominated Gamma modes, support Gomilsek-style energy plots including square-root energy scaling, and calculate covariance/correlation tensors plus pairwise `w2` witnesses
+- PIMD is out of scope
 
 ### 12.7 Energy Barriers
 
-- path selection among confirmed sites
+- path generation is explicit and pair-scoped: users select initial and final confirmed relaxed sites, then generate distinct paths for that pair on demand
+- selecting the same relaxed site for both endpoints must be allowed so symmetry-equivalent same-site hops can be generated, with zero-length self-maps excluded from the resulting path list
+- path generation must expose an optional maximum path-length limit that filters candidate hops before the final distinct-path list is shown
+- generated transition-state path rows must remain available after the endpoint selectors change so previously prepared hops are not discarded while the user explores another pair
+- generated transition-state path rows must be removable from the workflow, including via Delete and Backspace shortcuts when the path table has focus
 - TSS and NEB support
+- the workflow is split across dedicated tabs for path generation, transition-state results, and NEB analysis so the interface remains usable on smaller displays
+- completed NEB jobs expose an inline path inspector with image-by-image geometry preview in the shared structure viewer
+- the inline NEB inspector includes a plotted reaction-coordinate profile synchronized with the image table, slider, and structure viewer
 - persisted profiles and export paths
 
 ## 13. Directory and Storage Strategy
@@ -377,7 +432,6 @@ Canonical structure (abridged):
 - `imports/`
 - `files/`
 - `exports/`
-- `.autosave/`
 
 ## 14. Migration Strategy
 
@@ -465,11 +519,16 @@ Import behavior:
 
 MCIF magnetic extraction behavior:
 
-- parse propagation vector from known MCIF tags where present
-- parse atom-site moment vectors from `_atom_site_moment` loops where present
+- parse propagation vectors from known scalar tags and `_magnetic_propagation_vector_kxkykz` triplet entries where present
+- preserve multiple imported propagation vectors in reciprocal-lattice units, up to the three-vector basis used by the magnetic model
+- mirror the first imported propagation vector to the legacy `propagation_vector` property for existing supercell workflows
+- parse atom labels from `_atom_site_label`
+- parse atom-site moment vectors from dotted and underscored `_atom_site_moment` loops where present, including CIF uncertainty and fraction numeric notation
+- map atom-site moment labels onto host atom indices by exact label or a unique `label_...` atom-label expansion
 - attach extracted magnetic metadata to structure properties
 - when imported structure is active host, populate project-level magnetic structure
 - derive and store per-atom scalar spins from extracted moments for host-structure editing/visualization
+- promote MCIF-derived moments to propagation-vector components with phase-corrected Fourier coefficients so the unit-cell evaluated moments reproduce the imported labelled MCIF moments
 - persist extracted propagation vectors in structure-level properties for supercell spin propagation workflows
 
 Host visualization and CASTEP output behavior:

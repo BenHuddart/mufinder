@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+import re
 import shutil
 from typing import Any
 from uuid import UUID
@@ -27,18 +29,25 @@ from mufinder.persistence.codec import parse_datetime, parse_uuid, to_jsonable
 from mufinder.persistence.json_store import ProjectStore
 from mufinder.science.site_generation import (
     SiteGenerationError,
-    generate_near_element_sites,
+    closest_symmetry_equivalent_position,
+    estimate_random_site_count_from_separation,
+    estimate_muon_muon_separation_for_count,
+    generate_attached_element_sites,
     generate_random_sites,
+    generate_random_sites_by_distance,
     lattice_cart_to_frac,
     lattice_frac_to_cart,
 )
-from mufinder.science.structure_io import StructureLoadError, load_structure_file
+from mufinder.science.structure_io import load_structure_file
 from mufinder.science.supercell import build_supercell_structure
 
 _WORKFLOW_SUPERCELLS_STATE_KEY = "workflow_supercells"
 _WORKFLOW_SUPERCELL_UNIT_CELL = "unit_cell"
 _WORKFLOW_SUPERCELL_SAVED = "saved_supercell"
 _IDENTITY_SUPERCELL_MATRIX = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+_GENERATED_SITE_STATUS = "generated"
+_LEGACY_GENERATED_SITE_STATUSES = {_GENERATED_SITE_STATUS, "candidate"}
+_STAGEABLE_SITE_STATUSES = {*_LEGACY_GENERATED_SITE_STATUSES, "staged"}
 
 
 @dataclass(slots=True)
@@ -72,6 +81,7 @@ class WorkflowSupercellAsset:
 
     structure_id: UUID
     label: str
+    parent_structure_id: UUID | None
     owner_workflow_stage: WorkflowStage
     matrix: list[list[int]]
     source_asset_structure_id: UUID | None = None
@@ -88,6 +98,35 @@ class WorkflowStructureResolution:
     selected_asset: WorkflowSupercellAsset | None = None
     status_message: str = ""
     source_workflow_stage: WorkflowStage | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class PromotableHost:
+    """A structure eligible to serve as the project's active host."""
+
+    structure_id: UUID
+    label: str
+    provenance_hint: str
+    kind: str  # "imported" or "relaxed"
+    created_at: datetime | None
+
+
+@dataclass(slots=True)
+class SiteHostMismatch:
+    """Sites whose source structure differs from the active host."""
+
+    active_host_id: UUID
+    active_host_label: str
+    offenders: list[tuple[UUID, str, UUID | None, str]]  # (site_id, label, source_host_id, source_host_label)
+
+
+@dataclass(slots=True)
+class StructureHostMismatch:
+    """Structures whose provenance chain doesn't resolve to the active host."""
+
+    active_host_id: UUID
+    active_host_label: str
+    offenders: list[tuple[UUID, str, UUID | None, str]]  # (struct_id, label, resolved_host_id, host_label)
 
 
 class ProjectService:
@@ -207,9 +246,274 @@ class ProjectService:
         """Register one persisted comparison table in the current document."""
         document.comparison_tables[table.id] = table
 
+    def rename_comparison_table(self, document: ProjectDocument, table_id: UUID, label: str) -> ComparisonTable | None:
+        """Update the display label for one persisted comparison table."""
+        table = document.comparison_tables.get(table_id)
+        if table is None:
+            return None
+        table.label = str(label).strip() or "Comparison Table"
+        return table
+
     def remove_comparison_table(self, document: ProjectDocument, table_id: UUID) -> None:
         """Delete one persisted comparison table from the current document."""
         document.comparison_tables.pop(table_id, None)
+
+    def remove_candidate_sites(self, document: ProjectDocument, site_ids: Sequence[UUID]) -> list[MuonSite]:
+        """Remove generated muon sites by id and record the edit in provenance."""
+        removed: list[MuonSite] = []
+        for site_id in site_ids:
+            site = document.sites.get(site_id)
+            if site is None or site.status not in _LEGACY_GENERATED_SITE_STATUSES:
+                continue
+            removed.append(document.sites.pop(site_id))
+
+        if removed:
+            self.append_provenance(
+                document,
+                ProvenanceRecord(
+                    action="delete_candidates",
+                    workflow_stage=WorkflowStage.MUON_GENERATION,
+                    actor="user",
+                    description=f"Deleted {len(removed)} generated muon site(s)",
+                    parameters={"site_labels": [site.label for site in removed]},
+                    input_entity_ids=[site.id for site in removed],
+                ),
+            )
+        return removed
+
+    def cluster_candidate_positions(
+        self,
+        document: ProjectDocument,
+        site_ids: Sequence[UUID],
+        *,
+        anchor_fractional: Sequence[float],
+    ) -> list[MuonSite]:
+        """Move selected generated muon sites to symmetry representatives near an anchor."""
+
+        host = self._active_host_structure(document)
+        if host is None:
+            raise SiteGenerationError("Select a host structure before clustering generated muon positions.")
+        if not site_ids:
+            raise SiteGenerationError("Select one or more generated muon positions to cluster.")
+        if len(anchor_fractional) != 3:
+            raise SiteGenerationError("Enter a three-component fractional anchor position.")
+
+        lattice = host.lattice_vectors
+        host_species = host.species
+        host_positions = host.fractional_positions
+        anchor = [float(value) % 1.0 for value in anchor_fractional]
+        updated: list[MuonSite] = []
+        for site_id in site_ids:
+            site = document.sites.get(site_id)
+            if site is None or site.status not in _LEGACY_GENERATED_SITE_STATUSES:
+                continue
+            if len(site.fractional_position) != 3:
+                raise SiteGenerationError(f"Muon site '{site.label}' is missing a valid fractional position.")
+            clustered = closest_symmetry_equivalent_position(
+                site.fractional_position,
+                anchor_frac=anchor,
+                lattice_vectors=lattice,
+                host_species=host_species,
+                host_positions_frac=host_positions,
+            )
+            site.fractional_position = clustered
+            site.cartesian_position = lattice_frac_to_cart(clustered, lattice)
+            updated.append(site)
+
+        if not updated:
+            raise SiteGenerationError("Selected rows did not contain any generated muon positions.")
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="cluster_candidate_positions",
+                workflow_stage=WorkflowStage.MUON_GENERATION,
+                actor="user",
+                description=f"Clustered {len(updated)} generated muon site(s) near an anchor position",
+                parameters={
+                    "anchor_fractional": anchor,
+                    "site_labels": [site.label for site in updated],
+                },
+                input_entity_ids=[site.id for site in updated],
+                output_entity_ids=[site.id for site in updated],
+            ),
+        )
+        return updated
+
+    def stage_generated_sites(self, document: ProjectDocument, site_ids: Sequence[UUID]) -> list[MuonSite]:
+        """Mark generated muon sites as staged for structural relaxation."""
+
+        staged: list[MuonSite] = []
+        for site_id in site_ids:
+            site = document.sites.get(site_id)
+            if site is None or site.status not in _STAGEABLE_SITE_STATUSES:
+                continue
+            site.status = "staged"
+            staged.append(site)
+
+        if staged:
+            self.append_provenance(
+                document,
+                ProvenanceRecord(
+                    action="stage_muon_relaxation_sites",
+                    workflow_stage=WorkflowStage.MUON_RELAXATION,
+                    actor="user",
+                    description=f"Staged {len(staged)} generated muon site(s) for relaxation",
+                    parameters={"site_labels": [site.label for site in staged]},
+                    input_entity_ids=[site.id for site in staged],
+                    output_entity_ids=[site.id for site in staged],
+                ),
+            )
+        return staged
+
+    def record_job_submission(
+        self,
+        document: ProjectDocument,
+        *,
+        jobs: Sequence[Job],
+        execution_target: str,
+    ) -> None:
+        """Append one provenance milestone for a user submission action."""
+
+        submitted_jobs = [job for job in jobs if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED}]
+        if not submitted_jobs:
+            return
+
+        workflow_stage = submitted_jobs[0].workflow_stage if len({job.workflow_stage for job in submitted_jobs}) == 1 else None
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="submit_jobs",
+                workflow_stage=workflow_stage,
+                actor="user",
+                description=f"Submitted {len(submitted_jobs)} job(s) to {execution_target}",
+                parameters={
+                    "execution_target": execution_target,
+                    "job_count": len(submitted_jobs),
+                    "job_labels": [job.label for job in submitted_jobs],
+                    "jobs": [
+                        {
+                            "job_id": str(job.id),
+                            "label": job.label,
+                            "status": job.status.value,
+                            "execution_target": job.execution_target,
+                            "remote_job_id": job.remote_job_id,
+                            "remote_directory": job.remote_directory,
+                            "num_processes": job.num_processes,
+                            "submitted_at": job.submitted_at.isoformat() if job.submitted_at else None,
+                        }
+                        for job in submitted_jobs
+                    ],
+                },
+                output_entity_ids=[job.id for job in submitted_jobs],
+            ),
+        )
+
+    def record_job_terminal_event(
+        self,
+        document: ProjectDocument,
+        *,
+        action: str,
+        job: Job,
+        result: Result | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Append one provenance milestone for a terminal job outcome."""
+
+        parameters: dict[str, Any] = {
+            "job_label": job.label,
+            "calc_type": job.calc_type,
+            "execution_target": job.execution_target,
+        }
+        if result is not None:
+            data = result.data if isinstance(result.data, dict) else {}
+            total_energy = data.get("total_energy")
+            max_force = data.get("max_force")
+            warnings = data.get("warnings", [])
+            if total_energy is not None:
+                parameters["result_total_energy"] = total_energy
+            if max_force is not None:
+                parameters["result_max_force"] = max_force
+            if isinstance(warnings, list):
+                parameters["warnings_count"] = len(warnings)
+            if result.derived_structure_ids:
+                parameters["derived_structure_count"] = len(result.derived_structure_ids)
+        if error_message:
+            parameters["error_message"] = error_message
+
+        output_entity_ids: list[UUID] = [job.id]
+        if result is not None:
+            output_entity_ids.append(result.id)
+            output_entity_ids.extend(result.derived_structure_ids)
+
+        descriptions = {
+            "job_completed": f"Completed calculation {job.label}",
+            "job_failed": f"Calculation {job.label} failed",
+            "job_stopped": f"Calculation {job.label} stopped",
+            "job_cancelled": f"Cancelled calculation {job.label}",
+        }
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action=action,
+                workflow_stage=job.workflow_stage,
+                actor="system",
+                description=descriptions.get(action, job.label),
+                parameters=parameters,
+                output_entity_ids=output_entity_ids,
+                job_id=job.id,
+            ),
+        )
+
+    def record_job_reset(
+        self,
+        document: ProjectDocument,
+        *,
+        job: Job,
+        cleaned_output_directory: bool,
+    ) -> None:
+        """Append one provenance milestone when a job is reset for resubmission."""
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="job_reset",
+                workflow_stage=job.workflow_stage,
+                actor="user",
+                description=f"Reset calculation {job.label} for resubmission",
+                parameters={
+                    "job_label": job.label,
+                    "calc_type": job.calc_type,
+                    "execution_target": job.execution_target,
+                    "cleaned_output_directory": cleaned_output_directory,
+                },
+                output_entity_ids=[job.id],
+                job_id=job.id,
+            ),
+        )
+
+    def record_comparison_table_created(
+        self,
+        document: ProjectDocument,
+        *,
+        table: ComparisonTable,
+    ) -> None:
+        """Append one provenance milestone when a comparison table is created."""
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="create_comparison_table",
+                actor="user",
+                description=f"Created comparison table '{table.label}'",
+                parameters={
+                    "table_label": table.label,
+                    "dft_structure_count": len(table.dft_structure_ids),
+                },
+                input_entity_ids=[table.experimental_structure_id] if table.experimental_structure_id is not None else [],
+                output_entity_ids=[table.id, *table.dft_structure_ids],
+            ),
+        )
 
     @staticmethod
     def _identity_supercell_matrix() -> list[list[int]]:
@@ -314,6 +618,7 @@ class ProjectService:
         return WorkflowSupercellAsset(
             structure_id=structure.id,
             label=structure.label,
+            parent_structure_id=structure.parent_structure_id,
             owner_workflow_stage=owner_stage,
             matrix=matrix,
             source_asset_structure_id=self._parse_optional_uuid(raw.get("source_asset_structure_id")),
@@ -544,6 +849,7 @@ class ProjectService:
         workflow_stage: WorkflowStage,
         host_structure_id: UUID,
         matrix: list[list[int]],
+        label: str | None = None,
         source_asset_structure_id: UUID | None = None,
         reuse_existing: bool = True,
     ) -> Structure:
@@ -572,7 +878,7 @@ class ProjectService:
             atomic_spins=self._structure_atomic_spins(host),
             propagation_vector=self._structure_propagation_vector(host),
         )
-        structure.label = self._supercell_asset_label(workflow_stage, parsed_matrix)
+        structure.label = str(label or "").strip() or self._supercell_asset_label(workflow_stage, parsed_matrix)
         structure.parent_structure_id = host_structure_id
         structure.properties["supercell_asset"] = {
             "matrix": [list(row) for row in parsed_matrix],
@@ -583,6 +889,133 @@ class ProjectService:
         }
         document.structures[structure.id] = structure
         return structure
+
+    def supercell_asset_references(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+    ) -> list[str]:
+        """Return user-facing references to a saved supercell asset."""
+
+        references: list[str] = []
+        for definition in document.calculations.values():
+            if asset_structure_id in definition.input_structure_ids:
+                references.append(
+                    f"{definition.workflow_stage.value} calculation '{definition.calc_type}'"
+                )
+
+        for stage_value, raw in self._workflow_supercells_state(document).items():
+            if not isinstance(raw, dict):
+                continue
+            raw_id = self._parse_optional_uuid(raw.get("structure_id"))
+            if raw_id == asset_structure_id:
+                references.append(f"{stage_value} active selection")
+
+        return references
+
+    def supercell_asset_is_frozen(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+    ) -> bool:
+        """Return whether the asset is frozen into a calculation definition."""
+
+        return any(asset_structure_id in definition.input_structure_ids for definition in document.calculations.values())
+
+    def rename_workflow_supercell_asset(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+        label: str,
+    ) -> Structure:
+        """Rename a saved supercell asset."""
+
+        structure = document.structures.get(asset_structure_id)
+        if structure is None or self._supercell_asset(structure) is None:
+            raise ValueError("Selected structure is not a saved supercell asset.")
+        cleaned = str(label).strip()
+        if not cleaned:
+            raise ValueError("Supercell name must not be empty.")
+        structure.label = cleaned
+        return structure
+
+    def update_workflow_supercell_asset_matrix(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+        matrix: list[list[int]],
+        label: str | None = None,
+    ) -> Structure:
+        """Regenerate an unfrozen saved supercell asset with a new matrix."""
+
+        structure = document.structures.get(asset_structure_id)
+        if structure is None:
+            raise ValueError("Selected supercell does not exist in this project.")
+        asset = self._supercell_asset(structure)
+        if asset is None:
+            raise ValueError("Selected structure is not a saved supercell asset.")
+        if self.supercell_asset_is_frozen(document, asset_structure_id=asset_structure_id):
+            raise ValueError("This supercell is already used by configured calculations; save a new copy instead.")
+        if structure.parent_structure_id is None:
+            raise ValueError("Saved supercell is missing its source structure.")
+        host = document.structures.get(structure.parent_structure_id)
+        if host is None:
+            raise ValueError("Saved supercell source structure is no longer available.")
+
+        parsed_matrix = self._coerce_supercell_matrix(matrix)
+        if parsed_matrix is None:
+            raise ValueError("Supercell matrix must be a 3x3 integer matrix.")
+
+        regenerated, _expanded_spins = build_supercell_structure(
+            host,
+            parsed_matrix,
+            atomic_spins=self._structure_atomic_spins(host),
+            propagation_vector=self._structure_propagation_vector(host),
+        )
+        structure.lattice_vectors = [list(vector) for vector in regenerated.lattice_vectors]
+        structure.species = list(regenerated.species)
+        structure.fractional_positions = [list(position) for position in regenerated.fractional_positions]
+        structure.label = str(label or "").strip() or structure.label or self._supercell_asset_label(
+            asset.owner_workflow_stage,
+            parsed_matrix,
+        )
+        structure.properties = dict(regenerated.properties)
+        structure.properties["supercell_asset"] = {
+            "matrix": [list(row) for row in parsed_matrix],
+            "owner_workflow_stage": asset.owner_workflow_stage.value,
+            "source_asset_structure_id": (
+                str(asset.source_asset_structure_id) if asset.source_asset_structure_id is not None else None
+            ),
+        }
+        structure.parent_structure_id = host.id
+        return structure
+
+    def delete_workflow_supercell_asset(
+        self,
+        document: ProjectDocument,
+        *,
+        asset_structure_id: UUID,
+    ) -> Structure:
+        """Delete an unused saved supercell asset and clear stale active selections."""
+
+        structure = document.structures.get(asset_structure_id)
+        if structure is None or self._supercell_asset(structure) is None:
+            raise ValueError("Selected structure is not a saved supercell asset.")
+        if self.supercell_asset_is_frozen(document, asset_structure_id=asset_structure_id):
+            raise ValueError("This supercell is already used by configured calculations and cannot be deleted.")
+
+        removed = document.structures.pop(asset_structure_id)
+        state = self._workflow_supercells_state(document)
+        for stage_value, raw in list(state.items()):
+            if not isinstance(raw, dict):
+                continue
+            if self._parse_optional_uuid(raw.get("structure_id")) == asset_structure_id:
+                state[stage_value] = {"mode": _WORKFLOW_SUPERCELL_UNIT_CELL}
+        return removed
 
     def use_workflow_supercell_asset(
         self,
@@ -1001,6 +1434,328 @@ class ProjectService:
 
         return definition
 
+    def register_muon_relaxation_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_id: UUID | None = None,
+        host_structure_id: UUID | None = None,
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one muon-relaxation configuration."""
+
+        if input_structure_id is None:
+            input_structure_id = host_structure_id
+
+        if input_structure_id is None or input_structure_id not in document.structures:
+            raise ValueError("input_structure_id must reference a known structure.")
+
+        relative_output = str(output_directory)
+        try:
+            relative_output = str(output_directory.relative_to(document.project_root))
+        except ValueError:
+            relative_output = str(output_directory)
+
+        snapshot = to_jsonable(parameters)
+        input_site_ids: list[UUID] = []
+        for row in snapshot.get("rows", []):
+            if not isinstance(row, dict) or not row.get("site_id"):
+                continue
+            try:
+                input_site_ids.append(UUID(str(row["site_id"])))
+            except ValueError:
+                continue
+
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_muon_relaxation",
+            parameters={
+                "configuration": snapshot,
+                "output_directory": relative_output,
+                "job_ids_by_label": dict(job_ids_by_label or {}),
+            },
+            input_structure_ids=[input_structure_id],
+            input_site_ids=input_site_ids,
+        )
+        document.calculations[definition.id] = definition
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="configure_muon_relaxation",
+                workflow_stage=WorkflowStage.MUON_RELAXATION,
+                actor="user",
+                description=f"Configured muon relaxation with {len(snapshot.get('rows', []))} job row(s)",
+                parameters={
+                    "calculation_definition_id": str(definition.id),
+                    "configuration": snapshot,
+                    "output_directory": relative_output,
+                    "job_ids_by_label": dict(job_ids_by_label or {}),
+                },
+                input_entity_ids=[input_structure_id, *definition.input_site_ids],
+                output_entity_ids=[definition.id],
+            ),
+        )
+
+        return definition
+
+    def register_uep_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_id: UUID | None = None,
+        host_structure_id: UUID | None = None,
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one UEP source-job configuration as a reusable definition."""
+
+        if input_structure_id is None:
+            input_structure_id = host_structure_id
+
+        if input_structure_id is None or input_structure_id not in document.structures:
+            raise ValueError("input_structure_id must reference a known structure.")
+
+        relative_output = str(output_directory)
+        try:
+            relative_output = str(output_directory.relative_to(document.project_root))
+        except ValueError:
+            relative_output = str(output_directory)
+
+        snapshot = to_jsonable(parameters)
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.UEP,
+            calc_type="castep_uep_source",
+            parameters={
+                "configuration": snapshot,
+                "output_directory": relative_output,
+                "job_ids_by_label": dict(job_ids_by_label or {}),
+            },
+            input_structure_ids=[input_structure_id],
+        )
+        document.calculations[definition.id] = definition
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="configure_uep",
+                workflow_stage=WorkflowStage.UEP,
+                actor="user",
+                description=(
+                    "Configured UEP source workflow with "
+                    f"{len(snapshot.get('rows', []))} job row(s)"
+                ),
+                parameters={
+                    "calculation_definition_id": str(definition.id),
+                    "configuration": snapshot,
+                    "output_directory": relative_output,
+                    "job_ids_by_label": dict(job_ids_by_label or {}),
+                },
+                input_entity_ids=[input_structure_id],
+                output_entity_ids=[definition.id],
+            ),
+        )
+
+        return definition
+
+    def register_quantum_phonon_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_ids: list[UUID],
+        input_site_ids: list[UUID],
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one Quantum Corrections phonon configuration."""
+
+        if not input_structure_ids:
+            raise ValueError("At least one input structure is required.")
+        missing_structures = [structure_id for structure_id in input_structure_ids if structure_id not in document.structures]
+        if missing_structures:
+            raise ValueError("input_structure_ids must reference known structures.")
+        missing_sites = [site_id for site_id in input_site_ids if site_id not in document.sites]
+        if missing_sites:
+            raise ValueError("input_site_ids must reference known sites.")
+
+        relative_output = str(output_directory)
+        try:
+            relative_output = str(output_directory.relative_to(document.project_root))
+        except ValueError:
+            relative_output = str(output_directory)
+
+        snapshot = to_jsonable(parameters)
+        singlepoint_job_ids_by_label = snapshot.get("singlepoint_job_ids_by_label", {})
+        phonon_job_ids_by_label = snapshot.get("phonon_job_ids_by_label", {})
+        job_seed_names_by_label = snapshot.get("job_seed_names_by_label", {})
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+            calc_type="castep_quantum_phonon_set",
+            parameters={
+                "configuration": snapshot,
+                "output_directory": relative_output,
+                "job_ids_by_label": dict(job_ids_by_label or {}),
+                "singlepoint_job_ids_by_label": (
+                    dict(singlepoint_job_ids_by_label) if isinstance(singlepoint_job_ids_by_label, dict) else {}
+                ),
+                "phonon_job_ids_by_label": (
+                    dict(phonon_job_ids_by_label) if isinstance(phonon_job_ids_by_label, dict) else {}
+                ),
+                "job_seed_names_by_label": (
+                    dict(job_seed_names_by_label) if isinstance(job_seed_names_by_label, dict) else {}
+                ),
+            },
+            input_structure_ids=list(input_structure_ids),
+            input_site_ids=list(input_site_ids),
+        )
+        document.calculations[definition.id] = definition
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="configure_quantum_corrections",
+                workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+                actor="user",
+                description=f"Configured Quantum Corrections with {len(input_site_ids)} relaxed site(s)",
+                parameters={
+                    "calculation_definition_id": str(definition.id),
+                    "configuration": snapshot,
+                    "output_directory": relative_output,
+                    "job_ids_by_label": dict(job_ids_by_label or {}),
+                },
+                input_entity_ids=[*input_structure_ids, *input_site_ids],
+                output_entity_ids=[definition.id],
+            ),
+        )
+
+        return definition
+
+    def register_transition_state_search_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_ids: list[UUID],
+        input_site_ids: list[UUID],
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one Energy Barriers transition-state-search configuration."""
+
+        if not input_structure_ids:
+            raise ValueError("At least one input structure is required.")
+        missing_structures = [structure_id for structure_id in input_structure_ids if structure_id not in document.structures]
+        if missing_structures:
+            raise ValueError("input_structure_ids must reference known structures.")
+        missing_sites = [site_id for site_id in input_site_ids if site_id not in document.sites]
+        if missing_sites:
+            raise ValueError("input_site_ids must reference known sites.")
+
+        relative_output = str(output_directory)
+        try:
+            relative_output = str(output_directory.relative_to(document.project_root))
+        except ValueError:
+            relative_output = str(output_directory)
+
+        snapshot = to_jsonable(parameters)
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+            calc_type="castep_transition_state_search_set",
+            parameters={
+                "configuration": snapshot,
+                "output_directory": relative_output,
+                "job_ids_by_label": dict(job_ids_by_label or {}),
+            },
+            input_structure_ids=list(input_structure_ids),
+            input_site_ids=list(input_site_ids),
+        )
+        document.calculations[definition.id] = definition
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="configure_energy_barriers",
+                workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+                actor="user",
+                description=f"Configured Energy Barriers with {len(input_site_ids)} relaxed site(s)",
+                parameters={
+                    "calculation_definition_id": str(definition.id),
+                    "configuration": snapshot,
+                    "output_directory": relative_output,
+                    "job_ids_by_label": dict(job_ids_by_label or {}),
+                },
+                input_entity_ids=[*input_structure_ids, *input_site_ids],
+                output_entity_ids=[definition.id],
+            ),
+        )
+
+        return definition
+
+    def register_nudged_elastic_band_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        input_structure_ids: list[UUID],
+        input_site_ids: list[UUID],
+        parameters: dict[str, Any],
+        output_directory: Path,
+        job_ids_by_label: dict[str, str] | None = None,
+    ) -> CalculationDefinition:
+        """Persist one Energy Barriers NEB configuration."""
+
+        if not input_structure_ids:
+            raise ValueError("At least one input structure is required.")
+        missing_structures = [structure_id for structure_id in input_structure_ids if structure_id not in document.structures]
+        if missing_structures:
+            raise ValueError("input_structure_ids must reference known structures.")
+        missing_sites = [site_id for site_id in input_site_ids if site_id not in document.sites]
+        if missing_sites:
+            raise ValueError("input_site_ids must reference known sites.")
+
+        relative_output = str(output_directory)
+        try:
+            relative_output = str(output_directory.relative_to(document.project_root))
+        except ValueError:
+            relative_output = str(output_directory)
+
+        snapshot = to_jsonable(parameters)
+        definition = CalculationDefinition(
+            workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+            calc_type="castep_nudged_elastic_band_set",
+            parameters={
+                "configuration": snapshot,
+                "output_directory": relative_output,
+                "job_ids_by_label": dict(job_ids_by_label or {}),
+            },
+            input_structure_ids=list(input_structure_ids),
+            input_site_ids=list(input_site_ids),
+        )
+        document.calculations[definition.id] = definition
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="configure_energy_barriers",
+                workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+                actor="user",
+                description=f"Configured Energy Barriers NEB with {len(input_site_ids)} relaxed site(s)",
+                parameters={
+                    "calculation_definition_id": str(definition.id),
+                    "configuration": snapshot,
+                    "output_directory": relative_output,
+                    "job_ids_by_label": dict(job_ids_by_label or {}),
+                },
+                input_entity_ids=[*input_structure_ids, *input_site_ids],
+                output_entity_ids=[definition.id],
+            ),
+        )
+
+        return definition
+
     def set_recommended_cutoff(
         self,
         document: ProjectDocument,
@@ -1009,6 +1764,7 @@ class ProjectService:
         method: str | None = None,
         energy_threshold: float | None = None,
         force_threshold: float | None = None,
+        stress_threshold: float | None = None,
         cell_id: str | None = None,
     ) -> None:
         """Persist a project-wide recommended cutoff energy for future workflows."""
@@ -1021,6 +1777,9 @@ class ProjectService:
         )
         document.project.recommended_cutoff_force_threshold = (
             float(force_threshold) if force_threshold is not None else None
+        )
+        document.project.recommended_cutoff_stress_threshold = (
+            float(stress_threshold) if stress_threshold is not None else None
         )
         document.project.recommended_cutoff_cell_id = (
             str(cell_id).strip() if cell_id is not None and str(cell_id).strip() else None
@@ -1046,6 +1805,7 @@ class ProjectService:
                     "recommended_cutoff_method": document.project.recommended_cutoff_method,
                     "recommended_cutoff_energy_threshold": document.project.recommended_cutoff_energy_threshold,
                     "recommended_cutoff_force_threshold": document.project.recommended_cutoff_force_threshold,
+                    "recommended_cutoff_stress_threshold": document.project.recommended_cutoff_stress_threshold,
                     "recommended_cutoff_cell_id": document.project.recommended_cutoff_cell_id,
                 },
             ),
@@ -1060,6 +1820,7 @@ class ProjectService:
         method: str | None = None,
         energy_threshold: float | None = None,
         force_threshold: float | None = None,
+        stress_threshold: float | None = None,
         cell_id: str | None = None,
     ) -> None:
         """Persist a project-wide recommended k-point grid for future workflows."""
@@ -1083,6 +1844,9 @@ class ProjectService:
         document.project.recommended_kpoint_force_threshold = (
             float(force_threshold) if force_threshold is not None else None
         )
+        document.project.recommended_kpoint_stress_threshold = (
+            float(stress_threshold) if stress_threshold is not None else None
+        )
         document.project.recommended_kpoint_cell_id = (
             str(cell_id).strip() if cell_id is not None and str(cell_id).strip() else None
         )
@@ -1103,6 +1867,7 @@ class ProjectService:
                     "recommended_kpoint_method": document.project.recommended_kpoint_method,
                     "recommended_kpoint_energy_threshold": document.project.recommended_kpoint_energy_threshold,
                     "recommended_kpoint_force_threshold": document.project.recommended_kpoint_force_threshold,
+                    "recommended_kpoint_stress_threshold": document.project.recommended_kpoint_stress_threshold,
                     "recommended_kpoint_cell_id": document.project.recommended_kpoint_cell_id,
                 },
             ),
@@ -1113,6 +1878,9 @@ class ProjectService:
         self._assert_transition(job.status, JobStatus.SUBMITTING)
         job.status = JobStatus.SUBMITTING
         job.submitted_at = utc_now()
+        job.started_at = None
+        job.completed_at = None
+        job.error_message = None
 
     def mark_job_queued(self, job: Job, remote_job_id: str | None = None) -> None:
         """Mark an in-flight submission as queued."""
@@ -1180,11 +1948,13 @@ class ProjectService:
         *,
         method: str,
         parameters: dict[str, Any],
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[MuonSite]:
-        """Create candidate muon sites from a generation request.
+        """Create generated muon sites from a generation request.
 
-        Random and near-element strategies enforce periodic distance constraints
-        against host atoms and already-accepted candidate points.
+        Random strategies enforce periodic muon-muon and muon-atom distance
+        constraints. Element-attached generation ranks alternative starts for
+        each selected host atom by local clearance from the surrounding host.
         """
         host = self._active_host_structure(document)
         host_positions = host.fractional_positions if host else []
@@ -1192,7 +1962,28 @@ class ProjectService:
         lattice = host.lattice_vectors if host and host.lattice_vectors else None
 
         created_sites: list[MuonSite] = []
-        requested_count = int(parameters.get("count", 1)) if method != "manual" else 1
+        random_selection_mode = self._random_selection_mode(parameters) if method == "random" else ""
+        if method == "manual":
+            requested_count: int | None = 1
+        elif method == "random" and random_selection_mode == "separation":
+            requested_count = None
+        elif method == "uep_clusters" and isinstance(parameters.get("selections"), list):
+            requested_count = len(parameters.get("selections", []))
+        elif method == "near_element":
+            target = str(parameters.get("element", "")).strip().lower()
+            muons_per_atom_for_count = max(
+                1,
+                int(
+                    parameters.get(
+                        "muons_per_atom",
+                        parameters.get("max_candidates_per_atom", parameters.get("count", 1)),
+                    )
+                ),
+            )
+            matching_atoms = sum(1 for species in host_species if str(species).strip().lower() == target)
+            requested_count = matching_atoms * muons_per_atom_for_count if target and matching_atoms else None
+        else:
+            requested_count = int(parameters.get("count", 1))
         attempts_used = 1
 
         if method == "manual":
@@ -1212,9 +2003,10 @@ class ProjectService:
                     lattice or [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
                 )
 
+            label_prefix = "Manual Site"
             site = MuonSite(
-                label=f"Manual Site {len(document.sites) + 1}",
-                status="candidate",
+                label=f"{label_prefix} {self._next_site_label_number(document, label_prefix)}",
+                status=_GENERATED_SITE_STATUS,
                 fractional_position=fractional,
                 cartesian_position=cartesian,
                 generation_method=method,
@@ -1224,61 +2016,202 @@ class ProjectService:
             created_sites.append(site)
         elif method == "random":
             seed = self._parse_optional_int(parameters.get("seed"), field_name="seed")
-            points, attempts_used = generate_random_sites(
-                lattice_vectors=lattice,
-                host_positions_frac=host_positions,
-                count=max(1, requested_count),
-                min_muon_muon=float(parameters.get("min_muon_muon", 0.8)),
-                min_muon_atom=float(parameters.get("min_muon_atom", 1.0)),
-                max_attempts=int(parameters.get("max_attempts", 20000)),
-                seed=seed,
-            )
+            min_muon_atom = float(parameters.get("min_muon_atom", 1.0))
+            include_symmetry_equivalents = bool(parameters.get("include_symmetry_equivalents", True))
+            estimated_min_muon_muon: float | None = None
+            if random_selection_mode == "separation":
+                min_muon_muon = float(parameters.get("min_muon_muon", 0.8))
+                predicted_count = max(
+                    1,
+                    int(
+                        estimate_random_site_count_from_separation(
+                            lattice_vectors=lattice,
+                            host_positions_frac=host_positions,
+                            host_species=host_species,
+                            min_muon_muon=min_muon_muon,
+                            min_muon_atom=min_muon_atom,
+                            include_symmetry_equivalents=include_symmetry_equivalents,
+                        )
+                        + 0.999
+                    ),
+                )
+                points, attempts_used = generate_random_sites_by_distance(
+                    lattice_vectors=lattice,
+                    host_positions_frac=host_positions,
+                    host_species=host_species,
+                    min_muon_muon=min_muon_muon,
+                    min_muon_atom=min_muon_atom,
+                    max_attempts=int(parameters.get("max_attempts", 20000)),
+                    seed=seed,
+                    include_symmetry_equivalents=include_symmetry_equivalents,
+                    expected_count=predicted_count,
+                    progress_callback=progress_callback,
+                )
+            else:
+                target_count = max(1, int(requested_count or parameters.get("count", 1)))
+                estimated_min_muon_muon = estimate_muon_muon_separation_for_count(
+                    lattice_vectors=lattice,
+                    host_positions_frac=host_positions,
+                    host_species=host_species,
+                    target_count=target_count,
+                    min_muon_atom=min_muon_atom,
+                    include_symmetry_equivalents=include_symmetry_equivalents,
+                )
+                min_muon_muon = estimated_min_muon_muon
+                last_error: SiteGenerationError | None = None
+                for _attempt in range(6):
+                    try:
+                        points, attempts_used = generate_random_sites(
+                            lattice_vectors=lattice,
+                            host_positions_frac=host_positions,
+                            host_species=host_species,
+                            count=target_count,
+                            min_muon_muon=min_muon_muon,
+                            min_muon_atom=min_muon_atom,
+                            max_attempts=int(parameters.get("max_attempts", 20000)),
+                            seed=seed,
+                            include_symmetry_equivalents=include_symmetry_equivalents,
+                            progress_callback=progress_callback,
+                        )
+                        break
+                    except SiteGenerationError as exc:
+                        last_error = exc
+                        min_muon_muon *= 0.9
+                else:
+                    assert last_error is not None
+                    raise last_error
+            label_prefix = "Random Site"
+            start_index = self._next_site_label_number(document, label_prefix)
             for idx, point in enumerate(points, start=1):
                 site = MuonSite(
-                    label=f"Random Site {len(document.sites) + idx}",
-                    status="candidate",
+                    label=f"{label_prefix} {start_index + idx - 1}",
+                    status=_GENERATED_SITE_STATUS,
                     fractional_position=point.fractional,
                     cartesian_position=point.cartesian,
                     generation_method=method,
                     source_structure_id=host.id if host else None,
                     properties={
-                        "min_muon_muon": float(parameters.get("min_muon_muon", 0.8)),
-                        "min_muon_atom": float(parameters.get("min_muon_atom", 1.0)),
+                        "selection_mode": random_selection_mode,
+                        "min_muon_muon": min_muon_muon,
+                        "min_muon_atom": min_muon_atom,
+                        "include_symmetry_equivalents": include_symmetry_equivalents,
+                        **({"target_count": int(requested_count or 0)} if random_selection_mode == "count" else {}),
+                        **(
+                            {"estimated_min_muon_muon": estimated_min_muon_muon}
+                            if estimated_min_muon_muon is not None
+                            else {}
+                        ),
                     },
                 )
                 created_sites.append(site)
         elif method == "near_element":
-            seed = self._parse_optional_int(parameters.get("seed"), field_name="seed")
-            points, attempts_used = generate_near_element_sites(
+            muons_per_atom = max(
+                1,
+                int(
+                    parameters.get(
+                        "muons_per_atom",
+                        parameters.get("max_candidates_per_atom", parameters.get("count", 1)),
+                    )
+                ),
+            )
+            points, attempts_used = generate_attached_element_sites(
                 lattice_vectors=lattice,
                 host_species=host_species,
                 host_positions_frac=host_positions,
                 target_element=str(parameters.get("element", "")).strip(),
-                count=max(1, requested_count),
-                shell_min=float(parameters.get("shell_min", 0.9)),
-                shell_max=float(parameters.get("shell_max", 1.4)),
-                min_muon_muon=float(parameters.get("min_muon_muon", 0.8)),
-                min_muon_atom=float(parameters.get("min_muon_atom", 1.0)),
-                max_attempts=int(parameters.get("max_attempts", 30000)),
-                seed=seed,
+                muons_per_atom=muons_per_atom,
+                bond_distance=float(parameters.get("bond_distance", 1.0)),
+                min_muon_atom=float(parameters.get("min_muon_atom", 0.8)),
+                progress_callback=progress_callback,
             )
+            label_prefix = f"Attached-{parameters.get('element', '').strip() or 'Element'} Site"
+            start_index = self._next_site_label_number(document, label_prefix)
             for idx, point in enumerate(points, start=1):
                 site = MuonSite(
-                    label=f"Near-{parameters.get('element', '').strip() or 'Element'} Site {len(document.sites) + idx}",
-                    status="candidate",
+                    label=f"{label_prefix} {start_index + idx - 1}",
+                    status=_GENERATED_SITE_STATUS,
                     fractional_position=point.fractional,
                     cartesian_position=point.cartesian,
                     generation_method=method,
                     source_structure_id=host.id if host else None,
                     properties={
                         "target_element": str(parameters.get("element", "")).strip(),
-                        "shell_min": float(parameters.get("shell_min", 0.9)),
-                        "shell_max": float(parameters.get("shell_max", 1.4)),
-                        "min_muon_muon": float(parameters.get("min_muon_muon", 0.8)),
-                        "min_muon_atom": float(parameters.get("min_muon_atom", 1.0)),
+                        "strategy": "attached",
+                        "muons_per_atom": muons_per_atom,
+                        "bond_distance": float(parameters.get("bond_distance", 1.0)),
+                        "min_muon_atom": float(parameters.get("min_muon_atom", 0.8)),
                     },
                 )
                 created_sites.append(site)
+        elif method == "uep_clusters":
+            selections = parameters.get("selections", [])
+            if not isinstance(selections, list) or not selections:
+                raise SiteGenerationError("Select one or more UEP cluster rows to add as generated sites.")
+
+            skipped_duplicates = 0
+            for selection in selections:
+                if not isinstance(selection, dict):
+                    continue
+                fractional_raw = selection.get("fractional_position", selection.get("fractional", []))
+                cartesian_raw = selection.get("cartesian_position", selection.get("cartesian", []))
+                if (
+                    not isinstance(fractional_raw, (list, tuple))
+                    or len(fractional_raw) != 3
+                    or not isinstance(cartesian_raw, (list, tuple))
+                    or len(cartesian_raw) != 3
+                ):
+                    raise SiteGenerationError("Selected UEP cluster row is missing valid coordinates.")
+
+                fractional = [float(value) % 1.0 for value in fractional_raw]
+                cartesian = [float(value) for value in cartesian_raw]
+                source_key = str(selection.get("source_key", "")).strip()
+                if source_key and self._has_duplicate_uep_cluster_site(document, source_key, fractional):
+                    skipped_duplicates += 1
+                    continue
+
+                properties = selection.get("properties", {})
+                if not isinstance(properties, dict):
+                    properties = {}
+                method_name = str(selection.get("generation_method", "")).strip()
+                if method_name not in {"uep_cluster", "uep_cluster_member"}:
+                    method_name = "uep_cluster_member" if properties.get("selection_kind") == "member" else "uep_cluster"
+                merged_properties = dict(properties)
+                if source_key:
+                    merged_properties["uep_source_key"] = source_key
+
+                source_structure_id = None
+                raw_source_structure_id = selection.get("source_structure_id")
+                if raw_source_structure_id:
+                    try:
+                        source_structure_id = UUID(str(raw_source_structure_id))
+                    except ValueError:
+                        source_structure_id = host.id if host else None
+                elif host is not None:
+                    source_structure_id = host.id
+
+                label_hint = str(selection.get("label", "")).strip()
+                if not label_hint:
+                    label_hint = "UEP Cluster Site" if method_name == "uep_cluster" else "UEP Cluster Member"
+                label = (
+                    label_hint
+                    if str(selection.get("label", "")).strip()
+                    else f"{label_hint} {len(document.sites) + len(created_sites) + 1}"
+                )
+                site = MuonSite(
+                    label=label,
+                    status=_GENERATED_SITE_STATUS,
+                    fractional_position=fractional,
+                    cartesian_position=cartesian,
+                    generation_method=method_name,
+                    source_structure_id=source_structure_id,
+                    properties=merged_properties,
+                )
+                created_sites.append(site)
+
+            if not created_sites and skipped_duplicates:
+                raise SiteGenerationError("Selected UEP cluster rows are already present in the generated-site list.")
+            if not created_sites:
+                raise SiteGenerationError("Selected UEP cluster rows did not contain any usable generated sites.")
         else:
             raise SiteGenerationError(f"Unknown generation method '{method}'.")
 
@@ -1286,17 +2219,19 @@ class ProjectService:
             document.sites[site.id] = site
 
         warning: str | None = None
-        if method != "manual" and len(created_sites) < requested_count:
-            warning = (
-                f"Requested {requested_count} sites but generated {len(created_sites)}. "
-                "Increase max attempts, reduce distance limits, or use a larger supercell."
+        if requested_count is not None and method != "manual" and len(created_sites) < requested_count:
+            reason = (
+                "Some selected UEP rows were already present."
+                if method == "uep_clusters"
+                else "Increase max attempts, reduce distance limits, or use a larger supercell."
             )
+            warning = f"Requested {requested_count} sites but generated {len(created_sites)}. {reason}"
 
         record = ProvenanceRecord(
             action="generate_candidates",
             workflow_stage=WorkflowStage.MUON_GENERATION,
             actor="user",
-            description=f"Generated {len(created_sites)} candidate site(s) via {method}",
+            description=f"Generated {len(created_sites)} site(s) via {method}",
             parameters={"method": method, **parameters},
             output_entity_ids=[site.id for site in created_sites],
         )
@@ -1316,6 +2251,38 @@ class ProjectService:
             )
         return created_sites
 
+    @staticmethod
+    def _has_duplicate_uep_cluster_site(document: ProjectDocument, source_key: str, fractional: Sequence[float]) -> bool:
+        for site in document.sites.values():
+            if site.properties.get("uep_source_key") == source_key:
+                return True
+            if site.generation_method not in {"uep_cluster", "uep_cluster_member", "uep_batch_cluster"}:
+                continue
+            if not site.fractional_position or len(site.fractional_position) != 3:
+                continue
+            if all(abs((float(a) - float(b) + 0.5) % 1.0 - 0.5) <= 1e-6 for a, b in zip(site.fractional_position, fractional)):
+                return True
+        return False
+
+    @staticmethod
+    def _next_site_label_number(document: ProjectDocument, prefix: str) -> int:
+        pattern = re.compile(rf"^{re.escape(prefix.strip())}\s+(\d+)$")
+        used_numbers: list[int] = []
+        for site in document.sites.values():
+            match = pattern.match(str(site.label).strip())
+            if match is not None:
+                used_numbers.append(int(match.group(1)))
+        return max(used_numbers, default=0) + 1
+
+    @staticmethod
+    def _random_selection_mode(parameters: dict[str, Any]) -> str:
+        mode = str(parameters.get("selection_mode", parameters.get("mode", ""))).strip().lower()
+        if mode in {"separation", "distance", "spacing"}:
+            return "separation"
+        if mode in {"count", "number", "target_count"}:
+            return "count"
+        return "count" if "count" in parameters else "separation"
+
     def _active_host_structure(self, document: ProjectDocument) -> Structure | None:
         """Return the currently selected host structure if available."""
         host_id = document.project.host_structure_id
@@ -1326,6 +2293,213 @@ class ProjectService:
     def active_host_structure(self, document: ProjectDocument) -> Structure | None:
         """Return the current host structure, if one is selected."""
         return self._active_host_structure(document)
+
+    def list_promotable_host_structures(self, document: ProjectDocument) -> list[PromotableHost]:
+        """Return structures eligible to be the active host, ordered for display.
+
+        Includes imported structures and successfully completed pristine relaxation
+        results. Excludes supercell assets and all other derived structure origins.
+        """
+        # Build set of structure IDs produced by a completed pristine relaxation run.
+        completed_ids: set[UUID] = set()
+        result_created_at: dict[UUID, datetime | None] = {}
+        for result in document.results.values():
+            if not result.calculation_run_id:
+                continue
+            run = document.runs.get(result.calculation_run_id)
+            if run is None or run.status != JobStatus.COMPLETED or run.convergence_achieved is False:
+                continue
+            for struct_id in result.derived_structure_ids:
+                completed_ids.add(struct_id)
+                result_created_at[struct_id] = result.created_at
+
+        promotable: list[PromotableHost] = []
+        for structure in document.structures.values():
+            if self._supercell_asset(structure) is not None:
+                continue
+            if structure.origin == "imported":
+                hint = f"Imported from {structure.source_file}" if structure.source_file else "Imported structure"
+                promotable.append(PromotableHost(
+                    structure_id=structure.id,
+                    label=f"Original — {structure.label}",
+                    provenance_hint=hint,
+                    kind="imported",
+                    created_at=None,
+                ))
+            elif structure.origin == "pristine_relaxation" and structure.id in completed_ids:
+                created_at = result_created_at.get(structure.id)
+                date_str = created_at.strftime("%Y-%m-%d") if created_at else ""
+                job_label = structure.label
+                source_job_id_str = structure.properties.get("source_job_id")
+                if source_job_id_str:
+                    try:
+                        job = document.jobs.get(UUID(str(source_job_id_str)))
+                        if job:
+                            job_label = job.label
+                    except (ValueError, AttributeError):
+                        pass
+                label = f"Relaxed — {job_label}"
+                if date_str:
+                    label += f" ({date_str})"
+                hint = f"Result of pristine relaxation '{job_label}'"
+                if date_str:
+                    hint += f" completed {date_str}"
+                promotable.append(PromotableHost(
+                    structure_id=structure.id,
+                    label=label,
+                    provenance_hint=hint,
+                    kind="relaxed",
+                    created_at=created_at,
+                ))
+
+        def _sort_key(h: PromotableHost) -> tuple:
+            if h.created_at is None:
+                return (1, 0.0)
+            return (0, -h.created_at.timestamp())
+
+        imported = sorted(
+            [h for h in promotable if h.kind == "imported"],
+            key=lambda h: h.label.casefold(),
+        )
+        relaxed = sorted(
+            [h for h in promotable if h.kind == "relaxed"],
+            key=_sort_key,
+        )
+        return imported + relaxed
+
+    def set_active_host_structure(
+        self,
+        document: ProjectDocument,
+        structure_id: UUID,
+        *,
+        actor: str = "user",
+    ) -> Structure:
+        """Switch the project's active host to a promotable structure.
+
+        Updates host_structure_id and rebinds magnetic_structure to the new
+        host's properties (pristine-relaxation outputs typically carry no spins,
+        so the field becomes None and the user re-enters spins as needed).
+        """
+        promotable_ids = {h.structure_id for h in self.list_promotable_host_structures(document)}
+        if structure_id not in promotable_ids:
+            raise ValueError("Structure is not eligible as an active host.")
+
+        structure = document.structures[structure_id]
+        previous_id = document.project.host_structure_id
+        if previous_id == structure_id:
+            return structure
+
+        previous = document.structures.get(previous_id) if previous_id else None
+        prev_label = previous.label if previous else "(none)"
+
+        document.project.host_structure_id = structure_id
+        document.project.magnetic_structure = structure.properties.get("magnetic_structure")
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="set_active_host_structure",
+                actor=actor,
+                description=f"Changed active host from '{prev_label}' to '{structure.label}'",
+                parameters={
+                    "previous_host_structure_id": str(previous_id) if previous_id else None,
+                    "new_host_structure_id": str(structure_id),
+                },
+                input_entity_ids=[previous_id] if previous_id else [],
+                output_entity_ids=[structure_id],
+            ),
+        )
+        return structure
+
+    def resolve_underlying_host(self, document: ProjectDocument, structure_id: UUID) -> UUID | None:
+        """Walk the parent_structure_id chain to find the host root.
+
+        Returns the id of the first ancestor (inclusive) whose origin is
+        'imported' or 'pristine_relaxation', or None if the chain is broken
+        or contains a cycle.
+        """
+        _HOST_ORIGINS = {"imported", "pristine_relaxation"}
+        visited: set[UUID] = set()
+        current_id: UUID | None = structure_id
+        while current_id is not None:
+            if current_id in visited:
+                return None
+            visited.add(current_id)
+            structure = document.structures.get(current_id)
+            if structure is None:
+                return None
+            if structure.origin in _HOST_ORIGINS:
+                return structure.id
+            current_id = structure.parent_structure_id
+        return None
+
+    def validate_sites_match_active_host(
+        self,
+        document: ProjectDocument,
+        site_ids: Sequence[UUID],
+    ) -> SiteHostMismatch | None:
+        """Return mismatch info if any site was generated for a different host.
+
+        Sites carry source_structure_id stamped at generation time; this check
+        ensures none of them target a structure other than the active host.
+        Returns None when all sites are consistent with the active host.
+        """
+        host = self._active_host_structure(document)
+        if host is None:
+            return None
+        offenders: list[tuple[UUID, str, UUID | None, str]] = []
+        for site_id in site_ids:
+            site = document.sites.get(site_id)
+            if site is None:
+                continue
+            if site.source_structure_id != host.id:
+                source = (
+                    document.structures.get(site.source_structure_id)
+                    if site.source_structure_id
+                    else None
+                )
+                source_label = source.label if source else "(unknown)"
+                offenders.append((site.id, site.label, site.source_structure_id, source_label))
+        if not offenders:
+            return None
+        return SiteHostMismatch(
+            active_host_id=host.id,
+            active_host_label=host.label,
+            offenders=offenders,
+        )
+
+    def validate_structures_match_active_host(
+        self,
+        document: ProjectDocument,
+        structure_ids: Sequence[UUID],
+    ) -> StructureHostMismatch | None:
+        """Return mismatch info if any structure's provenance chain leads to a different host.
+
+        Used for downstream workflows (quantum corrections, energy barriers, NEB) that
+        consume muoniated relaxed structures rather than pristine sites. Walks the
+        parent_structure_id chain to find the underlying host for each structure.
+        Returns None when all structures resolve to the active host.
+        """
+        host = self._active_host_structure(document)
+        if host is None:
+            return None
+        offenders: list[tuple[UUID, str, UUID | None, str]] = []
+        for struct_id in structure_ids:
+            structure = document.structures.get(struct_id)
+            if structure is None:
+                continue
+            resolved_host_id = self.resolve_underlying_host(document, struct_id)
+            if resolved_host_id != host.id:
+                resolved_host = document.structures.get(resolved_host_id) if resolved_host_id else None
+                resolved_label = resolved_host.label if resolved_host else "(unknown)"
+                offenders.append((struct_id, structure.label, resolved_host_id, resolved_label))
+        if not offenders:
+            return None
+        return StructureHostMismatch(
+            active_host_id=host.id,
+            active_host_label=host.label,
+            offenders=offenders,
+        )
 
     def _copy_import_file(self, project_root: Path, source_path: Path) -> Path:
         """Copy imported source file into the project imports directory."""
@@ -1492,6 +2666,14 @@ class ProjectService:
         except (TypeError, ValueError):
             recommended_force_threshold = None
 
+        raw_stress_threshold = payload.get("recommended_cutoff_stress_threshold")
+        try:
+            recommended_stress_threshold = (
+                float(raw_stress_threshold) if raw_stress_threshold is not None else None
+            )
+        except (TypeError, ValueError):
+            recommended_stress_threshold = None
+
         raw_recommended_cutoff_cell_id = payload.get("recommended_cutoff_cell_id")
         recommended_cutoff_cell_id = None
         if isinstance(raw_recommended_cutoff_cell_id, str) and raw_recommended_cutoff_cell_id.strip():
@@ -1547,6 +2729,14 @@ class ProjectService:
         except (TypeError, ValueError):
             recommended_kpoint_force_threshold = None
 
+        raw_kpoint_stress_threshold = payload.get("recommended_kpoint_stress_threshold")
+        try:
+            recommended_kpoint_stress_threshold = (
+                float(raw_kpoint_stress_threshold) if raw_kpoint_stress_threshold is not None else None
+            )
+        except (TypeError, ValueError):
+            recommended_kpoint_stress_threshold = None
+
         raw_recommended_kpoint_cell_id = payload.get("recommended_kpoint_cell_id")
         recommended_kpoint_cell_id = None
         if isinstance(raw_recommended_kpoint_cell_id, str) and raw_recommended_kpoint_cell_id.strip():
@@ -1566,12 +2756,14 @@ class ProjectService:
             recommended_cutoff_method=recommended_method,
             recommended_cutoff_energy_threshold=recommended_energy_threshold,
             recommended_cutoff_force_threshold=recommended_force_threshold,
+            recommended_cutoff_stress_threshold=recommended_stress_threshold,
             recommended_cutoff_cell_id=recommended_cutoff_cell_id,
             recommended_kpoint_grid=recommended_kpoint_grid,
             recommended_kpoint_lattice=recommended_kpoint_lattice,
             recommended_kpoint_method=recommended_kpoint_method,
             recommended_kpoint_energy_threshold=recommended_kpoint_energy_threshold,
             recommended_kpoint_force_threshold=recommended_kpoint_force_threshold,
+            recommended_kpoint_stress_threshold=recommended_kpoint_stress_threshold,
             recommended_kpoint_cell_id=recommended_kpoint_cell_id,
             notes=payload.get("notes", ""),
         )
@@ -1668,7 +2860,7 @@ class ProjectService:
         return MuonSite(
             id=UUID(payload["id"]),
             label=payload.get("label", ""),
-            status=payload.get("status", "candidate"),
+            status=self._site_status_from_payload(payload),
             fractional_position=payload.get("fractional_position", [0.0, 0.0, 0.0]),
             cartesian_position=payload.get("cartesian_position", [0.0, 0.0, 0.0]),
             generation_method=payload.get("generation_method"),
@@ -1681,6 +2873,13 @@ class ProjectService:
             symmetry_label=payload.get("symmetry_label"),
             properties=payload.get("properties", {}),
         )
+
+    @staticmethod
+    def _site_status_from_payload(payload: dict[str, Any]) -> str:
+        status = str(payload.get("status", _GENERATED_SITE_STATUS) or _GENERATED_SITE_STATUS)
+        if status == "candidate":
+            return _GENERATED_SITE_STATUS
+        return status
 
     def _provenance_from_dict(self, payload: dict[str, Any]) -> ProvenanceRecord:
         workflow_stage = payload.get("workflow_stage")

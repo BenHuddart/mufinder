@@ -15,8 +15,20 @@ features, and quality standards that must be maintained as development expands.
    :caption: Contents
 
    implemented_functionality
+   agent_harness
+   architecture
+   supercells
+   journal
+   job_lifecycle
+   site_generation
+   uep_workflow
+   structural_relaxation_analysis
+   magnetic_fields
+   quantum_corrections
+   energy_barriers
    comparison_table
    quality_and_automation
+   compatibility_policy
    project_specification
    hpc_security_audit
    api

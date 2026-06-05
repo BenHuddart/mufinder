@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
+from mufinder.app.selection_snapshot import (
+    SelectionSnapshotComboBox,
+    SelectionSnapshotPushButton,
+    SelectionSnapshotToolButton,
+    resolve_target_keys,
+)
+
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -29,8 +37,10 @@ from PySide6.QtWidgets import (
 from mufinder.app.convergence_display import format_cutoff_energy, format_kpoint_grid
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_adapter import suggested_grid_for_row
+from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
+from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     infer_task,
@@ -51,13 +61,13 @@ _EXTRA_GEOMETRY_PARAMETER_NAMES = (
     "geom_max_iter",
     "geom_stress_tol",
 )
-_KPOINT_SORT_ANCHOR_NAMES = ("basis_precision", "cut_off_energy")
 _PREFERRED_DEFAULT_PARAMETER_NAMES = (
     "cut_off_energy",
     "kpoint_mp_grid",
     "kpoint_mp_spacing",
     "kpoints_list",
 )
+_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready", "cancelled"}
 
 
 def _append_workflow_stage(values: tuple[str, ...], workflow_stage: str) -> tuple[str, ...]:
@@ -80,36 +90,20 @@ def _clone_spec_for_pristine_workflow(
     if advanced:
         advanced_workflows = _append_workflow_stage(advanced_workflows, "pristine_relaxation")
 
+    default_value = 300 if spec.name == "geom_max_iter" else spec.default_value
+    if spec.name == "continuation":
+        default_value = "DEFAULT"
+
     return replace(
         spec,
         basic_workflows=basic_workflows,
         advanced_workflows=advanced_workflows,
+        default_value=default_value,
     )
 
 
 def _reorder_pristine_specs(specs: list[KeywordSpec]) -> list[KeywordSpec]:
-    kpoint_name = "kpoint_mp_grid"
-    kpoint_index = next((index for index, spec in enumerate(specs) if spec.name == kpoint_name), None)
-    if kpoint_index is None:
-        return specs
-
-    anchor_indices = [
-        index
-        for index, spec in enumerate(specs)
-        if spec.name in _KPOINT_SORT_ANCHOR_NAMES
-    ]
-    if not anchor_indices:
-        return specs
-
-    target_index = max(anchor_indices) + 1
-    if kpoint_index == target_index:
-        return specs
-
-    kpoint_spec = specs.pop(kpoint_index)
-    if kpoint_index < target_index:
-        target_index -= 1
-    specs.insert(target_index, kpoint_spec)
-    return specs
+    return reorder_workflow_parameter_specs(specs)
 
 
 class PristineRelaxationWidget(QWidget):
@@ -151,6 +145,7 @@ class PristineRelaxationWidget(QWidget):
         self._row_added_advanced: dict[int, set[str]] = {}
         self._runtime_states: dict[str, RelaxationRunState] = {}
         self._supercell_options: list[tuple[str, SupercellMatrix]] = []
+        self._parameter_species_options: tuple[str, ...] = ()
 
         self._name_prefix = QLineEdit("pristine_relax")
         self._project_default_cutoff = QLabel("Not set")
@@ -183,6 +178,12 @@ class PristineRelaxationWidget(QWidget):
         )
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(32)
+        self._table_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
+        self._table_delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._table_delete_shortcut.activated.connect(self._delete_selected_rows)
+        self._table_backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        self._table_backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._table_backspace_shortcut.activated.connect(self._delete_selected_rows)
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(self._LABEL_COLUMN, QHeaderView.ResizeMode.Stretch)
@@ -310,7 +311,7 @@ class PristineRelaxationWidget(QWidget):
                 spec,
                 basic=(
                     basic_in_convergence
-                    or spec.name == "kpoint_mp_grid"
+                    or spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing")
                     or spec.name in _EXTRA_GEOMETRY_PARAMETER_NAMES
                 ),
                 advanced=keyword_visible_in_workflow(
@@ -358,7 +359,11 @@ class PristineRelaxationWidget(QWidget):
         for spec in self._specs:
             if spec.default_value is None:
                 continue
-            if spec.name == "kpoint_mp_grid":
+            # kpoint_mp_grid and kpoint_mp_spacing are project-default-aware:
+            # _effective_params_for_row injects them from the adopted project
+            # grid (and its equivalent spacing) so the dialog reflects the
+            # user's project default rather than the bare schema default.
+            if spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing"):
                 continue
             if not keyword_visible_in_workflow(
                 spec,
@@ -439,6 +444,11 @@ class PristineRelaxationWidget(QWidget):
         self._supercell_options = parsed
         self._refresh_all_rows()
 
+    def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
+        self._parameter_species_options = tuple(
+            dict.fromkeys(option for item in species_options if (option := str(item).strip()))
+        )
+
     def row_supercell_matrix(self, row_id: int) -> SupercellMatrix | None:
         return self._row_supercells.get(int(row_id))
 
@@ -491,9 +501,10 @@ class PristineRelaxationWidget(QWidget):
         label_item.setData(Qt.ItemDataRole.UserRole, row_id)
         self._table.setItem(row, self._LABEL_COLUMN, label_item)
 
-        supercell_combo = QComboBox(self._table)
+        supercell_combo = SelectionSnapshotComboBox(self._table)
+        supercell_combo.selection_snapshot_key = row_id
         supercell_combo.currentIndexChanged.connect(
-            lambda _index, rid=row_id: self._on_supercell_combo_changed(rid)
+            lambda _index, rid=row_id, combo=supercell_combo: self._on_supercell_combo_changed(rid, combo)
         )
         self._table.setCellWidget(row, self._SUPERCELL_COLUMN, supercell_combo)
 
@@ -511,17 +522,21 @@ class PristineRelaxationWidget(QWidget):
         self._table.setItem(row, self._LATTICE_B_COLUMN, self._make_item("", editable=False))
         self._table.setItem(row, self._LATTICE_C_COLUMN, self._make_item("", editable=False))
 
-        configure_button = QPushButton("Configure...", self._table)
+        configure_button = SelectionSnapshotPushButton("Configure...", self._table)
+        configure_button.selection_snapshot_key = row_id
         configure_button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         configure_button.clicked.connect(
-            lambda _checked=False, rid=row_id: self._open_row_parameter_dialog((rid,))
+            lambda _checked=False, rid=row_id, btn=configure_button: self._dispatch_row_action(btn, rid, "configure")
         )
         self._table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
 
-        remove_button = QToolButton(self._table)
+        remove_button = SelectionSnapshotToolButton(self._table)
+        remove_button.selection_snapshot_key = row_id
         remove_button.setText("x")
         remove_button.setAutoRaise(True)
-        remove_button.clicked.connect(lambda _checked=False, rid=row_id: self._remove_rows_by_id((rid,)))
+        remove_button.clicked.connect(
+            lambda _checked=False, rid=row_id, btn=remove_button: self._dispatch_row_action(btn, rid, "remove")
+        )
         self._table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
 
         self._refresh_row(row)
@@ -611,15 +626,14 @@ class PristineRelaxationWidget(QWidget):
             combo.addItem(self._supercell_label(current), ("matrix", current))
             selected_index = combo.count() - 1
 
-        combo.addItem("Create new...", ("create", None))
+        combo.addItem("Manage Supercells...", ("create", None))
         combo.setCurrentIndex(selected_index)
         combo.blockSignals(previous)
 
-    def _on_supercell_combo_changed(self, row_id: int) -> None:
+    def _on_supercell_combo_changed(self, row_id: int, combo: SelectionSnapshotComboBox) -> None:
         row = self._row_index_for_id(row_id)
         if row is None:
             return
-        combo = self._table.cellWidget(row, self._SUPERCELL_COLUMN)
         if not isinstance(combo, QComboBox):
             return
 
@@ -634,14 +648,72 @@ class PristineRelaxationWidget(QWidget):
             self._refresh_row(row)
             return
 
-        self._row_supercells[row_id] = matrix
-        self._row_parameter_values[row_id] = self._strip_implicit_row_defaults(
-            row_id,
-            self._row_parameter_values.get(row_id, {}),
+        snapshot_keys = [
+            self._row_id_at(r)
+            for r in combo.selection_snapshot_rows
+        ]
+        target_row_ids = resolve_target_keys(
+            combo,
+            clicked_key=row_id,
+            snapshot_keys=[k for k in snapshot_keys if k is not None],
+            eligibility=self._row_supercell_is_editable,
+            parent=self,
+            title="Apply supercell to selected rows?",
+            message="Apply this supercell choice to all selected editable relaxation rows?",
         )
+        for target_row_id in target_row_ids:
+            self._row_supercells[target_row_id] = matrix
+            self._row_parameter_values[target_row_id] = self._strip_implicit_row_defaults(
+                target_row_id,
+                self._row_parameter_values.get(target_row_id, {}),
+            )
+            target_row = self._row_index_for_id(target_row_id)
+            if target_row is not None:
+                self._refresh_row(target_row)
         self._set_kpoint_message_for_row(row_id)
-        self._refresh_row(row)
         self._emit_state()
+
+    def _dispatch_row_action(
+        self,
+        widget: SelectionSnapshotPushButton | SelectionSnapshotToolButton,
+        row_id: int,
+        kind: str,
+    ) -> None:
+        snapshot_keys = [
+            self._row_id_at(r)
+            for r in widget.selection_snapshot_rows
+        ]
+        if kind == "configure":
+            target_row_ids = resolve_target_keys(
+                widget,
+                clicked_key=row_id,
+                snapshot_keys=[k for k in snapshot_keys if k is not None],
+                eligibility=lambda rid: True,
+                parent=self,
+                title="Configure selected rows?",
+                message="Open a shared parameter dialog for all selected relaxation rows?",
+            )
+            self._open_row_parameter_dialog(target_row_ids)
+        elif kind == "remove":
+            target_row_ids = resolve_target_keys(
+                widget,
+                clicked_key=row_id,
+                snapshot_keys=[k for k in snapshot_keys if k is not None],
+                eligibility=lambda rid: True,
+                parent=self,
+                title="Remove selected rows?",
+                message="Remove all selected relaxation rows?",
+            )
+            self._remove_rows_by_id(target_row_ids)
+
+    def _row_supercell_is_editable(self, row_id: int) -> bool:
+        row = self._row_index_for_id(row_id)
+        if row is None:
+            return False
+        label = self._label_at_row(row)
+        runtime = self._runtime_states.get(label)
+        status = "not generated" if runtime is None else runtime.status or "not generated"
+        return not self._runtime_controls_locked(status)
 
     def _set_status_item(self, row: int, status: str) -> None:
         item = self._table.item(row, self._STATUS_COLUMN)
@@ -678,11 +750,39 @@ class PristineRelaxationWidget(QWidget):
         )
         return grid
 
+    @staticmethod
+    def _runtime_controls_locked(status: str) -> bool:
+        return str(status).strip().casefold() not in _UNLOCKED_RUNTIME_STATUSES
+
+    def _suggested_spacing_for_row(self, row_id: int) -> ValueWithUnit | None:
+        # When the project has adopted a k-point grid, mirror it as a k-point
+        # spacing so the configure-parameters dialog's spacing field gets a
+        # sensible default when the user toggles to "Use spacing".
+        if self._reference_grid is None or self._reference_lattice is None:
+            return None
+        if tuple(int(v) for v in self._reference_grid) == (1, 1, 1):
+            return None
+        try:
+            spacing = spacing_from_grid(self._reference_lattice, self._reference_grid)
+        except ValueError:
+            return None
+        return ValueWithUnit(float(spacing), "1/ang")
+
     def _effective_params_for_row(self, row_id: int) -> dict[str, object]:
+        # The row's "effective" values reflect what would land in the rendered
+        # .cell: only ONE of kpoint_mp_grid / kpoint_mp_spacing, never both,
+        # since they are mutually exclusive at the CASTEP level. The
+        # configure-parameters dialog renders both rows with a radio toggle
+        # and drops the inactive choice in collect_values(), so the row's
+        # stored parameter_values is also single-choice. When neither has
+        # been set yet we default to grid (matching the radio default).
         values = dict(self._default_params)
         values.update(self._row_parameter_values.get(row_id, {}))
         values.setdefault("task", infer_task("pristine_relaxation"))
-        if "kpoint_mp_grid" not in values:
+        if (
+            "kpoint_mp_grid" not in values
+            and "kpoint_mp_spacing" not in values
+        ):
             suggested = self._suggested_grid_for_row(row_id)
             if suggested is not None:
                 values["kpoint_mp_grid"] = suggested
@@ -691,9 +791,14 @@ class PristineRelaxationWidget(QWidget):
     def _implicit_params_for_row(self, row_id: int) -> dict[str, object]:
         implicit = dict(self._default_params)
         implicit.setdefault("task", infer_task("pristine_relaxation"))
-        suggested = self._suggested_grid_for_row(row_id)
-        if suggested is not None:
-            implicit["kpoint_mp_grid"] = suggested
+        # Mirror _effective_params_for_row's single-choice contract: only
+        # inject kpoint_mp_grid as the implicit default when the row has not
+        # been explicitly configured to use kpoint_mp_spacing instead.
+        row_values = self._row_parameter_values.get(row_id, {})
+        if "kpoint_mp_spacing" not in row_values:
+            suggested = self._suggested_grid_for_row(row_id)
+            if suggested is not None:
+                implicit["kpoint_mp_grid"] = suggested
         return implicit
 
     def _strip_implicit_row_defaults(self, row_id: int, values: dict[str, object]) -> dict[str, object]:
@@ -728,6 +833,25 @@ class PristineRelaxationWidget(QWidget):
 
         label = self._label_at_row(row)
         runtime = self._runtime_states.get(label)
+        status = "not generated" if runtime is None else runtime.status or "not generated"
+        locked = self._runtime_controls_locked(status)
+        label_item = self._table.item(row, self._LABEL_COLUMN)
+        if label_item is not None:
+            flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+            if not locked:
+                flags |= Qt.ItemFlag.ItemIsEditable
+                label_item.setToolTip("")
+            else:
+                label_item.setToolTip("Job label is locked once this row has been queued for execution.")
+            label_item.setFlags(flags)
+        if isinstance(supercell_combo, QComboBox):
+            supercell_combo.setEnabled(not locked)
+        fix_combo = self._table.cellWidget(row, self._FIX_CELL_COLUMN)
+        if isinstance(fix_combo, QComboBox):
+            fix_combo.setEnabled(not locked)
+        remove_button = self._table.cellWidget(row, self._REMOVE_COLUMN)
+        if isinstance(remove_button, QToolButton):
+            remove_button.setEnabled(True)
         if runtime is None:
             self._set_status_item(row, "not generated")
             self._set_float_item(row, self._LATTICE_A_COLUMN, None)
@@ -742,7 +866,16 @@ class PristineRelaxationWidget(QWidget):
         configure_button = self._table.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
             customized = bool(self._row_parameter_values.get(row_id, {}))
-            configure_button.setText("Configured..." if customized else "Configure...")
+            configure_button.setText("Configured..." if customized or locked else "Configure...")
+            configure_button.setToolTip(
+                "Inspect the CASTEP parameters used for this row."
+                if locked
+                else (
+                    "Edit custom CASTEP parameters for this row."
+                    if customized
+                    else "Configure CASTEP parameters for this row."
+                )
+            )
 
     def _set_float_item(self, row: int, column: int, value: float | None) -> None:
         item = self._table.item(row, column)
@@ -780,6 +913,18 @@ class PristineRelaxationWidget(QWidget):
             return
         self._open_row_parameter_dialog(row_ids)
 
+    def _delete_selected_rows(self) -> None:
+        if self._table.state() == QAbstractItemView.State.EditingState:
+            return
+        row_ids = self._selected_row_ids()
+        if not row_ids and self._table.currentRow() >= 0:
+            row_id = self._row_id_at(self._table.currentRow())
+            if row_id is not None:
+                row_ids = (row_id,)
+        if not row_ids:
+            return
+        self._remove_rows_by_id(row_ids)
+
     def _common_params_for_rows(self, row_ids: tuple[int, ...]) -> dict[str, object]:
         if not row_ids:
             return dict(self._default_params)
@@ -793,6 +938,22 @@ class PristineRelaxationWidget(QWidget):
             }
         if "task" not in common:
             common["task"] = infer_task("pristine_relaxation")
+        # Configure-parameters dialog seeding only: pre-fill the inactive
+        # half of the kpoint_mp_grid / kpoint_mp_spacing pair so the editor
+        # for whichever radio the user toggles to shows a sensible value
+        # derived from the project default. The dialog drops the inactive
+        # choice in collect_values(), so this never reaches the rendered
+        # .cell or the validation path.
+        has_grid = "kpoint_mp_grid" in common
+        has_spacing = "kpoint_mp_spacing" in common
+        if has_grid and not has_spacing:
+            suggested_spacing = self._suggested_spacing_for_row(row_ids[0])
+            if suggested_spacing is not None:
+                common["kpoint_mp_spacing"] = suggested_spacing
+        elif has_spacing and not has_grid:
+            suggested_grid = self._suggested_grid_for_row(row_ids[0])
+            if suggested_grid is not None:
+                common["kpoint_mp_grid"] = suggested_grid
         return common
 
     def _advanced_names_for_rows(self, row_ids: tuple[int, ...]) -> set[str]:
@@ -800,6 +961,17 @@ class PristineRelaxationWidget(QWidget):
         for row_id in row_ids:
             names.update(self._row_added_advanced.get(row_id, set()))
         return names
+
+    def _row_parameters_locked(self, row_ids: tuple[int, ...]) -> bool:
+        for row_id in row_ids:
+            row = self._row_index_for_id(row_id)
+            if row is None:
+                continue
+            runtime = self._runtime_states.get(self._label_at_row(row))
+            status = "" if runtime is None else runtime.status
+            if self._runtime_controls_locked(status):
+                return True
+        return False
 
     def _restore_structured_value(self, name: str, value: object) -> object:
         spec = self._specs_by_name.get(name)
@@ -840,22 +1012,32 @@ class PristineRelaxationWidget(QWidget):
                 continue
             intro_labels.append(self._label_at_row(row))
 
-        dialog = ParameterDialog(
-            specs=self._specs,
-            workflow_stage="pristine_relaxation",
-            locked_values={
+        read_only = self._row_parameters_locked(row_ids)
+        dialog_kwargs = {
+            "specs": self._specs,
+            "workflow_stage": "pristine_relaxation",
+            "locked_values": {
                 "task": "GEOMETRYOPTIMIZATION",
                 "fix_all_cell": "Variable (set by row control)",
                 "write_cell_structure": "TRUE (required for relaxed-cell outputs)",
             },
-            intro_text="Included rows: " + ", ".join(intro_labels),
-            parent=self,
+            "intro_text": "Included rows: " + ", ".join(intro_labels),
+            "species_options": self._parameter_species_options,
+            "parent": self,
+        }
+        if read_only:
+            dialog_kwargs["read_only"] = True
+        dialog = ParameterDialog(**dialog_kwargs)
+        dialog.setWindowTitle("Inspect Relaxation Parameters" if read_only else "Configure Relaxation Parameters")
+        kpoint_hint = kpoint_exclusive_hint(
+            self._effective_params_for_row(r) for r in row_ids
         )
-        dialog.setWindowTitle("Configure Relaxation Parameters")
-        dialog.set_values(self._common_params_for_rows(row_ids))
+        dialog.set_values(self._common_params_for_rows(row_ids), preferred_exclusive=kpoint_hint)
         dialog.set_advanced_names(self._advanced_names_for_rows(row_ids))
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if read_only:
             return
 
         values = self._sanitize_parameter_mapping(dialog.collect_values())

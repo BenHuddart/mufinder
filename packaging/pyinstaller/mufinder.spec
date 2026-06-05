@@ -2,17 +2,46 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
 from PIL import Image
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata
 
 
 project_root = Path.cwd()
 src_root = project_root / "src"
 build_root = project_root / "packaging" / "build"
 logo_source = src_root / "mufinder" / "assets" / "mufinder_logo.png"
+
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
+
+
+def _module_is_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
+def _require_installed_modules(*module_names: str) -> None:
+    missing = [module_name for module_name in module_names if not _module_is_available(module_name)]
+    if missing:
+        missing_text = ", ".join(sorted(missing))
+        raise ModuleNotFoundError(
+            f"PyInstaller build requires installed runtime modules: {missing_text}"
+        )
+
+
+def _optional_collect_data_files(module_name: str):
+    if not _module_is_available(module_name):
+        return []
+    return collect_data_files(module_name)
+
+
+def _optional_collect_submodules(module_name: str):
+    if not _module_is_available(module_name):
+        return []
+    return collect_submodules(module_name)
 
 
 def _build_icon(extension: str) -> str:
@@ -36,22 +65,67 @@ def _build_icon(extension: str) -> str:
 exe_icon = _build_icon(".ico") if sys.platform.startswith("win") else None
 bundle_icon = _build_icon(".icns") if sys.platform == "darwin" else None
 
+_require_installed_modules(
+    "PySide6",
+    "ase",
+    "paramiko",
+    "pyvista",
+    "pyvistaqt",
+    "vtkmodules",
+)
+
 datas = collect_data_files("mufinder.assets")
+datas += collect_data_files("mufinder.data")
+# Expose the source tree's mufinder.egg-info to importlib.metadata so PyInstaller
+# can copy runtime package metadata even when CI builds from an editable checkout.
+_mufinder_metadata = copy_metadata("mufinder")
+if not _mufinder_metadata:
+    raise RuntimeError(
+        "copy_metadata('mufinder') returned no files — the package has no dist-info. "
+        "Run 'pip install -e .' before building so that a .dist-info directory exists."
+    )
+datas += _mufinder_metadata
 # ASE's CIF reader resolves symmetry data relative to ase.spacegroup.__file__.
 # Bundle ASE package data so frozen macOS apps can load spacegroup.dat.
 datas += collect_data_files("ase")
-hiddenimports = [
+# muesr ships core lookup data alongside its Python modules.
+datas += _optional_collect_data_files("muesr")
+# Soprano resolves static chemistry tables via pkgutil.get_data at runtime.
+datas += _optional_collect_data_files("soprano")
+datas += collect_data_files("pyvista")
+datas += collect_data_files("vtkmodules")
+# The UEP clustering dialog imports Soprano's phylogenetic clustering stack lazily
+# when the batch-search clustering window is opened.
+# Magnetic-field calculations import muesr/muLFC only when a calculation starts.
+optional_hiddenimports = (["lfclib"] if _module_is_available("lfclib") else []) + (
+    _optional_collect_submodules("muesr")
+    + _optional_collect_submodules("mulfc")
+    + _optional_collect_submodules("soprano")
+)
+
+hiddenimports = optional_hiddenimports + [
     "mufinder.app.main_window",
     "mufinder.app.splash_screen",
     "mufinder.app.theme",
     "mufinder.branding",
     "mufinder.castep_setup",
-] + collect_submodules("ase.io") + collect_submodules("mufinder.app") + collect_submodules("paramiko")
+] + (
+    collect_submodules("ase.io")
+    + collect_submodules("mufinder.app")
+    + collect_submodules("paramiko")
+    + collect_submodules("pyvista")
+    + collect_submodules("pyvistaqt")
+    + collect_submodules("vtkmodules")
+)
+
+# PyVista/VTK is imported lazily in the viewer stack, so static analysis does not
+# reliably discover VTK's native libraries during preview builds on Windows.
+binaries = collect_dynamic_libs("vtkmodules")
 
 a = Analysis(
     [str(src_root / "mufinder" / "main.py")],
     pathex=[str(src_root)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from mufinder.app.supercell_dialog import SupercellPreviewDialog
-from mufinder.domain.models import Structure
+from PySide6.QtWidgets import QHeaderView
+
+from mufinder.app.supercell_dialog import SupercellEditorDialog, SupercellPreviewDialog
+from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.models import CalculationDefinition, Structure
+from mufinder.services.project_service import ProjectService
 
 
 def _host_structure() -> Structure:
@@ -66,4 +70,134 @@ def test_supercell_dialog_supports_unit_cell_action(qapp) -> None:
 
     assert dialog.result() == dialog.DialogCode.Accepted
     assert dialog.result_mode() == "unit_cell"
+    dialog.close()
+
+
+def test_supercell_dialog_shutdowns_viewer_on_reject(qapp, monkeypatch) -> None:
+    dialog = SupercellPreviewDialog(
+        structure=_host_structure(),
+        atomic_spins=[1.0, -1.0],
+        propagation_vector=[0.0, 0.0, 0.0],
+    )
+    calls: list[bool] = []
+    monkeypatch.setattr(dialog._viewer, "shutdown", lambda: calls.append(True))
+
+    dialog.reject()
+
+    assert calls == [True]
+    dialog.close()
+
+
+def test_supercell_editor_saves_named_asset_and_selects_it(qapp, tmp_path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "editor_save.mufinder", "EditorSave")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    dialog = SupercellEditorDialog(
+        document=doc,
+        project_service=service,
+        source_structure=host,
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        initial_matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+        select_mode=True,
+    )
+    dialog._name_edit.setText("Relaxation 2x1x1")
+
+    saved = dialog._save_current()
+    assert saved is not None
+    dialog._use_selected()
+
+    assert dialog.result() == dialog.DialogCode.Accepted
+    assert dialog.selected_structure_id() == saved.id
+    assert dialog.selected_matrix() == [[2, 0, 0], [0, 1, 0], [0, 0, 1]]
+    assert doc.structures[saved.id].label == "Relaxation 2x1x1"
+    dialog.close()
+
+
+def test_supercell_editor_asset_table_visible_columns_stretch(qapp, tmp_path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "editor_columns.mufinder", "EditorColumns")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    dialog = SupercellEditorDialog(
+        document=doc,
+        project_service=service,
+        source_structure=host,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+    )
+
+    header = dialog._asset_table.horizontalHeader()
+    assert header.sectionResizeMode(dialog._ID_COLUMN) == QHeaderView.ResizeMode.Fixed
+    for column in (
+        dialog._NAME_COLUMN,
+        dialog._MATRIX_COLUMN,
+        dialog._ATOMS_COLUMN,
+        dialog._USAGE_COLUMN,
+    ):
+        assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.Stretch
+    dialog.close()
+
+
+def test_supercell_editor_matrix_edit_saves_copy_for_frozen_asset(qapp, tmp_path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "editor_frozen.mufinder", "EditorFrozen")
+    host = _host_structure()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    asset = service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+        label="Frozen 2x1x1",
+        reuse_existing=False,
+    )
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+        input_structure_ids=[asset.id],
+    )
+    doc.calculations[definition.id] = definition
+
+    dialog = SupercellEditorDialog(
+        document=doc,
+        project_service=service,
+        source_structure=host,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+    )
+    dialog._refresh_assets(select_id=asset.id)
+    dialog._simple_nx.setValue(3)
+    dialog._name_edit.setText("Future 3x1x1")
+
+    saved = dialog._save_current()
+
+    assert saved is not None
+    assert saved.id != asset.id
+    assert doc.structures[asset.id].properties["supercell_asset"]["matrix"] == [[2, 0, 0], [0, 1, 0], [0, 0, 1]]
+    assert saved.properties["supercell_asset"]["matrix"] == [[3, 0, 0], [0, 1, 0], [0, 0, 1]]
+    assert saved.properties["supercell_asset"]["source_asset_structure_id"] == str(asset.id)
+    dialog.close()
+
+
+def test_supercell_editor_shutdowns_viewer_on_reject(qapp, tmp_path, monkeypatch) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "editor_reject.mufinder", "EditorReject")
+    host = _host_structure()
+    service.add_structure(doc, host)
+
+    dialog = SupercellEditorDialog(
+        document=doc,
+        project_service=service,
+        source_structure=host,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+    )
+    calls: list[bool] = []
+    monkeypatch.setattr(dialog._viewer, "shutdown", lambda: calls.append(True))
+
+    dialog.reject()
+
+    assert calls == [True]
     dialog.close()
