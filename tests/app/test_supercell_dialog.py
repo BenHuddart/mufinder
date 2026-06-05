@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QHeaderView
+from PySide6.QtWidgets import QDialog, QHeaderView
 
 from mufinder.app.supercell_dialog import SupercellEditorDialog, SupercellPreviewDialog
+from mufinder.app.supercell_suggestion_dialog import SupercellSuggestionDialog
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Structure
+from mufinder.science.supercell_suggestion import SupercellCandidate, SupercellSuggestion
 from mufinder.services.project_service import ProjectService
 
 
@@ -200,4 +202,74 @@ def test_supercell_editor_shutdowns_viewer_on_reject(qapp, tmp_path, monkeypatch
     dialog.reject()
 
     assert calls == [True]
+    dialog.close()
+
+
+def _make_editor(tmp_path) -> SupercellEditorDialog:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "suggest.mufinder", "SuggestTest")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        properties={"pbc": [True, True, True]},
+    )
+    service.add_structure(doc, host)
+    return SupercellEditorDialog(
+        document=doc,
+        project_service=service,
+        source_structure=host,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+    )
+
+
+def test_supercell_editor_has_suggest_button(qapp, tmp_path) -> None:
+    dialog = _make_editor(tmp_path)
+    assert hasattr(dialog, "_suggest_button")
+    assert dialog._suggest_button.text() == "Suggest…"
+    dialog.close()
+
+
+def test_supercell_editor_suggest_writes_scaling_to_matrix(qapp, tmp_path, monkeypatch) -> None:
+    dialog = _make_editor(tmp_path)
+
+    suggestion = SupercellSuggestion(
+        candidates=(
+            SupercellCandidate(scaling=(3, 3, 3), atom_count=54, min_image_distance=12.0, satisfies_criterion=True),
+        ),
+        recommended_index=0,
+        primitive_atom_count=2,
+        distance_target=10.0,
+        display_threshold=8.0,
+        max_atoms=200,
+        primitive_exceeds_budget=False,
+    )
+
+    def fake_exec(self):
+        self._chosen_scaling = self._suggestion.candidates[self._suggestion.recommended_index].scaling
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(SupercellSuggestionDialog, "exec", fake_exec)
+
+    from unittest.mock import patch
+    with patch("mufinder.app.supercell_dialog.suggest_supercell", return_value=suggestion):
+        dialog._suggest_supercell()
+
+    assert dialog.matrix() == [[3, 0, 0], [0, 3, 0], [0, 0, 3]]
+    dialog.close()
+
+
+def test_supercell_editor_spinbox_range_allows_n_20(qapp, tmp_path) -> None:
+    # Regression: spinbox range was (1,12) so setValue(20) would silently clamp to 12.
+    dialog = _make_editor(tmp_path)
+    dialog._apply_matrix([[20, 0, 0], [0, 20, 0], [0, 0, 20]])
+    assert dialog.matrix() == [[20, 0, 0], [0, 20, 0], [0, 0, 20]]
+    dialog.close()
+
+
+def test_supercell_editor_spinbox_range_allows_n_64(qapp, tmp_path) -> None:
+    dialog = _make_editor(tmp_path)
+    dialog._apply_matrix([[64, 0, 0], [0, 64, 0], [0, 0, 64]])
+    assert dialog.matrix() == [[64, 0, 0], [0, 64, 0], [0, 0, 64]]
     dialog.close()

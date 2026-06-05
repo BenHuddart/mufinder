@@ -28,10 +28,12 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
+from mufinder.app.supercell_suggestion_dialog import SupercellSuggestionDialog
 from mufinder.app.theme import style_section_subtitle, style_section_title
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import Structure
 from mufinder.science.supercell import build_supercell_structure
+from mufinder.science.supercell_suggestion import SupercellSuggestionError, suggest_supercell
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 
@@ -64,7 +66,7 @@ class SupercellPreviewDialog(QDialog):
         self._simple_ny = QSpinBox()
         self._simple_nz = QSpinBox()
         for spinbox in (self._simple_nx, self._simple_ny, self._simple_nz):
-            spinbox.setRange(1, 12)
+            spinbox.setRange(1, 64)
             spinbox.setValue(1)
 
         self._advanced_toggle = QCheckBox("Advanced 3x3 matrix")
@@ -192,7 +194,7 @@ class SupercellPreviewDialog(QDialog):
             matrix_row: list[QSpinBox] = []
             for column in range(3):
                 cell = QSpinBox()
-                cell.setRange(-12, 12)
+                cell.setRange(-64, 64)
                 cell.setValue(1 if row == column else 0)
                 matrix_row.append(cell)
                 grid.addWidget(cell, row, column)
@@ -312,7 +314,7 @@ class SupercellEditorDialog(QDialog):
         self._simple_ny = QSpinBox()
         self._simple_nz = QSpinBox()
         for spinbox in (self._simple_nx, self._simple_ny, self._simple_nz):
-            spinbox.setRange(1, 12)
+            spinbox.setRange(1, 64)
             spinbox.setValue(1)
             spinbox.valueChanged.connect(lambda *_: self._generate_preview())
 
@@ -332,6 +334,7 @@ class SupercellEditorDialog(QDialog):
         self._save_button = QPushButton("Save")
         self._save_as_button = QPushButton("Save As")
         self._delete_button = QPushButton("Delete")
+        self._suggest_button = QPushButton("Suggest…")
         self._use_button = QPushButton("Use Selected")
         self._close_button = QPushButton("Close")
         self._viewer_shutdown = False
@@ -340,6 +343,7 @@ class SupercellEditorDialog(QDialog):
         self._save_button.clicked.connect(self._save_current)
         self._save_as_button.clicked.connect(self._save_as_asset)
         self._delete_button.clicked.connect(self._delete_current)
+        self._suggest_button.clicked.connect(self._suggest_supercell)
         self._use_button.clicked.connect(self._use_selected)
         self._close_button.clicked.connect(self.reject)
         self._use_button.setVisible(self._select_mode)
@@ -447,6 +451,7 @@ class SupercellEditorDialog(QDialog):
         action_row.addWidget(self._save_button)
         action_row.addWidget(self._save_as_button)
         action_row.addWidget(self._delete_button)
+        action_row.addWidget(self._suggest_button)
         action_row.addStretch(1)
         controls_layout.addLayout(action_row)
 
@@ -474,7 +479,7 @@ class SupercellEditorDialog(QDialog):
             matrix_row: list[QSpinBox] = []
             for column in range(3):
                 cell = QSpinBox()
-                cell.setRange(-12, 12)
+                cell.setRange(-64, 64)
                 cell.setValue(1 if row == column else 0)
                 cell.valueChanged.connect(lambda *_: self._generate_preview())
                 matrix_row.append(cell)
@@ -749,6 +754,22 @@ class SupercellEditorDialog(QDialog):
             return
         self._selected_structure_id = asset_id
         self.accept()
+
+    def _suggest_supercell(self) -> None:
+        try:
+            suggestion = suggest_supercell(
+                self._source_structure.lattice_vectors,
+                primitive_atom_count=len(self._source_structure.species),
+            )
+        except SupercellSuggestionError as exc:
+            QMessageBox.warning(self, "Suggest Supercell", str(exc))
+            return
+        dialog = SupercellSuggestionDialog(suggestion=suggestion, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        matrix = dialog.chosen_matrix()
+        if matrix is not None:
+            self._apply_matrix(matrix)
 
     def _generate_preview(self) -> None:
         matrix = self.matrix()
