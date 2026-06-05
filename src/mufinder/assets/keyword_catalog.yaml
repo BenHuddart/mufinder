@@ -976,3 +976,57 @@ keywords:
     requires: []
     example: NUM_FARMS : 1
     notes: Number of parallel CASTEP farms used to distribute independent calculations.
+
+  - name: IPRINT
+    canonical_name: iprint
+    file: param
+    kind: scalar
+    value_type: int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: IPRINT : 1
+    notes: Output verbosity level for the CASTEP run.
+
+  - name: LENGTH_UNIT
+    canonical_name: length_unit
+    file: param
+    kind: scalar
+    value_type: text
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: LENGTH_UNIT : ang
+    notes: Default length unit used when reporting results.
+
+  - name: DEVEL_CODE
+    canonical_name: devel_code
+    file: param
+    kind: block
+    value_type: block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK DEVEL_CODE
+      foo=1
+      %ENDBLOCK DEVEL_CODE
+    notes: Free-form developer control block; rows are passed through verbatim.
+
+  - name: XC_DEFINITION
+    canonical_name: xc_definition
+    file: param
+    kind: block
+    value_type: block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK XC_DEFINITION
+      PBE 1.0
+      %ENDBLOCK XC_DEFINITION
+    notes: Composite exchange-correlation definition; rows pair a functional with a weight.
