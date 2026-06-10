@@ -53,6 +53,24 @@ def _configs() -> list[ClusterConfig]:
     ]
 
 
+def _jump_password_config() -> ClusterConfig:
+    return ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        username="glam-user",
+        auth_method="password",
+        default_working_directory="/mnt/redwoodfs/glam-user",
+        queue_system="addqueue",
+        cores_per_node=24,
+        default_walltime="",
+        template_script_path="",
+        jump_host_enabled=True,
+        jump_hostname="bastion.physics.ox.ac.uk",
+        jump_username="physics-user",
+        jump_auth_method="password",
+    )
+
+
 def test_cluster_submission_dialog_populates_defaults(qapp) -> None:
     dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=_configs())
 
@@ -77,6 +95,45 @@ def test_cluster_submission_dialog_switches_cluster_defaults(qapp) -> None:
     assert config.username == "bob"
     assert config.num_processes == 32
     assert dialog._password_edit.isHidden() is False
+    dialog.close()
+
+
+def test_cluster_submission_dialog_shows_jump_host_credentials(qapp) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_jump_password_config()])
+
+    assert dialog._jump_secret_edit.isHidden() is False
+    assert dialog._target_secret_label.text() == "Redwood password"
+    assert dialog._jump_secret_label.text() == "Jump host password"
+    assert "jump-host password" in dialog._auth_hint.text()
+
+    dialog._target_secret_edit.setText("glam-secret")
+    dialog._jump_secret_edit.setText("physics-secret")
+
+    credentials = dialog.credentials()
+    assert credentials.target_secret == "glam-secret"
+    assert credentials.jump_secret == "physics-secret"
+    dialog.close()
+
+
+def test_cluster_submission_dialog_validates_jump_host_password_first(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_jump_password_config()])
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        dialog_module.QMessageBox,
+        "warning",
+        lambda _parent, title, _message: warnings.append(title),
+    )
+
+    dialog._accept_if_valid()
+    assert warnings[-1] == "Missing jump host password"
+
+    dialog._jump_secret_edit.setText("physics-secret")
+    dialog._accept_if_valid()
+    assert warnings[-1] == "Missing cluster password"
     dialog.close()
 
 
@@ -263,7 +320,7 @@ def test_cluster_submission_dialog_validation_warns_for_missing_fields(
     dialog._cluster_combo.setCurrentText("beta")
     dialog._password_edit.setText("")
     dialog._accept_if_valid()
-    assert warnings[-1] == "Missing password"
+    assert warnings[-1] == "Missing cluster password"
     dialog.close()
 
 

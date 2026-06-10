@@ -5865,7 +5865,10 @@ class MainWindow(QMainWindow):
 
         submission = dialog.config()
         self._persist_last_cluster_submission_config(submission, workflow_type=workflow_type)
-        target_secret = dialog.password().strip() or None
+        if hasattr(dialog, "credentials"):
+            dialog_credentials = dialog.credentials()
+        else:
+            dialog_credentials = SSHCredentials(target_secret=dialog.password().strip() or None)
         selected_cluster = load_cluster_config(self._settings, submission.cluster_name)
         if selected_cluster is None:
             QMessageBox.warning(self, "Cluster not found", "Selected cluster is no longer configured.")
@@ -5897,12 +5900,7 @@ class MainWindow(QMainWindow):
             and (not connected_user or connected_user == selected_cluster.username.strip())
         )
 
-        credentials = SSHCredentials() if reusing_connection else prompt_for_cluster_credentials(
-            self,
-            selected_cluster,
-            target_secret=target_secret,
-            prompt_optional_key=False,
-        )
+        credentials = SSHCredentials() if reusing_connection else dialog_credentials
         if credentials is None:
             QMessageBox.warning(self, "Missing credentials", "Credentials are required for cluster submission.")
             return

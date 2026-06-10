@@ -2270,6 +2270,112 @@ def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
     window.close()
 
 
+def test_main_window_submit_jobs_on_cluster_passes_jump_host_credentials(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_jump_submit_ui.mufinder", "ClusterJumpSubmit")
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    output_dir = doc.project_root / "files" / "convergence_cutoff"
+    (output_dir / job.label).mkdir(parents=True, exist_ok=True)
+    service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=output_dir,
+        job_ids_by_cutoff={main_window_module.MainWindow._cutoff_key(300.0): str(job.id)},
+    )
+    window._document = doc
+
+    cluster = ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        username="glam-user",
+        auth_method="password",
+        default_working_directory="/mnt/redwoodfs/glam-user",
+        queue_system="slurm",
+        cores_per_node=24,
+        default_walltime="01:00:00",
+        template_script_path="/templates/slurm.sh",
+        jump_host_enabled=True,
+        jump_hostname="bastion.physics.ox.ac.uk",
+        jump_username="physics-user",
+        jump_auth_method="password",
+    )
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 1
+
+        def config(self):
+            return SimpleNamespace(
+                cluster_name="Redwood",
+                working_directory="/mnt/redwoodfs/glam-user",
+                username="glam-user",
+                job_name_prefix="conv",
+                num_processes=24,
+                walltime="01:00:00",
+            )
+
+        def credentials(self) -> SSHCredentials:
+            return SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret")
+
+    connect_calls: list[tuple[str, SSHCredentials | None, str | None]] = []
+    submit_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "connect_to_cluster",
+        lambda config, password=None, credentials=None: connect_calls.append((config.name, credentials, password)),
+    )
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "remote_job_directory",
+        lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
+    )
+    monkeypatch.setattr(window._cluster_runner, "remote_directory_exists", lambda _path: False)
+    monkeypatch.setattr(window._cluster_runner, "submit", lambda **kwargs: submit_calls.append(kwargs) or "99123")
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+
+    window._submit_jobs_on_cluster([job])
+
+    assert len(connect_calls) == 1
+    assert connect_calls[0][0] == "Redwood"
+    assert connect_calls[0][1] == SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret")
+    assert connect_calls[0][2] is None
+    assert len(submit_calls) == 1
+    window.close()
+
+
 def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

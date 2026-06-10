@@ -24,6 +24,7 @@ from PySide6.QtCore import Qt
 
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.cluster_setup import ClusterConfig
+from mufinder.services.ssh_client import SSHCredentials
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,10 +125,17 @@ class ClusterSubmissionDialog(QDialog):
         self._comment_edit.setPlaceholderText("Optional note for this submission")
         form.addRow(self._comment_label, self._comment_edit)
 
-        self._password_label = QLabel("Password or key passphrase", form_group)
-        self._password_edit = QLineEdit(form_group)
-        self._password_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow(self._password_label, self._password_edit)
+        self._target_secret_label = QLabel("Cluster password or key passphrase", form_group)
+        self._target_secret_edit = QLineEdit(form_group)
+        self._target_secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow(self._target_secret_label, self._target_secret_edit)
+        self._password_label = self._target_secret_label
+        self._password_edit = self._target_secret_edit
+
+        self._jump_secret_label = QLabel("Jump host password or key passphrase", form_group)
+        self._jump_secret_edit = QLineEdit(form_group)
+        self._jump_secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow(self._jump_secret_label, self._jump_secret_edit)
 
         self._auth_hint = QLabel(form_group)
         self._auth_hint.setWordWrap(True)
@@ -171,7 +179,13 @@ class ClusterSubmissionDialog(QDialog):
         return self._cluster_configs.get(self.selected_cluster_name())
 
     def password(self) -> str:
-        return self._password_edit.text()
+        return self._target_secret_edit.text()
+
+    def credentials(self) -> SSHCredentials:
+        return SSHCredentials(
+            target_secret=self._secret_text(self._target_secret_edit),
+            jump_secret=self._secret_text(self._jump_secret_edit),
+        )
 
     def config(self) -> ClusterSubmissionConfig:
         addqueue = self._is_addqueue_cluster()
@@ -206,13 +220,17 @@ class ClusterSubmissionDialog(QDialog):
         self._queue_name_edit.setText(config.default_queue_name)
         self._memory_spin.setValue(7.5 if config.default_memory_gb is None else float(config.default_memory_gb))
         self._comment_edit.setText("")
+        self._target_secret_edit.setText("")
+        self._jump_secret_edit.setText("")
 
         if self._has_active_connection_for_selected():
             active_user = self._username_edit.text().strip() or self._connected_username
             self._set_auth_hint_text(
                 f"Active SSH connection detected for this cluster as '{active_user}'. "
-                "Password/passphrase is not required for this submission."
+                "Passwords/passphrases are not required for this submission."
             )
+        elif config.jump_host_enabled:
+            self._set_auth_hint_text(self._jump_host_auth_hint(config))
         elif config.auth_method == "password":
             self._set_auth_hint_text(
                 "Password authentication is enabled for this cluster. "
@@ -263,9 +281,23 @@ class ClusterSubmissionDialog(QDialog):
         self._auth_hint.updateGeometry()
 
     def _set_password_row_visible(self, visible: bool) -> None:
-        self._password_label.setVisible(visible)
-        self._password_edit.setVisible(visible)
-        self._password_edit.setEnabled(visible)
+        self._refresh_credential_rows(visible)
+
+    def _refresh_credential_rows(self, visible: bool) -> None:
+        config = self.selected_cluster_config()
+        target_visible = visible
+        jump_visible = visible and config is not None and config.jump_host_enabled
+
+        if config is not None:
+            self._target_secret_label.setText(self._secret_label(config.name, config.auth_method))
+            self._jump_secret_label.setText(self._secret_label("Jump host", config.jump_auth_method))
+
+        for widget in (self._target_secret_label, self._target_secret_edit):
+            widget.setVisible(target_visible)
+            widget.setEnabled(target_visible)
+        for widget in (self._jump_secret_label, self._jump_secret_edit):
+            widget.setVisible(jump_visible)
+            widget.setEnabled(jump_visible)
 
     def _has_active_connection_for_selected(self) -> bool:
         config = self.selected_cluster_config()
@@ -279,7 +311,32 @@ class ClusterSubmissionDialog(QDialog):
 
     def _refresh_connection_state(self) -> None:
         reuse_connection = self._has_active_connection_for_selected()
-        self._set_password_row_visible(not reuse_connection)
+        self._refresh_credential_rows(not reuse_connection)
+
+    @staticmethod
+    def _secret_text(edit: QLineEdit) -> str | None:
+        text = edit.text().strip()
+        return text or None
+
+    @staticmethod
+    def _secret_label(system_name: str, auth_method: str) -> str:
+        if auth_method.strip().lower() == "password":
+            return f"{system_name} password"
+        return f"{system_name} key passphrase"
+
+    def _jump_host_auth_hint(self, config: ClusterConfig) -> str:
+        target_label = "password" if config.auth_method.strip().lower() == "password" else "key passphrase"
+        jump_label = "password" if config.jump_auth_method.strip().lower() == "password" else "key passphrase"
+        optional_note = (
+            " Key passphrase fields can be left blank when the corresponding private key is not encrypted."
+            if "key passphrase" in {target_label, jump_label}
+            else ""
+        )
+        return (
+            "This cluster connects through an SSH jump host. "
+            f"Enter the jump-host {jump_label} and the cluster {target_label} below."
+            f"{optional_note}"
+        )
 
     def _is_addqueue_cluster(self) -> bool:
         config = self.selected_cluster_config()
@@ -359,17 +416,21 @@ class ClusterSubmissionDialog(QDialog):
             return
 
         selected = self.selected_cluster_config()
-        if (
-            selected is not None
-            and selected.auth_method == "password"
-            and not self._has_active_connection_for_selected()
-            and not self.password().strip()
-        ):
-            QMessageBox.warning(
-                self,
-                "Missing password",
-                "Enter the cluster password to continue with this submission.",
-            )
-            return
+        if selected is not None and not self._has_active_connection_for_selected():
+            credentials = self.credentials()
+            if selected.jump_host_enabled and selected.jump_auth_method == "password" and not credentials.jump_secret:
+                QMessageBox.warning(
+                    self,
+                    "Missing jump host password",
+                    "Enter the jump-host password to continue with this submission.",
+                )
+                return
+            if selected.auth_method == "password" and not credentials.target_secret:
+                QMessageBox.warning(
+                    self,
+                    "Missing cluster password",
+                    "Enter the cluster password to continue with this submission.",
+                )
+                return
 
         self.accept()

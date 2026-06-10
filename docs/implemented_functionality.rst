@@ -754,6 +754,9 @@ Remote submission and monitoring includes:
 	scheduler job ids.
 - Redwood submission through ``addqueue`` with exposed runtime controls for
 	queue/partition, memory per process, and comment.
+- Jump-host submissions show separate credential fields for the gateway and the
+	target cluster, so Redwood/Glamdring users can enter Physics/bastion and
+	Glamdring passwords independently.
 - addqueue submission uses sbatch-compatible response mode to keep scheduler
 	job-id parsing stable.
 - Dashboard columns for execution target (cluster/local) and remote job id.
