@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -30,6 +31,7 @@ from mufinder.app.cluster_ui_utils import (
     show_detailed_warning,
 )
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.theme import style_inline_group
 from mufinder.cluster_setup import ClusterConfig, load_cluster_configs, save_cluster_configs
 from mufinder.services.ssh_client import SSHConnection, SSHUnknownHostKeyError, save_trusted_host_key
 
@@ -44,7 +46,18 @@ class ClusterSetupDialog(QDialog):
         self._last_username = ""
 
         self.setWindowTitle("Remote Cluster Connections")
-        self.resize(760, 520)
+        self.resize(980, 520)
+        self.setStyleSheet(
+            """
+            #mufinderInlineGroup,
+            #mufinderInlineGroup QLabel {
+                background: transparent;
+            }
+            QCheckBox#mufinderInlineGroup {
+                background: transparent;
+            }
+            """
+        )
 
         layout = QVBoxLayout(self)
 
@@ -59,7 +72,18 @@ class ClusterSetupDialog(QDialog):
         layout.addLayout(top_row)
 
         form_group = QGroupBox("Connection Settings", self)
-        form = QFormLayout(form_group)
+        self._form_columns = QHBoxLayout(form_group)
+        self._form_columns.setSpacing(28)
+        self._form_columns.setContentsMargins(14, 18, 14, 14)
+        self._ssh_form = QFormLayout()
+        self._cluster_form = QFormLayout()
+        for form in (self._ssh_form, self._cluster_form):
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+            form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+            form.setHorizontalSpacing(12)
+            form.setVerticalSpacing(8)
+        self._form_columns.addLayout(self._ssh_form, 1)
+        self._form_columns.addLayout(self._cluster_form, 1)
 
         self._name_edit = QLineEdit(form_group)
         self._hostname_edit = QLineEdit(form_group)
@@ -72,14 +96,16 @@ class ClusterSetupDialog(QDialog):
         self._auth_combo.addItems(["key", "password"])
 
         self._key_path_edit = QLineEdit(form_group)
-        key_row = QWidget(form_group)
-        key_layout = QHBoxLayout(key_row)
+        self._key_path_row = QWidget(form_group)
+        style_inline_group(self._key_path_row)
+        key_layout = QHBoxLayout(self._key_path_row)
         key_layout.setContentsMargins(0, 0, 0, 0)
         key_layout.addWidget(self._key_path_edit, 1)
-        self._key_browse_button = QPushButton("Browse", key_row)
+        self._key_browse_button = QPushButton("Browse", self._key_path_row)
         key_layout.addWidget(self._key_browse_button)
 
         self._jump_enabled_check = QCheckBox("Connect through SSH jump host", form_group)
+        style_inline_group(self._jump_enabled_check)
         self._jump_hostname_edit = QLineEdit(form_group)
         self._jump_port_spin = QSpinBox(form_group)
         self._jump_port_spin.setRange(1, 65535)
@@ -88,11 +114,12 @@ class ClusterSetupDialog(QDialog):
         self._jump_auth_combo = QComboBox(form_group)
         self._jump_auth_combo.addItems(["key", "password"])
         self._jump_key_path_edit = QLineEdit(form_group)
-        jump_key_row = QWidget(form_group)
-        jump_key_layout = QHBoxLayout(jump_key_row)
+        self._jump_key_path_row = QWidget(form_group)
+        style_inline_group(self._jump_key_path_row)
+        jump_key_layout = QHBoxLayout(self._jump_key_path_row)
         jump_key_layout.setContentsMargins(0, 0, 0, 0)
         jump_key_layout.addWidget(self._jump_key_path_edit, 1)
-        self._jump_key_browse_button = QPushButton("Browse", jump_key_row)
+        self._jump_key_browse_button = QPushButton("Browse", self._jump_key_path_row)
         jump_key_layout.addWidget(self._jump_key_browse_button)
 
         self._working_dir_edit = QLineEdit(form_group)
@@ -108,11 +135,12 @@ class ClusterSetupDialog(QDialog):
         self._walltime_edit.setPlaceholderText("HH:MM:SS")
 
         self._template_path_edit = QLineEdit(form_group)
-        template_row = QWidget(form_group)
-        template_layout = QHBoxLayout(template_row)
+        self._template_path_row = QWidget(form_group)
+        style_inline_group(self._template_path_row)
+        template_layout = QHBoxLayout(self._template_path_row)
         template_layout.setContentsMargins(0, 0, 0, 0)
         template_layout.addWidget(self._template_path_edit, 1)
-        self._template_browse_button = QPushButton("Browse", template_row)
+        self._template_browse_button = QPushButton("Browse", self._template_path_row)
         template_layout.addWidget(self._template_browse_button)
 
         self._castep_exec_edit = QLineEdit(form_group)
@@ -131,43 +159,43 @@ class ClusterSetupDialog(QDialog):
         self._keyword_python_edit = QLineEdit(form_group)
         self._keyword_python_edit.setPlaceholderText("python3")
 
-        form.addRow("Cluster name", self._name_edit)
-        form.addRow("Host name", self._hostname_edit)
-        form.addRow("Port", self._port_spin)
-        form.addRow("Username", self._username_edit)
-        form.addRow("Authentication method", self._auth_combo)
-        form.addRow("SSH key path", key_row)
-        form.addRow("", self._jump_enabled_check)
+        self._ssh_form.addRow("Cluster name", self._name_edit)
+        self._ssh_form.addRow("Host name", self._hostname_edit)
+        self._ssh_form.addRow("Port", self._port_spin)
+        self._ssh_form.addRow("Username", self._username_edit)
+        self._ssh_form.addRow("Authentication method", self._auth_combo)
+        self._ssh_form.addRow("SSH key path", self._key_path_row)
+        self._ssh_form.addRow("", self._jump_enabled_check)
         self._jump_hostname_label = QLabel("Jump host name", form_group)
-        form.addRow(self._jump_hostname_label, self._jump_hostname_edit)
+        self._ssh_form.addRow(self._jump_hostname_label, self._jump_hostname_edit)
         self._jump_port_label = QLabel("Jump host port", form_group)
-        form.addRow(self._jump_port_label, self._jump_port_spin)
+        self._ssh_form.addRow(self._jump_port_label, self._jump_port_spin)
         self._jump_username_label = QLabel("Jump host username", form_group)
-        form.addRow(self._jump_username_label, self._jump_username_edit)
+        self._ssh_form.addRow(self._jump_username_label, self._jump_username_edit)
         self._jump_auth_label = QLabel("Jump host authentication method", form_group)
-        form.addRow(self._jump_auth_label, self._jump_auth_combo)
+        self._ssh_form.addRow(self._jump_auth_label, self._jump_auth_combo)
         self._jump_key_label = QLabel("Jump host SSH key path", form_group)
-        form.addRow(self._jump_key_label, jump_key_row)
-        form.addRow("Default remote working directory", self._working_dir_edit)
-        form.addRow("Queue system", self._queue_combo)
-        form.addRow("Cores per node", self._cores_per_node_spin)
-        form.addRow("Default walltime", self._walltime_edit)
+        self._ssh_form.addRow(self._jump_key_label, self._jump_key_path_row)
+        self._cluster_form.addRow("Default remote working directory", self._working_dir_edit)
+        self._cluster_form.addRow("Queue system", self._queue_combo)
+        self._cluster_form.addRow("Cores per node", self._cores_per_node_spin)
+        self._cluster_form.addRow("Default walltime", self._walltime_edit)
         self._template_label = QLabel("Template script", form_group)
-        form.addRow(self._template_label, template_row)
-        form.addRow("CASTEP executable", self._castep_exec_edit)
+        self._cluster_form.addRow(self._template_label, self._template_path_row)
+        self._cluster_form.addRow("CASTEP executable", self._castep_exec_edit)
         self._default_queue_label = QLabel("Default queue / partition", form_group)
-        form.addRow(self._default_queue_label, self._default_queue_edit)
+        self._cluster_form.addRow(self._default_queue_label, self._default_queue_edit)
         self._default_memory_label = QLabel("Default memory per core (GB)", form_group)
-        form.addRow(self._default_memory_label, self._default_memory_spin)
-        form.addRow("Submit command path", self._submit_command_edit)
-        form.addRow("Queue check command path", self._queue_check_command_edit)
-        form.addRow("Cancel command path", self._cancel_command_edit)
+        self._cluster_form.addRow(self._default_memory_label, self._default_memory_spin)
+        self._cluster_form.addRow("Submit command path", self._submit_command_edit)
+        self._cluster_form.addRow("Queue check command path", self._queue_check_command_edit)
+        self._cluster_form.addRow("Cancel command path", self._cancel_command_edit)
         self._keyword_mode_label = QLabel("Keyword generation mode", form_group)
-        form.addRow(self._keyword_mode_label, self._keyword_mode_combo)
+        self._cluster_form.addRow(self._keyword_mode_label, self._keyword_mode_combo)
         self._keyword_shell_init_label = QLabel("Keyword shell init", form_group)
-        form.addRow(self._keyword_shell_init_label, self._keyword_shell_init_edit)
+        self._cluster_form.addRow(self._keyword_shell_init_label, self._keyword_shell_init_edit)
         self._keyword_python_label = QLabel("Keyword Python command", form_group)
-        form.addRow(self._keyword_python_label, self._keyword_python_edit)
+        self._cluster_form.addRow(self._keyword_python_label, self._keyword_python_edit)
 
         layout.addWidget(form_group)
 

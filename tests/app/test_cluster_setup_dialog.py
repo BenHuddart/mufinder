@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from PySide6.QtWidgets import QHBoxLayout
 
 import mufinder.app.cluster_setup_dialog as dialog_module
 from mufinder.cluster_setup import load_cluster_configs
@@ -115,6 +116,29 @@ def test_cluster_setup_dialog_loads_redwood_jump_host_defaults(qapp) -> None:
     assert dialog._jump_hostname_edit.text() == "bastion.physics.ox.ac.uk"
     assert dialog._jump_username_edit.text() == "physics_username"
     assert dialog._jump_auth_combo.currentText() == "password"
+    dialog.close()
+
+
+def test_cluster_setup_dialog_splits_connection_settings_into_two_columns(qapp) -> None:
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+
+    assert isinstance(dialog._form_columns, QHBoxLayout)
+    assert dialog._form_columns.count() == 2
+    assert dialog._ssh_form.indexOf(dialog._hostname_edit) >= 0
+    assert dialog._ssh_form.indexOf(dialog._jump_key_path_row) >= 0
+    assert dialog._cluster_form.indexOf(dialog._working_dir_edit) >= 0
+    assert dialog._cluster_form.indexOf(dialog._queue_check_command_edit) >= 0
+    dialog.close()
+
+
+def test_cluster_setup_dialog_uses_transparent_inline_rows(qapp) -> None:
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+
+    assert dialog._key_path_row.objectName() == "mufinderInlineGroup"
+    assert dialog._jump_enabled_check.objectName() == "mufinderInlineGroup"
+    assert dialog._jump_key_path_row.objectName() == "mufinderInlineGroup"
+    assert dialog._template_path_row.objectName() == "mufinderInlineGroup"
+    assert "#mufinderInlineGroup" in dialog.styleSheet()
     dialog.close()
 
 
