@@ -26,7 +26,7 @@ from mufinder.domain.models import CalculationDefinition, CalculationRun, Compar
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.services.project_service import ProjectService
-from mufinder.services.ssh_client import SSHAuthenticationError
+from mufinder.services.ssh_client import SSHAuthenticationError, SSHCredentials
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
 
 
@@ -3654,9 +3654,9 @@ def test_main_window_disconnected_refresh_prompts_password_for_password_cluster(
     monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: refresh_calls.append("refresh"))
     monkeypatch.setattr(
-        main_window_module.QInputDialog,
-        "getText",
-        lambda *_args, **_kwargs: ("secret", True),
+        main_window_module,
+        "prompt_for_cluster_credentials",
+        lambda *_args, **_kwargs: SSHCredentials(target_secret="secret"),
     )
 
     warnings: list[str] = []
@@ -3718,9 +3718,9 @@ def test_main_window_disconnected_refresh_prompts_passphrase_for_key_cluster(
     monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: refresh_calls.append("refresh"))
     monkeypatch.setattr(
-        main_window_module.QInputDialog,
-        "getText",
-        lambda *_args, **_kwargs: ("secret-passphrase", True),
+        main_window_module,
+        "prompt_for_cluster_credentials",
+        lambda *_args, **_kwargs: SSHCredentials(target_secret="secret-passphrase"),
     )
 
     warnings: list[str] = []

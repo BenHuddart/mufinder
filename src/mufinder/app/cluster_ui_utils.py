@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 
 from mufinder.cluster_setup import ClusterConfig
 from mufinder.services.ssh_client import (
+    SSHCredentials,
     SSHAuthenticationError,
     SSHHostKeyMismatchError,
     SSHProtocolBannerError,
@@ -51,12 +52,101 @@ def show_detailed_warning(
     box.exec()
 
 
+def endpoint_label(config: ClusterConfig, endpoint: str) -> str:
+    """Return a compact user-facing label for a cluster SSH endpoint."""
+
+    if endpoint == "jump":
+        return f"jump host {config.jump_hostname}:{config.jump_port}"
+    return f"{config.hostname}:{config.port}"
+
+
+def prompt_for_cluster_credentials(
+    parent,
+    config: ClusterConfig,
+    *,
+    target_secret: str | None = None,
+    prompt_optional_key: bool = True,
+) -> SSHCredentials | None:
+    """Prompt for target and jump-host secrets, returning None when required input is cancelled."""
+
+    jump_secret: str | None = None
+    if config.jump_host_enabled:
+        jump_ok, jump_secret = _prompt_for_endpoint_secret(
+            parent,
+            config,
+            endpoint="jump",
+            prompt_optional_key=prompt_optional_key,
+        )
+        if not jump_ok:
+            return None
+
+    resolved_target = target_secret.strip() if target_secret is not None else None
+    if resolved_target == "":
+        resolved_target = None
+    if resolved_target is None:
+        target_ok, resolved_target = _prompt_for_endpoint_secret(
+            parent,
+            config,
+            endpoint="target",
+            prompt_optional_key=prompt_optional_key,
+        )
+        if not target_ok:
+            return None
+
+    return SSHCredentials(target_secret=resolved_target, jump_secret=jump_secret)
+
+
+def _prompt_for_endpoint_secret(
+    parent,
+    config: ClusterConfig,
+    *,
+    endpoint: str,
+    prompt_optional_key: bool,
+) -> tuple[bool, str | None]:
+    if endpoint == "jump":
+        auth_method = config.jump_auth_method.strip().lower()
+        username = config.jump_username.strip()
+        hostname = config.jump_hostname.strip()
+        title_prefix = "Jump host"
+        system_name = "Physics/bastion"
+    else:
+        auth_method = config.auth_method.strip().lower()
+        username = config.username.strip()
+        hostname = config.hostname.strip()
+        title_prefix = config.name
+        system_name = config.name
+
+    if auth_method == "password":
+        raw_secret, accepted = QInputDialog.getText(
+            parent,
+            f"{title_prefix} password",
+            f"Enter {system_name} password for {username}@{hostname}:",
+            QLineEdit.EchoMode.Password,
+        )
+        secret = raw_secret.strip()
+        return (bool(accepted and secret), secret or None)
+
+    if not prompt_optional_key:
+        return True, None
+
+    raw_passphrase, accepted = QInputDialog.getText(
+        parent,
+        f"{title_prefix} key passphrase",
+        f"Enter key passphrase for {username}@{hostname} if needed:",
+        QLineEdit.EchoMode.Password,
+    )
+    if not accepted or not raw_passphrase.strip():
+        return True, None
+    return True, raw_passphrase.strip()
+
+
 def format_cluster_connection_error(config: ClusterConfig, exc: Exception) -> str:
     """Return a user-facing cluster connection error with clear next steps."""
 
     if isinstance(exc, SSHUnknownHostKeyError):
+        endpoint = endpoint_label(config, exc.endpoint)
         return (
-            f"The SSH host key for {config.hostname}:{config.port} is not trusted yet.\n\n"
+            f"The SSH host key for {endpoint} is not trusted yet.\n\n"
             f"Fingerprint: {exc.fingerprint_sha256}\n"
             f"Algorithm: {exc.algorithm}\n\n"
             "Review the fingerprint carefully and trust it only if it matches the cluster documentation "
@@ -64,8 +154,9 @@ def format_cluster_connection_error(config: ClusterConfig, exc: Exception) -> st
         )
 
     if isinstance(exc, SSHHostKeyMismatchError):
+        endpoint = endpoint_label(config, exc.endpoint)
         return (
-            f"The SSH host key for {config.hostname}:{config.port} does not match the key previously trusted.\n\n"
+            f"The SSH host key for {endpoint} does not match the key previously trusted.\n\n"
             f"Stored: {exc.expected_fingerprint_sha256} ({exc.expected_algorithm})\n"
             f"Presented: {exc.presented_fingerprint_sha256} ({exc.presented_algorithm})\n\n"
             "This can indicate a real server change or a security problem. Verify the new fingerprint with "
@@ -101,10 +192,11 @@ def format_cluster_connection_error(config: ClusterConfig, exc: Exception) -> st
 def prompt_to_trust_host_key(parent, config: ClusterConfig, exc: SSHUnknownHostKeyError) -> bool:
     """Prompt the user to trust an unknown SSH host key."""
 
+    endpoint = endpoint_label(config, exc.endpoint)
     message = make_message_box_resizable(QMessageBox(parent))
     message.setIcon(QMessageBox.Icon.Warning)
     message.setWindowTitle("Trust SSH host key?")
-    message.setText(f"Trust the SSH host key for {config.name} ({config.hostname}:{config.port})?")
+    message.setText(f"Trust the SSH host key for {config.name} ({endpoint})?")
     message.setInformativeText(
         "Only continue if this fingerprint matches the cluster documentation or a trusted source."
     )
@@ -112,8 +204,9 @@ def prompt_to_trust_host_key(parent, config: ClusterConfig, exc: SSHUnknownHostK
         "\n".join(
             [
                 f"Cluster: {config.name}",
-                f"Host: {config.hostname}",
-                f"Port: {config.port}",
+                f"Endpoint: {exc.endpoint}",
+                f"Host: {exc.hostname}",
+                f"Port: {exc.port}",
                 f"Algorithm: {exc.algorithm}",
                 f"Fingerprint: {exc.fingerprint_sha256}",
             ]

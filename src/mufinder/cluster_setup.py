@@ -16,6 +16,8 @@ _REDWOOD_ADDQUEUE = "/bin/addqueue"
 _REDWOOD_SQUEUE = "/usr/local/shared/slurm/bin//squeue"
 _REDWOOD_SCANCEL = "/usr/local/shared/slurm/bin//scancel"
 _REDWOOD_PRESET_NAME = "Redwood"
+_REDWOOD_HOSTNAME = "glamdring.physics.ox.ac.uk"
+_REDWOOD_JUMP_HOSTNAME = "bastion.physics.ox.ac.uk"
 _DEFAULT_KEYWORD_EXECUTION_MODE = "direct"
 _DEFAULT_KEYWORD_PYTHON_COMMAND = "python3"
 _SCARF_KEYWORD_SHELL_INIT = "module load CASTEP"
@@ -47,11 +49,17 @@ def _default_clusters() -> list["ClusterConfig"]:
         ),
         ClusterConfig(
             name=_REDWOOD_PRESET_NAME,
-            hostname="glamdring.physics.ox.ac.uk",
+            hostname=_REDWOOD_HOSTNAME,
             port=22,
             username="username",
-            auth_method="key",
+            auth_method="password",
             key_path="",
+            jump_host_enabled=True,
+            jump_hostname=_REDWOOD_JUMP_HOSTNAME,
+            jump_port=22,
+            jump_username="physics_username",
+            jump_auth_method="password",
+            jump_key_path="",
             default_working_directory="/mnt/redwoodfs/username",
             queue_system="ADDQUEUE",
             cores_per_node=32,
@@ -80,6 +88,12 @@ class ClusterConfig:
     username: str = ""
     auth_method: str = "key"
     key_path: str = ""
+    jump_host_enabled: bool = False
+    jump_hostname: str = ""
+    jump_port: int = 22
+    jump_username: str = ""
+    jump_auth_method: str = "key"
+    jump_key_path: str = ""
     default_working_directory: str = ""
     queue_system: str = "slurm"
     cores_per_node: int = 1
@@ -119,6 +133,42 @@ def _cluster_prefix(name: str) -> str:
     return f"clusters/{name}"
 
 
+def _settings_value(settings: QSettings, key: str, default=None):  # noqa: ANN001
+    value = settings.value(key, None)
+    return default if value is None else value
+
+
+def _settings_text(settings: QSettings, key: str, default: str = "") -> str:
+    return str(_settings_value(settings, key, default) or "").strip()
+
+
+def _settings_bool(settings: QSettings, key: str, default: bool = False) -> bool:
+    value = _settings_value(settings, key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().casefold()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
+def _normalise_auth_method(value: str, *, default: str = "key") -> str:
+    method = value.strip().lower()
+    if method in {"key", "password"}:
+        return method
+    return default if default in {"key", "password"} else "key"
+
+
+def _should_inherit_builtin_jump_defaults(builtin: "ClusterConfig | None", hostname: str) -> bool:
+    if builtin is None or not builtin.jump_host_enabled:
+        return False
+    return hostname.strip().casefold() == builtin.hostname.strip().casefold()
+
+
 def _normalise_cluster_names(value: object) -> list[str]:
     if isinstance(value, str):
         names = [value]
@@ -141,19 +191,66 @@ def _normalise_cluster_names(value: object) -> list[str]:
 def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | None:
     prefix = _cluster_prefix(name)
     builtin = _builtin_cluster_by_name(name)
-    hostname = str(settings.value(f"{prefix}/hostname", "", str) or "").strip()
+    hostname = _settings_text(settings, f"{prefix}/hostname")
     if not hostname:
         return None
 
-    username = str(settings.value(f"{prefix}/username", "", str) or "").strip()
-    auth_method = str(settings.value(f"{prefix}/auth_method", "key", str) or "key").strip().lower()
-    if auth_method not in {"key", "password"}:
-        auth_method = "key"
+    username = _settings_text(settings, f"{prefix}/username")
+    auth_default = builtin.auth_method if builtin is not None else "key"
+    auth_method = _normalise_auth_method(
+        str(_settings_value(settings, f"{prefix}/auth_method", auth_default) or auth_default),
+        default=auth_default,
+    )
 
     try:
-        port = int(settings.value(f"{prefix}/port", 22) or 22)
+        port = int(_settings_value(settings, f"{prefix}/port", 22) or 22)
     except (TypeError, ValueError):
         port = 22
+
+    jump_defaults = builtin if _should_inherit_builtin_jump_defaults(builtin, hostname) else None
+    jump_host_enabled = _settings_bool(
+        settings,
+        f"{prefix}/jump_host_enabled",
+        jump_defaults.jump_host_enabled if jump_defaults is not None else False,
+    )
+    try:
+        jump_port = int(
+            _settings_value(
+                settings,
+                f"{prefix}/jump_port",
+                jump_defaults.jump_port if jump_defaults is not None else 22,
+            )
+            or 22
+        )
+    except (TypeError, ValueError):
+        jump_port = jump_defaults.jump_port if jump_defaults is not None else 22
+    jump_auth_default = jump_defaults.jump_auth_method if jump_defaults is not None else "key"
+    jump_auth_method = _normalise_auth_method(
+        str(
+            _settings_value(
+                settings,
+                f"{prefix}/jump_auth_method",
+                jump_auth_default,
+            )
+            or jump_auth_default
+        ),
+        default=jump_auth_default,
+    )
+    jump_hostname = _settings_text(
+        settings,
+        f"{prefix}/jump_hostname",
+        jump_defaults.jump_hostname if jump_defaults is not None else "",
+    )
+    jump_username = _settings_text(
+        settings,
+        f"{prefix}/jump_username",
+        jump_defaults.jump_username if jump_defaults is not None else "",
+    )
+    jump_key_path = _settings_text(
+        settings,
+        f"{prefix}/jump_key_path",
+        jump_defaults.jump_key_path if jump_defaults is not None else "",
+    )
 
     queue_system = str(settings.value(f"{prefix}/queue_system", "SLURM", str) or "SLURM").strip()
     if not queue_system:
@@ -226,7 +323,13 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         port=max(1, port),
         username=username,
         auth_method=auth_method,
-        key_path=str(settings.value(f"{prefix}/key_path", "", str) or "").strip(),
+        key_path=_settings_text(settings, f"{prefix}/key_path"),
+        jump_host_enabled=jump_host_enabled,
+        jump_hostname=jump_hostname,
+        jump_port=max(1, jump_port),
+        jump_username=jump_username,
+        jump_auth_method=jump_auth_method,
+        jump_key_path=jump_key_path,
         default_working_directory=str(
             settings.value(f"{prefix}/default_working_directory", "", str) or ""
         ).strip(),
@@ -321,8 +424,14 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
                 hostname=hostname,
                 port=max(1, int(config.port)),
                 username=config.username.strip(),
-                auth_method=(config.auth_method.strip().lower() or "key"),
+                auth_method=_normalise_auth_method(config.auth_method),
                 key_path=config.key_path.strip(),
+                jump_host_enabled=bool(config.jump_host_enabled),
+                jump_hostname=config.jump_hostname.strip(),
+                jump_port=max(1, int(config.jump_port)),
+                jump_username=config.jump_username.strip(),
+                jump_auth_method=_normalise_auth_method(config.jump_auth_method),
+                jump_key_path=config.jump_key_path.strip(),
                 default_working_directory=config.default_working_directory.strip(),
                 queue_system=queue_system,
                 cores_per_node=max(1, int(config.cores_per_node)),
@@ -351,6 +460,12 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
         settings.setValue(f"{prefix}/username", config.username)
         settings.setValue(f"{prefix}/auth_method", config.auth_method)
         settings.setValue(f"{prefix}/key_path", config.key_path)
+        settings.setValue(f"{prefix}/jump_host_enabled", bool(config.jump_host_enabled))
+        settings.setValue(f"{prefix}/jump_hostname", config.jump_hostname)
+        settings.setValue(f"{prefix}/jump_port", int(config.jump_port))
+        settings.setValue(f"{prefix}/jump_username", config.jump_username)
+        settings.setValue(f"{prefix}/jump_auth_method", config.jump_auth_method)
+        settings.setValue(f"{prefix}/jump_key_path", config.jump_key_path)
         settings.setValue(f"{prefix}/default_working_directory", config.default_working_directory)
         settings.setValue(f"{prefix}/queue_system", config.queue_system)
         settings.setValue(f"{prefix}/cores_per_node", int(config.cores_per_node))

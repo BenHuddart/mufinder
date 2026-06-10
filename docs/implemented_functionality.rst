@@ -732,9 +732,18 @@ Cluster setup and authentication includes:
 - Configurable hostname, username, queue system, default working directory,
 	cores-per-node, default walltime, submission-script template path, CASTEP
 	executable path, default queue/partition, and default memory-per-process.
+- Optional SSH jump-host settings for clusters behind gateways, including
+	separate jump hostname, port, username, authentication method, and key path.
+- The built-in Redwood preset targets ``glamdring.physics.ox.ac.uk`` through
+	the Physics gateway ``bastion.physics.ox.ac.uk``. MuFinder prompts separately
+	for Physics/bastion credentials and Glamdring credentials because those
+	accounts can differ.
 - Optional explicit scheduler command paths for submit/queue/cancel commands,
 	with non-interactive-shell command probing fallback.
 - SSH key authentication with password fallback support.
+- Explicit host-key trust prompts are preserved for both the jump host and the
+	target cluster host; bastion trust records are stored separately from
+	Glamdring trust records.
 
 Remote submission and monitoring includes:
 

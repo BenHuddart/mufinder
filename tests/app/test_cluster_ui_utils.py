@@ -23,6 +23,19 @@ def _config(*, auth_method: str = "key") -> ClusterConfig:
     )
 
 
+def _jump_config() -> ClusterConfig:
+    return ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        username="glam-user",
+        auth_method="password",
+        jump_host_enabled=True,
+        jump_hostname="bastion.physics.ox.ac.uk",
+        jump_username="phys-user",
+        jump_auth_method="password",
+    )
+
+
 def test_show_detailed_warning_uses_simple_warning_for_short_message(monkeypatch) -> None:
     captured: list[tuple[object, str, str]] = []
     monkeypatch.setattr(
@@ -185,6 +198,45 @@ def test_format_cluster_connection_error_for_all_structured_errors() -> None:
     assert "not answering as an SSH server" in banner
     assert "hostname and SSH port" in banner
     assert fallback == "Unknown cluster connection failure."
+
+
+def test_prompt_for_cluster_credentials_collects_jump_then_target(monkeypatch) -> None:
+    prompts: list[str] = []
+    responses = [("phys-secret", True), ("glam-secret", True)]
+
+    def _fake_get_text(_parent, title, prompt, _mode):
+        prompts.append(f"{title}: {prompt}")
+        return responses.pop(0)
+
+    monkeypatch.setattr(ui_module.QInputDialog, "getText", _fake_get_text)
+
+    credentials = ui_module.prompt_for_cluster_credentials(None, _jump_config())
+
+    assert credentials is not None
+    assert credentials.jump_secret == "phys-secret"
+    assert credentials.target_secret == "glam-secret"
+    assert "Jump host password" in prompts[0]
+    assert "Physics/bastion password" in prompts[0]
+    assert "Redwood password" in prompts[1]
+
+
+def test_prompt_for_cluster_credentials_can_skip_optional_key_prompt(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ui_module.QInputDialog,
+        "getText",
+        lambda *_args, **_kwargs: calls.append("prompt") or ("", False),
+    )
+
+    credentials = ui_module.prompt_for_cluster_credentials(
+        None,
+        _config(auth_method="key"),
+        prompt_optional_key=False,
+    )
+
+    assert credentials is not None
+    assert credentials.target_secret is None
+    assert calls == []
 
 
 def test_prompt_to_trust_host_key_returns_boolean_from_dialog(monkeypatch) -> None:

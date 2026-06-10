@@ -7,6 +7,7 @@ import pytest
 import mufinder.app.cluster_setup_dialog as dialog_module
 from mufinder.cluster_setup import load_cluster_configs
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
+from mufinder.services.ssh_client import SSHCredentials
 
 
 class _FakeSettings:
@@ -104,6 +105,48 @@ def test_cluster_setup_dialog_addqueue_does_not_require_template(qapp) -> None:
     dialog.close()
 
 
+def test_cluster_setup_dialog_loads_redwood_jump_host_defaults(qapp) -> None:
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+    dialog._cluster_combo.setCurrentText("Redwood")
+
+    assert dialog._hostname_edit.text() == "glamdring.physics.ox.ac.uk"
+    assert dialog._auth_combo.currentText() == "password"
+    assert dialog._jump_enabled_check.isChecked() is True
+    assert dialog._jump_hostname_edit.text() == "bastion.physics.ox.ac.uk"
+    assert dialog._jump_username_edit.text() == "physics_username"
+    assert dialog._jump_auth_combo.currentText() == "password"
+    dialog.close()
+
+
+def test_cluster_setup_dialog_saves_jump_host_configuration(qapp) -> None:
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings)
+
+    dialog._name_edit.setText("alpha")
+    dialog._hostname_edit.setText("alpha.example")
+    dialog._username_edit.setText("alice")
+    dialog._auth_combo.setCurrentText("password")
+    dialog._jump_enabled_check.setChecked(True)
+    dialog._jump_hostname_edit.setText("bastion.example")
+    dialog._jump_port_spin.setValue(2222)
+    dialog._jump_username_edit.setText("physics-alice")
+    dialog._jump_auth_combo.setCurrentText("key")
+    dialog._jump_key_path_edit.setText("/keys/physics")
+    dialog._working_dir_edit.setText("/work/alice")
+    dialog._template_path_edit.setText("/templates/slurm.sh")
+
+    dialog._accept_and_save()
+
+    saved = next(config for config in load_cluster_configs(settings) if config.name == "alpha")
+    assert saved.jump_host_enabled is True
+    assert saved.jump_hostname == "bastion.example"
+    assert saved.jump_port == 2222
+    assert saved.jump_username == "physics-alice"
+    assert saved.jump_auth_method == "key"
+    assert saved.jump_key_path == "/keys/physics"
+    dialog.close()
+
+
 def test_cluster_setup_dialog_test_connection_uses_ssh_client(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
@@ -112,11 +155,7 @@ def test_cluster_setup_dialog_test_connection_uses_ssh_client(
 
     infos: list[str] = []
     monkeypatch.setattr(dialog_module, "SSHConnection", _FakeConnection)
-    monkeypatch.setattr(
-        dialog_module.QInputDialog,
-        "getText",
-        lambda *_args, **_kwargs: ("", False),
-    )
+    monkeypatch.setattr(dialog_module, "prompt_for_cluster_credentials", lambda *_args, **_kwargs: SSHCredentials())
     monkeypatch.setattr(
         dialog_module.QMessageBox,
         "information",
@@ -147,9 +186,9 @@ def test_cluster_setup_dialog_test_connection_passes_key_passphrase(
 
     monkeypatch.setattr(dialog_module, "SSHConnection", _CaptureConnection)
     monkeypatch.setattr(
-        dialog_module.QInputDialog,
-        "getText",
-        lambda *_args, **_kwargs: ("my-passphrase", True),
+        dialog_module,
+        "prompt_for_cluster_credentials",
+        lambda *_args, **_kwargs: SSHCredentials(target_secret="my-passphrase"),
     )
     monkeypatch.setattr(
         dialog_module.QMessageBox,
@@ -193,11 +232,7 @@ def test_cluster_setup_dialog_test_connection_trusts_unknown_host_key(
 
     monkeypatch.setattr(dialog_module, "SSHConnection", _UnknownHostConnection)
     monkeypatch.setattr(dialog_module, "prompt_to_trust_host_key", lambda *_args, **_kwargs: prompted.append("yes") or True)
-    monkeypatch.setattr(
-        dialog_module.QInputDialog,
-        "getText",
-        lambda *_args, **_kwargs: ("", False),
-    )
+    monkeypatch.setattr(dialog_module, "prompt_for_cluster_credentials", lambda *_args, **_kwargs: SSHCredentials())
     monkeypatch.setattr(
         dialog_module.QMessageBox,
         "information",

@@ -84,6 +84,7 @@ from mufinder.app.comparison_table_widget import ComparisonTableWidget
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
     make_message_box_resizable,
+    prompt_for_cluster_credentials,
     prompt_to_trust_host_key,
     show_detailed_warning,
 )
@@ -193,6 +194,7 @@ from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
+    SSHCredentials,
     SSHUnknownHostKeyError,
     save_trusted_host_key,
 )
@@ -5863,7 +5865,7 @@ class MainWindow(QMainWindow):
 
         submission = dialog.config()
         self._persist_last_cluster_submission_config(submission, workflow_type=workflow_type)
-        password = dialog.password().strip() or None
+        target_secret = dialog.password().strip() or None
         selected_cluster = load_cluster_config(self._settings, submission.cluster_name)
         if selected_cluster is None:
             QMessageBox.warning(self, "Cluster not found", "Selected cluster is no longer configured.")
@@ -5895,8 +5897,18 @@ class MainWindow(QMainWindow):
             and (not connected_user or connected_user == selected_cluster.username.strip())
         )
 
+        credentials = SSHCredentials() if reusing_connection else prompt_for_cluster_credentials(
+            self,
+            selected_cluster,
+            target_secret=target_secret,
+            prompt_optional_key=False,
+        )
+        if credentials is None:
+            QMessageBox.warning(self, "Missing credentials", "Credentials are required for cluster submission.")
+            return
+
         try:
-            self._connect_to_cluster_with_trust(selected_cluster, password=password)
+            self._connect_to_cluster_with_trust(selected_cluster, credentials=credentials)
         except Exception as exc:  # noqa: BLE001
             show_detailed_warning(
                 self,
@@ -7522,9 +7534,12 @@ class MainWindow(QMainWindow):
             informative_text="Open Details to inspect the full polling failure.",
         )
 
-    def _connect_to_cluster_with_trust(self, config: ClusterConfig, *, password: str | None) -> None:
+    def _connect_to_cluster_with_trust(self, config: ClusterConfig, *, credentials: SSHCredentials) -> None:
         try:
-            self._cluster_runner.connect_to_cluster(config, password=password)
+            if config.jump_host_enabled:
+                self._cluster_runner.connect_to_cluster(config, credentials=credentials)
+            else:
+                self._cluster_runner.connect_to_cluster(config, password=credentials.target_secret)
             return
         except SSHUnknownHostKeyError as exc:
             if not prompt_to_trust_host_key(self, config, exc):
@@ -7534,8 +7549,12 @@ class MainWindow(QMainWindow):
                 config,
                 algorithm=exc.algorithm,
                 key_base64=exc.key_base64,
+                endpoint=exc.endpoint,
             )
-        self._cluster_runner.connect_to_cluster(config, password=password)
+        if config.jump_host_enabled:
+            self._cluster_runner.connect_to_cluster(config, credentials=credentials)
+        else:
+            self._cluster_runner.connect_to_cluster(config, password=credentials.target_secret)
 
     def _on_refresh_cluster_queue(self) -> None:
         try:
@@ -7575,28 +7594,21 @@ class MainWindow(QMainWindow):
                 )
                 continue
             try:
-                self._connect_to_cluster_with_trust(config, password=None)
+                self._connect_to_cluster_with_trust(config, credentials=SSHCredentials())
                 self._cluster_runner.refresh_queue()
                 refreshed.append(config.name)
             except Exception as exc:  # noqa: BLE001
                 auth_method = config.auth_method.strip().lower()
-                if auth_method == "password" or (
-                    auth_method == "key" and isinstance(exc, SSHAuthenticationError)
-                ):
-                    secret_label = "password" if auth_method == "password" else "key passphrase"
-                    raw_secret, accepted = QInputDialog.getText(
-                        self,
-                        f"Reconnect to {config.name}",
-                        f"Enter {secret_label} for {config.username}@{config.hostname}:",
-                        QLineEdit.EchoMode.Password,
-                    )
-                    if not accepted or not raw_secret.strip():
+                needs_credentials = auth_method == "password" or isinstance(exc, SSHAuthenticationError)
+                if needs_credentials:
+                    credentials = prompt_for_cluster_credentials(self, config)
+                    if credentials is None:
                         failures.append(
-                            f"- {config.name}: {secret_label.capitalize()} required for reconnect. Enter it when prompted."
+                            f"- {config.name}: credentials required for reconnect. Enter them when prompted."
                         )
                         continue
                     try:
-                        self._connect_to_cluster_with_trust(config, password=raw_secret.strip())
+                        self._connect_to_cluster_with_trust(config, credentials=credentials)
                         self._cluster_runner.refresh_queue()
                         refreshed.append(config.name)
                         continue

@@ -9,6 +9,7 @@ import pytest
 
 from mufinder.cluster_setup import ClusterConfig
 from mufinder.services.ssh_client import (
+    SSHCredentials,
     SSHAuthenticationError,
     SSHConnection,
     SSHHostKeyMismatchError,
@@ -24,12 +25,29 @@ class _FakeTransport:
     def __init__(self) -> None:
         self.active = True
         self.keepalive = None
+        self.opened_channels: list[tuple[str, tuple[str, int], tuple[str, int], object]] = []
 
     def is_active(self) -> bool:
         return self.active
 
     def set_keepalive(self, interval: int) -> None:
         self.keepalive = interval
+
+    def open_channel(self, kind: str, destination: tuple[str, int], source: tuple[str, int]):
+        channel = _FakeDirectTcpIpChannel(kind, destination, source)
+        self.opened_channels.append((kind, destination, source, channel))
+        return channel
+
+
+class _FakeDirectTcpIpChannel:
+    def __init__(self, kind: str, destination: tuple[str, int], source: tuple[str, int]) -> None:
+        self.kind = kind
+        self.destination = destination
+        self.source = source
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class _FakeChannel:
@@ -289,6 +307,25 @@ def _config(auth_method: str = "key") -> ClusterConfig:
     )
 
 
+def _jump_config() -> ClusterConfig:
+    return ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        port=22,
+        username="glam-user",
+        auth_method="password",
+        jump_host_enabled=True,
+        jump_hostname="bastion.physics.ox.ac.uk",
+        jump_port=22,
+        jump_username="phys-user",
+        jump_auth_method="password",
+        default_working_directory="/mnt/redwoodfs/glam-user",
+        queue_system="ADDQUEUE",
+        cores_per_node=32,
+        default_walltime="",
+    )
+
+
 def test_ssh_connection_connects_with_key_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_paramiko = _FakeParamiko(
         fail_key=False,
@@ -303,6 +340,102 @@ def test_ssh_connection_connects_with_key_auth(monkeypatch: pytest.MonkeyPatch) 
     assert fake_paramiko._client.get_transport().keepalive == 60
     assert fake_paramiko._client.connect_calls[0]["banner_timeout"] == 30
     assert fake_paramiko._client.connect_calls[0]["auth_timeout"] == 30
+
+
+def test_ssh_connection_connects_via_jump_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    jump_client = _FakeSSHClient(system_host_keys={"bastion.physics.ox.ac.uk": _FakeKey()})
+    target_client = _FakeSSHClient(system_host_keys={"glamdring.physics.ox.ac.uk": _FakeKey()})
+
+    class _JumpParamiko(_FakeParamiko):
+        def __init__(self) -> None:
+            self._clients = [jump_client, target_client]
+            self._client = target_client
+
+        def SSHClient(self):  # noqa: N802
+            return self._clients.pop(0)
+
+    monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: _JumpParamiko()))
+
+    connection = SSHConnection(_jump_config())
+    connection.connect(credentials=SSHCredentials(target_secret="glam-secret", jump_secret="phys-secret"))
+
+    assert connection.is_connected
+    assert jump_client.connect_calls[0]["hostname"] == "bastion.physics.ox.ac.uk"
+    assert jump_client.connect_calls[0]["username"] == "phys-user"
+    assert jump_client.connect_calls[0]["password"] == "phys-secret"
+    assert target_client.connect_calls[0]["hostname"] == "glamdring.physics.ox.ac.uk"
+    assert target_client.connect_calls[0]["username"] == "glam-user"
+    assert target_client.connect_calls[0]["password"] == "glam-secret"
+    channel = jump_client.get_transport().opened_channels[0][3]
+    assert jump_client.get_transport().opened_channels[0][:3] == (
+        "direct-tcpip",
+        ("glamdring.physics.ox.ac.uk", 22),
+        ("127.0.0.1", 0),
+    )
+    assert target_client.connect_calls[0]["sock"] is channel
+
+
+def test_ssh_connection_jump_host_unknown_key_raises_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_paramiko = _FakeParamiko(fail_key=False)
+    monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: fake_paramiko))
+
+    connection = SSHConnection(_jump_config())
+
+    with pytest.raises(SSHUnknownHostKeyError) as exc_info:
+        connection.connect(credentials=SSHCredentials(target_secret="glam-secret", jump_secret="phys-secret"))
+
+    assert exc_info.value.endpoint == "jump"
+    assert exc_info.value.hostname == "bastion.physics.ox.ac.uk"
+
+
+def test_ssh_connection_jump_host_password_is_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_paramiko = _FakeParamiko(
+        fail_key=False,
+        system_host_keys={"bastion.physics.ox.ac.uk": _FakeKey()},
+    )
+    monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: fake_paramiko))
+
+    connection = SSHConnection(_jump_config())
+
+    with pytest.raises(SSHAuthenticationError, match="jump host authentication"):
+        connection.connect(credentials=SSHCredentials(target_secret="glam-secret"))
+
+
+def test_ssh_connection_uses_saved_jump_host_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jump_client = _FakeSSHClient()
+    target_client = _FakeSSHClient(system_host_keys={"glamdring.physics.ox.ac.uk": _FakeKey()})
+
+    class _JumpParamiko(_FakeParamiko):
+        def __init__(self) -> None:
+            self._clients = [jump_client, target_client]
+            self._client = target_client
+
+        def SSHClient(self):  # noqa: N802
+            return self._clients.pop(0)
+
+    settings = _FakeSettings()
+    config = _jump_config()
+    save_trusted_host_key(
+        settings,
+        config,
+        algorithm="ssh-ed25519",
+        key_base64=_FakeKey().get_base64(),
+        endpoint="jump",
+    )
+    monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: _JumpParamiko()))
+
+    connection = SSHConnection(config, settings=settings)
+    connection.connect(credentials=SSHCredentials(target_secret="glam-secret", jump_secret="phys-secret"))
+
+    loaded = load_trusted_host_key(settings, config, endpoint="jump")
+    assert loaded is not None
+    assert jump_client.connect_calls[0]["hostname"] == "bastion.physics.ox.ac.uk"
 
 
 def test_ssh_connection_falls_back_to_password(monkeypatch: pytest.MonkeyPatch) -> None:
