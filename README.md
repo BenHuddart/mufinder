@@ -87,7 +87,7 @@ The project follows GitHub Flow. Branch short-lived `feature/*` branches off `ma
 Run the full test suite manually when needed:
 
 ```bash
-python -m pytest
+python -m pytest -n auto --dist load
 ```
 
 Build the Sphinx documentation:

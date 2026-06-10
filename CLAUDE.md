@@ -49,7 +49,7 @@ These boundaries are enforced by `tests/test_agent_harness.py`. If a new depende
 
 All changes must satisfy:
 
-- Tests pass (`python -m pytest`)
+- Tests pass (`python -m pytest -n auto --dist load`)
 - Coverage ≥ 85% (enforced by pytest-cov)
 - Sphinx docs build with warnings as errors (`python -m sphinx -W -b html docs docs/_build/html`)
 
@@ -64,7 +64,7 @@ uv sync --extra dev
 python -m mufinder.main
 
 # Full test suite with coverage
-python -m pytest
+python -m pytest -n auto --dist load
 
 # Run a single test file or function
 python -m pytest --no-cov tests/science/test_supercell.py

@@ -47,7 +47,7 @@ jobs:
           python -m pip install -e ".[dev,scientific-backends]"
 
       - name: Run full test suite
-        run: python -m pytest
+        run: python -m pytest -n auto --dist load
 
   docs:
     runs-on: ubuntu-latest
