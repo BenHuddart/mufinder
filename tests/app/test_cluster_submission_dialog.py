@@ -103,8 +103,10 @@ def test_cluster_submission_dialog_shows_jump_host_credentials(qapp) -> None:
 
     assert dialog._jump_secret_edit.isHidden() is False
     assert dialog._target_secret_label.text() == "Redwood password"
-    assert dialog._jump_secret_label.text() == "Jump host password"
-    assert "jump-host password" in dialog._auth_hint.text()
+    assert dialog._jump_secret_label.text() == "Physics password"
+    assert "Physics password" in dialog._auth_hint.text()
+    assert "above" in dialog._auth_hint.text()
+    assert "below" not in dialog._auth_hint.text()
 
     dialog._target_secret_edit.setText("glam-secret")
     dialog._jump_secret_edit.setText("physics-secret")

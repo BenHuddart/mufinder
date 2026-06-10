@@ -290,7 +290,7 @@ class ClusterSubmissionDialog(QDialog):
 
         if config is not None:
             self._target_secret_label.setText(self._secret_label(config.name, config.auth_method))
-            self._jump_secret_label.setText(self._secret_label("Jump host", config.jump_auth_method))
+            self._jump_secret_label.setText(self._jump_secret_label_text(config))
 
         for widget in (self._target_secret_label, self._target_secret_edit):
             widget.setVisible(target_visible)
@@ -324,8 +324,17 @@ class ClusterSubmissionDialog(QDialog):
             return f"{system_name} password"
         return f"{system_name} key passphrase"
 
+    def _jump_secret_label_text(self, config: ClusterConfig) -> str:
+        system_name = "Physics" if self._is_physics_bastion(config) else "Jump host"
+        return self._secret_label(system_name, config.jump_auth_method)
+
+    @staticmethod
+    def _is_physics_bastion(config: ClusterConfig) -> bool:
+        return config.jump_hostname.strip().casefold() == "bastion.physics.ox.ac.uk"
+
     def _jump_host_auth_hint(self, config: ClusterConfig) -> str:
         target_label = "password" if config.auth_method.strip().lower() == "password" else "key passphrase"
+        jump_system = "Physics" if self._is_physics_bastion(config) else "jump-host"
         jump_label = "password" if config.jump_auth_method.strip().lower() == "password" else "key passphrase"
         optional_note = (
             " Key passphrase fields can be left blank when the corresponding private key is not encrypted."
@@ -334,7 +343,7 @@ class ClusterSubmissionDialog(QDialog):
         )
         return (
             "This cluster connects through an SSH jump host. "
-            f"Enter the jump-host {jump_label} and the cluster {target_label} below."
+            f"Use the {jump_system} {jump_label} and cluster {target_label} fields above."
             f"{optional_note}"
         )
 
