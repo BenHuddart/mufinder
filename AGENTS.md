@@ -12,6 +12,8 @@ architecture, and quality expectations without relying on thread context.
   workflow contracts.
 - Use `docs/quality_and_automation.rst` for local commands, CI gates, and
   targeted validation loops.
+- Do not develop directly on `main`. Create a short-lived `feature/*` or
+  `fix/*` branch before making repository changes, then open a PR into `main`.
 - Use `docs/compatibility_policy.rst` before changing persisted names,
   compatibility aliases, or project-file migration behavior.
 - Update feature docs in `docs/` whenever behavior changes; new functionality

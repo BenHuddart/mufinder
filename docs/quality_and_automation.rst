@@ -25,7 +25,13 @@ Run tests with coverage gate:
 
 .. code-block:: bash
 
-   python -m pytest
+   python -m pytest -n auto --dist load
+
+Run only non-GUI tests during focused iteration:
+
+.. code-block:: bash
+
+   python -m pytest --no-cov -m "not gui"
 
 Build docs with warning-as-error behavior:
 
@@ -77,7 +83,7 @@ Then run the full coverage-enabled suite before merge:
 
 .. code-block:: bash
 
-   python -m pytest
+   python -m pytest -n auto --dist load
 
 Agent harness checks
 --------------------
@@ -109,7 +115,8 @@ continuous integration and tag-driven publishing:
 - Pull requests into ``main`` (and pushes to ``main`` after merge) run the full
   quality gates:
 
-  - ``pytest`` with coverage threshold enforcement
+  - ``pytest`` with coverage threshold enforcement, distributed with
+    ``pytest-xdist`` using ``--dist load``
   - ``sphinx`` HTML build with ``-W`` enabled
 
 - ``Preview Build`` is a manual GitHub Actions workflow that builds Windows

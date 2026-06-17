@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import atexit
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 import gc
 import os
 import sys
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings, QThread
 from PySide6.QtWidgets import QApplication, QWidget
 
 from mufinder.app.theme import cleanup_theme_runtime
@@ -24,6 +24,63 @@ os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
 _PYTEST_EXITSTATUS = 0
 
 
+def _drain_qt_deferred_deletes(app: QApplication) -> None:
+    """Force-dispatch Qt DeferredDelete events outside a running event loop."""
+
+    QCoreApplication.sendPostedEvents(None, 0)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def _stop_qt_threads(app: QApplication) -> None:
+    """Ask any QThreads parented into the widget tree to stop before teardown."""
+
+    seen: set[int] = set()
+    threads: list[QThread] = []
+    for owner in [app, *list(app.topLevelWidgets()), *list(app.allWidgets())]:
+        try:
+            children = owner.findChildren(QThread)
+        except (RuntimeError, SystemError):
+            continue
+        for thread in children:
+            marker = id(thread)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            threads.append(thread)
+
+    for thread in threads:
+        try:
+            if thread.isRunning():
+                thread.quit()
+                thread.wait(5000)
+        except (RuntimeError, SystemError):
+            continue
+
+
+def _cleanup_qt_application(app: QApplication, *, quit_app: bool = False) -> None:
+    """Close, delete, and flush leaked widgets from the shared QApplication."""
+
+    cleanup_theme_runtime(app)
+    _stop_qt_threads(app)
+    for widget in list(app.topLevelWidgets()):
+        try:
+            widget.close()
+        except (RuntimeError, SystemError):
+            continue
+    for widget in [w for w in list(app.allWidgets()) if w.parent() is None]:
+        try:
+            widget.deleteLater()
+        except (RuntimeError, SystemError):
+            continue
+    _drain_qt_deferred_deletes(app)
+    gc.collect()
+    if quit_app:
+        app.quit()
+        app.processEvents()
+
+
 @pytest.fixture(scope="session")
 def qapp() -> Generator[QApplication, None, None]:
     """Provide one QApplication instance for all UI tests."""
@@ -35,55 +92,29 @@ def qapp() -> Generator[QApplication, None, None]:
 
     yield app
 
-    cleanup_theme_runtime(app)
-    for widget in list(app.topLevelWidgets()):
-        try:
-            widget.close()
-        except (RuntimeError, SystemError):
-            continue
-    for widget in [w for w in list(app.allWidgets()) if w.parent() is None]:
-        try:
-            widget.deleteLater()
-        except (RuntimeError, SystemError):
-            continue
-    app.processEvents()
-    QCoreApplication.sendPostedEvents(None, 0)
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    app.processEvents()
-    gc.collect()
-    app.quit()
-    app.processEvents()
+    _cleanup_qt_application(app, quit_app=True)
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_qt_state_per_test(request: pytest.FixtureRequest):
+def _cleanup_qt_state_per_test() -> Iterator[None]:
     """Ensure Qt widgets and filters from one test do not leak into the next."""
 
     yield
-
-    if "qapp" not in request.fixturenames:
-        return
 
     app = QApplication.instance()
     if app is None:
         return
 
-    cleanup_theme_runtime(app)
-    for widget in list(app.topLevelWidgets()):
-        try:
-            widget.close()
-            widget.deleteLater()
-        except (RuntimeError, SystemError):
-            continue
-    QCoreApplication.sendPostedEvents(None, 0)
-    # Qt special-cases DeferredDelete: a plain sendPostedEvents/processEvents does
-    # not flush it (it only runs when the event loop unwinds to a lower nesting
-    # level). Without this explicit flush the deleteLater'd widgets above survive
-    # the fixture, so each MainWindow leaks ~700 widgets and theme re-polish grows
-    # O(n^2) across the GUI suite — eventually stalling CI.
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    app.processEvents()
-    gc.collect()
+    _cleanup_qt_application(app)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_qsettings(tmp_path) -> Iterator[None]:
+    """Redirect QSettings to a per-test path so xdist workers cannot share state."""
+
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -274,16 +305,24 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
     app = QApplication.instance()
     if app is not None:
-        cleanup_theme_runtime(app)
-        for widget in list(app.topLevelWidgets()):
-            try:
-                widget.close()
-                widget.deleteLater()
-            except (RuntimeError, SystemError):
-                continue
-        QCoreApplication.sendPostedEvents(None, 0)
-        app.processEvents()
-        gc.collect()
+        _cleanup_qt_application(app)
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Auto-mark GUI tests for fast local selection and strict marker hygiene."""
+
+    del config
+    for item in items:
+        marker_names = {marker.name for marker in item.iter_markers()}
+        if marker_names & {"unit", "gui"}:
+            continue
+        fixturenames = set(getattr(item, "fixturenames", ()))
+        path = getattr(item, "path", None)
+        is_app_test = path is not None and "tests/app/" in path.as_posix()
+        if "qapp" in fixturenames or is_app_test:
+            item.add_marker(pytest.mark.gui)
+        else:
+            item.add_marker(pytest.mark.unit)
 
 
 @atexit.register

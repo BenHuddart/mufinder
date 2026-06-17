@@ -1,4 +1,6 @@
-# MuFinder — Claude Code Guide
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Navigation
 
@@ -47,18 +49,26 @@ These boundaries are enforced by `tests/test_agent_harness.py`. If a new depende
 
 All changes must satisfy:
 
-- Tests pass (`python -m pytest`)
+- Tests pass (`python -m pytest -n auto --dist load`)
 - Coverage ≥ 85% (enforced by pytest-cov)
 - Sphinx docs build with warnings as errors (`python -m sphinx -W -b html docs docs/_build/html`)
 
 ## Common local commands
 
 ```bash
-# Install dev dependencies
-python -m pip install -e ".[dev]"
+# Install dev dependencies (uv preferred; plain pip also works)
+uv sync --extra dev
+# or: python -m pip install -e ".[dev]"
+
+# Run the GUI application
+python -m mufinder.main
 
 # Full test suite with coverage
-python -m pytest
+python -m pytest -n auto --dist load
+
+# Run a single test file or function
+python -m pytest --no-cov tests/science/test_supercell.py
+python -m pytest --no-cov tests/science/test_supercell.py::test_min_image_distance
 
 # Targeted checks (fast, no coverage)
 python -m pytest --no-cov \
@@ -77,6 +87,19 @@ python -m pytest --no-cov tests/test_agent_harness.py
 # Build docs
 python -m sphinx -W -b html docs docs/_build/html
 ```
+
+## CASTEP rules
+
+`castep_keywords.json` must never be committed; it must not appear in the repository. MuFinder discovers CASTEP metadata at runtime via environment variables (`MUFINDER_CASTEP_KEYWORDS_JSON`, `CASTEP_KEYWORDS_JSON`, `MUFINDER_CASTEP_ROOT`, `CASTEP_ROOT`).
+
+Treat `docs/castep/keyword_catalog.yaml` as the authoritative contributor-facing source for implemented keywords and their formatting rules. Never invent CASTEP keywords, block names, allowed values, units, or syntax — leave gaps unimplemented and note them in the catalog instead.
+
+The CASTEP I/O stack has a deliberate three-way split:
+- `castep_io/schema.py` — discovers local metadata; defines the supported runtime subset
+- `castep_io/validators.py` — enforces explicit validation
+- `castep_io/cell_writer.py` / `castep_io/param_writer.py` — render only validated data
+
+When extending CASTEP support: update docs and schema first, then validator/writer logic, then tests. Preserve exact CASTEP formatting conventions: uppercase keywords, deterministic ordering, `%BLOCK … %ENDBLOCK` delimiters.
 
 ## Platform-specific input handling
 
@@ -101,6 +124,15 @@ The project follows GitHub Flow: `main` is the single long-lived branch.
    every PR; merges are blocked until they pass.
 3. Use the `Preview Build` workflow to produce downloadable artifacts from any
    branch for ad hoc validation, without publishing a release.
-4. Release by pushing a `vX.Y.Z` tag (bump the version and stamp the changelog
-   locally with `semantic-release version`). The `Release Publish` workflow builds
-   the Windows and macOS binaries and publishes the GitHub release from the tag.
+4. Release by pushing a `vX.Y.Z` tag. Branch protection prevents pushing the
+   version bump commit directly to `main`, so the process is:
+   ```
+   git checkout main && git pull
+   uvx "python-semantic-release>=10.5,<11" version   # bumps pyproject.toml + CHANGELOG.md, commits + tags locally
+   git checkout -b release/vX.Y.Z                    # branch off the version bump commit
+   git checkout main && git reset --hard origin/main  # restore local main
+   git push origin release/vX.Y.Z                    # open a PR, wait for CI + merge
+   git push origin vX.Y.Z                            # push the tag — triggers Release Publish
+   ```
+   The `Release Publish` workflow builds the Windows and macOS binaries and
+   publishes the GitHub release from the tag.

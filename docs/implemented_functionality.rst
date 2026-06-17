@@ -272,7 +272,15 @@ Current behavior includes:
 - creating a new future-use copy when matrix edits are made to a frozen saved
   supercell,
 - returning a selected saved supercell to workflow tabs opened in
-  ``Manage Supercells...`` mode.
+  ``Manage Supercells...`` mode,
+- a **Suggest…** button that computes the smallest diagonal scaling
+  ``(n₁, n₂, n₃)`` whose minimum muon–image distance — the shortest
+  non-zero lattice translation over all ``(m₁, m₂, m₃) ∈ {-1,0,1}³``,
+  not simply the shortest cell edge — reaches ≥ 10 Å; when that cell has
+  ≥ 200 atoms an affordable largest-cell-under-200-atoms alternative is
+  also offered; the confirmed scaling is written into the editor matrix
+  controls, and the simple-mode diagonal range has been raised to 64 to
+  accommodate small or anisotropic primitive cells.
 
 Existing configured calculations remain reproducible because their
 ``CalculationDefinition.input_structure_ids`` continue to point at the original
