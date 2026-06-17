@@ -6,6 +6,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 
 from mufinder.cluster_setup import ClusterConfig
+from mufinder.services.keychain import (
+    KeychainCredentialError,
+    is_glamdring_keychain_supported,
+    keychain_setup_help,
+    load_keychain_credentials,
+)
 from mufinder.services.ssh_client import (
     SSHCredentials,
     SSHAuthenticationError,
@@ -61,6 +67,68 @@ def endpoint_label(config: ClusterConfig, endpoint: str) -> str:
 
 
 def prompt_for_cluster_credentials(
+    parent,
+    config: ClusterConfig,
+    *,
+    target_secret: str | None = None,
+    prompt_optional_key: bool = True,
+) -> SSHCredentials | None:
+    """Resolve cluster credentials, prompting only when Keychain mode is disabled."""
+
+    return resolve_cluster_credentials(
+        parent,
+        config,
+        target_secret=target_secret,
+        prompt_optional_key=prompt_optional_key,
+    )
+
+
+def resolve_cluster_credentials(
+    parent,
+    config: ClusterConfig,
+    *,
+    target_secret: str | None = None,
+    prompt_optional_key: bool = True,
+    manual_credentials: SSHCredentials | None = None,
+) -> SSHCredentials | None:
+    """Resolve credentials from macOS Keychain or manual prompts/fields."""
+
+    if config.use_macos_keychain_passwords and is_glamdring_keychain_supported(config):
+        try:
+            return load_keychain_credentials(config)
+        except KeychainCredentialError as exc:
+            show_keychain_credentials_missing(parent, config, exc)
+            return None
+
+    if manual_credentials is not None:
+        return manual_credentials
+
+    return _prompt_for_manual_cluster_credentials(
+        parent,
+        config,
+        target_secret=target_secret,
+        prompt_optional_key=prompt_optional_key,
+    )
+
+
+def show_keychain_credentials_missing(parent, config: ClusterConfig, exc: KeychainCredentialError) -> None:
+    """Show setup guidance for missing macOS Keychain credentials."""
+
+    lines = ["MuFinder could not read the required macOS Keychain password entries."]
+    for issue in exc.issues:
+        label = "Physics/bastion" if issue.endpoint == "jump" else "Glamdring"
+        lines.append(f"- {label}: {issue.command}")
+    lines.append("")
+    lines.append(keychain_setup_help(config))
+    show_detailed_warning(
+        parent,
+        "Missing Keychain passwords",
+        "\n".join(lines),
+        informative_text="Open Details for the exact macOS Keychain setup commands.",
+    )
+
+
+def _prompt_for_manual_cluster_credentials(
     parent,
     config: ClusterConfig,
     *,

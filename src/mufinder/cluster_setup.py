@@ -60,6 +60,7 @@ def _default_clusters() -> list["ClusterConfig"]:
             jump_username="physics_username",
             jump_auth_method="password",
             jump_key_path="",
+            use_macos_keychain_passwords=False,
             default_working_directory="/mnt/redwoodfs/username",
             queue_system="ADDQUEUE",
             cores_per_node=32,
@@ -94,6 +95,7 @@ class ClusterConfig:
     jump_username: str = ""
     jump_auth_method: str = "key"
     jump_key_path: str = ""
+    use_macos_keychain_passwords: bool = False
     default_working_directory: str = ""
     queue_system: str = "slurm"
     cores_per_node: int = 1
@@ -251,6 +253,7 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         f"{prefix}/jump_key_path",
         jump_defaults.jump_key_path if jump_defaults is not None else "",
     )
+    use_macos_keychain_passwords = _settings_bool(settings, f"{prefix}/use_macos_keychain_passwords", False)
 
     queue_system = str(settings.value(f"{prefix}/queue_system", "SLURM", str) or "SLURM").strip()
     if not queue_system:
@@ -330,6 +333,7 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         jump_username=jump_username,
         jump_auth_method=jump_auth_method,
         jump_key_path=jump_key_path,
+        use_macos_keychain_passwords=use_macos_keychain_passwords,
         default_working_directory=str(
             settings.value(f"{prefix}/default_working_directory", "", str) or ""
         ).strip(),
@@ -432,6 +436,7 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
                 jump_username=config.jump_username.strip(),
                 jump_auth_method=_normalise_auth_method(config.jump_auth_method),
                 jump_key_path=config.jump_key_path.strip(),
+                use_macos_keychain_passwords=bool(config.use_macos_keychain_passwords),
                 default_working_directory=config.default_working_directory.strip(),
                 queue_system=queue_system,
                 cores_per_node=max(1, int(config.cores_per_node)),
@@ -466,6 +471,7 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
         settings.setValue(f"{prefix}/jump_username", config.jump_username)
         settings.setValue(f"{prefix}/jump_auth_method", config.jump_auth_method)
         settings.setValue(f"{prefix}/jump_key_path", config.jump_key_path)
+        settings.setValue(f"{prefix}/use_macos_keychain_passwords", bool(config.use_macos_keychain_passwords))
         settings.setValue(f"{prefix}/default_working_directory", config.default_working_directory)
         settings.setValue(f"{prefix}/queue_system", config.queue_system)
         settings.setValue(f"{prefix}/cores_per_node", int(config.cores_per_node))

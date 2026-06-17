@@ -738,6 +738,11 @@ Cluster setup and authentication includes:
 	the Physics gateway ``bastion.physics.ox.ac.uk``. MuFinder prompts separately
 	for Physics/bastion credentials and Glamdring credentials because those
 	accounts can differ.
+- On macOS, eligible Redwood/Glamdring password-auth profiles can opt into
+	read-only Keychain password lookup. The required entries use the same
+	services as ``glamdring-tools``: ``security add-generic-password -a
+	<physics_username> -s bastion -w`` and ``security add-generic-password -a
+	<glamdring_username> -s glamdring -w``.
 - Optional explicit scheduler command paths for submit/queue/cancel commands,
 	with non-interactive-shell command probing fallback.
 - SSH key authentication with password fallback support.
@@ -757,6 +762,9 @@ Remote submission and monitoring includes:
 - Jump-host submissions show separate credential fields for the gateway and the
 	target cluster, so Redwood/Glamdring users can enter Physics/bastion and
 	Glamdring passwords independently.
+- When the Redwood/Glamdring macOS Keychain option is enabled in the cluster
+	profile, submission and reconnect flows use the Keychain entries instead of
+	showing manual password prompts.
 - addqueue submission uses sbatch-compatible response mode to keep scheduler
 	job-id parsing stable.
 - Dashboard columns for execution target (cluster/local) and remote job id.

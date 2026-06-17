@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import mufinder.app.cluster_ui_utils as ui_module
 from mufinder.cluster_setup import ClusterConfig
+from mufinder.services.keychain import KeychainCredentialError, KeychainCredentialIssue
 from mufinder.services.ssh_client import (
+    SSHCredentials,
     SSHAuthenticationError,
     SSHHostKeyMismatchError,
     SSHProtocolBannerError,
@@ -33,6 +35,20 @@ def _jump_config() -> ClusterConfig:
         jump_hostname="bastion.physics.ox.ac.uk",
         jump_username="phys-user",
         jump_auth_method="password",
+    )
+
+
+def _keychain_config() -> ClusterConfig:
+    return ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        username="glam-user",
+        auth_method="password",
+        jump_host_enabled=True,
+        jump_hostname="bastion.physics.ox.ac.uk",
+        jump_username="phys-user",
+        jump_auth_method="password",
+        use_macos_keychain_passwords=True,
     )
 
 
@@ -237,6 +253,54 @@ def test_prompt_for_cluster_credentials_can_skip_optional_key_prompt(monkeypatch
     assert credentials is not None
     assert credentials.target_secret is None
     assert calls == []
+
+
+def test_prompt_for_cluster_credentials_uses_keychain_without_prompting(monkeypatch) -> None:
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        ui_module.QInputDialog,
+        "getText",
+        lambda *_args, **_kwargs: prompts.append("prompt") or ("", False),
+    )
+    monkeypatch.setattr(
+        ui_module,
+        "load_keychain_credentials",
+        lambda _config: SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret"),
+    )
+
+    credentials = ui_module.prompt_for_cluster_credentials(None, _keychain_config())
+
+    assert credentials == SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret")
+    assert prompts == []
+
+
+def test_prompt_for_cluster_credentials_reports_missing_keychain_entry(monkeypatch) -> None:
+    warnings: list[tuple[str, str]] = []
+
+    def _raise_missing(_config):
+        raise KeychainCredentialError(
+            [
+                KeychainCredentialIssue(
+                    endpoint="jump",
+                    service="bastion",
+                    account="phys-user",
+                    command="security add-generic-password -a phys-user -s bastion -w",
+                )
+            ]
+        )
+
+    monkeypatch.setattr(ui_module, "load_keychain_credentials", _raise_missing)
+    monkeypatch.setattr(
+        ui_module,
+        "show_detailed_warning",
+        lambda _parent, title, message, **_kwargs: warnings.append((title, message)),
+    )
+
+    credentials = ui_module.prompt_for_cluster_credentials(None, _keychain_config())
+
+    assert credentials is None
+    assert warnings[0][0] == "Missing Keychain passwords"
+    assert "security add-generic-password -a phys-user -s bastion -w" in warnings[0][1]
 
 
 def test_prompt_to_trust_host_key_returns_boolean_from_dialog(monkeypatch) -> None:

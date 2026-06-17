@@ -6,6 +6,7 @@ import pytest
 from PySide6.QtWidgets import QHBoxLayout
 
 import mufinder.app.cluster_setup_dialog as dialog_module
+import mufinder.services.keychain as keychain_module
 from mufinder.cluster_setup import load_cluster_configs
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
 from mufinder.services.ssh_client import SSHCredentials
@@ -116,6 +117,7 @@ def test_cluster_setup_dialog_loads_redwood_jump_host_defaults(qapp) -> None:
     assert dialog._jump_hostname_edit.text() == "bastion.physics.ox.ac.uk"
     assert dialog._jump_username_edit.text() == "physics_username"
     assert dialog._jump_auth_combo.currentText() == "password"
+    assert dialog._keychain_check.isChecked() is False
     dialog.close()
 
 
@@ -137,8 +139,49 @@ def test_cluster_setup_dialog_uses_transparent_inline_rows(qapp) -> None:
     assert dialog._key_path_row.objectName() == "mufinderInlineGroup"
     assert dialog._jump_enabled_check.objectName() == "mufinderInlineGroup"
     assert dialog._jump_key_path_row.objectName() == "mufinderInlineGroup"
+    assert dialog._keychain_row.objectName() == "mufinderInlineGroup"
     assert dialog._template_path_row.objectName() == "mufinderInlineGroup"
     assert "#mufinderInlineGroup" in dialog.styleSheet()
+    dialog.close()
+
+
+def test_cluster_setup_dialog_shows_keychain_option_for_macos_redwood(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(keychain_module.sys, "platform", "darwin")
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+    dialog._cluster_combo.setCurrentText("Redwood")
+
+    assert dialog._keychain_row.isHidden() is False
+    assert dialog._keychain_check.text() == "Use macOS Keychain passwords"
+    assert dialog._keychain_help_button.toolTip() == "Show macOS Keychain setup commands"
+
+    messages: list[str] = []
+    monkeypatch.setattr(
+        dialog_module.QMessageBox,
+        "information",
+        lambda _parent, _title, message: messages.append(message),
+    )
+    dialog._show_keychain_help()
+
+    assert "security add-generic-password -a physics_username -s bastion -w" in messages[0]
+    assert "security add-generic-password -a username -s glamdring -w" in messages[0]
+    dialog.close()
+
+
+def test_cluster_setup_dialog_hides_keychain_option_off_macos(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(keychain_module.sys, "platform", "linux")
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+    dialog._cluster_combo.setCurrentText("Redwood")
+    dialog._keychain_check.setChecked(True)
+    dialog._refresh_keychain_controls()
+
+    assert dialog._keychain_row.isHidden() is True
+    assert dialog._keychain_check.isChecked() is False
     dialog.close()
 
 
@@ -168,6 +211,23 @@ def test_cluster_setup_dialog_saves_jump_host_configuration(qapp) -> None:
     assert saved.jump_username == "physics-alice"
     assert saved.jump_auth_method == "key"
     assert saved.jump_key_path == "/keys/physics"
+    dialog.close()
+
+
+def test_cluster_setup_dialog_saves_keychain_setting_for_eligible_redwood(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(keychain_module.sys, "platform", "darwin")
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings)
+    dialog._cluster_combo.setCurrentText("Redwood")
+    dialog._keychain_check.setChecked(True)
+
+    dialog._accept_and_save()
+
+    saved = next(config for config in load_cluster_configs(settings) if config.name == "Redwood")
+    assert saved.use_macos_keychain_passwords is True
     dialog.close()
 
 

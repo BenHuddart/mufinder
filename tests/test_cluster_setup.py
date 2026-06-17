@@ -150,6 +150,7 @@ def test_cluster_setup_returns_scarf_default_when_empty() -> None:
     assert loaded[1].jump_port == 22
     assert loaded[1].jump_username == "physics_username"
     assert loaded[1].jump_auth_method == "password"
+    assert loaded[1].use_macos_keychain_passwords is False
     assert loaded[1].default_working_directory == "/mnt/redwoodfs/username"
     assert loaded[1].queue_system == "ADDQUEUE"
     assert loaded[1].default_walltime == ""
@@ -238,6 +239,7 @@ def test_cluster_setup_legacy_saved_configs_pick_keyword_defaults() -> None:
     assert redwood.jump_host_enabled is True
     assert redwood.jump_hostname == "bastion.physics.ox.ac.uk"
     assert redwood.jump_username == "physics_username"
+    assert redwood.use_macos_keychain_passwords is False
 
 
 def test_cluster_setup_roundtrips_jump_host_settings() -> None:
@@ -253,6 +255,7 @@ def test_cluster_setup_roundtrips_jump_host_settings() -> None:
         jump_username="physics-user",
         jump_auth_method="key",
         jump_key_path="/keys/physics",
+        use_macos_keychain_passwords=True,
         default_working_directory="/remote/work",
         queue_system="slurm",
         cores_per_node=8,

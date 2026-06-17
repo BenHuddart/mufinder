@@ -22,8 +22,10 @@ from PySide6.QtWidgets import (
 
 from PySide6.QtCore import Qt
 
+from mufinder.app.cluster_ui_utils import resolve_cluster_credentials
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.cluster_setup import ClusterConfig
+from mufinder.services.keychain import is_glamdring_keychain_supported
 from mufinder.services.ssh_client import SSHCredentials
 
 
@@ -67,6 +69,7 @@ class ClusterSubmissionDialog(QDialog):
         self._initial_config = initial_config
         self._connected_cluster_name = (connected_cluster_name or "").strip().casefold()
         self._connected_username = (connected_username or "").strip()
+        self._resolved_credentials: SSHCredentials | None = None
 
         self.setWindowTitle("Run Calculations on a Remote Cluster")
         self.resize(620, 480)
@@ -182,10 +185,7 @@ class ClusterSubmissionDialog(QDialog):
         return self._target_secret_edit.text()
 
     def credentials(self) -> SSHCredentials:
-        return SSHCredentials(
-            target_secret=self._secret_text(self._target_secret_edit),
-            jump_secret=self._secret_text(self._jump_secret_edit),
-        )
+        return self._resolved_credentials or self._manual_credentials()
 
     def config(self) -> ClusterSubmissionConfig:
         addqueue = self._is_addqueue_cluster()
@@ -222,12 +222,18 @@ class ClusterSubmissionDialog(QDialog):
         self._comment_edit.setText("")
         self._target_secret_edit.setText("")
         self._jump_secret_edit.setText("")
+        self._resolved_credentials = None
 
         if self._has_active_connection_for_selected():
             active_user = self._username_edit.text().strip() or self._connected_username
             self._set_auth_hint_text(
                 f"Active SSH connection detected for this cluster as '{active_user}'. "
                 "Passwords/passphrases are not required for this submission."
+            )
+        elif self._uses_keychain_credentials(config):
+            self._set_auth_hint_text(
+                "macOS Keychain passwords are enabled for this cluster. "
+                "MuFinder will read the Physics and Glamdring passwords from Keychain when you submit."
             )
         elif config.jump_host_enabled:
             self._set_auth_hint_text(self._jump_host_auth_hint(config))
@@ -292,6 +298,10 @@ class ClusterSubmissionDialog(QDialog):
             self._target_secret_label.setText(self._secret_label(config.name, config.auth_method))
             self._jump_secret_label.setText(self._jump_secret_label_text(config))
 
+        if config is not None and self._uses_keychain_credentials(config):
+            target_visible = False
+            jump_visible = False
+
         for widget in (self._target_secret_label, self._target_secret_edit):
             widget.setVisible(target_visible)
             widget.setEnabled(target_visible)
@@ -317,6 +327,12 @@ class ClusterSubmissionDialog(QDialog):
     def _secret_text(edit: QLineEdit) -> str | None:
         text = edit.text().strip()
         return text or None
+
+    def _manual_credentials(self) -> SSHCredentials:
+        return SSHCredentials(
+            target_secret=self._secret_text(self._target_secret_edit),
+            jump_secret=self._secret_text(self._jump_secret_edit),
+        )
 
     @staticmethod
     def _secret_label(system_name: str, auth_method: str) -> str:
@@ -346,6 +362,9 @@ class ClusterSubmissionDialog(QDialog):
             f"Use the {jump_system} {jump_label} and cluster {target_label} fields above."
             f"{optional_note}"
         )
+
+    def _uses_keychain_credentials(self, config: ClusterConfig) -> bool:
+        return config.use_macos_keychain_passwords and is_glamdring_keychain_supported(config)
 
     def _is_addqueue_cluster(self) -> bool:
         config = self.selected_cluster_config()
@@ -426,15 +445,25 @@ class ClusterSubmissionDialog(QDialog):
 
         selected = self.selected_cluster_config()
         if selected is not None and not self._has_active_connection_for_selected():
-            credentials = self.credentials()
-            if selected.jump_host_enabled and selected.jump_auth_method == "password" and not credentials.jump_secret:
+            manual_credentials = self._manual_credentials()
+            if self._uses_keychain_credentials(selected):
+                resolved = resolve_cluster_credentials(
+                    self,
+                    selected,
+                    manual_credentials=manual_credentials,
+                    prompt_optional_key=False,
+                )
+                if resolved is None:
+                    return
+                self._resolved_credentials = resolved
+            elif selected.jump_host_enabled and selected.jump_auth_method == "password" and not manual_credentials.jump_secret:
                 QMessageBox.warning(
                     self,
                     "Missing jump host password",
                     "Enter the jump-host password to continue with this submission.",
                 )
                 return
-            if selected.auth_method == "password" and not credentials.target_secret:
+            if not self._uses_keychain_credentials(selected) and selected.auth_method == "password" and not manual_credentials.target_secret:
                 QMessageBox.warning(
                     self,
                     "Missing cluster password",

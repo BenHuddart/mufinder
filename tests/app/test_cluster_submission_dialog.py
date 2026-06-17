@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 import mufinder.app.cluster_submission_dialog as dialog_module
+import mufinder.services.keychain as keychain_module
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig, ClusterSubmissionDialog
 from mufinder.cluster_setup import ClusterConfig
+from mufinder.services.ssh_client import SSHCredentials
 
 
 def _configs() -> list[ClusterConfig]:
@@ -69,6 +73,10 @@ def _jump_password_config() -> ClusterConfig:
         jump_username="physics-user",
         jump_auth_method="password",
     )
+
+
+def _keychain_password_config() -> ClusterConfig:
+    return replace(_jump_password_config(), use_macos_keychain_passwords=True)
 
 
 def test_cluster_submission_dialog_populates_defaults(qapp) -> None:
@@ -136,6 +144,32 @@ def test_cluster_submission_dialog_validates_jump_host_password_first(
     dialog._jump_secret_edit.setText("physics-secret")
     dialog._accept_if_valid()
     assert warnings[-1] == "Missing cluster password"
+    dialog.close()
+
+
+def test_cluster_submission_dialog_keychain_mode_hides_manual_credentials(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(keychain_module.sys, "platform", "darwin")
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_keychain_password_config()])
+
+    monkeypatch.setattr(
+        dialog_module,
+        "resolve_cluster_credentials",
+        lambda *_args, **_kwargs: SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret"),
+    )
+    accepted: list[bool] = []
+    monkeypatch.setattr(dialog, "accept", lambda: accepted.append(True))
+
+    assert dialog._target_secret_edit.isHidden() is True
+    assert dialog._jump_secret_edit.isHidden() is True
+    assert "macOS Keychain passwords are enabled" in dialog._auth_hint.text()
+
+    dialog._accept_if_valid()
+
+    assert accepted == [True]
+    assert dialog.credentials() == SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret")
     dialog.close()
 
 
