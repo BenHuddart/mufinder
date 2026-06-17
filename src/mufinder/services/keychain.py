@@ -15,6 +15,7 @@ _GLAMDRING_HOSTNAME = "glamdring.physics.ox.ac.uk"
 _BASTION_HOSTNAME = "bastion.physics.ox.ac.uk"
 _BASTION_SERVICE = "bastion"
 _GLAMDRING_SERVICE = "glamdring"
+_SECURITY_BIN = "/usr/bin/security"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +129,7 @@ def _find_password(
 
     try:
         result = runner(
-            ["security", "find-generic-password", "-a", account, "-s", service, "-w"],
+            [_SECURITY_BIN, "find-generic-password", "-a", account, "-s", service, "-w"],
             capture_output=True,
             text=True,
             check=False,

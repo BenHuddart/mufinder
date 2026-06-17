@@ -65,8 +65,8 @@ def test_load_keychain_credentials_returns_both_secrets() -> None:
     assert credentials.jump_secret == "physics-secret"
     assert credentials.target_secret == "glam-secret"
     assert calls == [
-        ["security", "find-generic-password", "-a", "physics-user", "-s", "bastion", "-w"],
-        ["security", "find-generic-password", "-a", "glam-user", "-s", "glamdring", "-w"],
+        ["/usr/bin/security", "find-generic-password", "-a", "physics-user", "-s", "bastion", "-w"],
+        ["/usr/bin/security", "find-generic-password", "-a", "glam-user", "-s", "glamdring", "-w"],
     ]
 
 
