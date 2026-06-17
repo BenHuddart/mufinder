@@ -7533,26 +7533,27 @@ class MainWindow(QMainWindow):
         )
 
     def _connect_to_cluster_with_trust(self, config: ClusterConfig, *, credentials: SSHCredentials) -> None:
-        try:
-            if config.jump_host_enabled:
-                self._cluster_runner.connect_to_cluster(config, credentials=credentials)
-            else:
-                self._cluster_runner.connect_to_cluster(config, password=credentials.target_secret)
-            return
-        except SSHUnknownHostKeyError as exc:
-            if not prompt_to_trust_host_key(self, config, exc):
-                raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
-            save_trusted_host_key(
-                self._settings,
-                config,
-                algorithm=exc.algorithm,
-                key_base64=exc.key_base64,
-                endpoint=exc.endpoint,
-            )
-        if config.jump_host_enabled:
-            self._cluster_runner.connect_to_cluster(config, credentials=credentials)
-        else:
-            self._cluster_runner.connect_to_cluster(config, password=credentials.target_secret)
+        trusted_endpoints: set[str] = set()
+        while True:
+            try:
+                if config.jump_host_enabled:
+                    self._cluster_runner.connect_to_cluster(config, credentials=credentials)
+                else:
+                    self._cluster_runner.connect_to_cluster(config, password=credentials.target_secret)
+                return
+            except SSHUnknownHostKeyError as exc:
+                if exc.endpoint in trusted_endpoints:
+                    raise
+                if not prompt_to_trust_host_key(self, config, exc):
+                    raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
+                save_trusted_host_key(
+                    self._settings,
+                    config,
+                    algorithm=exc.algorithm,
+                    key_base64=exc.key_base64,
+                    endpoint=exc.endpoint,
+                )
+                trusted_endpoints.add(exc.endpoint)
 
     def _on_refresh_cluster_queue(self) -> None:
         try:

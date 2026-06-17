@@ -334,6 +334,82 @@ def test_cluster_setup_dialog_test_connection_trusts_unknown_host_key(
     dialog.close()
 
 
+def test_cluster_setup_dialog_test_connection_trusts_jump_and_target_host_keys(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+
+    infos: list[str] = []
+    prompted: list[str] = []
+
+    class _UnknownHostConnection(_FakeConnection):
+        attempts = 0
+
+        def connect(self, password: str | None = None, **_kwargs) -> None:
+            _ = password
+            self.__class__.attempts += 1
+            if self.__class__.attempts == 1:
+                raise dialog_module.SSHUnknownHostKeyError(
+                    hostname="bastion.physics.ox.ac.uk",
+                    port=22,
+                    algorithm="ssh-ed25519",
+                    fingerprint_sha256="SHA256:bastion",
+                    key_base64="YmFzdGlvbg==",
+                    endpoint="jump",
+                )
+            if self.__class__.attempts == 2:
+                raise dialog_module.SSHUnknownHostKeyError(
+                    hostname="glamdring.physics.ox.ac.uk",
+                    port=22,
+                    algorithm="ssh-ed25519",
+                    fingerprint_sha256="SHA256:glamdring",
+                    key_base64="Z2xhbWRyaW5n",
+                    endpoint="target",
+                )
+            self.connected = True
+
+    monkeypatch.setattr(dialog_module, "SSHConnection", _UnknownHostConnection)
+    monkeypatch.setattr(
+        dialog_module,
+        "prompt_to_trust_host_key",
+        lambda _parent, _config, exc: prompted.append(exc.endpoint) or True,
+    )
+    monkeypatch.setattr(
+        dialog_module,
+        "prompt_for_cluster_credentials",
+        lambda *_args, **_kwargs: SSHCredentials(target_secret="glam", jump_secret="phys"),
+    )
+    monkeypatch.setattr(
+        dialog_module.QMessageBox,
+        "information",
+        lambda _parent, title, _message: infos.append(title),
+    )
+
+    dialog._cluster_combo.setCurrentText("Redwood")
+    dialog._test_connection()
+
+    assert prompted == ["jump", "target"]
+    assert infos == ["Connection successful"]
+    assert (
+        dialog._settings.value(
+            "trusted_host_keys/Redwood/jump/bastion.physics.ox.ac.uk/algorithm",
+            "",
+            str,
+        )
+        == "ssh-ed25519"
+    )
+    assert (
+        dialog._settings.value(
+            "trusted_host_keys/Redwood/glamdring.physics.ox.ac.uk/algorithm",
+            "",
+            str,
+        )
+        == "ssh-ed25519"
+    )
+    dialog.close()
+
+
 def test_cluster_setup_dialog_remove_cluster_and_auth_controls(qapp) -> None:
     dialog = ClusterSetupDialog(settings=_FakeSettings())
 

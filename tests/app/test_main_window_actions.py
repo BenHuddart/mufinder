@@ -3862,6 +3862,77 @@ def test_main_window_cluster_poll_failed_shows_detailed_warning(
     window.close()
 
 
+def test_main_window_connect_with_trust_handles_jump_and_target_host_keys(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = MainWindow()
+    config = ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        username="glam-user",
+        auth_method="password",
+        jump_host_enabled=True,
+        jump_hostname="bastion.physics.ox.ac.uk",
+        jump_username="physics-user",
+        jump_auth_method="password",
+    )
+    credentials = SSHCredentials(target_secret="glam", jump_secret="phys")
+    prompts: list[str] = []
+    connect_attempts: list[int] = []
+
+    def _connect(_config, *, credentials=None, password=None):
+        _ = credentials, password
+        connect_attempts.append(len(connect_attempts) + 1)
+        if len(connect_attempts) == 1:
+            raise main_window_module.SSHUnknownHostKeyError(
+                hostname="bastion.physics.ox.ac.uk",
+                port=22,
+                algorithm="ssh-ed25519",
+                fingerprint_sha256="SHA256:bastion",
+                key_base64="YmFzdGlvbg==",
+                endpoint="jump",
+            )
+        if len(connect_attempts) == 2:
+            raise main_window_module.SSHUnknownHostKeyError(
+                hostname="glamdring.physics.ox.ac.uk",
+                port=22,
+                algorithm="ssh-ed25519",
+                fingerprint_sha256="SHA256:glamdring",
+                key_base64="Z2xhbWRyaW5n",
+                endpoint="target",
+            )
+
+    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", _connect)
+    monkeypatch.setattr(
+        main_window_module,
+        "prompt_to_trust_host_key",
+        lambda _parent, _config, exc: prompts.append(exc.endpoint) or True,
+    )
+
+    window._connect_to_cluster_with_trust(config, credentials=credentials)
+
+    assert connect_attempts == [1, 2, 3]
+    assert prompts == ["jump", "target"]
+    assert (
+        window._settings.value(
+            "trusted_host_keys/Redwood/jump/bastion.physics.ox.ac.uk/algorithm",
+            "",
+            str,
+        )
+        == "ssh-ed25519"
+    )
+    assert (
+        window._settings.value(
+            "trusted_host_keys/Redwood/glamdring.physics.ox.ac.uk/algorithm",
+            "",
+            str,
+        )
+        == "ssh-ed25519"
+    )
+    window.close()
+
+
 def test_main_window_remote_directory_prompt_mappings(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:

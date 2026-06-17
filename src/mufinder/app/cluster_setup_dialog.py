@@ -589,30 +589,31 @@ class ClusterSetupDialog(QDialog):
         QMessageBox.information(self, "Connection successful", "SSH connection test succeeded.")
 
     def _test_connection_with_trust(self, config: ClusterConfig, *, credentials) -> None:
-        connection = SSHConnection(config, settings=self._settings)
-        try:
-            if config.jump_host_enabled:
-                connection.connect(credentials=credentials)
-            else:
-                connection.connect(password=credentials.target_secret)
-        except SSHUnknownHostKeyError as exc:
-            if not prompt_to_trust_host_key(self, config, exc):
-                raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
-            save_trusted_host_key(
-                self._settings,
-                config,
-                algorithm=exc.algorithm,
-                key_base64=exc.key_base64,
-                endpoint=exc.endpoint,
-            )
+        trusted_endpoints: set[str] = set()
+        while True:
             connection = SSHConnection(config, settings=self._settings)
-            if config.jump_host_enabled:
-                connection.connect(credentials=credentials)
-            else:
-                connection.connect(password=credentials.target_secret)
-        finally:
-            if connection.is_connected:
-                connection.disconnect()
+            try:
+                if config.jump_host_enabled:
+                    connection.connect(credentials=credentials)
+                else:
+                    connection.connect(password=credentials.target_secret)
+                return
+            except SSHUnknownHostKeyError as exc:
+                if exc.endpoint in trusted_endpoints:
+                    raise
+                if not prompt_to_trust_host_key(self, config, exc):
+                    raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
+                save_trusted_host_key(
+                    self._settings,
+                    config,
+                    algorithm=exc.algorithm,
+                    key_base64=exc.key_base64,
+                    endpoint=exc.endpoint,
+                )
+                trusted_endpoints.add(exc.endpoint)
+            finally:
+                if connection.is_connected:
+                    connection.disconnect()
 
     def _validate_configs(self) -> list[str]:
         issues: list[str] = []
