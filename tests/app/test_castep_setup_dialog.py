@@ -23,6 +23,7 @@ from mufinder.castep_setup import (
     save_castep_setup,
 )
 from mufinder.app.castep_setup_dialog import CastepSetupDialog
+from mufinder.services.ssh_client import SSHCredentials
 
 
 class _FakeSettings:
@@ -311,23 +312,24 @@ def test_castep_setup_dialog_starts_cluster_generation_for_selected_target(
     output_path = tmp_path / "castep_keywords.json"
     dialog._keywords_edit.setText(str(output_path))
 
-    captured: list[tuple[str, Path, str | None]] = []
+    credentials = SSHCredentials(target_secret="glam", jump_secret="phys")
+    captured: list[tuple[str, Path, SSHCredentials | None]] = []
     monkeypatch.setattr(dialog_module, "validate_cluster_keyword_config", lambda _config: [])
     monkeypatch.setattr(
-        dialog_module.QInputDialog,
-        "getText",
-        lambda *_args, **_kwargs: ("", False),
+        dialog_module,
+        "prompt_for_cluster_credentials",
+        lambda *_args, **_kwargs: credentials,
     )
     monkeypatch.setattr(dialog, "_ensure_cluster_trusted_connection", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         dialog,
         "_start_cluster_generation",
-        lambda config, path, password=None: captured.append((config.name, path, password)),
+        lambda config, path, credentials=None: captured.append((config.name, path, credentials)),
     )
 
     dialog._generate_keywords()
 
-    assert captured == [("Redwood", output_path, None)]
+    assert captured == [("Redwood", output_path, credentials)]
     dialog.close()
 
 
@@ -342,7 +344,8 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
     dialog._keywords_edit.setText(str(output_path))
 
     prompts: list[str] = []
-    captured: list[tuple[str, Path, str | None]] = []
+    credentials = SSHCredentials(target_secret="glam", jump_secret="phys")
+    captured: list[tuple[str, Path, SSHCredentials | None]] = []
 
     class _UnknownHostConnection:
         attempts = 0
@@ -355,7 +358,7 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
         def is_connected(self) -> bool:
             return self.connected
 
-        def connect(self, password: str | None = None) -> None:
+        def connect(self, password: str | None = None, **_kwargs) -> None:
             _ = password
             self.__class__.attempts += 1
             if self.__class__.attempts == 1:
@@ -375,20 +378,20 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
     monkeypatch.setattr(dialog_module, "SSHConnection", _UnknownHostConnection)
     monkeypatch.setattr(dialog_module, "prompt_to_trust_host_key", lambda *_args, **_kwargs: prompts.append("yes") or True)
     monkeypatch.setattr(
-        dialog_module.QInputDialog,
-        "getText",
-        lambda *_args, **_kwargs: ("", False),
+        dialog_module,
+        "prompt_for_cluster_credentials",
+        lambda *_args, **_kwargs: credentials,
     )
     monkeypatch.setattr(
         dialog,
         "_start_cluster_generation",
-        lambda config, path, password=None: captured.append((config.name, path, password)),
+        lambda config, path, credentials=None: captured.append((config.name, path, credentials)),
     )
 
     dialog._generate_keywords()
 
     assert prompts == ["yes"]
-    assert captured == [("Redwood", output_path, None)]
+    assert captured == [("Redwood", output_path, credentials)]
     assert dialog._settings.value(
         "trusted_host_keys/Redwood/glamdring.physics.ox.ac.uk/algorithm", "", str
     ) == "ssh-ed25519"

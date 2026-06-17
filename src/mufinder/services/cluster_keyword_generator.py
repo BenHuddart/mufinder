@@ -17,7 +17,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 from mufinder.cluster_setup import ClusterConfig
 from mufinder.domain.enums import JobStatus
 from mufinder.services.scheduler import SchedulerSubmitRequest, create_scheduler
-from mufinder.services.ssh_client import SSHConnection
+from mufinder.services.ssh_client import SSHConnection, SSHCredentials
 
 
 ProgressCallback = Callable[[str, int | None], None]
@@ -525,6 +525,7 @@ def generate_cluster_castep_keywords_json(
     config: ClusterConfig,
     output_path: str | Path,
     password: str | None = None,
+    credentials: SSHCredentials | None = None,
     settings=None,
     progress: ProgressCallback | None = None,
     cancel_check: CancelCheck | None = None,
@@ -541,7 +542,11 @@ def generate_cluster_castep_keywords_json(
 
     ssh = SSHConnection(config, settings=settings)
     _emit_progress(progress, f"Connecting to {config.name}...", 0)
-    ssh.connect(password=password)
+    resolved_credentials = credentials or SSHCredentials.from_legacy_password(password)
+    if config.jump_host_enabled:
+        ssh.connect(credentials=resolved_credentials)
+    else:
+        ssh.connect(password=resolved_credentials.target_secret)
     try:
         _check_cancel(cancel_check)
         mode = _effective_keyword_mode(config)
@@ -736,12 +741,13 @@ class ClusterKeywordGenerationWorker(QObject):
         config: ClusterConfig,
         output_path: str | Path,
         password: str | None = None,
+        credentials: SSHCredentials | None = None,
         settings=None,
     ) -> None:
         super().__init__()
         self._config = config
         self._output_path = Path(output_path)
-        self._password = password
+        self._credentials = credentials or SSHCredentials.from_legacy_password(password)
         self._settings = settings
         self._cancel_requested = False
 
@@ -754,7 +760,7 @@ class ClusterKeywordGenerationWorker(QObject):
             output = generate_cluster_castep_keywords_json(
                 config=self._config,
                 output_path=self._output_path,
-                password=self._password,
+                credentials=self._credentials,
                 settings=self._settings,
                 progress=self._on_progress,
                 cancel_check=lambda: self._cancel_requested,

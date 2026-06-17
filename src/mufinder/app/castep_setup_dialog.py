@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -28,6 +27,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
     make_message_box_resizable,
+    prompt_for_cluster_credentials,
     prompt_to_trust_host_key,
     show_detailed_warning,
 )
@@ -44,7 +44,7 @@ from mufinder.services.cluster_keyword_generator import (
     ClusterKeywordGenerationWorker,
     validate_cluster_keyword_config,
 )
-from mufinder.services.ssh_client import SSHConnection, SSHUnknownHostKeyError, save_trusted_host_key
+from mufinder.services.ssh_client import SSHConnection, SSHCredentials, SSHUnknownHostKeyError, save_trusted_host_key
 
 
 _PROGRESS_RE = re.compile(r"Processed:\s*\[[# ]*\]\s*(\d+)%")
@@ -287,12 +287,12 @@ class CastepSetupDialog(QDialog):
         if output_path is None:
             return
 
-        password = self._prompt_for_cluster_secret(config)
-        if config.auth_method == "password" and not password:
-            QMessageBox.warning(self, "Missing password", "Password is required for this cluster.")
+        credentials = prompt_for_cluster_credentials(self, config)
+        if credentials is None:
+            QMessageBox.warning(self, "Missing credentials", "Credentials are required for this cluster.")
             return
         try:
-            self._ensure_cluster_trusted_connection(config, password=password)
+            self._ensure_cluster_trusted_connection(config, credentials=credentials)
         except Exception as exc:  # noqa: BLE001
             show_detailed_warning(
                 self,
@@ -301,7 +301,7 @@ class CastepSetupDialog(QDialog):
                 informative_text="Open Details for the full SSH connection error and recovery guidance.",
             )
             return
-        self._start_cluster_generation(config, output_path, password=password)
+        self._start_cluster_generation(config, output_path, credentials=credentials)
 
     def _accept_and_save(self) -> None:
         if self._generation_in_progress:
@@ -379,28 +379,6 @@ class CastepSetupDialog(QDialog):
         self._keywords_edit.setText(suggested)
         return Path(suggested)
 
-    def _prompt_for_cluster_secret(self, config: ClusterConfig) -> str | None:
-        if config.auth_method == "password":
-            raw_password, accepted = QInputDialog.getText(
-                self,
-                "Cluster password",
-                f"Enter the password for {config.name}:",
-                QLineEdit.EchoMode.Password,
-            )
-            if not accepted:
-                return None
-            return raw_password.strip()
-
-        raw_passphrase, accepted = QInputDialog.getText(
-            self,
-            "Key passphrase",
-            f"Enter the key passphrase for {config.name} if needed:",
-            QLineEdit.EchoMode.Password,
-        )
-        if not accepted or not raw_passphrase.strip():
-            return None
-        return raw_passphrase.strip()
-
     def _start_generation_process(self, executable: str, output_path: Path) -> None:
         if self._generation_in_progress:
             return
@@ -434,7 +412,7 @@ class CastepSetupDialog(QDialog):
         config: ClusterConfig,
         output_path: Path,
         *,
-        password: str | None,
+        credentials: SSHCredentials,
     ) -> None:
         if self._generation_in_progress:
             return
@@ -449,7 +427,7 @@ class CastepSetupDialog(QDialog):
         worker = ClusterKeywordGenerationWorker(
             config=config,
             output_path=self._generation_output_path,
-            password=password,
+            credentials=credentials,
             settings=self._settings,
         )
         thread = QThread(self)
@@ -600,21 +578,29 @@ class CastepSetupDialog(QDialog):
         box.setDetailedText(text)
         box.exec()
 
-    def _ensure_cluster_trusted_connection(self, config: ClusterConfig, *, password: str | None) -> None:
-        connection = SSHConnection(config, settings=self._settings)
-        try:
-            connection.connect(password=password)
-        except SSHUnknownHostKeyError as exc:
-            if not prompt_to_trust_host_key(self, config, exc):
-                raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
-            save_trusted_host_key(
-                self._settings,
-                config,
-                algorithm=exc.algorithm,
-                key_base64=exc.key_base64,
-            )
+    def _ensure_cluster_trusted_connection(self, config: ClusterConfig, *, credentials: SSHCredentials) -> None:
+        trusted_endpoints: set[str] = set()
+        while True:
             connection = SSHConnection(config, settings=self._settings)
-            connection.connect(password=password)
-        finally:
-            if connection.is_connected:
-                connection.disconnect()
+            try:
+                if config.jump_host_enabled:
+                    connection.connect(credentials=credentials)
+                else:
+                    connection.connect(password=credentials.target_secret)
+                return
+            except SSHUnknownHostKeyError as exc:
+                if exc.endpoint in trusted_endpoints:
+                    raise
+                if not prompt_to_trust_host_key(self, config, exc):
+                    raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
+                save_trusted_host_key(
+                    self._settings,
+                    config,
+                    algorithm=exc.algorithm,
+                    key_base64=exc.key_base64,
+                    endpoint=exc.endpoint,
+                )
+                trusted_endpoints.add(exc.endpoint)
+            finally:
+                if connection.is_connected:
+                    connection.disconnect()

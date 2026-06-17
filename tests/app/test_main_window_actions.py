@@ -26,7 +26,7 @@ from mufinder.domain.models import CalculationDefinition, CalculationRun, Compar
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.services.project_service import ProjectService
-from mufinder.services.ssh_client import SSHAuthenticationError
+from mufinder.services.ssh_client import SSHAuthenticationError, SSHCredentials
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
 
 
@@ -2270,6 +2270,112 @@ def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
     window.close()
 
 
+def test_main_window_submit_jobs_on_cluster_passes_jump_host_credentials(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_jump_submit_ui.mufinder", "ClusterJumpSubmit")
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    output_dir = doc.project_root / "files" / "convergence_cutoff"
+    (output_dir / job.label).mkdir(parents=True, exist_ok=True)
+    service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=output_dir,
+        job_ids_by_cutoff={main_window_module.MainWindow._cutoff_key(300.0): str(job.id)},
+    )
+    window._document = doc
+
+    cluster = ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        username="glam-user",
+        auth_method="password",
+        default_working_directory="/mnt/redwoodfs/glam-user",
+        queue_system="slurm",
+        cores_per_node=24,
+        default_walltime="01:00:00",
+        template_script_path="/templates/slurm.sh",
+        jump_host_enabled=True,
+        jump_hostname="bastion.physics.ox.ac.uk",
+        jump_username="physics-user",
+        jump_auth_method="password",
+    )
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 1
+
+        def config(self):
+            return SimpleNamespace(
+                cluster_name="Redwood",
+                working_directory="/mnt/redwoodfs/glam-user",
+                username="glam-user",
+                job_name_prefix="conv",
+                num_processes=24,
+                walltime="01:00:00",
+            )
+
+        def credentials(self) -> SSHCredentials:
+            return SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret")
+
+    connect_calls: list[tuple[str, SSHCredentials | None, str | None]] = []
+    submit_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "connect_to_cluster",
+        lambda config, password=None, credentials=None: connect_calls.append((config.name, credentials, password)),
+    )
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "remote_job_directory",
+        lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
+    )
+    monkeypatch.setattr(window._cluster_runner, "remote_directory_exists", lambda _path: False)
+    monkeypatch.setattr(window._cluster_runner, "submit", lambda **kwargs: submit_calls.append(kwargs) or "99123")
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+
+    window._submit_jobs_on_cluster([job])
+
+    assert len(connect_calls) == 1
+    assert connect_calls[0][0] == "Redwood"
+    assert connect_calls[0][1] == SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret")
+    assert connect_calls[0][2] is None
+    assert len(submit_calls) == 1
+    window.close()
+
+
 def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3654,9 +3760,9 @@ def test_main_window_disconnected_refresh_prompts_password_for_password_cluster(
     monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: refresh_calls.append("refresh"))
     monkeypatch.setattr(
-        main_window_module.QInputDialog,
-        "getText",
-        lambda *_args, **_kwargs: ("secret", True),
+        main_window_module,
+        "prompt_for_cluster_credentials",
+        lambda *_args, **_kwargs: SSHCredentials(target_secret="secret"),
     )
 
     warnings: list[str] = []
@@ -3718,9 +3824,9 @@ def test_main_window_disconnected_refresh_prompts_passphrase_for_key_cluster(
     monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: refresh_calls.append("refresh"))
     monkeypatch.setattr(
-        main_window_module.QInputDialog,
-        "getText",
-        lambda *_args, **_kwargs: ("secret-passphrase", True),
+        main_window_module,
+        "prompt_for_cluster_credentials",
+        lambda *_args, **_kwargs: SSHCredentials(target_secret="secret-passphrase"),
     )
 
     warnings: list[str] = []
@@ -3753,6 +3859,77 @@ def test_main_window_cluster_poll_failed_shows_detailed_warning(
     window._on_cluster_poll_failed("Queue polling failed for alpha: timeout")
 
     assert warnings == ["Queue polling failed"]
+    window.close()
+
+
+def test_main_window_connect_with_trust_handles_jump_and_target_host_keys(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = MainWindow()
+    config = ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        username="glam-user",
+        auth_method="password",
+        jump_host_enabled=True,
+        jump_hostname="bastion.physics.ox.ac.uk",
+        jump_username="physics-user",
+        jump_auth_method="password",
+    )
+    credentials = SSHCredentials(target_secret="glam", jump_secret="phys")
+    prompts: list[str] = []
+    connect_attempts: list[int] = []
+
+    def _connect(_config, *, credentials=None, password=None):
+        _ = credentials, password
+        connect_attempts.append(len(connect_attempts) + 1)
+        if len(connect_attempts) == 1:
+            raise main_window_module.SSHUnknownHostKeyError(
+                hostname="bastion.physics.ox.ac.uk",
+                port=22,
+                algorithm="ssh-ed25519",
+                fingerprint_sha256="SHA256:bastion",
+                key_base64="YmFzdGlvbg==",
+                endpoint="jump",
+            )
+        if len(connect_attempts) == 2:
+            raise main_window_module.SSHUnknownHostKeyError(
+                hostname="glamdring.physics.ox.ac.uk",
+                port=22,
+                algorithm="ssh-ed25519",
+                fingerprint_sha256="SHA256:glamdring",
+                key_base64="Z2xhbWRyaW5n",
+                endpoint="target",
+            )
+
+    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", _connect)
+    monkeypatch.setattr(
+        main_window_module,
+        "prompt_to_trust_host_key",
+        lambda _parent, _config, exc: prompts.append(exc.endpoint) or True,
+    )
+
+    window._connect_to_cluster_with_trust(config, credentials=credentials)
+
+    assert connect_attempts == [1, 2, 3]
+    assert prompts == ["jump", "target"]
+    assert (
+        window._settings.value(
+            "trusted_host_keys/Redwood/jump/bastion.physics.ox.ac.uk/algorithm",
+            "",
+            str,
+        )
+        == "ssh-ed25519"
+    )
+    assert (
+        window._settings.value(
+            "trusted_host_keys/Redwood/glamdring.physics.ox.ac.uk/algorithm",
+            "",
+            str,
+        )
+        == "ssh-ed25519"
+    )
     window.close()
 
 

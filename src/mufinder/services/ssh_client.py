@@ -26,6 +26,18 @@ class TrustedHostKeyRecord:
     key_base64: str
 
 
+@dataclass(frozen=True, slots=True)
+class SSHCredentials:
+    """Secrets needed for a target SSH connection and optional jump host."""
+
+    target_secret: str | None = None
+    jump_secret: str | None = None
+
+    @classmethod
+    def from_legacy_password(cls, password: str | None) -> "SSHCredentials":
+        return cls(target_secret=password, jump_secret=password)
+
+
 class SSHAuthenticationError(ConnectionError):
     """Raised when SSH authentication fails."""
 
@@ -61,12 +73,14 @@ class SSHUnknownHostKeyError(ConnectionError):
         algorithm: str,
         fingerprint_sha256: str,
         key_base64: str,
+        endpoint: str = "target",
     ) -> None:
         self.hostname = hostname
         self.port = int(port)
         self.algorithm = algorithm
         self.fingerprint_sha256 = fingerprint_sha256
         self.key_base64 = key_base64
+        self.endpoint = endpoint
         super().__init__(f"SSH host key for {hostname}:{port} is not trusted.")
 
 
@@ -82,6 +96,7 @@ class SSHHostKeyMismatchError(ConnectionError):
         expected_fingerprint_sha256: str,
         presented_algorithm: str,
         presented_fingerprint_sha256: str,
+        endpoint: str = "target",
     ) -> None:
         self.hostname = hostname
         self.port = int(port)
@@ -89,30 +104,42 @@ class SSHHostKeyMismatchError(ConnectionError):
         self.expected_fingerprint_sha256 = expected_fingerprint_sha256
         self.presented_algorithm = presented_algorithm
         self.presented_fingerprint_sha256 = presented_fingerprint_sha256
+        self.endpoint = endpoint
         super().__init__(f"SSH host key mismatch for {hostname}:{port}.")
 
 
-def trusted_host_settings_prefix(config: ClusterConfig) -> str:
+def trusted_host_settings_prefix(config: ClusterConfig, *, endpoint: str = "target") -> str:
     """Return the QSettings prefix used for one trusted host entry."""
 
-    endpoint = trusted_host_lookup_name(config)
-    return f"trusted_host_keys/{config.name}/{endpoint}"
+    lookup = trusted_host_lookup_name(config, endpoint=endpoint)
+    if endpoint == "jump":
+        return f"trusted_host_keys/{config.name}/jump/{lookup}"
+    return f"trusted_host_keys/{config.name}/{lookup}"
 
 
-def trusted_host_lookup_name(config: ClusterConfig) -> str:
+def trusted_host_lookup_name(config: ClusterConfig, *, endpoint: str = "target") -> str:
     """Return the host-key lookup name used by OpenSSH/Paramiko."""
 
-    hostname = config.hostname.strip()
-    port = int(config.port)
+    if endpoint == "jump":
+        hostname = config.jump_hostname.strip()
+        port = int(config.jump_port)
+    else:
+        hostname = config.hostname.strip()
+        port = int(config.port)
     return hostname if port == 22 else f"[{hostname}]:{port}"
 
 
-def load_trusted_host_key(settings, config: ClusterConfig) -> TrustedHostKeyRecord | None:
+def load_trusted_host_key(
+    settings,
+    config: ClusterConfig,
+    *,
+    endpoint: str = "target",
+) -> TrustedHostKeyRecord | None:
     """Load one trusted host key from user-scoped settings."""
 
     if settings is None:
         return None
-    prefix = trusted_host_settings_prefix(config)
+    prefix = trusted_host_settings_prefix(config, endpoint=endpoint)
     algorithm = str(settings.value(f"{prefix}/algorithm", "", str) or "").strip()
     key_base64 = str(settings.value(f"{prefix}/key_base64", "", str) or "").strip()
     if not algorithm or not key_base64:
@@ -120,12 +147,19 @@ def load_trusted_host_key(settings, config: ClusterConfig) -> TrustedHostKeyReco
     return TrustedHostKeyRecord(algorithm=algorithm, key_base64=key_base64)
 
 
-def save_trusted_host_key(settings, config: ClusterConfig, *, algorithm: str, key_base64: str) -> None:
+def save_trusted_host_key(
+    settings,
+    config: ClusterConfig,
+    *,
+    algorithm: str,
+    key_base64: str,
+    endpoint: str = "target",
+) -> None:
     """Persist one trusted host key in user-scoped settings."""
 
     if settings is None:
         return
-    prefix = trusted_host_settings_prefix(config)
+    prefix = trusted_host_settings_prefix(config, endpoint=endpoint)
     settings.setValue(f"{prefix}/algorithm", algorithm.strip())
     settings.setValue(f"{prefix}/key_base64", key_base64.strip())
 
@@ -149,6 +183,8 @@ class SSHConnection:
         self._config = config
         self._settings = settings
         self._client = None
+        self._jump_client = None
+        self._jump_channel = None
         self._sftp = None
 
     @property
@@ -158,42 +194,116 @@ class SSHConnection:
         transport = self._client.get_transport()
         return bool(transport and transport.is_active())
 
-    def connect(self, password: str | None = None) -> None:
+    def connect(
+        self,
+        password: str | None = None,
+        *,
+        credentials: SSHCredentials | None = None,
+    ) -> None:
         """Open SSH and SFTP connections."""
 
         paramiko = self._import_paramiko()
-        ssh_exception_type = getattr(paramiko, "SSHException", RuntimeError)
+        resolved_credentials = credentials or SSHCredentials.from_legacy_password(password)
 
         if self.is_connected:
             return
-
-        client = paramiko.SSHClient()
-        client.load_system_host_keys()
-        self._load_app_trusted_host_key(paramiko, client)
-        client.set_missing_host_key_policy(_MissingHostKeyPolicy(port=int(self._config.port)))
 
         hostname = self._config.hostname.strip()
         if not hostname:
             raise ConnectionError("Cluster hostname is required.")
 
+        jump_client = None
+        jump_channel = None
+        client = None
+        try:
+            if self._config.jump_host_enabled:
+                if not self._config.jump_hostname.strip():
+                    raise ConnectionError("Jump host name is required when jump-host access is enabled.")
+                if not self._config.jump_username.strip():
+                    raise ConnectionError("Jump host username is required when jump-host access is enabled.")
+                jump_client = self._connect_endpoint(
+                    paramiko,
+                    endpoint="jump",
+                    secret=resolved_credentials.jump_secret,
+                )
+                jump_transport = jump_client.get_transport()
+                if jump_transport is None or not jump_transport.is_active():
+                    raise SSHTransportError("Jump host transport is not active.")
+                jump_channel = jump_transport.open_channel(
+                    "direct-tcpip",
+                    (hostname, int(self._config.port)),
+                    ("127.0.0.1", 0),
+                )
+
+            client = self._connect_endpoint(
+                paramiko,
+                endpoint="target",
+                secret=resolved_credentials.target_secret,
+                sock=jump_channel,
+            )
+            try:
+                sftp = client.open_sftp()
+            except Exception as exc:  # noqa: BLE001
+                client.close()
+                raise ConnectionError(f"Failed to open SFTP session: {exc}") from exc
+        except Exception:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            if jump_channel is not None:
+                try:
+                    jump_channel.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            if jump_client is not None:
+                try:
+                    jump_client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
+
+        self._client = client
+        self._jump_client = jump_client
+        self._jump_channel = jump_channel
+        self._sftp = sftp
+        _LOG.debug("Connected to cluster %s", self._config.name)
+
+    def _connect_endpoint(
+        self,
+        paramiko,
+        *,
+        endpoint: str,
+        secret: str | None,
+        sock=None,
+    ):
+        ssh_exception_type = getattr(paramiko, "SSHException", RuntimeError)
+        client = paramiko.SSHClient()
+        client.load_system_host_keys()
+        self._load_app_trusted_host_key(paramiko, client, endpoint=endpoint)
+
+        hostname, port, username, auth_method, key_path = self._endpoint_connection_fields(endpoint)
+        client.set_missing_host_key_policy(_MissingHostKeyPolicy(port=port, endpoint=endpoint))
         base_kwargs: dict[str, Any] = {
             "hostname": hostname,
-            "port": int(self._config.port),
-            "username": self._config.username.strip(),
+            "port": port,
+            "username": username,
             "timeout": 20,
             "banner_timeout": 30,
             "auth_timeout": 30,
         }
-
-        key_path = self._config.key_path.strip()
+        if sock is not None:
+            base_kwargs["sock"] = sock
 
         try:
-            if self._config.auth_method == "password":
-                if not password:
-                    raise SSHAuthenticationError("Password is required for password authentication.")
+            if auth_method == "password":
+                if not secret:
+                    label = "jump host" if endpoint == "jump" else "password"
+                    raise SSHAuthenticationError(f"Password is required for {label} authentication.")
                 client.connect(
                     **base_kwargs,
-                    password=password,
+                    password=secret,
                     look_for_keys=False,
                     allow_agent=False,
                 )
@@ -204,18 +314,18 @@ class SSHConnection:
                 }
                 if key_path:
                     key_kwargs["key_filename"] = str(Path(key_path).expanduser())
-                if password:
-                    key_kwargs["passphrase"] = password
+                if secret:
+                    key_kwargs["passphrase"] = secret
                 try:
                     client.connect(**base_kwargs, **key_kwargs)
                 except paramiko.AuthenticationException as key_error:
-                    if not password:
+                    if not secret:
                         raise SSHAuthenticationError(
                             f"SSH key authentication failed: {key_error}"
                         ) from key_error
                     client.connect(
                         **base_kwargs,
-                        password=password,
+                        password=secret,
                         look_for_keys=False,
                         allow_agent=False,
                     )
@@ -224,11 +334,12 @@ class SSHConnection:
         except paramiko.BadHostKeyException as exc:
             raise SSHHostKeyMismatchError(
                 hostname=hostname,
-                port=int(self._config.port),
+                port=port,
                 expected_algorithm=exc.expected_key.get_name(),
                 expected_fingerprint_sha256=_host_key_fingerprint_sha256(exc.expected_key),
                 presented_algorithm=exc.key.get_name(),
                 presented_fingerprint_sha256=_host_key_fingerprint_sha256(exc.key),
+                endpoint=endpoint,
             ) from exc
         except paramiko.AuthenticationException as exc:
             raise SSHAuthenticationError(f"SSH authentication failed: {exc}") from exc
@@ -236,7 +347,7 @@ class SSHConnection:
             if _is_protocol_banner_error(exc):
                 raise SSHProtocolBannerError(
                     hostname=hostname,
-                    port=int(self._config.port),
+                    port=port,
                     details=str(exc),
                 ) from exc
             raise SSHTransportError(f"SSH transport negotiation failed: {exc}") from exc
@@ -246,7 +357,7 @@ class SSHConnection:
             if _is_protocol_banner_error(exc):
                 raise SSHProtocolBannerError(
                     hostname=hostname,
-                    port=int(self._config.port),
+                    port=port,
                     details=str(exc),
                 ) from exc
             raise SSHTransportError(f"SSH connection failed: {_format_exception_detail(exc)}") from exc
@@ -254,22 +365,35 @@ class SSHConnection:
         transport = client.get_transport()
         if transport is not None:
             transport.set_keepalive(60)
+        return client
 
-        try:
-            sftp = client.open_sftp()
-        except Exception as exc:  # noqa: BLE001
-            client.close()
-            raise ConnectionError(f"Failed to open SFTP session: {exc}") from exc
+    def _endpoint_connection_fields(self, endpoint: str) -> tuple[str, int, str, str, str]:
+        if endpoint == "jump":
+            return (
+                self._config.jump_hostname.strip(),
+                int(self._config.jump_port),
+                self._config.jump_username.strip(),
+                self._config.jump_auth_method.strip().lower(),
+                self._config.jump_key_path.strip(),
+            )
+        return (
+            self._config.hostname.strip(),
+            int(self._config.port),
+            self._config.username.strip(),
+            self._config.auth_method.strip().lower(),
+            self._config.key_path.strip(),
+        )
 
-        self._client = client
-        self._sftp = sftp
-        _LOG.debug("Connected to cluster %s", self._config.name)
-
-    def reconnect(self, password: str | None = None) -> None:
+    def reconnect(
+        self,
+        password: str | None = None,
+        *,
+        credentials: SSHCredentials | None = None,
+    ) -> None:
         """Reconnect SSH transport."""
 
         self.disconnect()
-        self.connect(password=password)
+        self.connect(password=password, credentials=credentials)
 
     def disconnect(self) -> None:
         """Close SSH and SFTP resources."""
@@ -284,7 +408,19 @@ class SSHConnection:
                 self._client.close()
             except Exception:  # noqa: BLE001
                 pass
+        if self._jump_channel is not None:
+            try:
+                self._jump_channel.close()
+            except Exception:  # noqa: BLE001
+                pass
+        if self._jump_client is not None:
+            try:
+                self._jump_client.close()
+            except Exception:  # noqa: BLE001
+                pass
         self._client = None
+        self._jump_client = None
+        self._jump_channel = None
         self._sftp = None
         _LOG.debug("Disconnected from cluster %s", self._config.name)
 
@@ -414,13 +550,13 @@ class SSHConnection:
             raise ConnectionError("SFTP session is not active.")
         return self._sftp
 
-    def _load_app_trusted_host_key(self, paramiko, client) -> None:
-        trusted = load_trusted_host_key(self._settings, self._config)
+    def _load_app_trusted_host_key(self, paramiko, client, *, endpoint: str = "target") -> None:
+        trusted = load_trusted_host_key(self._settings, self._config, endpoint=endpoint)
         if trusted is None:
             return
 
         host_keys = client.get_host_keys()
-        lookup = trusted_host_lookup_name(self._config)
+        lookup = trusted_host_lookup_name(self._config, endpoint=endpoint)
         if host_keys.lookup(lookup) is not None:
             return
         host_keys.add(lookup, trusted.algorithm, _decode_host_key(paramiko, trusted))
@@ -446,8 +582,9 @@ class SSHConnection:
 class _MissingHostKeyPolicy:
     """Raise a structured error for unknown host keys."""
 
-    def __init__(self, *, port: int) -> None:
+    def __init__(self, *, port: int, endpoint: str = "target") -> None:
         self._port = int(port)
+        self._endpoint = endpoint
 
     def missing_host_key(self, _client, hostname: str, key) -> None:
         raise SSHUnknownHostKeyError(
@@ -456,6 +593,7 @@ class _MissingHostKeyPolicy:
             algorithm=key.get_name(),
             fingerprint_sha256=_host_key_fingerprint_sha256(key),
             key_base64=key.get_base64(),
+            endpoint=self._endpoint,
         )
 
 

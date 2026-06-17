@@ -20,7 +20,7 @@ from mufinder.domain.enums import JobStatus
 from mufinder.services.cluster_security import invalid_remote_job_labels
 from mufinder.services.scheduler import Scheduler, SchedulerSubmitRequest, create_scheduler
 from mufinder.services.script_template import load_template_for_cluster, populate_template
-from mufinder.services.ssh_client import SSHConnection
+from mufinder.services.ssh_client import SSHConnection, SSHCredentials
 
 
 @dataclass(slots=True)
@@ -69,7 +69,7 @@ class ClusterJobRunner(QObject):
         self._ssh: SSHConnection | None = None
         self._scheduler: Scheduler | None = None
         self._tracked_jobs: dict[UUID, _TrackedClusterJob] = {}
-        self._password_cache: str | None = None
+        self._credential_cache: SSHCredentials | None = None
 
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(60_000)
@@ -92,27 +92,36 @@ class ClusterJobRunner(QObject):
         username = self._config.username.strip()
         return username or None
 
-    def connect_to_cluster(self, config: ClusterConfig, password: str | None = None) -> None:
+    def connect_to_cluster(
+        self,
+        config: ClusterConfig,
+        password: str | None = None,
+        *,
+        credentials: SSHCredentials | None = None,
+    ) -> None:
         """Connect to cluster and scheduler backend."""
 
         if self.is_connected and self._config == config:
             return
 
-        resolved_password = password
-        auth_method = config.auth_method.strip().lower()
+        resolved_credentials = credentials or SSHCredentials.from_legacy_password(password)
         if (
-            resolved_password is None
-            and auth_method in {"password", "key"}
+            resolved_credentials.target_secret is None
+            and resolved_credentials.jump_secret is None
             and self._config is not None
             and self._config.name.strip().casefold() == config.name.strip().casefold()
             and self._config.username.strip() == config.username.strip()
-            and self._password_cache
+            and self._config.jump_username.strip() == config.jump_username.strip()
+            and self._credential_cache is not None
         ):
-            resolved_password = self._password_cache
+            resolved_credentials = self._credential_cache
 
         self.disconnect()
         ssh = SSHConnection(config, settings=self._settings)
-        ssh.connect(password=resolved_password)
+        if config.jump_host_enabled:
+            ssh.connect(credentials=resolved_credentials)
+        else:
+            ssh.connect(password=resolved_credentials.target_secret)
 
         self._config = config
         self._ssh = ssh
@@ -122,7 +131,7 @@ class ClusterJobRunner(QObject):
             queue_check_command_path=config.queue_check_command_path,
             cancel_command_path=config.cancel_command_path,
         )
-        self._password_cache = resolved_password if auth_method in {"password", "key"} else None
+        self._credential_cache = resolved_credentials
         self.connection_status_changed.emit(True)
         if self._has_active_jobs_for_connected_cluster() and not self._poll_timer.isActive():
             self._poll_timer.start()
@@ -136,7 +145,7 @@ class ClusterJobRunner(QObject):
         self._ssh = None
         self._scheduler = None
         self._config = None
-        self._password_cache = None
+        self._credential_cache = None
         self.connection_status_changed.emit(False)
 
     def submit(

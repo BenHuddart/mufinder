@@ -144,6 +144,13 @@ def test_cluster_setup_returns_scarf_default_when_empty() -> None:
 
     assert loaded[1].name == "Redwood"
     assert loaded[1].hostname == "glamdring.physics.ox.ac.uk"
+    assert loaded[1].auth_method == "password"
+    assert loaded[1].jump_host_enabled is True
+    assert loaded[1].jump_hostname == "bastion.physics.ox.ac.uk"
+    assert loaded[1].jump_port == 22
+    assert loaded[1].jump_username == "physics_username"
+    assert loaded[1].jump_auth_method == "password"
+    assert loaded[1].use_macos_keychain_passwords is False
     assert loaded[1].default_working_directory == "/mnt/redwoodfs/username"
     assert loaded[1].queue_system == "ADDQUEUE"
     assert loaded[1].default_walltime == ""
@@ -171,6 +178,9 @@ def test_cluster_setup_loads_redwood_default_when_empty() -> None:
 
     assert loaded is not None
     assert loaded.hostname == "glamdring.physics.ox.ac.uk"
+    assert loaded.auth_method == "password"
+    assert loaded.jump_host_enabled is True
+    assert loaded.jump_hostname == "bastion.physics.ox.ac.uk"
     assert loaded.queue_system == "ADDQUEUE"
     assert loaded.default_walltime == ""
 
@@ -201,6 +211,8 @@ def test_cluster_setup_appends_redwood_for_legacy_saved_configs() -> None:
     redwood = load_cluster_config(settings, "Redwood")
     assert redwood is not None
     assert redwood.hostname == "glamdring.physics.ox.ac.uk"
+    assert redwood.jump_host_enabled is True
+    assert redwood.jump_hostname == "bastion.physics.ox.ac.uk"
 
 
 def test_cluster_setup_legacy_saved_configs_pick_keyword_defaults() -> None:
@@ -223,3 +235,49 @@ def test_cluster_setup_legacy_saved_configs_pick_keyword_defaults() -> None:
     assert scarf.keyword_python_command == "python3"
     assert redwood.keyword_execution_mode == "direct"
     assert redwood.keyword_python_command == "python3"
+    assert redwood.auth_method == "password"
+    assert redwood.jump_host_enabled is True
+    assert redwood.jump_hostname == "bastion.physics.ox.ac.uk"
+    assert redwood.jump_username == "physics_username"
+    assert redwood.use_macos_keychain_passwords is False
+
+
+def test_cluster_setup_roundtrips_jump_host_settings() -> None:
+    settings = _FakeSettings()
+    config = ClusterConfig(
+        name="jumped",
+        hostname="target.example",
+        username="target-user",
+        auth_method="password",
+        jump_host_enabled=True,
+        jump_hostname="bastion.example",
+        jump_port=2222,
+        jump_username="physics-user",
+        jump_auth_method="key",
+        jump_key_path="/keys/physics",
+        use_macos_keychain_passwords=True,
+        default_working_directory="/remote/work",
+        queue_system="slurm",
+        cores_per_node=8,
+        default_walltime="01:00:00",
+        template_script_path="/templates/slurm.sh",
+    )
+
+    save_cluster_configs(settings, [config])
+
+    loaded = load_cluster_config(settings, "jumped")
+    assert loaded == config
+
+
+def test_cluster_setup_saved_redwood_hostname_override_disables_builtin_jump_default() -> None:
+    settings = _FakeSettings()
+    settings.setValue("clusters/names", ["Redwood"])
+    settings.setValue("clusters/Redwood/hostname", "redwood.internal.example")
+    settings.setValue("clusters/Redwood/username", "alice")
+    settings.setValue("clusters/Redwood/default_working_directory", "/mnt/redwoodfs/alice")
+
+    redwood = load_cluster_config(settings, "Redwood")
+
+    assert redwood is not None
+    assert redwood.jump_host_enabled is False
+    assert redwood.jump_hostname == ""

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 import mufinder.app.cluster_submission_dialog as dialog_module
+import mufinder.services.keychain as keychain_module
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig, ClusterSubmissionDialog
 from mufinder.cluster_setup import ClusterConfig
+from mufinder.services.ssh_client import SSHCredentials
 
 
 def _configs() -> list[ClusterConfig]:
@@ -53,6 +57,28 @@ def _configs() -> list[ClusterConfig]:
     ]
 
 
+def _jump_password_config() -> ClusterConfig:
+    return ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        username="glam-user",
+        auth_method="password",
+        default_working_directory="/mnt/redwoodfs/glam-user",
+        queue_system="addqueue",
+        cores_per_node=24,
+        default_walltime="",
+        template_script_path="",
+        jump_host_enabled=True,
+        jump_hostname="bastion.physics.ox.ac.uk",
+        jump_username="physics-user",
+        jump_auth_method="password",
+    )
+
+
+def _keychain_password_config() -> ClusterConfig:
+    return replace(_jump_password_config(), use_macos_keychain_passwords=True)
+
+
 def test_cluster_submission_dialog_populates_defaults(qapp) -> None:
     dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=_configs())
 
@@ -80,6 +106,87 @@ def test_cluster_submission_dialog_switches_cluster_defaults(qapp) -> None:
     dialog.close()
 
 
+def test_cluster_submission_dialog_shows_jump_host_credentials(qapp) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_jump_password_config()])
+
+    assert dialog._jump_secret_edit.isHidden() is False
+    assert dialog._target_secret_label.text() == "Redwood password"
+    assert dialog._jump_secret_label.text() == "Physics password"
+    assert "Physics password" in dialog._auth_hint.text()
+    assert "above" in dialog._auth_hint.text()
+    assert "below" not in dialog._auth_hint.text()
+
+    dialog._target_secret_edit.setText("glam-secret")
+    dialog._jump_secret_edit.setText("physics-secret")
+
+    credentials = dialog.credentials()
+    assert credentials.target_secret == "glam-secret"
+    assert credentials.jump_secret == "physics-secret"
+    dialog.close()
+
+
+def test_cluster_submission_dialog_validates_jump_host_password_first(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_jump_password_config()])
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        dialog_module.QMessageBox,
+        "warning",
+        lambda _parent, title, _message: warnings.append(title),
+    )
+
+    dialog._accept_if_valid()
+    assert warnings[-1] == "Missing jump host password"
+
+    dialog._jump_secret_edit.setText("physics-secret")
+    dialog._accept_if_valid()
+    assert warnings[-1] == "Missing cluster password"
+    dialog.close()
+
+
+def test_cluster_submission_dialog_keychain_mode_hides_manual_credentials(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(keychain_module.sys, "platform", "darwin")
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_keychain_password_config()])
+
+    monkeypatch.setattr(
+        dialog_module,
+        "resolve_cluster_credentials",
+        lambda *_args, **_kwargs: SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret"),
+    )
+    accepted: list[bool] = []
+    monkeypatch.setattr(dialog, "accept", lambda: accepted.append(True))
+
+    assert dialog._target_secret_edit.isHidden() is True
+    assert dialog._jump_secret_edit.isHidden() is True
+    assert "macOS Keychain passwords are enabled" in dialog._auth_hint.text()
+
+    dialog._accept_if_valid()
+
+    assert accepted == [True]
+    assert dialog.credentials() == SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret")
+    dialog.close()
+
+
+def test_cluster_submission_dialog_compacts_large_job_summary(qapp) -> None:
+    job_labels = [f"cutoff_convergence_ecut_{index}" for index in range(12)]
+
+    dialog = ClusterSubmissionDialog(job_labels=job_labels, cluster_configs=[_jump_password_config()])
+
+    summary = dialog._summary_label.text()
+    assert "12 job(s)" in summary
+    assert "cutoff_convergence_ecut_0" in summary
+    assert "cutoff_convergence_ecut_3" in summary
+    assert "cutoff_convergence_ecut_4" not in summary
+    assert "and 8 more" in summary
+    dialog.close()
+
+
 def test_cluster_submission_dialog_password_auth_hint_has_vertical_headroom(qapp) -> None:
     dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=_configs())
 
@@ -89,6 +196,21 @@ def test_cluster_submission_dialog_password_auth_hint_has_vertical_headroom(qapp
     assert bool(dialog._auth_hint.alignment() & dialog_module.Qt.AlignTop)
     assert dialog._auth_hint.minimumHeight() >= dialog._auth_hint.fontMetrics().lineSpacing() + 6
     assert dialog._auth_hint.sizeHint().height() >= dialog._auth_hint.fontMetrics().lineSpacing()
+    dialog.close()
+
+
+def test_cluster_submission_dialog_auth_hint_reserves_wrapped_keychain_height(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(keychain_module.sys, "platform", "darwin")
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_keychain_password_config()])
+
+    dialog._auth_hint.setFixedWidth(320)
+    dialog._set_auth_hint_text(dialog._auth_hint.text())
+
+    assert dialog._auth_hint.minimumHeight() >= dialog._auth_hint.sizeHint().height()
+    assert dialog._auth_hint.minimumHeight() > dialog._auth_hint.fontMetrics().lineSpacing() + 6
     dialog.close()
 
 
@@ -263,7 +385,7 @@ def test_cluster_submission_dialog_validation_warns_for_missing_fields(
     dialog._cluster_combo.setCurrentText("beta")
     dialog._password_edit.setText("")
     dialog._accept_if_valid()
-    assert warnings[-1] == "Missing password"
+    assert warnings[-1] == "Missing cluster password"
     dialog.close()
 
 

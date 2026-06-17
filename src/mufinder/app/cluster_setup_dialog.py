@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -15,21 +17,24 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QInputDialog,
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
+    prompt_for_cluster_credentials,
     prompt_to_trust_host_key,
     show_detailed_warning,
 )
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.theme import style_help_button, style_inline_group
 from mufinder.cluster_setup import ClusterConfig, load_cluster_configs, save_cluster_configs
+from mufinder.services.keychain import is_glamdring_keychain_supported, keychain_setup_help
 from mufinder.services.ssh_client import SSHConnection, SSHUnknownHostKeyError, save_trusted_host_key
 
 
@@ -43,7 +48,18 @@ class ClusterSetupDialog(QDialog):
         self._last_username = ""
 
         self.setWindowTitle("Remote Cluster Connections")
-        self.resize(760, 520)
+        self.resize(980, 520)
+        self.setStyleSheet(
+            """
+            #mufinderInlineGroup,
+            #mufinderInlineGroup QLabel {
+                background: transparent;
+            }
+            QCheckBox#mufinderInlineGroup {
+                background: transparent;
+            }
+            """
+        )
 
         layout = QVBoxLayout(self)
 
@@ -58,7 +74,18 @@ class ClusterSetupDialog(QDialog):
         layout.addLayout(top_row)
 
         form_group = QGroupBox("Connection Settings", self)
-        form = QFormLayout(form_group)
+        self._form_columns = QHBoxLayout(form_group)
+        self._form_columns.setSpacing(28)
+        self._form_columns.setContentsMargins(14, 18, 14, 14)
+        self._ssh_form = QFormLayout()
+        self._cluster_form = QFormLayout()
+        for form in (self._ssh_form, self._cluster_form):
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+            form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
+            form.setHorizontalSpacing(12)
+            form.setVerticalSpacing(8)
+        self._form_columns.addLayout(self._ssh_form, 1)
+        self._form_columns.addLayout(self._cluster_form, 1)
 
         self._name_edit = QLineEdit(form_group)
         self._hostname_edit = QLineEdit(form_group)
@@ -71,12 +98,43 @@ class ClusterSetupDialog(QDialog):
         self._auth_combo.addItems(["key", "password"])
 
         self._key_path_edit = QLineEdit(form_group)
-        key_row = QWidget(form_group)
-        key_layout = QHBoxLayout(key_row)
+        self._key_path_row = QWidget(form_group)
+        style_inline_group(self._key_path_row)
+        key_layout = QHBoxLayout(self._key_path_row)
         key_layout.setContentsMargins(0, 0, 0, 0)
         key_layout.addWidget(self._key_path_edit, 1)
-        self._key_browse_button = QPushButton("Browse", key_row)
+        self._key_browse_button = QPushButton("Browse", self._key_path_row)
         key_layout.addWidget(self._key_browse_button)
+
+        self._jump_enabled_check = QCheckBox("Connect through SSH jump host", form_group)
+        style_inline_group(self._jump_enabled_check)
+        self._jump_hostname_edit = QLineEdit(form_group)
+        self._jump_port_spin = QSpinBox(form_group)
+        self._jump_port_spin.setRange(1, 65535)
+        self._jump_port_spin.setValue(22)
+        self._jump_username_edit = QLineEdit(form_group)
+        self._jump_auth_combo = QComboBox(form_group)
+        self._jump_auth_combo.addItems(["key", "password"])
+        self._jump_key_path_edit = QLineEdit(form_group)
+        self._jump_key_path_row = QWidget(form_group)
+        style_inline_group(self._jump_key_path_row)
+        jump_key_layout = QHBoxLayout(self._jump_key_path_row)
+        jump_key_layout.setContentsMargins(0, 0, 0, 0)
+        jump_key_layout.addWidget(self._jump_key_path_edit, 1)
+        self._jump_key_browse_button = QPushButton("Browse", self._jump_key_path_row)
+        jump_key_layout.addWidget(self._jump_key_browse_button)
+        self._keychain_row = QWidget(form_group)
+        style_inline_group(self._keychain_row)
+        keychain_layout = QHBoxLayout(self._keychain_row)
+        keychain_layout.setContentsMargins(0, 0, 0, 0)
+        self._keychain_check = QCheckBox("Use macOS Keychain passwords", self._keychain_row)
+        style_inline_group(self._keychain_check)
+        keychain_layout.addWidget(self._keychain_check, 1)
+        self._keychain_help_button = QToolButton(self._keychain_row)
+        self._keychain_help_button.setText("?")
+        self._keychain_help_button.setToolTip("Show macOS Keychain setup commands")
+        style_help_button(self._keychain_help_button)
+        keychain_layout.addWidget(self._keychain_help_button)
 
         self._working_dir_edit = QLineEdit(form_group)
 
@@ -91,11 +149,12 @@ class ClusterSetupDialog(QDialog):
         self._walltime_edit.setPlaceholderText("HH:MM:SS")
 
         self._template_path_edit = QLineEdit(form_group)
-        template_row = QWidget(form_group)
-        template_layout = QHBoxLayout(template_row)
+        self._template_path_row = QWidget(form_group)
+        style_inline_group(self._template_path_row)
+        template_layout = QHBoxLayout(self._template_path_row)
         template_layout.setContentsMargins(0, 0, 0, 0)
         template_layout.addWidget(self._template_path_edit, 1)
-        self._template_browse_button = QPushButton("Browse", template_row)
+        self._template_browse_button = QPushButton("Browse", self._template_path_row)
         template_layout.addWidget(self._template_browse_button)
 
         self._castep_exec_edit = QLineEdit(form_group)
@@ -114,32 +173,44 @@ class ClusterSetupDialog(QDialog):
         self._keyword_python_edit = QLineEdit(form_group)
         self._keyword_python_edit.setPlaceholderText("python3")
 
-        form.addRow("Cluster name", self._name_edit)
-        form.addRow("Host name", self._hostname_edit)
-        form.addRow("Port", self._port_spin)
-        form.addRow("Username", self._username_edit)
-        form.addRow("Authentication method", self._auth_combo)
-        form.addRow("SSH key path", key_row)
-        form.addRow("Default remote working directory", self._working_dir_edit)
-        form.addRow("Queue system", self._queue_combo)
-        form.addRow("Cores per node", self._cores_per_node_spin)
-        form.addRow("Default walltime", self._walltime_edit)
+        self._ssh_form.addRow("Cluster name", self._name_edit)
+        self._ssh_form.addRow("Host name", self._hostname_edit)
+        self._ssh_form.addRow("Port", self._port_spin)
+        self._ssh_form.addRow("Username", self._username_edit)
+        self._ssh_form.addRow("Authentication method", self._auth_combo)
+        self._ssh_form.addRow("SSH key path", self._key_path_row)
+        self._ssh_form.addRow("", self._jump_enabled_check)
+        self._jump_hostname_label = QLabel("Jump host name", form_group)
+        self._ssh_form.addRow(self._jump_hostname_label, self._jump_hostname_edit)
+        self._jump_port_label = QLabel("Jump host port", form_group)
+        self._ssh_form.addRow(self._jump_port_label, self._jump_port_spin)
+        self._jump_username_label = QLabel("Jump host username", form_group)
+        self._ssh_form.addRow(self._jump_username_label, self._jump_username_edit)
+        self._jump_auth_label = QLabel("Jump host authentication method", form_group)
+        self._ssh_form.addRow(self._jump_auth_label, self._jump_auth_combo)
+        self._jump_key_label = QLabel("Jump host SSH key path", form_group)
+        self._ssh_form.addRow(self._jump_key_label, self._jump_key_path_row)
+        self._ssh_form.addRow("", self._keychain_row)
+        self._cluster_form.addRow("Default remote working directory", self._working_dir_edit)
+        self._cluster_form.addRow("Queue system", self._queue_combo)
+        self._cluster_form.addRow("Cores per node", self._cores_per_node_spin)
+        self._cluster_form.addRow("Default walltime", self._walltime_edit)
         self._template_label = QLabel("Template script", form_group)
-        form.addRow(self._template_label, template_row)
-        form.addRow("CASTEP executable", self._castep_exec_edit)
+        self._cluster_form.addRow(self._template_label, self._template_path_row)
+        self._cluster_form.addRow("CASTEP executable", self._castep_exec_edit)
         self._default_queue_label = QLabel("Default queue / partition", form_group)
-        form.addRow(self._default_queue_label, self._default_queue_edit)
+        self._cluster_form.addRow(self._default_queue_label, self._default_queue_edit)
         self._default_memory_label = QLabel("Default memory per core (GB)", form_group)
-        form.addRow(self._default_memory_label, self._default_memory_spin)
-        form.addRow("Submit command path", self._submit_command_edit)
-        form.addRow("Queue check command path", self._queue_check_command_edit)
-        form.addRow("Cancel command path", self._cancel_command_edit)
+        self._cluster_form.addRow(self._default_memory_label, self._default_memory_spin)
+        self._cluster_form.addRow("Submit command path", self._submit_command_edit)
+        self._cluster_form.addRow("Queue check command path", self._queue_check_command_edit)
+        self._cluster_form.addRow("Cancel command path", self._cancel_command_edit)
         self._keyword_mode_label = QLabel("Keyword generation mode", form_group)
-        form.addRow(self._keyword_mode_label, self._keyword_mode_combo)
+        self._cluster_form.addRow(self._keyword_mode_label, self._keyword_mode_combo)
         self._keyword_shell_init_label = QLabel("Keyword shell init", form_group)
-        form.addRow(self._keyword_shell_init_label, self._keyword_shell_init_edit)
+        self._cluster_form.addRow(self._keyword_shell_init_label, self._keyword_shell_init_edit)
         self._keyword_python_label = QLabel("Keyword Python command", form_group)
-        form.addRow(self._keyword_python_label, self._keyword_python_edit)
+        self._cluster_form.addRow(self._keyword_python_label, self._keyword_python_edit)
 
         layout.addWidget(form_group)
 
@@ -159,10 +230,19 @@ class ClusterSetupDialog(QDialog):
         self._add_button.clicked.connect(self._add_cluster)
         self._remove_button.clicked.connect(self._remove_cluster)
         self._auth_combo.currentTextChanged.connect(lambda *_: self._refresh_auth_controls())
+        self._jump_enabled_check.toggled.connect(lambda *_: self._refresh_jump_host_controls())
+        self._hostname_edit.textChanged.connect(lambda *_: self._refresh_keychain_controls())
+        self._auth_combo.currentTextChanged.connect(lambda *_: self._refresh_keychain_controls())
+        self._jump_enabled_check.toggled.connect(lambda *_: self._refresh_keychain_controls())
+        self._jump_hostname_edit.textChanged.connect(lambda *_: self._refresh_keychain_controls())
+        self._jump_auth_combo.currentTextChanged.connect(lambda *_: self._refresh_keychain_controls())
+        self._jump_auth_combo.currentTextChanged.connect(lambda *_: self._refresh_jump_host_controls())
         self._queue_combo.currentTextChanged.connect(lambda *_: self._refresh_scheduler_controls())
         self._keyword_mode_combo.currentTextChanged.connect(lambda *_: self._refresh_keyword_controls())
         self._username_edit.editingFinished.connect(self._maybe_sync_working_dir_for_username)
         self._key_browse_button.clicked.connect(self._browse_key_path)
+        self._jump_key_browse_button.clicked.connect(self._browse_jump_key_path)
+        self._keychain_help_button.clicked.connect(self._show_keychain_help)
         self._template_browse_button.clicked.connect(self._browse_template_path)
         self._test_button.clicked.connect(self._test_connection)
 
@@ -248,6 +328,13 @@ class ClusterSetupDialog(QDialog):
             self._username_edit.setText("")
             self._auth_combo.setCurrentText("key")
             self._key_path_edit.setText("")
+            self._jump_enabled_check.setChecked(False)
+            self._jump_hostname_edit.setText("")
+            self._jump_port_spin.setValue(22)
+            self._jump_username_edit.setText("")
+            self._jump_auth_combo.setCurrentText("key")
+            self._jump_key_path_edit.setText("")
+            self._keychain_check.setChecked(False)
             self._working_dir_edit.setText("")
             self._queue_combo.setCurrentText("SLURM")
             self._cores_per_node_spin.setValue(1)
@@ -264,6 +351,8 @@ class ClusterSetupDialog(QDialog):
             self._keyword_python_edit.setText("python3")
             self._last_username = ""
             self._refresh_auth_controls()
+            self._refresh_jump_host_controls()
+            self._refresh_keychain_controls()
             self._refresh_scheduler_controls()
             self._refresh_keyword_controls()
             return
@@ -274,6 +363,13 @@ class ClusterSetupDialog(QDialog):
         self._username_edit.setText(config.username)
         self._auth_combo.setCurrentText(config.auth_method)
         self._key_path_edit.setText(config.key_path)
+        self._jump_enabled_check.setChecked(config.jump_host_enabled)
+        self._jump_hostname_edit.setText(config.jump_hostname)
+        self._jump_port_spin.setValue(int(config.jump_port))
+        self._jump_username_edit.setText(config.jump_username)
+        self._jump_auth_combo.setCurrentText(config.jump_auth_method)
+        self._jump_key_path_edit.setText(config.jump_key_path)
+        self._keychain_check.setChecked(config.use_macos_keychain_passwords)
         self._working_dir_edit.setText(config.default_working_directory)
         self._queue_combo.setCurrentText(config.queue_system.upper())
         self._cores_per_node_spin.setValue(int(config.cores_per_node))
@@ -290,6 +386,8 @@ class ClusterSetupDialog(QDialog):
         self._keyword_python_edit.setText(config.keyword_python_command)
         self._last_username = config.username
         self._refresh_auth_controls()
+        self._refresh_jump_host_controls()
+        self._refresh_keychain_controls()
         self._refresh_scheduler_controls()
         self._refresh_keyword_controls()
 
@@ -324,6 +422,48 @@ class ClusterSetupDialog(QDialog):
         self._key_path_edit.setEnabled(key_enabled)
         self._key_browse_button.setEnabled(key_enabled)
 
+    def _refresh_jump_host_controls(self) -> None:
+        enabled = self._jump_enabled_check.isChecked()
+        key_enabled = enabled and self._jump_auth_combo.currentText().strip().lower() == "key"
+        for widget in (
+            self._jump_hostname_label,
+            self._jump_hostname_edit,
+            self._jump_port_label,
+            self._jump_port_spin,
+            self._jump_username_label,
+            self._jump_username_edit,
+            self._jump_auth_label,
+            self._jump_auth_combo,
+            self._jump_key_label,
+            self._jump_key_path_edit,
+            self._jump_key_browse_button,
+        ):
+            widget.setEnabled(enabled)
+        self._jump_key_path_edit.setEnabled(key_enabled)
+        self._jump_key_browse_button.setEnabled(key_enabled)
+
+    def _refresh_keychain_controls(self) -> None:
+        eligible = self._keychain_is_available_for_form()
+        self._keychain_row.setVisible(eligible)
+        self._keychain_check.setEnabled(eligible)
+        self._keychain_help_button.setEnabled(eligible)
+        if not eligible:
+            self._keychain_check.setChecked(False)
+
+    def _keychain_is_available_for_form(self) -> bool:
+        return is_glamdring_keychain_supported(
+            ClusterConfig(
+                name=self._name_edit.text().strip() or "Redwood",
+                hostname=self._hostname_edit.text().strip(),
+                username=self._username_edit.text().strip(),
+                auth_method=self._auth_combo.currentText().strip().lower() or "key",
+                jump_host_enabled=self._jump_enabled_check.isChecked(),
+                jump_hostname=self._jump_hostname_edit.text().strip(),
+                jump_username=self._jump_username_edit.text().strip(),
+                jump_auth_method=self._jump_auth_combo.currentText().strip().lower() or "key",
+            )
+        )
+
     def _refresh_scheduler_controls(self) -> None:
         queue_name = self._queue_combo.currentText().strip().lower()
         is_slurm = queue_name == "slurm"
@@ -346,10 +486,22 @@ class ClusterSetupDialog(QDialog):
         if path:
             self._key_path_edit.setText(path)
 
+    def _browse_jump_key_path(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Select jump-host SSH private key", str(Path.home()), "All Files (*)")
+        if path:
+            self._jump_key_path_edit.setText(path)
+
     def _browse_template_path(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select submission template", str(Path.home()), "Shell Scripts (*.sh);;All Files (*)")
         if path:
             self._template_path_edit.setText(path)
+
+    def _show_keychain_help(self) -> None:
+        QMessageBox.information(
+            self,
+            "macOS Keychain setup",
+            keychain_setup_help(self._updated_selected_config() or self._selected_config() or ClusterConfig(name="", hostname="")),
+        )
 
     def _updated_selected_config(self) -> ClusterConfig | None:
         existing = self._selected_config()
@@ -375,6 +527,13 @@ class ClusterSetupDialog(QDialog):
             username=self._username_edit.text().strip(),
             auth_method=self._auth_combo.currentText().strip().lower() or "key",
             key_path=self._key_path_edit.text().strip(),
+            jump_host_enabled=self._jump_enabled_check.isChecked(),
+            jump_hostname=self._jump_hostname_edit.text().strip(),
+            jump_port=self._jump_port_spin.value(),
+            jump_username=self._jump_username_edit.text().strip(),
+            jump_auth_method=self._jump_auth_combo.currentText().strip().lower() or "key",
+            jump_key_path=self._jump_key_path_edit.text().strip(),
+            use_macos_keychain_passwords=self._keychain_check.isChecked() and self._keychain_is_available_for_form(),
             default_working_directory=self._working_dir_edit.text().strip(),
             queue_system=queue_system,
             cores_per_node=self._cores_per_node_spin.value(),
@@ -411,30 +570,13 @@ class ClusterSetupDialog(QDialog):
             QMessageBox.warning(self, "Missing username", "Enter a username before testing the connection.")
             return
 
-        password: str | None = None
-        if config.auth_method == "password":
-            raw_password, accepted = QInputDialog.getText(
-                self,
-                "Cluster password",
-                "Enter cluster password:",
-                QLineEdit.EchoMode.Password,
-            )
-            if not accepted or not raw_password.strip():
-                QMessageBox.warning(self, "Missing password", "Password is required for this auth method.")
-                return
-            password = raw_password.strip()
-        elif config.auth_method == "key":
-            raw_passphrase, accepted = QInputDialog.getText(
-                self,
-                "Key passphrase",
-                "Enter key passphrase (required for encrypted private keys):",
-                QLineEdit.EchoMode.Password,
-            )
-            if accepted and raw_passphrase.strip():
-                password = raw_passphrase.strip()
+        credentials = prompt_for_cluster_credentials(self, config)
+        if credentials is None:
+            QMessageBox.warning(self, "Missing credentials", "Credentials are required for this connection.")
+            return
 
         try:
-            self._test_connection_with_trust(config, password=password)
+            self._test_connection_with_trust(config, credentials=credentials)
         except Exception as exc:  # noqa: BLE001
             show_detailed_warning(
                 self,
@@ -446,24 +588,32 @@ class ClusterSetupDialog(QDialog):
 
         QMessageBox.information(self, "Connection successful", "SSH connection test succeeded.")
 
-    def _test_connection_with_trust(self, config: ClusterConfig, *, password: str | None) -> None:
-        connection = SSHConnection(config, settings=self._settings)
-        try:
-            connection.connect(password=password)
-        except SSHUnknownHostKeyError as exc:
-            if not prompt_to_trust_host_key(self, config, exc):
-                raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
-            save_trusted_host_key(
-                self._settings,
-                config,
-                algorithm=exc.algorithm,
-                key_base64=exc.key_base64,
-            )
+    def _test_connection_with_trust(self, config: ClusterConfig, *, credentials) -> None:
+        trusted_endpoints: set[str] = set()
+        while True:
             connection = SSHConnection(config, settings=self._settings)
-            connection.connect(password=password)
-        finally:
-            if connection.is_connected:
-                connection.disconnect()
+            try:
+                if config.jump_host_enabled:
+                    connection.connect(credentials=credentials)
+                else:
+                    connection.connect(password=credentials.target_secret)
+                return
+            except SSHUnknownHostKeyError as exc:
+                if exc.endpoint in trusted_endpoints:
+                    raise
+                if not prompt_to_trust_host_key(self, config, exc):
+                    raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
+                save_trusted_host_key(
+                    self._settings,
+                    config,
+                    algorithm=exc.algorithm,
+                    key_base64=exc.key_base64,
+                    endpoint=exc.endpoint,
+                )
+                trusted_endpoints.add(exc.endpoint)
+            finally:
+                if connection.is_connected:
+                    connection.disconnect()
 
     def _validate_configs(self) -> list[str]:
         issues: list[str] = []
@@ -479,6 +629,11 @@ class ClusterSetupDialog(QDialog):
                 issues.append(f"Cluster '{config.name}' is missing hostname.")
             if not config.username:
                 issues.append(f"Cluster '{config.name}' is missing username.")
+            if config.jump_host_enabled:
+                if not config.jump_hostname:
+                    issues.append(f"Cluster '{config.name}' is missing jump host name.")
+                if not config.jump_username:
+                    issues.append(f"Cluster '{config.name}' is missing jump host username.")
             if config.queue_system.strip().lower() == "slurm" and not config.template_script_path:
                 issues.append(f"Cluster '{config.name}' is missing template script path.")
         return issues
