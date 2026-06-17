@@ -264,6 +264,11 @@ def test_prompt_for_cluster_credentials_uses_keychain_without_prompting(monkeypa
     )
     monkeypatch.setattr(
         ui_module,
+        "is_glamdring_keychain_supported",
+        lambda _config: True,
+    )
+    monkeypatch.setattr(
+        ui_module,
         "load_keychain_credentials",
         lambda _config: SSHCredentials(target_secret="glam-secret", jump_secret="physics-secret"),
     )
@@ -289,6 +294,7 @@ def test_prompt_for_cluster_credentials_reports_missing_keychain_entry(monkeypat
             ]
         )
 
+    monkeypatch.setattr(ui_module, "is_glamdring_keychain_supported", lambda _config: True)
     monkeypatch.setattr(ui_module, "load_keychain_credentials", _raise_missing)
     monkeypatch.setattr(
         ui_module,
