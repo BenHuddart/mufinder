@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v0.3.0 (2026-06-17)
+
+### Bug Fixes
+
+- Patch _generate_preview in spinbox-range regression tests to prevent VTK abort
+  ([`5d32db7`](https://github.com/BenHuddart/mufinder/commit/5d32db7a797b6c2413a0c651ea9196f470b45e0b))
+
+- **tests**: Mock is_glamdring_keychain_supported in keychain credential tests
+  ([`cc36b43`](https://github.com/BenHuddart/mufinder/commit/cc36b43cdb1ac69d77985f90241f72b794bf051c))
+
+### Documentation
+
+- Document branch-protection-aware release process
+  ([`b955f68`](https://github.com/BenHuddart/mufinder/commit/b955f680f33992f75e9870cef7bfddddc99f794e))
+
+### Features
+
+- Add Suggest… supercell button with Pareto-front candidate table
+  ([`f53c07e`](https://github.com/BenHuddart/mufinder/commit/f53c07eaa3c745a13c21bf682301ff9ca32dea29))
+
+
 ## v0.2.0 (2026-06-05)
 
 ### Bug Fixes
