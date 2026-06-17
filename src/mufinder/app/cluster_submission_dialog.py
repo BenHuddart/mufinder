@@ -76,13 +76,9 @@ class ClusterSubmissionDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        summary = QLabel(
-            f"You are about to submit {len(self._job_labels)} job(s): "
-            + ", ".join(self._job_labels[:6])
-            + ("..." if len(self._job_labels) > 6 else "")
-        )
-        summary.setWordWrap(True)
-        layout.addWidget(summary)
+        self._summary_label = QLabel(self._job_summary_text())
+        self._summary_label.setWordWrap(True)
+        layout.addWidget(self._summary_label)
 
         form_group = QGroupBox("Submission Settings", self)
         form = QFormLayout(form_group)
@@ -145,7 +141,7 @@ class ClusterSubmissionDialog(QDialog):
         # Keep the hint top-aligned with explicit headroom to avoid glyph clipping.
         self._auth_hint.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self._auth_hint.setContentsMargins(0, 0, 0, 0)
-        self._auth_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self._auth_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._auth_hint.setMinimumHeight(self._auth_hint.fontMetrics().lineSpacing() + 6)
         # Add the label as a full-row widget so it isn't cramped by the form's label column
         form.addRow(self._auth_hint)
@@ -283,8 +279,21 @@ class ClusterSubmissionDialog(QDialog):
 
     def _set_auth_hint_text(self, text: str) -> None:
         self._auth_hint.setText(text)
-        self._auth_hint.setMinimumHeight(self._auth_hint.fontMetrics().lineSpacing() + 6)
+        minimum_height = self._auth_hint.fontMetrics().lineSpacing() + 6
+        self._auth_hint.setMinimumHeight(max(minimum_height, self._auth_hint.sizeHint().height()))
         self._auth_hint.updateGeometry()
+
+    def _job_summary_text(self) -> str:
+        job_count = len(self._job_labels)
+        prefix = f"You are about to submit {job_count} job(s)"
+        if not self._job_labels:
+            return f"{prefix}."
+        displayed_labels = self._job_labels[:4]
+        summary = ", ".join(displayed_labels)
+        remaining = job_count - len(displayed_labels)
+        if remaining > 0:
+            return f"{prefix}: {summary}, and {remaining} more."
+        return f"{prefix}: {summary}."
 
     def _set_password_row_visible(self, visible: bool) -> None:
         self._refresh_credential_rows(visible)

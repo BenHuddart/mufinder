@@ -173,6 +173,20 @@ def test_cluster_submission_dialog_keychain_mode_hides_manual_credentials(
     dialog.close()
 
 
+def test_cluster_submission_dialog_compacts_large_job_summary(qapp) -> None:
+    job_labels = [f"cutoff_convergence_ecut_{index}" for index in range(12)]
+
+    dialog = ClusterSubmissionDialog(job_labels=job_labels, cluster_configs=[_jump_password_config()])
+
+    summary = dialog._summary_label.text()
+    assert "12 job(s)" in summary
+    assert "cutoff_convergence_ecut_0" in summary
+    assert "cutoff_convergence_ecut_3" in summary
+    assert "cutoff_convergence_ecut_4" not in summary
+    assert "and 8 more" in summary
+    dialog.close()
+
+
 def test_cluster_submission_dialog_password_auth_hint_has_vertical_headroom(qapp) -> None:
     dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=_configs())
 
@@ -182,6 +196,21 @@ def test_cluster_submission_dialog_password_auth_hint_has_vertical_headroom(qapp
     assert bool(dialog._auth_hint.alignment() & dialog_module.Qt.AlignTop)
     assert dialog._auth_hint.minimumHeight() >= dialog._auth_hint.fontMetrics().lineSpacing() + 6
     assert dialog._auth_hint.sizeHint().height() >= dialog._auth_hint.fontMetrics().lineSpacing()
+    dialog.close()
+
+
+def test_cluster_submission_dialog_auth_hint_reserves_wrapped_keychain_height(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(keychain_module.sys, "platform", "darwin")
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=[_keychain_password_config()])
+
+    dialog._auth_hint.setFixedWidth(320)
+    dialog._set_auth_hint_text(dialog._auth_hint.text())
+
+    assert dialog._auth_hint.minimumHeight() >= dialog._auth_hint.sizeHint().height()
+    assert dialog._auth_hint.minimumHeight() > dialog._auth_hint.fontMetrics().lineSpacing() + 6
     dialog.close()
 
 
