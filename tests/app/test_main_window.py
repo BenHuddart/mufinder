@@ -2213,6 +2213,9 @@ def test_main_window_materializes_neb_jobs_directly_from_endpoints(
     assert "%BLOCK POSITIONS_ABS_PRODUCT" in cell_text
     assert "%BLOCK POSITIONS_ABS_INTERMEDIATE" not in cell_text
     assert "TSSEARCH_METHOD : NEB" in param_text
+    # Climbing image is locked on, and the image count defaults to an odd value (7).
+    assert "TSSEARCH_NEB_CLIMBING : TRUE" in param_text
+    assert "TSSEARCH_MAX_PATH_POINTS : 7" in param_text
 
     window.close()
 
@@ -2359,6 +2362,7 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
             "parameter_values": {
                 "kpoint_mp_grid": [1, 1, 2],
                 "tssearch_neb_max_iter": 24,
+                "tssearch_max_path_points": 8,
             }
         }
     }
@@ -2373,6 +2377,8 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
     assert "KPOINT_MP_GRID 1 1 2" in cell_text
     assert "CUT_OFF_ENERGY : 680" in param_text
     assert "TSSEARCH_NEB_MAX_ITER : 24" in param_text
+    # An even configured image count is rounded up to the next odd value for climbing NEB.
+    assert "TSSEARCH_MAX_PATH_POINTS : 9" in param_text
 
 
 def test_main_window_records_neb_result_and_loads_preview(

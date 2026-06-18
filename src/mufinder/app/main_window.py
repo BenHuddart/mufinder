@@ -253,15 +253,18 @@ _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _WorkflowKey = TypeVar("_WorkflowKey")
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {"lattice_cart", "lattice_abc", "positions_frac", "positions_abs"}
 _QUANTUM_CONFIG_KEYWORD_NAMES = workflow_basic_parameter_names()
+# Climbing image is locked on (see the NEB Configure dialog's locked_values): a barrier
+# calculation needs the top image driven onto the saddle, so it is not user-editable here.
 _ENERGY_BARRIER_NEB_KEYWORD_NAMES = workflow_basic_parameter_names(
     "tssearch_max_path_points",
     "tssearch_neb_spring_constant",
     "tssearch_neb_tangent_mode",
     "tssearch_neb_method",
     "tssearch_neb_max_iter",
-    "tssearch_neb_climbing",
     "tssearch_neb_normed",
 )
+# Default NEB image count (TSSEARCH_MAX_PATH_POINTS). Odd, as climbing-image NEB requires.
+_ENERGY_BARRIER_NEB_DEFAULT_IMAGES = 7
 _QUANTUM_GUI_TO_METHOD = {
     "FINITEDISPLACEMENT": "finite_displacement",
     "DFPT": "dfpt",
@@ -4509,7 +4512,16 @@ class MainWindow(QMainWindow):
                 if source_defaults_cache is not None:
                     source_defaults_cache[reactant_job_id] = reactant_defaults
             values.update(reactant_defaults)
+        # Default to an odd image count, and round any user-supplied even count up: climbing-image
+        # NEB requires an odd TSSEARCH_MAX_PATH_POINTS (CASTEP otherwise silently adds one).
+        values.setdefault("tssearch_max_path_points", _ENERGY_BARRIER_NEB_DEFAULT_IMAGES)
         values.update(params)
+        try:
+            image_count = int(values.get("tssearch_max_path_points"))
+        except (TypeError, ValueError):
+            image_count = None
+        if image_count is not None and image_count % 2 == 0:
+            values["tssearch_max_path_points"] = image_count + 1
         return values, advanced, extras
 
     def _project_convergence_input_defaults(
@@ -12752,6 +12764,7 @@ class MainWindow(QMainWindow):
             locked_values={
                 "task": "TRANSITIONSTATESEARCH",
                 "tssearch_method": "NEB",
+                "tssearch_neb_climbing": True,
             },
             intro_text=(
                 f"Path: {str(candidates[0].source.get('label', '')).strip() or candidates[0].key}"

@@ -92,6 +92,11 @@ Implemented:
   a latent Bohr-vs-Angstrom unit bug in the intermediate seed.
 - `tssearch_max_path_points` (the NEB image count) moved into `_ENERGY_BARRIER_NEB_KEYWORD_NAMES`;
   the NEB param template emits a default odd image count plus climbing-image.
+- Climbing image is **locked on** (a barrier needs the top image on the saddle): `tssearch_neb_climbing`
+  was removed from the editable surface and added to the NEB dialog's locked_values. The image
+  count defaults to **7** (`_ENERGY_BARRIER_NEB_DEFAULT_IMAGES`) and any even user value is rounded
+  up to the next odd in `_energy_barrier_neb_row_configuration_with_source_defaults` (CASTEP requires
+  an odd count under climbing).
 - Tests: removed the obsolete TS-seeded materialization test; added
   `test_main_window_materializes_neb_jobs_directly_from_endpoints` (product block, no
   intermediate). All energy-barrier/NEB GUI tests pass.
