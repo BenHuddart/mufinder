@@ -12455,6 +12455,7 @@ class MainWindow(QMainWindow):
                 )
                 reactant_spec = structure_to_spec(prepared.reactant)
                 product_block = self._fractional_position_block_from_structure(prepared.product)
+                intermediate_block = self._fractional_midpoint_block(prepared.reactant, prepared.product)
             except (EnergyBarrierError, StructureBridgeError, ValueError):
                 continue
             values, _advanced_names, _extras = self._energy_barrier_neb_row_configuration_with_source_defaults(
@@ -12475,9 +12476,9 @@ class MainWindow(QMainWindow):
                         label=f"{str(candidate.source.get('label', '')).strip() or candidate.key}_neb",
                         reactant_structure=reactant_spec,
                         product_positions_frac=product_block,
-                        intermediate_positions_frac=None,
+                        intermediate_positions_frac=intermediate_block,
                         product_atomic_spins=reactant_spec.atomic_spins,
-                        intermediate_atomic_spins=None,
+                        intermediate_atomic_spins=reactant_spec.atomic_spins,
                         source_site_ids=tuple(
                             value
                             for value in (reactant_site_id, product_site_id)
@@ -12602,6 +12603,26 @@ class MainWindow(QMainWindow):
             AtomicPosition(str(species), tuple(float(value) for value in fractional))
             for species, fractional in zip(structure.species, structure.fractional_positions, strict=True)
         ]
+        return PositionBlock(positions=tuple(rows), unit="frac")
+
+    def _fractional_midpoint_block(self, reactant: Structure, product: Structure) -> PositionBlock:
+        # CASTEP's NEB driver requires an INTERMEDIATE structure (tssearch.f90:307-314); it does not
+        # interpolate from the two endpoints alone. We synthesise the central image as the
+        # minimum-image fractional midpoint of reactant and product. Feeding this midpoint makes
+        # CASTEP's two linear segments (reactant->intermediate, intermediate->product) collapse into
+        # a single straight-line reactant->product interpolation -- the standard linear initial band.
+        rows = []
+        for species, reactant_frac, product_frac in zip(
+            reactant.species, reactant.fractional_positions, product.fractional_positions, strict=True
+        ):
+            midpoint = []
+            for r_value, p_value in zip(reactant_frac, product_frac, strict=True):
+                # Wrap the displacement into (-0.5, 0.5] so the muon takes the short path across
+                # the periodic boundary rather than the long way round the cell.
+                delta = float(p_value) - float(r_value)
+                delta -= round(delta)
+                midpoint.append(float(r_value) + 0.5 * delta)
+            rows.append(AtomicPosition(str(species), tuple(midpoint)))
         return PositionBlock(positions=tuple(rows), unit="frac")
 
     def _on_configure_quantum_corrections_source(self, payload: object) -> None:

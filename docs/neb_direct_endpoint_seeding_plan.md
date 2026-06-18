@@ -22,7 +22,18 @@ muon hops, gives the barrier directly, and matches the parser we already have.
 - Remove the LST/QST transition-state-search step from the Energy Barriers workflow.
 - Seed NEB directly from two relaxed endpoint muon sites (reactant + product).
 - Reuse the existing path "sources" (endpoint pairs), re-optimised for NEB.
-- Use CASTEP's built-in band interpolation; defer client-side IDPP pre-interpolation.
+- Synthesise the CASTEP-required INTERMEDIATE structure ourselves as the minimum-image
+  fractional midpoint of the endpoints (a linear initial band); defer IDPP pre-interpolation.
+
+> **Correction (CASTEP NEB requires three structures).** The earlier assumption that CASTEP
+> builds the band from the two endpoints alone is wrong. `tssearch.f90:307-314` makes the NEB
+> path *unconditionally* read REACTANT, PRODUCT **and** INTERMEDIATE; a cell without the
+> intermediate aborts with `cell_read_coordinates - one of POSITION_FRAC_INTERMEDIATE or
+> POSITION_ABS_INTERMEDIATE must be present`. CASTEP places the intermediate at the central
+> image and linearly interpolates reactant->intermediate->product (`tssearch_neb.f90:1497-1513`).
+> We therefore supply the minimum-image fractional midpoint as the intermediate, which collapses
+> the two segments into a single straight reactant->product line — the standard linear band.
+> The "no separate LST/QST search" goal still holds: we compute the midpoint, we don't search for it.
 - Keep barrier extraction correct (eV) and well tested.
 
 ## Key references (not committed to the repo)

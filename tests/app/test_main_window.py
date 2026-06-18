@@ -2138,9 +2138,9 @@ def test_main_window_records_energy_barrier_result_from_ts_file(
 def test_main_window_materializes_neb_jobs_directly_from_endpoints(
     qapp, tmp_path: Path
 ) -> None:
-    # The simplified workflow: NEB is seeded straight from the two relaxed endpoints
-    # with no transition-state search. CASTEP interpolates the band, so the cell has a
-    # product block but no intermediate block.
+    # The simplified workflow: NEB is seeded straight from the two relaxed endpoints with no
+    # transition-state search. CASTEP's NEB driver still requires an INTERMEDIATE structure, so the
+    # app synthesises the minimum-image midpoint and writes both a product and an intermediate block.
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "barrier_neb_endpoints.mufinder", "BarrierNebEndpoints")
@@ -2219,7 +2219,14 @@ def test_main_window_materializes_neb_jobs_directly_from_endpoints(
     cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
     param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
     assert "%BLOCK POSITIONS_FRAC_PRODUCT" in cell_text
-    assert "%BLOCK POSITIONS_FRAC_INTERMEDIATE" not in cell_text
+    # CASTEP NEB requires the intermediate; the app supplies the minimum-image fractional midpoint.
+    # The muon runs 0.25 -> 0.75 in x, so its central image sits at x = 0.5 (y, z unchanged at 0.25).
+    assert "%BLOCK POSITIONS_FRAC_INTERMEDIATE" in cell_text
+    intermediate_section = cell_text.split("%BLOCK POSITIONS_FRAC_INTERMEDIATE", 1)[1]
+    intermediate_section = intermediate_section.split("%ENDBLOCK POSITIONS_FRAC_INTERMEDIATE", 1)[0]
+    muon_line = next(line for line in intermediate_section.splitlines() if line.strip().startswith("H:mu"))
+    muon_coords = [float(value) for value in muon_line.split()[1:4]]
+    assert all(abs(actual - expected) < 1e-9 for actual, expected in zip(muon_coords, [0.5, 0.25, 0.25]))
     assert "TSSEARCH_METHOD : NEB" in param_text
     # Climbing image is locked on, and the image count defaults to an odd value (7).
     assert "TSSEARCH_NEB_CLIMBING : TRUE" in param_text

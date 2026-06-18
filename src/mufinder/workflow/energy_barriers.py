@@ -30,6 +30,10 @@ class NudgedElasticBandSource:
     # species (e.g. the muon "H:mu"); the POSITIONS_ABS_* reader does not and aborts with
     # "Unknown element in cell file".
     product_positions_frac: PositionBlock
+    # CASTEP's NEB driver requires an INTERMEDIATE structure (it seeds the central image and
+    # interpolates linearly to each endpoint); it does NOT build the band from the two endpoints
+    # alone. Callers should supply the minimum-image midpoint so the initial band is a straight
+    # reactant->product line. None is only for renderer tests; a real NEB job without it aborts.
     intermediate_positions_frac: PositionBlock | None = None
     product_atomic_spins: tuple[float, ...] | None = None
     intermediate_atomic_spins: tuple[float, ...] | None = None

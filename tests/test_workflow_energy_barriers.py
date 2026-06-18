@@ -74,9 +74,10 @@ def test_expand_nudged_elastic_band_jobs_renders_intermediate_blocks() -> None:
     assert any(keyword.name == "tssearch_method" and keyword.value == "NEB" for keyword in job.param_file.keywords)
 
 
-def test_expand_nudged_elastic_band_jobs_without_intermediate_seeds_from_endpoints() -> None:
-    # Direct endpoint seeding: no transition-state intermediate is supplied, so CASTEP
-    # interpolates the band itself. The cell must carry only the product block.
+def test_expand_nudged_elastic_band_jobs_without_intermediate_omits_block() -> None:
+    # The renderer faithfully omits the intermediate block when none is supplied. (A real CASTEP
+    # NEB run requires the intermediate; the app always supplies the minimum-image midpoint, but
+    # the lower-level expander must not invent one.)
     source = NudgedElasticBandSource(
         label="siteA_to_siteB_path1_neb",
         reactant_structure=_structure_spec(),
