@@ -4795,12 +4795,6 @@ class MainWindow(QMainWindow):
         )
         energy_barriers_view.configure_source_requested.connect(self._on_configure_energy_barrier_source)
         energy_barriers_view.view_source_requested.connect(self._on_view_energy_barrier_source)
-        energy_barriers_view.submit_local_requested.connect(
-            self._on_submit_local_from_energy_barriers
-        )
-        energy_barriers_view.submit_cluster_requested.connect(
-            self._on_submit_cluster_from_energy_barriers
-        )
         energy_barriers_view.configure_result_requested.connect(self._on_configure_energy_barrier_result)
         energy_barriers_view.submit_neb_local_requested.connect(
             self._on_submit_local_neb_from_energy_barriers
@@ -13440,34 +13434,6 @@ class MainWindow(QMainWindow):
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
-
-    def _on_submit_local_from_energy_barriers(self, keys: list[str]) -> None:
-        if not self._check_definition_host(self._active_energy_barriers_definition()):
-            return
-        self._submit_workflow_selection(
-            keys,
-            normalize=str,
-            build_states=self._build_energy_barriers_states,
-            jobs_for_values=self._jobs_for_energy_barrier_source_keys,
-            materialize_values=self._materialize_energy_barriers_jobs,
-            is_ready=workflow_row_state_is_ready,
-            no_ready_message="Only eligible transition-state paths in the 'ready' state can be submitted.",
-            submit=self._submit_jobs_locally,
-        )
-
-    def _on_submit_cluster_from_energy_barriers(self, keys: list[str]) -> None:
-        if not self._check_definition_host(self._active_energy_barriers_definition()):
-            return
-        self._submit_workflow_selection(
-            keys,
-            normalize=str,
-            build_states=self._build_energy_barriers_states,
-            jobs_for_values=self._jobs_for_energy_barrier_source_keys,
-            materialize_values=self._materialize_energy_barriers_jobs,
-            is_ready=workflow_row_state_is_ready,
-            no_ready_message="Only eligible transition-state paths in the 'ready' state can be submitted.",
-            submit=self._submit_jobs_on_cluster,
-        )
 
     def _on_energy_barrier_endpoint_selection_changed(self, reactant_key: str, product_key: str) -> None:
         if self._document is None:

@@ -107,14 +107,31 @@ Next (mostly Phase 3 / UI-coupled):
 
 ## Phase 3: UI (`app/energy_barriers_widget.py`)
 
-Status: not started.
+Status: **in progress** — TS-search submission removed and terminology rebranded to NEB;
+table/column consolidation still pending.
 
-Plan:
+Implemented:
 
-- Remove the TS-search section. Make "Generate paths -> set up NEB -> submit (local/cluster)"
-  the single flow on endpoint pairs (reuse the existing `submit_neb_*_requested(keys)` signals).
-- Surface NEB-relevant params (image count, climbing, spring constant, tangent mode,
-  tolerances); drop the LST/QST controls.
+- Removed the TS-search job submission from the Paths tab ("Run Local/Cluster Calculations"
+  buttons, their emit methods, and the `_on_submit_*_from_energy_barriers` handlers + signal
+  connections in `main_window`). Users can no longer launch a transition-state search.
+- Rebranded the UI: the Paths tab's "Diffusion Paths" list (generate/preview/delete), the
+  middle tab renamed "Transition States" -> "NEB Setup" with NEB-focused group titles, hints,
+  and intro; the results column header "Job" -> "Path".
+- Verified: 28 energy-barrier GUI tests pass; the widget constructs with tabs
+  `['Paths', 'NEB Setup', 'NEB Analysis']` and the NEB configure/submit controls intact.
+
+Next:
+
+- Consolidate the two path tables (the Paths "Diffusion Paths" list and the "NEB Setup"
+  table currently list the same paths); drop the vestigial `Barrier`/`Images`/`TS File`
+  columns from the NEB Setup table (and the matching `EnergyBarrierResultRow` fields).
+- The per-path "Configure Selected Parameters" dialog on the Paths tab still exposes LST/QST
+  controls (`_ENERGY_BARRIER_TSS_KEYWORD_NAMES`); retire it or repoint to NEB params.
+- Remove the now-dead TS materialization helpers (`_materialize_energy_barriers_jobs`,
+  `_jobs_for_energy_barrier_source_keys`) once nothing references them.
+- Relax the path-enumeration `max_path_length_ang` default.
+- Full visual verification by launching the app on a real project.
 
 ## Phase 4: Tests
 
