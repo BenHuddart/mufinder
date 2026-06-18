@@ -23,6 +23,7 @@ from mufinder.services.ssh_client import (
     SSHConnection,
     SSHProtocolBannerError,
     SSHTransportError,
+    SSHUnknownHostKeyError,
     TrustedHostKeyRecord,
     _decode_host_key,
     _format_exception_detail,
@@ -445,6 +446,49 @@ def test_trusted_host_key_already_known_is_not_readded(
     # Only the single system-provided entry should be registered.
     assert host_keys.lookup("example.org") is not None
     assert connection.is_connected
+
+
+def test_undecodable_trusted_host_key_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A corrupt/legacy stored trusted host key (e.g. base64 of a hostname placeholder written by
+    # an older build) must not abort the connection with a cryptic paramiko error; it is skipped
+    # so the connection falls through to system host keys / the trust prompt.
+    config = _config("key")
+    settings = _FakeSettings()
+    save_trusted_host_key(
+        settings,
+        config,
+        algorithm="ssh-ed25519",
+        key_base64=base64.b64encode(b"bastion").decode("ascii"),
+    )
+
+    def _raise(*_args, **_kwargs):
+        raise _FakeParamiko.SSHException("Invalid key (class: Ed25519Key, data type: ion")
+
+    monkeypatch.setattr("mufinder.services.ssh_client._decode_host_key", _raise)
+    # The endpoint is not in system host keys, so the app-trusted decode path is reached.
+    fake_paramiko = _FakeParamiko(fail_key=False, system_host_keys={})
+    _patch_paramiko(monkeypatch, fake_paramiko)
+
+    connection = SSHConnection(config, settings=settings)
+    # Before the fix this raised the cryptic paramiko SSHException ("Invalid key ...").
+    # Now the corrupt key is skipped, so the normal missing-host-key trust flow runs instead
+    # (and when the endpoint IS in ~/.ssh/known_hosts, the connection simply succeeds).
+    with pytest.raises(SSHUnknownHostKeyError):
+        connection.connect()
+
+
+def test_decode_host_key_rejects_hostname_placeholder_blob() -> None:
+    # Reproduces the real corruption: key_base64 was the base64 of a hostname string, so the
+    # decoded blob is not a valid SSH key wire format and real paramiko rejects it.
+    paramiko = pytest.importorskip("paramiko")
+    record = TrustedHostKeyRecord(
+        algorithm="ssh-ed25519",
+        key_base64=base64.b64encode(b"bastion").decode("ascii"),
+    )
+    with pytest.raises(Exception):
+        _decode_host_key(paramiko, record)
 
 
 # ---------------------------------------------------------------------------

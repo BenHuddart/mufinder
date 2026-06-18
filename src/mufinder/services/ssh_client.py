@@ -559,7 +559,22 @@ class SSHConnection:
         lookup = trusted_host_lookup_name(self._config, endpoint=endpoint)
         if host_keys.lookup(lookup) is not None:
             return
-        host_keys.add(lookup, trusted.algorithm, _decode_host_key(paramiko, trusted))
+        try:
+            host_key = _decode_host_key(paramiko, trusted)
+        except Exception as exc:  # noqa: BLE001 - a corrupt stored key must not abort the connection.
+            # An undecodable/legacy trusted host key (e.g. a placeholder written by an older
+            # build) would otherwise raise a cryptic paramiko error and block submission. Skip
+            # it: the connection falls through to ~/.ssh/known_hosts or the missing-host-key
+            # prompt, which re-saves a correct key.
+            _LOG.warning(
+                "Ignoring undecodable trusted host key for %s (%s/%s): %s",
+                lookup,
+                self._config.name,
+                endpoint,
+                exc,
+            )
+            return
+        host_keys.add(lookup, trusted.algorithm, host_key)
 
     def _rmtree_via_sftp(self, sftp, remote_path: str) -> None:
         if self.is_dir(remote_path):
