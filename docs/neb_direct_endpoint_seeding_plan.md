@@ -140,13 +140,28 @@ Implemented (continued):
   definition being populated — a generated path is immediately NEB-ready. The merged table's
   per-row + batch configure now drives NEB parameters (`configure_result_requested`).
 
+Implemented (continued):
+
+- UI polish: dropped the "transition-state" qualifiers from the subtitle/intro/hint, and made
+  the workflow tab bar/widget background transparent so the tab strip matches the window.
+- Dead-code sweep: removed the now-unused TS pipeline — `_on_configure_energy_barrier_source`,
+  `_materialize_energy_barriers_jobs`, `_jobs_for_energy_barrier_source_keys`,
+  `_build_energy_barriers_states`, `_ensure_energy_barriers_definition`,
+  `_serialize_energy_barrier_sources`, `_energy_barrier_source_parameter_specs`,
+  `_energy_barrier_row_configuration_with_source_defaults`, `_active_energy_barriers_definition`,
+  `_job_for_energy_barrier_source_key`, `_ENERGY_BARRIER_TSS_KEYWORD_NAMES` (main_window); and
+  the `expand_transition_state_search_jobs` / `_cell_template` / `_param_template` /
+  `TransitionStateSearchSource` / `TransitionStateSearchJobConfig` workflow API. Kept
+  `_transition_state_param_template` (the NEB template delegates to it) and the
+  `castep_transition_state_search*` calc-type constants (still used for backward-compatible
+  reads of old projects). TS-centric tests were deleted or repointed to the NEB pipeline.
+
+Note: the TS path applied per-reactant-cell kpoint defaults; the NEB path uses project
+convergence defaults instead (one TS-specific kpoint test was dropped accordingly). Revisit if
+NEB jobs should inherit the endpoints' relaxation kpoint grid.
+
 Next:
 
-- Dead-code sweep: the TS-only path is now fully unused — remove
-  `_on_configure_energy_barrier_source`, `_materialize_energy_barriers_jobs`,
-  `_jobs_for_energy_barrier_source_keys`, `_build_energy_barriers_states`,
-  `_ensure_energy_barriers_definition`, `_ENERGY_BARRIER_TSS_KEYWORD_NAMES`, the TS param
-  specs, and the LST/QST expansion path in `workflow/energy_barriers.py`.
 - Full visual verification by launching the app on a real project.
 
 ## Phase 4: Tests

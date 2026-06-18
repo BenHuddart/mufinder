@@ -14,10 +14,7 @@ from .energy_barriers import (
     TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
     NudgedElasticBandJobConfig,
     NudgedElasticBandSource,
-    TransitionStateSearchJobConfig,
-    TransitionStateSearchSource,
     expand_nudged_elastic_band_jobs,
-    expand_transition_state_search_jobs,
     position_block_from_structure,
 )
 from .merge import MERGE_PRECEDENCE_ORDER, merge_templates, merge_with_precedence, resolve_job
@@ -46,11 +43,8 @@ __all__ = [
     "TRANSITION_STATE_SEARCH_SET_CALC_TYPE",
     "NudgedElasticBandJobConfig",
     "NudgedElasticBandSource",
-    "TransitionStateSearchJobConfig",
-    "TransitionStateSearchSource",
     "expand_nudged_elastic_band_jobs",
     "expand_relaxation_jobs",
-    "expand_transition_state_search_jobs",
     "job_name",
     "merge_templates",
     "merge_with_precedence",
