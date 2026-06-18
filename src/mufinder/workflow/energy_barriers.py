@@ -258,7 +258,7 @@ def _param_template(config: TransitionStateSearchJobConfig) -> ParamTemplate:
 
 
 def _neb_param_template(config: NudgedElasticBandJobConfig) -> ParamTemplate:
-    base = _transition_state_param_template(
+    base = _nudged_elastic_band_param_template(
         method=config.method,
         atomic_spins=config.source.reactant_structure.atomic_spins,
     )
@@ -266,6 +266,15 @@ def _neb_param_template(config: NudgedElasticBandJobConfig) -> ParamTemplate:
         return base
     merged = merge_templates(InputTemplate(param=base), InputTemplate(param=config.param_overrides))
     return merged.param or base
+
+
+def _nudged_elastic_band_param_template(*, method: str, atomic_spins: tuple[float, ...] | None) -> ParamTemplate:
+    # Reuse the shared transition-state template (task + method + spin handling) and
+    # add the climbing-image flag so the central bead lands on the saddle (the barrier).
+    # The image count (`tssearch_max_path_points`) and tolerances come from the
+    # workflow/UI configuration; CASTEP requires an odd image count when climbing.
+    base = _transition_state_param_template(method=method, atomic_spins=atomic_spins)
+    return ParamTemplate(keywords=(*base.keywords, KeywordAssignment("tssearch_neb_climbing", True)))
 
 
 def _transition_state_param_template(*, method: str, atomic_spins: tuple[float, ...] | None) -> ParamTemplate:

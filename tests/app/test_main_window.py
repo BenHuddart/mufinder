@@ -2494,6 +2494,96 @@ def test_main_window_materializes_neb_jobs_from_completed_transition_state_resul
     window.close()
 
 
+def test_main_window_materializes_neb_jobs_directly_from_endpoints(
+    qapp, tmp_path: Path
+) -> None:
+    # The simplified workflow: NEB is seeded straight from the two relaxed endpoints
+    # with no transition-state search. CASTEP interpolates the band, so the cell has a
+    # product block but no intermediate block.
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_neb_endpoints.mufinder", "BarrierNebEndpoints")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
+        parent_structure_id=host.id,
+        properties={"atomic_spins": [1.0, -1.0, 0.0]},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    site_a = MuonSite(label="siteA", status="relaxed")
+    site_b = MuonSite(label="siteB", status="relaxed")
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    # Only the endpoint path source exists: no TS job, no job_ids_by_label, no TS result.
+    service.register_transition_state_search_definition(
+        doc,
+        input_structure_ids=[relaxed_a.id, relaxed_b.id],
+        input_site_ids=[site_a.id, site_b.id],
+        parameters={
+            "method": "NEB",
+            "sources": [
+                {
+                    "key": "source-key",
+                    "label": "siteA_to_siteB_path1",
+                    "reactant_site_id": str(site_a.id),
+                    "product_site_id": str(site_b.id),
+                    "reactant_run_id": str(uuid4()),
+                    "product_run_id": str(uuid4()),
+                    "reactant_job_id": str(uuid4()),
+                    "product_job_id": str(uuid4()),
+                    "reactant_structure_id": str(relaxed_a.id),
+                    "product_structure_id": str(relaxed_b.id),
+                    "path_start_fractional": [0.25, 0.25, 0.25],
+                    "path_end_fractional": [0.75, 0.25, 0.25],
+                    "path_length_ang": 2.5,
+                }
+            ],
+        },
+        output_directory=doc.project_root / "files" / "energy_barriers",
+    )
+
+    jobs = window._materialize_energy_barrier_neb_jobs(["source-key"])
+
+    assert len(jobs) == 1
+    assert jobs[0].calc_type == NUDGED_ELASTIC_BAND_CALC_TYPE
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
+    param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
+    assert "%BLOCK POSITIONS_ABS_PRODUCT" in cell_text
+    assert "%BLOCK POSITIONS_ABS_INTERMEDIATE" not in cell_text
+    assert "TSSEARCH_METHOD : NEB" in param_text
+
+    window.close()
+
+
 def test_main_window_applies_neb_row_configuration_to_materialized_job(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

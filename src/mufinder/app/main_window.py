@@ -625,13 +625,18 @@ class _EnergyBarrierSourceCandidate:
 
 @dataclass(frozen=True, slots=True)
 class _EnergyBarrierNebCandidate:
-    """Completed transition-state source eligible for NEB generation."""
+    """Endpoint path source eligible for NEB generation.
+
+    NEB is seeded directly from the two relaxed endpoints, so a transition-state
+    search is not required. The ``transition_state_*`` fields are populated only
+    when a completed TS result happens to exist (used as an optional band seed).
+    """
 
     key: str
     source: Mapping[str, object]
-    transition_state_run: CalculationRun
-    transition_state_job: Job
-    transition_state_result: Result
+    transition_state_run: CalculationRun | None = None
+    transition_state_job: Job | None = None
+    transition_state_result: Result | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -6928,16 +6933,15 @@ class MainWindow(QMainWindow):
         neb_definition = self._active_energy_barrier_neb_definition()
         for candidate in self._energy_barrier_neb_source_candidates():
             result = candidate.transition_state_result
-            job = candidate.transition_state_job
+            data = result.data if (result is not None and isinstance(result.data, dict)) else {}
+            label = str(candidate.source.get("label", "")).strip() or candidate.key
             result_rows.append(
                 EnergyBarrierResultRow(
                     key=candidate.key,
-                    label=job.label if job is not None else "Transition-state search",
-                    barrier_height=_format_energy(result.data.get("barrier_height_eV") if isinstance(result.data, dict) else None),
-                    images=str(result.data.get("num_images", "")) if isinstance(result.data, dict) else "",
-                    transition_state_file=(
-                        str(result.data.get("transition_state_file", "")) if isinstance(result.data, dict) else ""
-                    ),
+                    label=label,
+                    barrier_height=_format_energy(data.get("barrier_height_eV")),
+                    images=str(data.get("num_images", "")),
+                    transition_state_file=str(data.get("transition_state_file", "")),
                     neb_status=getattr(neb_states.get(candidate.key), "status", "ready") or "ready",
                     configured=self._workflow_row_configuration_exists(neb_definition, candidate.key),
                 )
@@ -12346,36 +12350,38 @@ class MainWindow(QMainWindow):
             }
             mapping = definition.parameters.get("job_ids_by_label", {})
             if not isinstance(mapping, dict):
-                continue
-            for key, raw_job_id in mapping.items():
-                if not isinstance(raw_job_id, str):
-                    continue
-                try:
-                    job_id = UUID(raw_job_id)
-                except ValueError:
-                    continue
-                job = self._document.jobs.get(job_id)
-                if job is None or job.calc_type != TRANSITION_STATE_SEARCH_CALC_TYPE:
-                    continue
-                run = self._run_for_job(job.id)
-                if run is None:
-                    continue
-                result = self._document.results.get(run.result_id) if run.result_id is not None else None
-                if result is None or result.result_type != TRANSITION_STATE_SEARCH_CALC_TYPE:
-                    continue
-                source = source_by_key.get(str(key))
-                if source is None:
-                    continue
+                mapping = {}
+            for key, source in source_by_key.items():
+                # Seed NEB directly from the endpoint pair. If a completed
+                # transition-state search exists for this source, attach it so its
+                # saddle geometry can be used as an optional band seed.
+                ts_run = ts_job = ts_result = None
+                raw_job_id = mapping.get(key)
+                if isinstance(raw_job_id, str):
+                    try:
+                        job_id = UUID(raw_job_id)
+                    except ValueError:
+                        job_id = None
+                    job = self._document.jobs.get(job_id) if job_id is not None else None
+                    if job is not None and job.calc_type == TRANSITION_STATE_SEARCH_CALC_TYPE:
+                        run = self._run_for_job(job.id)
+                        result = (
+                            self._document.results.get(run.result_id)
+                            if run is not None and run.result_id is not None
+                            else None
+                        )
+                        if result is not None and result.result_type == TRANSITION_STATE_SEARCH_CALC_TYPE:
+                            ts_run, ts_job, ts_result = run, job, result
                 candidates.append(
                     _EnergyBarrierNebCandidate(
-                        key=str(key),
+                        key=key,
                         source=source,
-                        transition_state_run=run,
-                        transition_state_job=job,
-                        transition_state_result=result,
+                        transition_state_run=ts_run,
+                        transition_state_job=ts_job,
+                        transition_state_result=ts_result,
                     )
                 )
-        return sorted(candidates, key=lambda item: (item.transition_state_job.label, item.key))
+        return sorted(candidates, key=lambda item: item.key)
 
     def _energy_barrier_neb_source_candidate_by_key(self, key: str) -> _EnergyBarrierNebCandidate | None:
         for candidate in self._energy_barrier_neb_source_candidates():
@@ -12411,15 +12417,21 @@ class MainWindow(QMainWindow):
         return None
 
     def _serialize_energy_barrier_neb_sources(self, keys: list[str]) -> list[dict[str, object]]:
+        candidates_by_key = {candidate.key: candidate for candidate in self._energy_barrier_neb_source_candidates()}
         serialized: list[dict[str, object]] = []
         for key in keys:
-            candidate = self._energy_barrier_neb_source_candidate_by_key(key)
+            candidate = candidates_by_key.get(key)
             if candidate is None:
                 continue
             source = dict(candidate.source)
-            source["transition_state_run_id"] = str(candidate.transition_state_run.id)
-            source["transition_state_job_id"] = str(candidate.transition_state_job.id)
-            source["transition_state_result_id"] = str(candidate.transition_state_result.id)
+            # A transition-state search is optional now that NEB seeds from endpoints;
+            # record its ids only when one exists for this source.
+            if candidate.transition_state_run is not None:
+                source["transition_state_run_id"] = str(candidate.transition_state_run.id)
+            if candidate.transition_state_job is not None:
+                source["transition_state_job_id"] = str(candidate.transition_state_job.id)
+            if candidate.transition_state_result is not None:
+                source["transition_state_result_id"] = str(candidate.transition_state_result.id)
             serialized.append(source)
         return serialized
 
@@ -12700,13 +12712,11 @@ class MainWindow(QMainWindow):
         if output_root is None or host is None:
             return []
 
+        candidates_by_key = {candidate.key: candidate for candidate in self._energy_barrier_neb_source_candidates()}
         configs: list[NudgedElasticBandJobConfig] = []
         for key in keys:
-            candidate = self._energy_barrier_neb_source_candidate_by_key(key)
+            candidate = candidates_by_key.get(key)
             if candidate is None:
-                continue
-            ts_path = self._transition_state_file_path(candidate.transition_state_result)
-            if ts_path is None or not ts_path.exists():
                 continue
             reactant_id = self._uuid_from_source(candidate.source, "reactant_structure_id")
             product_id = self._uuid_from_source(candidate.source, "product_structure_id")
@@ -12730,12 +12740,29 @@ class MainWindow(QMainWindow):
                 )
                 reactant_spec = structure_to_spec(prepared.reactant)
                 product_block = self._absolute_position_block_from_structure(prepared.product)
-                transition_state = parse_transition_state_file(ts_path)
-                intermediate_image = self._transition_state_intermediate_image(transition_state)
-            except (EnergyBarrierError, StructureBridgeError, TransitionStateParseError, ValueError):
+            except (EnergyBarrierError, StructureBridgeError, ValueError):
                 continue
-            if intermediate_image is None:
-                continue
+            # Optional transition-state intermediate as a band seed: used only when a
+            # completed TS search exists for this source. Otherwise CASTEP interpolates
+            # the band between the two endpoints (the default, simplified path).
+            intermediate_block = None
+            ts_run_id = None
+            ts_job_id = None
+            ts_path = (
+                self._transition_state_file_path(candidate.transition_state_result)
+                if candidate.transition_state_result is not None
+                else None
+            )
+            if ts_path is not None and ts_path.exists():
+                try:
+                    transition_state = parse_transition_state_file(ts_path)
+                    intermediate_image = self._transition_state_intermediate_image(transition_state)
+                except (TransitionStateParseError, ValueError):
+                    intermediate_image = None
+                if intermediate_image is not None:
+                    intermediate_block = self._position_block_from_transition_state_image(intermediate_image)
+                    ts_run_id = candidate.transition_state_run.id if candidate.transition_state_run is not None else None
+                    ts_job_id = candidate.transition_state_job.id if candidate.transition_state_job is not None else None
             values, _advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(
                 definition,
                 key,
@@ -12750,12 +12777,14 @@ class MainWindow(QMainWindow):
             configs.append(
                 NudgedElasticBandJobConfig(
                     source=NudgedElasticBandSource(
-                        label=f"{str(candidate.source.get('label', candidate.transition_state_job.label)).strip()}_neb",
+                        label=f"{str(candidate.source.get('label', '')).strip() or candidate.key}_neb",
                         reactant_structure=reactant_spec,
                         product_positions_abs=product_block,
-                        intermediate_positions_abs=self._position_block_from_transition_state_image(intermediate_image),
+                        intermediate_positions_abs=intermediate_block,
                         product_atomic_spins=reactant_spec.atomic_spins,
-                        intermediate_atomic_spins=reactant_spec.atomic_spins,
+                        intermediate_atomic_spins=(
+                            reactant_spec.atomic_spins if intermediate_block is not None else None
+                        ),
                         source_site_ids=tuple(
                             value
                             for value in (reactant_site_id, product_site_id)
@@ -12767,8 +12796,8 @@ class MainWindow(QMainWindow):
                             if value is not None
                         ),
                         source_relaxation_job_ids=(reactant_job_id, product_job_id),
-                        source_transition_state_run_id=candidate.transition_state_run.id,
-                        source_transition_state_job_id=candidate.transition_state_job.id,
+                        source_transition_state_run_id=ts_run_id,
+                        source_transition_state_job_id=ts_job_id,
                         path_length_ang=self._float_from_source(candidate.source, "path_length_ang"),
                         provenance={"source_key": key},
                     ),
@@ -13129,9 +13158,9 @@ class MainWindow(QMainWindow):
                 "tssearch_method": "NEB",
             },
             intro_text=(
-                f"Transition-state source: {candidates[0].transition_state_job.label}"
+                f"Path: {str(candidates[0].source.get('label', '')).strip() or candidates[0].key}"
                 if len(candidates) == 1
-                else f"Selected transition-state sources: {len(candidates)}"
+                else f"Selected paths: {len(candidates)}"
             ),
             read_only=read_only,
             species_options=_merge_species_options(reactant_structures),
