@@ -26,8 +26,11 @@ class NudgedElasticBandSource:
 
     label: str
     reactant_structure: StructureSpec
-    product_positions_abs: PositionBlock
-    intermediate_positions_abs: PositionBlock | None = None
+    # Fractional positions: CASTEP's POSITIONS_FRAC_PRODUCT/_INTERMEDIATE reader accepts tagged
+    # species (e.g. the muon "H:mu"); the POSITIONS_ABS_* reader does not and aborts with
+    # "Unknown element in cell file".
+    product_positions_frac: PositionBlock
+    intermediate_positions_frac: PositionBlock | None = None
     product_atomic_spins: tuple[float, ...] | None = None
     intermediate_atomic_spins: tuple[float, ...] | None = None
     source_site_ids: tuple[UUID, UUID] = field(default_factory=tuple)
@@ -103,22 +106,22 @@ def expand_nudged_elastic_band_jobs(
 def _neb_cell_template(config: NudgedElasticBandJobConfig) -> CellTemplate:
     blocks = [
         BlockSection(
-            name="positions_abs_product",
-            rows=tuple(_rows_from_positions(config.source.product_positions_abs, atomic_spins=config.source.product_atomic_spins)),
-            unit=config.source.product_positions_abs.unit,
+            name="positions_frac_product",
+            rows=tuple(_rows_from_positions(config.source.product_positions_frac, atomic_spins=config.source.product_atomic_spins)),
+            unit=None,
         )
     ]
-    if config.source.intermediate_positions_abs is not None:
+    if config.source.intermediate_positions_frac is not None:
         blocks.append(
             BlockSection(
-                name="positions_abs_intermediate",
+                name="positions_frac_intermediate",
                 rows=tuple(
                     _rows_from_positions(
-                        config.source.intermediate_positions_abs,
+                        config.source.intermediate_positions_frac,
                         atomic_spins=config.source.intermediate_atomic_spins,
                     )
                 ),
-                unit=config.source.intermediate_positions_abs.unit,
+                unit=None,
             )
         )
     base = CellTemplate(

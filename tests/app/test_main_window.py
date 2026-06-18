@@ -2218,8 +2218,8 @@ def test_main_window_materializes_neb_jobs_directly_from_endpoints(
     assert output_dir is not None
     cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
     param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
-    assert "%BLOCK POSITIONS_ABS_PRODUCT" in cell_text
-    assert "%BLOCK POSITIONS_ABS_INTERMEDIATE" not in cell_text
+    assert "%BLOCK POSITIONS_FRAC_PRODUCT" in cell_text
+    assert "%BLOCK POSITIONS_FRAC_INTERMEDIATE" not in cell_text
     assert "TSSEARCH_METHOD : NEB" in param_text
     # Climbing image is locked on, and the image count defaults to an odd value (7).
     assert "TSSEARCH_NEB_CLIMBING : TRUE" in param_text

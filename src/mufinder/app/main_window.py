@@ -211,7 +211,7 @@ from mufinder.science.energy_barriers import (
 from mufinder.science.kpoint_grids import equivalent_grid_for_supercell, lattice_parameters
 from mufinder.science.quantum_phonons import PhononParseError, muon_zpe, parse_phonon_path, w1_entanglement_witness
 from mufinder.science.relaxation_analysis import folded_muon_position_from_structure
-from mufinder.science.site_generation import SiteGenerationError, lattice_cart_to_frac, lattice_frac_to_cart
+from mufinder.science.site_generation import SiteGenerationError, lattice_cart_to_frac
 from mufinder.science.supercell import build_supercell_structure
 from mufinder.science.uep import UepError, UepPotentialGrid, deserialize_potential_grid, serialize_potential_grid
 from mufinder.science.structure_comparison import DftComparisonInput, compare_structures
@@ -12454,7 +12454,7 @@ class MainWindow(QMainWindow):
                     product_anchor_fractional=self._fractional_triplet_from_source(candidate.source, "path_end_fractional"),
                 )
                 reactant_spec = structure_to_spec(prepared.reactant)
-                product_block = self._absolute_position_block_from_structure(prepared.product)
+                product_block = self._fractional_position_block_from_structure(prepared.product)
             except (EnergyBarrierError, StructureBridgeError, ValueError):
                 continue
             values, _advanced_names, _extras = self._energy_barrier_neb_row_configuration_with_source_defaults(
@@ -12474,8 +12474,8 @@ class MainWindow(QMainWindow):
                     source=NudgedElasticBandSource(
                         label=f"{str(candidate.source.get('label', '')).strip() or candidate.key}_neb",
                         reactant_structure=reactant_spec,
-                        product_positions_abs=product_block,
-                        intermediate_positions_abs=None,
+                        product_positions_frac=product_block,
+                        intermediate_positions_frac=None,
                         product_atomic_spins=reactant_spec.atomic_spins,
                         intermediate_atomic_spins=None,
                         source_site_ids=tuple(
@@ -12595,12 +12595,14 @@ class MainWindow(QMainWindow):
                 "energy_eV": image.energy,
             },
         )
-    def _absolute_position_block_from_structure(self, structure: Structure) -> PositionBlock:
-        rows = []
-        for species, fractional in zip(structure.species, structure.fractional_positions, strict=True):
-            coordinates = lattice_frac_to_cart(fractional, structure.lattice_vectors)
-            rows.append(AtomicPosition(str(species), tuple(float(value) for value in coordinates)))
-        return PositionBlock(positions=tuple(rows), unit="ang")
+    def _fractional_position_block_from_structure(self, structure: Structure) -> PositionBlock:
+        # Fractional coordinates so the NEB product/intermediate blocks use
+        # POSITIONS_FRAC_PRODUCT, whose CASTEP reader accepts tagged species like the muon "H:mu".
+        rows = [
+            AtomicPosition(str(species), tuple(float(value) for value in fractional))
+            for species, fractional in zip(structure.species, structure.fractional_positions, strict=True)
+        ]
+        return PositionBlock(positions=tuple(rows), unit="frac")
 
     def _on_configure_quantum_corrections_source(self, payload: object) -> None:
         if self._document is None:
