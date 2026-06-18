@@ -1686,6 +1686,132 @@ def test_main_window_energy_barrier_strips_legacy_tss_params_from_stored_config(
     window.close()
 
 
+def test_main_window_neb_inherits_kpoints_from_reactant_relaxation_cell_file(qapp, tmp_path: Path) -> None:
+    """NEB jobs inherit the k-point grid from the reactant relaxation's output cell file."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "barrier_cell_kpoints_doc.mufinder", "BarrierCellKPoints")
+    window._document = doc
+
+    doc.project.recommended_kpoint_grid = (4, 4, 4)
+    # Deliberately omit recommended_kpoint_lattice so the project-default scaling path cannot work.
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    supercell_species = ["Si"] * 8 + ["H:mu"]
+    supercell_positions_a = [
+        [0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.5, 0.5, 0.0],
+        [0.0, 0.0, 0.5], [0.5, 0.0, 0.5], [0.0, 0.5, 0.5], [0.5, 0.5, 0.5],
+        [0.125, 0.125, 0.125],
+    ]
+    supercell_positions_b = [
+        [0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.5, 0.5, 0.0],
+        [0.0, 0.0, 0.5], [0.5, 0.0, 0.5], [0.0, 0.5, 0.5], [0.5, 0.5, 0.5],
+        [0.375, 0.125, 0.125],
+    ]
+    relaxed_a = Structure(
+        label="siteA relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        species=supercell_species,
+        fractional_positions=supercell_positions_a,
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    relaxed_b = Structure(
+        label="siteB relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        species=supercell_species,
+        fractional_positions=supercell_positions_b,
+        parent_structure_id=host.id,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_a.id] = relaxed_a
+    doc.structures[relaxed_b.id] = relaxed_b
+
+    job_a = Job(
+        label="mu-site-a",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    job_b = Job(
+        label="mu-site-b",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job_a.id] = job_a
+    doc.jobs[job_b.id] = job_b
+    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result_a = Result(
+        calculation_run_id=run_a.id,
+        result_type=job_a.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_a.id],
+    )
+    result_b = Result(
+        calculation_run_id=run_b.id,
+        result_type=job_b.calc_type,
+        data={"total_energy": -0.9},
+        derived_structure_ids=[relaxed_b.id],
+    )
+    run_a.result_id = result_a.id
+    run_b.result_id = result_b.id
+    doc.runs[run_a.id] = run_a
+    doc.runs[run_b.id] = run_b
+    doc.results[result_a.id] = result_a
+    doc.results[result_b.id] = result_b
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    doc.sites[site_a.id] = site_a
+    doc.sites[site_b.id] = site_b
+
+    # Write the reactant job's output cell file with the supercell k-point grid.
+    source_dir_a = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / job_a.label
+    source_dir_a.mkdir(parents=True, exist_ok=True)
+    (source_dir_a / f"{job_a.label}.cell").write_text(
+        "\n".join([
+            "%BLOCK LATTICE_CART",
+            "ang",
+            "8.0 0.0 0.0",
+            "0.0 8.0 0.0",
+            "0.0 0.0 8.0",
+            "%ENDBLOCK LATTICE_CART",
+            "%BLOCK POSITIONS_FRAC",
+            "Si 0.0 0.0 0.0",
+            "H:mu 0.125 0.125 0.125",
+            "%ENDBLOCK POSITIONS_FRAC",
+            "KPOINT_MP_GRID 2 2 2",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
+    candidate = window._eligible_energy_barrier_source_candidates()[0]
+    jobs = window._materialize_energy_barrier_neb_jobs([candidate.key])
+
+    assert len(jobs) == 1
+    output_dir = window._job_output_directory(jobs[0])
+    assert output_dir is not None
+    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
+    # Must use supercell grid from reactant job's cell file, not the raw project default (4 4 4).
+    assert "KPOINT_MP_GRID 2 2 2" in cell_text
+    assert "KPOINT_MP_GRID 4 4 4" not in cell_text
+    window.close()
+
+
 def test_main_window_generates_same_site_energy_barrier_paths(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()

@@ -4480,6 +4480,25 @@ class MainWindow(QMainWindow):
         values.update(params)
         return values, advanced, extras
 
+    def _energy_barrier_neb_row_configuration_with_source_defaults(
+        self,
+        definition,
+        key: str,
+        *,
+        target_lattice: list[list[float]] | None = None,
+    ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
+        # Precedence: project convergence defaults < reactant relaxation settings < user config.
+        # Inheriting the reactant endpoint's kpoint grid and cut-off keeps the NEB band on the
+        # same numerical footing as the relaxed structures it connects.
+        params, advanced, extras = self._workflow_row_configuration(definition, key)
+        params = _strip_legacy_energy_barrier_params(params)
+        values = self._project_convergence_parameter_values(target_lattice=target_lattice)
+        candidate = self._energy_barrier_source_candidate_by_key(key)
+        if candidate is not None:
+            values.update(self._quantum_source_default_parameter_values(candidate.reactant))
+        values.update(params)
+        return values, advanced, extras
+
     def _project_convergence_input_defaults(
         self,
         *,
@@ -12411,12 +12430,11 @@ class MainWindow(QMainWindow):
                 product_block = self._absolute_position_block_from_structure(prepared.product)
             except (EnergyBarrierError, StructureBridgeError, ValueError):
                 continue
-            values, _advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(
+            values, _advanced_names, _extras = self._energy_barrier_neb_row_configuration_with_source_defaults(
                 definition,
                 key,
                 target_lattice=reactant_structure.lattice_vectors,
             )
-            values = _strip_legacy_energy_barrier_params(values)
             values = {name: value for name, value in values.items() if name != "task"}
             try:
                 overrides = _input_template_from_keyword_values(values)
@@ -12695,12 +12713,11 @@ class MainWindow(QMainWindow):
         for candidate in candidates:
             reactant_structure = self._document.structures.get(self._uuid_from_source(candidate.source, "reactant_structure_id"))
             reactant_structures.append(reactant_structure)
-            values, row_advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(
+            values, row_advanced_names, _extras = self._energy_barrier_neb_row_configuration_with_source_defaults(
                 definition,
                 candidate.key,
                 target_lattice=reactant_structure.lattice_vectors if reactant_structure is not None else None,
             )
-            values = _strip_legacy_energy_barrier_params(values)
             values_by_key.append(values)
             advanced_names.update(row_advanced_names)
         common_values = dict(values_by_key[0])

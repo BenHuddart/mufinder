@@ -156,9 +156,12 @@ Implemented (continued):
   `castep_transition_state_search*` calc-type constants (still used for backward-compatible
   reads of old projects). TS-centric tests were deleted or repointed to the NEB pipeline.
 
-Note: the TS path applied per-reactant-cell kpoint defaults; the NEB path uses project
-convergence defaults instead (one TS-specific kpoint test was dropped accordingly). Revisit if
-NEB jobs should inherit the endpoints' relaxation kpoint grid.
+Parameter inheritance: NEB jobs inherit the reactant endpoint's relaxation settings (kpoint
+grid + cut-off) on top of the project convergence defaults, via
+`_energy_barrier_neb_row_configuration_with_source_defaults` (precedence: project defaults <
+reactant relaxation settings < user config). This applies to both the materialized job and the
+NEB configure dialog. Covered by
+`test_main_window_neb_inherits_kpoints_from_reactant_relaxation_cell_file`.
 
 Next:
 
