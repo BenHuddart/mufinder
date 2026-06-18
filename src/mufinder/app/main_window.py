@@ -225,7 +225,6 @@ from mufinder.workflow.energy_barriers import (
     NudgedElasticBandJobConfig,
     NudgedElasticBandSource,
     expand_nudged_elastic_band_jobs,
-    position_block_from_structure,
 )
 from mufinder.workflow.naming import job_name
 from mufinder.workflow.quantum import (
@@ -4486,16 +4485,30 @@ class MainWindow(QMainWindow):
         key: str,
         *,
         target_lattice: list[list[float]] | None = None,
+        source_candidate: _EnergyBarrierSourceCandidate | None = None,
+        source_defaults_cache: dict[UUID, dict[str, object]] | None = None,
     ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
         # Precedence: project convergence defaults < reactant relaxation settings < user config.
         # Inheriting the reactant endpoint's kpoint grid and cut-off keeps the NEB band on the
-        # same numerical footing as the relaxed structures it connects.
+        # same numerical footing as the relaxed structures it connects. (When the relaxation's
+        # output .cell/.param are unavailable, the reactant defaults are simply empty and the
+        # project convergence defaults stand in — graceful by design.)
+        # Callers that loop over many keys may pass a pre-resolved source_candidate and a shared
+        # source_defaults_cache to avoid rebuilding the candidate list and re-reading the
+        # reactant's files per key.
         params, advanced, extras = self._workflow_row_configuration(definition, key)
         params = _strip_legacy_energy_barrier_params(params)
         values = self._project_convergence_parameter_values(target_lattice=target_lattice)
-        candidate = self._energy_barrier_source_candidate_by_key(key)
+        candidate = source_candidate if source_candidate is not None else self._energy_barrier_source_candidate_by_key(key)
         if candidate is not None:
-            values.update(self._quantum_source_default_parameter_values(candidate.reactant))
+            reactant_job_id = candidate.reactant.job.id
+            if source_defaults_cache is not None and reactant_job_id in source_defaults_cache:
+                reactant_defaults = source_defaults_cache[reactant_job_id]
+            else:
+                reactant_defaults = self._quantum_source_default_parameter_values(candidate.reactant)
+                if source_defaults_cache is not None:
+                    source_defaults_cache[reactant_job_id] = reactant_defaults
+            values.update(reactant_defaults)
         values.update(params)
         return values, advanced, extras
 
@@ -12401,6 +12414,8 @@ class MainWindow(QMainWindow):
             return []
 
         candidates_by_key = {candidate.key: candidate for candidate in self._energy_barrier_neb_source_candidates()}
+        source_candidates_by_key = {c.key: c for c in self._eligible_energy_barrier_source_candidates()}
+        source_defaults_cache: dict[UUID, dict[str, object]] = {}
         configs: list[NudgedElasticBandJobConfig] = []
         for key in keys:
             candidate = candidates_by_key.get(key)
@@ -12434,6 +12449,8 @@ class MainWindow(QMainWindow):
                 definition,
                 key,
                 target_lattice=reactant_structure.lattice_vectors,
+                source_candidate=source_candidates_by_key.get(key),
+                source_defaults_cache=source_defaults_cache,
             )
             values = {name: value for name, value in values.items() if name != "task"}
             try:
@@ -12460,8 +12477,6 @@ class MainWindow(QMainWindow):
                             if value is not None
                         ),
                         source_relaxation_job_ids=(reactant_job_id, product_job_id),
-                        source_transition_state_run_id=None,
-                        source_transition_state_job_id=None,
                         path_length_ang=self._float_from_source(candidate.source, "path_length_ang"),
                         provenance={"source_key": key},
                     ),
@@ -12699,14 +12714,13 @@ class MainWindow(QMainWindow):
         keys = _ordered_string_list(payload)
         if not keys:
             return
-        candidates = [
-            candidate
-            for key in keys
-            if (candidate := self._energy_barrier_neb_source_candidate_by_key(key)) is not None
-        ]
+        neb_candidates_by_key = {c.key: c for c in self._energy_barrier_neb_source_candidates()}
+        candidates = [c for key in keys if (c := neb_candidates_by_key.get(key)) is not None]
         if not candidates:
             return
         definition = self._active_energy_barrier_neb_definition()
+        source_candidates_by_key = {c.key: c for c in self._eligible_energy_barrier_source_candidates()}
+        source_defaults_cache: dict[UUID, dict[str, object]] = {}
         values_by_key: list[dict[str, object]] = []
         advanced_names: set[str] = set()
         reactant_structures: list[Structure | None] = []
@@ -12717,6 +12731,8 @@ class MainWindow(QMainWindow):
                 definition,
                 candidate.key,
                 target_lattice=reactant_structure.lattice_vectors if reactant_structure is not None else None,
+                source_candidate=source_candidates_by_key.get(candidate.key),
+                source_defaults_cache=source_defaults_cache,
             )
             values_by_key.append(values)
             advanced_names.update(row_advanced_names)
@@ -13233,7 +13249,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_submit_local_neb_from_energy_barriers(self, keys: list[str]) -> None:
-        if not self._check_definition_host(self._active_energy_barrier_neb_definition()):
+        if not self._check_energy_barrier_neb_host(keys):
             return
         self._submit_workflow_selection(
             keys,
@@ -13242,12 +13258,12 @@ class MainWindow(QMainWindow):
             jobs_for_values=self._jobs_for_energy_barrier_neb_source_keys,
             materialize_values=self._materialize_energy_barrier_neb_jobs,
             is_ready=workflow_row_state_is_ready,
-            no_ready_message="Only completed transition-state searches in the 'ready' state can be submitted as NEB jobs.",
+            no_ready_message="Only paths in the 'ready' state can be submitted as NEB jobs.",
             submit=self._submit_jobs_locally,
         )
 
     def _on_submit_cluster_neb_from_energy_barriers(self, keys: list[str]) -> None:
-        if not self._check_definition_host(self._active_energy_barrier_neb_definition()):
+        if not self._check_energy_barrier_neb_host(keys):
             return
         self._submit_workflow_selection(
             keys,
@@ -13256,9 +13272,44 @@ class MainWindow(QMainWindow):
             jobs_for_values=self._jobs_for_energy_barrier_neb_source_keys,
             materialize_values=self._materialize_energy_barrier_neb_jobs,
             is_ready=workflow_row_state_is_ready,
-            no_ready_message="Only completed transition-state searches in the 'ready' state can be submitted as NEB jobs.",
+            no_ready_message="Only paths in the 'ready' state can be submitted as NEB jobs.",
             submit=self._submit_jobs_on_cluster,
         )
+
+    def _check_energy_barrier_neb_host(self, keys: list[str]) -> bool:
+        """Validate the selected paths' endpoint structures/sites against the active host.
+
+        NEB can be submitted before any NEB definition exists, so we validate the actual
+        endpoint structures/sites of the selected paths rather than a possibly-None definition.
+        """
+        if self._document is None:
+            return True
+        candidates = {candidate.key: candidate for candidate in self._energy_barrier_neb_source_candidates()}
+        structure_ids: list[UUID] = []
+        site_ids: list[UUID] = []
+        for key in keys:
+            candidate = candidates.get(str(key).strip())
+            if candidate is None:
+                continue
+            for field in ("reactant_structure_id", "product_structure_id"):
+                value = self._uuid_from_source(candidate.source, field)
+                if value is not None and value not in structure_ids:
+                    structure_ids.append(value)
+            for field in ("reactant_site_id", "product_site_id"):
+                value = self._uuid_from_source(candidate.source, field)
+                if value is not None and value not in site_ids:
+                    site_ids.append(value)
+        if structure_ids:
+            struct_mismatch = self._project_service.validate_structures_match_active_host(
+                self._document, structure_ids
+            )
+            if struct_mismatch is not None:
+                return self._handle_structure_host_mismatch(struct_mismatch)
+        if site_ids:
+            site_mismatch = self._project_service.validate_sites_match_active_host(self._document, site_ids)
+            if site_mismatch is not None:
+                return self._handle_site_host_mismatch(site_mismatch)
+        return True
 
     def _on_uep_source_structure_selection_requested(self, payload: object) -> None:
         if self._document is None:

@@ -369,7 +369,7 @@ class EnergyBarriersWidget(QWidget):
         self._neb_result_label = QLabel("Completed NEB calculations")
         style_section_title(self._neb_result_label)
         neb_results_layout.addWidget(self._neb_result_label)
-        self._neb_results_table = create_workflow_table(("Job", "Barrier", "Images", "TS File"))
+        self._neb_results_table = create_workflow_table(("Path", "Barrier", "Images", "Trajectory"))
         self._neb_results_table.itemSelectionChanged.connect(self._emit_neb_result_selected)
         neb_results_layout.addWidget(self._neb_results_table)
         neb_layout.addWidget(neb_results_group)

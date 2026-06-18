@@ -33,8 +33,6 @@ class NudgedElasticBandSource:
     source_site_ids: tuple[UUID, UUID] = field(default_factory=tuple)
     source_relaxation_run_ids: tuple[UUID, UUID] = field(default_factory=tuple)
     source_relaxation_job_ids: tuple[UUID | None, UUID | None] = field(default_factory=tuple)
-    source_transition_state_run_id: UUID | None = None
-    source_transition_state_job_id: UUID | None = None
     path_length_ang: float | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
 
@@ -94,16 +92,6 @@ def expand_nudged_elastic_band_jobs(
                     "source_relaxation_job_ids": [
                         str(value) if value is not None else None for value in config.source.source_relaxation_job_ids
                     ],
-                    "source_transition_state_run_id": (
-                        str(config.source.source_transition_state_run_id)
-                        if config.source.source_transition_state_run_id is not None
-                        else None
-                    ),
-                    "source_transition_state_job_id": (
-                        str(config.source.source_transition_state_job_id)
-                        if config.source.source_transition_state_job_id is not None
-                        else None
-                    ),
                     "path_length_ang": config.source.path_length_ang,
                     **dict(config.source.provenance),
                 },

@@ -57,8 +57,6 @@ def test_expand_nudged_elastic_band_jobs_renders_intermediate_blocks() -> None:
         source_site_ids=(uuid4(), uuid4()),
         source_relaxation_run_ids=(uuid4(), uuid4()),
         source_relaxation_job_ids=(uuid4(), uuid4()),
-        source_transition_state_run_id=uuid4(),
-        source_transition_state_job_id=uuid4(),
         path_length_ang=2.0,
     )
 
@@ -106,7 +104,7 @@ def test_expand_nudged_elastic_band_jobs_without_intermediate_seeds_from_endpoin
     assert len(jobs) == 1
     job = jobs[0]
     assert job.provenance["calc_type"] == NUDGED_ELASTIC_BAND_CALC_TYPE
-    assert job.provenance["source_transition_state_job_id"] is None
+    assert "source_transition_state_job_id" not in job.provenance
     assert any(block.name == "positions_abs_product" for block in job.cell_file.blocks)
     assert not any(block.name == "positions_abs_intermediate" for block in job.cell_file.blocks)
     assert any(keyword.name == "tssearch_method" and keyword.value == "NEB" for keyword in job.param_file.keywords)
