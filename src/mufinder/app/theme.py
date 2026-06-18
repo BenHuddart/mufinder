@@ -1048,13 +1048,13 @@ def _muon_relaxation_styles(p: MuFinderPalette) -> str:
     QTabWidget#analysisWorkspaceTabs,
     QTabWidget#energyBarriersTabs,
     QTabWidget#quantumAnalysisTabs {{
-        background: {p.bg_surface};
+        background: transparent;
     }}
     QTabWidget#muonRelaxationChargeTabs QTabBar,
     QTabWidget#analysisWorkspaceTabs QTabBar,
     QTabWidget#energyBarriersTabs QTabBar,
     QTabWidget#quantumAnalysisTabs QTabBar {{
-        background: {p.bg_surface};
+        background: transparent;
     }}
     QTabWidget#muonRelaxationChargeTabs QTabBar::tab,
     QTabWidget#analysisWorkspaceTabs QTabBar::tab,

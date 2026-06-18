@@ -237,7 +237,7 @@ class EnergyBarriersWidget(QWidget):
         header.addWidget(title)
 
         subtitle = QLabel(
-            "Build transition-state and NEB jobs from two relaxed muon endpoints, then inspect the minimum-energy path inside MuFinder."
+            "Build NEB jobs from two relaxed muon endpoints, then inspect the minimum-energy path inside MuFinder."
         )
         subtitle.setWordWrap(True)
         style_section_subtitle(subtitle)
@@ -258,7 +258,7 @@ class EnergyBarriersWidget(QWidget):
         paths_layout.setSpacing(8)
 
         path_intro = QLabel(
-            "Select two relaxed endpoints with the same charge state, generate symmetry-distinct paths, then configure or preview each transition-state search row."
+            "Select two relaxed endpoints with the same charge state, generate symmetry-distinct paths, then configure or preview each NEB path."
         )
         path_intro.setWordWrap(True)
         style_hint_text(path_intro)
@@ -317,8 +317,7 @@ class EnergyBarriersWidget(QWidget):
         source_hint = QLabel(
             "Each row is a candidate hop between two relaxed endpoints. Configure the climbing-image "
             "NEB controls (image count, spring constant, tolerances) per path, then build the NEB job "
-            "locally or on the cluster — CASTEP interpolates the band, so no separate transition-state "
-            "search is needed. Use View to preview a path in the undistorted supercell."
+            "locally or on the cluster. Use View to preview a path in the undistorted supercell."
         )
         source_hint.setWordWrap(True)
         style_hint_text(source_hint)
