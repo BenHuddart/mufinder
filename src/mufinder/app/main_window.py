@@ -12764,7 +12764,7 @@ class MainWindow(QMainWindow):
             locked_values={
                 "task": "TRANSITIONSTATESEARCH",
                 "tssearch_method": "NEB",
-                "tssearch_neb_climbing": True,
+                "tssearch_neb_climbing": "TRUE",
             },
             intro_text=(
                 f"Path: {str(candidates[0].source.get('label', '')).strip() or candidates[0].key}"

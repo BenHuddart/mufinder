@@ -924,10 +924,16 @@ def test_main_window_quantum_corrections_hides_fine_cutoff_from_default_rows(qap
 def test_main_window_energy_barriers_hides_fine_cutoff_from_default_rows(qapp) -> None:
     window = MainWindow()
 
+    # Mirror the locked values the real NEB configure handler passes, including the
+    # locked climbing flag (a non-string locked value must not crash dialog construction).
     neb_dialog = ParameterDialog(
         specs=window._energy_barrier_neb_parameter_specs(),
         workflow_stage="energy_barriers",
-        locked_values={"task": "TRANSITIONSTATESEARCH", "tssearch_method": "NEB"},
+        locked_values={
+            "task": "TRANSITIONSTATESEARCH",
+            "tssearch_method": "NEB",
+            "tssearch_neb_climbing": "TRUE",
+        },
     )
 
     assert "fine_cut_off_energy" not in neb_dialog._visible_names()
@@ -938,6 +944,8 @@ def test_main_window_energy_barriers_hides_fine_cutoff_from_default_rows(qapp) -
         "elec_energy_tol",
         "kpoint_mp_grid",
     ]
+    # Climbing is locked on and shown as a fixed row.
+    assert "tssearch_neb_climbing" in neb_dialog._visible_names()
 
     neb_dialog.close()
     window.close()
