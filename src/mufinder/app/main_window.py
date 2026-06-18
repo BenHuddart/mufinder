@@ -265,6 +265,7 @@ _ENERGY_BARRIER_TSS_KEYWORD_NAMES = workflow_basic_parameter_names(
     "tssearch_max_path_points",
 )
 _ENERGY_BARRIER_NEB_KEYWORD_NAMES = workflow_basic_parameter_names(
+    "tssearch_max_path_points",
     "tssearch_neb_spring_constant",
     "tssearch_neb_tangent_mode",
     "tssearch_neb_method",
@@ -627,16 +628,12 @@ class _EnergyBarrierSourceCandidate:
 class _EnergyBarrierNebCandidate:
     """Endpoint path source eligible for NEB generation.
 
-    NEB is seeded directly from the two relaxed endpoints, so a transition-state
-    search is not required. The ``transition_state_*`` fields are populated only
-    when a completed TS result happens to exist (used as an optional band seed).
+    NEB is seeded directly from the two relaxed endpoints; CASTEP interpolates
+    the band between them, so no transition-state search is required.
     """
 
     key: str
     source: Mapping[str, object]
-    transition_state_run: CalculationRun | None = None
-    transition_state_job: Job | None = None
-    transition_state_result: Result | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -6932,16 +6929,16 @@ class MainWindow(QMainWindow):
         neb_states = self._build_energy_barrier_neb_states()
         neb_definition = self._active_energy_barrier_neb_definition()
         for candidate in self._energy_barrier_neb_source_candidates():
-            result = candidate.transition_state_result
-            data = result.data if (result is not None and isinstance(result.data, dict)) else {}
+            # Endpoint path ready for NEB; the computed barrier appears in the NEB
+            # results table once the job completes.
             label = str(candidate.source.get("label", "")).strip() or candidate.key
             result_rows.append(
                 EnergyBarrierResultRow(
                     key=candidate.key,
                     label=label,
-                    barrier_height=_format_energy(data.get("barrier_height_eV")),
-                    images=str(data.get("num_images", "")),
-                    transition_state_file=str(data.get("transition_state_file", "")),
+                    barrier_height="",
+                    images="",
+                    transition_state_file="",
                     neb_status=getattr(neb_states.get(candidate.key), "status", "ready") or "ready",
                     configured=self._workflow_row_configuration_exists(neb_definition, candidate.key),
                 )
@@ -12348,39 +12345,9 @@ class MainWindow(QMainWindow):
                 for source in raw_sources
                 if isinstance(source, dict) and str(source.get("key", "")).strip()
             }
-            mapping = definition.parameters.get("job_ids_by_label", {})
-            if not isinstance(mapping, dict):
-                mapping = {}
             for key, source in source_by_key.items():
-                # Seed NEB directly from the endpoint pair. If a completed
-                # transition-state search exists for this source, attach it so its
-                # saddle geometry can be used as an optional band seed.
-                ts_run = ts_job = ts_result = None
-                raw_job_id = mapping.get(key)
-                if isinstance(raw_job_id, str):
-                    try:
-                        job_id = UUID(raw_job_id)
-                    except ValueError:
-                        job_id = None
-                    job = self._document.jobs.get(job_id) if job_id is not None else None
-                    if job is not None and job.calc_type == TRANSITION_STATE_SEARCH_CALC_TYPE:
-                        run = self._run_for_job(job.id)
-                        result = (
-                            self._document.results.get(run.result_id)
-                            if run is not None and run.result_id is not None
-                            else None
-                        )
-                        if result is not None and result.result_type == TRANSITION_STATE_SEARCH_CALC_TYPE:
-                            ts_run, ts_job, ts_result = run, job, result
-                candidates.append(
-                    _EnergyBarrierNebCandidate(
-                        key=key,
-                        source=source,
-                        transition_state_run=ts_run,
-                        transition_state_job=ts_job,
-                        transition_state_result=ts_result,
-                    )
-                )
+                # NEB is seeded directly from the endpoint pair; CASTEP interpolates the band.
+                candidates.append(_EnergyBarrierNebCandidate(key=key, source=source))
         return sorted(candidates, key=lambda item: item.key)
 
     def _energy_barrier_neb_source_candidate_by_key(self, key: str) -> _EnergyBarrierNebCandidate | None:
@@ -12423,16 +12390,7 @@ class MainWindow(QMainWindow):
             candidate = candidates_by_key.get(key)
             if candidate is None:
                 continue
-            source = dict(candidate.source)
-            # A transition-state search is optional now that NEB seeds from endpoints;
-            # record its ids only when one exists for this source.
-            if candidate.transition_state_run is not None:
-                source["transition_state_run_id"] = str(candidate.transition_state_run.id)
-            if candidate.transition_state_job is not None:
-                source["transition_state_job_id"] = str(candidate.transition_state_job.id)
-            if candidate.transition_state_result is not None:
-                source["transition_state_result_id"] = str(candidate.transition_state_result.id)
-            serialized.append(source)
+            serialized.append(dict(candidate.source))
         return serialized
 
     def _job_for_energy_barrier_source_key(self, definition, key: str) -> Job | None:
@@ -12742,27 +12700,6 @@ class MainWindow(QMainWindow):
                 product_block = self._absolute_position_block_from_structure(prepared.product)
             except (EnergyBarrierError, StructureBridgeError, ValueError):
                 continue
-            # Optional transition-state intermediate as a band seed: used only when a
-            # completed TS search exists for this source. Otherwise CASTEP interpolates
-            # the band between the two endpoints (the default, simplified path).
-            intermediate_block = None
-            ts_run_id = None
-            ts_job_id = None
-            ts_path = (
-                self._transition_state_file_path(candidate.transition_state_result)
-                if candidate.transition_state_result is not None
-                else None
-            )
-            if ts_path is not None and ts_path.exists():
-                try:
-                    transition_state = parse_transition_state_file(ts_path)
-                    intermediate_image = self._transition_state_intermediate_image(transition_state)
-                except (TransitionStateParseError, ValueError):
-                    intermediate_image = None
-                if intermediate_image is not None:
-                    intermediate_block = self._position_block_from_transition_state_image(intermediate_image)
-                    ts_run_id = candidate.transition_state_run.id if candidate.transition_state_run is not None else None
-                    ts_job_id = candidate.transition_state_job.id if candidate.transition_state_job is not None else None
             values, _advanced_names, _extras = self._workflow_row_configuration_with_project_defaults(
                 definition,
                 key,
@@ -12780,11 +12717,9 @@ class MainWindow(QMainWindow):
                         label=f"{str(candidate.source.get('label', '')).strip() or candidate.key}_neb",
                         reactant_structure=reactant_spec,
                         product_positions_abs=product_block,
-                        intermediate_positions_abs=intermediate_block,
+                        intermediate_positions_abs=None,
                         product_atomic_spins=reactant_spec.atomic_spins,
-                        intermediate_atomic_spins=(
-                            reactant_spec.atomic_spins if intermediate_block is not None else None
-                        ),
+                        intermediate_atomic_spins=None,
                         source_site_ids=tuple(
                             value
                             for value in (reactant_site_id, product_site_id)
@@ -12796,8 +12731,8 @@ class MainWindow(QMainWindow):
                             if value is not None
                         ),
                         source_relaxation_job_ids=(reactant_job_id, product_job_id),
-                        source_transition_state_run_id=ts_run_id,
-                        source_transition_state_job_id=ts_job_id,
+                        source_transition_state_run_id=None,
+                        source_transition_state_job_id=None,
                         path_length_ang=self._float_from_source(candidate.source, "path_length_ang"),
                         provenance={"source_key": key},
                     ),
@@ -12910,21 +12845,6 @@ class MainWindow(QMainWindow):
             coordinates = lattice_frac_to_cart(fractional, structure.lattice_vectors)
             rows.append(AtomicPosition(str(species), tuple(float(value) for value in coordinates)))
         return PositionBlock(positions=tuple(rows), unit="ang")
-
-    def _position_block_from_transition_state_image(self, image: TransitionStateImage) -> PositionBlock:
-        rows = [
-            AtomicPosition(species, tuple(float(value) for value in coordinates))
-            for species, coordinates in zip(image.species, image.cartesian_positions, strict=True)
-        ]
-        return PositionBlock(positions=tuple(rows), unit="ang")
-
-    def _transition_state_intermediate_image(self, transition_state: TransitionStatePath) -> TransitionStateImage | None:
-        intermediate = [
-            image for image in transition_state.images if image.label.upper() not in {"REA", "PRO"}
-        ]
-        if not intermediate:
-            return None
-        return max(intermediate, key=lambda image: image.energy)
 
     def _on_configure_quantum_corrections_source(self, payload: object) -> None:
         if self._document is None:

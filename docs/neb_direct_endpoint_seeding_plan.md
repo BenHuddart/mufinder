@@ -78,33 +78,32 @@ Next:
 
 ## Phase 2: App orchestration (`app/main_window.py`)
 
-Status: **core done** (candidate decoupling + materialization); keyword-set/source
-optimisation and TS-handler removal still pending.
+Status: **data layer done**; UI-side TS-search removal (submit handlers, source
+configure dialog, `_ENERGY_BARRIER_TSS_KEYWORD_NAMES`) deferred to Phase 3.
 
 Implemented:
 
-- `_EnergyBarrierNebCandidate` TS fields are optional; `_energy_barrier_neb_source_candidates`
-  builds one candidate per endpoint path source and attaches a TS result only if one exists.
-- `_materialize_energy_barrier_neb_jobs` no longer requires a `.ts` file or intermediate; it
-  seeds NEB from endpoints and uses a TS intermediate only when present.
-- `_serialize_energy_barrier_neb_sources` and the NEB parameter dialog intro no longer assume
-  a TS job/run/result.
-- Tests: existing TS-seeded materialization still passes; new
-  `test_main_window_materializes_neb_jobs_directly_from_endpoints` covers endpoint-only seeding
-  (product block, no intermediate block).
+- `_EnergyBarrierNebCandidate` now carries only `key` + `source`; `_energy_barrier_neb_source_candidates`
+  builds one candidate per endpoint path source (no TS dependency).
+- `_materialize_energy_barrier_neb_jobs` seeds NEB directly from endpoints with no
+  intermediate (CASTEP interpolates). The TS-seeded intermediate path and its plumbing
+  (`_serialize_energy_barrier_neb_sources` TS ids, the dead `_transition_state_intermediate_image`
+  and `_position_block_from_transition_state_image` helpers) were removed — this also eliminated
+  a latent Bohr-vs-Angstrom unit bug in the intermediate seed.
+- `tssearch_max_path_points` (the NEB image count) moved into `_ENERGY_BARRIER_NEB_KEYWORD_NAMES`;
+  the NEB param template emits a default odd image count plus climbing-image.
+- Tests: removed the obsolete TS-seeded materialization test; added
+  `test_main_window_materializes_neb_jobs_directly_from_endpoints` (product block, no
+  intermediate). All energy-barrier/NEB GUI tests pass.
 
-Next:
+Next (mostly Phase 3 / UI-coupled):
 
-- Make the Energy Barriers definition an NEB set (`method="NEB"`; fix the
-  `setdefault("method", "LSTQST")` defaults).
-- Optimise reused sources for NEB: strip LST/QST-only config
-  (`tssearch_lstqst_protocol`, `tssearch_qst_max_iter`, `tssearch_cg_max_iter`); move
-  `tssearch_max_path_points` (as image count, enforced odd when climbing) and the NEB
-  tolerances into `_ENERGY_BARRIER_NEB_KEYWORD_NAMES`.
-- Relax the path-enumeration `max_path_length_ang` default: the straight-line-through-an-atom
-  failure mode is gone, so longer/curved hops are valid; optionally scale image count with
-  path length.
-- Remove the TS submit handlers, TS candidate logic, and `_ENERGY_BARRIER_TSS_KEYWORD_NAMES`.
+- Relax the path-enumeration `max_path_length_ang` default now that straight-line overlap
+  is no longer a failure mode; optionally scale image count with path length.
+- Remove the TS submit handlers (`_on_submit_*_from_energy_barriers`), the source-configure
+  TS dialog, and `_ENERGY_BARRIER_TSS_KEYWORD_NAMES` as part of the widget teardown.
+- (Deeper) promote the energy-barriers definition to a first-class NEB set rather than reusing
+  `castep_transition_state_search_set`.
 
 ## Phase 3: UI (`app/energy_barriers_widget.py`)
 

@@ -274,7 +274,15 @@ def _nudged_elastic_band_param_template(*, method: str, atomic_spins: tuple[floa
     # The image count (`tssearch_max_path_points`) and tolerances come from the
     # workflow/UI configuration; CASTEP requires an odd image count when climbing.
     base = _transition_state_param_template(method=method, atomic_spins=atomic_spins)
-    return ParamTemplate(keywords=(*base.keywords, KeywordAssignment("tssearch_neb_climbing", True)))
+    return ParamTemplate(
+        keywords=(
+            *base.keywords,
+            KeywordAssignment("tssearch_neb_climbing", True),
+            # Odd default so the climbing image sits on the saddle without CASTEP
+            # silently bumping the count; user config may override this.
+            KeywordAssignment("tssearch_max_path_points", 7),
+        )
+    )
 
 
 def _transition_state_param_template(*, method: str, atomic_spins: tuple[float, ...] | None) -> ParamTemplate:
