@@ -6930,9 +6930,6 @@ class MainWindow(QMainWindow):
                 EnergyBarrierResultRow(
                     key=candidate.key,
                     label=label,
-                    barrier_height="",
-                    images="",
-                    transition_state_file="",
                     neb_status=getattr(neb_states.get(candidate.key), "status", "ready") or "ready",
                     configured=self._workflow_row_configuration_exists(neb_definition, candidate.key),
                 )

@@ -319,9 +319,6 @@ def test_energy_barriers_widget_marks_configured_result_row(qapp) -> None:
             EnergyBarrierResultRow(
                 key="ts-a",
                 label="TS A",
-                barrier_height="0.1 eV",
-                images="5",
-                transition_state_file="barrier.ts",
                 neb_status="ready",
                 configured=True,
             )
@@ -331,7 +328,7 @@ def test_energy_barriers_widget_marks_configured_result_row(qapp) -> None:
     configured: list[str] = []
     widget.configure_result_requested.connect(configured.append)
 
-    configure_button = widget._results_table.cellWidget(0, 5)
+    configure_button = widget._results_table.cellWidget(0, 2)
     assert isinstance(configure_button, QPushButton)
     assert configure_button.text() == "Configured..."
 
@@ -347,17 +344,11 @@ def test_energy_barriers_widget_batch_configure_emits_selected_result_keys(qapp)
             EnergyBarrierResultRow(
                 key="ts-a",
                 label="TS A",
-                barrier_height="0.1 eV",
-                images="5",
-                transition_state_file="barrier.ts",
                 neb_status="ready",
             ),
             EnergyBarrierResultRow(
                 key="ts-b",
                 label="TS B",
-                barrier_height="0.2 eV",
-                images="6",
-                transition_state_file="barrier_b.ts",
                 neb_status="ready",
             ),
         ]

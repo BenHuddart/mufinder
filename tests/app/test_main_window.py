@@ -501,7 +501,7 @@ def test_main_window_routes_to_quantum_view_and_construction_placeholders(qapp, 
     assert tabs is not None
     assert [tabs.tabText(index) for index in range(tabs.count())] == [
         "Paths",
-        "Transition States",
+        "NEB Setup",
         "NEB Analysis",
     ]
     window.close()
@@ -2583,7 +2583,7 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
 
     window._ensure_energy_barriers_view()
     window._refresh_energy_barriers_view()
-    configure_button = window._energy_barriers_view._results_table.cellWidget(0, 5)
+    configure_button = window._energy_barriers_view._results_table.cellWidget(0, 2)
     assert configure_button.text() == "Configured..."
 
     jobs = window._materialize_energy_barrier_neb_jobs(["source-key"])

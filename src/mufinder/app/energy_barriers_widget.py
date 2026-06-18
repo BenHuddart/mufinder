@@ -63,13 +63,10 @@ class EnergyBarrierSourceRow:
 
 @dataclass(frozen=True, slots=True)
 class EnergyBarrierResultRow:
-    """One completed transition-state-search result row."""
+    """One diffusion path eligible for NEB setup."""
 
     key: str
     label: str
-    barrier_height: str
-    images: str
-    transition_state_file: str
     neb_status: str
     configured: bool = False
 
@@ -389,8 +386,8 @@ class EnergyBarriersWidget(QWidget):
         style_hint_text(result_hint)
         results_layout.addWidget(result_hint)
         self._results_table = create_workflow_table(
-            ("Path", "Barrier", "Images", "TS File", "NEB Status", "Parameters"),
-            resize_to_contents_columns=(5,),
+            ("Path", "NEB Status", "Parameters"),
+            resize_to_contents_columns=(2,),
         )
         self._results_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._results_table.itemSelectionChanged.connect(self._update_actions)
@@ -824,7 +821,7 @@ def _fill_result_table(
     table.setRowCount(len(rows))
     key_by_row: dict[int, str] = {i: row.key for i, row in enumerate(rows)}
     for row_index, row in enumerate(rows):
-        for column, value in enumerate((row.label, row.barrier_height, row.images, row.transition_state_file, row.neb_status)):
+        for column, value in enumerate((row.label, row.neb_status)):
             set_workflow_table_item(table, row_index, column, value)
         configure_button = SelectionSnapshotPushButton(table)
         configure_button.selection_snapshot_key = row.key
@@ -847,7 +844,7 @@ def _fill_result_table(
                 ))
             )
         )
-        table.setCellWidget(row_index, 5, configure_button)
+        table.setCellWidget(row_index, 2, configure_button)
     table.resizeRowsToContents()
 
 

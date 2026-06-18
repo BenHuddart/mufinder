@@ -121,16 +121,23 @@ Implemented:
 - Verified: 28 energy-barrier GUI tests pass; the widget constructs with tabs
   `['Paths', 'NEB Setup', 'NEB Analysis']` and the NEB configure/submit controls intact.
 
+Implemented (continued):
+
+- Dropped the vestigial `Barrier`/`Images`/`TS File` columns from the NEB Setup table
+  (now `Path | NEB Status | Parameters`), along with the matching `EnergyBarrierResultRow`
+  fields; updated the widget tests' cellWidget indices.
+- Confirmed the path-enumeration `max_path_length_ang` is already uncapped when the field is
+  blank, so no default needs relaxing.
+
 Next:
 
 - Consolidate the two path tables (the Paths "Diffusion Paths" list and the "NEB Setup"
-  table currently list the same paths); drop the vestigial `Barrier`/`Images`/`TS File`
-  columns from the NEB Setup table (and the matching `EnergyBarrierResultRow` fields).
+  table list the same paths) into one — the larger UX refactor, best done with the app open.
 - The per-path "Configure Selected Parameters" dialog on the Paths tab still exposes LST/QST
   controls (`_ENERGY_BARRIER_TSS_KEYWORD_NAMES`); retire it or repoint to NEB params.
-- Remove the now-dead TS materialization helpers (`_materialize_energy_barriers_jobs`,
-  `_jobs_for_energy_barrier_source_keys`) once nothing references them.
-- Relax the path-enumeration `max_path_length_ang` default.
+- Dead-code sweep: remove the now-unused TS materialization helpers
+  (`_materialize_energy_barriers_jobs`, `_jobs_for_energy_barrier_source_keys`) and the
+  TS expansion path in `workflow/energy_barriers.py`, plus any helpers they alone reference.
 - Full visual verification by launching the app on a real project.
 
 ## Phase 4: Tests
