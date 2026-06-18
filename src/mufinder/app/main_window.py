@@ -106,7 +106,6 @@ from mufinder.app.energy_barriers_widget import (
     EnergyBarrierEndpointRow,
     EnergyBarrierNebResultRow,
     EnergyBarrierPreviewImageRow,
-    EnergyBarrierResultRow,
     EnergyBarrierSourceRow,
 )
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
@@ -4793,7 +4792,6 @@ class MainWindow(QMainWindow):
         energy_barriers_view.remove_sources_requested.connect(
             self._on_remove_energy_barrier_sources
         )
-        energy_barriers_view.configure_source_requested.connect(self._on_configure_energy_barrier_source)
         energy_barriers_view.view_source_requested.connect(self._on_view_energy_barrier_source)
         energy_barriers_view.configure_result_requested.connect(self._on_configure_energy_barrier_result)
         energy_barriers_view.submit_neb_local_requested.connect(
@@ -6888,7 +6886,6 @@ class MainWindow(QMainWindow):
         if self._document is None:
             energy_barriers_view.set_endpoint_options([])
             energy_barriers_view.set_sources([])
-            energy_barriers_view.set_results([])
             energy_barriers_view.set_neb_results([])
             return
 
@@ -6901,11 +6898,11 @@ class MainWindow(QMainWindow):
             max_path_length_text=self._energy_barrier_max_path_length_text(),
         )
 
+        # One unified table: each generated path carries its NEB status + configuration.
         source_rows: list[EnergyBarrierSourceRow] = []
-        barrier_states = self._build_energy_barriers_states()
-        source_definition = self._active_energy_barriers_definition()
+        neb_states = self._build_energy_barrier_neb_states()
+        neb_definition = self._active_energy_barrier_neb_definition()
         for candidate in self._eligible_energy_barrier_source_candidates():
-            state = barrier_states.get(candidate.key)
             source_rows.append(
                 EnergyBarrierSourceRow(
                     key=candidate.key,
@@ -6913,30 +6910,12 @@ class MainWindow(QMainWindow):
                     product=candidate.product.site.label or candidate.product.job.label,
                     charge_state=self._charge_state_label_for_job(candidate.reactant.job),
                     path_length=f"{candidate.path.length_ang:.4g} ang",
-                    source_jobs=f"{candidate.reactant.job.label} -> {candidate.product.job.label}",
-                    status=getattr(state, "status", "ready") or "ready",
-                    configured=self._workflow_row_configuration_exists(source_definition, candidate.key),
-                )
-            )
-
-        result_rows: list[EnergyBarrierResultRow] = []
-        neb_states = self._build_energy_barrier_neb_states()
-        neb_definition = self._active_energy_barrier_neb_definition()
-        for candidate in self._energy_barrier_neb_source_candidates():
-            # Endpoint path ready for NEB; the computed barrier appears in the NEB
-            # results table once the job completes.
-            label = str(candidate.source.get("label", "")).strip() or candidate.key
-            result_rows.append(
-                EnergyBarrierResultRow(
-                    key=candidate.key,
-                    label=label,
                     neb_status=getattr(neb_states.get(candidate.key), "status", "ready") or "ready",
                     configured=self._workflow_row_configuration_exists(neb_definition, candidate.key),
                 )
             )
 
         energy_barriers_view.set_sources(source_rows)
-        energy_barriers_view.set_results(result_rows)
 
         neb_result_rows: list[EnergyBarrierNebResultRow] = []
         for candidate in self._completed_energy_barrier_neb_candidates():
@@ -12323,22 +12302,15 @@ class MainWindow(QMainWindow):
     def _energy_barrier_neb_source_candidates(self) -> list[_EnergyBarrierNebCandidate]:
         if self._document is None:
             return []
+        # NEB is seeded directly from each generated path (the union of form-state and
+        # committed definition sources); CASTEP interpolates the band between the endpoints.
+        # No transition-state-search definition is required.
         candidates: list[_EnergyBarrierNebCandidate] = []
-        for definition in self._energy_barriers_definitions():
-            config = definition.parameters.get("configuration", {})
-            if not isinstance(config, dict):
+        for source in self._energy_barrier_generated_sources():
+            key = str(source.get("key", "")).strip()
+            if not key:
                 continue
-            raw_sources = config.get("sources", [])
-            if not isinstance(raw_sources, list):
-                continue
-            source_by_key = {
-                str(source.get("key", "")): source
-                for source in raw_sources
-                if isinstance(source, dict) and str(source.get("key", "")).strip()
-            }
-            for key, source in source_by_key.items():
-                # NEB is seeded directly from the endpoint pair; CASTEP interpolates the band.
-                candidates.append(_EnergyBarrierNebCandidate(key=key, source=source))
+            candidates.append(_EnergyBarrierNebCandidate(key=key, source=source))
         return sorted(candidates, key=lambda item: item.key)
 
     def _energy_barrier_neb_source_candidate_by_key(self, key: str) -> _EnergyBarrierNebCandidate | None:

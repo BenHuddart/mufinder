@@ -501,7 +501,6 @@ def test_main_window_routes_to_quantum_view_and_construction_placeholders(qapp, 
     assert tabs is not None
     assert [tabs.tabText(index) for index in range(tabs.count())] == [
         "Paths",
-        "NEB Setup",
         "NEB Analysis",
     ]
     window.close()
@@ -1329,23 +1328,23 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
 
     window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
     candidate = window._eligible_energy_barrier_source_candidates()[0]
-    definition = window._ensure_energy_barriers_definition([candidate.key])
-    assert definition is not None
-    definition.parameters["configuration"]["row_settings"] = {
+    neb_definition = window._ensure_energy_barrier_neb_definition([candidate.key])
+    assert neb_definition is not None
+    neb_definition.parameters["configuration"]["row_settings"] = {
         candidate.key: {
             "parameter_values": {
                 "kpoint_mp_grid": [2, 1, 1],
-                "tssearch_qst_max_iter": 12,
+                "tssearch_neb_max_iter": 18,
             }
         }
     }
 
     window._ensure_energy_barriers_view()
     window._refresh_energy_barriers_view()
-    configure_button = window._energy_barriers_view._sources_table.cellWidget(0, 6)
+    configure_button = window._energy_barriers_view._sources_table.cellWidget(0, 5)
     assert configure_button.text() == "Configured..."
 
-    jobs = window._materialize_energy_barriers_jobs([candidate.key])
+    jobs = window._materialize_energy_barrier_neb_jobs([candidate.key])
 
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
@@ -1353,7 +1352,7 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
     cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
     param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
     assert "KPOINT_MP_GRID 2 1 1" in cell_text
-    assert "TSSEARCH_QST_MAX_ITER : 12" in param_text
+    assert "TSSEARCH_NEB_MAX_ITER : 18" in param_text
 
     opened: dict[str, object] = {}
 
@@ -2580,11 +2579,6 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
             }
         }
     }
-
-    window._ensure_energy_barriers_view()
-    window._refresh_energy_barriers_view()
-    configure_button = window._energy_barriers_view._results_table.cellWidget(0, 2)
-    assert configure_button.text() == "Configured..."
 
     jobs = window._materialize_energy_barrier_neb_jobs(["source-key"])
 

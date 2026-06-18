@@ -9,7 +9,6 @@ from mufinder.app.theme import status_brush
 from mufinder.app.energy_barriers_widget import (
     EnergyBarrierEndpointRow,
     EnergyBarrierPreviewImageRow,
-    EnergyBarrierResultRow,
     EnergyBarrierSourceRow,
     EnergyBarriersWidget,
 )
@@ -186,19 +185,18 @@ def test_energy_barriers_widget_emits_configure_and_view_for_source_row(qapp) ->
                 product="B",
                 charge_state="Muonium",
                 path_length="1.2 ang",
-                source_jobs="relax_a -> relax_b",
-                status="ready",
+                neb_status="ready",
             )
         ]
     )
 
     configured: list[str] = []
     viewed: list[str] = []
-    widget.configure_source_requested.connect(configured.append)
+    widget.configure_result_requested.connect(configured.append)
     widget.view_source_requested.connect(viewed.append)
 
-    configure_button = widget._sources_table.cellWidget(0, 6)
-    view_button = widget._sources_table.cellWidget(0, 7)
+    configure_button = widget._sources_table.cellWidget(0, 5)
+    view_button = widget._sources_table.cellWidget(0, 6)
     assert isinstance(configure_button, QPushButton)
     assert isinstance(view_button, QPushButton)
     assert configure_button.text() == "Configure..."
@@ -221,8 +219,7 @@ def test_energy_barriers_widget_batch_configure_emits_selected_source_keys(qapp)
                 product="B",
                 charge_state="Muonium",
                 path_length="1.2 ang",
-                source_jobs="relax_a -> relax_b",
-                status="ready",
+                neb_status="ready",
             ),
             EnergyBarrierSourceRow(
                 key="path-b",
@@ -230,16 +227,15 @@ def test_energy_barriers_widget_batch_configure_emits_selected_source_keys(qapp)
                 product="C",
                 charge_state="Muonium",
                 path_length="1.4 ang",
-                source_jobs="relax_b -> relax_c",
-                status="ready",
+                neb_status="ready",
             ),
         ]
     )
     configured: list[object] = []
-    widget.configure_source_requested.connect(configured.append)
+    widget.configure_result_requested.connect(configured.append)
 
     widget._sources_table.selectRow(0)
-    widget._emit_batch_configure_sources()
+    widget._emit_batch_configure_results()
 
     assert configured == [["path-a"]]
 
@@ -282,8 +278,7 @@ def test_energy_barriers_widget_delete_key_removes_selected_source_from_child_fo
                 product="A",
                 charge_state="Muonium",
                 path_length="1.2 ang",
-                source_jobs="relax_a -> relax_a",
-                status="ready",
+                neb_status="ready",
             ),
             EnergyBarrierSourceRow(
                 key="path-b",
@@ -291,14 +286,13 @@ def test_energy_barriers_widget_delete_key_removes_selected_source_from_child_fo
                 product="B",
                 charge_state="Muonium",
                 path_length="1.8 ang",
-                source_jobs="relax_a -> relax_b",
-                status="ready",
+                neb_status="ready",
             ),
         ]
     )
     removed: list[list[str]] = []
     widget.remove_sources_requested.connect(lambda keys: removed.append(list(keys)))
-    configure_button = widget._sources_table.cellWidget(0, 6)
+    configure_button = widget._sources_table.cellWidget(0, 5)
     assert isinstance(configure_button, QPushButton)
 
     widget.show()
@@ -312,13 +306,16 @@ def test_energy_barriers_widget_delete_key_removes_selected_source_from_child_fo
     assert widget._source_rows[0].key == "path-b"
 
 
-def test_energy_barriers_widget_marks_configured_result_row(qapp) -> None:
+def test_energy_barriers_widget_marks_configured_path_row(qapp) -> None:
     widget = EnergyBarriersWidget()
-    widget.set_results(
+    widget.set_sources(
         [
-            EnergyBarrierResultRow(
-                key="ts-a",
-                label="TS A",
+            EnergyBarrierSourceRow(
+                key="path-a",
+                reactant="A",
+                product="B",
+                charge_state="Muonium",
+                path_length="1.2 ang",
                 neb_status="ready",
                 configured=True,
             )
@@ -328,38 +325,13 @@ def test_energy_barriers_widget_marks_configured_result_row(qapp) -> None:
     configured: list[str] = []
     widget.configure_result_requested.connect(configured.append)
 
-    configure_button = widget._results_table.cellWidget(0, 2)
+    configure_button = widget._sources_table.cellWidget(0, 5)
     assert isinstance(configure_button, QPushButton)
     assert configure_button.text() == "Configured..."
 
     configure_button.click()
 
-    assert configured == [["ts-a"]]
-
-
-def test_energy_barriers_widget_batch_configure_emits_selected_result_keys(qapp) -> None:
-    widget = EnergyBarriersWidget()
-    widget.set_results(
-        [
-            EnergyBarrierResultRow(
-                key="ts-a",
-                label="TS A",
-                neb_status="ready",
-            ),
-            EnergyBarrierResultRow(
-                key="ts-b",
-                label="TS B",
-                neb_status="ready",
-            ),
-        ]
-    )
-    configured: list[object] = []
-    widget.configure_result_requested.connect(configured.append)
-
-    widget._results_table.selectRow(1)
-    widget._emit_batch_configure_results()
-
-    assert configured == [["ts-b"]]
+    assert configured == [["path-a"]]
 
 
 def test_energy_barriers_widget_switches_preview_splitter_for_narrow_widths(qapp) -> None:
@@ -405,15 +377,15 @@ def test_energy_barriers_source_configure_applies_to_snapshot_rows(
     widget = EnergyBarriersWidget()
     widget.set_sources(
         [
-            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", source_jobs="j", status="ready"),
-            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", source_jobs="j", status="ready"),
+            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", neb_status="ready"),
+            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", neb_status="ready"),
         ]
     )
     configured: list[object] = []
-    widget.configure_source_requested.connect(configured.append)
+    widget.configure_result_requested.connect(configured.append)
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Yes))
 
-    btn = widget._sources_table.cellWidget(0, 6)
+    btn = widget._sources_table.cellWidget(0, 5)
     assert isinstance(btn, SelectionSnapshotPushButton)
     btn.selection_snapshot_rows = (0, 1)
     btn.clicked.emit()
@@ -429,14 +401,14 @@ def test_energy_barriers_source_configure_single_row_no_prompt(
 
     widget = EnergyBarriersWidget()
     widget.set_sources(
-        [EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", source_jobs="j", status="ready")]
+        [EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", neb_status="ready")]
     )
     configured: list[object] = []
-    widget.configure_source_requested.connect(configured.append)
+    widget.configure_result_requested.connect(configured.append)
     prompted: list[bool] = []
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: prompted.append(True) or QMessageBox.StandardButton.Yes))
 
-    btn = widget._sources_table.cellWidget(0, 6)
+    btn = widget._sources_table.cellWidget(0, 5)
     assert isinstance(btn, SelectionSnapshotPushButton)
     btn.selection_snapshot_rows = (0,)
     btn.clicked.emit()
@@ -453,15 +425,15 @@ def test_energy_barriers_view_shows_confirm_for_multi_row_snapshot(
     widget = EnergyBarriersWidget()
     widget.set_sources(
         [
-            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", source_jobs="j", status="ready"),
-            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", source_jobs="j", status="ready"),
+            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", neb_status="ready"),
+            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", neb_status="ready"),
         ]
     )
     viewed: list[str] = []
     widget.view_source_requested.connect(viewed.append)
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Yes))
 
-    btn = widget._sources_table.cellWidget(0, 7)
+    btn = widget._sources_table.cellWidget(0, 6)
     assert isinstance(btn, SelectionSnapshotPushButton)
     btn.selection_snapshot_rows = (0, 1)
     btn.clicked.emit()

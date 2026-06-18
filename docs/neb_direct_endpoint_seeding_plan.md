@@ -129,15 +129,24 @@ Implemented (continued):
 - Confirmed the path-enumeration `max_path_length_ang` is already uncapped when the field is
   blank, so no default needs relaxing.
 
+Implemented (continued):
+
+- Consolidated the two path tables into a single "Diffusion Paths" table on the Paths tab
+  (Reactant / Product / Charge / Path Length / NEB Status / Parameters / View) with the NEB
+  configure + build-local/cluster + delete actions; removed the separate "NEB Setup" tab and
+  the `EnergyBarrierResultRow` / `set_results` / `_fill_result_table` machinery.
+- Repointed `_energy_barrier_neb_source_candidates` at the generated-path union
+  (`_energy_barrier_generated_sources`) so NEB no longer depends on the TS-search-set
+  definition being populated — a generated path is immediately NEB-ready. The merged table's
+  per-row + batch configure now drives NEB parameters (`configure_result_requested`).
+
 Next:
 
-- Consolidate the two path tables (the Paths "Diffusion Paths" list and the "NEB Setup"
-  table list the same paths) into one — the larger UX refactor, best done with the app open.
-- The per-path "Configure Selected Parameters" dialog on the Paths tab still exposes LST/QST
-  controls (`_ENERGY_BARRIER_TSS_KEYWORD_NAMES`); retire it or repoint to NEB params.
-- Dead-code sweep: remove the now-unused TS materialization helpers
-  (`_materialize_energy_barriers_jobs`, `_jobs_for_energy_barrier_source_keys`) and the
-  TS expansion path in `workflow/energy_barriers.py`, plus any helpers they alone reference.
+- Dead-code sweep: the TS-only path is now fully unused — remove
+  `_on_configure_energy_barrier_source`, `_materialize_energy_barriers_jobs`,
+  `_jobs_for_energy_barrier_source_keys`, `_build_energy_barriers_states`,
+  `_ensure_energy_barriers_definition`, `_ENERGY_BARRIER_TSS_KEYWORD_NAMES`, the TS param
+  specs, and the LST/QST expansion path in `workflow/energy_barriers.py`.
 - Full visual verification by launching the app on a real project.
 
 ## Phase 4: Tests
