@@ -31,6 +31,7 @@ from mufinder.app.atomic_structure_viewer import (
     _ViewerIsosurfaceSpec,
     _ViewerPointOverlaySpec,
     _ViewerSliceSpec,
+    _PyVistaCanvas,
     _viewer_background_color,
     _viewer_style,
     _viewer_style_signature,
@@ -404,6 +405,67 @@ def test_atomic_structure_viewer_controls_default_states_and_reset_button_width(
 
     viewer._show_spins.setChecked(False)
     viewer._show_spins.setChecked(True)
+
+    widget.close()
+
+
+def test_pyvista_canvas_disables_pyvistaqt_auto_update_render_timer(qapp, monkeypatch) -> None:
+    """The canvas must build its interactor with ``auto_update=False`` (CPU regression).
+
+    pyvistaqt's ``QtInteractor`` defaults to ``auto_update=5.0``, which starts a
+    timer that calls ``render()`` ~5x/sec forever regardless of visibility and
+    pegged the CPU even on tabs without the view. We render explicitly, so the
+    periodic timer must be disabled at construction.
+    """
+
+    import mufinder.app.atomic_structure_viewer as module
+
+    captured: dict[str, object] = {}
+
+    class _RecordingInteractor(module.QWidget):
+        def __init__(self, parent=None, **kwargs) -> None:
+            super().__init__(parent)
+            captured.update(kwargs)
+
+        def set_background(self, *_args, **_kwargs) -> None:
+            return
+
+        def enable_parallel_projection(self) -> None:
+            return
+
+        def enable_anti_aliasing(self, *_args, **_kwargs) -> None:
+            return
+
+    monkeypatch.setattr(module, "_pyvista_modules", lambda: (object(), _RecordingInteractor))
+
+    # _PyVistaCanvas was imported before the autouse fake patched the module
+    # attribute, so this constructs the real production canvas.
+    canvas = _PyVistaCanvas()
+    try:
+        assert captured.get("auto_update") is False
+    finally:
+        canvas.deleteLater()
+
+
+def test_atomic_structure_viewer_pauses_camera_poll_while_hidden(qapp) -> None:
+    """The camera poll timer must stop while hidden and resume when shown again.
+
+    It only needs to tick while the view is visible (to sync axes/triad to
+    user-driven camera moves); leaving it running on tabs without the view is
+    wasted work.
+    """
+
+    from PySide6.QtGui import QHideEvent, QShowEvent
+
+    widget = HostStructureWidget()
+    widget.set_structure(_sample_structure())
+    viewer = widget._viewer
+
+    assert viewer._pyvista_camera_timer.isActive()
+    viewer.hideEvent(QHideEvent())
+    assert not viewer._pyvista_camera_timer.isActive()
+    viewer.showEvent(QShowEvent())
+    assert viewer._pyvista_camera_timer.isActive()
 
     widget.close()
 

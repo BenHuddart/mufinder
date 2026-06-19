@@ -1211,7 +1211,11 @@ class _PyVistaCanvas(QWidget):
         if pv is None or qt_interactor is None:
             raise RuntimeError("PyVista backend requested but PyVista is not installed.")
 
-        self._plotter = qt_interactor(self)
+        # auto_update=False disables pyvistaqt's internal render_timer, which
+        # otherwise calls plotter.render() ~5x/sec forever regardless of
+        # visibility. We drive rendering explicitly (_render/draw_idle), so the
+        # timer is pure waste and pegged the CPU even on tabs without the view.
+        self._plotter = qt_interactor(self, auto_update=False)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet("background: transparent;")
         self._plotter.setPalette(self.palette())
@@ -1307,7 +1311,8 @@ class _PyVistaTriadCanvas(QWidget):
             raise RuntimeError("PyVista triad requested but PyVista is not installed.")
 
         self._pv = pv
-        self._plotter = qt_interactor(self)
+        # See _PyVistaCanvas: disable the always-on render_timer (auto_update).
+        self._plotter = qt_interactor(self, auto_update=False)
         self._plotter.enable_parallel_projection()
         try:
             self._plotter.enable_anti_aliasing("ssaa")
@@ -1672,7 +1677,19 @@ class AtomicStructureViewer(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().showEvent(event)
+        # Camera polling only matters while the view is visible (it syncs the
+        # axes/triad to user-driven camera moves). Resume it on show; it is
+        # paused in hideEvent so it does not tick on tabs without the view.
+        timer = getattr(self, "_pyvista_camera_timer", None)
+        if timer is not None and not getattr(self, "_shutting_down", False) and not timer.isActive():
+            timer.start()
         QTimer.singleShot(0, self._refresh_interaction_hint_layout)
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().hideEvent(event)
+        timer = getattr(self, "_pyvista_camera_timer", None)
+        if timer is not None:
+            timer.stop()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().resizeEvent(event)

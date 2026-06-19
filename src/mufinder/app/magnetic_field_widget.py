@@ -3501,7 +3501,10 @@ class _DemagnetizingPyVistaCanvas(QWidget):
         self._sample: DemagnetizingSample | None = None
         self._refreshing_theme = False
         self._style_signature = self._style_signature_for_current_palette()
-        self._plotter = qt_interactor(self)
+        # auto_update=False disables pyvistaqt's always-on render_timer; we
+        # render explicitly (draw_idle/plotter.render), so the ~5Hz timer is
+        # pure CPU waste that runs even when this widget is not visible.
+        self._plotter = qt_interactor(self, auto_update=False)
         _configure_transparent_pyvista_background(self._plotter)
         self._plotter.enable_parallel_projection()
         layout = QVBoxLayout(self)
