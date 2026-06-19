@@ -1583,6 +1583,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._project_service = ProjectService()
         self._document: ProjectDocument | None = None
+        # Tracks whether the job dashboard is actually visible to the user.
+        # Driven by jobs_dock.visibilityChanged, which (unlike isHidden())
+        # also reports False on window minimize / tabbed-dock obscuring.
+        # Defaults True so an as-yet-unshown window still arms the timer.
+        self._jobs_dock_visible = True
         self._settings = QSettings("MuFinder", "MuFinder")
         self._appearance_mode = load_theme_mode(self._settings)
         self._local_runner = LocalJobRunner(self)
@@ -1909,6 +1914,10 @@ class MainWindow(QMainWindow):
             Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea
         )
         jobs_dock.setWidget(self._jobs_table)
+        # Pause the 1s runtime timer while the dock is not visible (closed,
+        # obscured, or window minimized), and refresh + re-arm when it returns,
+        # so we do not update an invisible table every second.
+        jobs_dock.visibilityChanged.connect(self._on_jobs_dock_visibility_changed)
         self._jobs_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, jobs_dock)
         self._jobs_delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._jobs_delete_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
@@ -3383,11 +3392,21 @@ class MainWindow(QMainWindow):
             for job in self._document.jobs.values()
             if job.status in _VISIBLE_DASHBOARD_STATES
         )
-        if has_live_runtime:
+        # No point ticking once a second to update a table the user cannot see;
+        # _on_jobs_dock_visibility_changed re-arms it when the dock returns.
+        if has_live_runtime and self._jobs_dock_visible:
             if not self._job_runtime_timer.isActive():
                 self._job_runtime_timer.start()
         else:
             self._job_runtime_timer.stop()
+
+    def _on_jobs_dock_visibility_changed(self, visible: bool) -> None:
+        self._jobs_dock_visible = bool(visible)
+        # On becoming visible, bring the (possibly stale) runtime cells current
+        # before re-arming. _sync_job_runtime_timer stops the timer when hidden.
+        if self._jobs_dock_visible:
+            self._refresh_active_job_runtime_cells()
+        self._sync_job_runtime_timer()
 
     def _configure_jobs_table_columns(self) -> None:
         """Stretch primary dashboard columns while keeping action columns compact."""
@@ -3638,7 +3657,10 @@ class MainWindow(QMainWindow):
             if table_id is not None:
                 target = self._comparison_widgets.get(table_id, self._pristine_relaxation_view)
         self._main_stack.setCurrentWidget(target)
-        self._refresh_workflow_stage_icons()
+        # Navigation does not mutate the document, so workflow completion state
+        # cannot change here. Stage icons are kept current by tree construction
+        # and by the mutation-driven refresh calls, so recomputing every check
+        # on each tab switch (which scans jobs/results) is wasted work.
         self._sync_project_home_trail()
 
     def _comparison_route(self, table_id: UUID) -> str:

@@ -1211,7 +1211,11 @@ class _PyVistaCanvas(QWidget):
         if pv is None or qt_interactor is None:
             raise RuntimeError("PyVista backend requested but PyVista is not installed.")
 
-        self._plotter = qt_interactor(self)
+        # auto_update=False disables pyvistaqt's internal render_timer, which
+        # otherwise calls plotter.render() ~5x/sec forever regardless of
+        # visibility. We drive rendering explicitly (_render/draw_idle), so the
+        # timer is pure waste and pegged the CPU even on tabs without the view.
+        self._plotter = qt_interactor(self, auto_update=False)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet("background: transparent;")
         self._plotter.setPalette(self.palette())
@@ -1307,7 +1311,8 @@ class _PyVistaTriadCanvas(QWidget):
             raise RuntimeError("PyVista triad requested but PyVista is not installed.")
 
         self._pv = pv
-        self._plotter = qt_interactor(self)
+        # See _PyVistaCanvas: disable the always-on render_timer (auto_update).
+        self._plotter = qt_interactor(self, auto_update=False)
         self._plotter.enable_parallel_projection()
         try:
             self._plotter.enable_anti_aliasing("ssaa")
@@ -1655,7 +1660,9 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_camera_timer = QTimer(self)
         self._pyvista_camera_timer.setInterval(40)
         self._pyvista_camera_timer.timeout.connect(self._poll_pyvista_camera)
-        self._pyvista_camera_timer.start()
+        # Do not start here: the timer is started lazily in showEvent and paused
+        # in hideEvent, so a viewer that is never shown (e.g. its tab is never
+        # opened) never polls. It only needs to tick while actually visible.
 
         self._render()
 
@@ -1672,7 +1679,21 @@ class AtomicStructureViewer(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().showEvent(event)
+        # Camera polling only matters while the view is visible (it syncs the
+        # axes/triad to user-driven camera moves). Resume it on show; it is
+        # paused in hideEvent so it does not tick on tabs without the view.
+        if not self._shutting_down and not self._pyvista_camera_timer.isActive():
+            self._pyvista_camera_timer.start()
+            # Sync the axes/triad to the current camera immediately rather than
+            # waiting up to one tick: if the camera/structure changed while the
+            # view was hidden (the poll was paused), this avoids a brief stale
+            # gizmo on the first frame after the tab is shown.
+            self._poll_pyvista_camera()
         QTimer.singleShot(0, self._refresh_interaction_hint_layout)
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().hideEvent(event)
+        self._pyvista_camera_timer.stop()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().resizeEvent(event)

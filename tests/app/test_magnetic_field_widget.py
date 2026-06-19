@@ -1318,7 +1318,7 @@ def test_demagnetizing_pyvista_axis_triad_uses_active_theme(qapp, monkeypatch) -
             return ("polydata", points, faces)
 
     class _FakePlotter(magnetic_field_widget_module.QWidget):
-        def __init__(self, parent=None):
+        def __init__(self, parent=None, **kwargs):
             super().__init__(parent)
             self.backgrounds = []
             self.meshes = []

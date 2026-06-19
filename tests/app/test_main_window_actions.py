@@ -3582,6 +3582,81 @@ def test_main_window_cluster_runtime_uses_queue_elapsed_and_ticks_between_polls(
     window.close()
 
 
+def test_main_window_runtime_timer_pauses_while_job_dock_hidden(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "dock_pause.mufinder", "DockPause")
+
+    job = service.add_job(
+        doc,
+        label="uep_dock_job",
+        workflow_stage=main_window_module.WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+    job.status = JobStatus.RUNNING
+    job.started_at = datetime(2026, 4, 20, 16, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(
+        main_window_module, "utc_now", lambda: datetime(2026, 4, 20, 16, 0, 0, tzinfo=UTC)
+    )
+
+    window._document = doc
+    window._refresh_jobs_table()
+    assert window._job_runtime_timer.isActive() is True
+
+    # Dock becoming not-visible (closed, obscured, or window minimized — all of
+    # which emit visibilityChanged(False)) should pause the per-second updates.
+    window._on_jobs_dock_visibility_changed(False)
+    assert window._jobs_dock_visible is False
+    assert window._job_runtime_timer.isActive() is False
+
+    # A live-runtime resync while not visible must not re-arm the timer.
+    window._sync_job_runtime_timer()
+    assert window._job_runtime_timer.isActive() is False
+
+    # Becoming visible again re-arms it and refreshes the (now stale) cells.
+    window._on_jobs_dock_visibility_changed(True)
+    assert window._jobs_dock_visible is True
+    assert window._job_runtime_timer.isActive() is True
+
+    window.close()
+
+
+def test_main_window_tab_navigation_does_not_recompute_stage_icons(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "nav_icons.mufinder", "NavIcons")
+    window._document = doc
+    window._refresh_ui_after_project_change()
+
+    # Switching tabs cannot change workflow completion, so navigation must not
+    # re-run the (job/result-scanning) completion checks.
+    calls = 0
+    original = window._refresh_workflow_stage_icons
+
+    def _counting() -> None:
+        nonlocal calls
+        calls += 1
+        original()
+
+    monkeypatch.setattr(window, "_refresh_workflow_stage_icons", _counting)
+
+    item = QTreeWidgetItem(["Candidates"])
+    item.setData(0, 0x0100, "muon_candidates")  # Qt.UserRole
+    window._project_tree.clearSelection()
+    window._project_tree.addTopLevelItem(item)
+    window._project_tree.setCurrentItem(item)
+    window._on_tree_selection_changed()
+
+    assert window._main_stack.currentWidget() is window._muon_generation_view
+    assert calls == 0
+
+    window.close()
+
+
 def test_main_window_refresh_ui_seeds_cluster_tracking_for_active_remote_jobs(
     qapp,
     tmp_path: Path,
