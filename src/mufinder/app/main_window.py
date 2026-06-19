@@ -1583,6 +1583,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._project_service = ProjectService()
         self._document: ProjectDocument | None = None
+        # Tracks whether the job dashboard is actually visible to the user.
+        # Driven by jobs_dock.visibilityChanged, which (unlike isHidden())
+        # also reports False on window minimize / tabbed-dock obscuring.
+        # Defaults True so an as-yet-unshown window still arms the timer.
+        self._jobs_dock_visible = True
         self._settings = QSettings("MuFinder", "MuFinder")
         self._appearance_mode = load_theme_mode(self._settings)
         self._local_runner = LocalJobRunner(self)
@@ -1909,9 +1914,9 @@ class MainWindow(QMainWindow):
             Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea
         )
         jobs_dock.setWidget(self._jobs_table)
-        self._jobs_dock = jobs_dock
-        # Pause the 1s runtime timer while the dock is closed, and refresh + re-arm
-        # when it is reopened, so we do not update an invisible table every second.
+        # Pause the 1s runtime timer while the dock is not visible (closed,
+        # obscured, or window minimized), and refresh + re-arm when it returns,
+        # so we do not update an invisible table every second.
         jobs_dock.visibilityChanged.connect(self._on_jobs_dock_visibility_changed)
         self._jobs_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, jobs_dock)
         self._jobs_delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -3387,20 +3392,20 @@ class MainWindow(QMainWindow):
             for job in self._document.jobs.values()
             if job.status in _VISIBLE_DASHBOARD_STATES
         )
-        # No point ticking once a second to update a table the user has closed;
-        # _on_jobs_dock_visibility_changed re-arms it when the dock reopens.
-        if has_live_runtime and not self._jobs_dock.isHidden():
+        # No point ticking once a second to update a table the user cannot see;
+        # _on_jobs_dock_visibility_changed re-arms it when the dock returns.
+        if has_live_runtime and self._jobs_dock_visible:
             if not self._job_runtime_timer.isActive():
                 self._job_runtime_timer.start()
         else:
             self._job_runtime_timer.stop()
 
-    def _on_jobs_dock_visibility_changed(self, _visible: bool) -> None:
-        if self._jobs_dock.isHidden():
-            self._job_runtime_timer.stop()
-            return
-        # Dock reopened: bring stale runtime cells current and re-arm if needed.
-        self._refresh_active_job_runtime_cells()
+    def _on_jobs_dock_visibility_changed(self, visible: bool) -> None:
+        self._jobs_dock_visible = bool(visible)
+        # On becoming visible, bring the (possibly stale) runtime cells current
+        # before re-arming. _sync_job_runtime_timer stops the timer when hidden.
+        if self._jobs_dock_visible:
+            self._refresh_active_job_runtime_cells()
         self._sync_job_runtime_timer()
 
     def _configure_jobs_table_columns(self) -> None:

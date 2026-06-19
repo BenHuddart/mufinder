@@ -473,6 +473,43 @@ def test_atomic_structure_viewer_pauses_camera_poll_while_hidden(qapp) -> None:
     widget.close()
 
 
+def test_atomic_structure_viewer_resyncs_camera_on_show(qapp, monkeypatch) -> None:
+    """showEvent must poll the camera once when it restarts the timer.
+
+    The poll timer is the only thing that syncs the axes/triad to the camera.
+    Because it is paused while hidden, a camera/structure change made off-screen
+    would otherwise leave a stale gizmo until the first tick; a one-shot poll on
+    show avoids that flicker.
+    """
+
+    from PySide6.QtGui import QHideEvent, QShowEvent
+
+    widget = HostStructureWidget()
+    widget.set_structure(_sample_structure())
+    viewer = widget._viewer
+    viewer.showEvent(QShowEvent())
+    viewer.hideEvent(QHideEvent())
+
+    polls = 0
+    original = viewer._poll_pyvista_camera
+
+    def _counting() -> None:
+        nonlocal polls
+        polls += 1
+        original()
+
+    monkeypatch.setattr(viewer, "_poll_pyvista_camera", _counting)
+    viewer.showEvent(QShowEvent())
+    assert viewer._pyvista_camera_timer.isActive()
+    assert polls == 1
+
+    # An already-visible viewer should not re-poll on a redundant show.
+    viewer.showEvent(QShowEvent())
+    assert polls == 1
+
+    widget.close()
+
+
 def test_atomic_structure_viewer_requires_pyvista_modules(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("mufinder.app.atomic_structure_viewer._pyvista_modules", lambda: (None, None))
 

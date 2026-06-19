@@ -3605,19 +3605,19 @@ def test_main_window_runtime_timer_pauses_while_job_dock_hidden(
     window._refresh_jobs_table()
     assert window._job_runtime_timer.isActive() is True
 
-    # Closing the dock should pause the per-second runtime updates.
-    window._jobs_dock.hide()
+    # Dock becoming not-visible (closed, obscured, or window minimized — all of
+    # which emit visibilityChanged(False)) should pause the per-second updates.
     window._on_jobs_dock_visibility_changed(False)
-    assert window._jobs_dock.isHidden() is True
+    assert window._jobs_dock_visible is False
     assert window._job_runtime_timer.isActive() is False
 
-    # A live-runtime resync while hidden must not re-arm the timer.
+    # A live-runtime resync while not visible must not re-arm the timer.
     window._sync_job_runtime_timer()
     assert window._job_runtime_timer.isActive() is False
 
-    # Reopening the dock re-arms it and refreshes the (now stale) cells.
-    window._jobs_dock.show()
+    # Becoming visible again re-arms it and refreshes the (now stale) cells.
     window._on_jobs_dock_visibility_changed(True)
+    assert window._jobs_dock_visible is True
     assert window._job_runtime_timer.isActive() is True
 
     window.close()

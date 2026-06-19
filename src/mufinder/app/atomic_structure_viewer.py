@@ -1682,16 +1682,18 @@ class AtomicStructureViewer(QWidget):
         # Camera polling only matters while the view is visible (it syncs the
         # axes/triad to user-driven camera moves). Resume it on show; it is
         # paused in hideEvent so it does not tick on tabs without the view.
-        timer = getattr(self, "_pyvista_camera_timer", None)
-        if timer is not None and not getattr(self, "_shutting_down", False) and not timer.isActive():
-            timer.start()
+        if not self._shutting_down and not self._pyvista_camera_timer.isActive():
+            self._pyvista_camera_timer.start()
+            # Sync the axes/triad to the current camera immediately rather than
+            # waiting up to one tick: if the camera/structure changed while the
+            # view was hidden (the poll was paused), this avoids a brief stale
+            # gizmo on the first frame after the tab is shown.
+            self._poll_pyvista_camera()
         QTimer.singleShot(0, self._refresh_interaction_hint_layout)
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().hideEvent(event)
-        timer = getattr(self, "_pyvista_camera_timer", None)
-        if timer is not None:
-            timer.stop()
+        self._pyvista_camera_timer.stop()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().resizeEvent(event)
