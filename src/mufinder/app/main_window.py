@@ -1909,6 +1909,10 @@ class MainWindow(QMainWindow):
             Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea
         )
         jobs_dock.setWidget(self._jobs_table)
+        self._jobs_dock = jobs_dock
+        # Pause the 1s runtime timer while the dock is closed, and refresh + re-arm
+        # when it is reopened, so we do not update an invisible table every second.
+        jobs_dock.visibilityChanged.connect(self._on_jobs_dock_visibility_changed)
         self._jobs_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, jobs_dock)
         self._jobs_delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._jobs_delete_shortcut.activated.connect(self._on_dashboard_delete_key_requested)
@@ -3383,11 +3387,21 @@ class MainWindow(QMainWindow):
             for job in self._document.jobs.values()
             if job.status in _VISIBLE_DASHBOARD_STATES
         )
-        if has_live_runtime:
+        # No point ticking once a second to update a table the user has closed;
+        # _on_jobs_dock_visibility_changed re-arms it when the dock reopens.
+        if has_live_runtime and not self._jobs_dock.isHidden():
             if not self._job_runtime_timer.isActive():
                 self._job_runtime_timer.start()
         else:
             self._job_runtime_timer.stop()
+
+    def _on_jobs_dock_visibility_changed(self, _visible: bool) -> None:
+        if self._jobs_dock.isHidden():
+            self._job_runtime_timer.stop()
+            return
+        # Dock reopened: bring stale runtime cells current and re-arm if needed.
+        self._refresh_active_job_runtime_cells()
+        self._sync_job_runtime_timer()
 
     def _configure_jobs_table_columns(self) -> None:
         """Stretch primary dashboard columns while keeping action columns compact."""
@@ -3638,7 +3652,10 @@ class MainWindow(QMainWindow):
             if table_id is not None:
                 target = self._comparison_widgets.get(table_id, self._pristine_relaxation_view)
         self._main_stack.setCurrentWidget(target)
-        self._refresh_workflow_stage_icons()
+        # Navigation does not mutate the document, so workflow completion state
+        # cannot change here. Stage icons are kept current by tree construction
+        # and by the mutation-driven refresh calls, so recomputing every check
+        # on each tab switch (which scans jobs/results) is wasted work.
         self._sync_project_home_trail()
 
     def _comparison_route(self, table_id: UUID) -> str:

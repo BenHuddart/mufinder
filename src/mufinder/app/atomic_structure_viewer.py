@@ -1660,7 +1660,9 @@ class AtomicStructureViewer(QWidget):
         self._pyvista_camera_timer = QTimer(self)
         self._pyvista_camera_timer.setInterval(40)
         self._pyvista_camera_timer.timeout.connect(self._poll_pyvista_camera)
-        self._pyvista_camera_timer.start()
+        # Do not start here: the timer is started lazily in showEvent and paused
+        # in hideEvent, so a viewer that is never shown (e.g. its tab is never
+        # opened) never polls. It only needs to tick while actually visible.
 
         self._render()
 

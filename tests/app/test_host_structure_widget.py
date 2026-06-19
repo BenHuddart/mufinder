@@ -461,6 +461,9 @@ def test_atomic_structure_viewer_pauses_camera_poll_while_hidden(qapp) -> None:
     widget.set_structure(_sample_structure())
     viewer = widget._viewer
 
+    # Lazy: the timer is not started in __init__, so an unshown viewer never polls.
+    assert not viewer._pyvista_camera_timer.isActive()
+    viewer.showEvent(QShowEvent())
     assert viewer._pyvista_camera_timer.isActive()
     viewer.hideEvent(QHideEvent())
     assert not viewer._pyvista_camera_timer.isActive()
