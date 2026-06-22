@@ -8,6 +8,7 @@ from typing import Sequence
 
 from ase import Atoms
 from ase.build import make_supercell
+from ase.mep import NEB, idpp_interpolate
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
@@ -17,6 +18,15 @@ from mufinder.science.spglib_compat import get_crystal_symmetry
 
 _MUON_LABELS = {"x", "h:mu", "mu", "muon"}
 _ELEMENT_RE = re.compile(r"^([A-Z][a-z]?)")
+
+# Number of images used for the internal IDPP interpolation. Odd so there is an exact
+# central image at reaction coordinate 0.5 -- the only image CASTEP consumes (it places the
+# intermediate at the climbing image and re-interpolates each half-band linearly).
+_IDPP_BAND_IMAGES = 7
+# Accept the IDPP intermediate unless it reduces the muon's clearance from neighbouring atoms
+# by more than this margin (Angstrom) versus the plain linear midpoint -- a cheap safety net
+# against a misbehaving optimiser, while still using IDPP for ties and improvements.
+_IDPP_CLEARANCE_MARGIN_ANG = 1e-3
 
 
 class EnergyBarrierError(ValueError):
@@ -272,6 +282,76 @@ def _atoms_to_structure(atoms: Atoms, template: Structure, *, origin: str) -> St
     if isinstance(spins, list) and len(spins) == len(labels):
         result.properties["atomic_spins"] = [float(value) for value in spins]
     return result
+
+
+def idpp_intermediate_structure(
+    reactant: Structure,
+    product: Structure,
+    *,
+    band_images: int = _IDPP_BAND_IMAGES,
+) -> Structure:
+    """Return the central NEB image for a reactant->product muon hop, seeded by IDPP.
+
+    CASTEP's NEB reads a single INTERMEDIATE structure, places it at the climbing image and
+    linearly interpolates each half-band. A plain linear midpoint can drop the muon onto a host
+    atom (huge initial forces / non-convergence). IDPP (Smidstrup et al., J. Chem. Phys. 140,
+    214106 (2014)) interpolates the pairwise distance matrix instead, bowing the muon around
+    obstacles; we optimise a small band and return its central image. On any failure -- or if the
+    optimiser somehow worsens the muon's clearance -- we fall back to the linear minimum-image
+    midpoint so job generation never blocks.
+    """
+
+    reactant_atoms = _structure_to_atoms(reactant, require_muon=True)
+    product_atoms = _structure_to_atoms(product, require_muon=True)
+    _validate_transition_state_cells(reactant_atoms, product_atoms)
+
+    linear = _linear_midpoint_atoms(reactant_atoms, product_atoms)
+    central = linear
+    try:
+        idpp = _idpp_central_image(reactant_atoms, product_atoms, band_images)
+        if _muon_host_clearance(idpp) + _IDPP_CLEARANCE_MARGIN_ANG >= _muon_host_clearance(linear):
+            central = idpp
+    except Exception:  # noqa: BLE001 - seeding is a heuristic; never block job generation
+        central = linear
+
+    return _atoms_to_structure(central, template=reactant, origin="energy_barriers_neb_intermediate")
+
+
+def _linear_midpoint_atoms(reactant_atoms: Atoms, product_atoms: Atoms) -> Atoms:
+    reactant_frac = reactant_atoms.get_scaled_positions(wrap=True)
+    product_frac = product_atoms.get_scaled_positions(wrap=True)
+    # Wrap each displacement into (-0.5, 0.5] so the muon takes the short path across the
+    # periodic boundary rather than the long way round the cell.
+    midpoint_frac = reactant_frac + 0.5 * _wrapped_fractional_delta(reactant_frac, product_frac)
+    midpoint = reactant_atoms.copy()
+    midpoint.set_scaled_positions(midpoint_frac)
+    return midpoint
+
+
+def _idpp_central_image(reactant_atoms: Atoms, product_atoms: Atoms, band_images: int) -> Atoms:
+    images_count = max(5, int(band_images))
+    if images_count % 2 == 0:
+        images_count += 1
+    images = [reactant_atoms.copy() for _ in range(images_count)]
+    images[-1] = product_atoms.copy()
+    # 'improvedtangent' is ASE's recommended (and default-pending) tangent estimator; set it
+    # explicitly to silence the deprecation warning and get a better-behaved IDPP optimisation.
+    neb = NEB(images, method="improvedtangent")
+    neb.interpolate(mic=True)  # linear spread of the interior images (no file output)
+    # Refine with IDPP; traj=None/log=None suppress the idpp.traj/idpp.log files ASE writes by default.
+    idpp_interpolate(neb, traj=None, log=None, mic=True)
+    return images[images_count // 2]
+
+
+def _muon_host_clearance(atoms: Atoms) -> float:
+    muon = _muon_index(atoms)
+    frac = atoms.get_scaled_positions(wrap=True)
+    cell = atoms.cell.array
+    return min(
+        _minimum_image_distance(frac[muon], frac[index], cell)
+        for index in range(len(atoms))
+        if index != muon
+    )
 
 
 def _single_muon_position(atoms: Atoms) -> np.ndarray:

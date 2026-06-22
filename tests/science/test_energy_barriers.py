@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from mufinder.domain.models import Structure
-from mufinder.science.energy_barriers import enumerate_distinct_muon_paths, prepare_transition_state_structures
+from mufinder.science.energy_barriers import (
+    _linear_midpoint_atoms,
+    _muon_host_clearance,
+    _structure_to_atoms,
+    enumerate_distinct_muon_paths,
+    idpp_intermediate_structure,
+    prepare_transition_state_structures,
+)
 
 
 def _host_structure() -> Structure:
@@ -73,3 +80,72 @@ def test_enumerate_distinct_muon_paths_respects_max_distance() -> None:
     )
 
     assert paths == ()
+
+
+def _overlapping_midpoint_endpoints() -> tuple[Structure, Structure]:
+    # A host Cu sits just off the straight muon path so the *linear* midpoint lands almost on
+    # top of it (~0.2 A) -- the exact pathology that blew up the Oct->Oct NEB (191 eV/A initial
+    # force). Placing the Cu off-axis gives IDPP a well-defined perpendicular escape direction.
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+
+    def endpoint(label: str, muon: list[float]) -> Structure:
+        return Structure(
+            label=label,
+            origin="muon_relaxation",
+            lattice_vectors=lattice,
+            species=["Cu", "H:mu"],
+            fractional_positions=[[0.5, 0.30, 0.25], muon],
+            properties={"atomic_spins": [0.0, 0.0]},
+        )
+
+    # Avoid an exactly-half-cell hop (0.25->0.75): a 0.5 displacement is min-image ambiguous and
+    # wraps the muon the other way round the cell. A 0.30->0.70 hop puts the linear midpoint at
+    # x=0.5, right next to the Cu at x=0.5.
+    return endpoint("siteA", [0.30, 0.25, 0.25]), endpoint("siteB", [0.70, 0.25, 0.25])
+
+
+def test_idpp_intermediate_bows_muon_off_host_atom() -> None:
+    reactant, product = _overlapping_midpoint_endpoints()
+
+    linear_clearance = _muon_host_clearance(
+        _linear_midpoint_atoms(
+            _structure_to_atoms(reactant, require_muon=True),
+            _structure_to_atoms(product, require_muon=True),
+        )
+    )
+    assert linear_clearance < 0.3  # linear midpoint overlaps the host
+
+    intermediate = idpp_intermediate_structure(reactant, product)
+
+    # Structure integrity: same atoms, same order, muon preserved as a tagged species.
+    assert intermediate.species == reactant.species
+    assert len(intermediate.fractional_positions) == len(reactant.fractional_positions)
+
+    idpp_clearance = _muon_host_clearance(_structure_to_atoms(intermediate, require_muon=True))
+    # IDPP must pull the muon well clear of the host (target Cu-mu distance is ~1 A here),
+    # and by contract it never returns something worse than the linear midpoint.
+    assert idpp_clearance > 0.8
+    assert idpp_clearance >= linear_clearance
+
+
+def test_idpp_intermediate_preserves_clean_short_hop() -> None:
+    # When the linear midpoint is already clear, the result must still be a valid single-muon
+    # intermediate that is no worse than linear (the acceptance gate's contract).
+    lattice = [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]]
+
+    def endpoint(label: str, muon: list[float]) -> Structure:
+        return Structure(
+            label=label,
+            origin="muon_relaxation",
+            lattice_vectors=lattice,
+            species=["Cu", "Cu", "H:mu"],
+            fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], muon],
+            properties={"atomic_spins": [0.0, 0.0, 0.0]},
+        )
+
+    reactant = endpoint("siteA", [0.20, 0.50, 0.50])
+    product = endpoint("siteB", [0.30, 0.50, 0.50])
+
+    intermediate = idpp_intermediate_structure(reactant, product)
+    assert intermediate.species == reactant.species
+    assert _muon_host_clearance(_structure_to_atoms(intermediate, require_muon=True)) > 0.0

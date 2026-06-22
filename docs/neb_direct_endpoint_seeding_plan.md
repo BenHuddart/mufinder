@@ -22,8 +22,8 @@ muon hops, gives the barrier directly, and matches the parser we already have.
 - Remove the LST/QST transition-state-search step from the Energy Barriers workflow.
 - Seed NEB directly from two relaxed endpoint muon sites (reactant + product).
 - Reuse the existing path "sources" (endpoint pairs), re-optimised for NEB.
-- Synthesise the CASTEP-required INTERMEDIATE structure ourselves as the minimum-image
-  fractional midpoint of the endpoints (a linear initial band); defer IDPP pre-interpolation.
+- Synthesise the CASTEP-required INTERMEDIATE structure ourselves via **IDPP** (with a linear
+  minimum-image midpoint as the fallback).
 
 > **Correction (CASTEP NEB requires three structures).** The earlier assumption that CASTEP
 > builds the band from the two endpoints alone is wrong. `tssearch.f90:307-314` makes the NEB
@@ -31,9 +31,21 @@ muon hops, gives the barrier directly, and matches the parser we already have.
 > intermediate aborts with `cell_read_coordinates - one of POSITION_FRAC_INTERMEDIATE or
 > POSITION_ABS_INTERMEDIATE must be present`. CASTEP places the intermediate at the central
 > image and linearly interpolates reactant->intermediate->product (`tssearch_neb.f90:1497-1513`).
-> We therefore supply the minimum-image fractional midpoint as the intermediate, which collapses
-> the two segments into a single straight reactant->product line — the standard linear band.
-> The "no separate LST/QST search" goal still holds: we compute the midpoint, we don't search for it.
+> We therefore supply a single central image as the intermediate.
+> The "no separate LST/QST search" goal still holds: we compute the intermediate, we don't search for it.
+
+> **IDPP seeding (implemented).** Because CASTEP only consumes the *central* image (re-interpolating
+> each half-band linearly), a plain linear midpoint can drop the muon onto a host atom — on the Cu
+> diffusion project the Oct→Oct path2 midpoint landed 0.038 Å from a Cu, giving a 191 eV/Å initial
+> force and a NEB that couldn't converge in the walltime; two Oct→Tet paths plateaued just above the
+> force tol because their midpoints started close to a Cu. We now seed the intermediate with IDPP
+> (Smidstrup et al., JCP 140, 214106 (2014)) via `science/energy_barriers.idpp_intermediate_structure`:
+> build a small odd-length band, `NEB.interpolate(mic=True)` then `idpp_interpolate(..., mic=True)`,
+> and take the rc=0.5 image. It falls back to the linear midpoint on any failure or if the optimiser
+> would reduce the muon's clearance from the host. Measured clearances on the real failing paths:
+> Oct→Oct path2 0.038 → 1.43 Å, Oct→Tet path2 0.81 → 1.46 Å, Oct→Tet path3 1.51 → 1.85 Å; already-clean
+> paths are left unchanged. IDPP fixes the catastrophic seed; the marginal long-hop plateaus may still
+> want `TSSEARCH_NEB_MAX_ITER` raised from 20 (separate follow-up).
 - Keep barrier extraction correct (eV) and well tested.
 
 ## Key references (not committed to the repo)
