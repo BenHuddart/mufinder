@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import logging
+
+import pytest
+
 from mufinder.domain.models import Structure
+from mufinder.science import energy_barriers as eb
 from mufinder.science.energy_barriers import (
     _linear_midpoint_atoms,
     _muon_host_clearance,
@@ -149,3 +154,29 @@ def test_idpp_intermediate_preserves_clean_short_hop() -> None:
     intermediate = idpp_intermediate_structure(reactant, product)
     assert intermediate.species == reactant.species
     assert _muon_host_clearance(_structure_to_atoms(intermediate, require_muon=True)) > 0.0
+
+
+def test_idpp_intermediate_warns_and_falls_back_when_optimiser_fails(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A silent fall-back would reintroduce the muon-on-host overlap IDPP exists to prevent, so the
+    # failure path must log a warning and still return the linear midpoint (job generation unblocked).
+    reactant, product = _overlapping_midpoint_endpoints()
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("optimiser diverged")
+
+    monkeypatch.setattr(eb, "_idpp_central_image", _boom)
+
+    with caplog.at_level(logging.WARNING, logger="mufinder.science.energy_barriers"):
+        intermediate = idpp_intermediate_structure(reactant, product)
+
+    assert any("falling back to the linear midpoint" in record.message for record in caplog.records)
+
+    # Result equals the linear midpoint (muon clearance matches, structure still valid).
+    linear = _linear_midpoint_atoms(
+        _structure_to_atoms(reactant, require_muon=True),
+        _structure_to_atoms(product, require_muon=True),
+    )
+    result_clearance = _muon_host_clearance(_structure_to_atoms(intermediate, require_muon=True))
+    assert result_clearance == pytest.approx(_muon_host_clearance(linear))

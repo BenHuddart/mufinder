@@ -90,6 +90,22 @@ keywords:
       %ENDBLOCK POSITIONS_FRAC_PRODUCT
     notes: Product-state fractional positions for CASTEP transition-state searches. MuFinder generates this from the selected product relaxed structure and does not expose it in parameter dialogs.
 
+  - name: POSITIONS_FRAC_INTERMEDIATE
+    canonical_name: positions_frac_intermediate
+    file: cell
+    kind: block
+    value_type: positions_block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK POSITIONS_FRAC_INTERMEDIATE
+      Fe 0 0 0 SPIN=2
+      Fe 0.25 0.5 0.5 SPIN=-2
+      %ENDBLOCK POSITIONS_FRAC_INTERMEDIATE
+    notes: Intermediate-image fractional positions for CASTEP NEB transition-state searches. MuFinder generates this as the IDPP-seeded central image between the two relaxed endpoints and does not expose it in parameter dialogs.
+
   - name: POSITIONS_ABS_PRODUCT
     canonical_name: positions_abs_product
     file: cell
