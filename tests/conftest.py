@@ -13,7 +13,50 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QSettings, QThread
 from PySide6.QtWidgets import QApplication, QWidget
 
+import mufinder.castep_io.schema as _schema_module
 from mufinder.app.theme import cleanup_theme_runtime
+
+
+# Process-wide CASTEP keyword-schema state. Several tests rebuild it (refresh_keyword_catalog,
+# swapping _candidate_catalog_sources, or pointing the *_KEYWORDS_JSON env vars at a stub) and
+# restore it manually after their assertions. A mid-test assertion failure, or an env var leaked
+# by another test, would skip that restore and strand the reduced starter catalog globally,
+# cascading failures into every later test that reads the schema. The autouse fixture below makes
+# the isolation guaranteed: teardown always runs, so the canonical schema is always reinstated.
+_SCHEMA_GLOBAL_NAMES = (
+    "CELL_KEYWORDS",
+    "PARAM_KEYWORDS",
+    "SOURCE_KEYWORDS",
+    "SCHEMA",
+    "CELL_SERIALIZATION_ORDER",
+    "PARAM_SERIALIZATION_ORDER",
+    "SERIALIZATION_INDEX",
+    "CATALOG_SOURCE_INFO",
+    "_candidate_catalog_sources",
+)
+_SCHEMA_ENV_VARS = ("MUFINDER_CASTEP_KEYWORDS_JSON", "CASTEP_KEYWORDS_JSON")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_castep_keyword_catalog() -> Iterator[None]:
+    """Snapshot and restore the global CASTEP keyword schema around every test."""
+
+    saved_globals = {
+        name: getattr(_schema_module, name)
+        for name in _SCHEMA_GLOBAL_NAMES
+        if hasattr(_schema_module, name)
+    }
+    saved_env = {name: os.environ.get(name) for name in _SCHEMA_ENV_VARS}
+    try:
+        yield
+    finally:
+        for name, value in saved_globals.items():
+            setattr(_schema_module, name, value)
+        for name, value in saved_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
