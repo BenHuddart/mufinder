@@ -159,9 +159,10 @@ def _nudged_elastic_band_param_template(*, method: str, atomic_spins: tuple[floa
         keywords=(
             *base.keywords,
             KeywordAssignment("tssearch_neb_climbing", True),
-            # Odd default so the climbing image sits on the saddle without CASTEP
-            # silently bumping the count; user config may override this.
-            KeywordAssignment("tssearch_max_path_points", 7),
+            # Odd default so the climbing image sits on the saddle without CASTEP silently
+            # bumping the count; 11 gives a smoother, better-resolved band than the minimum.
+            # User/UI config may override this.
+            KeywordAssignment("tssearch_max_path_points", 11),
         )
     )
 

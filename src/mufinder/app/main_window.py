@@ -265,7 +265,9 @@ _ENERGY_BARRIER_NEB_KEYWORD_NAMES = workflow_basic_parameter_names(
     "tssearch_neb_normed",
 )
 # Default NEB image count (TSSEARCH_MAX_PATH_POINTS). Odd, as climbing-image NEB requires.
-_ENERGY_BARRIER_NEB_DEFAULT_IMAGES = 7
+# 11 gives a finer band than the CASTEP minimum: a smoother barrier path and a lower residual
+# force at the climbing image (7 images left a ~0.08 eV/Ang plateau just above the force tol).
+_ENERGY_BARRIER_NEB_DEFAULT_IMAGES = 11
 _QUANTUM_GUI_TO_METHOD = {
     "FINITEDISPLACEMENT": "finite_displacement",
     "DFPT": "dfpt",

@@ -2229,9 +2229,9 @@ def test_main_window_materializes_neb_jobs_directly_from_endpoints(
     muon_coords = [float(value) for value in muon_line.split()[1:4]]
     assert len(muon_coords) == 3
     assert "TSSEARCH_METHOD : NEB" in param_text
-    # Climbing image is locked on, and the image count defaults to an odd value (7).
+    # Climbing image is locked on, and the image count defaults to an odd value (11).
     assert "TSSEARCH_NEB_CLIMBING : TRUE" in param_text
-    assert "TSSEARCH_MAX_PATH_POINTS : 7" in param_text
+    assert "TSSEARCH_MAX_PATH_POINTS : 11" in param_text
 
     window.close()
 

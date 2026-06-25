@@ -46,6 +46,16 @@ muon hops, gives the barrier directly, and matches the parser we already have.
 > Oct→Oct path2 0.038 → 1.43 Å, Oct→Tet path2 0.81 → 1.46 Å, Oct→Tet path3 1.51 → 1.85 Å; already-clean
 > paths are left unchanged. IDPP fixes the catastrophic seed; the marginal long-hop plateaus may still
 > want `TSSEARCH_NEB_MAX_ITER` raised from 20 (separate follow-up).
+
+> **IDPP re-run outcome (2026-06-25).** With IDPP, all nine Cu paths produce well-defined barriers.
+> Three (Oct→Oct path2, Oct→Tet path2/path3) still print "Failed to converge", but this is cosmetic:
+> they stop at 26-30 of 60 iterations with the displacement converged (~1e-6 Å) and only the max
+> force component plateaued at ~0.08 eV/Å (ODE12R stalls just above the 0.05 eV/Å default force tol).
+> Their barriers are fully converged to **0.0 meV drift** (0.35 / 0.60 / 0.34 eV), in line with the
+> jobs that pass. Remedy chosen: raise the default `TSSEARCH_MAX_PATH_POINTS` from 7 to **11** — a
+> finer band gives a smoother barrier path and a lower residual force at the climbing image (likely
+> converging honestly). `TSSEARCH_NEB_MAX_ITER` is now 60 and was not the limiter. Loosening
+> `TSSEARCH_FORCE_TOL` to ~0.1 eV/Ang remains the cheaper alternative if 11 images still plateau.
 - Keep barrier extraction correct (eV) and well tested.
 
 ## Key references (not committed to the repo)
