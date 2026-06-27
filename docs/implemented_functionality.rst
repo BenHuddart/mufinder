@@ -33,6 +33,10 @@ inheriting each platform's native look:
   artwork, so icons stay on-brand and identical across operating systems. The
   platform standard icon is used only as a fallback for names without a
   branded glyph.
+- Checkbox and radio-button indicators are styled by the stylesheet (with
+  bundled tick/dot glyphs) and tinted with the muon-red accent, so they render
+  identically on every platform instead of falling back to each OS's native
+  control artwork and accent colour.
 - The project-home trail map scales with the window: the artwork keeps its
   aspect ratio and the signpost labels are sized relative to the rendered
   banner (``ProjectHomeTrailWidget._sign_title_point_size``), so the labels

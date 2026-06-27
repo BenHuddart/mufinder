@@ -167,6 +167,32 @@ def test_apply_base_style_forces_fusion(qapp) -> None:
         qapp.setStyleSheet(previous_sheet)
 
 
+def test_apply_theme_styles_checkbox_and_radio_indicators(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    stylesheet = qapp.styleSheet()
+    accent = theme_module.current_palette().accent
+
+    # Indicators are explicitly styled (so they render identically on every OS
+    # via Fusion) and tinted with the brand accent rather than left Fusion-gray.
+    assert "QCheckBox::indicator" in stylesheet
+    assert "QRadioButton::indicator" in stylesheet
+    assert "QCheckBox::indicator:checked" in stylesheet
+    assert "QRadioButton::indicator:checked" in stylesheet
+    assert "QCheckBox::indicator:indeterminate" in stylesheet
+    assert accent in stylesheet  # accent fill/border on the checked indicators
+
+
+def test_indicator_glyph_assets_are_generated(qapp) -> None:
+    from pathlib import Path
+
+    for kind, colour in (("check", "#FFFFFF"), ("dash", "#FFFFFF"), ("dot", "#E02020")):
+        path = Path(theme_module._indicator_glyph_path(kind, colour))
+        assert path.exists()
+        svg = path.read_text(encoding="utf-8")
+        assert svg.startswith("<svg")
+        assert colour.lower() in svg.lower()
+
+
 def test_status_brush_uses_palette_tokens(qapp) -> None:
     theme_module.apply_theme(qapp, theme_module.THEME_DARK)
 

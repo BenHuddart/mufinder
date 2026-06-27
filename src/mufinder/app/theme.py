@@ -126,6 +126,40 @@ def _arrow_asset_path(direction: str, colour: str) -> str:
     return str(filename)
 
 
+def _indicator_glyph_path(kind: str, colour: str) -> str:
+    """Return a temporary SVG asset path for a checkbox/radio indicator glyph.
+
+    ``kind`` is one of ``check`` (tick mark), ``dot`` (filled radio dot), or
+    ``dash`` (indeterminate checkbox). Styling a Qt ``::indicator`` via the
+    stylesheet replaces the native glyph, so we supply our own here to keep the
+    indicators identical on every platform and tinted to the MuFinder palette.
+    """
+
+    normalized = colour.lower().replace("#", "")
+    asset_dir = Path(tempfile.gettempdir()) / "mufinder-theme-assets"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    filename = asset_dir / f"indicator-{kind}-{normalized}.svg"
+    if not filename.exists():
+        if kind == "check":
+            body = (
+                f'<path d="M4 8.5 L7 11.2 L12.4 5" fill="none" stroke="{colour}" '
+                'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+            )
+        elif kind == "dash":
+            body = (
+                f'<line x1="4.5" y1="8" x2="11.5" y2="8" stroke="{colour}" '
+                'stroke-width="2" stroke-linecap="round"/>'
+            )
+        else:  # dot
+            body = f'<circle cx="8" cy="8" r="4" fill="{colour}"/>'
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
+            f"{body}</svg>"
+        )
+        filename.write_text(svg, encoding="utf-8")
+    return str(filename)
+
+
 @dataclass(frozen=True, slots=True)
 class MuFinderPalette:
     """Named UI colors for a single MuFinder appearance mode."""
@@ -1621,6 +1655,54 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     """
 
 
+def _indicator_styles(p: MuFinderPalette, check_glyph: str, dash_glyph: str, dot_glyph: str) -> str:
+    return f"""
+    QCheckBox::indicator, QRadioButton::indicator {{
+        width: 16px;
+        height: 16px;
+        border: 1px solid {p.border};
+        background: {p.bg_surface};
+    }}
+    QCheckBox::indicator {{
+        border-radius: 4px;
+    }}
+    QRadioButton::indicator {{
+        border-radius: 9px;
+    }}
+    QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
+        border-color: {p.accent};
+    }}
+    QCheckBox::indicator:checked {{
+        background: {p.accent};
+        border-color: {p.accent};
+        image: url("{check_glyph}");
+    }}
+    QCheckBox::indicator:checked:hover {{
+        background: {p.accent_hover};
+        border-color: {p.accent_hover};
+    }}
+    QCheckBox::indicator:indeterminate {{
+        background: {p.accent};
+        border-color: {p.accent};
+        image: url("{dash_glyph}");
+    }}
+    QRadioButton::indicator:checked {{
+        border-color: {p.accent};
+        image: url("{dot_glyph}");
+    }}
+    QRadioButton::indicator:checked:hover {{
+        border-color: {p.accent_hover};
+    }}
+    QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
+        background: {p.bg_surface_alt};
+        border-color: {p.border};
+    }}
+    QCheckBox:disabled, QRadioButton:disabled {{
+        color: {p.text_muted};
+    }}
+    """
+
+
 def _build_stylesheet(p: MuFinderPalette) -> str:
     heading_font = heading_font_family()
     arrow_down = _arrow_asset_path("down", p.text_primary)
@@ -1628,9 +1710,13 @@ def _build_stylesheet(p: MuFinderPalette) -> str:
     arrow_right = _arrow_asset_path("right", p.text_primary)
     selected_arrow_down = _arrow_asset_path("down", "#FFFFFF")
     selected_arrow_right = _arrow_asset_path("right", "#FFFFFF")
+    check_glyph = _indicator_glyph_path("check", "#FFFFFF")
+    dash_glyph = _indicator_glyph_path("dash", "#FFFFFF")
+    dot_glyph = _indicator_glyph_path("dot", p.accent)
     sections = (
         _base_widget_styles(p),
         _input_control_styles(p, arrow_up, arrow_down),
+        _indicator_styles(p, check_glyph, dash_glyph, dot_glyph),
         _item_view_styles(p),
         _panel_container_styles(p),
         _muon_generation_styles(p),
