@@ -3,6 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 
 
+BUNDLED_FONT_ASSETS = [
+    "Inter-Regular.ttf",
+    "Inter-Medium.ttf",
+    "Inter-SemiBold.ttf",
+    "Inter-Bold.ttf",
+    "Fraunces-Regular.ttf",
+    "Fraunces-SemiBold.ttf",
+    "Fraunces-Bold.ttf",
+    "Inter-OFL.txt",
+    "Fraunces-OFL.txt",
+]
+
+
 PROJECT_HOME_ASSETS = [
     "project_home_convergence_cutoff.png",
     "project_home_convergence_kpoint.png",
@@ -34,12 +47,20 @@ def test_pyproject_packages_runtime_assets_and_science_data() -> None:
     repo_root = _repo_root()
     pyproject_text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
 
-    assert '"mufinder.assets" = ["*.png", "*.ico", "*.yaml"]' in pyproject_text
+    assert (
+        '"mufinder.assets" = ["*.png", "*.ico", "*.yaml", "fonts/*.ttf", "fonts/*.txt"]'
+        in pyproject_text
+    )
     assert '"mufinder.data" = ["*.ini"]' in pyproject_text
 
     assets_root = repo_root / "src" / "mufinder" / "assets"
     for asset_name in PROJECT_HOME_ASSETS:
         assert (assets_root / asset_name).is_file()
+
+    # Bundled fonts must ship so typography is identical on every platform.
+    fonts_root = assets_root / "fonts"
+    for font_name in BUNDLED_FONT_ASSETS:
+        assert (fonts_root / font_name).is_file()
 
     assert (repo_root / "src" / "mufinder" / "data" / "isotopes.ini").is_file()
 
