@@ -33,6 +33,11 @@ inheriting each platform's native look:
   artwork, so icons stay on-brand and identical across operating systems. The
   platform standard icon is used only as a fallback for names without a
   branded glyph.
+- The project-home trail map scales with the window: the artwork keeps its
+  aspect ratio and the signpost labels are sized relative to the rendered
+  banner (``ProjectHomeTrailWidget._sign_title_point_size``), so the labels
+  stay proportionate and legible from small laptops to large/high-DPI displays
+  instead of shrinking as the map grows.
 
 Domain and persistence
 ----------------------

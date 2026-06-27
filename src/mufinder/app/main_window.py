@@ -829,6 +829,9 @@ class ProjectHomeTrailWidget(QWidget):
         "energy_barriers": QPointF(450.0, 745.0),
     }
     _LOGO_COVER_REGION = QRectF(34.0, 780.0, 174.0, 190.0)
+    # Banner height (logical px) at a typical window; signpost label sizes are
+    # scaled relative to this so they stay proportionate as the map grows/shrinks.
+    _SIGN_REF_BANNER_HEIGHT = 34.0
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1208,6 +1211,22 @@ class ProjectHomeTrailWidget(QWidget):
     def _workflow_scroll_label_color() -> QColor:
         return QColor(light_palette().text_primary)
 
+    @classmethod
+    def _sign_title_point_size(cls, route: str, title: str, banner_height: float) -> float:
+        """Point size for a signpost label, scaled to the rendered banner.
+
+        A fixed point size made labels look generous on small windows but shrink
+        to near-illegible on large or high-DPI displays. Tying the size to the
+        banner height keeps the same proportion at every window size. The
+        reference height matches the banner at a typical window, so the
+        already-tuned default appearance is preserved; the result is floored for
+        legibility and capped so it never overwhelms its banner.
+        """
+
+        base = float(cls._SIGN_TEXT_MAX_SIZES.get(route, 13 if len(title) <= 16 else 11))
+        scale = banner_height / cls._SIGN_REF_BANNER_HEIGHT
+        return max(11.0, min(base * scale, base * 2.0))
+
     def _draw_sign_title(self, painter: QPainter, palette, rect: QRectF, title: str, route: str) -> None:
         left, top, right, bottom = self._SIGN_TEXT_INSETS.get(route, (18.0, 5.0, 20.0, 8.0))
         text_rect = rect.adjusted(left, top, -right, -bottom)
@@ -1217,9 +1236,9 @@ class ProjectHomeTrailWidget(QWidget):
 
         font = QFont(heading_font_family())
         font.setBold(True)
-        font.setPointSize(self._SIGN_TEXT_MAX_SIZES.get(route, 13 if len(title) <= 16 else 11))
-        while font.pointSize() > 8 and QFontMetricsF(font).horizontalAdvance(title) > text_rect.width() - 8.0:
-            font.setPointSize(font.pointSize() - 1)
+        font.setPointSizeF(self._sign_title_point_size(route, title, rect.height()))
+        while font.pointSizeF() > 8.0 and QFontMetricsF(font).horizontalAdvance(title) > text_rect.width() - 8.0:
+            font.setPointSizeF(font.pointSizeF() - 1.0)
 
         painter.setFont(font)
         painter.setPen(self._workflow_scroll_label_color())

@@ -2877,6 +2877,21 @@ def test_project_home_trail_destinations_include_journal(qapp, tmp_path: Path) -
     window.close()
 
 
+def test_sign_title_point_size_scales_with_banner_height() -> None:
+    trail = main_window_module.ProjectHomeTrailWidget
+    ref = trail._SIGN_REF_BANNER_HEIGHT
+
+    # At the reference banner height the tuned base size is preserved.
+    assert trail._sign_title_point_size("host_structure", "Host Structure", ref) == 13.0
+    # Larger banners (large/high-DPI windows) yield larger, still-legible labels;
+    # smaller banners shrink but never below the legibility floor.
+    small = trail._sign_title_point_size("host_structure", "Host Structure", ref * 0.5)
+    large = trail._sign_title_point_size("host_structure", "Host Structure", ref * 1.6)
+    assert large > 13.0 > small
+    assert small >= 11.0  # legibility floor
+    assert large <= 13.0 * 2.0  # capped so it never overwhelms the banner
+
+
 def test_project_home_trail_scroll_labels_keep_dark_ink_in_dark_mode(qapp) -> None:
     theme_module.apply_theme(qapp, theme_module.THEME_DARK)
     try:
