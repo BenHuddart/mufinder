@@ -28,6 +28,11 @@ inheriting each platform's native look:
   the same fonts appear regardless of what is installed on the machine. The
   historical system-font fallbacks (Helvetica Neue/Arial, Georgia) are
   retained only as a safety net.
+- Action/toolbar icons prefer MuFinder's own hand-drawn vector glyphs
+  (``mufinder.app.icons``) over the platform's ``QStyle.standardIcon``
+  artwork, so icons stay on-brand and identical across operating systems. The
+  platform standard icon is used only as a fallback for names without a
+  branded glyph.
 
 Domain and persistence
 ----------------------
