@@ -180,6 +180,11 @@ def test_apply_theme_styles_checkbox_and_radio_indicators(qapp) -> None:
     assert "QRadioButton::indicator:checked" in stylesheet
     assert "QCheckBox::indicator:indeterminate" in stylesheet
     assert accent in stylesheet  # accent fill/border on the checked indicators
+    # Checkable item-view rows get the same branded indicators as form widgets.
+    assert "QTreeView::indicator:checked" in stylesheet
+    assert "QTableView::indicator:checked" in stylesheet
+    # Disabled+checked uses a muted tick instead of the low-contrast white one.
+    assert "QCheckBox::indicator:checked:disabled" in stylesheet
 
 
 def test_indicator_glyph_assets_are_generated(qapp) -> None:

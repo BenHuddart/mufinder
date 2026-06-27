@@ -1655,15 +1655,27 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     """
 
 
-def _indicator_styles(p: MuFinderPalette, check_glyph: str, dash_glyph: str, dot_glyph: str) -> str:
+def _indicator_styles(
+    p: MuFinderPalette,
+    check_glyph: str,
+    check_muted_glyph: str,
+    dash_glyph: str,
+    dot_glyph: str,
+) -> str:
+    # The same treatment is applied to standalone QCheckBox/QRadioButton widgets
+    # and to checkable item-view rows (QTreeView/QTableView/QListView indicators),
+    # so a table's checkboxes match the form checkboxes instead of falling back
+    # to the plain Fusion indicator.
     return f"""
-    QCheckBox::indicator, QRadioButton::indicator {{
+    QCheckBox::indicator, QRadioButton::indicator,
+    QTreeView::indicator, QTableView::indicator, QListView::indicator {{
         width: 16px;
         height: 16px;
         border: 1px solid {p.border};
         background: {p.bg_surface};
     }}
-    QCheckBox::indicator {{
+    QCheckBox::indicator,
+    QTreeView::indicator, QTableView::indicator, QListView::indicator {{
         border-radius: 4px;
     }}
     QRadioButton::indicator {{
@@ -1672,7 +1684,8 @@ def _indicator_styles(p: MuFinderPalette, check_glyph: str, dash_glyph: str, dot
     QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
         border-color: {p.accent};
     }}
-    QCheckBox::indicator:checked {{
+    QCheckBox::indicator:checked,
+    QTreeView::indicator:checked, QTableView::indicator:checked, QListView::indicator:checked {{
         background: {p.accent};
         border-color: {p.accent};
         image: url("{check_glyph}");
@@ -1681,7 +1694,8 @@ def _indicator_styles(p: MuFinderPalette, check_glyph: str, dash_glyph: str, dot
         background: {p.accent_hover};
         border-color: {p.accent_hover};
     }}
-    QCheckBox::indicator:indeterminate {{
+    QCheckBox::indicator:indeterminate,
+    QTreeView::indicator:indeterminate, QTableView::indicator:indeterminate, QListView::indicator:indeterminate {{
         background: {p.accent};
         border-color: {p.accent};
         image: url("{dash_glyph}");
@@ -1693,9 +1707,16 @@ def _indicator_styles(p: MuFinderPalette, check_glyph: str, dash_glyph: str, dot
     QRadioButton::indicator:checked:hover {{
         border-color: {p.accent_hover};
     }}
-    QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
+    QCheckBox::indicator:disabled, QRadioButton::indicator:disabled,
+    QTreeView::indicator:disabled, QTableView::indicator:disabled, QListView::indicator:disabled {{
         background: {p.bg_surface_alt};
         border-color: {p.border};
+    }}
+    QCheckBox::indicator:checked:disabled,
+    QTreeView::indicator:checked:disabled,
+    QTableView::indicator:checked:disabled,
+    QListView::indicator:checked:disabled {{
+        image: url("{check_muted_glyph}");
     }}
     QCheckBox:disabled, QRadioButton:disabled {{
         color: {p.text_muted};
@@ -1711,12 +1732,13 @@ def _build_stylesheet(p: MuFinderPalette) -> str:
     selected_arrow_down = _arrow_asset_path("down", "#FFFFFF")
     selected_arrow_right = _arrow_asset_path("right", "#FFFFFF")
     check_glyph = _indicator_glyph_path("check", "#FFFFFF")
+    check_muted_glyph = _indicator_glyph_path("check", p.text_muted)
     dash_glyph = _indicator_glyph_path("dash", "#FFFFFF")
     dot_glyph = _indicator_glyph_path("dot", p.accent)
     sections = (
         _base_widget_styles(p),
         _input_control_styles(p, arrow_up, arrow_down),
-        _indicator_styles(p, check_glyph, dash_glyph, dot_glyph),
+        _indicator_styles(p, check_glyph, check_muted_glyph, dash_glyph, dot_glyph),
         _item_view_styles(p),
         _panel_container_styles(p),
         _muon_generation_styles(p),
