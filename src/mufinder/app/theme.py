@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 import tempfile
 
@@ -14,6 +15,50 @@ THEME_LIGHT = "light"
 THEME_DARK = "dark"
 THEME_SYSTEM = "system"
 THEME_MODE_KEY = "ui/theme_mode"
+
+# Base Qt style shared across platforms. Fusion renders identically on macOS,
+# Windows, and Linux, giving the stylesheet one predictable baseline to sit on
+# instead of each OS's native style (which leaks through on unstyled controls).
+_BASE_STYLE = "Fusion"
+
+# Bundled families MuFinder ships so typography is identical on every OS rather
+# than depending on whatever fonts the host happens to have installed.
+_BUNDLED_BODY_FAMILY = "Inter"
+_BUNDLED_HEADING_FAMILY = "Fraunces"
+
+
+def _bundled_font_dir() -> Path:
+    """Return the directory holding MuFinder's bundled font files."""
+
+    return Path(str(files("mufinder.assets").joinpath("fonts")))
+
+
+def ensure_fonts_loaded() -> None:
+    """Register MuFinder's bundled fonts with the Qt font database.
+
+    Idempotent and safe to call repeatedly; it is a no-op until a Qt
+    application object exists (the font database requires one), and a no-op
+    once the bundled fonts have been registered. Loading the fonts ourselves
+    guarantees the Inter/Fraunces families are present on every platform, so
+    the UI never silently falls back to host system fonts.
+
+    The bundled files are always registered on first run rather than skipped
+    when a host font happens to share the family name: that keeps the exact,
+    pinned weights MuFinder ships in control of the look, and avoids enumerating
+    the whole font database on every call from the hot ``*_font_family`` paths.
+    """
+
+    global _FONTS_LOADED
+
+    if _FONTS_LOADED or QGuiApplication.instance() is None:
+        return
+
+    font_dir = _bundled_font_dir()
+    if not font_dir.is_dir():
+        return
+    for font_path in sorted(font_dir.glob("*.ttf")):
+        QFontDatabase.addApplicationFont(str(font_path))
+    _FONTS_LOADED = True
 
 
 def _first_available_font(candidates: tuple[str, ...], fallback: str | None = None) -> str:
@@ -42,14 +87,18 @@ def _first_available_font(candidates: tuple[str, ...], fallback: str | None = No
 def body_font_family() -> str:
     """Return preferred body font family available on this system."""
 
-    return _first_available_font(("Inter", "Helvetica Neue", "Arial"), fallback="Helvetica")
+    ensure_fonts_loaded()
+    return _first_available_font(
+        (_BUNDLED_BODY_FAMILY, "Helvetica Neue", "Arial"), fallback="Helvetica"
+    )
 
 
 def heading_font_family() -> str:
     """Return preferred heading font family available on this system."""
 
+    ensure_fonts_loaded()
     return _first_available_font(
-        ("Playfair Display", "Libre Baskerville", "Georgia", "Times New Roman", "Serif"),
+        (_BUNDLED_HEADING_FAMILY, "Playfair Display", "Libre Baskerville", "Georgia", "Serif"),
         fallback=body_font_family(),
     )
 
@@ -171,6 +220,8 @@ def dark_palette() -> MuFinderPalette:
 
 _CURRENT_PALETTE: MuFinderPalette = light_palette()
 _TABLE_CORNER_STYLER: "_TableCornerStyler | None" = None
+_BASE_STYLE_APP: "QApplication | None" = None
+_FONTS_LOADED: bool = False
 
 
 def _repolish_widget(widget: QWidget) -> None:
@@ -358,7 +409,10 @@ def _ensure_table_corner_styler(app: QApplication) -> None:
 def cleanup_theme_runtime(app: QApplication | None = None) -> None:
     """Detach long-lived Qt hooks so test/process shutdown is deterministic."""
 
-    global _TABLE_CORNER_STYLER
+    global _TABLE_CORNER_STYLER, _BASE_STYLE_APP, _FONTS_LOADED
+
+    _BASE_STYLE_APP = None
+    _FONTS_LOADED = False
 
     styler = _TABLE_CORNER_STYLER
     if styler is None:
@@ -1597,10 +1651,33 @@ def _build_stylesheet(p: MuFinderPalette) -> str:
     return "\n".join(sections)
 
 
+def apply_base_style(app: QApplication) -> None:
+    """Force the shared Fusion base style for cross-platform consistency.
+
+    Without this Qt uses each platform's native style (macOS/Windows/Linux),
+    which leaks through on controls the stylesheet does not fully override and
+    makes the same UI look different per OS. Fusion is the same everywhere and
+    is fully styleable, so MuFinder renders identically on every platform.
+
+    Idempotent per application instance: re-applying the style would needlessly
+    rebuild and re-polish every widget on each theme toggle, so we set it once.
+    """
+
+    global _BASE_STYLE_APP
+
+    if _BASE_STYLE_APP is app:
+        return
+    app.setStyle(_BASE_STYLE)
+    _BASE_STYLE_APP = app
+
+
 def apply_theme(app: QApplication, mode: str) -> str:
     """Apply MuFinder look-and-feel and return resolved light/dark mode."""
 
     global _CURRENT_PALETTE
+
+    ensure_fonts_loaded()
+    apply_base_style(app)
 
     resolved = resolve_theme_mode(mode)
     _CURRENT_PALETTE = dark_palette() if resolved == THEME_DARK else light_palette()

@@ -8,9 +8,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QFontDatabase, QGuiApplication, QLinearGradient, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QSplashScreen
 
+from mufinder.app.theme import ensure_fonts_loaded
 from mufinder.branding import logo_path
 
-_TITLE_FONT_CANDIDATES = ("Playfair Display", "Libre Baskerville", "Georgia", "Times New Roman", "Serif")
+_TITLE_FONT_CANDIDATES = ("Fraunces", "Playfair Display", "Libre Baskerville", "Georgia", "Serif")
 _BODY_FONT_CANDIDATES = ("Inter", "Helvetica Neue", "Arial", "Helvetica")
 
 
@@ -22,6 +23,7 @@ class MuFinderSplashScreen(QSplashScreen):
 
     def __init__(self) -> None:
         super().__init__(self._make_canvas(self._fallback_device_pixel_ratio()))
+        ensure_fonts_loaded()
         self._progress = 0
         self._message = "Starting MuFinder..."
         self._logo = self._load_logo()
