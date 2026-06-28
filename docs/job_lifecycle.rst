@@ -168,7 +168,18 @@ state is not saved after cancellation.
 Cluster runner behavior
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-``ClusterJobRunner`` is an SSH/scheduler facade with in-memory tracking:
+``ClusterJobRunner`` is an SSH/scheduler facade with in-memory tracking.
+
+All of its paramiko SSH/SFTP work is blocking, so it runs on a dedicated worker
+thread owned by ``mufinder.app.cluster_controller.ClusterController``. The
+controller mirrors the runner's public surface (the same signal names, methods,
+and connection-state properties) and is what ``main_window`` holds, so the GUI
+event loop is never blocked by polling, result retrieval, or connection setup.
+Queue polling and output retrieval — the heaviest path, since a single
+completed batch can download many files — therefore execute off the GUI thread.
+The controller mirrors connection state (``is_connected``,
+``connected_cluster_name``, ``connected_username``) on the GUI thread so callers
+never touch the live transport across threads.
 
 - ``connect_to_cluster`` creates the SSH connection and scheduler backend.
 - ``submit`` validates the local output directory and remote seed name, creates

@@ -187,7 +187,7 @@ from mufinder.castep_io.ts_parser import (
 )
 from mufinder.castep_io.types import AtomicPosition, BlockSection, PositionBlock, ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
-from mufinder.services.cluster_runner import ClusterJobRunner
+from mufinder.app.cluster_controller import ClusterController
 from mufinder.services.job_execution_controller import ClusterJobSubmission, JobExecutionController
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
@@ -1610,7 +1610,9 @@ class MainWindow(QMainWindow):
         self._settings = QSettings("MuFinder", "MuFinder")
         self._appearance_mode = load_theme_mode(self._settings)
         self._local_runner = LocalJobRunner(self)
-        self._cluster_runner = ClusterJobRunner(self, settings=self._settings)
+        # Cluster SSH work runs on a dedicated worker thread via this facade,
+        # which mirrors ClusterJobRunner's public surface (see cluster_controller).
+        self._cluster_runner = ClusterController(self, settings=self._settings)
         self._active_run_by_job: dict[UUID, UUID] = {}
         self._job_execution = JobExecutionController(
             document_getter=lambda: self._document,
