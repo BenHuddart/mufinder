@@ -166,9 +166,11 @@ class ClusterController(QObject):
         if connected:
             # Adopt the identity of the connect that is in flight (set on the GUI
             # thread before the worker ran). This carries the cluster name for an
-            # async connect, where there is no eager set to read it from.
+            # async connect, where there is no eager set to read it from. Consume
+            # it so a later status change cannot re-adopt a stale identity.
             if self._pending_connect is not None:
                 self._connected_cluster_name, self._connected_username = self._pending_connect
+                self._pending_connect = None
         else:
             self._connected_cluster_name = None
             self._connected_username = None

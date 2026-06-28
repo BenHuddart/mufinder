@@ -196,6 +196,20 @@ def test_connect_async_success_mirrors_and_signals_none(controller) -> None:
     assert fake.threads["connect"] is ctrl._thread
 
 
+def test_pending_connect_identity_is_consumed_not_reused(controller) -> None:
+    # After a successful connect, a later status change must not re-adopt the
+    # previous connect's identity (the pending identity is consumed once).
+    ctrl, fake = controller
+    ctrl.connect_async(_FakeConfig(name="hpc", username="bob"), credentials=_FakeCredentials())
+    assert _process_until(lambda: ctrl.connected_cluster_name == "hpc")
+
+    # A spurious reconnect signal with nothing pending keeps the current name.
+    fake.connection_status_changed.emit(True)
+    assert _process_until(lambda: ctrl.is_connected is True)
+    assert ctrl.connected_cluster_name == "hpc"
+    assert ctrl._pending_connect is None
+
+
 def test_connect_async_failure_emits_exception(controller) -> None:
     ctrl, fake = controller
     fake.connect_should_raise = ConnectionError("nope")
