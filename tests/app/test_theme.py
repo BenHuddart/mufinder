@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QFrame, QTableWidget, QToolButton, QTreeWidget, QTreeWidgetItem, QWidget
 
 from mufinder.app import theme as theme_module
@@ -70,6 +73,129 @@ def test_apply_theme_sets_active_palette(qapp) -> None:
     assert "QProgressBar#muonGenerationProgress" in stylesheet
     assert 'QProgressBar#muonGenerationProgress[generationState="complete"]::chunk' in stylesheet
     assert qapp.font().family() == theme_module.body_font_family()
+
+
+def test_bundled_font_assets_exist() -> None:
+    font_dir = theme_module._bundled_font_dir()
+
+    assert font_dir.is_dir()
+    expected = {
+        "Inter-Regular.ttf",
+        "Inter-Medium.ttf",
+        "Inter-SemiBold.ttf",
+        "Inter-Bold.ttf",
+        "Fraunces-Regular.ttf",
+        "Fraunces-SemiBold.ttf",
+        "Fraunces-Bold.ttf",
+    }
+    present = {path.name for path in font_dir.glob("*.ttf")}
+    assert expected <= present
+    # OFL license text must ship alongside the fonts for redistribution.
+    licenses = {path.name for path in font_dir.glob("*.txt")}
+    assert {"Inter-OFL.txt", "Fraunces-OFL.txt"} <= licenses
+
+
+def test_ensure_fonts_loaded_registers_bundled_families(qapp) -> None:
+    theme_module.ensure_fonts_loaded()
+
+    families = set(QFontDatabase.families())
+    assert theme_module._BUNDLED_BODY_FAMILY in families
+    assert theme_module._BUNDLED_HEADING_FAMILY in families
+    # Idempotent: calling again is a no-op and keeps the families present.
+    theme_module.ensure_fonts_loaded()
+    assert theme_module._BUNDLED_HEADING_FAMILY in set(QFontDatabase.families())
+
+
+def test_ensure_fonts_loaded_registers_bundled_files_even_when_family_present(
+    qapp, monkeypatch
+) -> None:
+    # A host machine may already expose families named "Inter"/"Fraunces". The
+    # loader must still register the pinned bundled files (so the shipped weights
+    # drive the look) instead of deferring to whatever the host has installed.
+    theme_module.ensure_fonts_loaded()
+    assert theme_module._BUNDLED_BODY_FAMILY in set(QFontDatabase.families())
+
+    theme_module._FONTS_LOADED = False
+    registered: list[str] = []
+    real_add = QFontDatabase.addApplicationFont
+
+    def _spy(path: str) -> int:
+        registered.append(path)
+        return real_add(path)
+
+    monkeypatch.setattr(QFontDatabase, "addApplicationFont", _spy)
+    # If the loader ever enumerates the font DB on the hot path, fail loudly.
+    monkeypatch.setattr(
+        QFontDatabase,
+        "families",
+        staticmethod(lambda *a, **k: pytest.fail("ensure_fonts_loaded must not enumerate families")),
+    )
+
+    theme_module.ensure_fonts_loaded()
+
+    assert registered, "bundled font files must be registered regardless of host fonts"
+    assert all(path.endswith(".ttf") for path in registered)
+    assert theme_module._FONTS_LOADED is True
+
+    # Subsequent calls short-circuit without touching the font database again.
+    registered.clear()
+    theme_module.ensure_fonts_loaded()
+    assert registered == []
+
+
+def test_apply_theme_uses_bundled_typography(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    assert theme_module.body_font_family() == theme_module._BUNDLED_BODY_FAMILY
+    assert theme_module.heading_font_family() == theme_module._BUNDLED_HEADING_FAMILY
+    assert qapp.font().family() == theme_module._BUNDLED_BODY_FAMILY
+
+
+def test_apply_base_style_forces_fusion(qapp) -> None:
+    previous_sheet = qapp.styleSheet()
+    try:
+        qapp.setStyleSheet("")  # drop the wrapper so the base style is observable
+        theme_module._BASE_STYLE_APP = None
+        theme_module.apply_base_style(qapp)
+
+        assert qapp.style().metaObject().className() == "QFusionStyle"
+        # Marked applied so a redundant second call is skipped (avoids re-polish).
+        assert theme_module._BASE_STYLE_APP is qapp
+        theme_module.apply_base_style(qapp)
+        assert theme_module._BASE_STYLE_APP is qapp
+    finally:
+        qapp.setStyleSheet(previous_sheet)
+
+
+def test_apply_theme_styles_checkbox_and_radio_indicators(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    stylesheet = qapp.styleSheet()
+    accent = theme_module.current_palette().accent
+
+    # Indicators are explicitly styled (so they render identically on every OS
+    # via Fusion) and tinted with the brand accent rather than left Fusion-gray.
+    assert "QCheckBox::indicator" in stylesheet
+    assert "QRadioButton::indicator" in stylesheet
+    assert "QCheckBox::indicator:checked" in stylesheet
+    assert "QRadioButton::indicator:checked" in stylesheet
+    assert "QCheckBox::indicator:indeterminate" in stylesheet
+    assert accent in stylesheet  # accent fill/border on the checked indicators
+    # Checkable item-view rows get the same branded indicators as form widgets.
+    assert "QTreeView::indicator:checked" in stylesheet
+    assert "QTableView::indicator:checked" in stylesheet
+    # Disabled+checked uses a muted tick instead of the low-contrast white one.
+    assert "QCheckBox::indicator:checked:disabled" in stylesheet
+
+
+def test_indicator_glyph_assets_are_generated(qapp) -> None:
+    from pathlib import Path
+
+    for kind, colour in (("check", "#FFFFFF"), ("dash", "#FFFFFF"), ("dot", "#E02020")):
+        path = Path(theme_module._indicator_glyph_path(kind, colour))
+        assert path.exists()
+        svg = path.read_text(encoding="utf-8")
+        assert svg.startswith("<svg")
+        assert colour.lower() in svg.lower()
 
 
 def test_status_brush_uses_palette_tokens(qapp) -> None:

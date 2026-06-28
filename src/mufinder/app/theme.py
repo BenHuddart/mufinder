@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 import tempfile
 
@@ -14,6 +15,50 @@ THEME_LIGHT = "light"
 THEME_DARK = "dark"
 THEME_SYSTEM = "system"
 THEME_MODE_KEY = "ui/theme_mode"
+
+# Base Qt style shared across platforms. Fusion renders identically on macOS,
+# Windows, and Linux, giving the stylesheet one predictable baseline to sit on
+# instead of each OS's native style (which leaks through on unstyled controls).
+_BASE_STYLE = "Fusion"
+
+# Bundled families MuFinder ships so typography is identical on every OS rather
+# than depending on whatever fonts the host happens to have installed.
+_BUNDLED_BODY_FAMILY = "Inter"
+_BUNDLED_HEADING_FAMILY = "Fraunces"
+
+
+def _bundled_font_dir() -> Path:
+    """Return the directory holding MuFinder's bundled font files."""
+
+    return Path(str(files("mufinder.assets").joinpath("fonts")))
+
+
+def ensure_fonts_loaded() -> None:
+    """Register MuFinder's bundled fonts with the Qt font database.
+
+    Idempotent and safe to call repeatedly; it is a no-op until a Qt
+    application object exists (the font database requires one), and a no-op
+    once the bundled fonts have been registered. Loading the fonts ourselves
+    guarantees the Inter/Fraunces families are present on every platform, so
+    the UI never silently falls back to host system fonts.
+
+    The bundled files are always registered on first run rather than skipped
+    when a host font happens to share the family name: that keeps the exact,
+    pinned weights MuFinder ships in control of the look, and avoids enumerating
+    the whole font database on every call from the hot ``*_font_family`` paths.
+    """
+
+    global _FONTS_LOADED
+
+    if _FONTS_LOADED or QGuiApplication.instance() is None:
+        return
+
+    font_dir = _bundled_font_dir()
+    if not font_dir.is_dir():
+        return
+    for font_path in sorted(font_dir.glob("*.ttf")):
+        QFontDatabase.addApplicationFont(str(font_path))
+    _FONTS_LOADED = True
 
 
 def _first_available_font(candidates: tuple[str, ...], fallback: str | None = None) -> str:
@@ -42,14 +87,18 @@ def _first_available_font(candidates: tuple[str, ...], fallback: str | None = No
 def body_font_family() -> str:
     """Return preferred body font family available on this system."""
 
-    return _first_available_font(("Inter", "Helvetica Neue", "Arial"), fallback="Helvetica")
+    ensure_fonts_loaded()
+    return _first_available_font(
+        (_BUNDLED_BODY_FAMILY, "Helvetica Neue", "Arial"), fallback="Helvetica"
+    )
 
 
 def heading_font_family() -> str:
     """Return preferred heading font family available on this system."""
 
+    ensure_fonts_loaded()
     return _first_available_font(
-        ("Playfair Display", "Libre Baskerville", "Georgia", "Times New Roman", "Serif"),
+        (_BUNDLED_HEADING_FAMILY, "Playfair Display", "Libre Baskerville", "Georgia", "Serif"),
         fallback=body_font_family(),
     )
 
@@ -72,6 +121,40 @@ def _arrow_asset_path(direction: str, colour: str) -> str:
             '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12">'
             f'<polygon points="{points}" fill="{colour}"/>'
             "</svg>"
+        )
+        filename.write_text(svg, encoding="utf-8")
+    return str(filename)
+
+
+def _indicator_glyph_path(kind: str, colour: str) -> str:
+    """Return a temporary SVG asset path for a checkbox/radio indicator glyph.
+
+    ``kind`` is one of ``check`` (tick mark), ``dot`` (filled radio dot), or
+    ``dash`` (indeterminate checkbox). Styling a Qt ``::indicator`` via the
+    stylesheet replaces the native glyph, so we supply our own here to keep the
+    indicators identical on every platform and tinted to the MuFinder palette.
+    """
+
+    normalized = colour.lower().replace("#", "")
+    asset_dir = Path(tempfile.gettempdir()) / "mufinder-theme-assets"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    filename = asset_dir / f"indicator-{kind}-{normalized}.svg"
+    if not filename.exists():
+        if kind == "check":
+            body = (
+                f'<path d="M4 8.5 L7 11.2 L12.4 5" fill="none" stroke="{colour}" '
+                'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+            )
+        elif kind == "dash":
+            body = (
+                f'<line x1="4.5" y1="8" x2="11.5" y2="8" stroke="{colour}" '
+                'stroke-width="2" stroke-linecap="round"/>'
+            )
+        else:  # dot
+            body = f'<circle cx="8" cy="8" r="4" fill="{colour}"/>'
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
+            f"{body}</svg>"
         )
         filename.write_text(svg, encoding="utf-8")
     return str(filename)
@@ -171,6 +254,8 @@ def dark_palette() -> MuFinderPalette:
 
 _CURRENT_PALETTE: MuFinderPalette = light_palette()
 _TABLE_CORNER_STYLER: "_TableCornerStyler | None" = None
+_BASE_STYLE_APP: "QApplication | None" = None
+_FONTS_LOADED: bool = False
 
 
 def _repolish_widget(widget: QWidget) -> None:
@@ -358,7 +443,10 @@ def _ensure_table_corner_styler(app: QApplication) -> None:
 def cleanup_theme_runtime(app: QApplication | None = None) -> None:
     """Detach long-lived Qt hooks so test/process shutdown is deterministic."""
 
-    global _TABLE_CORNER_STYLER
+    global _TABLE_CORNER_STYLER, _BASE_STYLE_APP, _FONTS_LOADED
+
+    _BASE_STYLE_APP = None
+    _FONTS_LOADED = False
 
     styler = _TABLE_CORNER_STYLER
     if styler is None:
@@ -1567,6 +1655,75 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     """
 
 
+def _indicator_styles(
+    p: MuFinderPalette,
+    check_glyph: str,
+    check_muted_glyph: str,
+    dash_glyph: str,
+    dot_glyph: str,
+) -> str:
+    # The same treatment is applied to standalone QCheckBox/QRadioButton widgets
+    # and to checkable item-view rows (QTreeView/QTableView/QListView indicators),
+    # so a table's checkboxes match the form checkboxes instead of falling back
+    # to the plain Fusion indicator.
+    return f"""
+    QCheckBox::indicator, QRadioButton::indicator,
+    QTreeView::indicator, QTableView::indicator, QListView::indicator {{
+        width: 16px;
+        height: 16px;
+        border: 1px solid {p.border};
+        background: {p.bg_surface};
+    }}
+    QCheckBox::indicator,
+    QTreeView::indicator, QTableView::indicator, QListView::indicator {{
+        border-radius: 4px;
+    }}
+    QRadioButton::indicator {{
+        border-radius: 9px;
+    }}
+    QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
+        border-color: {p.accent};
+    }}
+    QCheckBox::indicator:checked,
+    QTreeView::indicator:checked, QTableView::indicator:checked, QListView::indicator:checked {{
+        background: {p.accent};
+        border-color: {p.accent};
+        image: url("{check_glyph}");
+    }}
+    QCheckBox::indicator:checked:hover {{
+        background: {p.accent_hover};
+        border-color: {p.accent_hover};
+    }}
+    QCheckBox::indicator:indeterminate,
+    QTreeView::indicator:indeterminate, QTableView::indicator:indeterminate, QListView::indicator:indeterminate {{
+        background: {p.accent};
+        border-color: {p.accent};
+        image: url("{dash_glyph}");
+    }}
+    QRadioButton::indicator:checked {{
+        border-color: {p.accent};
+        image: url("{dot_glyph}");
+    }}
+    QRadioButton::indicator:checked:hover {{
+        border-color: {p.accent_hover};
+    }}
+    QCheckBox::indicator:disabled, QRadioButton::indicator:disabled,
+    QTreeView::indicator:disabled, QTableView::indicator:disabled, QListView::indicator:disabled {{
+        background: {p.bg_surface_alt};
+        border-color: {p.border};
+    }}
+    QCheckBox::indicator:checked:disabled,
+    QTreeView::indicator:checked:disabled,
+    QTableView::indicator:checked:disabled,
+    QListView::indicator:checked:disabled {{
+        image: url("{check_muted_glyph}");
+    }}
+    QCheckBox:disabled, QRadioButton:disabled {{
+        color: {p.text_muted};
+    }}
+    """
+
+
 def _build_stylesheet(p: MuFinderPalette) -> str:
     heading_font = heading_font_family()
     arrow_down = _arrow_asset_path("down", p.text_primary)
@@ -1574,9 +1731,14 @@ def _build_stylesheet(p: MuFinderPalette) -> str:
     arrow_right = _arrow_asset_path("right", p.text_primary)
     selected_arrow_down = _arrow_asset_path("down", "#FFFFFF")
     selected_arrow_right = _arrow_asset_path("right", "#FFFFFF")
+    check_glyph = _indicator_glyph_path("check", "#FFFFFF")
+    check_muted_glyph = _indicator_glyph_path("check", p.text_muted)
+    dash_glyph = _indicator_glyph_path("dash", "#FFFFFF")
+    dot_glyph = _indicator_glyph_path("dot", p.accent)
     sections = (
         _base_widget_styles(p),
         _input_control_styles(p, arrow_up, arrow_down),
+        _indicator_styles(p, check_glyph, check_muted_glyph, dash_glyph, dot_glyph),
         _item_view_styles(p),
         _panel_container_styles(p),
         _muon_generation_styles(p),
@@ -1597,10 +1759,33 @@ def _build_stylesheet(p: MuFinderPalette) -> str:
     return "\n".join(sections)
 
 
+def apply_base_style(app: QApplication) -> None:
+    """Force the shared Fusion base style for cross-platform consistency.
+
+    Without this Qt uses each platform's native style (macOS/Windows/Linux),
+    which leaks through on controls the stylesheet does not fully override and
+    makes the same UI look different per OS. Fusion is the same everywhere and
+    is fully styleable, so MuFinder renders identically on every platform.
+
+    Idempotent per application instance: re-applying the style would needlessly
+    rebuild and re-polish every widget on each theme toggle, so we set it once.
+    """
+
+    global _BASE_STYLE_APP
+
+    if _BASE_STYLE_APP is app:
+        return
+    app.setStyle(_BASE_STYLE)
+    _BASE_STYLE_APP = app
+
+
 def apply_theme(app: QApplication, mode: str) -> str:
     """Apply MuFinder look-and-feel and return resolved light/dark mode."""
 
     global _CURRENT_PALETTE
+
+    ensure_fonts_loaded()
+    apply_base_style(app)
 
     resolved = resolve_theme_mode(mode)
     _CURRENT_PALETTE = dark_palette() if resolved == THEME_DARK else light_palette()

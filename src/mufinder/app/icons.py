@@ -27,24 +27,27 @@ _ICON_MAP: dict[str, QStyle.StandardPixmap] = {
 
 
 def icon(name: str) -> QIcon:
-    """Return a standard icon for the requested semantic name."""
+    """Return an icon for the requested semantic name.
+
+    MuFinder's own hand-drawn vector glyph is preferred whenever one exists, so
+    toolbar/action icons look identical on every platform and stay on-brand
+    rather than borrowing each OS's native ``QStyle.standardIcon`` artwork. The
+    platform standard icon is used only as a fallback for names that do not yet
+    have a branded glyph.
+    """
 
     app = QApplication.instance()
     if app is None:
         return QIcon()
-    if name.startswith("appearance_") or name in {"delete", "help", "pin", "project_home", "save_workspace"}:
-        return _semantic_icon(name)
 
-    style = app.style()
+    semantic = _semantic_icon(name)
+    if not semantic.isNull():
+        return semantic
+
     standard = _ICON_MAP.get(name)
     if standard is None:
         return QIcon()
-    candidate = style.standardIcon(standard)
-    if not candidate.isNull():
-        preview = candidate.pixmap(18, 18)
-        if not preview.isNull():
-            return candidate
-    return _semantic_icon(name)
+    return app.style().standardIcon(standard)
 
 
 def _icon_device_pixel_ratio() -> float:

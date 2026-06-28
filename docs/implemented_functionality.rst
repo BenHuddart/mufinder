@@ -11,6 +11,40 @@ The current application provides:
 - A project-wide job dashboard dock.
 - Persisted per-project UI state.
 
+Cross-platform appearance
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+MuFinder renders identically on macOS, Windows, and Linux rather than
+inheriting each platform's native look:
+
+- The Qt ``Fusion`` base style is forced on every platform
+  (``mufinder.app.theme.apply_base_style``), giving the stylesheet one
+  predictable, fully-styleable baseline instead of leaking native controls
+  through on unstyled widgets.
+- Typography is shipped with the application, not assumed from the host. The
+  bundled families — **Fraunces** for the "field-journal" headings and
+  **Inter** for body text — live in ``mufinder/assets/fonts`` and are
+  registered at startup by ``mufinder.app.theme.ensure_fonts_loaded``, so
+  the same fonts appear regardless of what is installed on the machine. The
+  historical system-font fallbacks (Helvetica Neue/Arial, Georgia) are
+  retained only as a safety net.
+- Action/toolbar icons prefer MuFinder's own hand-drawn vector glyphs
+  (``mufinder.app.icons``) over the platform's ``QStyle.standardIcon``
+  artwork, so icons stay on-brand and identical across operating systems. The
+  platform standard icon is used only as a fallback for names without a
+  branded glyph.
+- Checkbox and radio-button indicators are styled by the stylesheet (with
+  bundled tick/dot glyphs) and tinted with the muon-red accent, so they render
+  identically on every platform instead of falling back to each OS's native
+  control artwork and accent colour. The same treatment covers checkable
+  item-view rows (tree/table/list), so table checkboxes match the form
+  checkboxes.
+- The project-home trail map scales with the window: the artwork keeps its
+  aspect ratio and the signpost labels are sized relative to the rendered
+  banner (``ProjectHomeTrailWidget._sign_title_point_size``), so the labels
+  stay proportionate and legible from small laptops to large/high-DPI displays
+  instead of shrinking as the map grows.
+
 Domain and persistence
 ----------------------
 
