@@ -181,6 +181,16 @@ The controller mirrors connection state (``is_connected``,
 ``connected_cluster_name``, ``connected_username``) on the GUI thread so callers
 never touch the live transport across threads.
 
+Batch submission is asynchronous. The GUI computes remote targets, checks which
+remote directories already exist (on the worker), resolves any overwrite prompts
+up front, then prepares document state for each job
+(``JobExecutionController.prepare_cluster_submission``) and hands the batch to
+``ClusterController.submit_batch``. The worker uploads and submits each job,
+emitting progress and per-job results that the GUI applies via
+``finalize_cluster_submission``/``fail_cluster_submission``. A modal progress
+dialog reports progress and offers a Cancel button; jobs prepared but not yet
+submitted when cancelled are moved to ``cancelled``.
+
 - ``connect_to_cluster`` creates the SSH connection and scheduler backend.
 - ``submit`` validates the local output directory and remote seed name, creates
   the remote directory, uploads ``.cell``/``.param`` and ``run.sh`` unless

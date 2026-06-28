@@ -55,6 +55,9 @@ class _FakeRunner(QObject):
         self.calls: list[tuple] = []
         self.threads: dict[str, QThread] = {}
         self.submit_should_raise = False
+        self.existing_dirs: set[str] | None = None
+        self.exists_should_raise: set[str] = set()
+        self.on_submit = None
 
     def connect_to_cluster(self, config, password=None, *, credentials=None) -> None:
         self.threads["connect"] = QThread.currentThread()
@@ -66,12 +69,18 @@ class _FakeRunner(QObject):
         if self.submit_should_raise:
             raise ConnectionError("boom")
         self.calls.append(("submit", kwargs.get("seed_name")))
+        if self.on_submit is not None:
+            self.on_submit()
         return "JOB-1"
 
     def remote_directory_exists(self, remote_directory: str) -> bool:
         self.threads["exists"] = QThread.currentThread()
         self.calls.append(("exists", remote_directory))
-        return True
+        if remote_directory in self.exists_should_raise:
+            raise ConnectionError("stat failed")
+        if self.existing_dirs is None:
+            return True
+        return remote_directory in self.existing_dirs
 
     def remove_remote_directory(self, remote_directory: str) -> None:
         self.threads["rmtree"] = QThread.currentThread()
@@ -196,6 +205,127 @@ def test_pure_passthrough_helpers(controller) -> None:
     ctrl, _fake = controller
     assert ctrl.remote_job_directory(working_directory="/work", seed_name="s") == "/work/s"
     assert ctrl.invalid_remote_job_labels(["ok", "bad/label"]) == ["bad/label"]
+
+
+def _batch_item(index: int, *, delete: str | None = None) -> dict:
+    return {
+        "job_id": f"job-{index}",
+        "label": f"L{index}",
+        "submit_kwargs": {"seed_name": f"s{index}"},
+        "remote_dir_to_delete": delete,
+    }
+
+
+def test_check_remote_dirs_reports_existing_and_errors(controller) -> None:
+    ctrl, fake = controller
+    fake.existing_dirs = {"/exists"}
+    fake.exists_should_raise = {"/broken"}
+    payloads: list[dict] = []
+    ctrl.remote_dirs_checked.connect(payloads.append)
+
+    ctrl.check_remote_dirs([("a", "/exists"), ("b", "/missing"), ("c", "/broken")])
+
+    assert _process_until(lambda: payloads)
+    assert payloads[0]["existing"] == ["/exists"]
+    assert payloads[0]["errors"] == {"c": "stat failed"}
+    assert fake.threads["exists"] is ctrl._thread
+
+
+def test_submit_batch_emits_progress_results_and_finished(controller) -> None:
+    ctrl, fake = controller
+    progress: list[tuple] = []
+    results: list[tuple] = []
+    finished: list[bool] = []
+    ctrl.submit_batch_progress.connect(lambda i, n, label: progress.append((i, n, label)))
+    ctrl.job_submit_finished.connect(lambda jid, rid, err: results.append((jid, rid, err)))
+    ctrl.submit_batch_finished.connect(lambda: finished.append(True))
+
+    ctrl.submit_batch([_batch_item(0, delete="/old"), _batch_item(1)])
+
+    assert _process_until(lambda: finished)
+    assert progress[0] == (1, 2, "L0")
+    assert [r[0] for r in results] == ["job-0", "job-1"]
+    assert all(r[1] == "JOB-1" and r[2] == "" for r in results)
+    assert ("rmtree", "/old") in fake.calls
+    assert fake.threads["submit"] is ctrl._thread
+
+
+def test_submit_batch_reports_per_job_failure(controller) -> None:
+    ctrl, fake = controller
+    fake.submit_should_raise = True
+    results: list[tuple] = []
+    finished: list[bool] = []
+    ctrl.job_submit_finished.connect(lambda jid, rid, err: results.append((jid, rid, err)))
+    ctrl.submit_batch_finished.connect(lambda: finished.append(True))
+
+    ctrl.submit_batch([_batch_item(0)])
+
+    assert _process_until(lambda: finished)
+    assert results == [("job-0", None, "boom")]
+
+
+def test_submit_batch_stops_after_cancel(controller) -> None:
+    ctrl, fake = controller
+    results: list[tuple] = []
+    finished: list[bool] = []
+    ctrl.job_submit_finished.connect(lambda jid, rid, err: results.append((jid, rid, err)))
+    ctrl.submit_batch_finished.connect(lambda: finished.append(True))
+    # Cancel from inside the first submit so the second job is never submitted.
+    fake.on_submit = ctrl.cancel_batch
+
+    ctrl.submit_batch([_batch_item(0), _batch_item(1), _batch_item(2)])
+
+    assert _process_until(lambda: finished)
+    assert [r[0] for r in results] == ["job-0"]
+
+
+def test_run_submit_batch_direct_covers_worker_body(controller) -> None:
+    # Invoke the worker method directly (on the test thread) so its logic is
+    # exercised deterministically and visibly to coverage; the threaded path is
+    # covered by test_submit_batch_* above.
+    ctrl, fake = controller
+    results: list[tuple] = []
+    finished: list[bool] = []
+    ctrl.job_submit_finished.connect(lambda jid, rid, err: results.append((jid, rid, err)))
+    ctrl.submit_batch_finished.connect(lambda: finished.append(True))
+
+    ctrl._batch_cancelled = False
+    ctrl._run_submit_batch([_batch_item(0, delete="/old"), _batch_item(1)])
+
+    assert finished == [True]
+    assert [r[0] for r in results] == ["job-0", "job-1"]
+    assert ("rmtree", "/old") in fake.calls
+
+    # A per-job submit failure is reported, not raised.
+    results.clear()
+    finished.clear()
+    fake.submit_should_raise = True
+    ctrl._batch_cancelled = False
+    ctrl._run_submit_batch([_batch_item(9)])
+    assert results == [("job-9", None, "boom")]
+    assert finished == [True]
+    fake.submit_should_raise = False
+
+    # Cancel short-circuits the loop before any job runs.
+    results.clear()
+    finished.clear()
+    ctrl.cancel_batch()
+    ctrl._run_submit_batch([_batch_item(2)])
+    assert finished == [True]
+    assert results == []
+
+
+def test_run_check_remote_dirs_direct_covers_worker_body(controller) -> None:
+    ctrl, fake = controller
+    fake.existing_dirs = {"/x"}
+    fake.exists_should_raise = {"/e"}
+    payloads: list[dict] = []
+    ctrl.remote_dirs_checked.connect(payloads.append)
+
+    ctrl._run_check_remote_dirs([("a", "/x"), ("b", "/y"), ("c", "/e")])
+
+    assert payloads[0]["existing"] == ["/x"]
+    assert payloads[0]["errors"] == {"c": "stat failed"}
 
 
 def test_ssh_task_runner_executes_and_captures(qapp) -> None:

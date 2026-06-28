@@ -18,7 +18,7 @@ from typing import TypeVar
 from uuid import UUID, uuid4
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QEventLoop, QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import (
     QActionGroup,
     QColor,
@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QRadioButton,
     QStackedWidget,
@@ -188,7 +189,11 @@ from mufinder.castep_io.ts_parser import (
 from mufinder.castep_io.types import AtomicPosition, BlockSection, PositionBlock, ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
 from mufinder.app.cluster_controller import ClusterController
-from mufinder.services.job_execution_controller import ClusterJobSubmission, JobExecutionController
+from mufinder.services.job_execution_controller import (
+    ClusterJobSubmission,
+    JobExecutionController,
+    PreparedClusterSubmission,
+)
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.services.project_service import ProjectDocument, ProjectService
@@ -5971,15 +5976,13 @@ class MainWindow(QMainWindow):
         submitted_jobs: list[Job] = []
         failed_submit: list[str] = []
         skipped_submit: list[str] = []
+
+        # 1. Compute remote targets for every job (no SSH; GUI thread).
         remote_target_by_job: dict[UUID, str] = {}
         reuse_existing_files_by_job: dict[UUID, bool] = {}
         allow_existing_remote_directory_by_job: dict[UUID, bool] = {}
-        existing_remote_targets: list[str] = []
-        for index, job in enumerate(eligible_jobs, start=1):
-            self.statusBar().showMessage(
-                f"Checking remote directories ({index}/{len(eligible_jobs)}): {job.label}"
-            )
-            QApplication.processEvents()
+        targets_to_check: list[tuple[UUID, str]] = []
+        for job in eligible_jobs:
             allow_existing_remote_directory = False
             remote_target = (job.remote_directory or "").strip() if reuse_existing_remote_files else ""
             if not remote_target:
@@ -5999,55 +6002,58 @@ class MainWindow(QMainWindow):
             reuse_existing_files_by_job[job.id] = reuse_existing_files_for_job
             allow_existing_remote_directory_by_job[job.id] = allow_existing_remote_directory
             if not reuse_existing_files_for_job and not allow_existing_remote_directory:
-                try:
-                    if self._cluster_runner.remote_directory_exists(remote_target):
-                        existing_remote_targets.append(remote_target)
-                except Exception as exc:  # noqa: BLE001
-                    failed_submit.append(f"- {job.label}: Failed to check remote directory ({exc})")
+                targets_to_check.append((job.id, remote_target))
 
+        # 2. Check existing remote directories on the worker thread.
+        existing_remote_targets: list[str] = []
+        if targets_to_check:
+            check_result = self._await_remote_dir_check(targets_to_check)
+            existing_remote_targets = list(check_result.get("existing", []))
+            errors = check_result.get("errors", {})
+            for job in eligible_jobs:
+                error = errors.get(job.id)
+                if error:
+                    failed_submit.append(f"- {job.label}: Failed to check remote directory ({error})")
+
+        # 3. Resolve overwrite decisions up front (GUI thread), so no modal prompt
+        #    interrupts the submission loop running on the worker thread.
+        decision_by_job: dict[UUID, str] = {}
         overwrite_mode: str | None = None
         for job in eligible_jobs:
-            self.statusBar().showMessage(
-                f"Submitting cluster jobs ({submitted + 1}/{len(eligible_jobs)}): {job.label}"
-            )
-            QApplication.processEvents()
+            remote_target = remote_target_by_job.get(job.id)
+            if not (remote_target and remote_target in existing_remote_targets):
+                continue
+            if overwrite_mode is None:
+                choice = self._prompt_remote_directory_overwrite(job.label, remote_target)
+                if choice == "yes_to_all":
+                    confirmed = self._confirm_bulk_remote_delete(existing_remote_targets)
+                    overwrite_mode = "yes_to_all" if confirmed else "no_to_all"
+                    choice = overwrite_mode
+                elif choice == "no_to_all":
+                    overwrite_mode = "no_to_all"
+            else:
+                choice = overwrite_mode
+            if choice in {"yes", "yes_to_all"}:
+                decision_by_job[job.id] = "delete"
+            else:
+                decision_by_job[job.id] = "skip"
+                skipped_submit.append(
+                    f"- {job.label}: Submission skipped because remote directory already exists ({remote_target})"
+                )
 
+        # 4. Prepare document state (GUI thread) and build the worker batch.
+        prepared_by_job: dict[UUID, PreparedClusterSubmission] = {}
+        submit_items: list[dict[str, object]] = []
+        for job in eligible_jobs:
+            if decision_by_job.get(job.id) == "skip":
+                continue
             output_dir = self._job_output_directory(job)
             if output_dir is None:
                 missing_paths.append(job.label)
                 continue
             seed_name = seed_name_by_job.get(job.id, self._job_seed_name(job))
-
             remote_target = remote_target_by_job.get(job.id)
-            if remote_target and remote_target in existing_remote_targets:
-                if overwrite_mode is None:
-                    choice = self._prompt_remote_directory_overwrite(job.label, remote_target)
-                    if choice == "yes_to_all":
-                        confirmed = self._confirm_bulk_remote_delete(existing_remote_targets)
-                        overwrite_mode = "yes_to_all" if confirmed else "no_to_all"
-                        choice = overwrite_mode
-                    elif choice == "no_to_all":
-                        overwrite_mode = "no_to_all"
-                else:
-                    choice = overwrite_mode
-
-                if choice in {"yes", "yes_to_all"}:
-                    try:
-                        self._cluster_runner.remove_remote_directory(remote_target)
-                    except Exception as exc:  # noqa: BLE001
-                        failed_submit.append(f"- {job.label}: Failed to delete remote directory ({exc})")
-                        self._refresh_jobs_table()
-                        QApplication.processEvents()
-                        continue
-                elif choice in {"no", "no_to_all"}:
-                    skipped_submit.append(
-                        f"- {job.label}: Submission skipped because remote directory already exists ({remote_target})"
-                    )
-                    self._refresh_jobs_table()
-                    QApplication.processEvents()
-                    continue
-
-            outcome = self._job_execution.submit_cluster_job(
+            prepared = self._job_execution.prepare_cluster_submission(
                 ClusterJobSubmission(
                     job=job,
                     output_dir=output_dir,
@@ -6074,15 +6080,26 @@ class MainWindow(QMainWindow):
                     num_farms=self._quantum_task_farming_for_job(job)[1],
                 )
             )
-            if outcome.submitted_job is not None:
-                submitted += 1
-                submitted_jobs.append(outcome.submitted_job)
-            if outcome.failed_message is not None:
-                failed_submit.append(outcome.failed_message)
-            if outcome.journal_changed:
-                self._refresh_journal_view()
-            self._refresh_jobs_table()
-            QApplication.processEvents()
+            if prepared is None:
+                continue
+            prepared_by_job[job.id] = prepared
+            submit_items.append(
+                {
+                    "job_id": job.id,
+                    "label": job.label,
+                    "submit_kwargs": prepared.submit_kwargs,
+                    "remote_dir_to_delete": (
+                        remote_target if decision_by_job.get(job.id) == "delete" else None
+                    ),
+                }
+            )
+
+        # 5. Run the batch on the worker thread with a cancellable progress dialog.
+        if submit_items:
+            batch_submitted, batch_failed = self._run_cluster_submit_batch(submit_items, prepared_by_job)
+            submitted = len(batch_submitted)
+            submitted_jobs = batch_submitted
+            failed_submit.extend(batch_failed)
 
         self._refresh_jobs_table()
         self._refresh_convergence_cutoff_rows()
@@ -6200,6 +6217,106 @@ class MainWindow(QMainWindow):
             "comment": str(getattr(config, "comment", "")),
             "workflow_type": workflow_type,
         }
+
+    def _await_remote_dir_check(self, targets: list[tuple[UUID, str]]) -> dict[str, object]:
+        """Stat remote directories on the worker thread without freezing the GUI.
+
+        Shows a modal busy dialog and runs a nested event loop so the window keeps
+        repainting while the worker thread performs the SFTP stats.
+        """
+
+        result: dict[str, object] = {"existing": [], "errors": {}}
+        loop = QEventLoop()
+
+        def on_checked(payload: object) -> None:
+            if isinstance(payload, dict):
+                result.update(payload)
+            loop.quit()
+
+        progress = QProgressDialog(
+            "Checking existing remote job directories…", None, 0, 0, self
+        )
+        progress.setWindowTitle("Checking remote directories")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        self._cluster_runner.remote_dirs_checked.connect(on_checked)
+        progress.show()
+        try:
+            self._cluster_runner.check_remote_dirs(targets)
+            loop.exec()
+        finally:
+            self._cluster_runner.remote_dirs_checked.disconnect(on_checked)
+            progress.close()
+        return result
+
+    def _run_cluster_submit_batch(
+        self,
+        submit_items: list[dict[str, object]],
+        prepared_by_job: dict[UUID, PreparedClusterSubmission],
+    ) -> tuple[list[Job], list[str]]:
+        """Submit a batch on the worker thread with a cancellable progress dialog.
+
+        Returns the successfully submitted jobs and per-job failure messages. The
+        GUI stays responsive via a nested event loop; document bookkeeping for each
+        result runs here on the GUI thread.
+        """
+
+        submitted_jobs: list[Job] = []
+        failed: list[str] = []
+        results_seen: set[UUID] = set()
+        total = len(submit_items)
+        loop = QEventLoop()
+
+        progress = QProgressDialog("Submitting cluster jobs…", "Cancel", 0, total, self)
+        progress.setWindowTitle("Submitting to cluster")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        def on_progress(index: int, count: int, label: str) -> None:
+            progress.setLabelText(f"Submitting {label} ({index}/{count})")
+            progress.setValue(index - 1)
+
+        def on_one(job_id: object, remote_job_id: object, error: str) -> None:
+            if not isinstance(job_id, UUID):
+                return
+            results_seen.add(job_id)
+            prepared = prepared_by_job.get(job_id)
+            if prepared is None:
+                return
+            if remote_job_id:
+                outcome = self._job_execution.finalize_cluster_submission(prepared, str(remote_job_id))
+            else:
+                outcome = self._job_execution.fail_cluster_submission(prepared, error)
+            if outcome.submitted_job is not None:
+                submitted_jobs.append(outcome.submitted_job)
+            if outcome.failed_message is not None:
+                failed.append(outcome.failed_message)
+            if outcome.journal_changed:
+                self._refresh_journal_view()
+            progress.setValue(progress.value() + 1)
+            self._refresh_jobs_table()
+
+        self._cluster_runner.submit_batch_progress.connect(on_progress)
+        self._cluster_runner.job_submit_finished.connect(on_one)
+        self._cluster_runner.submit_batch_finished.connect(loop.quit)
+        progress.canceled.connect(self._cluster_runner.cancel_batch)
+        progress.show()
+        try:
+            self._cluster_runner.submit_batch(submit_items)
+            loop.exec()
+        finally:
+            self._cluster_runner.submit_batch_progress.disconnect(on_progress)
+            self._cluster_runner.job_submit_finished.disconnect(on_one)
+            self._cluster_runner.submit_batch_finished.disconnect(loop.quit)
+            progress.close()
+
+        # Jobs prepared but never submitted (cancelled mid-batch) are cancelled so
+        # they do not linger in the ``submitting`` state.
+        for job_id, prepared in prepared_by_job.items():
+            if job_id not in results_seen:
+                self._job_execution.cancel_job(prepared.job.id)
+        return submitted_jobs, failed
 
     def _prompt_remote_directory_overwrite(self, job_label: str, remote_dir: str) -> str:
         message = QMessageBox(self)

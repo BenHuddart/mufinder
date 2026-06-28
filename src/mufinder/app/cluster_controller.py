@@ -97,6 +97,12 @@ class ClusterController(QObject):
     queue_checked = Signal(object)
     poll_failed = Signal(str)
 
+    # Asynchronous batch-submission progress (all emitted on the GUI thread).
+    remote_dirs_checked = Signal(object)  # {"existing": [str], "errors": {job_id: str}}
+    submit_batch_progress = Signal(int, int, str)  # index, total, job label
+    job_submit_finished = Signal(object, object, str)  # job_id, remote_job_id|None, error
+    submit_batch_finished = Signal()
+
     # Internal: marshals a fire-and-forget callable onto the worker thread.
     _async_task = Signal(object)
 
@@ -118,6 +124,7 @@ class ClusterController(QObject):
         self._connected = False
         self._connected_cluster_name: str | None = None
         self._connected_username: str | None = None
+        self._batch_cancelled = False
 
         # Forward worker signals to the GUI thread. These cross-thread
         # connections are queued automatically.
@@ -223,6 +230,66 @@ class ClusterController(QObject):
 
     def track_existing_job(self, **kwargs: Any) -> None:
         self._async_task.emit(lambda: self._runner.track_existing_job(**kwargs))
+
+    # ------------------------------------------------------------------
+    # Asynchronous batch submission (runs SSH off the GUI thread)
+    # ------------------------------------------------------------------
+    def check_remote_dirs(self, items: list[tuple[Any, str]]) -> None:
+        """Stat each ``(job_id, remote_dir)`` on the worker thread.
+
+        Emits :attr:`remote_dirs_checked` with the directories that already exist
+        and any per-job errors.
+        """
+
+        self._async_task.emit(lambda: self._run_check_remote_dirs(items))
+
+    def _run_check_remote_dirs(self, items: list[tuple[Any, str]]) -> None:
+        existing: list[str] = []
+        errors: dict[Any, str] = {}
+        for job_id, remote_dir in items:
+            try:
+                if self._runner.remote_directory_exists(remote_dir):
+                    existing.append(remote_dir)
+            except Exception as exc:  # noqa: BLE001 - reported back to the GUI
+                errors[job_id] = str(exc)
+        self.remote_dirs_checked.emit({"existing": existing, "errors": errors})
+
+    def submit_batch(self, items: list[dict[str, Any]]) -> None:
+        """Submit a batch of prepared jobs on the worker thread.
+
+        Each item is ``{"job_id", "label", "submit_kwargs", "remote_dir_to_delete"}``.
+        Emits :attr:`submit_batch_progress` before each job, :attr:`job_submit_finished`
+        with the result of each, and :attr:`submit_batch_finished` once (even when
+        cancelled or on error).
+        """
+
+        self._batch_cancelled = False
+        self._async_task.emit(lambda: self._run_submit_batch(items))
+
+    def cancel_batch(self) -> None:
+        """Request cancellation; checked between jobs by the worker."""
+
+        self._batch_cancelled = True
+
+    def _run_submit_batch(self, items: list[dict[str, Any]]) -> None:
+        total = len(items)
+        try:
+            for index, item in enumerate(items, start=1):
+                if self._batch_cancelled:
+                    break
+                job_id = item["job_id"]
+                self.submit_batch_progress.emit(index, total, item.get("label", ""))
+                try:
+                    delete_dir = item.get("remote_dir_to_delete")
+                    if delete_dir:
+                        self._runner.remove_remote_directory(delete_dir)
+                    remote_job_id = self._runner.submit(**item["submit_kwargs"])
+                except Exception as exc:  # noqa: BLE001 - reported per job to the GUI
+                    self.job_submit_finished.emit(job_id, None, str(exc))
+                    continue
+                self.job_submit_finished.emit(job_id, remote_job_id, "")
+        finally:
+            self.submit_batch_finished.emit()
 
     # ------------------------------------------------------------------
     # Lifecycle

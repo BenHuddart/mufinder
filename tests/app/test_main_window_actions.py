@@ -2220,9 +2220,9 @@ def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner, "remote_directory_exists", lambda _path: False)
+    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: False)
     monkeypatch.setattr(
-        window._cluster_runner,
+        window._cluster_runner._runner,
         "submit",
         lambda **kwargs: submit_calls.append(kwargs) or "99123",
     )
@@ -2362,8 +2362,8 @@ def test_main_window_submit_jobs_on_cluster_passes_jump_host_credentials(
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner, "remote_directory_exists", lambda _path: False)
-    monkeypatch.setattr(window._cluster_runner, "submit", lambda **kwargs: submit_calls.append(kwargs) or "99123")
+    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: False)
+    monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **kwargs: submit_calls.append(kwargs) or "99123")
     monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
 
     window._submit_jobs_on_cluster([job])
@@ -2471,19 +2471,19 @@ def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files
         lambda **_kwargs: pytest.fail("resubmission should reuse the stored remote directory"),
     )
     monkeypatch.setattr(
-        window._cluster_runner,
+        window._cluster_runner._runner,
         "remote_directory_exists",
         lambda _path: pytest.fail("resubmission should not check for overwrite"),
     )
     monkeypatch.setattr(
-        window._cluster_runner,
+        window._cluster_runner._runner,
         "remove_remote_directory",
         lambda _path: pytest.fail("resubmission should not delete remote files"),
     )
     submit_calls: list[dict[str, object]] = []
     infos: list[str] = []
     monkeypatch.setattr(
-        window._cluster_runner,
+        window._cluster_runner._runner,
         "submit",
         lambda **kwargs: submit_calls.append(kwargs) or "new99123",
     )
@@ -3099,10 +3099,10 @@ def test_main_window_submit_jobs_on_cluster_existing_remote_dir_yes_deletes(
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner, "remote_directory_exists", lambda _path: True)
+    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: True)
     deleted: list[str] = []
-    monkeypatch.setattr(window._cluster_runner, "remove_remote_directory", lambda path: deleted.append(path))
-    monkeypatch.setattr(window._cluster_runner, "submit", lambda **_kwargs: "99123")
+    monkeypatch.setattr(window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path))
+    monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **_kwargs: "99123")
     monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "yes")
     monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
 
@@ -3239,12 +3239,12 @@ def test_main_window_submit_jobs_on_cluster_reuses_quantum_continuation_director
     deleted: list[str] = []
     submit_calls: list[dict[str, object]] = []
     monkeypatch.setattr(
-        window._cluster_runner,
+        window._cluster_runner._runner,
         "remote_directory_exists",
         lambda path: checked_paths.append(path) or False,
     )
-    monkeypatch.setattr(window._cluster_runner, "remove_remote_directory", lambda path: deleted.append(path))
-    monkeypatch.setattr(window._cluster_runner, "submit", lambda **kwargs: submit_calls.append(kwargs) or "99123")
+    monkeypatch.setattr(window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path))
+    monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **kwargs: submit_calls.append(kwargs) or "99123")
     monkeypatch.setattr(
         window,
         "_prompt_remote_directory_overwrite",
@@ -3357,10 +3357,10 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner, "remote_directory_exists", lambda _path: True)
+    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: True)
     deleted: list[str] = []
-    monkeypatch.setattr(window._cluster_runner, "remove_remote_directory", lambda path: deleted.append(path))
-    monkeypatch.setattr(window._cluster_runner, "submit", lambda **_kwargs: "99123")
+    monkeypatch.setattr(window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path))
+    monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **_kwargs: "99123")
 
     prompt_calls: list[str] = []
     confirm_calls: list[list[str]] = []
@@ -4135,11 +4135,11 @@ def test_main_window_submit_jobs_on_cluster_no_to_all_skips_deletion(
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner, "remote_directory_exists", lambda _path: True)
+    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: True)
     deleted: list[str] = []
-    monkeypatch.setattr(window._cluster_runner, "remove_remote_directory", lambda path: deleted.append(path))
+    monkeypatch.setattr(window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path))
     submitted: list[dict[str, object]] = []
-    monkeypatch.setattr(window._cluster_runner, "submit", lambda **kwargs: submitted.append(kwargs) or "99123")
+    monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **kwargs: submitted.append(kwargs) or "99123")
     monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "no_to_all")
     monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
 
@@ -4233,11 +4233,11 @@ def test_main_window_submit_jobs_on_cluster_no_skips_submission(
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner, "remote_directory_exists", lambda _path: True)
+    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: True)
     deleted: list[str] = []
-    monkeypatch.setattr(window._cluster_runner, "remove_remote_directory", lambda path: deleted.append(path))
+    monkeypatch.setattr(window._cluster_runner._runner, "remove_remote_directory", lambda path: deleted.append(path))
     submitted: list[dict[str, object]] = []
-    monkeypatch.setattr(window._cluster_runner, "submit", lambda **kwargs: submitted.append(kwargs) or "99123")
+    monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **kwargs: submitted.append(kwargs) or "99123")
     monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "no")
     monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
 
@@ -4346,8 +4346,8 @@ def test_main_window_submit_jobs_on_cluster_reuses_connection_without_success_di
         "remote_job_directory",
         lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
     )
-    monkeypatch.setattr(window._cluster_runner, "remote_directory_exists", lambda _path: False)
-    monkeypatch.setattr(window._cluster_runner, "submit", lambda **_kwargs: "99123")
+    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", lambda _path: False)
+    monkeypatch.setattr(window._cluster_runner._runner, "submit", lambda **_kwargs: "99123")
 
     infos: list[str] = []
     monkeypatch.setattr(

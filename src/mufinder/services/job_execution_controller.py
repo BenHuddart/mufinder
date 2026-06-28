@@ -67,6 +67,21 @@ class ClusterJobSubmissionOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedClusterSubmission:
+    """Document-side state created before the remote SSH submit runs.
+
+    Splitting submission into *prepare* (mutates the project document on the GUI
+    thread), the SSH *submit* (runs on the cluster worker thread), and *finalize*
+    (mutates the document again on the GUI thread) lets the blocking network work
+    move off the GUI thread without touching project state from two threads.
+    """
+
+    job: Job
+    run: CalculationRun
+    submit_kwargs: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class LifecycleUpdate:
     """Result of a runner lifecycle notification."""
 
@@ -235,68 +250,106 @@ class JobExecutionController:
             journal_changed=journal_changed,
         )
 
-    def submit_cluster_job(self, request: ClusterJobSubmission) -> ClusterJobSubmissionOutcome:
-        """Submit or resubmit one cluster job and update lifecycle state."""
+    def prepare_cluster_submission(
+        self, request: ClusterJobSubmission
+    ) -> PreparedClusterSubmission | None:
+        """Mutate document state for one job and return its SSH submit arguments.
+
+        Runs on the GUI thread. The returned ``submit_kwargs`` are passed to the
+        cluster runner's ``submit`` on the worker thread; the document is not
+        touched again until :meth:`finalize_cluster_submission` or
+        :meth:`fail_cluster_submission`.
+        """
 
         document = self._document_getter()
         if document is None or request.job.status not in {JobStatus.DEFINED, JobStatus.FAILED, JobStatus.CANCELLED}:
-            return ClusterJobSubmissionOutcome()
+            return None
 
         job = request.job
         try:
             self._project_service.submit_job(job)
         except ValueError:
-            return ClusterJobSubmissionOutcome()
+            return None
         job.num_processes = max(1, int(request.num_processes))
         job.execution_target = request.execution_target
         job.remote_directory = request.remote_target
         run = self._create_active_run(document, job, JobStatus.SUBMITTING)
 
-        try:
-            remote_job_id = self._cluster_runner.submit(
-                job_id=job.id,
-                local_job_dir=request.output_dir,
-                seed_name=request.seed_name,
-                num_processes=request.num_processes,
-                walltime=request.walltime,
-                working_directory=request.working_directory,
-                template_script_path=request.template_script_path,
-                cores_per_node=request.cores_per_node,
-                memory_gb=request.memory_gb,
-                queue_name=request.queue_name,
-                comment=request.comment,
-                castep_executable=request.castep_executable,
-                retrieve_den_fmt=request.retrieve_den_fmt,
-                retrieve_out_cell=request.retrieve_out_cell,
-                retrieve_phonon=request.retrieve_phonon,
-                retrieve_ts=request.retrieve_ts,
-                remote_directory=request.remote_target,
-                reuse_existing_files=request.reuse_existing_files,
-                allow_existing_remote_directory=request.allow_existing_remote_directory,
-                task_farming_enabled=request.task_farming_enabled,
-                num_farms=request.num_farms,
-            )
-        except Exception as exc:  # noqa: BLE001
-            message = str(exc)
-            try:
-                self._project_service.fail_job(job, message)
-            except ValueError:
-                pass
-            run.status = JobStatus.FAILED
-            run.completed_at = utc_now()
-            self._active_run_by_job.pop(job.id, None)
-            self._record_terminal_event("job_failed", job, error_message=message)
-            return ClusterJobSubmissionOutcome(
-                failed_message=f"- {job.label}: {message}",
-                journal_changed=True,
-            )
+        submit_kwargs: dict[str, Any] = {
+            "job_id": job.id,
+            "local_job_dir": request.output_dir,
+            "seed_name": request.seed_name,
+            "num_processes": request.num_processes,
+            "walltime": request.walltime,
+            "working_directory": request.working_directory,
+            "template_script_path": request.template_script_path,
+            "cores_per_node": request.cores_per_node,
+            "memory_gb": request.memory_gb,
+            "queue_name": request.queue_name,
+            "comment": request.comment,
+            "castep_executable": request.castep_executable,
+            "retrieve_den_fmt": request.retrieve_den_fmt,
+            "retrieve_out_cell": request.retrieve_out_cell,
+            "retrieve_phonon": request.retrieve_phonon,
+            "retrieve_ts": request.retrieve_ts,
+            "remote_directory": request.remote_target,
+            "reuse_existing_files": request.reuse_existing_files,
+            "allow_existing_remote_directory": request.allow_existing_remote_directory,
+            "task_farming_enabled": request.task_farming_enabled,
+            "num_farms": request.num_farms,
+        }
+        return PreparedClusterSubmission(job=job, run=run, submit_kwargs=submit_kwargs)
 
+    def finalize_cluster_submission(
+        self, prepared: PreparedClusterSubmission, remote_job_id: str
+    ) -> ClusterJobSubmissionOutcome:
+        """Record a successful remote submit. Runs on the GUI thread."""
+
+        job = prepared.job
+        run = prepared.run
         job.remote_job_id = remote_job_id
-        job.remote_directory = request.remote_target
         if job.status == JobStatus.SUBMITTING:
             self._project_service.mark_job_queued(job, remote_job_id=remote_job_id)
         run.status = job.status
         return ClusterJobSubmissionOutcome(submitted_job=job)
+
+    def fail_cluster_submission(
+        self, prepared: PreparedClusterSubmission, message: str
+    ) -> ClusterJobSubmissionOutcome:
+        """Record a failed remote submit. Runs on the GUI thread."""
+
+        job = prepared.job
+        run = prepared.run
+        try:
+            self._project_service.fail_job(job, message)
+        except ValueError:
+            pass
+        run.status = JobStatus.FAILED
+        run.completed_at = utc_now()
+        self._active_run_by_job.pop(job.id, None)
+        self._record_terminal_event("job_failed", job, error_message=message)
+        return ClusterJobSubmissionOutcome(
+            failed_message=f"- {job.label}: {message}",
+            journal_changed=True,
+        )
+
+    def submit_cluster_job(self, request: ClusterJobSubmission) -> ClusterJobSubmissionOutcome:
+        """Submit or resubmit one cluster job synchronously and update state.
+
+        Convenience wrapper retained for non-GUI callers and tests; the GUI path
+        drives :meth:`prepare_cluster_submission`/:meth:`finalize_cluster_submission`
+        directly so the SSH submit can run on the cluster worker thread.
+        """
+
+        prepared = self.prepare_cluster_submission(request)
+        if prepared is None:
+            return ClusterJobSubmissionOutcome()
+
+        try:
+            remote_job_id = self._cluster_runner.submit(**prepared.submit_kwargs)
+        except Exception as exc:  # noqa: BLE001
+            return self.fail_cluster_submission(prepared, str(exc))
+        return self.finalize_cluster_submission(prepared, remote_job_id)
 
     def record_submission(self, jobs: Sequence[Job], execution_target: str) -> bool:
         """Record one provenance event for a batch of submitted jobs."""
