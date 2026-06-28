@@ -231,6 +231,22 @@ def test_check_remote_dirs_reports_existing_and_errors(controller) -> None:
     assert fake.threads["exists"] is ctrl._thread
 
 
+def test_check_remote_dirs_always_emits_even_on_unexpected_error(controller) -> None:
+    # A malformed item makes the loop's tuple unpacking raise outside the per-item
+    # try; the result must still be emitted (finally) so the GUI's nested event
+    # loop — which has no Cancel button — can quit instead of hanging forever.
+    ctrl, _fake = controller
+    payloads: list[dict] = []
+    ctrl.remote_dirs_checked.connect(payloads.append)
+
+    # The unpacking error propagates (and is swallowed by Qt on the worker
+    # thread in production), but the result is emitted first via finally.
+    with pytest.raises(ValueError):
+        ctrl._run_check_remote_dirs([("only-one-element",)])
+
+    assert payloads and isinstance(payloads[0], dict)
+
+
 def test_submit_batch_emits_progress_results_and_finished(controller) -> None:
     ctrl, fake = controller
     progress: list[tuple] = []

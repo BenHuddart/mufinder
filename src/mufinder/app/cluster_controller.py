@@ -246,13 +246,18 @@ class ClusterController(QObject):
     def _run_check_remote_dirs(self, items: list[tuple[Any, str]]) -> None:
         existing: list[str] = []
         errors: dict[Any, str] = {}
-        for job_id, remote_dir in items:
-            try:
-                if self._runner.remote_directory_exists(remote_dir):
-                    existing.append(remote_dir)
-            except Exception as exc:  # noqa: BLE001 - reported back to the GUI
-                errors[job_id] = str(exc)
-        self.remote_dirs_checked.emit({"existing": existing, "errors": errors})
+        # The result is always emitted (finally), even if an unexpected error
+        # escapes the loop body: the GUI waits for this signal in a nested event
+        # loop with no Cancel button, so a missing emit would freeze the app.
+        try:
+            for job_id, remote_dir in items:
+                try:
+                    if self._runner.remote_directory_exists(remote_dir):
+                        existing.append(remote_dir)
+                except Exception as exc:  # noqa: BLE001 - reported back to the GUI
+                    errors[job_id] = str(exc)
+        finally:
+            self.remote_dirs_checked.emit({"existing": existing, "errors": errors})
 
     def submit_batch(self, items: list[dict[str, Any]]) -> None:
         """Submit a batch of prepared jobs on the worker thread.
@@ -295,15 +300,23 @@ class ClusterController(QObject):
     # Lifecycle
     # ------------------------------------------------------------------
     def shutdown(self) -> None:
-        """Disconnect and stop the worker thread. Safe to call more than once."""
+        """Disconnect and stop the worker thread. Safe to call more than once.
 
-        if self._thread.isRunning():
-            try:
-                self._call_blocking(self._runner.shutdown)
-            except Exception:  # noqa: BLE001 - best-effort during teardown
-                pass
-            self._thread.quit()
-            self._thread.wait(5000)
+        Closing the app must not freeze behind an in-flight SSH transfer. Rather
+        than blocking the GUI (``BlockingQueuedConnection``) until the worker
+        finishes a possibly-large download, the disconnect is requested
+        asynchronously and the join is bounded; a worker still stuck in a long
+        transfer after the timeout is abandoned at process exit instead of
+        hanging the close.
+        """
+
+        if not self._thread.isRunning():
+            return
+        self._async_task.emit(self._runner.shutdown)
+        self._thread.quit()
+        if not self._thread.wait(5000):
+            self._thread.terminate()
+            self._thread.wait(2000)
 
     # ------------------------------------------------------------------
     # Internal blocking-invocation machinery

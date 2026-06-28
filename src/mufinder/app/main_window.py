@@ -6053,6 +6053,7 @@ class MainWindow(QMainWindow):
                 continue
             seed_name = seed_name_by_job.get(job.id, self._job_seed_name(job))
             remote_target = remote_target_by_job.get(job.id)
+            task_farming_enabled, num_farms = self._quantum_task_farming_for_job(job)
             prepared = self._job_execution.prepare_cluster_submission(
                 ClusterJobSubmission(
                     job=job,
@@ -6076,8 +6077,8 @@ class MainWindow(QMainWindow):
                     retrieve_ts=job.calc_type in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE},
                     reuse_existing_files=reuse_existing_files_by_job.get(job.id, False),
                     allow_existing_remote_directory=allow_existing_remote_directory_by_job.get(job.id, False),
-                    task_farming_enabled=self._quantum_task_farming_for_job(job)[0],
-                    num_farms=self._quantum_task_farming_for_job(job)[1],
+                    task_farming_enabled=task_farming_enabled,
+                    num_farms=num_farms,
                 )
             )
             if prepared is None:
