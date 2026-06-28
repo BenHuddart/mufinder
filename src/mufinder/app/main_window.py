@@ -6219,36 +6219,63 @@ class MainWindow(QMainWindow):
             "workflow_type": workflow_type,
         }
 
-    def _await_remote_dir_check(self, targets: list[tuple[UUID, str]]) -> dict[str, object]:
-        """Stat remote directories on the worker thread without freezing the GUI.
+    def _await_cluster_signal(
+        self,
+        *,
+        start: Callable[[], None],
+        signal: Signal,
+        title: str,
+        label: str,
+    ) -> object:
+        """Run a worker-thread cluster op behind a modal busy dialog.
 
-        Shows a modal busy dialog and runs a nested event loop so the window keeps
-        repainting while the worker thread performs the SFTP stats.
+        Calls ``start()`` (which kicks off async work on the worker thread), then
+        runs a nested event loop until ``signal`` fires, returning its payload. The
+        window keeps repainting while the worker performs the blocking SSH work.
         """
 
-        result: dict[str, object] = {"existing": [], "errors": {}}
+        captured: dict[str, object] = {}
         loop = QEventLoop()
 
-        def on_checked(payload: object) -> None:
-            if isinstance(payload, dict):
-                result.update(payload)
+        def on_signal(payload: object = None) -> None:
+            captured["payload"] = payload
             loop.quit()
 
-        progress = QProgressDialog(
-            "Checking existing remote job directories…", None, 0, 0, self
-        )
-        progress.setWindowTitle("Checking remote directories")
+        progress = QProgressDialog(label, None, 0, 0, self)
+        progress.setWindowTitle(title)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
-        self._cluster_runner.remote_dirs_checked.connect(on_checked)
+        signal.connect(on_signal)
         progress.show()
         try:
-            self._cluster_runner.check_remote_dirs(targets)
+            start()
             loop.exec()
         finally:
-            self._cluster_runner.remote_dirs_checked.disconnect(on_checked)
+            signal.disconnect(on_signal)
             progress.close()
-        return result
+        return captured.get("payload")
+
+    def _await_remote_dir_check(self, targets: list[tuple[UUID, str]]) -> dict[str, object]:
+        payload = self._await_cluster_signal(
+            start=lambda: self._cluster_runner.check_remote_dirs(targets),
+            signal=self._cluster_runner.remote_dirs_checked,
+            title="Checking remote directories",
+            label="Checking existing remote job directories…",
+        )
+        return payload if isinstance(payload, dict) else {"existing": [], "errors": {}}
+
+    def _await_cluster_connect(
+        self, config: ClusterConfig, *, credentials: SSHCredentials
+    ) -> BaseException | None:
+        """Connect to a cluster off the GUI thread, returning the error (or None)."""
+
+        payload = self._await_cluster_signal(
+            start=lambda: self._cluster_runner.connect_async(config, credentials=credentials),
+            signal=self._cluster_runner.connect_finished,
+            title="Connecting to cluster",
+            label=f"Connecting to {config.name}…",
+        )
+        return payload if isinstance(payload, BaseException) else None
 
     def _run_cluster_submit_batch(
         self,
@@ -7696,25 +7723,26 @@ class MainWindow(QMainWindow):
     def _connect_to_cluster_with_trust(self, config: ClusterConfig, *, credentials: SSHCredentials) -> None:
         trusted_endpoints: set[str] = set()
         while True:
-            try:
-                if config.jump_host_enabled:
-                    self._cluster_runner.connect_to_cluster(config, credentials=credentials)
-                else:
-                    self._cluster_runner.connect_to_cluster(config, password=credentials.target_secret)
+            error = self._await_cluster_connect(config, credentials=credentials)
+            if error is None:
                 return
-            except SSHUnknownHostKeyError as exc:
-                if exc.endpoint in trusted_endpoints:
-                    raise
-                if not prompt_to_trust_host_key(self, config, exc):
-                    raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
+            if isinstance(error, SSHUnknownHostKeyError):
+                if error.endpoint in trusted_endpoints:
+                    raise error
+                if not prompt_to_trust_host_key(self, config, error):
+                    raise ConnectionError(
+                        "Connection cancelled because the SSH host key was not trusted."
+                    ) from error
                 save_trusted_host_key(
                     self._settings,
                     config,
-                    algorithm=exc.algorithm,
-                    key_base64=exc.key_base64,
-                    endpoint=exc.endpoint,
+                    algorithm=error.algorithm,
+                    key_base64=error.key_base64,
+                    endpoint=error.endpoint,
                 )
-                trusted_endpoints.add(exc.endpoint)
+                trusted_endpoints.add(error.endpoint)
+                continue
+            raise error
 
     def _on_refresh_cluster_queue(self) -> None:
         try:

@@ -35,6 +35,12 @@ class _FakeConfig:
     def __init__(self, name: str = "hpc", username: str = "alice") -> None:
         self.name = name
         self.username = username
+        self.jump_host_enabled = False
+
+
+class _FakeCredentials:
+    def __init__(self, target_secret: str | None = None) -> None:
+        self.target_secret = target_secret
 
 
 class _FakeRunner(QObject):
@@ -58,10 +64,13 @@ class _FakeRunner(QObject):
         self.existing_dirs: set[str] | None = None
         self.exists_should_raise: set[str] = set()
         self.on_submit = None
+        self.connect_should_raise: Exception | None = None
 
     def connect_to_cluster(self, config, password=None, *, credentials=None) -> None:
         self.threads["connect"] = QThread.currentThread()
         self.calls.append(("connect", config.name))
+        if self.connect_should_raise is not None:
+            raise self.connect_should_raise
         self.connection_status_changed.emit(True)
 
     def submit(self, **kwargs) -> str:
@@ -170,6 +179,34 @@ def test_connect_mirrors_state_and_forwards_signal(controller) -> None:
 
     # The forwarded signal arrives on the GUI thread once events are pumped.
     assert _process_until(lambda: received == [True])
+
+
+def test_connect_async_success_mirrors_and_signals_none(controller) -> None:
+    ctrl, fake = controller
+    results: list = []
+    ctrl.connect_finished.connect(results.append)
+
+    ctrl.connect_async(_FakeConfig(name="hpc", username="bob"), credentials=_FakeCredentials())
+
+    assert _process_until(lambda: results)
+    assert results == [None]
+    assert ctrl.is_connected is True
+    assert ctrl.connected_cluster_name == "hpc"
+    assert ctrl.connected_username == "bob"
+    assert fake.threads["connect"] is ctrl._thread
+
+
+def test_connect_async_failure_emits_exception(controller) -> None:
+    ctrl, fake = controller
+    fake.connect_should_raise = ConnectionError("nope")
+    results: list = []
+    ctrl.connect_finished.connect(results.append)
+
+    ctrl.connect_async(_FakeConfig(), credentials=_FakeCredentials())
+
+    assert _process_until(lambda: results)
+    assert isinstance(results[0], ConnectionError)
+    assert ctrl.is_connected is False
 
 
 def test_disconnect_signal_clears_mirror(controller) -> None:
@@ -329,6 +366,24 @@ def test_run_submit_batch_direct_covers_worker_body(controller) -> None:
     ctrl._run_submit_batch([_batch_item(2)])
     assert finished == [True]
     assert results == []
+
+
+def test_run_connect_direct_covers_worker_body(controller) -> None:
+    ctrl, fake = controller
+    results: list = []
+    ctrl.connect_finished.connect(results.append)
+
+    ctrl._run_connect(_FakeConfig(), _FakeCredentials())
+    assert results[-1] is None
+
+    jump = _FakeConfig()
+    jump.jump_host_enabled = True
+    ctrl._run_connect(jump, _FakeCredentials())
+    assert results[-1] is None
+
+    fake.connect_should_raise = ConnectionError("x")
+    ctrl._run_connect(_FakeConfig(), _FakeCredentials())
+    assert isinstance(results[-1], ConnectionError)
 
 
 def test_run_check_remote_dirs_direct_covers_worker_body(controller) -> None:

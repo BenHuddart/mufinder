@@ -97,6 +97,9 @@ class ClusterController(QObject):
     queue_checked = Signal(object)
     poll_failed = Signal(str)
 
+    # Result of an asynchronous connect: None on success, else the exception.
+    connect_finished = Signal(object)
+
     # Asynchronous batch-submission progress (all emitted on the GUI thread).
     remote_dirs_checked = Signal(object)  # {"existing": [str], "errors": {job_id: str}}
     submit_batch_progress = Signal(int, int, str)  # index, total, job label
@@ -124,6 +127,7 @@ class ClusterController(QObject):
         self._connected = False
         self._connected_cluster_name: str | None = None
         self._connected_username: str | None = None
+        self._pending_connect: tuple[str, str | None] | None = None
         self._batch_cancelled = False
 
         # Forward worker signals to the GUI thread. These cross-thread
@@ -159,7 +163,13 @@ class ClusterController(QObject):
     @Slot(bool)
     def _on_connection_status_changed(self, connected: bool) -> None:
         self._connected = bool(connected)
-        if not connected:
+        if connected:
+            # Adopt the identity of the connect that is in flight (set on the GUI
+            # thread before the worker ran). This carries the cluster name for an
+            # async connect, where there is no eager set to read it from.
+            if self._pending_connect is not None:
+                self._connected_cluster_name, self._connected_username = self._pending_connect
+        else:
             self._connected_cluster_name = None
             self._connected_username = None
         self.connection_status_changed.emit(bool(connected))
@@ -186,6 +196,7 @@ class ClusterController(QObject):
         *,
         credentials: SSHCredentials | None = None,
     ) -> None:
+        self._pending_connect = (config.name, config.username.strip() or None)
         self._call_blocking(
             lambda: self._runner.connect_to_cluster(
                 config,
@@ -230,6 +241,29 @@ class ClusterController(QObject):
 
     def track_existing_job(self, **kwargs: Any) -> None:
         self._async_task.emit(lambda: self._runner.track_existing_job(**kwargs))
+
+    def connect_async(self, config: ClusterConfig, *, credentials: SSHCredentials) -> None:
+        """Connect on the worker thread; result is delivered via connect_finished.
+
+        Keeps the GUI responsive during the (often multi-second) SSH handshake.
+        The host-key trust retry is driven by the GUI: on an unknown-host-key
+        error it saves the key and calls this again, and the next attempt trusts
+        it — so no cross-thread wait is needed here.
+        """
+
+        self._pending_connect = (config.name, config.username.strip() or None)
+        self._async_task.emit(lambda: self._run_connect(config, credentials))
+
+    def _run_connect(self, config: ClusterConfig, credentials: SSHCredentials) -> None:
+        try:
+            if config.jump_host_enabled:
+                self._runner.connect_to_cluster(config, credentials=credentials)
+            else:
+                self._runner.connect_to_cluster(config, password=credentials.target_secret)
+        except Exception as exc:  # noqa: BLE001 - delivered to the GUI to handle
+            self.connect_finished.emit(exc)
+            return
+        self.connect_finished.emit(None)
 
     # ------------------------------------------------------------------
     # Asynchronous batch submission (runs SSH off the GUI thread)

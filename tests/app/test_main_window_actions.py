@@ -2211,7 +2211,7 @@ def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
     submit_calls: list[dict[str, object]] = []
     infos: list[str] = []
     monkeypatch.setattr(
-        window._cluster_runner,
+        window._cluster_runner._runner,
         "connect_to_cluster",
         lambda config, password=None: connect_calls.append((config.name, password)),
     )
@@ -2353,7 +2353,7 @@ def test_main_window_submit_jobs_on_cluster_passes_jump_host_credentials(
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
     monkeypatch.setattr(
-        window._cluster_runner,
+        window._cluster_runner._runner,
         "connect_to_cluster",
         lambda config, password=None, credentials=None: connect_calls.append((config.name, credentials, password)),
     )
@@ -2461,7 +2461,7 @@ def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
     monkeypatch.setattr(
-        window._cluster_runner,
+        window._cluster_runner._runner,
         "connect_to_cluster",
         lambda _config, password=None: None,
     )
@@ -2854,7 +2854,7 @@ def test_main_window_submit_jobs_on_cluster_persists_last_submission_defaults(
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [redwood])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: redwood)
     monkeypatch.setattr(
-        window._cluster_runner,
+        window._cluster_runner._runner,
         "connect_to_cluster",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
@@ -2933,7 +2933,7 @@ def test_main_window_submit_jobs_on_cluster_connection_failure_warns(
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(
-        window._cluster_runner,
+        window._cluster_runner._runner,
         "connect_to_cluster",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
@@ -3093,7 +3093,7 @@ def test_main_window_submit_jobs_on_cluster_existing_remote_dir_yes_deletes(
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
-    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
@@ -3228,7 +3228,7 @@ def test_main_window_submit_jobs_on_cluster_reuses_quantum_continuation_director
     monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
-    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
@@ -3351,7 +3351,7 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
-    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
@@ -3773,7 +3773,7 @@ def test_main_window_disconnected_refresh_attempts_active_cluster_targets(
         _ = password
         connect_calls.append(config.name)
 
-    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", _connect)
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: refresh_calls.append("refresh"))
 
     warnings: list[str] = []
@@ -3832,7 +3832,7 @@ def test_main_window_disconnected_refresh_prompts_password_for_password_cluster(
             raise RuntimeError("Password is required for password authentication.")
 
     refresh_calls: list[str] = []
-    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", _connect)
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: refresh_calls.append("refresh"))
     monkeypatch.setattr(
         main_window_module,
@@ -3896,7 +3896,7 @@ def test_main_window_disconnected_refresh_prompts_passphrase_for_key_cluster(
             raise SSHAuthenticationError("SSH key authentication failed: private key is encrypted")
 
     refresh_calls: list[str] = []
-    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", _connect)
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(window._cluster_runner, "refresh_queue", lambda: refresh_calls.append("refresh"))
     monkeypatch.setattr(
         main_window_module,
@@ -3978,7 +3978,7 @@ def test_main_window_connect_with_trust_handles_jump_and_target_host_keys(
                 endpoint="target",
             )
 
-    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", _connect)
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", _connect)
     monkeypatch.setattr(
         main_window_module,
         "prompt_to_trust_host_key",
@@ -4129,7 +4129,7 @@ def test_main_window_submit_jobs_on_cluster_no_to_all_skips_deletion(
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
-    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
@@ -4227,7 +4227,7 @@ def test_main_window_submit_jobs_on_cluster_no_skips_submission(
     monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
     monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
 
-    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",
@@ -4340,7 +4340,7 @@ def test_main_window_submit_jobs_on_cluster_reuses_connection_without_success_di
         property(lambda _self: "alice"),
     )
 
-    monkeypatch.setattr(window._cluster_runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         window._cluster_runner,
         "remote_job_directory",

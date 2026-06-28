@@ -181,6 +181,13 @@ The controller mirrors connection state (``is_connected``,
 ``connected_cluster_name``, ``connected_username``) on the GUI thread so callers
 never touch the live transport across threads.
 
+Connecting is also asynchronous (``connect_async`` / ``connect_finished``): the
+multi-second SSH handshake runs on the worker behind a modal "Connecting…"
+dialog instead of freezing the window. Host-key trust is handled by the GUI
+retry loop in ``_connect_to_cluster_with_trust`` — on an unknown-host-key error
+it prompts, saves the key, and reconnects, and the next attempt trusts it — so
+no cross-thread coordination is needed.
+
 Batch submission is asynchronous. The GUI computes remote targets, checks which
 remote directories already exist (on the worker), resolves any overwrite prompts
 up front, then prepares document state for each job
