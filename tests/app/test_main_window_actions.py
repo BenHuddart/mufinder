@@ -3452,6 +3452,30 @@ def test_dashboard_flush_is_coalesced_across_a_completion_burst(qapp, tmp_path: 
     window.close()
 
 
+def test_close_persists_pending_dashboard_flush(qapp, tmp_path: Path) -> None:
+    # A coalesced flush pending at close must be persisted, not dropped — before
+    # autosave coalescing these completions were already written to disk per job.
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "close_flush.mufinder", "CloseFlush")
+    window._document = doc
+
+    save_calls: list[str] = []
+    original_save = window._project_service.save_project
+
+    def _save_project(document) -> None:
+        save_calls.append("save")
+        original_save(document)
+
+    window._project_service.save_project = _save_project
+
+    window._request_dashboard_flush(failure_message="x")
+    assert save_calls == []
+
+    window.close()
+    assert save_calls == ["save"]
+
+
 def test_cluster_queue_checked_flushes_pending_dashboard(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()

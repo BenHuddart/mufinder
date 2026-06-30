@@ -1984,6 +1984,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes,
             )
             if answer == QMessageBox.StandardButton.Cancel:
+                # Staying open: persist/refresh the coalesced flush that closeEvent
+                # stopped the timer for, so it is not orphaned until the next job.
+                self._flush_dashboard()
                 self._sync_job_runtime_timer()
                 event.ignore()
                 return
@@ -2002,6 +2005,10 @@ class MainWindow(QMainWindow):
             if relaxation_analysis_view is not None:
                 relaxation_analysis_view.shutdown()
         else:
+            # No save prompt (no document or window not visible). Persist any
+            # pending coalesced save so completions are not lost on this close;
+            # before the autosave coalescing these were already on disk.
+            self._flush_dashboard()
             self._shutting_down = True
             relaxation_analysis_view = getattr(self, "_relaxation_analysis_view", None)
             if relaxation_analysis_view is not None:
@@ -2337,6 +2344,8 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # Persist any coalesced flush for the outgoing project before swapping.
+        self._flush_dashboard()
         try:
             self._document = self._project_service.create_project(project_root, project_name.strip())
         except ValueError as exc:
@@ -3592,14 +3601,12 @@ class MainWindow(QMainWindow):
         self._dashboard_flush_pending = False
         if self._document is None:
             return
+        # _refresh_jobs_table already refreshes the convergence/kpoint/pristine/
+        # muon-relaxation/uep rows, so only the views it does not cover are added.
         self._refresh_jobs_table()
         self._refresh_journal_view()
-        self._refresh_pristine_relaxation_rows()
         self._refresh_host_structure_view()
-        self._refresh_muon_relaxation_rows()
         self._refresh_muon_generation_table()
-        self._refresh_convergence_cutoff_rows()
-        self._refresh_kpoint_convergence_rows()
         self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
         self._persist_document_ui_state(failure_message=self._dashboard_autosave_failure_message)
