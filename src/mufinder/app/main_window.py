@@ -18,7 +18,7 @@ from typing import TypeVar
 from uuid import UUID, uuid4
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QEventLoop, QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import (
     QActionGroup,
     QColor,
@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QRadioButton,
     QStackedWidget,
@@ -187,8 +188,12 @@ from mufinder.castep_io.ts_parser import (
 )
 from mufinder.castep_io.types import AtomicPosition, BlockSection, PositionBlock, ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
-from mufinder.services.cluster_runner import ClusterJobRunner
-from mufinder.services.job_execution_controller import ClusterJobSubmission, JobExecutionController
+from mufinder.app.cluster_controller import ClusterController
+from mufinder.services.job_execution_controller import (
+    ClusterJobSubmission,
+    JobExecutionController,
+    PreparedClusterSubmission,
+)
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.services.project_service import ProjectDocument, ProjectService
@@ -1610,7 +1615,9 @@ class MainWindow(QMainWindow):
         self._settings = QSettings("MuFinder", "MuFinder")
         self._appearance_mode = load_theme_mode(self._settings)
         self._local_runner = LocalJobRunner(self)
-        self._cluster_runner = ClusterJobRunner(self, settings=self._settings)
+        # Cluster SSH work runs on a dedicated worker thread via this facade,
+        # which mirrors ClusterJobRunner's public surface (see cluster_controller).
+        self._cluster_runner = ClusterController(self, settings=self._settings)
         self._active_run_by_job: dict[UUID, UUID] = {}
         self._job_execution = JobExecutionController(
             document_getter=lambda: self._document,
@@ -1625,6 +1632,17 @@ class MainWindow(QMainWindow):
         self._job_runtime_timer = QTimer(self)
         self._job_runtime_timer.setInterval(1000)
         self._job_runtime_timer.timeout.connect(self._refresh_active_job_runtime_cells)
+        # Job-lifecycle handlers (completion/status/cancel) coalesce their heavy
+        # dashboard work — the full-document autosave AND the journal/jobs-table/
+        # workflow-view rebuilds — through this timer. A burst of cluster jobs
+        # finishing in one poll otherwise rebuilds every view and rewrites the
+        # whole document to disk once per job, which freezes the GUI.
+        self._dashboard_flush_pending = False
+        self._dashboard_autosave_failure_message = ""
+        self._dashboard_flush_timer = QTimer(self)
+        self._dashboard_flush_timer.setSingleShot(True)
+        self._dashboard_flush_timer.setInterval(300)
+        self._dashboard_flush_timer.timeout.connect(self._flush_dashboard)
         self._cluster_elapsed_seconds_by_job: dict[UUID, int] = {}
         self._cluster_elapsed_checked_at: datetime | None = None
         self._shutting_down = False
@@ -1952,6 +1970,9 @@ class MainWindow(QMainWindow):
         job_runtime_timer = getattr(self, "_job_runtime_timer", None)
         if job_runtime_timer is not None:
             job_runtime_timer.stop()
+        dashboard_flush_timer = getattr(self, "_dashboard_flush_timer", None)
+        if dashboard_flush_timer is not None:
+            dashboard_flush_timer.stop()
         if self._document is not None and self.isVisible():
             answer = QMessageBox.question(
                 self,
@@ -1963,6 +1984,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes,
             )
             if answer == QMessageBox.StandardButton.Cancel:
+                # Staying open: persist/refresh the coalesced flush that closeEvent
+                # stopped the timer for, so it is not orphaned until the next job.
+                self._flush_dashboard()
                 self._sync_job_runtime_timer()
                 event.ignore()
                 return
@@ -1981,6 +2005,10 @@ class MainWindow(QMainWindow):
             if relaxation_analysis_view is not None:
                 relaxation_analysis_view.shutdown()
         else:
+            # No save prompt (no document or window not visible). Persist any
+            # pending coalesced save so completions are not lost on this close;
+            # before the autosave coalescing these were already on disk.
+            self._flush_dashboard()
             self._shutting_down = True
             relaxation_analysis_view = getattr(self, "_relaxation_analysis_view", None)
             if relaxation_analysis_view is not None:
@@ -2316,6 +2344,8 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # Persist any coalesced flush for the outgoing project before swapping.
+        self._flush_dashboard()
         try:
             self._document = self._project_service.create_project(project_root, project_name.strip())
         except ValueError as exc:
@@ -2347,6 +2377,8 @@ class MainWindow(QMainWindow):
                 )
             return False
 
+        # Persist any coalesced autosave for the outgoing project before swapping.
+        self._flush_dashboard()
         try:
             self._document = self._project_service.load_project(project_root)
         except Exception as exc:  # noqa: BLE001 - surface project-load failures to users.
@@ -2452,6 +2484,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
 
+        # This writes the whole document, so any coalesced flush is subsumed.
+        self._dashboard_flush_pending = False
+        self._dashboard_flush_timer.stop()
         try:
             self._project_service.save_project(self._document)
         except ValueError as exc:
@@ -3541,6 +3576,40 @@ class MainWindow(QMainWindow):
             self._project_service.save_project(self._document)
         except ValueError:
             self.statusBar().showMessage(failure_message)
+
+    def _request_dashboard_flush(self, *, failure_message: str) -> None:
+        """Schedule a coalesced dashboard refresh + autosave for lifecycle handlers.
+
+        Many cluster jobs can finish in a single queue poll; rebuilding every view
+        and saving the whole document per job freezes the GUI. Instead, mark a
+        flush pending and let it run once after the burst (via ``_flush_dashboard``,
+        called from the queue-check handler and a short debounce timer).
+        """
+
+        if self._document is None:
+            return
+        self._dashboard_flush_pending = True
+        self._dashboard_autosave_failure_message = failure_message
+        self._dashboard_flush_timer.start()
+
+    def _flush_dashboard(self) -> None:
+        """Rebuild the dashboard views and persist the document, if a flush is due."""
+
+        self._dashboard_flush_timer.stop()
+        if not self._dashboard_flush_pending:
+            return
+        self._dashboard_flush_pending = False
+        if self._document is None:
+            return
+        # _refresh_jobs_table already refreshes the convergence/kpoint/pristine/
+        # muon-relaxation/uep rows, so only the views it does not cover are added.
+        self._refresh_jobs_table()
+        self._refresh_journal_view()
+        self._refresh_host_structure_view()
+        self._refresh_muon_generation_table()
+        self._refresh_quantum_corrections_view()
+        self._refresh_energy_barriers_view()
+        self._persist_document_ui_state(failure_message=self._dashboard_autosave_failure_message)
 
     def _store_convergence_overview_snapshot(self, kind: str, snapshot: Mapping[str, object] | None) -> None:
         if self._document is None:
@@ -5969,15 +6038,13 @@ class MainWindow(QMainWindow):
         submitted_jobs: list[Job] = []
         failed_submit: list[str] = []
         skipped_submit: list[str] = []
+
+        # 1. Compute remote targets for every job (no SSH; GUI thread).
         remote_target_by_job: dict[UUID, str] = {}
         reuse_existing_files_by_job: dict[UUID, bool] = {}
         allow_existing_remote_directory_by_job: dict[UUID, bool] = {}
-        existing_remote_targets: list[str] = []
-        for index, job in enumerate(eligible_jobs, start=1):
-            self.statusBar().showMessage(
-                f"Checking remote directories ({index}/{len(eligible_jobs)}): {job.label}"
-            )
-            QApplication.processEvents()
+        targets_to_check: list[tuple[UUID, str]] = []
+        for job in eligible_jobs:
             allow_existing_remote_directory = False
             remote_target = (job.remote_directory or "").strip() if reuse_existing_remote_files else ""
             if not remote_target:
@@ -5997,55 +6064,59 @@ class MainWindow(QMainWindow):
             reuse_existing_files_by_job[job.id] = reuse_existing_files_for_job
             allow_existing_remote_directory_by_job[job.id] = allow_existing_remote_directory
             if not reuse_existing_files_for_job and not allow_existing_remote_directory:
-                try:
-                    if self._cluster_runner.remote_directory_exists(remote_target):
-                        existing_remote_targets.append(remote_target)
-                except Exception as exc:  # noqa: BLE001
-                    failed_submit.append(f"- {job.label}: Failed to check remote directory ({exc})")
+                targets_to_check.append((job.id, remote_target))
 
+        # 2. Check existing remote directories on the worker thread.
+        existing_remote_targets: list[str] = []
+        if targets_to_check:
+            check_result = self._await_remote_dir_check(targets_to_check)
+            existing_remote_targets = list(check_result.get("existing", []))
+            errors = check_result.get("errors", {})
+            for job in eligible_jobs:
+                error = errors.get(job.id)
+                if error:
+                    failed_submit.append(f"- {job.label}: Failed to check remote directory ({error})")
+
+        # 3. Resolve overwrite decisions up front (GUI thread), so no modal prompt
+        #    interrupts the submission loop running on the worker thread.
+        decision_by_job: dict[UUID, str] = {}
         overwrite_mode: str | None = None
         for job in eligible_jobs:
-            self.statusBar().showMessage(
-                f"Submitting cluster jobs ({submitted + 1}/{len(eligible_jobs)}): {job.label}"
-            )
-            QApplication.processEvents()
+            remote_target = remote_target_by_job.get(job.id)
+            if not (remote_target and remote_target in existing_remote_targets):
+                continue
+            if overwrite_mode is None:
+                choice = self._prompt_remote_directory_overwrite(job.label, remote_target)
+                if choice == "yes_to_all":
+                    confirmed = self._confirm_bulk_remote_delete(existing_remote_targets)
+                    overwrite_mode = "yes_to_all" if confirmed else "no_to_all"
+                    choice = overwrite_mode
+                elif choice == "no_to_all":
+                    overwrite_mode = "no_to_all"
+            else:
+                choice = overwrite_mode
+            if choice in {"yes", "yes_to_all"}:
+                decision_by_job[job.id] = "delete"
+            else:
+                decision_by_job[job.id] = "skip"
+                skipped_submit.append(
+                    f"- {job.label}: Submission skipped because remote directory already exists ({remote_target})"
+                )
 
+        # 4. Prepare document state (GUI thread) and build the worker batch.
+        prepared_by_job: dict[UUID, PreparedClusterSubmission] = {}
+        submit_items: list[dict[str, object]] = []
+        for job in eligible_jobs:
+            if decision_by_job.get(job.id) == "skip":
+                continue
             output_dir = self._job_output_directory(job)
             if output_dir is None:
                 missing_paths.append(job.label)
                 continue
             seed_name = seed_name_by_job.get(job.id, self._job_seed_name(job))
-
             remote_target = remote_target_by_job.get(job.id)
-            if remote_target and remote_target in existing_remote_targets:
-                if overwrite_mode is None:
-                    choice = self._prompt_remote_directory_overwrite(job.label, remote_target)
-                    if choice == "yes_to_all":
-                        confirmed = self._confirm_bulk_remote_delete(existing_remote_targets)
-                        overwrite_mode = "yes_to_all" if confirmed else "no_to_all"
-                        choice = overwrite_mode
-                    elif choice == "no_to_all":
-                        overwrite_mode = "no_to_all"
-                else:
-                    choice = overwrite_mode
-
-                if choice in {"yes", "yes_to_all"}:
-                    try:
-                        self._cluster_runner.remove_remote_directory(remote_target)
-                    except Exception as exc:  # noqa: BLE001
-                        failed_submit.append(f"- {job.label}: Failed to delete remote directory ({exc})")
-                        self._refresh_jobs_table()
-                        QApplication.processEvents()
-                        continue
-                elif choice in {"no", "no_to_all"}:
-                    skipped_submit.append(
-                        f"- {job.label}: Submission skipped because remote directory already exists ({remote_target})"
-                    )
-                    self._refresh_jobs_table()
-                    QApplication.processEvents()
-                    continue
-
-            outcome = self._job_execution.submit_cluster_job(
+            task_farming_enabled, num_farms = self._quantum_task_farming_for_job(job)
+            prepared = self._job_execution.prepare_cluster_submission(
                 ClusterJobSubmission(
                     job=job,
                     output_dir=output_dir,
@@ -6068,19 +6139,30 @@ class MainWindow(QMainWindow):
                     retrieve_ts=job.calc_type in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE},
                     reuse_existing_files=reuse_existing_files_by_job.get(job.id, False),
                     allow_existing_remote_directory=allow_existing_remote_directory_by_job.get(job.id, False),
-                    task_farming_enabled=self._quantum_task_farming_for_job(job)[0],
-                    num_farms=self._quantum_task_farming_for_job(job)[1],
+                    task_farming_enabled=task_farming_enabled,
+                    num_farms=num_farms,
                 )
             )
-            if outcome.submitted_job is not None:
-                submitted += 1
-                submitted_jobs.append(outcome.submitted_job)
-            if outcome.failed_message is not None:
-                failed_submit.append(outcome.failed_message)
-            if outcome.journal_changed:
-                self._refresh_journal_view()
-            self._refresh_jobs_table()
-            QApplication.processEvents()
+            if prepared is None:
+                continue
+            prepared_by_job[job.id] = prepared
+            submit_items.append(
+                {
+                    "job_id": job.id,
+                    "label": job.label,
+                    "submit_kwargs": prepared.submit_kwargs,
+                    "remote_dir_to_delete": (
+                        remote_target if decision_by_job.get(job.id) == "delete" else None
+                    ),
+                }
+            )
+
+        # 5. Run the batch on the worker thread with a cancellable progress dialog.
+        if submit_items:
+            batch_submitted, batch_failed = self._run_cluster_submit_batch(submit_items, prepared_by_job)
+            submitted = len(batch_submitted)
+            submitted_jobs = batch_submitted
+            failed_submit.extend(batch_failed)
 
         self._refresh_jobs_table()
         self._refresh_convergence_cutoff_rows()
@@ -6198,6 +6280,133 @@ class MainWindow(QMainWindow):
             "comment": str(getattr(config, "comment", "")),
             "workflow_type": workflow_type,
         }
+
+    def _await_cluster_signal(
+        self,
+        *,
+        start: Callable[[], None],
+        signal: Signal,
+        title: str,
+        label: str,
+    ) -> object:
+        """Run a worker-thread cluster op behind a modal busy dialog.
+
+        Calls ``start()`` (which kicks off async work on the worker thread), then
+        runs a nested event loop until ``signal`` fires, returning its payload. The
+        window keeps repainting while the worker performs the blocking SSH work.
+        """
+
+        captured: dict[str, object] = {}
+        loop = QEventLoop()
+
+        def on_signal(payload: object = None) -> None:
+            captured["payload"] = payload
+            loop.quit()
+
+        progress = QProgressDialog(label, None, 0, 0, self)
+        progress.setWindowTitle(title)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        signal.connect(on_signal)
+        progress.show()
+        try:
+            start()
+            loop.exec()
+        finally:
+            signal.disconnect(on_signal)
+            progress.close()
+        return captured.get("payload")
+
+    def _await_remote_dir_check(self, targets: list[tuple[UUID, str]]) -> dict[str, object]:
+        payload = self._await_cluster_signal(
+            start=lambda: self._cluster_runner.check_remote_dirs(targets),
+            signal=self._cluster_runner.remote_dirs_checked,
+            title="Checking remote directories",
+            label="Checking existing remote job directories…",
+        )
+        return payload if isinstance(payload, dict) else {"existing": [], "errors": {}}
+
+    def _await_cluster_connect(
+        self, config: ClusterConfig, *, credentials: SSHCredentials
+    ) -> BaseException | None:
+        """Connect to a cluster off the GUI thread, returning the error (or None)."""
+
+        payload = self._await_cluster_signal(
+            start=lambda: self._cluster_runner.connect_async(config, credentials=credentials),
+            signal=self._cluster_runner.connect_finished,
+            title="Connecting to cluster",
+            label=f"Connecting to {config.name}…",
+        )
+        return payload if isinstance(payload, BaseException) else None
+
+    def _run_cluster_submit_batch(
+        self,
+        submit_items: list[dict[str, object]],
+        prepared_by_job: dict[UUID, PreparedClusterSubmission],
+    ) -> tuple[list[Job], list[str]]:
+        """Submit a batch on the worker thread with a cancellable progress dialog.
+
+        Returns the successfully submitted jobs and per-job failure messages. The
+        GUI stays responsive via a nested event loop; document bookkeeping for each
+        result runs here on the GUI thread.
+        """
+
+        submitted_jobs: list[Job] = []
+        failed: list[str] = []
+        results_seen: set[UUID] = set()
+        total = len(submit_items)
+        loop = QEventLoop()
+
+        progress = QProgressDialog("Submitting cluster jobs…", "Cancel", 0, total, self)
+        progress.setWindowTitle("Submitting to cluster")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        def on_progress(index: int, count: int, label: str) -> None:
+            progress.setLabelText(f"Submitting {label} ({index}/{count})")
+            progress.setValue(index - 1)
+
+        def on_one(job_id: object, remote_job_id: object, error: str) -> None:
+            if not isinstance(job_id, UUID):
+                return
+            results_seen.add(job_id)
+            prepared = prepared_by_job.get(job_id)
+            if prepared is None:
+                return
+            if remote_job_id:
+                outcome = self._job_execution.finalize_cluster_submission(prepared, str(remote_job_id))
+            else:
+                outcome = self._job_execution.fail_cluster_submission(prepared, error)
+            if outcome.submitted_job is not None:
+                submitted_jobs.append(outcome.submitted_job)
+            if outcome.failed_message is not None:
+                failed.append(outcome.failed_message)
+            if outcome.journal_changed:
+                self._refresh_journal_view()
+            progress.setValue(progress.value() + 1)
+            self._refresh_jobs_table()
+
+        self._cluster_runner.submit_batch_progress.connect(on_progress)
+        self._cluster_runner.job_submit_finished.connect(on_one)
+        self._cluster_runner.submit_batch_finished.connect(loop.quit)
+        progress.canceled.connect(self._cluster_runner.cancel_batch)
+        progress.show()
+        try:
+            self._cluster_runner.submit_batch(submit_items)
+            loop.exec()
+        finally:
+            self._cluster_runner.submit_batch_progress.disconnect(on_progress)
+            self._cluster_runner.job_submit_finished.disconnect(on_one)
+            self._cluster_runner.submit_batch_finished.disconnect(loop.quit)
+            progress.close()
+
+        # Jobs prepared but never submitted (cancelled mid-batch) are cancelled so
+        # they do not linger in the ``submitting`` state.
+        for job_id, prepared in prepared_by_job.items():
+            if job_id not in results_seen:
+                self._job_execution.cancel_job(prepared.job.id)
+        return submitted_jobs, failed
 
     def _prompt_remote_directory_overwrite(self, job_label: str, remote_dir: str) -> str:
         message = QMessageBox(self)
@@ -7414,15 +7623,7 @@ class MainWindow(QMainWindow):
             warnings=parsed.warnings,
             convergence_achieved=parsed.geom_converged,
         )
-        self._refresh_journal_view()
-        self._refresh_jobs_table()
-        self._refresh_pristine_relaxation_rows()
-        self._refresh_host_structure_view()
-        self._refresh_muon_relaxation_rows()
-        self._refresh_muon_generation_table()
-        self._refresh_quantum_corrections_view()
-        self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(
+        self._request_dashboard_flush(
             failure_message="Completed job result was recorded, but autosave failed.",
         )
         self.statusBar().showMessage(f"Completed local job {job.label}")
@@ -7433,12 +7634,7 @@ class MainWindow(QMainWindow):
         update = self._job_execution.fail_job(job_id, message)
         if update.job is None:
             return
-        if update.journal_changed:
-            self._refresh_journal_view()
-        self._refresh_jobs_table()
-        self._refresh_quantum_corrections_view()
-        self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(
+        self._request_dashboard_flush(
             failure_message="Failed job state was recorded, but autosave failed.",
         )
         self.statusBar().showMessage(f"Local job failed: {update.job.label}")
@@ -7449,12 +7645,7 @@ class MainWindow(QMainWindow):
         update = self._job_execution.cancel_job(job_id)
         if update.job is None:
             return
-        if update.journal_changed:
-            self._refresh_journal_view()
-        self._refresh_jobs_table()
-        self._refresh_quantum_corrections_view()
-        self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(
+        self._request_dashboard_flush(
             failure_message="Cancelled job state was recorded, but autosave failed.",
         )
         self.statusBar().showMessage(f"Cancelled local job {update.job.label}")
@@ -7465,14 +7656,7 @@ class MainWindow(QMainWindow):
         update = self._job_execution.mark_cluster_status_changed(job_id, status_value)
         if not update.changed:
             return
-        if update.journal_changed:
-            self._refresh_journal_view()
-        self._refresh_jobs_table()
-        self._refresh_convergence_cutoff_rows()
-        self._refresh_kpoint_convergence_rows()
-        self._refresh_quantum_corrections_view()
-        self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(
+        self._request_dashboard_flush(
             failure_message="Cluster job status changed, but autosave failed.",
         )
 
@@ -7481,8 +7665,7 @@ class MainWindow(QMainWindow):
             return
         update = self._job_execution.mark_started(job_id)
         if update.changed:
-            self._refresh_jobs_table()
-            self._persist_document_ui_state(
+            self._request_dashboard_flush(
                 failure_message="Cluster job start was recorded, but autosave failed.",
             )
 
@@ -7532,6 +7715,10 @@ class MainWindow(QMainWindow):
         self._cluster_connection_label.setStyleSheet(f"color: {colour};")
 
     def _on_cluster_queue_checked(self, checked_at) -> None:
+        # A queue poll fires this once after any jobs it retrieved have been
+        # applied, so flush the autosave those completions coalesced into a single
+        # write here.
+        self._flush_dashboard()
         elapsed_by_job_id = getattr(checked_at, "elapsed_by_job_id", None)
         if isinstance(elapsed_by_job_id, Mapping):
             parsed: dict[UUID, int] = {}
@@ -7576,25 +7763,26 @@ class MainWindow(QMainWindow):
     def _connect_to_cluster_with_trust(self, config: ClusterConfig, *, credentials: SSHCredentials) -> None:
         trusted_endpoints: set[str] = set()
         while True:
-            try:
-                if config.jump_host_enabled:
-                    self._cluster_runner.connect_to_cluster(config, credentials=credentials)
-                else:
-                    self._cluster_runner.connect_to_cluster(config, password=credentials.target_secret)
+            error = self._await_cluster_connect(config, credentials=credentials)
+            if error is None:
                 return
-            except SSHUnknownHostKeyError as exc:
-                if exc.endpoint in trusted_endpoints:
-                    raise
-                if not prompt_to_trust_host_key(self, config, exc):
-                    raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
+            if isinstance(error, SSHUnknownHostKeyError):
+                if error.endpoint in trusted_endpoints:
+                    raise error
+                if not prompt_to_trust_host_key(self, config, error):
+                    raise ConnectionError(
+                        "Connection cancelled because the SSH host key was not trusted."
+                    ) from error
                 save_trusted_host_key(
                     self._settings,
                     config,
-                    algorithm=exc.algorithm,
-                    key_base64=exc.key_base64,
-                    endpoint=exc.endpoint,
+                    algorithm=error.algorithm,
+                    key_base64=error.key_base64,
+                    endpoint=error.endpoint,
                 )
-                trusted_endpoints.add(exc.endpoint)
+                trusted_endpoints.add(error.endpoint)
+                continue
+            raise error
 
     def _on_refresh_cluster_queue(self) -> None:
         try:

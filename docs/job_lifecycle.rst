@@ -168,7 +168,35 @@ state is not saved after cancellation.
 Cluster runner behavior
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-``ClusterJobRunner`` is an SSH/scheduler facade with in-memory tracking:
+``ClusterJobRunner`` is an SSH/scheduler facade with in-memory tracking.
+
+All of its paramiko SSH/SFTP work is blocking, so it runs on a dedicated worker
+thread owned by ``mufinder.app.cluster_controller.ClusterController``. The
+controller mirrors the runner's public surface (the same signal names, methods,
+and connection-state properties) and is what ``main_window`` holds, so the GUI
+event loop is never blocked by polling, result retrieval, or connection setup.
+Queue polling and output retrieval — the heaviest path, since a single
+completed batch can download many files — therefore execute off the GUI thread.
+The controller mirrors connection state (``is_connected``,
+``connected_cluster_name``, ``connected_username``) on the GUI thread so callers
+never touch the live transport across threads.
+
+Connecting is also asynchronous (``connect_async`` / ``connect_finished``): the
+multi-second SSH handshake runs on the worker behind a modal "Connecting…"
+dialog instead of freezing the window. Host-key trust is handled by the GUI
+retry loop in ``_connect_to_cluster_with_trust`` — on an unknown-host-key error
+it prompts, saves the key, and reconnects, and the next attempt trusts it — so
+no cross-thread coordination is needed.
+
+Batch submission is asynchronous. The GUI computes remote targets, checks which
+remote directories already exist (on the worker), resolves any overwrite prompts
+up front, then prepares document state for each job
+(``JobExecutionController.prepare_cluster_submission``) and hands the batch to
+``ClusterController.submit_batch``. The worker uploads and submits each job,
+emitting progress and per-job results that the GUI applies via
+``finalize_cluster_submission``/``fail_cluster_submission``. A modal progress
+dialog reports progress and offers a Cancel button; jobs prepared but not yet
+submitted when cancelled are moved to ``cancelled``.
 
 - ``connect_to_cluster`` creates the SSH connection and scheduler backend.
 - ``submit`` validates the local output directory and remote seed name, creates
@@ -213,6 +241,16 @@ The main window wires runner signals into ``JobExecutionController``:
 - local and cluster ``job_cancelled`` both call ``cancel_job``.
 - cluster ``status_changed`` is used for ``queued``, ``running``,
   ``retrieving``, and ``stopped`` updates.
+
+The per-job document mutation happens synchronously, but the **heavy dashboard
+work is coalesced**: rebuilding the journal (whole provenance), the jobs table
+(which recreates per-row action buttons), and the workflow views, plus the
+full-document autosave. Lifecycle handlers call ``_request_dashboard_flush``
+instead of refreshing and saving inline; the pending flush runs once after each
+queue poll (``_on_cluster_queue_checked``), on a short debounce timer, and before
+save/close/project-switch (``_flush_dashboard``). A burst of cluster jobs
+finishing in one poll therefore rebuilds the views and writes the document once
+rather than once per job, which previously froze the GUI for large batches.
 
 The dashboard displays active states plus ``failed``, ``stopped``, and
 ``cancelled``. Actions are enabled as follows:
