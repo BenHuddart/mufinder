@@ -450,8 +450,29 @@ def test_blocking_call_falls_back_after_shutdown(controller) -> None:
 def test_shutdown_stops_worker_thread(qapp, monkeypatch) -> None:
     monkeypatch.setattr(cluster_controller, "ClusterJobRunner", _FakeRunner)
     ctrl = ClusterController(settings=None)
+    fake = ctrl._runner
     assert ctrl._thread.isRunning() is True
     ctrl.shutdown()
     assert ctrl._thread.isRunning() is False
+    # The disconnect must run synchronously on the worker before quit, otherwise
+    # the worker's poll timer is left active and is later killed from the GUI
+    # thread ("Timers cannot be stopped from another thread").
+    assert ("shutdown",) in fake.calls
     # Idempotent.
     ctrl.shutdown()
+
+
+def test_real_runner_poll_timer_is_stopped_by_shutdown(qapp) -> None:
+    # Use the real ClusterJobRunner so its worker-thread poll QTimer exists, then
+    # confirm shutdown leaves it inactive (and on no live thread) so destruction
+    # does not stop a timer from the wrong thread.
+    from mufinder.app.cluster_controller import ClusterController as RealController
+
+    ctrl = RealController(settings=None)
+    # Start the poll timer on the worker thread, as submit/connect/track do.
+    ctrl._call_blocking(ctrl._runner._poll_timer.start)
+    assert ctrl._call_blocking(ctrl._runner._poll_timer.isActive) is True
+
+    ctrl.shutdown()
+    assert ctrl._thread.isRunning() is False
+    assert ctrl._runner._poll_timer.isActive() is False

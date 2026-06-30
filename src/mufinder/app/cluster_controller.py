@@ -338,21 +338,23 @@ class ClusterController(QObject):
     def shutdown(self) -> None:
         """Disconnect and stop the worker thread. Safe to call more than once.
 
-        Closing the app must not freeze behind an in-flight SSH transfer. Rather
-        than blocking the GUI (``BlockingQueuedConnection``) until the worker
-        finishes a possibly-large download, the disconnect is requested
-        asynchronously and the join is bounded; a worker still stuck in a long
-        transfer after the timeout is abandoned at process exit instead of
-        hanging the close.
+        The disconnect runs synchronously *on the worker thread* (blocking bridge)
+        so the poll ``QTimer`` — which lives on that thread — is stopped before the
+        event loop quits. Doing it asynchronously and then calling ``quit()`` races:
+        the loop can exit before the disconnect runs, leaving the timer active and
+        later killed from the GUI thread ("Timers cannot be stopped from another
+        thread"). The cost is that closing while a large download is in flight
+        waits for it, which matches how the app's other worker threads shut down.
         """
 
         if not self._thread.isRunning():
             return
-        self._async_task.emit(self._runner.shutdown)
+        try:
+            self._call_blocking(self._runner.shutdown)
+        except Exception:  # noqa: BLE001 - best-effort during teardown
+            pass
         self._thread.quit()
-        if not self._thread.wait(5000):
-            self._thread.terminate()
-            self._thread.wait(2000)
+        self._thread.wait(5000)
 
     # ------------------------------------------------------------------
     # Internal blocking-invocation machinery
