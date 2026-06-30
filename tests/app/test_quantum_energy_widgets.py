@@ -209,6 +209,27 @@ def test_energy_barriers_widget_emits_configure_and_view_for_source_row(qapp) ->
     assert viewed == ["path-a"]
 
 
+def test_energy_barriers_widget_uses_shared_status_text_colors(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_sources(
+        [
+            EnergyBarrierSourceRow(
+                key="path-a",
+                reactant="A",
+                product="B",
+                charge_state="Muonium",
+                path_length="1.2 ang",
+                neb_status="failed",
+            )
+        ]
+    )
+
+    # NEB Status is column 4 in the Diffusion Paths table; it uses the shared per-status palette.
+    status_item = widget._sources_table.item(0, 4)
+    assert status_item is not None
+    assert status_item.foreground().color().name() == status_brush("failed").color().name()
+
+
 def test_energy_barriers_widget_batch_configure_emits_selected_source_keys(qapp) -> None:
     widget = EnergyBarriersWidget()
     widget.set_sources(

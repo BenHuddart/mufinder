@@ -26,7 +26,13 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
-from mufinder.app.theme import current_palette, style_hint_text, style_section_subtitle, style_section_title
+from mufinder.app.theme import (
+    current_palette,
+    status_brush,
+    style_hint_text,
+    style_section_subtitle,
+    style_section_title,
+)
 from mufinder.app.workflow_table_utils import (
     create_workflow_table,
     set_workflow_table_item,
@@ -684,6 +690,11 @@ class EnergyBarriersWidget(QWidget):
         if combo.count():
             combo.setCurrentIndex(max(0, min(fallback_index, combo.count() - 1)))
 
+# Column index of the "NEB Status" header in the Diffusion Paths table (see create_workflow_table
+# call); the row tuple writes reactant, product, charge, path length, then NEB status.
+_NEB_STATUS_COLUMN = 4
+
+
 def _fill_source_table(
     table: QTableWidget,
     rows: list[EnergyBarrierSourceRow],
@@ -696,6 +707,11 @@ def _fill_source_table(
     for row_index, row in enumerate(rows):
         for column, value in enumerate((row.reactant, row.product, row.charge_state, row.path_length, row.neb_status)):
             set_workflow_table_item(table, row_index, column, value)
+        # Colour the NEB Status cell with the project-standard per-status palette (matching the
+        # relaxation/convergence tables), so a path's state reads at a glance.
+        status_item = table.item(row_index, _NEB_STATUS_COLUMN)
+        if status_item is not None:
+            status_item.setForeground(status_brush(row.neb_status))
         configure_button = SelectionSnapshotPushButton(table)
         configure_button.selection_snapshot_key = row.key
         style_workflow_configure_button(
