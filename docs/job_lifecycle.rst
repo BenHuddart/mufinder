@@ -242,6 +242,14 @@ The main window wires runner signals into ``JobExecutionController``:
 - cluster ``status_changed`` is used for ``queued``, ``running``,
   ``retrieving``, and ``stopped`` updates.
 
+The per-job document mutation and the jobs-table refresh happen synchronously,
+but the full-document **autosave is coalesced**: lifecycle handlers call
+``_request_autosave`` instead of saving inline, and the pending save is flushed
+once after each queue poll (``_on_cluster_queue_checked``), by a short backstop
+timer, and before save/close/project-switch. A burst of cluster jobs finishing
+in one poll therefore triggers a single disk write rather than one per job,
+which previously froze the GUI for large batches.
+
 The dashboard displays active states plus ``failed``, ``stopped``, and
 ``cancelled``. Actions are enabled as follows:
 

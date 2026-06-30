@@ -3421,6 +3421,60 @@ def test_main_window_cluster_status_handlers_update_job_and_run(
     window.close()
 
 
+def test_autosave_is_coalesced_across_a_completion_burst(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "autosave_coalesce.mufinder", "AutosaveCoalesce")
+    window._document = doc
+
+    save_calls: list[str] = []
+    original_save = window._project_service.save_project
+
+    def _save_project(document) -> None:
+        save_calls.append("save")
+        original_save(document)
+
+    window._project_service.save_project = _save_project
+
+    # A burst of lifecycle autosave requests does not write per request.
+    window._request_autosave(failure_message="x")
+    window._request_autosave(failure_message="x")
+    window._request_autosave(failure_message="x")
+    assert save_calls == []
+
+    # The flush (called after a queue poll / by the backstop timer) writes once.
+    window._flush_pending_autosave()
+    assert save_calls == ["save"]
+
+    # Nothing pending -> no further writes.
+    window._flush_pending_autosave()
+    assert save_calls == ["save"]
+    window.close()
+
+
+def test_cluster_queue_checked_flushes_pending_autosave(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "queue_flush.mufinder", "QueueFlush")
+    window._document = doc
+
+    save_calls: list[str] = []
+    original_save = window._project_service.save_project
+
+    def _save_project(document) -> None:
+        save_calls.append("save")
+        original_save(document)
+
+    window._project_service.save_project = _save_project
+
+    window._request_autosave(failure_message="x")
+    assert save_calls == []
+
+    window._on_cluster_queue_checked(SimpleNamespace(checked_at=None, elapsed_by_job_id={}))
+    assert save_calls == ["save"]
+    window.close()
+
+
 def test_main_window_cluster_connection_indicator_and_refresh(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:

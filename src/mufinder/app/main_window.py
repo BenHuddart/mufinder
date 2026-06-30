@@ -1632,6 +1632,15 @@ class MainWindow(QMainWindow):
         self._job_runtime_timer = QTimer(self)
         self._job_runtime_timer.setInterval(1000)
         self._job_runtime_timer.timeout.connect(self._refresh_active_job_runtime_cells)
+        # Job-lifecycle handlers (completion/status/cancel) coalesce their full-
+        # document autosave through this timer so a burst of cluster jobs finishing
+        # in one poll triggers a single save, not one disk write per job.
+        self._autosave_pending = False
+        self._autosave_failure_message = ""
+        self._autosave_backstop_timer = QTimer(self)
+        self._autosave_backstop_timer.setSingleShot(True)
+        self._autosave_backstop_timer.setInterval(1500)
+        self._autosave_backstop_timer.timeout.connect(self._flush_pending_autosave)
         self._cluster_elapsed_seconds_by_job: dict[UUID, int] = {}
         self._cluster_elapsed_checked_at: datetime | None = None
         self._shutting_down = False
@@ -1959,6 +1968,9 @@ class MainWindow(QMainWindow):
         job_runtime_timer = getattr(self, "_job_runtime_timer", None)
         if job_runtime_timer is not None:
             job_runtime_timer.stop()
+        autosave_timer = getattr(self, "_autosave_backstop_timer", None)
+        if autosave_timer is not None:
+            autosave_timer.stop()
         if self._document is not None and self.isVisible():
             answer = QMessageBox.question(
                 self,
@@ -2354,6 +2366,8 @@ class MainWindow(QMainWindow):
                 )
             return False
 
+        # Persist any coalesced autosave for the outgoing project before swapping.
+        self._flush_pending_autosave()
         try:
             self._document = self._project_service.load_project(project_root)
         except Exception as exc:  # noqa: BLE001 - surface project-load failures to users.
@@ -2459,6 +2473,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
 
+        # This writes the whole document, so any coalesced autosave is subsumed.
+        self._autosave_pending = False
+        self._autosave_backstop_timer.stop()
         try:
             self._project_service.save_project(self._document)
         except ValueError as exc:
@@ -3548,6 +3565,30 @@ class MainWindow(QMainWindow):
             self._project_service.save_project(self._document)
         except ValueError:
             self.statusBar().showMessage(failure_message)
+
+    def _request_autosave(self, *, failure_message: str) -> None:
+        """Schedule a coalesced autosave for the job-lifecycle handlers.
+
+        Many cluster jobs can finish in a single queue poll; saving the whole
+        document per job freezes the GUI. Instead, mark a save pending and let it
+        be flushed once after the burst (via ``_flush_pending_autosave``, called
+        from the queue-check handler and a short backstop timer).
+        """
+
+        if self._document is None:
+            return
+        self._autosave_pending = True
+        self._autosave_failure_message = failure_message
+        self._autosave_backstop_timer.start()
+
+    def _flush_pending_autosave(self) -> None:
+        """Persist a coalesced autosave if one is pending."""
+
+        self._autosave_backstop_timer.stop()
+        if not self._autosave_pending:
+            return
+        self._autosave_pending = False
+        self._persist_document_ui_state(failure_message=self._autosave_failure_message)
 
     def _store_convergence_overview_snapshot(self, kind: str, snapshot: Mapping[str, object] | None) -> None:
         if self._document is None:
@@ -7569,7 +7610,7 @@ class MainWindow(QMainWindow):
         self._refresh_muon_generation_table()
         self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(
+        self._request_autosave(
             failure_message="Completed job result was recorded, but autosave failed.",
         )
         self.statusBar().showMessage(f"Completed local job {job.label}")
@@ -7585,7 +7626,7 @@ class MainWindow(QMainWindow):
         self._refresh_jobs_table()
         self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(
+        self._request_autosave(
             failure_message="Failed job state was recorded, but autosave failed.",
         )
         self.statusBar().showMessage(f"Local job failed: {update.job.label}")
@@ -7601,7 +7642,7 @@ class MainWindow(QMainWindow):
         self._refresh_jobs_table()
         self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(
+        self._request_autosave(
             failure_message="Cancelled job state was recorded, but autosave failed.",
         )
         self.statusBar().showMessage(f"Cancelled local job {update.job.label}")
@@ -7619,7 +7660,7 @@ class MainWindow(QMainWindow):
         self._refresh_kpoint_convergence_rows()
         self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(
+        self._request_autosave(
             failure_message="Cluster job status changed, but autosave failed.",
         )
 
@@ -7629,7 +7670,7 @@ class MainWindow(QMainWindow):
         update = self._job_execution.mark_started(job_id)
         if update.changed:
             self._refresh_jobs_table()
-            self._persist_document_ui_state(
+            self._request_autosave(
                 failure_message="Cluster job start was recorded, but autosave failed.",
             )
 
@@ -7679,6 +7720,10 @@ class MainWindow(QMainWindow):
         self._cluster_connection_label.setStyleSheet(f"color: {colour};")
 
     def _on_cluster_queue_checked(self, checked_at) -> None:
+        # A queue poll fires this once after any jobs it retrieved have been
+        # applied, so flush the autosave those completions coalesced into a single
+        # write here.
+        self._flush_pending_autosave()
         elapsed_by_job_id = getattr(checked_at, "elapsed_by_job_id", None)
         if isinstance(elapsed_by_job_id, Mapping):
             parsed: dict[UUID, int] = {}
