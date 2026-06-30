@@ -3421,7 +3421,7 @@ def test_main_window_cluster_status_handlers_update_job_and_run(
     window.close()
 
 
-def test_autosave_is_coalesced_across_a_completion_burst(qapp, tmp_path: Path) -> None:
+def test_dashboard_flush_is_coalesced_across_a_completion_burst(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "autosave_coalesce.mufinder", "AutosaveCoalesce")
@@ -3437,22 +3437,22 @@ def test_autosave_is_coalesced_across_a_completion_burst(qapp, tmp_path: Path) -
     window._project_service.save_project = _save_project
 
     # A burst of lifecycle autosave requests does not write per request.
-    window._request_autosave(failure_message="x")
-    window._request_autosave(failure_message="x")
-    window._request_autosave(failure_message="x")
+    window._request_dashboard_flush(failure_message="x")
+    window._request_dashboard_flush(failure_message="x")
+    window._request_dashboard_flush(failure_message="x")
     assert save_calls == []
 
     # The flush (called after a queue poll / by the backstop timer) writes once.
-    window._flush_pending_autosave()
+    window._flush_dashboard()
     assert save_calls == ["save"]
 
     # Nothing pending -> no further writes.
-    window._flush_pending_autosave()
+    window._flush_dashboard()
     assert save_calls == ["save"]
     window.close()
 
 
-def test_cluster_queue_checked_flushes_pending_autosave(qapp, tmp_path: Path) -> None:
+def test_cluster_queue_checked_flushes_pending_dashboard(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "queue_flush.mufinder", "QueueFlush")
@@ -3467,7 +3467,7 @@ def test_cluster_queue_checked_flushes_pending_autosave(qapp, tmp_path: Path) ->
 
     window._project_service.save_project = _save_project
 
-    window._request_autosave(failure_message="x")
+    window._request_dashboard_flush(failure_message="x")
     assert save_calls == []
 
     window._on_cluster_queue_checked(SimpleNamespace(checked_at=None, elapsed_by_job_id={}))
