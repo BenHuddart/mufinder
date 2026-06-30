@@ -263,11 +263,18 @@ _ENERGY_BARRIER_NEB_KEYWORD_NAMES = workflow_basic_parameter_names(
     "tssearch_neb_method",
     "tssearch_neb_max_iter",
     "tssearch_neb_normed",
+    "tssearch_force_tol",
 )
 # Default NEB image count (TSSEARCH_MAX_PATH_POINTS). Odd, as climbing-image NEB requires.
 # 11 gives a finer band than the CASTEP minimum: a smoother barrier path and a lower residual
 # force at the climbing image (7 images left a ~0.08 eV/Ang plateau just above the force tol).
 _ENERGY_BARRIER_NEB_DEFAULT_IMAGES = 11
+# Editable NEB force-convergence tolerance (TSSEARCH_FORCE_TOL). Default mirrors CASTEP's own
+# default (0.05 eV/Ang via GEOM_FORCE_TOL). Exposed so users can loosen it for stubborn bands whose
+# barrier is converged but whose max force component plateaus above 0.05. The keyword's canonical
+# unit is H/BOHR; we surface it in eV/Ang (what the .castep output reports) for legibility.
+_ENERGY_BARRIER_NEB_FORCE_TOL_UNIT = "eV/ang"
+_ENERGY_BARRIER_NEB_DEFAULT_FORCE_TOL = ValueWithUnit(0.05, _ENERGY_BARRIER_NEB_FORCE_TOL_UNIT)
 _QUANTUM_GUI_TO_METHOD = {
     "FINITEDISPLACEMENT": "finite_displacement",
     "DFPT": "dfpt",
@@ -4724,10 +4731,24 @@ class MainWindow(QMainWindow):
         ]
 
     def _energy_barrier_neb_parameter_specs(self) -> list[KeywordSpec]:
-        return build_workflow_parameter_surface(
+        specs = build_workflow_parameter_surface(
             workflow_stage="energy_barriers",
             basic_names=_ENERGY_BARRIER_NEB_KEYWORD_NAMES,
         )
+        # Surface TSSEARCH_FORCE_TOL in eV/Ang (its catalog unit is H/BOHR) with CASTEP's own
+        # default pre-filled, so the editor labels/edits it legibly and an untouched row reproduces
+        # CASTEP's behaviour. The physical editor forces the value's unit to spec.unit, so both the
+        # unit and the default_value must be overridden together.
+        return [
+            replace(
+                spec,
+                unit=_ENERGY_BARRIER_NEB_FORCE_TOL_UNIT,
+                default_value=_ENERGY_BARRIER_NEB_DEFAULT_FORCE_TOL,
+            )
+            if spec.name == "tssearch_force_tol"
+            else spec
+            for spec in specs
+        ]
 
     def _workflow_dialog_payload(
         self,

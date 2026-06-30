@@ -56,6 +56,16 @@ muon hops, gives the barrier directly, and matches the parser we already have.
 > finer band gives a smoother barrier path and a lower residual force at the climbing image (likely
 > converging honestly). `TSSEARCH_NEB_MAX_ITER` is now 60 and was not the limiter. Loosening
 > `TSSEARCH_FORCE_TOL` to ~0.1 eV/Ang remains the cheaper alternative if 11 images still plateau.
+
+> **11-image re-run + force-tolerance control (2026-06-30).** More images did NOT fix convergence and
+> made the max force *worse* on two paths (0.09 -> 0.14 eV/Ang) -- the bands sit in a two-value limit
+> cycle with displacement -> 1e-6 A and ODE12R stalling at <30 of 60 iters. Crucially the barriers are
+> identical to the 7-image run (<5 meV, 0 meV drift), confirming the bottleneck is the optimiser/PES,
+> not band resolution: the 0.05 eV/Ang default force tol is simply unreachable for these bands. So
+> `TSSEARCH_FORCE_TOL` is now an editable NEB row (`_ENERGY_BARRIER_NEB_KEYWORD_NAMES`), surfaced in
+> eV/Ang (catalog unit is H/BOHR) and pre-filled with CASTEP's own default 0.05 via the surface spec's
+> `default_value` (`_energy_barrier_neb_parameter_specs`). Users loosen it (~0.1-0.15) for stubborn
+> bands whose barrier is already converged.
 - Keep barrier extraction correct (eV) and well tested.
 
 ## Key references (not committed to the repo)

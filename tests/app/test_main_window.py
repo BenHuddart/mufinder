@@ -2379,6 +2379,7 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
                 "kpoint_mp_grid": [1, 1, 2],
                 "tssearch_neb_max_iter": 24,
                 "tssearch_max_path_points": 8,
+                "tssearch_force_tol": {"value": 0.15, "unit": "eV/ang"},
             }
         }
     }
@@ -2395,6 +2396,25 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
     assert "TSSEARCH_NEB_MAX_ITER : 24" in param_text
     # An even configured image count is rounded up to the next odd value for climbing NEB.
     assert "TSSEARCH_MAX_PATH_POINTS : 9" in param_text
+    # A user-set force tolerance is written through in eV/Ang.
+    assert "TSSEARCH_FORCE_TOL : 0.15 eV/ang" in param_text
+
+
+def test_energy_barrier_neb_specs_expose_force_tol_editable_with_castep_default(qapp) -> None:
+    # TSSEARCH_FORCE_TOL is an editable NEB row defaulting to CASTEP's own value (0.05), surfaced in
+    # eV/Ang rather than its H/BOHR catalog unit so the editor labels it the way the .castep reports.
+    window = MainWindow()
+    try:
+        spec = next(
+            (s for s in window._energy_barrier_neb_parameter_specs() if s.name == "tssearch_force_tol"),
+            None,
+        )
+        assert spec is not None, "tssearch_force_tol should be an exposed NEB parameter"
+        assert spec.unit == "eV/ang"
+        assert spec.value_type == "physical"
+        assert spec.default_value == ValueWithUnit(0.05, "eV/ang")
+    finally:
+        window.close()
 
 
 def test_main_window_records_neb_result_and_loads_preview(
