@@ -8,7 +8,7 @@ from uuid import UUID
 
 from mufinder.castep_io.schema import canonical_keyword_name
 from mufinder.castep_io.types import BlockSection, KeywordAssignment, ValueWithUnit
-from mufinder.domain.charge_states import is_muonium
+from mufinder.domain.charge_states import is_muonium, seed_muon_spins
 from mufinder.domain.constants import MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
@@ -41,25 +41,18 @@ def _seed_muonium_spin(structure: StructureSpec, muon_species: str) -> Structure
     """
 
     positions = structure.positions_frac.positions
+    muon_indices = [index for index, position in enumerate(positions) if position.species == muon_species]
     # Fail loudly rather than emit a spin-polarised muonium job with no seeded moment: a
     # zero net moment on an odd-electron cell silently converges to the wrong (closed-shell)
     # solution. This catches a species-label mismatch between the structure and muon_species.
-    if not any(position.species == muon_species for position in positions):
+    if not muon_indices:
         raise ValueError(
             f"Muonium structure has no atom matching muon species {muon_species!r}; "
             f"cannot seed the +1 muon spin. Present species: "
             f"{sorted({position.species for position in positions})}."
         )
-    existing = (
-        list(structure.atomic_spins)
-        if structure.atomic_spins is not None
-        else [0.0] * len(positions)
-    )
-    spins = tuple(
-        1.0 if position.species == muon_species else existing[index]
-        for index, position in enumerate(positions)
-    )
-    return replace(structure, atomic_spins=spins)
+    spins = seed_muon_spins(structure.atomic_spins, atom_count=len(positions), muon_indices=muon_indices)
+    return replace(structure, atomic_spins=tuple(spins))
 
 
 @dataclass(frozen=True, slots=True)

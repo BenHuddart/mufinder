@@ -30,8 +30,10 @@ from mufinder.domain.models import Structure
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.charge_states import (
     MUONIUM_CHARGE_STATE,
+    MUONIUM_MUON_SPIN,
     POSITIVE_MUON_CHARGE_STATE,
     canonical_charge_state,
+    seed_muon_spins,
 )
 from mufinder.science.kpoint_grids import (
     equivalent_grid_for_supercell,
@@ -375,13 +377,19 @@ def _structure_for_muon_row(host_structure: Structure, row: MuonRelaxationRow) -
     # muon so the spin-polarised SCF localises the unpaired electron there; the diamagnetic mu+
     # has no bound electron and stays 0.
     is_muonium = _charge_state_key(row.charge_state) == MUONIUM_CHARGE_STATE
-    muon_spin = 1.0 if is_muonium else 0.0
-    atomic_spins = list(properties.get("atomic_spins", host_structure.properties.get("atomic_spins", [])))
-    if atomic_spins:
-        properties["atomic_spins"] = [float(value) for value in atomic_spins] + [muon_spin]
-    elif is_muonium:
-        # Non-magnetic host: create the spin array so the muon carries SPIN=1 in the cell file.
-        properties["atomic_spins"] = [0.0] * len(base.fractional_positions) + [muon_spin]
+    muon_spin = MUONIUM_MUON_SPIN if is_muonium else 0.0
+    host_spins = list(properties.get("atomic_spins", host_structure.properties.get("atomic_spins", [])))
+    # The muon is appended as the last atom (see below), so seed it there. Only materialise the
+    # array when it carries information: a magnetic host (host_spins) or a muonium seed. A
+    # diamagnetic muon on a non-magnetic host needs no spin array at all.
+    if host_spins or is_muonium:
+        atom_count = len(base.fractional_positions) + 1
+        properties["atomic_spins"] = seed_muon_spins(
+            host_spins or None,
+            atom_count=atom_count,
+            muon_indices=(atom_count - 1,),
+            muon_spin=muon_spin,
+        )
 
     return Structure(
         label=f"{base.label}_{muon_charge_state_prefix(row.charge_state)}_{row.label}",
