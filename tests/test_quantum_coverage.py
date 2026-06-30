@@ -293,8 +293,8 @@ def test_singlepoint_param_template_no_charge_when_neutral() -> None:
     assert "charge" not in names
 
 
-def test_param_template_charge_zero_for_non_positive_muon() -> None:
-    config = QuantumPhononJobConfig(source=_source(charge_state="neutral_muonium"))
+def test_param_template_charge_zero_for_muonium() -> None:
+    config = QuantumPhononJobConfig(source=_source(charge_state="muonium"))
     template = _param_template(config)
     charge = {kw.name: kw.value for kw in template.keywords}["charge"]
     assert charge == 0

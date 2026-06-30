@@ -28,6 +28,13 @@ from mufinder.castep_io.types import (
 )
 from mufinder.domain.models import Structure
 from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.charge_states import (
+    MUONIUM_CHARGE_STATE,
+    MUONIUM_MUON_SPIN,
+    POSITIVE_MUON_CHARGE_STATE,
+    canonical_charge_state,
+    seed_muon_spins,
+)
 from mufinder.science.kpoint_grids import (
     equivalent_grid_for_supercell,
     supercell_lattice_vectors,
@@ -41,8 +48,6 @@ from mufinder.workflow.relaxation import RelaxationJobConfig, expand_relaxation_
 from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamTemplate
 
 
-POSITIVE_MUON_CHARGE_STATE = "positive_muon"
-MUONIUM_CHARGE_STATE = "muonium"
 MUON_RELAXATION_CALC_TYPES = {
     POSITIVE_MUON_CHARGE_STATE: "castep_positivemuon_relaxation",
     MUONIUM_CHARGE_STATE: "castep_muonium_relaxation",
@@ -81,6 +86,16 @@ def _find_keyword_spec(name: str):
         if spec is not None:
             return spec
     return None
+
+
+def _row_values_has_keyword(row_values: Mapping[str, object], target: str) -> bool:
+    """Return true if the user's row parameter values include the given canonical keyword."""
+
+    for raw_name in row_values:
+        spec = _find_keyword_spec(raw_name)
+        if spec is not None and canonical_keyword_name(spec.file, spec.name) == target:
+            return True
+    return False
 
 
 def _lattice_cart_from_block(block: BlockSection) -> LatticeCart:
@@ -300,16 +315,7 @@ def _structure_for_row(host_structure: Structure, row: PristineRelaxationRow) ->
 
 
 def _charge_state_key(value: str) -> str:
-    normalized = str(value).strip().lower().replace("-", "_").replace(" ", "_")
-    aliases = {
-        "positive": POSITIVE_MUON_CHARGE_STATE,
-        "positive_muon": POSITIVE_MUON_CHARGE_STATE,
-        "positivemuon": POSITIVE_MUON_CHARGE_STATE,
-        "mu+": POSITIVE_MUON_CHARGE_STATE,
-        "muonium": MUONIUM_CHARGE_STATE,
-        "mu": MUONIUM_CHARGE_STATE,
-    }
-    return aliases.get(normalized, normalized)
+    return canonical_charge_state(value) or POSITIVE_MUON_CHARGE_STATE
 
 
 def muon_charge_state_label(charge_state: str) -> str:
@@ -367,9 +373,23 @@ def _structure_for_muon_row(host_structure: Structure, row: MuonRelaxationRow) -
     )
     muon_position = _muon_supercell_fractional_position(row.initial_fractional_position, row.supercell_matrix)
     properties = dict(base.properties)
-    atomic_spins = list(properties.get("atomic_spins", host_structure.properties.get("atomic_spins", [])))
-    if atomic_spins:
-        properties["atomic_spins"] = [float(value) for value in atomic_spins] + [0.0]
+    # Neutral muonium is open-shell: mu+ binds one electron (S = 1/2, ~1 muB). Seed +1 on the
+    # muon so the spin-polarised SCF localises the unpaired electron there; the diamagnetic mu+
+    # has no bound electron and stays 0.
+    is_muonium = _charge_state_key(row.charge_state) == MUONIUM_CHARGE_STATE
+    muon_spin = MUONIUM_MUON_SPIN if is_muonium else 0.0
+    host_spins = list(properties.get("atomic_spins", host_structure.properties.get("atomic_spins", [])))
+    # The muon is appended as the last atom (see below), so seed it there. Only materialise the
+    # array when it carries information: a magnetic host (host_spins) or a muonium seed. A
+    # diamagnetic muon on a non-magnetic host needs no spin array at all.
+    if host_spins or is_muonium:
+        atom_count = len(base.fractional_positions) + 1
+        properties["atomic_spins"] = seed_muon_spins(
+            host_spins or None,
+            atom_count=atom_count,
+            muon_indices=(atom_count - 1,),
+            muon_spin=muon_spin,
+        )
 
     return Structure(
         label=f"{base.label}_{muon_charge_state_prefix(row.charge_state)}_{row.label}",
@@ -584,9 +604,13 @@ def expand_muon_relaxation_jobs(
                 )
 
         param = row_template.param
-        forced_keywords = (KeywordAssignment("charge", muon_charge_for_state(charge_state)),)
+        forced_keywords = [KeywordAssignment("charge", muon_charge_for_state(charge_state))]
+        # Muonium is open-shell, so default to a spin-polarised SCF. Left as a default (not locked
+        # like charge) so the user can still override it from the param dialog.
+        if charge_state == MUONIUM_CHARGE_STATE and not _row_values_has_keyword(row_values, "spin_polarized"):
+            forced_keywords.append(KeywordAssignment("spin_polarized", True))
         param_overrides = ParamTemplate(
-            keywords=(tuple(param.keywords) if param is not None else ()) + forced_keywords,
+            keywords=(tuple(param.keywords) if param is not None else ()) + tuple(forced_keywords),
             extra_blocks=tuple(param.extra_blocks) if param is not None else (),
         )
 

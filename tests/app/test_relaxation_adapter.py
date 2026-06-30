@@ -290,6 +290,9 @@ def test_expand_muon_relaxation_jobs_forces_fixed_cell_and_charge() -> None:
     assert muonium_params["geom_max_iter"] == 300
     assert positive_params["charge"] == 1
     assert muonium_params["charge"] == 0
+    # Muonium is open-shell: spin-polarised by default; the diamagnetic mu+ is not.
+    assert muonium_params["spin_polarized"] is True
+    assert "spin_polarized" not in positive_params
     assert positive_params["write_cell_structure"] is True
     assert expansion.jobs[0].cell_file.symmetry_generate is False
     assert positive_cell["fix_all_cell"] is True
@@ -297,6 +300,65 @@ def test_expand_muon_relaxation_jobs_forces_fixed_cell_and_charge() -> None:
     assert "FIX_ALL_CELL : TRUE" in rendered_cell
     assert "FIX_CELL" not in rendered_cell
     assert "SYMMETRY_GENERATE" not in rendered_cell
+
+
+def test_expand_muon_relaxation_jobs_seeds_muonium_spin_in_cell() -> None:
+    config = MuonRelaxationConfig(
+        rows=(
+            MuonRelaxationRow(
+                site_id=uuid4(),
+                label="dia",
+                initial_fractional_position=(0.2, 0.4, 0.6),
+                charge_state="positive_muon",
+            ),
+            MuonRelaxationRow(
+                site_id=uuid4(),
+                label="mu",
+                initial_fractional_position=(0.1, 0.2, 0.3),
+                charge_state="muonium",
+            ),
+        )
+    )
+
+    expansion = expand_muon_relaxation_jobs(
+        host_structure=_host_structure(),
+        config=config,
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(4, 4, 4),
+        project_kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+    )
+
+    positive_cell = write_cell(expansion.jobs[0].cell_file)
+    muonium_cell = write_cell(expansion.jobs[1].cell_file)
+    # Neutral muonium seeds +1 on the muon (one unpaired electron); mu+ carries no spin.
+    assert "SPIN=1" in muonium_cell
+    assert "SPIN=" not in positive_cell
+
+
+def test_expand_muon_relaxation_jobs_muonium_spin_polarized_is_overridable() -> None:
+    config = MuonRelaxationConfig(
+        rows=(
+            MuonRelaxationRow(
+                site_id=uuid4(),
+                label="mu",
+                initial_fractional_position=(0.1, 0.2, 0.3),
+                charge_state="muonium",
+                parameter_values={"spin_polarized": False},
+            ),
+        )
+    )
+
+    expansion = expand_muon_relaxation_jobs(
+        host_structure=_host_structure(),
+        config=config,
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(4, 4, 4),
+        project_kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+    )
+
+    params = {keyword.name: keyword.value for keyword in expansion.jobs[0].param_file.keywords}
+    # The default is overridable from the param dialog, so an explicit False is honoured.
+    assert params["spin_polarized"] is False
 
 
 def test_expand_muon_relaxation_jobs_places_muon_in_origin_supercell_image() -> None:

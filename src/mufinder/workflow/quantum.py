@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Sequence
 from uuid import UUID
 
 from mufinder.castep_io.schema import canonical_keyword_name
 from mufinder.castep_io.types import BlockSection, KeywordAssignment, ValueWithUnit
+from mufinder.domain.charge_states import is_muonium, seed_muon_spins
 from mufinder.domain.constants import MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
@@ -29,6 +30,29 @@ _METHOD_TO_CASTEP = {
     "dfpt": "DFPT",
     "linear_response": "LINEARRESPONSE",
 }
+
+
+def _seed_muonium_spin(structure: StructureSpec, muon_species: str) -> StructureSpec:
+    """Seed +1 on the muon so a muonium phonon/singlepoint stays open-shell.
+
+    Mirrors the muon-relaxation adapter: neutral muonium binds one unpaired electron
+    (S = 1/2, ~1 muB). Host moments are preserved, and this is idempotent if the relaxed
+    source structure already carried the seed.
+    """
+
+    positions = structure.positions_frac.positions
+    muon_indices = [index for index, position in enumerate(positions) if position.species == muon_species]
+    # Fail loudly rather than emit a spin-polarised muonium job with no seeded moment: a
+    # zero net moment on an odd-electron cell silently converges to the wrong (closed-shell)
+    # solution. This catches a species-label mismatch between the structure and muon_species.
+    if not muon_indices:
+        raise ValueError(
+            f"Muonium structure has no atom matching muon species {muon_species!r}; "
+            f"cannot seed the +1 muon spin. Present species: "
+            f"{sorted({position.species for position in positions})}."
+        )
+    spins = seed_muon_spins(structure.atomic_spins, atom_count=len(positions), muon_indices=muon_indices)
+    return replace(structure, atomic_spins=tuple(spins))
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,16 +176,19 @@ def expand_quantum_singlepoint_jobs(
         if not label:
             raise ValueError("Quantum singlepoint source labels must not be empty.")
 
+        structure = config.source.structure
+        if is_muonium(config.source.charge_state):
+            structure = _seed_muonium_spin(structure, config.muon_species)
         patch = JobPatch(
             label_suffix=label,
-            structure=config.source.structure,
+            structure=structure,
             cell=config.cell_overrides,
             param=_singlepoint_param_template(config),
         )
         resolved.append(
             resolve_job(
                 name=job_name(name_prefix, label),
-                base_structure=config.source.structure,
+                base_structure=structure,
                 workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
                 global_defaults=global_defaults,
                 workflow_defaults=workflow_defaults,
@@ -213,16 +240,19 @@ def expand_quantum_phonon_jobs(
         if not compatible:
             raise ValueError(message or "Incompatible CASTEP phonon method.")
 
+        structure = config.source.structure
+        if is_muonium(config.source.charge_state):
+            structure = _seed_muonium_spin(structure, config.muon_species)
         patch = JobPatch(
             label_suffix=label,
-            structure=config.source.structure,
+            structure=structure,
             cell=_cell_template(config),
             param=_param_template(config),
         )
         resolved.append(
             resolve_job(
                 name=job_name(name_prefix, label),
-                base_structure=config.source.structure,
+                base_structure=structure,
                 workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
                 global_defaults=global_defaults,
                 workflow_defaults=workflow_defaults,
@@ -279,8 +309,11 @@ def _param_template(config: QuantumPhononJobConfig) -> ParamTemplate:
     if int(config.num_farms) > 1:
         keywords.append(KeywordAssignment("num_farms", max(1, int(config.num_farms))))
     if config.source.charge_state:
-        charge = 1 if config.source.charge_state == "positive_muon" else 0
+        charge = 0 if is_muonium(config.source.charge_state) else 1
         keywords.append(KeywordAssignment("charge", charge))
+    if is_muonium(config.source.charge_state):
+        # Muonium is open-shell: default to spin-polarised (overridable via param_overrides).
+        keywords.append(KeywordAssignment("spin_polarized", True))
     base = ParamTemplate(keywords=tuple(keywords))
     if config.param_overrides is None:
         return base
@@ -291,8 +324,11 @@ def _param_template(config: QuantumPhononJobConfig) -> ParamTemplate:
 def _singlepoint_param_template(config: QuantumPhononJobConfig) -> ParamTemplate:
     keywords = [KeywordAssignment("task", "SINGLEPOINT")]
     if config.source.charge_state:
-        charge = 1 if config.source.charge_state == "positive_muon" else 0
+        charge = 0 if is_muonium(config.source.charge_state) else 1
         keywords.append(KeywordAssignment("charge", charge))
+    if is_muonium(config.source.charge_state):
+        # Muonium is open-shell: default to spin-polarised (overridable via param_overrides).
+        keywords.append(KeywordAssignment("spin_polarized", True))
     base = ParamTemplate(keywords=tuple(keywords))
     if config.param_overrides is None:
         return base
