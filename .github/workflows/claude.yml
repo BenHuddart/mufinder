@@ -18,6 +18,9 @@ jobs:
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
+    # The agent has a bounded execution window. Fail loudly if it is exhausted
+    # rather than silently ending mid-run with the work uncommitted.
+    timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: write
@@ -34,6 +37,7 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Prepare runtime directories
         run: |
@@ -52,11 +56,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libegl1 libgl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0
 
+      # Install the dev environment as a static step (mirroring ci.yml) so the
+      # agent starts with a ready venv instead of spending its execution window
+      # on a cold pip install. Extras match the CI test job exactly.
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy
+          python -m pip install -e ".[dev,scientific-backends]"
+
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
-            --allowedTools "Bash(python*),Bash(git*),Bash(pip*)"
-            --system-prompt "You are working on MuFinder, a PySide6 desktop GUI for muon stopping-site calculations. Always read CLAUDE.md before making non-trivial changes. Key constraints: (1) Package dependencies flow inward only — app → services/workflow/science → domain/castep_io/persistence; lower layers must never import higher ones. (2) All changes must pass the quality gates: tests (python -m pytest), coverage ≥ 85%, and Sphinx docs without warnings (python -m sphinx -W -b html docs docs/_build/html). (3) Install the full dev environment with: python -m pip install -e \".[dev]\". (4) The project uses GitHub Flow: create short-lived feature branches off main and open pull requests directly into main."
+            --allowedTools "Bash(python*),Bash(git*),Bash(pip*),Bash(gh*)"
+            --system-prompt "You are working on MuFinder, a PySide6 desktop GUI for muon stopping-site calculations. Always read CLAUDE.md before making non-trivial changes. Key constraints: (1) Package dependencies flow inward only — app → services/workflow/science → domain/castep_io/persistence; lower layers must never import higher ones. (2) The project uses GitHub Flow: create a short-lived feature branch off main and open a pull request directly into main. WORKING WITHIN A TIME-BOUNDED JOB — follow this order so work is never lost: first make the code and test changes, then IMMEDIATELY commit and push your branch and open (or update) a PR, and only THEN run any verification. Do NOT run the full quality-gate suite yourself: the PR's CI (ci.yml) is the authoritative gate and runs the full test suite, coverage ≥ 85%, and the Sphinx docs build (python -m sphinx -W) on every push. Running those in this job is redundant and will exhaust your execution window before you can commit. Instead, sanity-check only the area you touched with focused, no-coverage runs, e.g. `python -m pytest --no-cov tests/app/test_kpoint_convergence_widget.py`. If CI later reports a failure, push a follow-up commit to the same branch. (3) The dev environment is already installed in this job (editable install of the project with [dev,scientific-backends] extras) — do NOT reinstall it; just run python/pytest directly."
