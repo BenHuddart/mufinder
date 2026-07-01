@@ -557,7 +557,7 @@ class CutoffConvergenceWidget(QWidget):
         configure_button.selection_snapshot_key = value
         self._style_configure_button(configure_button)
         configure_button.clicked.connect(
-            lambda _checked=False, btn=configure_button: self._configure_cutoff_button_clicked(btn)
+            lambda _checked=False, key=value, btn=configure_button: self._configure_cutoff_button_clicked(btn, key)
         )
         self._cutoff_table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
 
@@ -567,7 +567,7 @@ class CutoffConvergenceWidget(QWidget):
         remove_button.setAutoRaise(True)
         remove_button.setToolTip("Remove this cutoff")
         remove_button.clicked.connect(
-            lambda _checked=False, btn=remove_button: self._remove_cutoff_button_clicked(btn)
+            lambda _checked=False, key=value, btn=remove_button: self._remove_cutoff_button_clicked(btn, key)
         )
         self._cutoff_table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
         self._refresh_cutoff_row(row)
@@ -618,10 +618,7 @@ class CutoffConvergenceWidget(QWidget):
     def _format_cutoff_list(self, cutoffs: tuple[float, ...]) -> str:
         return ", ".join(f"{value:.8g} eV" for value in cutoffs)
 
-    def _configure_cutoff_button_clicked(self, button: SelectionSnapshotPushButton) -> None:
-        clicked_cutoff = button.selection_snapshot_key
-        if not isinstance(clicked_cutoff, float):
-            return
+    def _configure_cutoff_button_clicked(self, button: SelectionSnapshotPushButton, clicked_cutoff: float) -> None:
         snapshot_keys = [
             self._cutoff_value_at_row(r, strict=False)
             for r in button.selection_snapshot_rows
@@ -756,10 +753,7 @@ class CutoffConvergenceWidget(QWidget):
                 return True
         return False
 
-    def _remove_cutoff_button_clicked(self, button: SelectionSnapshotToolButton) -> None:
-        clicked_cutoff = button.selection_snapshot_key
-        if not isinstance(clicked_cutoff, float):
-            return
+    def _remove_cutoff_button_clicked(self, button: SelectionSnapshotToolButton, clicked_cutoff: float) -> None:
         snapshot_keys = [
             self._cutoff_value_at_row(r, strict=False)
             for r in button.selection_snapshot_rows

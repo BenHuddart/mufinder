@@ -626,7 +626,7 @@ class KPointConvergenceWidget(QWidget):
         configure_button.selection_snapshot_key = grid
         self._style_configure_button(configure_button)
         configure_button.clicked.connect(
-            lambda _checked=False, btn=configure_button: self._configure_grid_button_clicked(btn)
+            lambda _checked=False, key=grid, btn=configure_button: self._configure_grid_button_clicked(btn, key)
         )
         self._table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
 
@@ -636,7 +636,7 @@ class KPointConvergenceWidget(QWidget):
         remove_button.setAutoRaise(True)
         remove_button.setToolTip("Remove this k-point grid")
         remove_button.clicked.connect(
-            lambda _checked=False, btn=remove_button: self._remove_grid_button_clicked(btn)
+            lambda _checked=False, key=grid, btn=remove_button: self._remove_grid_button_clicked(btn, key)
         )
         self._table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
         self._refresh_row(row)
@@ -749,10 +749,9 @@ class KPointConvergenceWidget(QWidget):
             return
         self._open_grid_parameter_dialog(grids)
 
-    def _configure_grid_button_clicked(self, button: SelectionSnapshotPushButton) -> None:
-        clicked_grid = button.selection_snapshot_key
-        if not isinstance(clicked_grid, tuple):
-            return
+    def _configure_grid_button_clicked(
+        self, button: SelectionSnapshotPushButton, clicked_grid: tuple[int, int, int]
+    ) -> None:
         snapshot_keys = [
             self._grid_value_at_row(r, strict=False)
             for r in button.selection_snapshot_rows
@@ -867,10 +866,9 @@ class KPointConvergenceWidget(QWidget):
                 return True
         return False
 
-    def _remove_grid_button_clicked(self, button: SelectionSnapshotToolButton) -> None:
-        clicked_grid = button.selection_snapshot_key
-        if not isinstance(clicked_grid, tuple):
-            return
+    def _remove_grid_button_clicked(
+        self, button: SelectionSnapshotToolButton, clicked_grid: tuple[int, int, int]
+    ) -> None:
         snapshot_keys = [
             self._grid_value_at_row(r, strict=False)
             for r in button.selection_snapshot_rows

@@ -318,6 +318,33 @@ def test_kpoint_widget_configure_selected_grids_handles_empty_selection(
     assert infos == ["No grids selected"]
 
 
+def test_kpoint_widget_configure_button_reopens_after_first_use(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for issue #23: the per-row Configure button must stay
+    clickable after being used once, regardless of whether the dialog was
+    accepted or dismissed."""
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+
+    exec_calls: list[int] = []
+
+    def fake_exec(_self) -> int:
+        exec_calls.append(1)
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(kpoint_widget_module.ParameterDialog, "exec", fake_exec)
+
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    configure_button.click()
+    assert len(exec_calls) == 1
+
+    configure_button.click()
+    assert len(exec_calls) == 2, "Configure button stopped opening the dialog after first use"
+
+
 def test_kpoint_widget_open_grid_parameter_dialog_applies_to_all_selected(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:

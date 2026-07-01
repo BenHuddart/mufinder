@@ -215,6 +215,33 @@ def test_convergence_widget_restores_legacy_shared_and_override_state(qapp) -> N
     assert widget._cutoff_added_advanced[320.0] == {"basis_precision", "max_scf_cycles"}
 
 
+def test_convergence_widget_configure_button_reopens_after_first_use(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for issue #23: the per-row Configure button must stay
+    clickable after being used once, regardless of whether the dialog was
+    accepted or dismissed."""
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+
+    exec_calls: list[int] = []
+
+    def fake_exec(_self) -> int:
+        exec_calls.append(1)
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+
+    configure_button = widget._cutoff_table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    configure_button.click()
+    assert len(exec_calls) == 1
+
+    configure_button.click()
+    assert len(exec_calls) == 2, "Configure button stopped opening the dialog after first use"
+
+
 def test_convergence_widget_single_cutoff_parameter_dialog_updates_row(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -495,7 +522,7 @@ def test_convergence_widget_remove_button_emits_removal_request(qapp) -> None:
     remove_button = widget._cutoff_table.cellWidget(0, widget._REMOVE_COLUMN)
     assert isinstance(remove_button, QToolButton)
 
-    widget._remove_cutoff_button_clicked(remove_button)
+    widget._remove_cutoff_button_clicked(remove_button, 300.0)
 
     assert requested == [[300.0]]
     assert widget._cutoff_table.rowCount() == 1
