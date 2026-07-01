@@ -486,6 +486,24 @@ class KPointConvergenceWidget(QWidget):
             self._default_params.pop("cut_off_energy", None)
         else:
             self._default_params["cut_off_energy"] = ValueWithUnit(float(cutoff_energy), "eV")
+            self._drop_shared_default_conflicts("cut_off_energy")
+
+    def _drop_shared_default_conflicts(self, explicit_name: str) -> None:
+        """Drop shared defaults that are mutually exclusive with ``explicit_name``.
+
+        Once a value is explicitly determined for a keyword (e.g. the
+        project's cutoff energy convergence result), any other shared
+        default that CASTEP treats as mutually exclusive with it (e.g. the
+        ``basis_precision`` schema default) must be removed. Otherwise every
+        unconfigured grid row inherits both values and fails validation with
+        a "conflicts with" error until the user manually opens and confirms
+        the row's Configure dialog.
+        """
+        spec = self._specs_by_name.get(explicit_name)
+        if spec is None:
+            return
+        for conflict in spec.mutually_exclusive_with:
+            self._default_params.pop(conflict, None)
 
     def set_simulation_cell_options(
         self,

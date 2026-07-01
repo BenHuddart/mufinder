@@ -180,6 +180,48 @@ def test_kpoint_widget_set_project_defaults_formats_values(qapp) -> None:
     assert "dF <= 0.05" in widget._project_default_criteria.text()
     assert widget._project_default_cutoff.text() == "450 eV"
     assert widget._default_params["cut_off_energy"] == ValueWithUnit(450.0, "eV")
+    assert "basis_precision" not in widget._default_params
+
+
+def test_kpoint_widget_cutoff_default_clears_conflicting_basis_precision(qapp) -> None:
+    widget = KPointConvergenceWidget()
+    assert widget._default_params["basis_precision"] == "FINE"
+
+    widget.set_cutoff_default(340.0)
+
+    assert widget._default_params["cut_off_energy"] == ValueWithUnit(340.0, "eV")
+    assert "basis_precision" not in widget._default_params
+
+
+def test_kpoint_widget_unconfigured_grid_builds_valid_config_after_cutoff_set(qapp) -> None:
+    # Regression test for https://github.com/BenHuddart/mufinder/issues/24:
+    # an unconfigured grid row must not inherit both cut_off_energy and the
+    # mutually-exclusive basis_precision schema default once a project
+    # cutoff energy has been determined.
+    widget = KPointConvergenceWidget()
+    widget.set_cutoff_default(800.0)
+    widget._add_grid((2, 2, 2))
+
+    config = widget.build_config()
+
+    assert config is not None
+    assert config.shared_params["cut_off_energy"] == ValueWithUnit(800.0, "eV")
+    assert "basis_precision" not in config.shared_params
+
+
+def test_kpoint_widget_set_cutoff_default_none_leaves_basis_precision(qapp) -> None:
+    widget = KPointConvergenceWidget()
+
+    widget.set_cutoff_default(340.0)
+    assert "basis_precision" not in widget._default_params
+
+    widget.set_cutoff_default(None)
+
+    assert "cut_off_energy" not in widget._default_params
+    # basis_precision was dropped once cut_off_energy was set and is not
+    # restored automatically when the cutoff default is cleared again; this
+    # matches the widget's existing "explicit override wins" contract.
+    assert "basis_precision" not in widget._default_params
 
 
 def test_kpoint_widget_simulation_cell_combo_emits_expected_signals(qapp) -> None:

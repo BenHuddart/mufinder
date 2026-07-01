@@ -458,6 +458,50 @@ def test_relaxation_widget_does_not_pre_fill_spacing_for_gamma_only(qapp) -> Non
     assert "kpoint_mp_spacing" not in effective
 
 
+def test_relaxation_widget_set_project_defaults_keeps_cutoff_over_basis_precision(qapp) -> None:
+    # cut_off_energy already has a schema default (340 eV) that wins over the
+    # mutually-exclusive basis_precision default at construction time (see
+    # PristineRelaxationWidget._default_shared_params /
+    # _drop_default_conflicts). set_project_defaults() must preserve that
+    # invariant when it overwrites cut_off_energy with the project's
+    # determined value, not reintroduce a conflicting basis_precision -
+    # see https://github.com/BenHuddart/mufinder/issues/24, where the
+    # sibling KPointConvergenceWidget had exactly this defect because its
+    # basic-visible default set never included cut_off_energy at
+    # construction time.
+    widget = PristineRelaxationWidget()
+    assert "basis_precision" not in widget._default_params
+    assert widget._default_params["cut_off_energy"] == ValueWithUnit(340.0, "eV")
+
+    widget.set_project_defaults(
+        cutoff_energy=800.0,
+        kpoint_grid=None,
+        kpoint_reference_lattice=None,
+    )
+
+    assert widget._default_params["cut_off_energy"] == ValueWithUnit(800.0, "eV")
+    assert "basis_precision" not in widget._default_params
+
+
+def test_relaxation_widget_unconfigured_row_builds_valid_config_after_cutoff_set(qapp) -> None:
+    # End-to-end safety net for the user flow reported in issue #24: setting
+    # a project cutoff energy and then running an unconfigured row must not
+    # raise a "basis_precision conflicts with cut_off_energy" validation
+    # error.
+    widget = PristineRelaxationWidget()
+    widget.set_project_defaults(
+        cutoff_energy=800.0,
+        kpoint_grid=None,
+        kpoint_reference_lattice=None,
+    )
+    widget._add_row()
+
+    config = widget._build_config_or_warn()
+
+    assert config is not None
+    assert config.rows[0].label == widget._label_at_row(0)
+
+
 def test_relaxation_widget_inspect_dialog_shows_spacing_when_spacing_is_active(qapp) -> None:
     # Regression: when a row was configured with kpoint_mp_spacing, the
     # inspect/configure dialog must show spacing as the active exclusive
