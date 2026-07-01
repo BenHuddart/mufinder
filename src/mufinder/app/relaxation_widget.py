@@ -353,6 +353,38 @@ class PristineRelaxationWidget(QWidget):
                 return preferred
         return min(left, right)
 
+    def _drop_default_conflicts(self, values: dict[str, Any], *, locked_names: set[str] | None = None) -> dict[str, Any]:
+        locked = locked_names or set()
+        for name in tuple(values):
+            spec = self._specs_by_name.get(name)
+            if spec is not None and self._spec_is_blocked_by_locked(spec, locked):
+                values.pop(name, None)
+
+        # Prefer deterministic defaults inside mutually exclusive groups.
+        changed = True
+        while changed:
+            changed = False
+            for name in tuple(values):
+                if name in locked:
+                    continue
+                spec = self._specs_by_name.get(name)
+                if spec is None or name not in values:
+                    continue
+                for conflict in spec.mutually_exclusive_with:
+                    if conflict not in values:
+                        continue
+                    keep = self._preferred_default_name(name, conflict)
+                    drop = conflict if keep == name else name
+                    if drop in locked:
+                        drop = name
+                    if drop in values:
+                        values.pop(drop, None)
+                        changed = True
+                        break
+                if changed:
+                    break
+        return values
+
     def _default_shared_params(self) -> dict[str, Any]:
         defaults: dict[str, Any] = {"task": infer_task("pristine_relaxation")}
         locked_names = {"task"}
@@ -375,28 +407,7 @@ class PristineRelaxationWidget(QWidget):
                 continue
             defaults[spec.name] = normalize_gui_value(spec, spec.default_value)
 
-        # Prefer deterministic defaults inside mutually exclusive groups.
-        changed = True
-        while changed:
-            changed = False
-            names = [name for name in defaults if name != "task"]
-            for name in names:
-                spec = self._specs_by_name.get(name)
-                if spec is None or name not in defaults:
-                    continue
-                for conflict in spec.mutually_exclusive_with:
-                    if conflict not in defaults:
-                        continue
-                    keep = self._preferred_default_name(name, conflict)
-                    drop = conflict if keep == name else name
-                    if drop in defaults:
-                        defaults.pop(drop, None)
-                        changed = True
-                        break
-                if changed:
-                    break
-
-        return defaults
+        return self._drop_default_conflicts(defaults, locked_names=locked_names)
 
     def set_project_defaults(
         self,
@@ -417,6 +428,7 @@ class PristineRelaxationWidget(QWidget):
             self._default_params.pop("cut_off_energy", None)
         else:
             self._default_params["cut_off_energy"] = ValueWithUnit(float(cutoff_energy), "eV")
+        self._default_params = self._drop_default_conflicts(self._default_params, locked_names={"task"})
         self._normalize_all_row_parameter_values()
         self._refresh_all_rows()
 
