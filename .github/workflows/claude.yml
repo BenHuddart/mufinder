@@ -30,6 +30,28 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Prepare runtime directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/matplotlib" "$RUNNER_TEMP/xdg-cache"
+          {
+            echo "QT_QPA_PLATFORM=offscreen"
+            echo "PYVISTA_OFF_SCREEN=true"
+            echo "VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=1"
+            echo "LIBGL_ALWAYS_SOFTWARE=1"
+            echo "MPLCONFIGDIR=$RUNNER_TEMP/matplotlib"
+            echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache"
+          } >> "$GITHUB_ENV"
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0
+
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
