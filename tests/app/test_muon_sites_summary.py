@@ -167,6 +167,33 @@ def test_summary_panel_populates_table_and_preview(qapp) -> None:
         widget.deleteLater()
 
 
+def test_summary_repopulates_when_host_edited_in_place(qapp) -> None:
+    host = _host_structure()
+    widget = MuonSitesSummaryWidget()
+    try:
+        snap = _snapshot("ws-1", host)
+        widget.set_panel(
+            POSITIVE_MUON_CHARGE_STATE, snapshot=snap, host_structure=host, placeholder_message="x"
+        )
+        panel = widget._panels[POSITIVE_MUON_CHARGE_STATE]
+        first_signature = panel._render_signature
+        # Same snapshot + a host mutated in place (same id, new lattice) must not
+        # hit the dirty-check early return, or the 3D preview would go stale.
+        host.lattice_vectors = [[6.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 6.0]]
+        widget.set_panel(
+            POSITIVE_MUON_CHARGE_STATE, snapshot=snap, host_structure=host, placeholder_message="x"
+        )
+        assert panel._render_signature != first_signature
+        # An identical repeat call is still skipped by the dirty check.
+        skipped_signature = panel._render_signature
+        widget.set_panel(
+            POSITIVE_MUON_CHARGE_STATE, snapshot=snap, host_structure=host, placeholder_message="x"
+        )
+        assert panel._render_signature == skipped_signature
+    finally:
+        widget.deleteLater()
+
+
 def test_summary_row_click_emits_focus_site(qapp) -> None:
     host = _host_structure()
     widget = MuonSitesSummaryWidget()

@@ -69,6 +69,24 @@ def _format_fractional(position: object) -> str:
         return "—"
 
 
+def _host_signature(host_structure: Structure | None) -> object:
+    """Return a value identifying the host geometry rendered in the preview.
+
+    Keyed by the fields that actually affect the drawn scene (lattice, species,
+    positions) rather than only the structure id, so an in-place host edit
+    invalidates the render cache.
+    """
+
+    if host_structure is None:
+        return None
+    return (
+        str(host_structure.id),
+        tuple(tuple(row) for row in host_structure.lattice_vectors),
+        tuple(host_structure.species),
+        tuple(tuple(position) for position in host_structure.fractional_positions),
+    )
+
+
 def _snapshot_sites(snapshot: Mapping[str, object] | None) -> list[Mapping[str, object]]:
     if not isinstance(snapshot, Mapping):
         return []
@@ -247,7 +265,10 @@ class _ChargeStatePanel(QFrame):
 
         signature = (
             str(snapshot.get("workspace_id", "")).strip(),
-            str(host_structure.id) if host_structure is not None else None,
+            # Fingerprint the host geometry that feeds the preview, not just its
+            # id: a host edited in place (same id, new lattice/species/positions)
+            # must invalidate the cache so the 3D view is not left stale.
+            _host_signature(host_structure),
             tuple(
                 (
                     site.get("cluster_index"),
