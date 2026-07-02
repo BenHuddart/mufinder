@@ -68,16 +68,6 @@ def _si_structure() -> Structure:
     )
 
 
-def _fe_spin_structure() -> Structure:
-    return Structure(
-        label="Fe",
-        lattice_vectors=[[2.87, 0.0, 0.0], [0.0, 2.87, 0.0], [0.0, 0.0, 2.87]],
-        species=["Fe"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-        properties={"atomic_spins": [2.2]},
-    )
-
-
 def _relaxed_muon_structure() -> Structure:
     from mufinder.domain.enums import WorkflowStage
 
