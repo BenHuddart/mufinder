@@ -1589,6 +1589,14 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
         border-radius: 12px;
         background: {p.bg_surface_alt};
     }}
+    QFrame#muonSummaryViewerFrame {{
+        border: 1px solid {p.border};
+        border-radius: 8px;
+        background: {p.bg_primary};
+    }}
+    QWidget#muonSummaryPanelBody {{
+        background: transparent;
+    }}
     QFrame#mufinderOptionCard {{
         border: 1px solid {p.border};
         border-radius: 12px;

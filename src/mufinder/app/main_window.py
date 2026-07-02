@@ -113,6 +113,7 @@ from mufinder.app.relaxation_adapter import (
     MUON_RELAXATION_CALC_TYPES,
     MUONIUM_CHARGE_STATE,
     POSITIVE_MUON_CHARGE_STATE,
+    canonical_charge_state,
     expand_muon_relaxation_jobs,
     expand_pristine_relaxation_jobs,
     is_muon_relaxation_calc_type,
@@ -136,6 +137,7 @@ from mufinder.app.relaxation_analysis_widget import (
 )
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
+from mufinder.app.muon_sites_summary_widget import MuonSitesSummaryWidget
 from mufinder.app.uep_adapter import expand_uep_jobs
 from mufinder.app.uep_types import UepConfig, UepRunState, UepSourceRow
 from mufinder.app.uep_wizard import UepAnalysisDialog
@@ -1627,6 +1629,7 @@ class MainWindow(QMainWindow):
     _MAGNETIC_FIELD_WORKSPACES_KEY = "magnetic_field_workspaces"
     _MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX = "magnetic_fields/workspace/"
     _CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY = "convergence_overview_snapshots"
+    _MUON_SITES_SUMMARY_SNAPSHOTS_KEY = "muon_sites_summary_snapshots"
     _LAST_CLUSTER_SUBMISSION_CONFIG_KEY = "last_cluster_submission_config"
     _COMPARISON_ROUTE_PREFIX = "pristine_relaxation/comparison/"
     _WORKFLOW_COMPLETE_ROLE = int(Qt.ItemDataRole.UserRole) + 1
@@ -1836,6 +1839,14 @@ class MainWindow(QMainWindow):
         self._relaxation_analysis_view = RelaxationAnalysisWidget()
         self._relaxation_analysis_view.state_changed.connect(self._on_relaxation_analysis_state_changed)
         self._relaxation_analysis_view.add_sites_requested.connect(self._on_relaxation_analysis_add_sites_requested)
+        self._relaxation_analysis_view.pin_summary_requested.connect(self._on_muon_sites_pin_requested)
+        self._muon_sites_summary_view = MuonSitesSummaryWidget()
+        self._muon_sites_summary_view.open_analysis_requested.connect(self._on_open_muon_analysis_requested)
+        self._muon_sites_summary_view.open_analysis_root_requested.connect(
+            lambda: self._set_active_route("muon_analysis")
+        )
+        self._muon_sites_summary_view.focus_site_requested.connect(self._on_focus_muon_site_requested)
+        self._muon_sites_summary_view.unpin_requested.connect(self._on_unpin_muon_sites_requested)
         self._magnetic_field_view = MagneticFieldWidget()
         self._magnetic_field_view.magnetic_structure_changed.connect(
             self._on_magnetic_field_structure_changed
@@ -1872,6 +1883,7 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._muon_generation_view)
         self._main_stack.addWidget(self._muon_relaxation_view)
         self._main_stack.addWidget(self._relaxation_analysis_view)
+        self._main_stack.addWidget(self._muon_sites_summary_view)
         self._main_stack.addWidget(self._magnetic_field_view)
         self._main_stack.addWidget(self._quantum_corrections_view)
         self._main_stack.addWidget(self._journal_view)
@@ -2691,6 +2703,9 @@ class MainWindow(QMainWindow):
         self._refresh_uep_source_structures()
         self._refresh_uep_supercell_options()
         self._refresh_convergence_overview()
+        # The Muon Sites summary drives two PyVista viewers, so it is refreshed
+        # lazily on navigation (route dispatch) and after pin/unpin rather than
+        # rebuilt off-screen on every project change.
         self._refresh_journal_view()
 
     def _refresh_journal_view(self) -> None:
@@ -3174,6 +3189,7 @@ class MainWindow(QMainWindow):
                 key="muon_sites",
                 title="Muon Sites",
                 subtitle="Place and refine muons",
+                route="muon_sites",
                 completion_goal="Generate at least one muon site.",
                 completion_check=self._workflow_muon_candidates_complete,
                 children=(
@@ -3197,11 +3213,6 @@ class MainWindow(QMainWindow):
                         route="muon_analysis",
                         completion_goal="Create at least one structural-relaxation analysis workspace.",
                         completion_check=self._workflow_relaxation_analysis_complete,
-                    ),
-                    WorkflowDefinition(
-                        key="muon_confirmed",
-                        title="Confirmed Sites",
-                        route="muon_confirmed",
                     ),
                 ),
             ),
@@ -3755,6 +3766,9 @@ class MainWindow(QMainWindow):
             target = self._muon_relaxation_view
         elif route == "muon_analysis":
             target = self._relaxation_analysis_view
+        elif route == "muon_sites":
+            self._refresh_muon_sites_summary()
+            target = self._muon_sites_summary_view
         elif route == "magnetic_fields":
             target = self._magnetic_field_view
         elif isinstance(route, str) and self._magnetic_field_workspace_id_from_route(route) is not None:
@@ -8453,6 +8467,226 @@ class MainWindow(QMainWindow):
         self._relaxation_analysis_view.add_job_ids_to_workspace(str(workspace_id), selected)
         self._refresh_relaxation_analysis_context()
         self.statusBar().showMessage(f"Added {len(selected)} relaxation result(s) to the analysis workspace")
+
+    # --- Muon Sites summary (pinned analyses) -------------------------------
+
+    def _muon_sites_summary_snapshots_state(self) -> dict[str, object]:
+        if self._document is None:
+            return {}
+        raw = self._document.ui_state.get(self._MUON_SITES_SUMMARY_SNAPSHOTS_KEY, {})
+        return raw if isinstance(raw, dict) else {}
+
+    def _store_muon_sites_summary_snapshot(
+        self, charge_state: str, snapshot: Mapping[str, object] | None
+    ) -> None:
+        if self._document is None:
+            return
+        snapshots = dict(self._muon_sites_summary_snapshots_state())
+        if snapshot is None:
+            snapshots.pop(charge_state, None)
+        else:
+            serialized = to_jsonable(dict(snapshot))
+            if isinstance(serialized, dict):
+                snapshots[charge_state] = serialized
+        self._document.ui_state[self._MUON_SITES_SUMMARY_SNAPSHOTS_KEY] = snapshots
+
+    def _validated_muon_sites_summary_snapshot(self, charge_state: str) -> dict[str, object] | None:
+        if self._document is None:
+            return None
+        snapshot = self._muon_sites_summary_snapshots_state().get(charge_state)
+        if not isinstance(snapshot, dict):
+            return None
+        # The snapshot is a decoupled copy; only show it while it still describes
+        # the current host structure (mirrors the convergence overview).
+        if str(snapshot.get("host_structure_id", "")) != (self._host_structure_id_text() or ""):
+            return None
+        sites = snapshot.get("sites")
+        if not isinstance(sites, list) or not sites:
+            return None
+        return snapshot
+
+    @staticmethod
+    def _muon_site_wyckoff_labels(result: Mapping[str, object]) -> dict[int, str]:
+        labels: dict[int, str] = {}
+        raw = result.get("wyckoff_assignments")
+        if not isinstance(raw, list):
+            return labels
+        for entry in raw:
+            if not isinstance(entry, Mapping):
+                continue
+            try:
+                cluster_index = int(entry.get("cluster_index", 0))
+            except (TypeError, ValueError):
+                continue
+            match = entry.get("match")
+            if cluster_index > 0 and isinstance(match, Mapping):
+                label = str(match.get("label", "")).strip()
+                if label:
+                    labels[cluster_index] = label
+        return labels
+
+    def _build_muon_sites_summary_snapshot(
+        self, workspace: Mapping[str, object]
+    ) -> dict[str, object] | None:
+        host_structure_id = self._host_structure_id_text()
+        if host_structure_id is None:
+            return None
+        clustering = workspace.get("clustering")
+        result = clustering.get("result") if isinstance(clustering, Mapping) else None
+        clusters = result.get("clusters") if isinstance(result, Mapping) else None
+        if not isinstance(clusters, list) or not clusters:
+            return None
+        wyckoff_labels = self._muon_site_wyckoff_labels(result)
+        sites: list[dict[str, object]] = []
+        for cluster in clusters:
+            if not isinstance(cluster, Mapping):
+                continue
+            try:
+                cluster_index = int(cluster.get("cluster_index", 0))
+            except (TypeError, ValueError):
+                continue
+            position = cluster.get("representative_fractional_position")
+            if not isinstance(position, (list, tuple)) or len(position) != 3:
+                continue
+            try:
+                fractional = [float(position[0]), float(position[1]), float(position[2])]
+            except (TypeError, ValueError):
+                continue
+            raw_energy = cluster.get("minimum_relative_energy_ev")
+            try:
+                energy: float | None = None if raw_energy is None else float(raw_energy)
+            except (TypeError, ValueError):
+                energy = None
+            sites.append(
+                {
+                    "cluster_index": cluster_index,
+                    "fractional_position": fractional,
+                    "relative_energy_ev": energy,
+                    "wyckoff_label": wyckoff_labels.get(cluster_index, ""),
+                }
+            )
+        if not sites:
+            return None
+        # Rank distinct sites by relative energy (lowest first); sites without an
+        # energy sort last so an unranked cluster never masquerades as the minimum.
+        # cluster_index breaks ties so ordering stays deterministic even when
+        # every site lacks an energy (otherwise the "rank 1" site would depend on
+        # the persisted clusters-list order and shuffle across re-clustering).
+        sites.sort(
+            key=lambda site: (
+                site["relative_energy_ev"] is None,
+                site["relative_energy_ev"] if site["relative_energy_ev"] is not None else 0.0,
+                site["cluster_index"],
+            )
+        )
+        charge_state = canonical_charge_state(workspace.get("charge_state")) or POSITIVE_MUON_CHARGE_STATE
+        return {
+            "charge_state": charge_state,
+            "workspace_id": str(workspace.get("id", "")),
+            "workspace_name": str(workspace.get("name", "")).strip() or "Analysis workspace",
+            "host_structure_id": host_structure_id,
+            "sites": sites,
+        }
+
+    @staticmethod
+    def _muon_sites_summary_placeholder(charge_state: str) -> str:
+        label = muon_charge_state_label(charge_state)
+        return (
+            f"No {label} analysis is pinned yet. Use “Go to Analysis” to cluster the "
+            f"relaxed {label} sites, then choose “Pin to summary” to bring the distinct "
+            "sites here."
+        )
+
+    def _refresh_muon_sites_summary(self) -> None:
+        summary_view = getattr(self, "_muon_sites_summary_view", None)
+        if summary_view is None:
+            return
+        host = (
+            self._project_service.active_host_structure(self._document)
+            if self._document is not None
+            else None
+        )
+        for charge_state in (POSITIVE_MUON_CHARGE_STATE, MUONIUM_CHARGE_STATE):
+            summary_view.set_panel(
+                charge_state,
+                snapshot=self._validated_muon_sites_summary_snapshot(charge_state),
+                host_structure=host,
+                placeholder_message=self._muon_sites_summary_placeholder(charge_state),
+            )
+
+    def _on_muon_sites_pin_requested(self, workspace_id: str) -> None:
+        if self._document is None:
+            return
+        workspace = next(
+            (
+                entry
+                for entry in self._relaxation_analysis_workspaces()
+                if str(entry.get("id", "")) == str(workspace_id)
+            ),
+            None,
+        )
+        if workspace is None:
+            return
+        snapshot = self._build_muon_sites_summary_snapshot(workspace)
+        if snapshot is None:
+            QMessageBox.information(
+                self,
+                "Nothing to pin",
+                "Run clustering on this workspace first — the Muon Sites summary shows the "
+                "distinct clustered muon sites.",
+            )
+            return
+        charge_state = str(snapshot.get("charge_state", POSITIVE_MUON_CHARGE_STATE))
+        if charge_state not in (POSITIVE_MUON_CHARGE_STATE, MUONIUM_CHARGE_STATE):
+            # The summary only has a panel per canonical charge state; storing a
+            # snapshot under any other key would silently vanish (never rendered,
+            # never unpinnable) despite a success message.
+            QMessageBox.information(
+                self,
+                "Cannot pin",
+                "This workspace's charge state is not supported by the Muon Sites summary.",
+            )
+            return
+        self._store_muon_sites_summary_snapshot(charge_state, snapshot)
+        self._refresh_muon_sites_summary()
+        self._set_active_route("muon_sites")
+        self._persist_document_ui_state(
+            failure_message="The muon sites summary was pinned, but autosave failed."
+        )
+        self.statusBar().showMessage(
+            f"Pinned {muon_charge_state_label(charge_state)} sites to the Muon Sites summary"
+        )
+
+    def _on_unpin_muon_sites_requested(self, charge_state: str) -> None:
+        if self._document is None:
+            return
+        key = str(charge_state)
+        if key not in self._muon_sites_summary_snapshots_state():
+            return
+        self._store_muon_sites_summary_snapshot(key, None)
+        self._refresh_muon_sites_summary()
+        self._persist_document_ui_state(
+            failure_message="The muon sites summary was updated, but autosave failed."
+        )
+        self.statusBar().showMessage(
+            f"Unpinned {muon_charge_state_label(key)} sites from the Muon Sites summary"
+        )
+
+    def _navigate_to_pinned_analysis(self, workspace_id: str, cluster_index: int | None) -> None:
+        self._set_active_route("muon_analysis")
+        resolved = self._relaxation_analysis_view.focus_workspace(
+            str(workspace_id), cluster_index=cluster_index
+        )
+        if not resolved:
+            self.statusBar().showMessage(
+                "The pinned analysis has changed — opened the Analysis tab instead."
+            )
+
+    def _on_open_muon_analysis_requested(self, workspace_id: str) -> None:
+        self._navigate_to_pinned_analysis(str(workspace_id), None)
+
+    def _on_focus_muon_site_requested(self, workspace_id: str, cluster_index: int) -> None:
+        self._navigate_to_pinned_analysis(str(workspace_id), int(cluster_index))
 
     def _on_convergence_form_state_changed(self, state: dict) -> None:
         if self._document is None or self._shutting_down:

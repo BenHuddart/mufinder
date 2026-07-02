@@ -102,6 +102,35 @@ site against ion distance from the muon, in the style of Fig. 5(b) in the
 MuFinder paper. Positive radial displacement means the matched ion moved away
 from the muon.
 
+Muon Sites Summary
+------------------
+
+The **Muon Sites** page (the parent node above Generation, Relaxations, and
+Analysis) is a summary of your headline result: the distinct, symmetry-
+inequivalent candidate stopping sites for each charge state. It has one card for
+**Positive muon** and one for **Muonium**, shown side by side.
+
+To populate a card, open a clustered analysis workspace and choose **Pin to
+summary**. MuFinder copies the workspace's distinct clustered sites into the card
+for the matching charge state, ranked by relative energy (lowest first), and
+shows each site's relative energy, representative fractional position, and
+Wyckoff label. A 3D preview renders the host structure with the pinned muon
+sites. Pinning requires that clustering has been run; the button reports if there
+is nothing to summarise yet. Use **Unpin** to clear a card.
+
+You can navigate from the summary straight into the live analysis:
+
+* **Open in Analysis** jumps to the workspace the card was pinned from. When a
+  card is empty, this button instead reads **Go to Analysis** and takes you to
+  the Analysis tab so you can create and cluster a workspace.
+* **Clicking a site row** in the ranked table, or **clicking a muon** in the 3D
+  preview, opens the source workspace and reveals that specific cluster.
+
+Because a pinned card is a snapshot, MuFinder validates it against the current
+host structure and hides it if the host changes. If the source workspace or
+cluster no longer exists when you follow a link, MuFinder opens the Analysis tab
+and notes that the pinned analysis has changed.
+
 Sources
 -------
 

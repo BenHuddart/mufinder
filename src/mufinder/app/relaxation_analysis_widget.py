@@ -1267,6 +1267,7 @@ class RelaxationAnalysisWidget(QWidget):
 
     state_changed = Signal(list)
     add_sites_requested = Signal(str)
+    pin_summary_requested = Signal(str)
 
     _SITE_COLUMN = 0
     _CLUSTER_COLUMN = 1
@@ -1327,11 +1328,50 @@ class RelaxationAnalysisWidget(QWidget):
         finally:
             self._restoring = False
 
-    def focus_workspace(self, workspace_id: str) -> None:
+    def focus_workspace(self, workspace_id: str, *, cluster_index: int | None = None) -> bool:
+        """Switch to ``workspace_id``'s tab, optionally revealing one cluster.
+
+        Returns ``True`` when the workspace (and, when requested, the cluster)
+        was found. A ``False`` result lets callers surface a "the pinned
+        analysis has changed" hint when a decoupled snapshot points at a
+        workspace or cluster that no longer exists.
+        """
+
+        page: QWidget | None = None
         for index in range(self._workspace_tabs.count()):
-            if self._workspace_tabs.widget(index).property("workspace_id") == workspace_id:
+            candidate = self._workspace_tabs.widget(index)
+            if candidate.property("workspace_id") == workspace_id:
                 self._workspace_tabs.setCurrentIndex(index)
-                return
+                page = candidate
+                break
+        if page is None:
+            return False
+        # cluster_index <= 0 means "no specific cluster" (unclustered sites carry
+        # label 0 and get no header); treat it as a plain workspace focus rather
+        # than a failed reveal, so callers don't report a false "analysis changed".
+        if cluster_index is None or int(cluster_index) <= 0:
+            return True
+        return self._reveal_cluster(page, int(cluster_index))
+
+    @staticmethod
+    def _reveal_cluster(page: QWidget, cluster_index: int) -> bool:
+        table = page.findChild(QTreeWidget)
+        if table is None:
+            return False
+        for row in range(table.topLevelItemCount()):
+            item = table.topLevelItem(row)
+            if item is None:
+                continue
+            if item.data(0, Qt.ItemDataRole.UserRole) != cluster_index:
+                continue
+            item.setExpanded(True)
+            # Cluster headers are non-selectable; select the first member site
+            # so the reveal has a visible highlight, falling back to the header.
+            target = item.child(0) if item.childCount() else item
+            table.setCurrentItem(target)
+            table.scrollToItem(target, QAbstractItemView.ScrollHint.PositionAtCenter)
+            return True
+        return False
 
     def _rebuild_tabs(self) -> None:
         current_id = None
@@ -1380,6 +1420,11 @@ class RelaxationAnalysisWidget(QWidget):
         cluster_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self._open_clustering(wid))
         displacement_button = QPushButton("Analyse displacements", header)
         displacement_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self._open_displacements(wid))
+        pin_button = QPushButton("Pin to summary", header)
+        pin_button.setToolTip(
+            "Pin this workspace's distinct muon sites to the Muon Sites summary page."
+        )
+        pin_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self.pin_summary_requested.emit(wid))
         show_shifted = QCheckBox("Show shifted positions", header)
         show_shifted.setStyleSheet("background: transparent;")
         show_shifted.setChecked(bool(workspace.get("show_shifted_positions", False)))
@@ -1392,6 +1437,7 @@ class RelaxationAnalysisWidget(QWidget):
         header_layout.addWidget(add_button, 1, 1)
         header_layout.addWidget(cluster_button, 1, 2)
         header_layout.addWidget(displacement_button, 1, 3)
+        header_layout.addWidget(pin_button, 1, 4)
         header_layout.setColumnStretch(1, 1)
         layout.addWidget(header)
 
@@ -1483,6 +1529,7 @@ class RelaxationAnalysisWidget(QWidget):
             title = f"Cluster {int(label)}: {_wyckoff_assignment_text(match)}"
             item = QTreeWidgetItem([title, "", "", "", "", "", ""])
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            item.setData(0, Qt.ItemDataRole.UserRole, int(label))
             item.setToolTip(0, _wyckoff_assignment_tooltip(match))
             table.addTopLevelItem(item)
             item.setFirstColumnSpanned(True)
