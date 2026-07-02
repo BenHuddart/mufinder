@@ -117,6 +117,30 @@ def test_build_convergence_workflow_rejects_overrides() -> None:
         adapter_module.build_convergence_workflow(structure=_base_structure_spec(), config=config)
 
 
+def test_build_convergence_workflow_happy_path_matches_direct_expansion() -> None:
+    # build_convergence_workflow is a deprecated public helper; its happy path is
+    # orphaned in the GUI, so cover it here to guard the delegating shim. Its
+    # expand() must produce the same jobs as calling the sweep expander directly.
+    structure = _base_structure_spec()
+    config = ConvergenceConfig(
+        sweep_parameter="cut_off_energy",
+        sweep_values=(300.0, 360.0),
+        cutoff_energies=(300.0, 360.0),
+        shared_params={"task": "SINGLEPOINT", "xc_functional": "PBE"},
+    )
+
+    workflow = adapter_module.build_convergence_workflow(structure=structure, config=config)
+    shim_jobs = workflow.expand()
+    direct_jobs = expand_convergence_jobs(structure=structure, config=config)
+
+    assert [job.name for job in shim_jobs] == [job.name for job in direct_jobs]
+    assert [job.name for job in shim_jobs] == ["convergence_ecut_300", "convergence_ecut_360"]
+    for shim_job, direct_job in zip(shim_jobs, direct_jobs):
+        assert shim_job.param_file.keywords == direct_job.param_file.keywords
+        assert shim_job.workflow_stage == direct_job.workflow_stage
+        assert shim_job.tags == direct_job.tags
+
+
 def test_expand_convergence_jobs_rejects_empty_and_duplicate_cutoffs() -> None:
     with pytest.raises(ValueError, match="At least one cutoff"):
         expand_convergence_jobs(

@@ -54,6 +54,17 @@ Compatibility ledger
      - Public import alias. Keep until a major release or one minor release
        after ``expand_convergence_sweep_jobs`` has shipped as the documented
        replacement.
+   * - ``build_convergence_workflow``
+     - ``mufinder.app.convergence_adapter`` (re-exported from ``mufinder.app``)
+     - Deprecated public helper that returns the ``ConvergenceWorkflow`` shim.
+       Its happy path is orphaned now that the GUI calls
+       ``expand_convergence_jobs`` /
+       ``expand_convergence_sweep_jobs`` directly; kept only for external
+       callers.
+     - Public helper alias. Retires together with ``ConvergenceWorkflow``: keep
+       until a major release or one minor release after
+       ``expand_convergence_sweep_jobs`` has shipped as the documented
+       replacement.
    * - ``MuonSiteWorkflow``
      - ``mufinder.workflow.muon_site`` (re-exported from ``mufinder.workflow``)
      - Deprecated class wrapper kept for public imports while the workflow layer

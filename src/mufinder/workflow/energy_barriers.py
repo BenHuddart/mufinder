@@ -9,6 +9,7 @@ from uuid import UUID
 from mufinder.castep_io.types import AtomicPosition, BlockSection, KeywordAssignment, PositionBlock
 from mufinder.domain.enums import WorkflowStage
 
+from ._common import has_nonzero_spins, require_jobs
 from .merge import compose_patch, resolve_job
 from .naming import job_name
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate, StructureSpec
@@ -66,8 +67,7 @@ def expand_nudged_elastic_band_jobs(
 ) -> list[JobSpec]:
     """Expand diffusion-path endpoint pairs into CASTEP NEB jobs."""
 
-    if not jobs:
-        raise ValueError("At least one NEB job must be configured.")
+    require_jobs(jobs, "NEB job")
 
     resolved: list[JobSpec] = []
     for config in jobs:
@@ -170,7 +170,7 @@ def _transition_state_param_template(*, method: str, atomic_spins: tuple[float, 
         KeywordAssignment("task", "TRANSITIONSTATESEARCH"),
         KeywordAssignment("tssearch_method", method),
     ]
-    if atomic_spins is not None and any(abs(float(value)) > 1e-12 for value in atomic_spins):
+    if has_nonzero_spins(atomic_spins):
         keywords.append(KeywordAssignment("spin_polarized", True))
     return ParamTemplate(keywords=tuple(keywords))
 

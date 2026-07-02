@@ -8,6 +8,7 @@ from typing import Any, Sequence
 from mufinder.castep_io.types import KeywordAssignment
 from mufinder.domain.enums import WorkflowStage
 
+from ._common import require_jobs
 from .merge import compose_patch, resolve_job
 from .naming import job_name
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate, StructureSpec
@@ -55,8 +56,7 @@ def expand_relaxation_jobs(
 ) -> list[JobSpec]:
     """Expand pristine-relaxation job configurations into resolved jobs."""
 
-    if not jobs:
-        raise ValueError("At least one pristine-relaxation job must be configured.")
+    require_jobs(jobs, "pristine-relaxation job")
 
     resolved: list[JobSpec] = []
     for config in jobs:

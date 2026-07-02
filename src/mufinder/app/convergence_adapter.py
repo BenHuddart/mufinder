@@ -19,6 +19,7 @@ from mufinder.castep_io.types import (
     ValueWithUnit,
 )
 from mufinder.domain.enums import WorkflowStage
+from mufinder.workflow._common import format_value_token
 from mufinder.workflow.convergence import ConvergenceWorkflow, expand_convergence_sweep_jobs
 from mufinder.workflow.merge import merge_templates, resolve_job
 from mufinder.workflow.naming import job_name
@@ -39,13 +40,6 @@ _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
 }
 
 
-def _format_numeric_token(value: float) -> str:
-    token = f"{value:.12g}"
-    token = token.replace(".", "p")
-    token = token.replace("-", "m")
-    return token
-
-
 def _as_kpoint_grid(value: object) -> KPointGrid:
     triplet = tuple(int(component) for component in value)  # type: ignore[arg-type]
     if len(triplet) != 3:
@@ -55,7 +49,7 @@ def _as_kpoint_grid(value: object) -> KPointGrid:
 
 def _sweep_label_suffix(sweep_parameter: str, value: SweepValue) -> str:
     if sweep_parameter == "cut_off_energy":
-        return f"ecut_{_format_numeric_token(float(value))}"
+        return f"ecut_{format_value_token(float(value))}"
     if sweep_parameter == "kpoint_mp_grid":
         grid = _as_kpoint_grid(value)
         return f"kgrid_{grid[0]}x{grid[1]}x{grid[2]}"
@@ -295,7 +289,19 @@ def build_convergence_workflow(
     structure: StructureSpec,
     config: ConvergenceConfig,
 ) -> ConvergenceWorkflow:
-    """Build a ConvergenceWorkflow for shared-parameter-only convergence sweeps."""
+    """Build a ConvergenceWorkflow for shared-parameter-only convergence sweeps.
+
+    .. deprecated::
+        This helper predates the function-based expansion path. The GUI now
+        calls :func:`expand_convergence_jobs` (which delegates to
+        :func:`~mufinder.workflow.convergence.expand_convergence_sweep_jobs`)
+        directly, so ``build_convergence_workflow`` is orphaned on its happy
+        path and only remains as a public compatibility helper returning the
+        deprecated :class:`~mufinder.workflow.convergence.ConvergenceWorkflow`
+        shim. Prefer :func:`expand_convergence_jobs` in new code. See the
+        compatibility ledger in ``docs/compatibility_policy.rst``; this helper
+        retires together with ``ConvergenceWorkflow``.
+    """
 
     if config.overrides:
         raise ValueError(

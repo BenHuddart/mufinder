@@ -8,6 +8,7 @@ from typing import Sequence
 from mufinder.castep_io.types import AtomicPosition, PositionBlock
 from mufinder.domain.enums import WorkflowStage
 
+from ._common import require_jobs
 from .merge import resolve_job
 from .naming import job_name
 from .types import InputTemplate, JobPatch, JobSpec, StructureSpec
@@ -59,8 +60,7 @@ def expand_muon_site_jobs(
     :data:`~mufinder.workflow.merge.MERGE_PRECEDENCE_ORDER`.
     """
 
-    if not muon_positions_frac:
-        raise ValueError("Muon-site workflow requires at least one position.")
+    require_jobs(muon_positions_frac, "muon position")
 
     jobs: list[JobSpec] = []
     for index, raw_position in enumerate(muon_positions_frac, start=1):

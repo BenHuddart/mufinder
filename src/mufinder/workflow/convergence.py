@@ -8,16 +8,10 @@ from typing import Sequence
 from mufinder.castep_io.types import KeywordAssignment, ValueWithUnit
 from mufinder.domain.enums import WorkflowStage
 
+from ._common import format_value_token, require_jobs
 from .merge import resolve_job
 from .naming import job_name
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate, StructureSpec
-
-
-def _format_value_token(value: float) -> str:
-    token = f"{value:.12g}"
-    token = token.replace(".", "p")
-    token = token.replace("-", "m")
-    return token
 
 
 def _patch_for_value(
@@ -25,7 +19,7 @@ def _patch_for_value(
 ) -> JobPatch:
     if sweep_parameter == "cut_off_energy":
         numeric_value = float(value)  # type: ignore[arg-type]
-        suffix = f"ecut_{_format_value_token(numeric_value)}"
+        suffix = f"ecut_{format_value_token(numeric_value)}"
         return JobPatch(
             label_suffix=suffix,
             param=ParamTemplate(
@@ -66,8 +60,7 @@ def expand_convergence_sweep_jobs(
     :data:`~mufinder.workflow.merge.MERGE_PRECEDENCE_ORDER`.
     """
 
-    if not sweep_values:
-        raise ValueError("Convergence workflow requires at least one sweep value.")
+    require_jobs(sweep_values, "convergence sweep value")
 
     if sweep_parameter not in {"cut_off_energy", "kpoint_mp_grid"}:
         raise ValueError(
