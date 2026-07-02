@@ -34,9 +34,20 @@ Package layers
    owning project mutation, runner state, or widgets. Each workflow is exposed
    as a keyword-only ``expand_*`` function returning ``list[JobSpec]`` that
    layers ``InputTemplate`` parameters in ``MERGE_PRECEDENCE_ORDER``; see
-   ``mufinder.workflow.base`` for the contract. ``ConvergenceWorkflow`` and
-   ``MuonSiteWorkflow`` remain as deprecated class wrappers over their
-   ``expand_*`` functions (see :doc:`compatibility_policy`).
+   ``mufinder.workflow.base`` for the contract. Every ``expand_*`` function
+   accepts the full five-layer template stack — ``global_defaults``,
+   ``workflow_defaults``, ``structure_defaults``, the per-job patch (sweep)
+   layer, and ``user_overrides`` — and threads each into
+   :func:`~mufinder.workflow.merge.resolve_job`. Function-based workflows
+   compose their per-job patch layer with
+   :func:`~mufinder.workflow.merge.compose_patch`, whose rule is
+   ``patch = compose_patch(workflow_base_template, config_overrides)``: the
+   workflow-computed base template (e.g. ``task``/``continuation``) is passed
+   first and the per-config ``cell_overrides``/``param_overrides`` last, so the
+   base template sits in the patch layer *above* ``workflow_defaults`` and
+   ``structure_defaults`` while per-config overrides still win over the base.
+   ``ConvergenceWorkflow`` and ``MuonSiteWorkflow`` remain as deprecated class
+   wrappers over their ``expand_*`` functions (see :doc:`compatibility_policy`).
 
 ``mufinder.services``
    Project-level state management, local and remote execution, journals,

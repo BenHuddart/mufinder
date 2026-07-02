@@ -9,7 +9,7 @@ from uuid import UUID
 from mufinder.castep_io.types import AtomicPosition, BlockSection, KeywordAssignment, PositionBlock
 from mufinder.domain.enums import WorkflowStage
 
-from .merge import merge_templates, resolve_job
+from .merge import compose_patch, resolve_job
 from .naming import job_name
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate, StructureSpec
 
@@ -60,6 +60,7 @@ def expand_nudged_elastic_band_jobs(
     name_prefix: str,
     global_defaults: InputTemplate | None = None,
     workflow_defaults: InputTemplate | None = None,
+    structure_defaults: InputTemplate | None = None,
     user_overrides: InputTemplate | None = None,
     tags: tuple[str, ...] = (),
 ) -> list[JobSpec]:
@@ -73,11 +74,15 @@ def expand_nudged_elastic_band_jobs(
         label = config.source.label.strip()
         if not label:
             raise ValueError("NEB path labels must not be empty.")
+        patch_template = compose_patch(
+            InputTemplate(cell=_neb_cell_base_template(config), param=_neb_param_base_template(config)),
+            InputTemplate(cell=config.cell_overrides, param=config.param_overrides),
+        )
         patch = JobPatch(
             label_suffix=label,
             structure=config.source.reactant_structure,
-            cell=_neb_cell_template(config),
-            param=_neb_param_template(config),
+            cell=patch_template.cell,
+            param=patch_template.param,
         )
         resolved.append(
             resolve_job(
@@ -86,6 +91,7 @@ def expand_nudged_elastic_band_jobs(
                 workflow_stage=WorkflowStage.ENERGY_BARRIERS,
                 global_defaults=global_defaults,
                 workflow_defaults=workflow_defaults,
+                structure_defaults=structure_defaults,
                 patch=patch,
                 user_overrides=user_overrides,
                 tags=("energy_barriers", "nudged_elastic_band", *tags),
@@ -107,7 +113,7 @@ def expand_nudged_elastic_band_jobs(
     return resolved
 
 
-def _neb_cell_template(config: NudgedElasticBandJobConfig) -> CellTemplate:
+def _neb_cell_base_template(config: NudgedElasticBandJobConfig) -> CellTemplate:
     blocks = [
         BlockSection(
             name="positions_frac_product",
@@ -128,25 +134,17 @@ def _neb_cell_template(config: NudgedElasticBandJobConfig) -> CellTemplate:
                 unit=None,
             )
         )
-    base = CellTemplate(
+    return CellTemplate(
         extra_scalars=(KeywordAssignment("fix_com", False),),
         extra_blocks=tuple(blocks),
     )
-    if config.cell_overrides is None:
-        return base
-    merged = merge_templates(InputTemplate(cell=base), InputTemplate(cell=config.cell_overrides))
-    return merged.cell or base
 
 
-def _neb_param_template(config: NudgedElasticBandJobConfig) -> ParamTemplate:
-    base = _nudged_elastic_band_param_template(
+def _neb_param_base_template(config: NudgedElasticBandJobConfig) -> ParamTemplate:
+    return _nudged_elastic_band_param_template(
         method=config.method,
         atomic_spins=config.source.reactant_structure.atomic_spins,
     )
-    if config.param_overrides is None:
-        return base
-    merged = merge_templates(InputTemplate(param=base), InputTemplate(param=config.param_overrides))
-    return merged.param or base
 
 
 def _nudged_elastic_band_param_template(*, method: str, atomic_spins: tuple[float, ...] | None) -> ParamTemplate:

@@ -21,18 +21,19 @@ from mufinder.workflow.quantum import (
     QUANTUM_DEFAULT_NONSCF_EIGENVALUE_TOL,
     QuantumPhononJobConfig,
     QuantumPhononSource,
-    _cell_template,
+    _cell_base_template,
+    _param_base_template,
     _param_keyword_value,
-    _param_template,
     _phonon_nonscf_eigenvalue_tol,
-    _singlepoint_param_template,
+    _singlepoint_param_base_template,
     expand_quantum_phonon_jobs,
     expand_quantum_singlepoint_jobs,
     method_to_castep,
     phonon_method_compatibility,
     quantum_source_eligibility,
 )
-from mufinder.workflow.types import CellTemplate, ParamTemplate
+from mufinder.workflow.merge import compose_patch
+from mufinder.workflow.types import CellTemplate, InputTemplate, ParamTemplate
 
 # Fixed UUIDs keep the tests deterministic.
 _RUN_ID = UUID("11111111-1111-1111-1111-111111111111")
@@ -260,7 +261,12 @@ def test_expand_phonon_rejects_blank_label() -> None:
 def test_cell_template_merges_cell_overrides() -> None:
     overrides = CellTemplate(kpoint_mp_grid=(2, 2, 2))
     config = QuantumPhononJobConfig(source=_source(), cell_overrides=overrides)
-    template = _cell_template(config)
+    # Composition now happens at the expand call site via compose_patch.
+    merged = compose_patch(
+        InputTemplate(cell=_cell_base_template(config)),
+        InputTemplate(cell=config.cell_overrides),
+    )
+    template = merged.cell
     assert template.kpoint_mp_grid == (2, 2, 2)
     # Base extra blocks (species mass/gamma) survive the merge.
     block_names = {block.name for block in template.extra_blocks}
@@ -271,8 +277,11 @@ def test_cell_template_merges_cell_overrides() -> None:
 def test_param_template_merges_param_overrides_into_phonon_job() -> None:
     overrides = ParamTemplate(keywords=(KeywordAssignment("smearing_width", "0.05 eV"),))
     config = QuantumPhononJobConfig(source=_source(), param_overrides=overrides)
-    template = _param_template(config)
-    names = {kw.name for kw in template.keywords}
+    merged = compose_patch(
+        InputTemplate(param=_param_base_template(config)),
+        InputTemplate(param=config.param_overrides),
+    )
+    names = {kw.name for kw in merged.param.keywords}
     assert "task" in names
     assert "smearing_width" in names
 
@@ -280,22 +289,25 @@ def test_param_template_merges_param_overrides_into_phonon_job() -> None:
 def test_singlepoint_param_template_merges_param_overrides() -> None:
     overrides = ParamTemplate(keywords=(KeywordAssignment("cut_off_energy", "500 eV"),))
     config = QuantumPhononJobConfig(source=_source(), param_overrides=overrides)
-    template = _singlepoint_param_template(config)
-    names = {kw.name for kw in template.keywords}
+    merged = compose_patch(
+        InputTemplate(param=_singlepoint_param_base_template(config)),
+        InputTemplate(param=config.param_overrides),
+    )
+    names = {kw.name for kw in merged.param.keywords}
     assert "task" in names
     assert "cut_off_energy" in names
 
 
 def test_singlepoint_param_template_no_charge_when_neutral() -> None:
     config = QuantumPhononJobConfig(source=_source(charge_state=None))
-    template = _singlepoint_param_template(config)
+    template = _singlepoint_param_base_template(config)
     names = {kw.name for kw in template.keywords}
     assert "charge" not in names
 
 
 def test_param_template_charge_zero_for_muonium() -> None:
     config = QuantumPhononJobConfig(source=_source(charge_state="muonium"))
-    template = _param_template(config)
+    template = _param_base_template(config)
     charge = {kw.name: kw.value for kw in template.keywords}["charge"]
     assert charge == 0
 
