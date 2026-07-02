@@ -457,6 +457,41 @@ def test_pin_without_clustering_is_rejected(qapp, tmp_path: Path, monkeypatch) -
         window.close()
 
 
+def test_visible_summary_drops_stale_pin_on_host_change(qapp, tmp_path: Path) -> None:
+    window, _service, doc, host = _window_with_host(tmp_path)
+    try:
+        workspace = _clustered_workspace(host, uuid4())
+        window._set_relaxation_analysis_workspaces([workspace])
+        window._on_muon_sites_pin_requested(str(workspace["id"]))
+        panel = window._muon_sites_summary_view._panels[POSITIVE_MUON_CHARGE_STATE]
+        assert panel._table.rowCount() == 2
+        assert window._main_stack.currentWidget() is window._muon_sites_summary_view
+        # Switching the active host must drop the now-stale pin from the visible
+        # summary (its snapshot is keyed to the previous host id).
+        doc.project.host_structure_id = uuid4()
+        window._refresh_muon_sites_summary(only_if_visible=True)
+        assert panel._table.rowCount() == 0
+    finally:
+        window.close()
+
+
+def test_gated_summary_refresh_is_noop_while_hidden(qapp, tmp_path: Path) -> None:
+    window, _service, doc, host = _window_with_host(tmp_path)
+    try:
+        assert window._main_stack.currentWidget() is not window._muon_sites_summary_view
+        window._store_muon_sites_summary_snapshot(POSITIVE_MUON_CHARGE_STATE, _snapshot("ws-1", host))
+        panel = window._muon_sites_summary_view._panels[POSITIVE_MUON_CHARGE_STATE]
+        # only_if_visible must not rebuild the viewers off-screen when the page
+        # is not showing.
+        window._refresh_muon_sites_summary(only_if_visible=True)
+        assert panel._table.rowCount() == 0
+        # An unconditional refresh (as route dispatch does before showing) populates it.
+        window._refresh_muon_sites_summary()
+        assert panel._table.rowCount() == 2
+    finally:
+        window.close()
+
+
 def test_pin_with_unsupported_charge_state_is_rejected(qapp, tmp_path: Path, monkeypatch) -> None:
     window, _service, doc, host = _window_with_host(tmp_path)
     try:

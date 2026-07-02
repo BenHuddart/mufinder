@@ -2703,9 +2703,10 @@ class MainWindow(QMainWindow):
         self._refresh_uep_source_structures()
         self._refresh_uep_supercell_options()
         self._refresh_convergence_overview()
-        # The Muon Sites summary drives two PyVista viewers, so it is refreshed
-        # lazily on navigation (route dispatch) and after pin/unpin rather than
-        # rebuilt off-screen on every project change.
+        # Keep a visible summary current on project change without rebuilding its
+        # two PyVista viewers off-screen when the page is not showing (route
+        # dispatch and pin/unpin refresh it unconditionally when it is shown).
+        self._refresh_muon_sites_summary(only_if_visible=True)
         self._refresh_journal_view()
 
     def _refresh_journal_view(self) -> None:
@@ -8597,9 +8598,16 @@ class MainWindow(QMainWindow):
             "sites here."
         )
 
-    def _refresh_muon_sites_summary(self) -> None:
+    def _refresh_muon_sites_summary(self, *, only_if_visible: bool = False) -> None:
         summary_view = getattr(self, "_muon_sites_summary_view", None)
         if summary_view is None:
+            return
+        # The summary drives two PyVista viewers, so host/project-change callers
+        # pass only_if_visible=True: they keep a *visible* summary current (e.g.
+        # dropping a pin whose host was switched away) without paying for an
+        # off-screen rebuild when the page is not showing. Navigation and
+        # pin/unpin call it unconditionally because they are about to show it.
+        if only_if_visible and self._main_stack.currentWidget() is not summary_view:
             return
         host = (
             self._project_service.active_host_structure(self._document)
@@ -14136,6 +14144,8 @@ class MainWindow(QMainWindow):
         self._refresh_host_structure_view()
         self._refresh_muon_generation_table()
         self._refresh_muon_relaxation_rows()
+        # Drop/redraw a visible summary whose pins are keyed to the old host.
+        self._refresh_muon_sites_summary(only_if_visible=True)
         self._persist_document_ui_state(
             failure_message="Active host changed, but autosave failed.",
         )
