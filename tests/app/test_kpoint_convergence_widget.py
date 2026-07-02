@@ -180,6 +180,48 @@ def test_kpoint_widget_set_project_defaults_formats_values(qapp) -> None:
     assert "dF <= 0.05" in widget._project_default_criteria.text()
     assert widget._project_default_cutoff.text() == "450 eV"
     assert widget._default_params["cut_off_energy"] == ValueWithUnit(450.0, "eV")
+    assert "basis_precision" not in widget._default_params
+
+
+def test_kpoint_widget_cutoff_default_clears_conflicting_basis_precision(qapp) -> None:
+    widget = KPointConvergenceWidget()
+    assert widget._default_params["basis_precision"] == "FINE"
+
+    widget.set_cutoff_default(340.0)
+
+    assert widget._default_params["cut_off_energy"] == ValueWithUnit(340.0, "eV")
+    assert "basis_precision" not in widget._default_params
+
+
+def test_kpoint_widget_unconfigured_grid_builds_valid_config_after_cutoff_set(qapp) -> None:
+    # Regression test for https://github.com/BenHuddart/mufinder/issues/24:
+    # an unconfigured grid row must not inherit both cut_off_energy and the
+    # mutually-exclusive basis_precision schema default once a project
+    # cutoff energy has been determined.
+    widget = KPointConvergenceWidget()
+    widget.set_cutoff_default(800.0)
+    widget._add_grid((2, 2, 2))
+
+    config = widget.build_config()
+
+    assert config is not None
+    assert config.shared_params["cut_off_energy"] == ValueWithUnit(800.0, "eV")
+    assert "basis_precision" not in config.shared_params
+
+
+def test_kpoint_widget_set_cutoff_default_none_leaves_basis_precision(qapp) -> None:
+    widget = KPointConvergenceWidget()
+
+    widget.set_cutoff_default(340.0)
+    assert "basis_precision" not in widget._default_params
+
+    widget.set_cutoff_default(None)
+
+    assert "cut_off_energy" not in widget._default_params
+    # basis_precision was dropped once cut_off_energy was set and is not
+    # restored automatically when the cutoff default is cleared again; this
+    # matches the widget's existing "explicit override wins" contract.
+    assert "basis_precision" not in widget._default_params
 
 
 def test_kpoint_widget_simulation_cell_combo_emits_expected_signals(qapp) -> None:
@@ -316,6 +358,33 @@ def test_kpoint_widget_configure_selected_grids_handles_empty_selection(
     widget._configure_selected_grids()
 
     assert infos == ["No grids selected"]
+
+
+def test_kpoint_widget_configure_button_reopens_after_first_use(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for issue #23: the per-row Configure button must stay
+    clickable after being used once, regardless of whether the dialog was
+    accepted or dismissed."""
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+
+    exec_calls: list[int] = []
+
+    def fake_exec(_self) -> int:
+        exec_calls.append(1)
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(kpoint_widget_module.ParameterDialog, "exec", fake_exec)
+
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, QPushButton)
+
+    configure_button.click()
+    assert len(exec_calls) == 1
+
+    configure_button.click()
+    assert len(exec_calls) == 2, "Configure button stopped opening the dialog after first use"
 
 
 def test_kpoint_widget_open_grid_parameter_dialog_applies_to_all_selected(
