@@ -269,23 +269,25 @@ Current behavior includes:
 - an optional maximum path-length filter for Energy Barriers path generation;
 - symmetry-guided enumeration of distinct muon paths between the selected
   endpoints;
-- generated transition-state path rows staying available after the endpoint
-  selectors change;
-- deletion of generated transition-state path rows from the Energy Barriers
-  workflow;
+- generated path rows staying available after the endpoint selectors change;
+- deletion of generated path rows from the Energy Barriers workflow;
 - a path preview dialog that shows the undistorted matching pristine supercell
   with initial/final muon positions and an optional path arrow;
-- curated per-row parameter dialogs for both transition-state and NEB jobs,
-  with searchable advanced CASTEP controls available on demand;
-- transition-state search job expansion with aligned reactant/product endpoint
-  structures;
+- curated per-row parameter dialogs for NEB jobs, with searchable advanced
+  CASTEP controls available on demand;
 - supercell-aware Energy Barriers k-point defaults that preserve equivalent
   reciprocal-space sampling density relative to the recommended project
   lattice;
-- NEB job expansion from completed transition-state results, including product
-  and intermediate images when present in the parsed path file;
-- inline NEB inspection with synchronized plot, image table, slider, and
-  structure viewer.
+- NEB job expansion seeded directly from the two aligned relaxed endpoints,
+  with an IDPP-interpolated intermediate image;
+- a completed-results table summarising each NEB run by endpoint pair, charge
+  state, path length, forward/reverse barrier, endpoint ``ΔE``, and image
+  count, with the trajectory file reachable via tooltip and a right-click
+  ``Open Containing Folder`` action;
+- inline NEB inspection with an annotated reaction-coordinate plot (click,
+  drag, or arrow keys to scrub), an image stepper, and a structure viewer
+  that preserves camera orientation and zoom while stepping through images
+  and can pop out into its own window.
 
 See :doc:`energy_barriers` for the user-facing workflow, assumptions, and
 current scope.

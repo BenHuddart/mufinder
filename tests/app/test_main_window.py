@@ -2510,10 +2510,12 @@ def test_main_window_records_neb_result_and_loads_preview(
     window._on_energy_barrier_neb_result_selected(str(stored.id))
 
     assert window._energy_barriers_view._profile_plot.point_count() == 3
-    assert window._energy_barriers_view._preview_slider.maximum() == 2
-    assert window._energy_barriers_view._preview_slider_start_label.text() == "0"
-    assert window._energy_barriers_view._preview_slider_end_label.text() == "1"
-    window._energy_barriers_view._preview_slider.setValue(1)
+    assert window._energy_barriers_view._preview_position_label.text() == "Image 1 / 3"
+    results_table = window._energy_barriers_view._neb_results_table
+    assert results_table.item(0, 3).text() == "0.2 eV"
+    assert results_table.item(0, 4).text() == "0.1 eV"
+    assert results_table.item(0, 5).text() == "0.1 eV"
+    window._energy_barriers_view._preview_next_button.click()
     assert "TST" in window._energy_barriers_view._preview_summary.text()
 
     window.close()

@@ -313,6 +313,31 @@ def _format_energy(value: object) -> str:
         return ""
 
 
+def _neb_barrier_summaries(data: Mapping[str, object]) -> tuple[str, str, str]:
+    """Format (forward barrier, reverse barrier, endpoint ΔE) from a NEB result payload.
+
+    Both barriers and ΔE derive from the persisted per-image energies; results
+    that predate ``image_energies_eV`` fall back to the stored forward barrier
+    with blank reverse/ΔE columns.
+    """
+
+    energies_payload = data.get("image_energies_eV")
+    energies: list[float] = []
+    if isinstance(energies_payload, (list, tuple)):
+        try:
+            energies = [float(value) for value in energies_payload]
+        except (TypeError, ValueError):
+            energies = []
+    if len(energies) >= 2:
+        peak = max(energies)
+        return (
+            _format_energy(peak - energies[0]),
+            _format_energy(peak - energies[-1]),
+            _format_energy(energies[-1] - energies[0]),
+        )
+    return _format_energy(data.get("barrier_height_eV")), "", ""
+
+
 def _ordered_string_list(payload: object) -> list[str]:
     if payload is None:
         return []
@@ -6945,7 +6970,7 @@ class MainWindow(QMainWindow):
                     reactant=candidate.reactant.site.label or candidate.reactant.job.label,
                     product=candidate.product.site.label or candidate.product.job.label,
                     charge_state=self._charge_state_label_for_job(candidate.reactant.job),
-                    path_length=f"{candidate.path.length_ang:.4g} ang",
+                    path_length=f"{candidate.path.length_ang:.4g} Å",
                     neb_status=getattr(neb_states.get(candidate.key), "status", "ready") or "ready",
                     configured=self._workflow_row_configuration_exists(neb_definition, candidate.key),
                 )
@@ -6954,17 +6979,25 @@ class MainWindow(QMainWindow):
         energy_barriers_view.set_sources(source_rows)
 
         neb_result_rows: list[EnergyBarrierNebResultRow] = []
+        neb_sources_by_job_id = self._energy_barrier_neb_sources_by_job_id()
         for candidate in self._completed_energy_barrier_neb_candidates():
             result = candidate.result
+            data = result.data if isinstance(result.data, dict) else {}
+            forward, reverse, delta = _neb_barrier_summaries(data)
+            source = neb_sources_by_job_id.get(candidate.job.id)
+            path_length_ang = self._float_from_source(source, "path_length_ang") if source is not None else None
+            raw_charge = str(source.get("charge_state", "")).strip() if source is not None else ""
             neb_result_rows.append(
                 EnergyBarrierNebResultRow(
                     key=candidate.key,
-                    label=candidate.job.label,
-                    barrier_height=_format_energy(result.data.get("barrier_height_eV") if isinstance(result.data, dict) else None),
-                    images=str(result.data.get("num_images", "")) if isinstance(result.data, dict) else "",
-                    transition_state_file=(
-                        str(result.data.get("transition_state_file", "")) if isinstance(result.data, dict) else ""
-                    ),
+                    label=self._energy_barrier_neb_result_path_label(candidate, source),
+                    charge_state=muon_charge_state_label(raw_charge) if raw_charge else "",
+                    path_length="" if path_length_ang is None else f"{path_length_ang:.4g} Å",
+                    barrier_forward=forward,
+                    barrier_reverse=reverse,
+                    delta_energy=delta,
+                    images=str(data.get("num_images", "")),
+                    transition_state_file=str(data.get("transition_state_file", "")),
                 )
             )
         energy_barriers_view.set_neb_results(neb_result_rows)
@@ -12314,6 +12347,45 @@ class MainWindow(QMainWindow):
                 return candidate
         return None
 
+    def _energy_barrier_neb_sources_by_job_id(self) -> dict[UUID, dict[str, object]]:
+        """Map each materialized NEB job back to its generated-path source metadata."""
+
+        sources_by_key = {
+            str(source.get("key", "")).strip(): source
+            for source in self._energy_barrier_generated_sources()
+        }
+        by_job_id: dict[UUID, dict[str, object]] = {}
+        for definition in self._energy_barrier_neb_definitions():
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict):
+                continue
+            for key, raw_job_id in mapping.items():
+                source = sources_by_key.get(str(key).strip())
+                if source is None or not isinstance(raw_job_id, str):
+                    continue
+                try:
+                    by_job_id[UUID(raw_job_id)] = source
+                except ValueError:
+                    continue
+        return by_job_id
+
+    def _energy_barrier_neb_result_path_label(
+        self,
+        candidate: _EnergyBarrierCompletedNebCandidate,
+        source: Mapping[str, object] | None,
+    ) -> str:
+        """Describe a completed NEB result as ``initial → final``, falling back to the job label."""
+
+        if source is not None and self._document is not None:
+            labels: list[str] = []
+            for field in ("reactant_site_id", "product_site_id"):
+                site_id = self._uuid_from_source(source, field)
+                site = self._document.sites.get(site_id) if site_id is not None else None
+                labels.append((site.label or "").strip() if site is not None else "")
+            if all(labels):
+                return f"{labels[0]} → {labels[1]}"
+        return candidate.job.label
+
     def _serialize_energy_barrier_neb_sources(self, keys: list[str]) -> list[dict[str, object]]:
         candidates_by_key = {candidate.key: candidate for candidate in self._energy_barrier_neb_source_candidates()}
         serialized: list[dict[str, object]] = []
@@ -13269,11 +13341,14 @@ class MainWindow(QMainWindow):
         except TransitionStateParseError:
             energy_barriers_view.clear_neb_preview(title=f"{candidate.job.label} preview unavailable")
             return
+        # Report each image's energy relative to the initial image: absolute
+        # CASTEP energies are ~10⁵ eV, so differences vanish in the display.
+        initial_energy = transition_state.images[0].energy
         image_rows = [
             EnergyBarrierPreviewImageRow(
                 label=image.label,
                 reaction_coordinate=f"{image.reaction_coordinate:.6g}",
-                energy=f"{image.energy:.6g} eV",
+                energy=f"{image.energy - initial_energy:+.4g} eV",
                 reaction_coordinate_value=image.reaction_coordinate,
                 energy_value=image.energy,
             )

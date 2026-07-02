@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QMessageBox, QPushButton
 from mufinder.app.theme import status_brush
 from mufinder.app.energy_barriers_widget import (
     EnergyBarrierEndpointRow,
+    EnergyBarrierNebResultRow,
     EnergyBarrierPreviewImageRow,
     EnergyBarrierSourceRow,
     EnergyBarriersWidget,
@@ -358,36 +359,247 @@ def test_energy_barriers_widget_marks_configured_path_row(qapp) -> None:
 def test_energy_barriers_widget_switches_preview_splitter_for_narrow_widths(qapp) -> None:
     widget = EnergyBarriersWidget()
 
-    widget.resize(1100, 800)
+    widget.resize(900, 800)
     widget._apply_responsive_layout()
-    assert widget._preview_splitter.orientation() == Qt.Orientation.Horizontal
+    assert widget._preview_splitter.orientation() == Qt.Orientation.Vertical
 
     widget.resize(1500, 800)
     widget._apply_responsive_layout()
     assert widget._preview_splitter.orientation() == Qt.Orientation.Horizontal
 
 
-def test_energy_barriers_widget_uses_slider_only_for_neb_preview_navigation(qapp) -> None:
+def _sample_preview_rows() -> list[EnergyBarrierPreviewImageRow]:
+    return [
+        EnergyBarrierPreviewImageRow("REA", "0", "-1 eV", 0.0, -1.0),
+        EnergyBarrierPreviewImageRow("TST", "0.5", "-0.8 eV", 0.5, -0.8),
+        EnergyBarrierPreviewImageRow("PRO", "1", "-0.9 eV", 1.0, -0.9),
+    ]
+
+
+def test_energy_barriers_widget_stepper_and_plot_navigate_neb_preview(qapp) -> None:
     widget = EnergyBarriersWidget()
 
     widget.set_neb_preview(
         title="NEB preview",
-        image_rows=[
-            EnergyBarrierPreviewImageRow("REA", "0", "-1 eV", 0.0, -1.0),
-            EnergyBarrierPreviewImageRow("TST", "0.5", "-0.8 eV", 0.5, -0.8),
-            EnergyBarrierPreviewImageRow("PRO", "1", "-0.9 eV", 1.0, -0.9),
-        ],
+        image_rows=_sample_preview_rows(),
         structures=[_sample_structure(), _sample_structure(), _sample_structure()],
     )
 
-    assert not hasattr(widget, "_preview_table")
-    assert widget._preview_slider.maximum() == 2
-    assert widget._preview_slider_start_label.text() == "0"
-    assert widget._preview_slider_end_label.text() == "1"
+    assert not hasattr(widget, "_preview_slider")
+    assert widget._preview_position_label.text() == "Image 1 / 3"
+    assert not widget._preview_prev_button.isEnabled()
+    assert widget._preview_next_button.isEnabled()
 
-    widget._preview_slider.setValue(1)
+    widget._preview_next_button.click()
 
     assert "TST" in widget._preview_summary.text()
+    assert widget._preview_position_label.text() == "Image 2 / 3"
+    assert widget._profile_plot._selected_index == 1
+
+    QTest.keyClick(widget._profile_plot, Qt.Key.Key_Right)
+
+    assert widget._preview_position_label.text() == "Image 3 / 3"
+    assert not widget._preview_next_button.isEnabled()
+
+    QTest.keyClick(widget._profile_plot, Qt.Key.Key_Left)
+
+    assert widget._preview_position_label.text() == "Image 2 / 3"
+    widget.close()
+
+
+def test_energy_barriers_widget_preserves_viewer_camera_while_scrubbing(qapp) -> None:
+    from mufinder.app.atomic_structure_viewer import _CameraState
+
+    widget = EnergyBarriersWidget()
+    widget.set_neb_preview(
+        title="NEB preview",
+        image_rows=_sample_preview_rows(),
+        structures=[_sample_structure(), _sample_structure(), _sample_structure()],
+    )
+    viewer = widget._preview_viewer
+    assert viewer is not None
+    viewer._camera_state = _CameraState(17.0, 38.0, 9.0)
+    viewer._axis.set_from_state(viewer._camera_state)
+    viewer._view = (17.0, 38.0)
+    viewer._view_roll = 9.0
+
+    widget._preview_next_button.click()
+
+    assert "TST" in widget._preview_summary.text()
+    assert viewer._camera_state == _CameraState(17.0, 38.0, 9.0)
+    widget.close()
+
+
+def test_energy_barriers_widget_neb_results_show_barriers_not_trajectory_paths(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    table = widget._neb_results_table
+    headers = [table.horizontalHeaderItem(index).text() for index in range(table.columnCount())]
+    assert headers == ["Path", "Charge", "Length", "Barrier (fwd)", "Barrier (rev)", "ΔE", "Images"]
+    assert not table.wordWrap()
+
+    selected: list[str] = []
+    widget.neb_result_selected.connect(selected.append)
+    trajectory = "/projects/very/long/output/path/neb_job/neb_job.ts"
+    widget.set_neb_results(
+        [
+            EnergyBarrierNebResultRow(
+                key="result-a",
+                label="site A → site B",
+                charge_state="positive muon",
+                path_length="1.2 Å",
+                barrier_forward="0.2 eV",
+                barrier_reverse="0.1 eV",
+                delta_energy="0.1 eV",
+                images="11",
+                transition_state_file=trajectory,
+            )
+        ]
+    )
+
+    assert table.rowCount() == 1
+    assert widget._neb_results_group.title() == "Completed NEB Calculations (1)"
+    assert table.item(0, 0).text() == "site A → site B"
+    assert table.item(0, 3).text() == "0.2 eV"
+    assert table.item(0, 4).text() == "0.1 eV"
+    row_texts = [table.item(0, column).text() for column in range(table.columnCount())]
+    assert trajectory not in row_texts
+    assert trajectory in table.item(0, 0).toolTip()
+    assert table.maximumHeight() < 16777215
+    assert selected == ["result-a"]
+    widget.close()
+
+
+def test_energy_barriers_widget_viewer_popout_and_restore(qapp) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_neb_preview(
+        title="NEB preview",
+        image_rows=_sample_preview_rows(),
+        structures=[_sample_structure(), _sample_structure(), _sample_structure()],
+    )
+    viewer = widget._preview_viewer
+    assert viewer is not None
+    assert widget._popout_viewer_button.text() == "Pop Out Viewer"
+
+    widget._popout_viewer_button.click()
+
+    window = widget._viewer_popout_window
+    assert window is not None
+    assert viewer.window() is window
+    # Tool windows float above the main window, so scrubbing from the main
+    # window never buries the popped-out viewer.
+    assert window.windowFlags() & Qt.WindowType.Tool
+    assert widget._preview_splitter.widget(1) is widget._viewer_popout_placeholder
+    assert widget._popout_viewer_button.text() == "Restore Viewer"
+
+    widget._preview_next_button.click()
+    assert "TST" in widget._preview_summary.text()
+    assert window._position_label.text() == "Image 2 / 3"
+
+    window._next_button.click()
+    assert "PRO" in widget._preview_summary.text()
+    assert widget._preview_position_label.text() == "Image 3 / 3"
+    assert not window._next_button.isEnabled()
+
+    widget._popout_viewer_button.click()
+
+    assert widget._viewer_popout_window is None
+    assert widget._viewer_popout_placeholder is None
+    assert widget._preview_splitter.widget(1) is viewer
+    assert widget._popout_viewer_button.text() == "Pop Out Viewer"
+    widget.close()
+
+
+def test_reaction_coordinate_profile_renders_ticks_and_barrier_annotation(qapp) -> None:
+    from PySide6.QtGui import QPixmap
+
+    from mufinder.app.energy_barriers_widget import _ReactionCoordinateProfile, _nice_ticks
+
+    assert _nice_ticks(0.0, 1.0, 5) == [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    assert _nice_ticks(0.0, 0.0, 4) == [0.0]
+
+    plot = _ReactionCoordinateProfile()
+    plot.resize(480, 240)
+    plot.set_profile(_sample_preview_rows(), selected_index=1)
+    pixmap = QPixmap(plot.size())
+    plot.render(pixmap)
+
+    geometry = plot._plot_geometry()
+    assert geometry is not None
+    bounds, points, x_ticks, y_ticks = geometry
+    assert len(points) == 3
+    assert len(y_ticks) >= 2
+    # The y-axis title and tick labels must fit inside the left margin.
+    assert bounds.left() > 30.0
+
+    empty = _ReactionCoordinateProfile()
+    empty.resize(300, 200)
+    empty.render(QPixmap(empty.size()))
+
+
+def test_reaction_coordinate_profile_plots_energies_relative_to_first_image(qapp) -> None:
+    from mufinder.app.energy_barriers_widget import _ReactionCoordinateProfile
+
+    plot = _ReactionCoordinateProfile()
+    plot.resize(480, 240)
+    # Absolute CASTEP energies (~1.8e5 eV) must not leak into the axis ticks.
+    plot.set_profile(
+        [
+            EnergyBarrierPreviewImageRow("REA", "0", "+0 eV", 0.0, -181556.5),
+            EnergyBarrierPreviewImageRow("TST", "0.5", "+0.6 eV", 0.5, -181555.9),
+            EnergyBarrierPreviewImageRow("PRO", "1", "+0.2 eV", 1.0, -181556.3),
+        ]
+    )
+
+    geometry = plot._plot_geometry()
+    assert geometry is not None
+    _bounds, _points, _x_ticks, y_ticks = geometry
+    assert max(abs(tick) for tick in y_ticks) < 10.0
+
+
+def test_energy_barriers_widget_stepper_stays_below_plot_in_short_panes(qapp) -> None:
+    from PySide6.QtCore import QPoint
+
+    widget = EnergyBarriersWidget()
+    widget.set_neb_preview(
+        title="NEB preview",
+        image_rows=_sample_preview_rows(),
+        structures=[_sample_structure(), _sample_structure(), _sample_structure()],
+    )
+    widget._tabs.setCurrentIndex(1)
+    widget.resize(1900, 520)
+    widget.show()
+    qapp.processEvents()
+
+    plot_bottom = widget._profile_plot.mapTo(widget, QPoint(0, widget._profile_plot.height())).y()
+    stepper_top = widget._preview_prev_button.mapTo(widget, QPoint(0, 0)).y()
+    # The plot must shrink in short panes instead of overpainting the stepper
+    # (1px adjacency is tolerated when the layout is in deficit).
+    assert stepper_top >= plot_bottom - 1
+    widget.close()
+
+
+def test_reaction_coordinate_profile_click_selects_nearest_point(qapp) -> None:
+    from PySide6.QtCore import QPoint
+
+    from mufinder.app.energy_barriers_widget import _ReactionCoordinateProfile
+
+    plot = _ReactionCoordinateProfile()
+    plot.resize(480, 240)
+    plot.set_profile(_sample_preview_rows(), selected_index=0)
+
+    selected: list[int] = []
+    plot.point_selected.connect(selected.append)
+    geometry = plot._plot_geometry()
+    assert geometry is not None
+    target = geometry[1][2]
+
+    QTest.mouseClick(
+        plot,
+        Qt.MouseButton.LeftButton,
+        pos=QPoint(int(target[0]), int(target[1])),
+    )
+
+    assert selected == [2]
 
 
 def test_energy_barriers_source_configure_applies_to_snapshot_rows(
@@ -438,11 +650,9 @@ def test_energy_barriers_source_configure_single_row_no_prompt(
     assert prompted == []
 
 
-def test_energy_barriers_view_shows_confirm_for_multi_row_snapshot(
+def test_energy_barriers_view_button_opens_clicked_row_without_prompt(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
-
     widget = EnergyBarriersWidget()
     widget.set_sources(
         [
@@ -452,14 +662,20 @@ def test_energy_barriers_view_shows_confirm_for_multi_row_snapshot(
     )
     viewed: list[str] = []
     widget.view_source_requested.connect(viewed.append)
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Yes))
+    prompted: list[bool] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        staticmethod(lambda *a, **kw: prompted.append(True) or QMessageBox.StandardButton.Yes),
+    )
+    widget._sources_table.selectAll()
 
     btn = widget._sources_table.cellWidget(0, 6)
-    assert isinstance(btn, SelectionSnapshotPushButton)
-    btn.selection_snapshot_rows = (0, 1)
-    btn.clicked.emit()
+    assert isinstance(btn, QPushButton)
+    btn.click()
 
     assert viewed == ["path-a"]
+    assert prompted == []
 
 
 def test_quantum_source_configure_applies_to_snapshot_rows(
