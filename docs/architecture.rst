@@ -31,7 +31,12 @@ Package layers
 ``mufinder.workflow``
    Pure workflow expansion and rendering contracts. This layer turns resolved
    workflow state into ``JobSpec`` objects and rendered input files without
-   owning project mutation, runner state, or widgets.
+   owning project mutation, runner state, or widgets. Each workflow is exposed
+   as a keyword-only ``expand_*`` function returning ``list[JobSpec]`` that
+   layers ``InputTemplate`` parameters in ``MERGE_PRECEDENCE_ORDER``; see
+   ``mufinder.workflow.base`` for the contract. ``ConvergenceWorkflow`` and
+   ``MuonSiteWorkflow`` remain as deprecated class wrappers over their
+   ``expand_*`` functions (see :doc:`compatibility_policy`).
 
 ``mufinder.services``
    Project-level state management, local and remote execution, journals,

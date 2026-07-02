@@ -46,6 +46,21 @@ Compatibility ledger
        and UEP setup flows.
      - Current project data, not deprecated. Do not remove without a schema
        migration and replacement project-default model.
+   * - ``ConvergenceWorkflow``
+     - ``mufinder.workflow.convergence`` (re-exported from
+       ``mufinder.workflow``)
+     - Deprecated class wrapper kept for public imports while the workflow layer
+       converges on ``expand_convergence_sweep_jobs``.
+     - Public import alias. Keep until a major release or one minor release
+       after ``expand_convergence_sweep_jobs`` has shipped as the documented
+       replacement.
+   * - ``MuonSiteWorkflow``
+     - ``mufinder.workflow.muon_site`` (re-exported from ``mufinder.workflow``)
+     - Deprecated class wrapper kept for public imports while the workflow layer
+       converges on ``expand_muon_site_jobs``.
+     - Public import alias. Keep until a major release or one minor release
+       after ``expand_muon_site_jobs`` has shipped as the documented
+       replacement.
 
 Rules for new shims
 -------------------

@@ -8,7 +8,7 @@ from pathlib import Path
 from mufinder.castep_io.types import KeywordAssignment
 from mufinder.domain.models import Structure
 from mufinder.workflow.bridge import structure_to_spec
-from mufinder.workflow.convergence import ConvergenceWorkflow
+from mufinder.workflow.convergence import expand_convergence_sweep_jobs
 from mufinder.workflow.output import write_job_set
 from mufinder.workflow.types import InputTemplate, ParamTemplate
 
@@ -20,7 +20,7 @@ def _jobs() -> list[object]:
         species=["Si", "Si"],
         fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
     )
-    workflow = ConvergenceWorkflow(
+    return expand_convergence_sweep_jobs(
         structure=structure_to_spec(structure),
         sweep_parameter="cut_off_energy",
         sweep_values=[300.0, 340.0],
@@ -34,7 +34,6 @@ def _jobs() -> list[object]:
             )
         ),
     )
-    return workflow.expand()
 
 
 def test_write_job_set_creates_input_files_and_manifest(tmp_path: Path) -> None:
