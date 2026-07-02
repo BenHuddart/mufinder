@@ -14,9 +14,15 @@ under ``tests/data/golden_inputs/`` after eyeballing the change.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import UUID
 
+import mufinder.castep_io.cell_writer as _cell_writer_module
+import mufinder.castep_io.gui_metadata as _gui_metadata_module
+import mufinder.castep_io.param_writer as _param_writer_module
+import mufinder.castep_io.schema as _schema_module
 from mufinder.app.convergence_adapter import expand_convergence_jobs
 from mufinder.app.convergence_types import ConvergenceConfig
 from mufinder.app.relaxation_adapter import (
@@ -49,6 +55,20 @@ from mufinder.workflow.renderer import render_job
 from mufinder.workflow.types import JobSpec, StructureSpec
 
 GOLDEN_DIR = Path("tests/data/golden_inputs")
+
+# Schema globals snapshotted/restored around the starter-catalog pin; mirrors
+# the autouse isolation fixture in tests/conftest.py.
+_SCHEMA_GLOBAL_NAMES = (
+    "CELL_KEYWORDS",
+    "PARAM_KEYWORDS",
+    "SOURCE_KEYWORDS",
+    "SCHEMA",
+    "CELL_SERIALIZATION_ORDER",
+    "PARAM_SERIALIZATION_ORDER",
+    "SERIALIZATION_INDEX",
+    "CATALOG_SOURCE_INFO",
+    "_candidate_catalog_sources",
+)
 
 # Fixed UUIDs so provenance is stable; these are never rendered into cell/param.
 _SITE_A = UUID("00000000-0000-0000-0000-0000000000a1")
@@ -329,13 +349,66 @@ BUILDERS = {
 }
 
 
-def iter_golden_cases():
-    """Yield (workflow, job_name, cell_text, param_text) for every golden job."""
+@contextmanager
+def pinned_starter_catalog() -> Iterator[None]:
+    """Pin the CASTEP keyword schema to the bundled starter catalog.
 
-    for workflow, builder in BUILDERS.items():
-        for job_name, job in builder():
-            cell_text, param_text = render_job(job)
-            yield workflow, job_name, cell_text, param_text
+    Rendered keyword order follows the source order of the discovered keyword
+    catalog, which differs between machines (a local ``CASTEP-*`` checkout vs
+    CI's bundled starter catalog). Golden files must be generated and compared
+    against the one catalog that is guaranteed identical everywhere: the
+    bundled starter catalog. Prior schema state is always restored.
+    """
+
+    saved_globals = {
+        name: getattr(_schema_module, name)
+        for name in _SCHEMA_GLOBAL_NAMES
+        if hasattr(_schema_module, name)
+    }
+    # cell_writer / param_writer / gui_metadata bind the serialization-order
+    # tuples by value at import, so refreshing the schema module alone does not
+    # reach them (characterization: a runtime refresh_keyword_catalog() leaves
+    # renderers on the previously discovered order). Sync and restore those
+    # bindings explicitly.
+    saved_bindings = [
+        (_cell_writer_module, "CELL_SERIALIZATION_ORDER"),
+        (_param_writer_module, "PARAM_SERIALIZATION_ORDER"),
+        (_gui_metadata_module, "CELL_SERIALIZATION_ORDER"),
+        (_gui_metadata_module, "PARAM_SERIALIZATION_ORDER"),
+    ]
+    saved_binding_values = [
+        (module, name, getattr(module, name)) for module, name in saved_bindings
+    ]
+    # Suppress catalog discovery entirely so refresh falls back to the bundled
+    # starter schema — the same path CI takes when no CASTEP checkout exists.
+    _schema_module._candidate_catalog_sources = lambda: ()
+    _schema_module.refresh_keyword_catalog(allow_fallback=True)
+    for module, name in saved_bindings:
+        setattr(module, name, getattr(_schema_module, name))
+    try:
+        yield
+    finally:
+        for module, name, value in saved_binding_values:
+            setattr(module, name, value)
+        for name, value in saved_globals.items():
+            setattr(_schema_module, name, value)
+
+
+def iter_golden_cases():
+    """Return (workflow, job_name, cell_text, param_text) for every golden job.
+
+    Builds and renders under :func:`pinned_starter_catalog` so the output is
+    machine-independent; returns a fully materialized list so the pin is
+    released before the caller consumes the cases.
+    """
+
+    cases: list[tuple[str, str, str, str]] = []
+    with pinned_starter_catalog():
+        for workflow, builder in BUILDERS.items():
+            for job_name, job in builder():
+                cell_text, param_text = render_job(job)
+                cases.append((workflow, job_name, cell_text, param_text))
+    return cases
 
 
 def write_golden_files(base_dir: Path = GOLDEN_DIR) -> list[Path]:
