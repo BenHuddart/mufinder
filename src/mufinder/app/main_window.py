@@ -8529,8 +8529,13 @@ class MainWindow(QMainWindow):
     def _build_muon_sites_summary_snapshot(
         self, workspace: Mapping[str, object]
     ) -> dict[str, object] | None:
-        host_structure_id = self._host_structure_id_text()
-        if host_structure_id is None:
+        # Key the snapshot to the workspace's own host, not the active project
+        # host: the cluster positions are fractional coordinates in that host's
+        # cell, so validation must hide the pin (rather than overlay stale sites
+        # on a different host) whenever the active host is not the one the
+        # analysis was run against.
+        host_structure_id = str(workspace.get("host_structure_id", "")).strip()
+        if not host_structure_id:
             return None
         clustering = workspace.get("clustering")
         result = clustering.get("result") if isinstance(clustering, Mapping) else None
@@ -8642,6 +8647,17 @@ class MainWindow(QMainWindow):
                 "Nothing to pin",
                 "Run clustering on this workspace first — the Muon Sites summary shows the "
                 "distinct clustered muon sites.",
+            )
+            return
+        if str(snapshot.get("host_structure_id", "")) != (self._host_structure_id_text() or ""):
+            # The sites are fractional coordinates in the workspace's host; pinning
+            # while a different host is active would only ever validate to a hidden
+            # panel, so reject it explicitly rather than storing a silent pin.
+            QMessageBox.information(
+                self,
+                "Cannot pin",
+                "This analysis was run against a host structure that is not the active "
+                "host. Switch to that host before pinning it to the Muon Sites summary.",
             )
             return
         charge_state = str(snapshot.get("charge_state", POSITIVE_MUON_CHARGE_STATE))

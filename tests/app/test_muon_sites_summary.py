@@ -492,6 +492,38 @@ def test_gated_summary_refresh_is_noop_while_hidden(qapp, tmp_path: Path) -> Non
         window.close()
 
 
+def test_pin_from_non_active_host_workspace_is_rejected(qapp, tmp_path: Path, monkeypatch) -> None:
+    window, _service, doc, host = _window_with_host(tmp_path)
+    try:
+        # A workspace whose clustering was run against a different host than the
+        # active one must not overlay its old fractional sites on the new host.
+        other_host = _host_structure()
+        workspace = _clustered_workspace(other_host, uuid4())
+        window._set_relaxation_analysis_workspaces([workspace])
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information",
+            lambda *args, **kwargs: None,
+        )
+        window._on_muon_sites_pin_requested(str(workspace["id"]))
+        assert window._muon_sites_summary_snapshots_state() == {}
+    finally:
+        window.close()
+
+
+def test_pin_snapshot_is_keyed_to_workspace_host(qapp, tmp_path: Path) -> None:
+    window, _service, doc, host = _window_with_host(tmp_path)
+    try:
+        workspace = _clustered_workspace(host, uuid4())
+        window._set_relaxation_analysis_workspaces([workspace])
+        window._on_muon_sites_pin_requested(str(workspace["id"]))
+        stored = window._muon_sites_summary_snapshots_state()[POSITIVE_MUON_CHARGE_STATE]
+        # The snapshot host is the workspace's host (which equals the active host
+        # here), so its sites are always interpreted in the correct cell.
+        assert stored["host_structure_id"] == str(host.id)
+    finally:
+        window.close()
+
+
 def test_pin_with_unsupported_charge_state_is_rejected(qapp, tmp_path: Path, monkeypatch) -> None:
     window, _service, doc, host = _window_with_host(tmp_path)
     try:
