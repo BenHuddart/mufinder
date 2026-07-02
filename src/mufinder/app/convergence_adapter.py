@@ -19,7 +19,7 @@ from mufinder.castep_io.types import (
     ValueWithUnit,
 )
 from mufinder.domain.enums import WorkflowStage
-from mufinder.workflow.convergence import ConvergenceWorkflow
+from mufinder.workflow.convergence import ConvergenceWorkflow, expand_convergence_sweep_jobs
 from mufinder.workflow.merge import merge_templates, resolve_job
 from mufinder.workflow.naming import job_name
 from mufinder.workflow.types import (
@@ -330,8 +330,18 @@ def expand_convergence_jobs(
     stage, tags = _stage_and_tags_for_sweep(config.sweep_parameter)
 
     if not config.overrides:
-        workflow = build_convergence_workflow(structure=structure, config=config)
-        return workflow.expand()
+        workflow_defaults = _template_from_values(
+            config.shared_params, sweep_parameter=config.sweep_parameter
+        )
+        return expand_convergence_sweep_jobs(
+            structure=structure,
+            sweep_parameter=config.sweep_parameter,
+            sweep_values=unique_values,
+            name_prefix=config.name_prefix,
+            workflow_stage=stage,
+            workflow_defaults=workflow_defaults,
+            tags=tags,
+        )
 
     workflow_defaults = _template_from_values(config.shared_params, sweep_parameter=config.sweep_parameter)
 

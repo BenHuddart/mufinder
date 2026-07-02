@@ -5,7 +5,10 @@ from __future__ import annotations
 from mufinder.castep_io.types import KeywordAssignment, ValueWithUnit
 from mufinder.domain.models import Structure
 from mufinder.workflow.bridge import structure_to_spec
-from mufinder.workflow.convergence import ConvergenceWorkflow
+from mufinder.workflow.convergence import (
+    ConvergenceWorkflow,
+    expand_convergence_sweep_jobs,
+)
 from mufinder.workflow.types import InputTemplate, ParamTemplate
 
 
@@ -19,6 +22,17 @@ def _base_structure_spec() -> object:
     return structure_to_spec(structure)
 
 
+def _workflow_defaults() -> InputTemplate:
+    return InputTemplate(
+        param=ParamTemplate(
+            keywords=(
+                KeywordAssignment("task", "SINGLEPOINT"),
+                KeywordAssignment("xc_functional", "PBE"),
+            )
+        )
+    )
+
+
 def _find_value(keywords: tuple[KeywordAssignment, ...], name: str) -> object:
     for item in keywords:
         if item.name == name:
@@ -26,23 +40,14 @@ def _find_value(keywords: tuple[KeywordAssignment, ...], name: str) -> object:
     raise AssertionError(f"Keyword {name} missing")
 
 
-def test_convergence_workflow_expands_cutoff_sweep() -> None:
-    workflow = ConvergenceWorkflow(
+def test_expand_convergence_sweep_jobs_expands_cutoff_sweep() -> None:
+    jobs = expand_convergence_sweep_jobs(
         structure=_base_structure_spec(),
         sweep_parameter="cut_off_energy",
         sweep_values=[300.0, 360.0],
         name_prefix="conv",
-        workflow_defaults=InputTemplate(
-            param=ParamTemplate(
-                keywords=(
-                    KeywordAssignment("task", "SINGLEPOINT"),
-                    KeywordAssignment("xc_functional", "PBE"),
-                )
-            )
-        ),
+        workflow_defaults=_workflow_defaults(),
     )
-
-    jobs = workflow.expand()
 
     assert [job.name for job in jobs] == ["conv_ecut_300", "conv_ecut_360"]
     assert len(jobs) == 2
@@ -52,16 +57,29 @@ def test_convergence_workflow_expands_cutoff_sweep() -> None:
     assert first_cutoff.value == 300.0
 
 
-def test_convergence_workflow_rejects_empty_sweep() -> None:
-    workflow = ConvergenceWorkflow(
-        structure=_base_structure_spec(),
-        sweep_parameter="cut_off_energy",
-        sweep_values=[],
-    )
-
+def test_expand_convergence_sweep_jobs_rejects_empty_sweep() -> None:
     try:
-        workflow.expand()
+        expand_convergence_sweep_jobs(
+            structure=_base_structure_spec(),
+            sweep_parameter="cut_off_energy",
+            sweep_values=[],
+        )
     except ValueError as exc:
         assert "at least one sweep value" in str(exc)
     else:
         raise AssertionError("Expected ValueError for empty sweep")
+
+
+def test_convergence_workflow_shim_matches_function() -> None:
+    kwargs = dict(
+        structure=_base_structure_spec(),
+        sweep_parameter="cut_off_energy",
+        sweep_values=[300.0, 360.0],
+        name_prefix="conv",
+        workflow_defaults=_workflow_defaults(),
+    )
+
+    function_jobs = expand_convergence_sweep_jobs(**kwargs)
+    shim_jobs = ConvergenceWorkflow(**kwargs).expand()
+
+    assert shim_jobs == function_jobs
