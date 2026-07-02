@@ -13,6 +13,7 @@ from mufinder.domain.constants import MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 
+from ._common import require_jobs
 from .merge import compose_patch, resolve_job
 from .naming import job_name
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate, StructureSpec
@@ -168,8 +169,7 @@ def expand_quantum_singlepoint_jobs(
 ) -> list[JobSpec]:
     """Expand quantum-corrections singlepoint configurations into CASTEP jobs."""
 
-    if not jobs:
-        raise ValueError("At least one quantum singlepoint job must be configured.")
+    require_jobs(jobs, "quantum singlepoint job")
 
     resolved: list[JobSpec] = []
     for config in jobs:
@@ -234,8 +234,7 @@ def expand_quantum_phonon_jobs(
 ) -> list[JobSpec]:
     """Expand quantum-corrections phonon configurations into CASTEP jobs."""
 
-    if not jobs:
-        raise ValueError("At least one quantum phonon job must be configured.")
+    require_jobs(jobs, "quantum phonon job")
 
     resolved: list[JobSpec] = []
     for config in jobs:

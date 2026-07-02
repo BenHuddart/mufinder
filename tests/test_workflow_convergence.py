@@ -65,7 +65,7 @@ def test_expand_convergence_sweep_jobs_rejects_empty_sweep() -> None:
             sweep_values=[],
         )
     except ValueError as exc:
-        assert "at least one sweep value" in str(exc)
+        assert str(exc) == "At least one convergence sweep value must be configured."
     else:
         raise AssertionError("Expected ValueError for empty sweep")
 

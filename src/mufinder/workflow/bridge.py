@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 from mufinder.castep_io.types import AtomicPosition, LatticeCart, PositionBlock
 from mufinder.domain.models import Structure
 
+from ._common import has_nonzero_spins
 from .types import StructureSpec
 
 
 class StructureBridgeError(ValueError):
     """Raised when a Structure cannot be converted to a StructureSpec."""
-
-
-def _has_nonzero_spin(values: Sequence[float], *, tolerance: float = 1e-12) -> bool:
-    return any(abs(float(value)) > tolerance for value in values)
 
 
 def _as_vector3(values: list[float], *, label: str) -> tuple[float, float, float]:
@@ -104,13 +99,13 @@ def structure_to_spec(structure: Structure) -> StructureSpec:
         if (
             not isinstance(structure.properties.get("supercell_asset"), dict)
             and fallback_spins is not None
-            and not _has_nonzero_spin(parsed_spins)
-            and _has_nonzero_spin(fallback_spins)
+            and not has_nonzero_spins(parsed_spins)
+            and has_nonzero_spins(fallback_spins)
         ):
             atomic_spins = tuple(float(value) for value in fallback_spins)
         else:
             atomic_spins = parsed_spins
-    elif fallback_spins is not None and _has_nonzero_spin(fallback_spins):
+    elif fallback_spins is not None and has_nonzero_spins(fallback_spins):
         atomic_spins = tuple(float(value) for value in fallback_spins)
 
     unique_species = tuple(dict.fromkeys(structure.species))
