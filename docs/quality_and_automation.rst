@@ -15,17 +15,21 @@ All implemented and future functionality must satisfy these gates:
 Local commands
 --------------
 
-Install development dependencies:
+Install development dependencies (the ``scientific-backends`` extra is
+required by the test suite):
 
 .. code-block:: bash
 
-   python -m pip install -e ".[dev]"
+   python -m pip install -e ".[dev,scientific-backends]"
+   # or: uv sync --extra dev --extra scientific-backends
 
-Run tests with coverage gate:
+Run tests with coverage gate. Locally, cap parallelism at 4 workers and run
+in the foreground — each xdist worker loads Qt, and ``-n auto`` can exhaust
+the machine (CI uses ``-n auto``):
 
 .. code-block:: bash
 
-   python -m pytest -n auto --dist load
+   python -m pytest -n 4 --dist load
 
 Run only non-GUI tests during focused iteration:
 
@@ -83,7 +87,7 @@ Then run the full coverage-enabled suite before merge:
 
 .. code-block:: bash
 
-   python -m pytest -n auto --dist load
+   python -m pytest -n 4 --dist load
 
 Agent harness checks
 --------------------

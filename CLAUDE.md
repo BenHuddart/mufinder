@@ -49,22 +49,26 @@ These boundaries are enforced by `tests/test_agent_harness.py`. If a new depende
 
 All changes must satisfy:
 
-- Tests pass (`python -m pytest -n auto --dist load`)
+- Tests pass (`python -m pytest -n 4 --dist load` locally; CI uses `-n auto`)
 - Coverage ≥ 85% (enforced by pytest-cov)
 - Sphinx docs build with warnings as errors (`python -m sphinx -W -b html docs docs/_build/html`)
 
 ## Common local commands
 
 ```bash
-# Install dev dependencies (uv preferred; plain pip also works)
-uv sync --extra dev
-# or: python -m pip install -e ".[dev]"
+# Install dev dependencies (uv preferred; plain pip also works).
+# The scientific-backends extra is required by the test suite (soprano, mulfc).
+uv sync --extra dev --extra scientific-backends
+# or: python -m pip install -e ".[dev,scientific-backends]"
 
 # Run the GUI application
 python -m mufinder.main
 
-# Full test suite with coverage
-python -m pytest -n auto --dist load
+# Full test suite with coverage.
+# Locally, cap parallelism at 4 workers and run in the foreground — each xdist
+# worker loads Qt, and `-n auto` can exhaust the machine. Never run the full
+# suite as a background process you are not watching. CI uses `-n auto`.
+python -m pytest -n 4 --dist load
 
 # Run a single test file or function
 python -m pytest --no-cov tests/science/test_supercell.py
