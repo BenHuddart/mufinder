@@ -17,7 +17,13 @@ from .energy_barriers import (
     expand_nudged_elastic_band_jobs,
     position_block_from_structure,
 )
-from .merge import MERGE_PRECEDENCE_ORDER, merge_templates, merge_with_precedence, resolve_job
+from .merge import (
+    MERGE_PRECEDENCE_ORDER,
+    compose_patch,
+    merge_templates,
+    merge_with_precedence,
+    resolve_job,
+)
 from .muon_site import MuonSiteWorkflow, expand_muon_site_jobs
 from .naming import job_name
 from .output import write_job_directory, write_job_set, write_manifest
@@ -37,6 +43,7 @@ __all__ = [
     "RelaxationJobConfig",
     "StructureBridgeError",
     "StructureSpec",
+    "compose_patch",
     "NUDGED_ELASTIC_BAND_CALC_TYPE",
     "NUDGED_ELASTIC_BAND_SET_CALC_TYPE",
     "TRANSITION_STATE_SEARCH_CALC_TYPE",

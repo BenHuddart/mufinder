@@ -154,6 +154,31 @@ def merge_templates(*layers: InputTemplate | None) -> InputTemplate:
     return InputTemplate(cell=merged_cell, param=merged_param)
 
 
+def compose_patch(*templates: InputTemplate | None) -> InputTemplate:
+    """Compose the per-job patch layer of a function-based workflow.
+
+    A thin, documented wrapper over :func:`merge_templates` for building the
+    single ``sweep_overrides``/patch layer that an ``expand_*`` function feeds
+    into :func:`resolve_job`. The composition rule for a function-based
+    workflow is::
+
+        patch layer = compose_patch(workflow_base_template, config_overrides)
+
+    That is: the workflow-computed base template (e.g. ``task``/``continuation``
+    for relaxation, the ``tssearch_*`` keywords for NEB, or ``task``/``phonon``
+    keywords for quantum) is passed first, and the per-config
+    ``param_overrides``/``cell_overrides`` are passed last so they win on any
+    shared keyword. Because this whole result lands in the patch layer, the
+    workflow base template sits *above* the caller's ``workflow_defaults`` and
+    ``structure_defaults`` layers — that placement is intentional and preserved.
+
+    ``None`` templates (and ``None`` cell/param fields within them) are skipped,
+    so ``compose_patch(base)`` with no overrides simply returns ``base``.
+    """
+
+    return merge_templates(*templates)
+
+
 def merge_with_precedence(
     *,
     global_defaults: InputTemplate | None = None,

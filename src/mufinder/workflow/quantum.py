@@ -13,7 +13,7 @@ from mufinder.domain.constants import MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 
-from .merge import merge_templates, resolve_job
+from .merge import compose_patch, resolve_job
 from .naming import job_name
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate, StructureSpec
 
@@ -162,6 +162,7 @@ def expand_quantum_singlepoint_jobs(
     name_prefix: str,
     global_defaults: InputTemplate | None = None,
     workflow_defaults: InputTemplate | None = None,
+    structure_defaults: InputTemplate | None = None,
     user_overrides: InputTemplate | None = None,
     tags: tuple[str, ...] = (),
 ) -> list[JobSpec]:
@@ -179,11 +180,17 @@ def expand_quantum_singlepoint_jobs(
         structure = config.source.structure
         if is_muonium(config.source.charge_state):
             structure = _seed_muonium_spin(structure, config.muon_species)
+        # Singlepoint has no cell base template; its cell patch is the caller's
+        # cell_overrides alone.
+        patch_template = compose_patch(
+            InputTemplate(param=_singlepoint_param_base_template(config)),
+            InputTemplate(cell=config.cell_overrides, param=config.param_overrides),
+        )
         patch = JobPatch(
             label_suffix=label,
             structure=structure,
-            cell=config.cell_overrides,
-            param=_singlepoint_param_template(config),
+            cell=patch_template.cell,
+            param=patch_template.param,
         )
         resolved.append(
             resolve_job(
@@ -192,6 +199,7 @@ def expand_quantum_singlepoint_jobs(
                 workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
                 global_defaults=global_defaults,
                 workflow_defaults=workflow_defaults,
+                structure_defaults=structure_defaults,
                 patch=patch,
                 user_overrides=user_overrides,
                 tags=("quantum_corrections", "singlepoint", *tags),
@@ -220,6 +228,7 @@ def expand_quantum_phonon_jobs(
     name_prefix: str,
     global_defaults: InputTemplate | None = None,
     workflow_defaults: InputTemplate | None = None,
+    structure_defaults: InputTemplate | None = None,
     user_overrides: InputTemplate | None = None,
     tags: tuple[str, ...] = (),
 ) -> list[JobSpec]:
@@ -243,11 +252,15 @@ def expand_quantum_phonon_jobs(
         structure = config.source.structure
         if is_muonium(config.source.charge_state):
             structure = _seed_muonium_spin(structure, config.muon_species)
+        patch_template = compose_patch(
+            InputTemplate(cell=_cell_base_template(config), param=_param_base_template(config)),
+            InputTemplate(cell=config.cell_overrides, param=config.param_overrides),
+        )
         patch = JobPatch(
             label_suffix=label,
             structure=structure,
-            cell=_cell_template(config),
-            param=_param_template(config),
+            cell=patch_template.cell,
+            param=patch_template.param,
         )
         resolved.append(
             resolve_job(
@@ -256,6 +269,7 @@ def expand_quantum_phonon_jobs(
                 workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
                 global_defaults=global_defaults,
                 workflow_defaults=workflow_defaults,
+                structure_defaults=structure_defaults,
                 patch=patch,
                 user_overrides=user_overrides,
                 tags=("quantum_corrections", "phonon", *tags),
@@ -285,21 +299,17 @@ def expand_quantum_phonon_jobs(
     return resolved
 
 
-def _cell_template(config: QuantumPhononJobConfig) -> CellTemplate:
-    base = CellTemplate(
+def _cell_base_template(config: QuantumPhononJobConfig) -> CellTemplate:
+    return CellTemplate(
         extra_scalars=(KeywordAssignment("phonon_kpoint_mp_grid", (1, 1, 1)),),
         extra_blocks=(
             BlockSection("species_mass", ((config.muon_species, MUON_MASS_AMU),), unit="AMU"),
             BlockSection("species_gamma", ((config.muon_species, MUON_GAMMA_RAD_S_T),), unit="radsectesla"),
         ),
     )
-    if config.cell_overrides is None:
-        return base
-    merged = merge_templates(InputTemplate(cell=base), InputTemplate(cell=config.cell_overrides))
-    return merged.cell or base
 
 
-def _param_template(config: QuantumPhononJobConfig) -> ParamTemplate:
+def _param_base_template(config: QuantumPhononJobConfig) -> ParamTemplate:
     keywords = [
         KeywordAssignment("task", "PHONON"),
         KeywordAssignment("phonon_method", method_to_castep(config.method)),
@@ -314,14 +324,10 @@ def _param_template(config: QuantumPhononJobConfig) -> ParamTemplate:
     if is_muonium(config.source.charge_state):
         # Muonium is open-shell: default to spin-polarised (overridable via param_overrides).
         keywords.append(KeywordAssignment("spin_polarized", True))
-    base = ParamTemplate(keywords=tuple(keywords))
-    if config.param_overrides is None:
-        return base
-    merged = merge_templates(InputTemplate(param=base), InputTemplate(param=config.param_overrides))
-    return merged.param or base
+    return ParamTemplate(keywords=tuple(keywords))
 
 
-def _singlepoint_param_template(config: QuantumPhononJobConfig) -> ParamTemplate:
+def _singlepoint_param_base_template(config: QuantumPhononJobConfig) -> ParamTemplate:
     keywords = [KeywordAssignment("task", "SINGLEPOINT")]
     if config.source.charge_state:
         charge = 0 if is_muonium(config.source.charge_state) else 1
@@ -329,11 +335,7 @@ def _singlepoint_param_template(config: QuantumPhononJobConfig) -> ParamTemplate
     if is_muonium(config.source.charge_state):
         # Muonium is open-shell: default to spin-polarised (overridable via param_overrides).
         keywords.append(KeywordAssignment("spin_polarized", True))
-    base = ParamTemplate(keywords=tuple(keywords))
-    if config.param_overrides is None:
-        return base
-    merged = merge_templates(InputTemplate(param=base), InputTemplate(param=config.param_overrides))
-    return merged.param or base
+    return ParamTemplate(keywords=tuple(keywords))
 
 
 def _phonon_nonscf_eigenvalue_tol(config: QuantumPhononJobConfig) -> ValueWithUnit:

@@ -8,7 +8,7 @@ from typing import Any, Sequence
 from mufinder.castep_io.types import KeywordAssignment
 from mufinder.domain.enums import WorkflowStage
 
-from .merge import merge_templates, resolve_job
+from .merge import compose_patch, resolve_job
 from .naming import job_name
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate, StructureSpec
 
@@ -35,28 +35,12 @@ def _task_param_template() -> ParamTemplate:
     )
 
 
-def _cell_override_template(config: RelaxationJobConfig) -> CellTemplate:
+def _cell_base_template(config: RelaxationJobConfig) -> CellTemplate:
     scalars = [KeywordAssignment("fix_all_cell", bool(config.fix_all_cell))]
-    base = CellTemplate(
+    return CellTemplate(
         kpoint_mp_grid=(tuple(int(value) for value in config.kpoint_grid) if config.kpoint_grid is not None else None),
         extra_scalars=tuple(scalars),
     )
-    if config.cell_overrides is None:
-        return base
-
-    merged = merge_templates(
-        InputTemplate(cell=base),
-        InputTemplate(cell=config.cell_overrides),
-    )
-    return merged.cell or base
-
-
-def _param_override_template(config: RelaxationJobConfig) -> ParamTemplate:
-    merged = merge_templates(
-        InputTemplate(param=_task_param_template()),
-        InputTemplate(param=config.param_overrides),
-    )
-    return merged.param or _task_param_template()
 
 
 def expand_relaxation_jobs(
@@ -65,6 +49,7 @@ def expand_relaxation_jobs(
     name_prefix: str,
     global_defaults: InputTemplate | None = None,
     workflow_defaults: InputTemplate | None = None,
+    structure_defaults: InputTemplate | None = None,
     user_overrides: InputTemplate | None = None,
     tags: tuple[str, ...] = (),
 ) -> list[JobSpec]:
@@ -79,11 +64,15 @@ def expand_relaxation_jobs(
         if not suffix:
             raise ValueError("Pristine-relaxation job labels must not be empty.")
 
+        patch_template = compose_patch(
+            InputTemplate(cell=_cell_base_template(config), param=_task_param_template()),
+            InputTemplate(cell=config.cell_overrides, param=config.param_overrides),
+        )
         patch = JobPatch(
             label_suffix=suffix,
             structure=config.structure,
-            cell=_cell_override_template(config),
-            param=_param_override_template(config),
+            cell=patch_template.cell,
+            param=patch_template.param,
         )
 
         resolved.append(
@@ -93,6 +82,7 @@ def expand_relaxation_jobs(
                 workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
                 global_defaults=global_defaults,
                 workflow_defaults=workflow_defaults,
+                structure_defaults=structure_defaults,
                 patch=patch,
                 user_overrides=user_overrides,
                 tags=tags,
