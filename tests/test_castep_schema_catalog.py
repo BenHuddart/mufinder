@@ -8,6 +8,16 @@ from pathlib import Path
 import pytest
 
 from mufinder.assets import starter_keyword_catalog_path
+from mufinder.castep_io import (
+    AtomicPosition,
+    CellFile,
+    KeywordAssignment,
+    LatticeCart,
+    ParamFile,
+    PositionBlock,
+    write_cell,
+    write_param,
+)
 import mufinder.castep_io.schema as schema_module
 from mufinder.castep_io.schema import (
     CatalogSourceInfo,
@@ -16,6 +26,7 @@ from mufinder.castep_io.schema import (
     get_keyword_spec,
     keyword_catalog_source_info,
     refresh_keyword_catalog,
+    serialization_order,
 )
 
 
@@ -122,3 +133,88 @@ def test_refresh_keyword_catalog_stays_strict_without_fallback_when_missing(
     finally:
         schema_module._candidate_catalog_sources = original_candidate_sources
         refresh_keyword_catalog(allow_fallback=True)
+
+
+def _stub_param_catalog(order: tuple[str, ...]) -> str:
+    entries = ", ".join(
+        f'"{name}": {{"option_type": "String", "level": "Basic", "docstring": "Example"}}'
+        for name in order
+    )
+    return (
+        "{\n"
+        '  "castep_version": "test",\n'
+        '  "cell": {},\n'
+        f'  "param": {{{entries}}}\n'
+        "}\n"
+    )
+
+
+def test_param_writer_follows_serialization_order_after_runtime_refresh(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """write_param must reflect a catalog order set by a *runtime* refresh, not a stale copy.
+
+    Regression for the writers binding ``PARAM_SERIALIZATION_ORDER`` by value at import time:
+    reconfiguring the CASTEP location at runtime reassigns the module global, and the writer
+    must pick up the new order rather than the order discovered when it was first imported.
+    """
+
+    # Input order is the opposite of the first catalog order, so a stale by-value binding
+    # (under which neither keyword is found and both fall through to write_param's
+    # input-order tail) renders them in input order and fails the very first assertion.
+    param_file = ParamFile(
+        keywords=(
+            KeywordAssignment("beta", "B"),
+            KeywordAssignment("alpha", "A"),
+        )
+    )
+
+    first = tmp_path / "first.json"
+    first.write_text(_stub_param_catalog(("alpha", "beta")), encoding="utf-8")
+    monkeypatch.setenv("MUFINDER_CASTEP_KEYWORDS_JSON", str(first))
+    refresh_keyword_catalog()
+    order = serialization_order("param")
+    assert order.index("alpha") < order.index("beta")
+    assert write_param(param_file).splitlines() == ["ALPHA : A", "BETA : B"]
+
+    second = tmp_path / "second.json"
+    second.write_text(_stub_param_catalog(("beta", "alpha")), encoding="utf-8")
+    monkeypatch.setenv("MUFINDER_CASTEP_KEYWORDS_JSON", str(second))
+    refresh_keyword_catalog()
+    order = serialization_order("param")
+    assert order.index("beta") < order.index("alpha")
+    assert write_param(param_file).splitlines() == ["BETA : B", "ALPHA : A"]
+
+
+def test_cell_writer_follows_serialization_order_after_runtime_refresh(
+    monkeypatch,
+) -> None:
+    """write_cell must consult the live serialization order after a runtime refresh."""
+
+    cell_file = CellFile(
+        lattice_cart=LatticeCart(
+            vectors=((5.43, 0.0, 0.0), (0.0, 5.43, 0.0), (0.0, 0.0, 5.43)),
+            unit="ang",
+        ),
+        positions_frac=PositionBlock(positions=(AtomicPosition("Si", (0.0, 0.0, 0.0)),)),
+        kpoint_mp_grid=(4, 4, 4),
+    )
+
+    default_lines = write_cell(cell_file).splitlines()
+    default_lattice = next(i for i, line in enumerate(default_lines) if line == "%BLOCK LATTICE_CART")
+    default_grid = next(i for i, line in enumerate(default_lines) if line.startswith("KPOINT_MP_GRID"))
+    assert default_lattice < default_grid
+
+    # Simulate the module-global reassignment that refresh_keyword_catalog performs, moving
+    # kpoint_mp_grid ahead of lattice_cart. The autouse conftest fixture restores the global.
+    reordered = (
+        "kpoint_mp_grid",
+        *(name for name in serialization_order("cell") if name != "kpoint_mp_grid"),
+    )
+    monkeypatch.setattr(schema_module, "CELL_SERIALIZATION_ORDER", reordered)
+
+    reordered_lines = write_cell(cell_file).splitlines()
+    reordered_lattice = next(i for i, line in enumerate(reordered_lines) if line == "%BLOCK LATTICE_CART")
+    reordered_grid = next(i for i, line in enumerate(reordered_lines) if line.startswith("KPOINT_MP_GRID"))
+    assert reordered_grid < reordered_lattice

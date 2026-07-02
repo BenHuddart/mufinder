@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .schema import PARAM_SERIALIZATION_ORDER, canonical_keyword_name
+from .schema import canonical_keyword_name, serialization_order
 from .types import BlockSection, KeywordAssignment, ParamFile, ValueWithUnit
 from .validators import validate_param_file
 
@@ -12,7 +12,7 @@ def write_param(param_file: ParamFile) -> str:
 
     validate_param_file(param_file)
 
-    ordered_names = list(PARAM_SERIALIZATION_ORDER)
+    ordered_names = list(serialization_order("param"))
     seen_indexes: set[int] = set()
     lines: list[str] = []
 

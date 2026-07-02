@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .schema import CELL_SERIALIZATION_ORDER, canonical_keyword_name, get_keyword_spec
+from .schema import canonical_keyword_name, get_keyword_spec, serialization_order
 from .types import BlockSection, CellFile, KeywordAssignment, ValueWithUnit
 from .validators import validate_cell_file
 
@@ -13,7 +13,7 @@ def write_cell(cell_file: CellFile) -> str:
     validate_cell_file(cell_file)
 
     sections: list[str] = []
-    for name in CELL_SERIALIZATION_ORDER:
+    for name in serialization_order("cell"):
         rendered = _render_known_section(cell_file, name)
         if rendered is not None:
             sections.append(rendered)

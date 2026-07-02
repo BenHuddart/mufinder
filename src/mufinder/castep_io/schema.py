@@ -1158,6 +1158,30 @@ def keyword_sort_key(file: FileKind, name: str) -> tuple[int, str]:
     return (SERIALIZATION_INDEX[file].get(canonical, 1_000_000), canonical)
 
 
+def serialization_order(file: FileKind) -> tuple[str, ...]:
+    """Return the current keyword serialization order for a CASTEP file kind.
+
+    Consumers must call this rather than importing ``CELL_SERIALIZATION_ORDER`` /
+    ``PARAM_SERIALIZATION_ORDER`` by value at import time: those module globals are
+    reassigned by :func:`refresh_keyword_catalog`, so a value-bound copy would keep the
+    stale order after a runtime catalog refresh (e.g. reconfiguring the CASTEP location).
+    """
+
+    return CELL_SERIALIZATION_ORDER if file == "cell" else PARAM_SERIALIZATION_ORDER
+
+
+def keyword_specs(file: FileKind) -> dict[str, KeywordSpec]:
+    """Return the live mapping of canonical keyword name to spec for a file kind.
+
+    Like :func:`serialization_order`, this exists so consumers read the current schema
+    instead of importing the ``SCHEMA`` / ``CELL_KEYWORDS`` / ``PARAM_KEYWORDS`` globals by
+    value: :func:`refresh_keyword_catalog` reassigns those, so a value-bound copy would go
+    stale after a runtime catalog refresh.
+    """
+
+    return SCHEMA[file]
+
+
 def keyword_catalog_source_info() -> CatalogSourceInfo | None:
     """Return how the active keyword catalog was located."""
 

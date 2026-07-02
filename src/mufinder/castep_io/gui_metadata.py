@@ -5,13 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 from .schema import (
-    CELL_SERIALIZATION_ORDER,
-    PARAM_SERIALIZATION_ORDER,
     FileKind,
     KeywordSpec,
-    SCHEMA,
     canonical_keyword_name,
     keyword_sort_key,
+    keyword_specs,
 )
 from .types import BlockSection, KeywordAssignment, ValueWithUnit
 from .validators import CastepValidationError, validate_keyword_value
@@ -73,12 +71,6 @@ def infer_task(workflow_stage: str) -> str:
     return WORKFLOW_TASK_MAP.get(normalized, "SINGLEPOINT")
 
 
-def _ordered_names(file: FileKind) -> tuple[str, ...]:
-    if file == "cell":
-        return CELL_SERIALIZATION_ORDER
-    return PARAM_SERIALIZATION_ORDER
-
-
 def get_gui_keyword_specs(
     *,
     file: FileKind,
@@ -87,7 +79,7 @@ def get_gui_keyword_specs(
 ) -> list[KeywordSpec]:
     """Return keyword specs visible for a given workflow and mode."""
 
-    schema = SCHEMA[file]
+    schema = keyword_specs(file)
     visible_names = [
         name
         for name, spec in schema.items()
