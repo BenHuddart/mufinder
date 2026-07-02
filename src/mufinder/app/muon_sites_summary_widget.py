@@ -265,6 +265,9 @@ class _ChargeStatePanel(QFrame):
 
         signature = (
             str(snapshot.get("workspace_id", "")).strip(),
+            # Include the workspace name so a rename (same sites) still refreshes
+            # the "Source analysis" summary row rather than hitting the early return.
+            str(snapshot.get("workspace_name", "")).strip(),
             # Fingerprint the host geometry that feeds the preview, not just its
             # id: a host edited in place (same id, new lattice/species/positions)
             # must invalidate the cache so the 3D view is not left stale.

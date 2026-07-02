@@ -194,6 +194,28 @@ def test_summary_repopulates_when_host_edited_in_place(qapp) -> None:
         widget.deleteLater()
 
 
+def test_summary_updates_source_label_on_workspace_rename(qapp) -> None:
+    host = _host_structure()
+    widget = MuonSitesSummaryWidget()
+    try:
+        snap = _snapshot("ws-1", host)
+        widget.set_panel(
+            POSITIVE_MUON_CHARGE_STATE, snapshot=snap, host_structure=host, placeholder_message="x"
+        )
+        panel = widget._panels[POSITIVE_MUON_CHARGE_STATE]
+        assert "Positive muon analysis" in panel._summary_labels["Source analysis"].text()
+        # Rename the source workspace but keep the same clustered sites; the
+        # dirty check must still refresh the "Source analysis" summary row.
+        renamed = dict(snap)
+        renamed["workspace_name"] = "Renamed analysis"
+        widget.set_panel(
+            POSITIVE_MUON_CHARGE_STATE, snapshot=renamed, host_structure=host, placeholder_message="x"
+        )
+        assert "Renamed analysis" in panel._summary_labels["Source analysis"].text()
+    finally:
+        widget.deleteLater()
+
+
 def test_summary_row_click_emits_focus_site(qapp) -> None:
     host = _host_structure()
     widget = MuonSitesSummaryWidget()
