@@ -471,6 +471,42 @@ generation and defect-style candidate enumeration, see the
 ``pymuon-suite`` AIRSS/UEP workflow material referenced in the UEP workflow
 documentation.
 
+Muon Sites summary page
+-----------------------
+
+The parent ``Muon Sites`` workflow node now opens a dedicated summary page that
+presents the headline result of the muon-site workflow: the distinct,
+symmetry-inequivalent candidate stopping sites. The page includes:
+
+- Two horizontally arranged notebook-style cards, one per charge state
+  (``Positive muon`` and ``Muonium``), each holding one pinned analysis.
+- A ranked sites table per card ordered by relative energy (lowest first),
+  showing the relative energy, representative fractional position, and Wyckoff
+  label for each distinct clustered site.
+- A 3D preview per card rendering the host structure with the pinned muon sites
+  overlaid as ``H:mu`` atoms.
+- A ``Pin to summary`` action added to each structural-relaxation analysis
+  workspace that snapshots the workspace's distinct clustered sites into the
+  matching charge-state card. Pinning requires that clustering has been run.
+- Navigation from the summary back into the live analysis: an
+  ``Open in Analysis`` button jumps to the source workspace, while clicking a
+  site row or a muon in the 3D preview reveals that specific cluster. When the
+  pinned snapshot's source workspace or cluster no longer exists, MuFinder
+  opens the Analysis tab and reports that the pinned analysis has changed.
+- An adaptive, always-enabled card action rather than a disabled control: it
+  reads ``Open in Analysis`` when a card is populated and ``Go to Analysis``
+  when empty, so an unpinned card still routes the user to the Analysis tab.
+- An ``Unpin`` action that clears a charge state's pinned snapshot.
+- Safe placeholder fallback when nothing is pinned, or when a persisted snapshot
+  no longer matches the current host structure.
+- Persisted summary snapshot state in
+  ``ui_state["muon_sites_summary_snapshots"]``, keyed by charge state and
+  decoupled from the live analysis workspaces (mirroring the convergence
+  overview snapshot design).
+
+The previous placeholder ``Confirmed Sites`` child page, which had no behaviour,
+has been removed in favour of this summary page.
+
 UEP clustering analysis
 -----------------------
 
