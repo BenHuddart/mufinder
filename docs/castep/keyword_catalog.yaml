@@ -90,6 +90,22 @@ keywords:
       %ENDBLOCK POSITIONS_FRAC_PRODUCT
     notes: Product-state fractional positions for CASTEP transition-state searches. MuFinder generates this from the selected product relaxed structure and does not expose it in parameter dialogs.
 
+  - name: POSITIONS_FRAC_INTERMEDIATE
+    canonical_name: positions_frac_intermediate
+    file: cell
+    kind: block
+    value_type: positions_block
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: |
+      %BLOCK POSITIONS_FRAC_INTERMEDIATE
+      Fe 0 0 0 SPIN=2
+      Fe 0.25 0.5 0.5 SPIN=-2
+      %ENDBLOCK POSITIONS_FRAC_INTERMEDIATE
+    notes: Intermediate-image fractional positions for CASTEP NEB transition-state searches. MuFinder generates this as the IDPP-seeded central image between the two relaxed endpoints and does not expose it in parameter dialogs.
+
   - name: POSITIONS_ABS_PRODUCT
     canonical_name: positions_abs_product
     file: cell
@@ -909,7 +925,7 @@ keywords:
     canonical_name: tssearch_force_tol
     file: param
     kind: scalar
-    value_type: positive_float_with_optional_unit
+    value_type: physical
     unit: eV/ang
     allowed_values: []
     mutually_exclusive_with: []
@@ -964,6 +980,85 @@ keywords:
     requires: []
     example: TSSEARCH_NEB_MAX_ITER : 20
     notes: Maximum NEB optimization cycles for transition-state searches.
+
+  - name: TSSEARCH_MAX_PATH_POINTS
+    canonical_name: tssearch_max_path_points
+    file: param
+    kind: scalar
+    value_type: positive_int
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_MAX_PATH_POINTS : 11
+    notes: Number of images (beads) along the transition-state path. Climbing-image NEB requires an odd value.
+
+  - name: TSSEARCH_NEB_SPRING_CONSTANT
+    canonical_name: tssearch_neb_spring_constant
+    file: param
+    kind: scalar
+    value_type: physical
+    unit: eV/ang**2
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_NEB_SPRING_CONSTANT : 100.0 eV/ang**2
+    notes: Spring constant coupling adjacent beads in an NEB search.
+
+  - name: TSSEARCH_NEB_METHOD
+    canonical_name: tssearch_neb_method
+    file: param
+    kind: scalar
+    value_type: enum
+    unit:
+    allowed_values:
+      - GRAD_BB
+      - FIRE
+      - ODE12R
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_NEB_METHOD : ODE12R
+    notes: Optimizer used to relax the NEB band.
+
+  - name: TSSEARCH_NEB_TANGENT_MODE
+    canonical_name: tssearch_neb_tangent_mode
+    file: param
+    kind: scalar
+    value_type: enum
+    unit:
+    allowed_values:
+      - NONE
+      - BISECT
+      - HIGH_E
+      - SPLINE
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_NEB_TANGENT_MODE : SPLINE
+    notes: Scheme used to estimate the path tangent between NEB beads.
+
+  - name: TSSEARCH_NEB_CLIMBING
+    canonical_name: tssearch_neb_climbing
+    file: param
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_NEB_CLIMBING : TRUE
+    notes: When TRUE the central bead climbs to the saddle point; TSSEARCH_MAX_PATH_POINTS must be odd.
+
+  - name: TSSEARCH_NEB_NORMED
+    canonical_name: tssearch_neb_normed
+    file: param
+    kind: scalar
+    value_type: bool
+    unit:
+    allowed_values: [TRUE, FALSE]
+    mutually_exclusive_with: []
+    requires: []
+    example: TSSEARCH_NEB_NORMED : TRUE
+    notes: When TRUE the NEB spring forces are normalized.
 
   - name: NUM_FARMS
     canonical_name: num_farms

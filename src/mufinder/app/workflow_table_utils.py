@@ -16,6 +16,10 @@ def create_workflow_table(
     table = QTableWidget(0, len(headers))
     table.setHorizontalHeaderLabels(list(headers))
     table.setFrameShape(QFrame.Shape.NoFrame)
+    # Long values (file paths, labels) must elide instead of wrapping, so
+    # resizeRowsToContents() cannot balloon row heights.
+    table.setWordWrap(False)
+    table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
     table.setAlternatingRowColors(True)
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

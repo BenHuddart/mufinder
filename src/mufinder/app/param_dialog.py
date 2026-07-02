@@ -567,7 +567,11 @@ class ParameterDialog(QDialog):
             locked = self._is_locked_name(name)
             editor: ParamEditorBase | None = None
             if locked:
-                value_text = self._locked_values.get(name, "Variable (set by workflow)")
+                raw_locked = self._locked_values.get(name, "Variable (set by workflow)")
+                if isinstance(raw_locked, bool):
+                    value_text = "TRUE" if raw_locked else "FALSE"
+                else:
+                    value_text = str(raw_locked)
                 value_widget: QWidget = QLabel(value_text, self._table_widget)
                 value_widget.setEnabled(False)
             else:

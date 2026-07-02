@@ -5,6 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from ase.units import Hartree
+
+# CASTEP writes `.ts` energies in atomic units (Hartree); we expose eV downstream.
+# Reuse ase's CODATA conversion (ase is a hard project dependency) rather than
+# keeping a second hard-coded copy of the constant.
+HARTREE_TO_EV = Hartree
+
 
 class TransitionStateParseError(ValueError):
     """Raised when a CASTEP `.ts` file cannot be parsed."""
@@ -17,7 +24,7 @@ class TransitionStateImage:
     label: str
     iteration: int
     reaction_coordinate: float
-    energy: float
+    energy: float  # eV (converted from the Hartree value stored in the `.ts` file)
     lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
     species: tuple[str, ...]
     cartesian_positions: tuple[tuple[float, float, float], ...]
@@ -89,7 +96,7 @@ def _parse_images(lines: list[str]) -> list[TransitionStateImage]:
                 continue
             if "<-- E" in content:
                 try:
-                    energy = float(stripped.split()[0])
+                    energy = float(stripped.split()[0]) * HARTREE_TO_EV
                 except ValueError as exc:
                     raise TransitionStateParseError("Invalid energy entry in CASTEP `.ts` file.") from exc
                 index += 1

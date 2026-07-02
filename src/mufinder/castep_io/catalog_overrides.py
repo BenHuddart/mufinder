@@ -258,6 +258,15 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
             "advanced_workflows": (),
             "notes": "Energy-barrier workflows generate this block from the selected product structure and path.",
         },
+        "positions_frac_intermediate": {
+            "label": "Intermediate Fractional Positions",
+            "description": "Intermediate-image atomic positions for transition-state searches.",
+            "category": "structure",
+            "widget_hint": "block",
+            "basic_workflows": (),
+            "advanced_workflows": (),
+            "notes": "Energy-barrier NEB workflows generate this block as the IDPP-seeded central image between the endpoints.",
+        },
         "positions_abs_product": {
             "label": "Product Cartesian Positions",
             "description": "Final-state Cartesian positions for transition-state searches.",

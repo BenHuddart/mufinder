@@ -501,7 +501,6 @@ def test_main_window_routes_to_quantum_view_and_construction_placeholders(qapp, 
     assert tabs is not None
     assert [tabs.tabText(index) for index in range(tabs.count())] == [
         "Paths",
-        "Transition States",
         "NEB Analysis",
     ]
     window.close()
@@ -925,35 +924,29 @@ def test_main_window_quantum_corrections_hides_fine_cutoff_from_default_rows(qap
 def test_main_window_energy_barriers_hides_fine_cutoff_from_default_rows(qapp) -> None:
     window = MainWindow()
 
-    source_dialog = ParameterDialog(
-        specs=window._energy_barrier_source_parameter_specs(),
-        workflow_stage="energy_barriers",
-        locked_values={"task": "TRANSITIONSTATESEARCH", "tssearch_method": "LSTQST"},
-    )
+    # Mirror the locked values the real NEB configure handler passes, including the
+    # locked climbing flag (a non-string locked value must not crash dialog construction).
     neb_dialog = ParameterDialog(
         specs=window._energy_barrier_neb_parameter_specs(),
         workflow_stage="energy_barriers",
-        locked_values={"task": "TRANSITIONSTATESEARCH", "tssearch_method": "NEB"},
+        locked_values={
+            "task": "TRANSITIONSTATESEARCH",
+            "tssearch_method": "NEB",
+            "tssearch_neb_climbing": "TRUE",
+        },
     )
 
-    assert "fine_cut_off_energy" not in source_dialog._visible_names()
     assert "fine_cut_off_energy" not in neb_dialog._visible_names()
-    assert "fine_cut_off_energy" in {spec.name for spec in source_dialog._available_advanced_specs()}
     assert "fine_cut_off_energy" in {spec.name for spec in neb_dialog._available_advanced_specs()}
-    assert source_dialog._visible_names()[:4] == [
-        "basis_precision",
-        "cut_off_energy",
-        "elec_energy_tol",
-        "kpoint_mp_grid",
-    ]
     assert neb_dialog._visible_names()[:4] == [
         "basis_precision",
         "cut_off_energy",
         "elec_energy_tol",
         "kpoint_mp_grid",
     ]
+    # Climbing is locked on and shown as a fixed row.
+    assert "tssearch_neb_climbing" in neb_dialog._visible_names()
 
-    source_dialog.close()
     neb_dialog.close()
     window.close()
 
@@ -1148,107 +1141,6 @@ def test_main_window_quantum_corrections_allows_editing_eligible_site_name(qapp,
     window.close()
 
 
-def test_main_window_materializes_energy_barrier_jobs_from_relaxed_sources(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "barrier_doc.mufinder", "Barriers")
-    window._document = doc
-    doc.project.recommended_cutoff_energy = 700.0
-    doc.project.recommended_kpoint_grid = (3, 1, 1)
-
-    host = Structure(
-        label="host",
-        origin="imported",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
-    )
-    doc.structures[host.id] = host
-    doc.project.host_structure_id = host.id
-
-    relaxed_a = Structure(
-        label="siteA relaxed",
-        origin="muon_relaxation",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si", "H:mu"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
-        parent_structure_id=host.id,
-        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
-    )
-    relaxed_b = Structure(
-        label="siteB relaxed",
-        origin="muon_relaxation",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si", "H:mu"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
-        parent_structure_id=host.id,
-        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
-    )
-    doc.structures[relaxed_a.id] = relaxed_a
-    doc.structures[relaxed_b.id] = relaxed_b
-
-    job_a = Job(
-        label="mu-site-a",
-        workflow_stage=WorkflowStage.MUON_RELAXATION,
-        calc_type="castep_positivemuon_relaxation",
-        status=JobStatus.COMPLETED,
-    )
-    job_b = Job(
-        label="mu-site-b",
-        workflow_stage=WorkflowStage.MUON_RELAXATION,
-        calc_type="castep_positivemuon_relaxation",
-        status=JobStatus.COMPLETED,
-    )
-    doc.jobs[job_a.id] = job_a
-    doc.jobs[job_b.id] = job_b
-    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
-    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
-    result_a = Result(
-        calculation_run_id=run_a.id,
-        result_type=job_a.calc_type,
-        data={"total_energy": -1.0},
-        derived_structure_ids=[relaxed_a.id],
-    )
-    result_b = Result(
-        calculation_run_id=run_b.id,
-        result_type=job_b.calc_type,
-        data={"total_energy": -0.9},
-        derived_structure_ids=[relaxed_b.id],
-    )
-    run_a.result_id = result_a.id
-    run_b.result_id = result_b.id
-    doc.runs[run_a.id] = run_a
-    doc.runs[run_b.id] = run_b
-    doc.results[result_a.id] = result_a
-    doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
-    doc.sites[site_a.id] = site_a
-    doc.sites[site_b.id] = site_b
-
-    window._ensure_energy_barriers_view()
-    window._refresh_energy_barriers_view()
-    assert window._energy_barriers_view._sources_table.rowCount() == 0
-
-    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
-    candidates = window._eligible_energy_barrier_source_candidates()
-
-    assert candidates
-    jobs = window._materialize_energy_barriers_jobs([candidates[0].key])
-
-    assert len(jobs) == 1
-    assert jobs[0].calc_type == TRANSITION_STATE_SEARCH_CALC_TYPE
-    output_dir = window._job_output_directory(jobs[0])
-    assert output_dir is not None
-    cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
-    param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
-    assert "%BLOCK POSITIONS_FRAC_PRODUCT" in cell_text
-    assert "KPOINT_MP_GRID 3 1 1" in cell_text
-    assert "TASK : TRANSITIONSTATESEARCH" in param_text
-    assert "CUT_OFF_ENERGY : 700" in param_text
-    assert "TSSEARCH_METHOD : LSTQST" in param_text
-
-
 def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_preview(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1329,23 +1221,23 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
 
     window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
     candidate = window._eligible_energy_barrier_source_candidates()[0]
-    definition = window._ensure_energy_barriers_definition([candidate.key])
-    assert definition is not None
-    definition.parameters["configuration"]["row_settings"] = {
+    neb_definition = window._ensure_energy_barrier_neb_definition([candidate.key])
+    assert neb_definition is not None
+    neb_definition.parameters["configuration"]["row_settings"] = {
         candidate.key: {
             "parameter_values": {
                 "kpoint_mp_grid": [2, 1, 1],
-                "tssearch_qst_max_iter": 12,
+                "tssearch_neb_max_iter": 18,
             }
         }
     }
 
     window._ensure_energy_barriers_view()
     window._refresh_energy_barriers_view()
-    configure_button = window._energy_barriers_view._sources_table.cellWidget(0, 6)
+    configure_button = window._energy_barriers_view._sources_table.cellWidget(0, 5)
     assert configure_button.text() == "Configured..."
 
-    jobs = window._materialize_energy_barriers_jobs([candidate.key])
+    jobs = window._materialize_energy_barrier_neb_jobs([candidate.key])
 
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
@@ -1353,7 +1245,7 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
     cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
     param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
     assert "KPOINT_MP_GRID 2 1 1" in cell_text
-    assert "TSSEARCH_QST_MAX_ITER : 12" in param_text
+    assert "TSSEARCH_NEB_MAX_ITER : 18" in param_text
 
     opened: dict[str, object] = {}
 
@@ -1376,108 +1268,6 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
     assert opened["structure"].origin == "energy_barriers_path_preview"
     assert opened["start_fractional"] == candidate.path.start_fractional
     assert opened["end_fractional"] == candidate.path.end_fractional
-
-
-def test_main_window_applies_energy_barrier_batch_configuration(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    window = MainWindow()
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "barrier_batch_config_doc.mufinder", "BarrierBatchConfig")
-    window._document = doc
-
-    host = Structure(
-        label="host",
-        origin="imported",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
-    )
-    doc.structures[host.id] = host
-    doc.project.host_structure_id = host.id
-
-    relaxed_a = Structure(
-        label="siteA relaxed",
-        origin="muon_relaxation",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si", "H:mu"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
-        parent_structure_id=host.id,
-        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
-    )
-    relaxed_b = Structure(
-        label="siteB relaxed",
-        origin="muon_relaxation",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si", "H:mu"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
-        parent_structure_id=host.id,
-        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value, "atomic_spins": [1.0, -1.0, 0.0]},
-    )
-    doc.structures[relaxed_a.id] = relaxed_a
-    doc.structures[relaxed_b.id] = relaxed_b
-
-    job_a = Job(
-        label="mu-site-a",
-        workflow_stage=WorkflowStage.MUON_RELAXATION,
-        calc_type="castep_positivemuon_relaxation",
-        status=JobStatus.COMPLETED,
-    )
-    job_b = Job(
-        label="mu-site-b",
-        workflow_stage=WorkflowStage.MUON_RELAXATION,
-        calc_type="castep_positivemuon_relaxation",
-        status=JobStatus.COMPLETED,
-    )
-    doc.jobs[job_a.id] = job_a
-    doc.jobs[job_b.id] = job_b
-    run_a = CalculationRun(job_id=job_a.id, status=JobStatus.COMPLETED, convergence_achieved=True)
-    run_b = CalculationRun(job_id=job_b.id, status=JobStatus.COMPLETED, convergence_achieved=True)
-    result_a = Result(
-        calculation_run_id=run_a.id,
-        result_type=job_a.calc_type,
-        data={"total_energy": -1.0},
-        derived_structure_ids=[relaxed_a.id],
-    )
-    result_b = Result(
-        calculation_run_id=run_b.id,
-        result_type=job_b.calc_type,
-        data={"total_energy": -0.9},
-        derived_structure_ids=[relaxed_b.id],
-    )
-    run_a.result_id = result_a.id
-    run_b.result_id = result_b.id
-    doc.runs[run_a.id] = run_a
-    doc.runs[run_b.id] = run_b
-    doc.results[result_a.id] = result_a
-    doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
-    doc.sites[site_a.id] = site_a
-    doc.sites[site_b.id] = site_b
-
-    window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
-    candidates = window._eligible_energy_barrier_source_candidates()[:2]
-    assert len(candidates) == 2
-
-    monkeypatch.setattr(
-        main_window_module.ParameterDialog,
-        "exec",
-        lambda _self: main_window_module.QDialog.DialogCode.Accepted,
-    )
-    monkeypatch.setattr(
-        main_window_module.ParameterDialog,
-        "collect_values",
-        lambda _self: {"task": "TRANSITIONSTATESEARCH", "tssearch_qst_max_iter": 14},
-    )
-    monkeypatch.setattr(main_window_module.ParameterDialog, "advanced_names", lambda _self: ())
-
-    window._on_configure_energy_barrier_source([candidate.key for candidate in candidates])
-
-    definition = window._active_energy_barriers_definition()
-    assert definition is not None
-    row_settings = definition.parameters["configuration"]["row_settings"]
-    for candidate in candidates:
-        assert row_settings[candidate.key]["parameter_values"]["tssearch_qst_max_iter"] == 14
-    window.close()
 
 
 def test_main_window_energy_barrier_paths_persist_when_endpoint_selection_changes(qapp, tmp_path: Path) -> None:
@@ -1672,7 +1462,7 @@ def test_main_window_energy_barrier_defaults_apply_equivalent_density_kpoints_fo
     window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
     candidate = window._eligible_energy_barrier_source_candidates()[0]
 
-    jobs = window._materialize_energy_barriers_jobs([candidate.key])
+    jobs = window._materialize_energy_barrier_neb_jobs([candidate.key])
 
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
@@ -1775,10 +1565,10 @@ def test_main_window_energy_barriers_view_loads_with_existing_state(qapp, tmp_pa
     candidates = window2._eligible_energy_barrier_source_candidates()
     assert len(candidates) > 0
 
-    # Configure dialog values must be gettable without error.
-    definition = window2._active_energy_barriers_definition()
+    # NEB configure dialog values must be gettable without error.
+    definition = window2._active_energy_barrier_neb_definition()
     for candidate in candidates:
-        values, _advanced, _extras = window2._energy_barrier_row_configuration_with_source_defaults(
+        values, _advanced, _extras = window2._workflow_row_configuration_with_project_defaults(
             definition,
             candidate.key,
             target_lattice=candidate.reactant.structure.lattice_vectors,
@@ -1872,7 +1662,7 @@ def test_main_window_energy_barrier_strips_legacy_tss_params_from_stored_config(
     # Simulate legacy stored config as it would have been written by the old TSS dialog:
     # tssearch_force/disp/energy_tol stored as 0 with cross-reference unit strings,
     # and tssearch_lst_max_iter present as an obsolete keyword.
-    definition = window._ensure_energy_barriers_definition([candidate.key])
+    definition = window._ensure_energy_barrier_neb_definition([candidate.key])
     assert definition is not None
     definition.parameters["configuration"]["row_settings"] = {
         candidate.key: {
@@ -1887,7 +1677,7 @@ def test_main_window_energy_barrier_strips_legacy_tss_params_from_stored_config(
         }
     }
 
-    jobs = window._materialize_energy_barriers_jobs([candidate.key])
+    jobs = window._materialize_energy_barrier_neb_jobs([candidate.key])
 
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
@@ -1904,8 +1694,8 @@ def test_main_window_energy_barrier_strips_legacy_tss_params_from_stored_config(
     window.close()
 
 
-def test_main_window_energy_barrier_defaults_read_kpoints_from_reactant_job_cell_file(qapp, tmp_path: Path) -> None:
-    """Equivalent k-point density is taken from the reactant relaxation job's output cell file."""
+def test_main_window_neb_inherits_kpoints_from_reactant_relaxation_cell_file(qapp, tmp_path: Path) -> None:
+    """NEB jobs inherit the k-point grid from the reactant relaxation's output cell file."""
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "barrier_cell_kpoints_doc.mufinder", "BarrierCellKPoints")
@@ -2018,7 +1808,7 @@ def test_main_window_energy_barrier_defaults_read_kpoints_from_reactant_job_cell
 
     window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
     candidate = window._eligible_energy_barrier_source_candidates()[0]
-    jobs = window._materialize_energy_barriers_jobs([candidate.key])
+    jobs = window._materialize_energy_barrier_neb_jobs([candidate.key])
 
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
@@ -2248,7 +2038,7 @@ def test_main_window_removes_energy_barrier_generated_path(qapp, tmp_path: Path)
 
     window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id), "")
     candidate = window._eligible_energy_barrier_source_candidates()[0]
-    definition = window._ensure_energy_barriers_definition([candidate.key])
+    definition = window._ensure_energy_barrier_neb_definition([candidate.key])
 
     assert definition is not None
 
@@ -2345,12 +2135,15 @@ def test_main_window_records_energy_barrier_result_from_ts_file(
     window.close()
 
 
-def test_main_window_materializes_neb_jobs_from_completed_transition_state_result(
-    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_main_window_materializes_neb_jobs_directly_from_endpoints(
+    qapp, tmp_path: Path
 ) -> None:
+    # The simplified workflow: NEB is seeded straight from the two relaxed endpoints with no
+    # transition-state search. CASTEP's NEB driver still requires an INTERMEDIATE structure, so the
+    # app synthesises the minimum-image midpoint and writes both a product and an intermediate block.
     window = MainWindow()
     service = ProjectService()
-    doc = service.create_project(tmp_path / "barrier_neb_doc.mufinder", "BarrierNeb")
+    doc = service.create_project(tmp_path / "barrier_neb_endpoints.mufinder", "BarrierNebEndpoints")
     window._document = doc
 
     host = Structure(
@@ -2389,12 +2182,13 @@ def test_main_window_materializes_neb_jobs_from_completed_transition_state_resul
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
-    definition = service.register_transition_state_search_definition(
+    # Only the endpoint path source exists: no TS job, no job_ids_by_label, no TS result.
+    service.register_transition_state_search_definition(
         doc,
         input_structure_ids=[relaxed_a.id, relaxed_b.id],
         input_site_ids=[site_a.id, site_b.id],
         parameters={
-            "method": "LSTQST",
+            "method": "NEB",
             "sources": [
                 {
                     "key": "source-key",
@@ -2416,69 +2210,6 @@ def test_main_window_materializes_neb_jobs_from_completed_transition_state_resul
         output_directory=doc.project_root / "files" / "energy_barriers",
     )
 
-    ts_job = service.add_job(
-        doc,
-        label="barrier_siteA_to_siteB_path1",
-        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
-        calc_type=TRANSITION_STATE_SEARCH_CALC_TYPE,
-    )
-    definition.parameters["job_ids_by_label"] = {"source-key": str(ts_job.id)}
-    ts_run = CalculationRun(job_id=ts_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
-    ts_path = doc.project_root / "files" / "energy_barriers" / ts_job.label / f"{ts_job.label}.ts"
-    ts_path.parent.mkdir(parents=True, exist_ok=True)
-    ts_path.write_text("placeholder", encoding="utf-8")
-    ts_result = Result(
-        calculation_run_id=ts_run.id,
-        result_type=TRANSITION_STATE_SEARCH_CALC_TYPE,
-        data={
-            "transition_state_file": str(ts_path),
-            "barrier_height_eV": 0.2,
-            "num_images": 3,
-        },
-    )
-    ts_run.result_id = ts_result.id
-    doc.runs[ts_run.id] = ts_run
-    doc.results[ts_result.id] = ts_result
-
-    monkeypatch.setattr(
-        main_window_module,
-        "parse_transition_state_file",
-        lambda _path: TransitionStatePath(
-            images=(
-                TransitionStateImage(
-                    label="REA",
-                    iteration=1,
-                    reaction_coordinate=0.0,
-                    energy=-1.0,
-                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
-                    species=("Si", "Si", "H:mu"),
-                    cartesian_positions=((0.0, 0.0, 0.0), (2.6, 2.5, 2.5), (1.25, 1.25, 1.25)),
-                    forces=((0.0, 0.0, 0.0),) * 3,
-                ),
-                TransitionStateImage(
-                    label="TST",
-                    iteration=1,
-                    reaction_coordinate=0.5,
-                    energy=-0.8,
-                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
-                    species=("Si", "Si", "H:mu"),
-                    cartesian_positions=((0.0, 0.0, 0.0), (2.6, 2.5, 2.5), (2.5, 1.25, 1.25)),
-                    forces=((0.0, 0.0, 0.0),) * 3,
-                ),
-                TransitionStateImage(
-                    label="PRO",
-                    iteration=1,
-                    reaction_coordinate=1.0,
-                    energy=-0.9,
-                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
-                    species=("Si", "Si", "H:mu"),
-                    cartesian_positions=((0.0, 0.0, 0.0), (2.6, 2.5, 2.5), (3.75, 1.25, 1.25)),
-                    forces=((0.0, 0.0, 0.0),) * 3,
-                ),
-            )
-        ),
-    )
-
     jobs = window._materialize_energy_barrier_neb_jobs(["source-key"])
 
     assert len(jobs) == 1
@@ -2487,9 +2218,20 @@ def test_main_window_materializes_neb_jobs_from_completed_transition_state_resul
     assert output_dir is not None
     cell_text = (output_dir / f"{output_dir.name}.cell").read_text(encoding="utf-8")
     param_text = (output_dir / f"{output_dir.name}.param").read_text(encoding="utf-8")
-    assert "%BLOCK POSITIONS_ABS_PRODUCT" in cell_text
-    assert "%BLOCK POSITIONS_ABS_INTERMEDIATE" in cell_text
+    assert "%BLOCK POSITIONS_FRAC_PRODUCT" in cell_text
+    # CASTEP NEB requires the intermediate; the app supplies an IDPP-seeded central image. We don't
+    # assert its exact (optimiser-determined) coordinates, only that the block exists and carries
+    # the muon as a tagged species with three fractional coordinates.
+    assert "%BLOCK POSITIONS_FRAC_INTERMEDIATE" in cell_text
+    intermediate_section = cell_text.split("%BLOCK POSITIONS_FRAC_INTERMEDIATE", 1)[1]
+    intermediate_section = intermediate_section.split("%ENDBLOCK POSITIONS_FRAC_INTERMEDIATE", 1)[0]
+    muon_line = next(line for line in intermediate_section.splitlines() if line.strip().startswith("H:mu"))
+    muon_coords = [float(value) for value in muon_line.split()[1:4]]
+    assert len(muon_coords) == 3
     assert "TSSEARCH_METHOD : NEB" in param_text
+    # Climbing image is locked on, and the image count defaults to an odd value (11).
+    assert "TSSEARCH_NEB_CLIMBING : TRUE" in param_text
+    assert "TSSEARCH_MAX_PATH_POINTS : 11" in param_text
 
     window.close()
 
@@ -2636,14 +2378,11 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
             "parameter_values": {
                 "kpoint_mp_grid": [1, 1, 2],
                 "tssearch_neb_max_iter": 24,
+                "tssearch_max_path_points": 8,
+                "tssearch_force_tol": {"value": 0.15, "unit": "eV/ang"},
             }
         }
     }
-
-    window._ensure_energy_barriers_view()
-    window._refresh_energy_barriers_view()
-    configure_button = window._energy_barriers_view._results_table.cellWidget(0, 5)
-    assert configure_button.text() == "Configured..."
 
     jobs = window._materialize_energy_barrier_neb_jobs(["source-key"])
 
@@ -2655,6 +2394,27 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
     assert "KPOINT_MP_GRID 1 1 2" in cell_text
     assert "CUT_OFF_ENERGY : 680" in param_text
     assert "TSSEARCH_NEB_MAX_ITER : 24" in param_text
+    # An even configured image count is rounded up to the next odd value for climbing NEB.
+    assert "TSSEARCH_MAX_PATH_POINTS : 9" in param_text
+    # A user-set force tolerance is written through in eV/Ang.
+    assert "TSSEARCH_FORCE_TOL : 0.15 eV/ang" in param_text
+
+
+def test_energy_barrier_neb_specs_expose_force_tol_editable_with_castep_default(qapp) -> None:
+    # TSSEARCH_FORCE_TOL is an editable NEB row defaulting to CASTEP's own value (0.05), surfaced in
+    # eV/Ang rather than its H/BOHR catalog unit so the editor labels it the way the .castep reports.
+    window = MainWindow()
+    try:
+        spec = next(
+            (s for s in window._energy_barrier_neb_parameter_specs() if s.name == "tssearch_force_tol"),
+            None,
+        )
+        assert spec is not None, "tssearch_force_tol should be an exposed NEB parameter"
+        assert spec.unit == "eV/ang"
+        assert spec.value_type == "physical"
+        assert spec.default_value == ValueWithUnit(0.05, "eV/ang")
+    finally:
+        window.close()
 
 
 def test_main_window_records_neb_result_and_loads_preview(
@@ -2750,10 +2510,12 @@ def test_main_window_records_neb_result_and_loads_preview(
     window._on_energy_barrier_neb_result_selected(str(stored.id))
 
     assert window._energy_barriers_view._profile_plot.point_count() == 3
-    assert window._energy_barriers_view._preview_slider.maximum() == 2
-    assert window._energy_barriers_view._preview_slider_start_label.text() == "0"
-    assert window._energy_barriers_view._preview_slider_end_label.text() == "1"
-    window._energy_barriers_view._preview_slider.setValue(1)
+    assert window._energy_barriers_view._preview_position_label.text() == "Image 1 / 3"
+    results_table = window._energy_barriers_view._neb_results_table
+    assert results_table.item(0, 3).text() == "0.2 eV"
+    assert results_table.item(0, 4).text() == "0.1 eV"
+    assert results_table.item(0, 5).text() == "0.1 eV"
+    window._energy_barriers_view._preview_next_button.click()
     assert "TST" in window._energy_barriers_view._preview_summary.text()
 
     window.close()
