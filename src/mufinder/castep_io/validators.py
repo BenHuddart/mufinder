@@ -7,10 +7,8 @@ from math import isclose
 from typing import Iterable
 
 from .schema import (
-    PARAM_KEYWORDS,
     BlockColumnSpec,
     FileKind,
-    SCHEMA,
     canonical_keyword_name,
     get_keyword_spec,
 )
@@ -124,7 +122,7 @@ def validate_param_file(param_file: ParamFile) -> None:
 
     normalized_task = str(task_name).strip().lower()
     for name in present_names:
-        spec = PARAM_KEYWORDS.get(name)
+        spec = get_keyword_spec("param", name)
         if spec and spec.allowed_tasks and normalized_task.upper() not in {
             task.upper() for task in spec.allowed_tasks
         }:
@@ -237,7 +235,9 @@ def _validate_requirements(file: FileKind, names: Iterable[str]) -> None:
     ordered_present = _ordered_canonical_names(file, names)
     present = set(ordered_present)
     for name in ordered_present:
-        spec = SCHEMA[file][name]
+        spec = get_keyword_spec(file, name)
+        if spec is None:  # pragma: no cover - name came from the live schema above
+            continue
         for required in spec.requires:
             if required not in present:
                 raise MissingRequiredKeywordError(

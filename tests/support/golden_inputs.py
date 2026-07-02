@@ -19,9 +19,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import UUID
 
-import mufinder.castep_io.cell_writer as _cell_writer_module
-import mufinder.castep_io.gui_metadata as _gui_metadata_module
-import mufinder.castep_io.param_writer as _param_writer_module
 import mufinder.castep_io.schema as _schema_module
 from mufinder.app.convergence_adapter import expand_convergence_jobs
 from mufinder.app.convergence_types import ConvergenceConfig
@@ -365,31 +362,16 @@ def pinned_starter_catalog() -> Iterator[None]:
         for name in _SCHEMA_GLOBAL_NAMES
         if hasattr(_schema_module, name)
     }
-    # cell_writer / param_writer / gui_metadata bind the serialization-order
-    # tuples by value at import, so refreshing the schema module alone does not
-    # reach them (characterization: a runtime refresh_keyword_catalog() leaves
-    # renderers on the previously discovered order). Sync and restore those
-    # bindings explicitly.
-    saved_bindings = [
-        (_cell_writer_module, "CELL_SERIALIZATION_ORDER"),
-        (_param_writer_module, "PARAM_SERIALIZATION_ORDER"),
-        (_gui_metadata_module, "CELL_SERIALIZATION_ORDER"),
-        (_gui_metadata_module, "PARAM_SERIALIZATION_ORDER"),
-    ]
-    saved_binding_values = [
-        (module, name, getattr(module, name)) for module, name in saved_bindings
-    ]
     # Suppress catalog discovery entirely so refresh falls back to the bundled
     # starter schema — the same path CI takes when no CASTEP checkout exists.
+    # The renderers read the order/schema live via schema.serialization_order()
+    # and keyword_specs(), so refreshing the schema module reaches them directly;
+    # no per-module binding sync is needed.
     _schema_module._candidate_catalog_sources = lambda: ()
     _schema_module.refresh_keyword_catalog(allow_fallback=True)
-    for module, name in saved_bindings:
-        setattr(module, name, getattr(_schema_module, name))
     try:
         yield
     finally:
-        for module, name, value in saved_binding_values:
-            setattr(module, name, value)
         for name, value in saved_globals.items():
             setattr(_schema_module, name, value)
 
