@@ -4731,6 +4731,60 @@ def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_p
     window.close()
 
 
+def test_main_window_local_finish_pristine_relaxation_missing_out_cell_fails_job(
+    qapp, tmp_path: Path
+) -> None:
+    """The shared out.cell prologue in _on_local_job_finished must fail a
+    pristine job whose relaxed structure output is absent, BEFORE the migrated
+    PristineRelaxationController.build_result is ever reached. This pins the
+    inline failure-detection guard that build_result deliberately does not own
+    (ControllerResult has no failure channel)."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "pristine_missing_out.mufinder", "PristineMissingOut")
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="pristine_relax_row1",
+        workflow_stage=main_window_module.WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    job.status = JobStatus.RUNNING
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.RUNNING)
+    doc.runs[run.id] = run
+    window._document = doc
+    window._active_run_by_job[job.id] = run.id
+
+    # Output directory exists but the relaxed -out.cell was NOT written.
+    output_dir = doc.project_root / "files" / "pristine_relaxation" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    parsed = CastepResult(
+        completed=True,
+        total_energy=-11.0,
+        warnings=(),
+        geom_converged=True,  # clears the geom prologue so we reach the out.cell guard
+    )
+    window._on_local_job_finished(job.id, parsed)
+
+    assert job.status == JobStatus.FAILED
+    assert run.result_id is None
+    assert not any(
+        structure.origin == "pristine_relaxation" for structure in doc.structures.values()
+    )
+    window.close()
+
+
 def test_main_window_job_output_directory_fallback_by_stage(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
@@ -7898,7 +7952,7 @@ def test_materialize_pristine_relaxation_rewrites_defined_job_inputs_when_projec
         )
     )
 
-    jobs = window._materialize_pristine_relaxation_jobs(["row_1"])
+    jobs = window._pristine_relaxation_controller.materialize(["row_1"])
     assert len(jobs) == 1
     job = jobs[0]
     assert job.status == JobStatus.DEFINED
@@ -7910,7 +7964,7 @@ def test_materialize_pristine_relaxation_rewrites_defined_job_inputs_when_projec
     doc.project.recommended_kpoint_grid = (4, 4, 4)
     doc.project.recommended_kpoint_lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
 
-    jobs = window._materialize_pristine_relaxation_jobs(["row_1"])
+    jobs = window._pristine_relaxation_controller.materialize(["row_1"])
     assert len(jobs) == 1
     assert jobs[0].id == job.id
 
@@ -8524,9 +8578,9 @@ def test_pristine_relaxation_preserves_running_row_when_adding_job(
     submitted: list[Job] = []
     monkeypatch.setattr(window, "_submit_jobs_on_cluster", lambda jobs: submitted.extend(jobs))
 
-    window._on_submit_cluster_from_pristine_relaxation(["row_2"])
+    window._pristine_relaxation_controller.submit(["row_2"], target="cluster")
 
-    states = window._build_pristine_relaxation_states()
+    states = window._pristine_relaxation_controller.build_states()
     assert states["row_1"].status == JobStatus.RUNNING.value
     assert states["row_1"].job_id == running_job.id
     assert len(submitted) == 1
@@ -8681,7 +8735,7 @@ def test_pristine_relaxation_deleted_row_does_not_reinherit_stale_status(qapp, t
     )
     doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
 
-    states = window._build_pristine_relaxation_states()
+    states = window._pristine_relaxation_controller.build_states()
 
     assert states["row_1"].status == "ready"
     assert new_definition.parameters.get("job_ids_by_label", {}) == {}

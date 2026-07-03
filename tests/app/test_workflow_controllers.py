@@ -40,6 +40,10 @@ from mufinder.app.workflow_controllers.convergence_kpoint import (
     ConvergenceKpointController,
     ConvergenceKpointDeps,
 )
+from mufinder.app.workflow_controllers.pristine_relaxation import (
+    PristineRelaxationController,
+    PristineRelaxationDeps,
+)
 from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
 
 
@@ -865,3 +869,350 @@ def test_kpoint_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
     other = _job(service, document, "k", calc_type="castep_convergence_cutoff")
     assert controller.handles_job(handled) is True
     assert controller.handles_job(other) is False
+
+
+# --------------------------------------------------------------------------- #
+# PristineRelaxationController
+# --------------------------------------------------------------------------- #
+#
+# This is the first migration whose ``build_result`` does real work: it parses
+# the relaxed ``-out.cell``, contributes the ``lattice_a/b/c`` payload, and
+# creates the derived relaxed Structure on the document. The tests below drive
+# it with narrow fakes (no MainWindow) and a REAL ``-out.cell`` fixture.
+
+
+class _FakeRelaxationView:
+    """Minimal PristineRelaxationWidget stand-in for controller tests."""
+
+    def __init__(self) -> None:
+        self.runtime_states: list[dict] = []
+
+    def set_runtime_states(self, states) -> None:
+        self.runtime_states.append(dict(states))
+
+
+_OUT_CELL_TEXT = """
+%BLOCK LATTICE_CART
+ang
+5.1 0.0 0.0
+0.0 5.2 0.0
+0.0 0.0 5.3
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Si 0.0 0.0 0.0
+%ENDBLOCK POSITIONS_FRAC
+"""
+
+
+def _real_parse_relaxed_out_cell(path: Path):
+    """Parse an ``-out.cell`` exactly as MainWindow._parse_relaxed_out_cell does."""
+
+    from mufinder.castep_io.cell_parser import parse_cell_file
+    from mufinder.science.kpoint_grids import lattice_parameters
+
+    relaxed = parse_cell_file(path)
+    a, b, c = lattice_parameters(relaxed.lattice_vectors)[:3]
+    return relaxed, a, b, c
+
+
+def _stub_pristine_deps(**overrides) -> PristineRelaxationDeps:
+    base = dict(
+        active_pristine_relaxation_definition=lambda: None,
+        deserialize_pristine_relaxation_config=lambda _payload: None,
+        sync_equivalent_pristine_relaxation_mappings=lambda _definition: None,
+        pristine_relaxation_form_config=lambda: None,
+        pristine_relaxation_row_signature=lambda _row: (),
+        job_for_pristine_relaxation_label=lambda _definition, _label: None,
+        definition_output_directory=lambda _definition: None,
+        expand_pristine_relaxation_jobs=lambda _definition, _config: None,
+        job_output_directory=lambda _job: None,
+        job_seed_name=lambda job: job.label,
+        parse_relaxed_out_cell=_real_parse_relaxed_out_cell,
+        run_for_job=lambda _job_id: None,
+        total_energy_for_job=lambda _job_id: None,
+        max_force_for_job=lambda _job_id: None,
+    )
+    base.update(overrides)
+    return PristineRelaxationDeps(**base)
+
+
+def _pristine_job(service: ProjectService, document: ProjectDocument, label: str) -> Job:
+    return service.add_job(
+        document,
+        label=label,
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+
+
+def test_pristine_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    controller = PristineRelaxationController(
+        _make_context(document=document), _stub_pristine_deps(), _FakeRelaxationView()
+    )
+    handled = _pristine_job(service, document, "pristine_relax_row1")
+    muon = service.add_job(
+        document,
+        label="site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muonium_relaxation",
+    )
+    # The still-inline muon-relaxation branch must NOT be claimed by this
+    # controller — it is dispatched by the inline code, not build_result.
+    assert controller.handles_job(handled) is True
+    assert controller.handles_job(muon) is False
+
+
+def test_pristine_controller_uses_workflow_row_ready_predicate() -> None:
+    controller = PristineRelaxationController(
+        _make_context(), _stub_pristine_deps(), _FakeRelaxationView()
+    )
+    # Pristine relaxation uses the base-default (wider) workflow-row predicate:
+    # "not generated" / "defined" rows are ready, only "failed" is excluded.
+    assert controller.is_ready({"r": _State("not generated")}, "r") is True
+    assert controller.is_ready({"r": _State("ready")}, "r") is True
+    assert controller.is_ready({"r": _State("failed")}, "r") is False
+
+
+def test_pristine_controller_refresh_view_without_document_clears_rows() -> None:
+    view = _FakeRelaxationView()
+    controller = PristineRelaxationController(
+        _make_context(document=None), _stub_pristine_deps(), view
+    )
+    controller.refresh_view()
+    assert view.runtime_states == [{}]
+
+
+def test_pristine_controller_build_result_parses_lattice_and_creates_structure(
+    tmp_path: Path,
+) -> None:
+    from mufinder.domain.models import Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+
+    definition = service.register_pristine_relaxation_definition(
+        document,
+        host_structure_id=host.id,
+        parameters={"name_prefix": "pristine_relax", "rows": []},
+        output_directory=document.project_root / "files" / "pristine_relaxation",
+    )
+
+    job = _pristine_job(service, document, "pristine_relax_row1")
+    run = CalculationRun(job_id=job.id)
+    document.runs[run.id] = run
+
+    # A REAL -out.cell fixture on disk, fed through the controller's parse helper.
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    (output_dir / f"{job.label}-out.cell").write_text(_OUT_CELL_TEXT, encoding="utf-8")
+
+    deps = _stub_pristine_deps(
+        active_pristine_relaxation_definition=lambda: definition,
+        job_output_directory=lambda _job: output_dir,
+    )
+    context = _make_context(document=document, project_service=service)
+    controller = PristineRelaxationController(context, deps, _FakeRelaxationView())
+
+    parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
+    result = controller.build_result(job, parsed, run)
+
+    # Payload gains the first three lattice parameters from the relaxed cell.
+    assert result.payload["lattice_a"] == pytest.approx(5.1)
+    assert result.payload["lattice_b"] == pytest.approx(5.2)
+    assert result.payload["lattice_c"] == pytest.approx(5.3)
+
+    # No output_files contributed — the call site already passes them generically.
+    assert result.output_files == []
+
+    # Exactly one derived structure created on the document, with the right
+    # origin and parentage.
+    assert len(result.derived_structure_ids) == 1
+    derived_id = result.derived_structure_ids[0]
+    derived = document.structures[derived_id]
+    assert derived.origin == "pristine_relaxation"
+    assert derived.parent_structure_id == host.id
+    assert derived.properties["source_job_id"] == str(job.id)
+    assert derived.properties["source_workflow_stage"] == WorkflowStage.PRISTINE_RELAXATION.value
+    assert derived.label == "pristine_relax_row1 relaxed"
+
+
+def test_pristine_controller_build_result_missing_out_cell_raises(tmp_path: Path) -> None:
+    """build_result surfaces the parse error rather than silently fabricating a
+    structure when the -out.cell is absent. In production the inline prologue in
+    ``_on_local_job_finished`` guards this case (see the FAILED-job regression in
+    tests/app/test_main_window_actions.py) so build_result is never reached with a
+    missing file; this test pins only build_result's own parse contract."""
+
+    from mufinder.castep_io.cell_parser import CellParseError
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    job = _pristine_job(service, document, "pristine_relax_row1")
+    run = CalculationRun(job_id=job.id)
+    document.runs[run.id] = run
+
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    deps = _stub_pristine_deps(job_output_directory=lambda _job: empty_dir)
+    context = _make_context(document=document, project_service=service)
+    controller = PristineRelaxationController(context, deps, _FakeRelaxationView())
+
+    parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
+    with pytest.raises((CellParseError, FileNotFoundError, OSError)):
+        controller.build_result(job, parsed, run)
+    # No derived structure was created.
+    assert document.structures == {} or all(
+        s.origin != "pristine_relaxation" for s in document.structures.values()
+    )
+
+
+def test_pristine_controller_materialize_writes_job_ids_by_label(tmp_path: Path) -> None:
+    from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
+    from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow
+    from mufinder.domain.models import Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+
+    config = PristineRelaxationConfig(
+        name_prefix="pristine_relax",
+        rows=(PristineRelaxationRow(label="row1"),),
+    )
+    output_root = document.project_root / "files" / "pristine_relaxation"
+    definition = service.register_pristine_relaxation_definition(
+        document,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "pristine_relax",
+            "rows": [{"label": "row1", "parameter_values": {}}],
+        },
+        output_directory=output_root,
+    )
+
+    def job_for_label(defn, label):
+        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
+        job_id = mapping.get(label)
+        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
+
+    def expand(defn, cfg):
+        return expand_pristine_relaxation_jobs(
+            host_structure=host,
+            config=cfg,
+            project_cutoff_energy=None,
+            project_kpoint_grid=None,
+            project_kpoint_reference_lattice=None,
+        )
+
+    deps = _stub_pristine_deps(
+        active_pristine_relaxation_definition=lambda: definition,
+        deserialize_pristine_relaxation_config=lambda _payload: config,
+        job_for_pristine_relaxation_label=job_for_label,
+        definition_output_directory=lambda _defn: output_root,
+        expand_pristine_relaxation_jobs=expand,
+    )
+    context = _make_context(document=document, project_service=service)
+    controller = PristineRelaxationController(context, deps, _FakeRelaxationView())
+
+    jobs = controller.materialize(["row1"])
+
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.calc_type == "castep_pristine_relaxation"
+    mapping = definition.parameters["job_ids_by_label"]
+    assert mapping["row1"] == str(job.id)
+    # Rendered inputs were written under the output root.
+    job_dir = output_root / job.label
+    assert (job_dir / f"{job.label}.cell").exists()
+    assert (job_dir / f"{job.label}.param").exists()
+
+
+def test_pristine_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:
+    from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
+    from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow
+    from mufinder.domain.models import Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+
+    config = PristineRelaxationConfig(
+        name_prefix="pristine_relax",
+        rows=(PristineRelaxationRow(label="row1"),),
+    )
+    output_root = document.project_root / "files" / "pristine_relaxation"
+    definition = service.register_pristine_relaxation_definition(
+        document,
+        host_structure_id=host.id,
+        parameters={"name_prefix": "pristine_relax", "rows": [{"label": "row1"}]},
+        output_directory=output_root,
+    )
+
+    def job_for_label(defn, label):
+        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
+        job_id = mapping.get(label)
+        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
+
+    def expand(defn, cfg):
+        return expand_pristine_relaxation_jobs(
+            host_structure=host,
+            config=cfg,
+            project_cutoff_energy=None,
+            project_kpoint_grid=None,
+            project_kpoint_reference_lattice=None,
+        )
+
+    deps = _stub_pristine_deps(
+        active_pristine_relaxation_definition=lambda: definition,
+        deserialize_pristine_relaxation_config=lambda _payload: config,
+        pristine_relaxation_form_config=lambda: config,
+        pristine_relaxation_row_signature=lambda row: (row.label,),
+        job_for_pristine_relaxation_label=job_for_label,
+        definition_output_directory=lambda _defn: output_root,
+        expand_pristine_relaxation_jobs=expand,
+    )
+
+    local = _RecordingBackend()
+    cluster = _RecordingBackend()
+    context = _make_context(
+        document=document,
+        project_service=service,
+        local_backend=local,
+        cluster_backend=cluster,
+    )
+    controller = PristineRelaxationController(context, deps, _FakeRelaxationView())
+
+    controller.submit(["row1"], target="local")
+
+    assert cluster.calls == []
+    assert len(local.calls) == 1
+    submitted, extras = local.calls[0]
+    assert extras == {}
+    assert len(submitted) == 1
+    assert submitted[0].calc_type == "castep_pristine_relaxation"
