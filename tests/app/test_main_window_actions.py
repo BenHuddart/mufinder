@@ -4986,7 +4986,7 @@ def test_materialize_muon_relaxation_filters_charge_qualified_selection(qapp, tm
 
     window._project_service.save_project = _save_project
 
-    jobs = window._materialize_muon_relaxation_jobs(["muonium:Shared Site"])
+    jobs = window._muon_relaxation_controller.materialize(["muonium:Shared Site"])
 
     assert len(jobs) == 1
     assert save_calls == ["save"]
@@ -5510,7 +5510,7 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
     assert result.data["muon_final_fractional_position_supercell"] == pytest.approx([0.3, 0.4, 0.5])
     assert result.data["muon_final_fractional_position_host"] == pytest.approx([0.6, 0.8, 0.5])
     doc.ui_state[main_window_module.MainWindow._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
-    states = window._build_muon_relaxation_states()
+    states = window._muon_relaxation_controller.build_states()
     assert states["muonium:Shared Site"].final_fractional_position == pytest.approx((0.6, 0.8, 0.5))
     window._refresh_muon_relaxation_rows()
     muonium_table = window._muon_relaxation_view._tables_by_charge_state["muonium"]
@@ -8119,7 +8119,7 @@ def test_main_window_muon_relaxation_existing_defined_job_shows_defined(
 
     table = window._muon_relaxation_view._tables_by_charge_state["positive_muon"]
     assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "defined"
-    assert window._build_muon_relaxation_states()["positivemuon:Site 1"].status == "defined"
+    assert window._muon_relaxation_controller.build_states()["positivemuon:Site 1"].status == "defined"
     window.close()
 
 
@@ -8185,7 +8185,7 @@ def test_main_window_muon_relaxation_sync_prefers_defined_job_over_cancelled_his
     table = window._muon_relaxation_view._tables_by_charge_state["positive_muon"]
     assert active_definition.parameters["job_ids_by_label"][key] == str(defined_job.id)
     assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "defined"
-    assert window._jobs_for_muon_relaxation_labels([key]) == [defined_job]
+    assert window._muon_relaxation_controller.jobs_for_keys([key]) == [defined_job]
     window.close()
 
 
@@ -8356,7 +8356,7 @@ def test_main_window_muon_relaxation_added_form_rows_preserve_existing_job_state
     table = window._muon_relaxation_view._tables_by_charge_state["positive_muon"]
     assert table.item(0, window._muon_relaxation_view._STATUS_COLUMN).text() == "running"
     assert table.item(1, window._muon_relaxation_view._STATUS_COLUMN).text() == "ready"
-    states = window._build_muon_relaxation_states()
+    states = window._muon_relaxation_controller.build_states()
     assert states["positivemuon:Site 1"].status == "running"
     assert states["positivemuon:Site 2"].status == "ready"
     window.close()
@@ -8637,7 +8637,7 @@ def test_muon_relaxation_preserves_running_row_across_reconfiguration(
     )
     doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
 
-    states = window._build_muon_relaxation_states()
+    states = window._muon_relaxation_controller.build_states()
 
     assert states["positivemuon:Site 1"].status == JobStatus.RUNNING.value
     assert states["positivemuon:Site 1"].job_id == running_job.id
@@ -8880,7 +8880,7 @@ def test_muon_relaxation_deleted_row_does_not_reinherit_stale_status(qapp, tmp_p
     )
     doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
 
-    states = window._build_muon_relaxation_states()
+    states = window._muon_relaxation_controller.build_states()
 
     assert states["positivemuon:Site 1"].status == "ready"
     assert new_definition.parameters.get("job_ids_by_label", {}) == {}

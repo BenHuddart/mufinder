@@ -185,6 +185,8 @@ from mufinder.app.workflow_controllers import (
     ConvergenceCutoffDeps,
     ConvergenceKpointController,
     ConvergenceKpointDeps,
+    MuonRelaxationController,
+    MuonRelaxationDeps,
     PristineRelaxationController,
     PristineRelaxationDeps,
     WorkflowControllerContext,
@@ -1879,8 +1881,25 @@ class MainWindow(QMainWindow):
         self._muon_relaxation_view.row_supercell_edit_requested.connect(
             self._on_muon_relaxation_supercell_edit_requested
         )
-        self._muon_relaxation_view.submit_local_requested.connect(self._on_submit_local_from_muon_relaxation)
-        self._muon_relaxation_view.submit_cluster_requested.connect(self._on_submit_cluster_from_muon_relaxation)
+        # Muon-relaxation controller: the first migration exercising the
+        # pre_submit_check (staged-site/host validation) and submission_groups
+        # (per-charge-state grouped submission) hooks, plus the richest
+        # build_result so far (muon position payload, derived structure, and
+        # source-site mutation). Built here (after its view exists) and appended
+        # to the registry so completed muon-relaxation jobs route through its
+        # build_result.
+        self._muon_relaxation_controller = MuonRelaxationController(
+            self._build_workflow_controller_context(),
+            self._build_muon_relaxation_deps(),
+            self._muon_relaxation_view,
+        )
+        self._workflow_controllers.append(self._muon_relaxation_controller)
+        self._muon_relaxation_view.submit_local_requested.connect(
+            lambda values: self._muon_relaxation_controller.submit(values, target="local")
+        )
+        self._muon_relaxation_view.submit_cluster_requested.connect(
+            lambda values: self._muon_relaxation_controller.submit(values, target="cluster")
+        )
         self._muon_relaxation_view.remove_requested.connect(self._on_remove_muon_relaxation_rows)
         self._muon_relaxation_view.analysis_workspace_requested.connect(
             self._on_create_relaxation_analysis_workspace_requested
@@ -6774,12 +6793,72 @@ class MainWindow(QMainWindow):
             project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
         )
 
+    def _build_muon_relaxation_deps(self) -> MuonRelaxationDeps:
+        """Build the muon-relaxation controller's deps.
+
+        These helpers stay on ``MainWindow`` because non-migrating code still
+        calls them: the definition/config/mapping helpers are shared with row
+        removal, staging, and dashboard sync;
+        ``_muon_fractional_position_from_cell`` is still called by the inline
+        ``H:mu`` failure guard in ``_on_local_job_finished``;
+        ``_coerce_fractional_triplet`` and ``_muon_relaxation_row_key`` have
+        other view-refresh callers. The controller reaches them only through
+        these late-bound wrappers.
+        """
+
+        return MuonRelaxationDeps(
+            active_muon_relaxation_definition=(
+                lambda: self._active_muon_relaxation_definition()
+            ),
+            deserialize_muon_relaxation_config=(
+                lambda payload: self._deserialize_muon_relaxation_config(payload)
+            ),
+            sync_equivalent_muon_relaxation_mappings=(
+                lambda definition: self._sync_equivalent_muon_relaxation_mappings(definition)
+            ),
+            sync_active_muon_relaxation_dashboard_jobs=(
+                lambda definition: self._sync_active_muon_relaxation_dashboard_jobs(definition)
+            ),
+            muon_relaxation_form_config=lambda: self._muon_relaxation_form_config(),
+            muon_relaxation_row_signature=(
+                lambda row: self._muon_relaxation_row_signature(row)
+            ),
+            muon_relaxation_row_key=lambda row: self._muon_relaxation_row_key(row),
+            job_for_muon_relaxation_label=(
+                lambda definition, label, charge_state: self._job_for_muon_relaxation_label(
+                    definition, label, charge_state
+                )
+            ),
+            job_is_active_local=lambda job: job.status in _ACTIVE_LOCAL_JOB_STATES,
+            definition_output_directory=(
+                lambda definition: self._definition_output_directory(definition)
+            ),
+            handle_site_host_mismatch=(
+                lambda mismatch: self._handle_site_host_mismatch(mismatch)
+            ),
+            muon_relaxation_definition_and_row_for_job=(
+                lambda job: self._muon_relaxation_definition_and_row_for_job(job)
+            ),
+            muon_fractional_position_from_cell=(
+                lambda cell: self._muon_fractional_position_from_cell(cell)
+            ),
+            coerce_fractional_triplet=(
+                lambda value: self._coerce_fractional_triplet(value)
+            ),
+            job_output_directory=lambda job: self._job_output_directory(job),
+            job_seed_name=lambda job: self._job_seed_name(job),
+            parse_relaxed_out_cell=lambda path: self._parse_relaxed_out_cell(path),
+            run_for_job=lambda job_id: self._run_for_job(job_id),
+            total_energy_for_job=lambda job_id: self._total_energy_for_job(job_id),
+            max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
+        )
+
     def _parse_relaxed_out_cell(self, path: Path) -> tuple[object, float, float, float]:
         """Parse a relaxation ``-out.cell`` into ``(relaxed, a, b, c)``.
 
-        Shared by the pristine-relaxation controller's ``build_result`` and the
-        still-inline muon-relaxation result branch, so both go through exactly one
-        parse implementation. Uses the module-global ``parse_cell_file`` /
+        Shared by the pristine- and muon-relaxation controllers' ``build_result``
+        and the inline ``-out.cell`` failure prologue, so all go through exactly
+        one parse implementation. Uses the module-global ``parse_cell_file`` /
         ``lattice_parameters`` (which tests monkeypatch). Raises
         :class:`~mufinder.castep_io.cell_parser.CellParseError` on an unparseable
         file — the inline ``_on_local_job_finished`` prologue converts that to a
@@ -7693,9 +7772,9 @@ class MainWindow(QMainWindow):
             # Shared failure-detection prologue for both relaxation workflows: the
             # -out.cell must exist and parse before any result is built. This
             # guard is deliberately kept inline (like the geom_converged prologue)
-            # because it guards both the migrated pristine workflow and the
-            # still-inline muon workflow; the pristine controller's build_result
-            # re-parses the (now validated) file on the success path.
+            # because ControllerResult has no failure channel; the pristine and
+            # muon controllers' build_result re-parse the (now validated) file on
+            # the success path.
             output_dir = self._job_output_directory(job)
             seed_name = self._job_seed_name(job)
             out_cell_path = None if output_dir is None else output_dir / f"{seed_name}-out.cell"
@@ -7714,51 +7793,22 @@ class MainWindow(QMainWindow):
                 self._on_local_job_failed(job_id, f"Failed to parse relaxed CELL output: {exc}")
                 return
 
-            # Pristine relaxation's lattice payload and derived structure are now
-            # contributed by PristineRelaxationController.build_result (via the
-            # merge_controller_result call below). Only the muon-relaxation branch
-            # — not migrated in this PR — builds its result inline here.
+            # Both relaxation workflows' lattice payloads and derived structures
+            # are now contributed by their controllers' build_result (via the
+            # merge_controller_result call below); the muon controller also
+            # contributes the folded muon position payload and mutates the source
+            # site. Only the H:mu failure guard stays inline (like the parse
+            # prologue above): ControllerResult has no failure channel, so a
+            # relaxed cell without a muon must abort the job before any result is
+            # built. The muon controller re-extracts the (now validated) position
+            # on the success path.
             if is_muon_relaxation_calc_type(job.calc_type):
-                result_payload["lattice_a"] = _lattice_a
-                result_payload["lattice_b"] = _lattice_b
-                result_payload["lattice_c"] = _lattice_c
-
-                definition, row = self._muon_relaxation_definition_and_row_for_job(job)
-                if definition is None:
-                    definition = self._active_muon_relaxation_definition()
-                final_supercell_position = self._muon_fractional_position_from_cell(relaxed)
-                if final_supercell_position is None:
+                if self._muon_fractional_position_from_cell(relaxed) is None:
                     self._on_local_job_failed(
                         job_id,
                         f"Expected H:mu muon position was not found in {seed_name}-out.cell.",
                     )
                     return
-                final_host_position = self._fold_supercell_fractional_to_host(
-                    final_supercell_position,
-                    row.supercell_matrix if row is not None else None,
-                )
-                result_payload["muon_final_fractional_position_supercell"] = list(final_supercell_position)
-                result_payload["muon_final_fractional_position_host"] = list(final_host_position)
-                parent_structure_id = definition.input_structure_ids[0] if definition is not None and definition.input_structure_ids else None
-                relaxed_structure = Structure(
-                    label=f"{job.label} relaxed",
-                    origin="muon_relaxation",
-                    lattice_vectors=[list(row) for row in relaxed.lattice_vectors],
-                    species=list(relaxed.species),
-                    fractional_positions=[list(row) for row in relaxed.fractional_positions],
-                    parent_structure_id=parent_structure_id,
-                    properties={
-                        "source_job_id": str(job.id),
-                        "source_workflow_stage": WorkflowStage.MUON_RELAXATION.value,
-                    },
-                )
-                self._project_service.add_structure(self._document, relaxed_structure)
-                derived_structure_ids.append(relaxed_structure.id)
-                site = self._site_for_muon_relaxation_job(job)
-                if site is not None:
-                    site.status = "relaxed"
-                    site.relaxation_run_id = run.id
-                    site.relative_energy_eV = parsed.total_energy
 
         # Give the owning workflow controller (if any) a chance to contribute
         # payload/file/structure additions before the Result is built. This is a
@@ -11049,14 +11099,6 @@ class MainWindow(QMainWindow):
                         return job
         return None
 
-    @staticmethod
-    def _muon_relaxation_selection_matches(row: MuonRelaxationRow, selection: str) -> bool:
-        selection = str(selection)
-        prefix, separator, label = selection.partition(":")
-        if separator:
-            return prefix == muon_charge_state_prefix(row.charge_state) and label == row.label
-        return selection == row.label
-
     def _muon_relaxation_form_config(self) -> MuonRelaxationConfig | None:
         if self._document is None:
             return None
@@ -11080,10 +11122,6 @@ class MainWindow(QMainWindow):
     def _muon_relaxation_row_key(row: MuonRelaxationRow) -> str:
         return f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
 
-    def _muon_relaxation_row_for_job(self, job: Job) -> MuonRelaxationRow | None:
-        _definition, row = self._muon_relaxation_definition_and_row_for_job(job)
-        return row
-
     def _muon_relaxation_definition_and_row_for_job(self, job: Job):
         if self._document is None:
             return None, None
@@ -11096,14 +11134,6 @@ class MainWindow(QMainWindow):
                 if candidate is not None and candidate.id == job.id:
                     return definition, row
         return None, None
-
-    def _site_for_muon_relaxation_job(self, job: Job) -> MuonSite | None:
-        if self._document is None:
-            return None
-        row = self._muon_relaxation_row_for_job(job)
-        if row is None:
-            return None
-        return self._document.sites.get(row.site_id)
 
     @staticmethod
     def _muon_fractional_position_from_cell(cell: object) -> tuple[float, float, float] | None:
@@ -11118,21 +11148,6 @@ class MainWindow(QMainWindow):
         return None
 
     @staticmethod
-    def _fold_supercell_fractional_to_host(
-        position: tuple[float, float, float],
-        matrix: SupercellMatrix | None,
-    ) -> tuple[float, float, float]:
-        if matrix is None:
-            return tuple(float(component) % 1.0 for component in position)
-        x, y, z = position
-        host_position = (
-            x * matrix[0][0] + y * matrix[1][0] + z * matrix[2][0],
-            x * matrix[0][1] + y * matrix[1][1] + z * matrix[2][1],
-            x * matrix[0][2] + y * matrix[1][2] + z * matrix[2][2],
-        )
-        return tuple(float(component) % 1.0 for component in host_position)
-
-    @staticmethod
     def _coerce_fractional_triplet(value: object) -> tuple[float, float, float] | None:
         if not isinstance(value, (list, tuple)) or len(value) != 3:
             return None
@@ -11141,86 +11156,8 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             return None
 
-    def _build_muon_relaxation_states(self) -> dict[str, RelaxationRunState]:
-        states: dict[str, RelaxationRunState] = {}
-        if self._document is None:
-            return states
-        form_config = self._muon_relaxation_form_config()
-        if form_config is not None:
-            for row in form_config.rows:
-                states[self._muon_relaxation_row_key(row)] = RelaxationRunState(status="ready")
-
-        definition = self._active_muon_relaxation_definition()
-        if definition is None:
-            return states
-        self._sync_equivalent_muon_relaxation_mappings(definition)
-        self._sync_active_muon_relaxation_dashboard_jobs(definition)
-        config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
-        if config is None:
-            return states
-
-        if form_config is not None:
-            definition_rows_by_key = {
-                self._muon_relaxation_row_key(row): row
-                for row in config.rows
-            }
-            rows_for_status = []
-            for row in form_config.rows:
-                key = self._muon_relaxation_row_key(row)
-                definition_row = definition_rows_by_key.get(key)
-                if definition_row is None:
-                    continue
-                if self._muon_relaxation_row_signature(row) == self._muon_relaxation_row_signature(definition_row):
-                    rows_for_status.append(definition_row)
-                    continue
-                job = self._job_for_muon_relaxation_label(
-                    definition,
-                    definition_row.label,
-                    definition_row.charge_state,
-                )
-                if job is not None and job.status in _ACTIVE_LOCAL_JOB_STATES:
-                    rows_for_status.append(definition_row)
-        else:
-            rows_for_status = list(config.rows)
-
-        for row in rows_for_status:
-            state_key = self._muon_relaxation_row_key(row)
-            job = self._job_for_muon_relaxation_label(definition, row.label, row.charge_state)
-            if job is None:
-                states[state_key] = RelaxationRunState(status="ready")
-                continue
-            status_value = job.status.value
-            run = self._run_for_job(job.id)
-            if status_value == JobStatus.COMPLETED.value and run is not None and run.convergence_achieved is False:
-                status_value = "not converged"
-            lattice_a = lattice_b = lattice_c = None
-            final_fractional_position = None
-            if run is not None and run.result_id is not None:
-                result = self._document.results.get(run.result_id)
-                if result is not None and isinstance(result.data, dict):
-                    lattice_a = result.data.get("lattice_a")
-                    lattice_b = result.data.get("lattice_b")
-                    lattice_c = result.data.get("lattice_c")
-                    final_fractional_position = self._coerce_fractional_triplet(
-                        result.data.get("muon_final_fractional_position_host")
-                    )
-            states[state_key] = RelaxationRunState(
-                status=status_value,
-                total_energy=self._total_energy_for_job(job.id),
-                max_force=self._max_force_for_job(job.id),
-                lattice_a=float(lattice_a) if isinstance(lattice_a, (int, float)) else None,
-                lattice_b=float(lattice_b) if isinstance(lattice_b, (int, float)) else None,
-                lattice_c=float(lattice_c) if isinstance(lattice_c, (int, float)) else None,
-                final_fractional_position=final_fractional_position,
-                job_id=job.id,
-                job_label=job.label,
-                geom_converged=(run.convergence_achieved if run is not None else None),
-                error_message=job.error_message,
-            )
-        return states
-
     def _refresh_muon_relaxation_rows(self) -> None:
-        self._muon_relaxation_view.set_runtime_states(self._build_muon_relaxation_states())
+        self._muon_relaxation_controller.refresh_view()
         self._refresh_relaxation_analysis_context()
 
     def _relaxation_analysis_workspaces(self) -> list[dict[str, object]]:
@@ -11778,163 +11715,6 @@ class MainWindow(QMainWindow):
         self._set_active_route(self._comparison_route(table.id))
         self._refresh_journal_view()
         self.statusBar().showMessage(f"Generated comparison table '{table.label}'")
-
-    def _jobs_for_muon_relaxation_labels(self, labels: list[str]) -> list[Job]:
-        if self._document is None:
-            return []
-        definition = self._active_muon_relaxation_definition()
-        if definition is None:
-            return []
-        self._sync_equivalent_muon_relaxation_mappings(definition)
-        self._sync_active_muon_relaxation_dashboard_jobs(definition)
-        config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
-        if config is None:
-            return []
-        selected: list[Job] = []
-        seen: set[UUID] = set()
-        wanted = {str(label) for label in labels}
-        for row in config.rows:
-            if not any(self._muon_relaxation_selection_matches(row, selection) for selection in wanted):
-                continue
-            job = self._job_for_muon_relaxation_label(definition, row.label, row.charge_state)
-            if job is None or job.id in seen:
-                continue
-            selected.append(job)
-            seen.add(job.id)
-        return selected
-
-    def _materialize_muon_relaxation_jobs(self, labels: list[str]) -> list[Job]:
-        if self._document is None:
-            return []
-        definition = self._active_muon_relaxation_definition()
-        if definition is None:
-            return []
-        self._sync_equivalent_muon_relaxation_mappings(definition)
-        self._sync_active_muon_relaxation_dashboard_jobs(definition)
-        config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
-        if config is None or not definition.input_structure_ids:
-            return []
-        host = self._document.structures.get(definition.input_structure_ids[0])
-        output_root = self._definition_output_directory(definition)
-        if host is None or output_root is None:
-            return []
-        try:
-            expansion = expand_muon_relaxation_jobs(
-                host_structure=host,
-                config=config,
-                project_cutoff_energy=self._document.project.recommended_cutoff_energy,
-                project_kpoint_grid=self._document.project.recommended_kpoint_grid,
-                project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
-            )
-        except (ValueError, StructureBridgeError):
-            return []
-        mapping = definition.parameters.setdefault("job_ids_by_label", {})
-        if not isinstance(mapping, dict):
-            mapping = {}
-            definition.parameters["job_ids_by_label"] = mapping
-        seed_mapping = definition.parameters.setdefault("job_seed_names_by_label", {})
-        if not isinstance(seed_mapping, dict):
-            seed_mapping = {}
-            definition.parameters["job_seed_names_by_label"] = seed_mapping
-        spec_by_key = {
-            f"{muon_charge_state_prefix(str(spec.provenance.get('charge_state', '')))}:{spec.provenance.get('label', '')}": spec
-            for spec in expansion.jobs
-        }
-        wanted = {str(label) for label in labels}
-        rows_by_label = [
-            row
-            for row in config.rows
-            if any(self._muon_relaxation_selection_matches(row, selection) for selection in wanted)
-        ]
-        created: list[Job] = []
-        for row in rows_by_label:
-            key = f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
-            spec = spec_by_key.get(key)
-            existing_job = self._job_for_muon_relaxation_label(definition, row.label, row.charge_state)
-            if existing_job is not None:
-                if existing_job.status == JobStatus.DEFINED and spec is not None:
-                    seed_mapping[key] = spec.name
-                    write_job_directory(spec, output_root / muon_charge_state_prefix(row.charge_state))
-                created.append(existing_job)
-                continue
-            if spec is None:
-                continue
-            charge_root = output_root / muon_charge_state_prefix(row.charge_state)
-            write_job_directory(spec, charge_root)
-            job = self._project_service.add_job(
-                self._document,
-                label=row.label,
-                workflow_stage=spec.workflow_stage,
-                calc_type=muon_relaxation_calc_type(row.charge_state),
-            )
-            mapping[key] = str(job.id)
-            seed_mapping[key] = spec.name
-            created.append(job)
-        jobs = self._dedupe_jobs(created)
-        if jobs:
-            self._persist_document_ui_state(
-                failure_message="Muon relaxation jobs were generated, but autosave failed."
-            )
-        return jobs
-
-    @staticmethod
-    def _muon_relaxation_label_is_ready(states: dict[str, RelaxationRunState], label: str) -> bool:
-        ready_statuses = {"ready", "defined", "not generated"}
-        state = states.get(label)
-        if state is not None and state.status in ready_statuses:
-            return True
-        if ":" in str(label):
-            return False
-        suffix = f":{label}"
-        return any(
-            candidate.status in ready_statuses
-            for key, candidate in states.items()
-            if key.endswith(suffix)
-        )
-
-    def _on_submit_local_from_muon_relaxation(self, labels: list[str]) -> None:
-        if not self._check_staged_muon_relaxation_host():
-            return
-        self._submit_workflow_selection(
-            labels,
-            normalize=str,
-            build_states=self._build_muon_relaxation_states,
-            jobs_for_values=self._jobs_for_muon_relaxation_labels,
-            materialize_values=self._materialize_muon_relaxation_jobs,
-            is_ready=self._muon_relaxation_label_is_ready,
-            no_ready_message="Only configured muon-relaxation rows in the 'ready' state can be submitted.",
-            submit=lambda jobs: self._submit_muon_relaxation_jobs_grouped(jobs, target="local"),
-        )
-
-    def _on_submit_cluster_from_muon_relaxation(self, labels: list[str]) -> None:
-        if not self._check_staged_muon_relaxation_host():
-            return
-        self._submit_workflow_selection(
-            labels,
-            normalize=str,
-            build_states=self._build_muon_relaxation_states,
-            jobs_for_values=self._jobs_for_muon_relaxation_labels,
-            materialize_values=self._materialize_muon_relaxation_jobs,
-            is_ready=self._muon_relaxation_label_is_ready,
-            no_ready_message="Only configured muon-relaxation rows in the 'ready' state can be submitted.",
-            submit=lambda jobs: self._submit_muon_relaxation_jobs_grouped(jobs, target="cluster"),
-        )
-
-    def _submit_muon_relaxation_jobs_grouped(self, jobs: list[Job], *, target: str) -> None:
-        grouped: dict[str, list[Job]] = {}
-        for job in self._dedupe_jobs(jobs):
-            grouped.setdefault(job.calc_type, []).append(job)
-        for calc_type in (
-            MUON_RELAXATION_CALC_TYPES["positive_muon"],
-            MUON_RELAXATION_CALC_TYPES["muonium"],
-        ):
-            group = grouped.get(calc_type, [])
-            if not group:
-                continue
-            if target == "local":
-                self._submit_jobs_locally(group)
-            else:
-                self._submit_jobs_on_cluster(group)
 
     def _quantum_corrections_definitions(self) -> list[object]:
         if self._document is None:
@@ -14019,23 +13799,6 @@ class MainWindow(QMainWindow):
             f"Please select only structures that share a single source host.",
         )
         return False
-
-    def _check_staged_muon_relaxation_host(self) -> bool:
-        """Validate all staged muon-relaxation sites match the active host.
-
-        Returns True if the submission should proceed (no mismatch, or the
-        user resolved the mismatch by switching hosts).  Returns False if
-        the user cancelled or the mismatch could not be resolved.
-        """
-        if self._document is None:
-            return True
-        definition = self._active_muon_relaxation_definition()
-        if definition is None or not definition.input_site_ids:
-            return True
-        mismatch = self._project_service.validate_sites_match_active_host(
-            self._document, definition.input_site_ids
-        )
-        return mismatch is None or self._handle_site_host_mismatch(mismatch)
 
     def _check_definition_host(self, definition) -> bool:
         """Validate a QC / energy-barriers / NEB definition against the active host.

@@ -56,8 +56,8 @@ class PristineRelaxationDeps:
     """Pristine-relaxation-specific handles, late-bound to ``MainWindow`` helpers.
 
     These helpers stay on ``MainWindow`` because non-migrating code still calls
-    them there — several are shared with the still-inline muon-relaxation result
-    branch (``parse_relaxed_out_cell``, ``job_output_directory``,
+    them there — several are shared with the muon-relaxation controller's deps
+    (``parse_relaxed_out_cell``, ``job_output_directory``,
     ``job_seed_name``, ``run_for_job``). The controller reaches them only through
     these required callables. Workflow-specific dependencies like these never go
     in the shared
@@ -80,7 +80,7 @@ class PristineRelaxationDeps:
     expand_pristine_relaxation_jobs: Callable[
         [CalculationDefinition, PristineRelaxationConfig], AdapterExpansion | None
     ]
-    # Shared with the still-inline muon-relaxation result branch:
+    # Shared with the muon-relaxation controller (via its own deps):
     job_output_directory: Callable[[Job], Path | None]
     job_seed_name: Callable[[Job], str]
     parse_relaxed_out_cell: Callable[[Path], tuple[object, float, float, float]]
