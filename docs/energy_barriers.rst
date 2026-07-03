@@ -48,7 +48,7 @@ The intended user flow is:
   ordered pair only, including symmetry-equivalent hops of the same relaxed
   site when the same endpoint is selected twice;
 - optionally inspect a path with ``View...`` before submission;
-- delete generated paths that are no longer relevant with ``Delete Selected
+- delete generated paths that are no longer relevant with ``Remove Selected
   Paths`` or the ``Delete`` / ``Backspace`` shortcuts;
 - configure and build one or more NEB jobs, locally or on the cluster;
 - inspect completed NEB paths in the ``NEB Analysis`` tab with the
