@@ -154,7 +154,14 @@ previously accreted on ``MainWindow``.
   controller's own module (e.g. ``ConvergenceCutoffDeps``), and the
   controller's own widget/view reference. A controller holds **no** reference
   to ``MainWindow`` and never imports the ``main_window`` module, which keeps
-  controllers unit-testable without constructing a window.
+  controllers unit-testable without constructing a window. The one sanctioned
+  deviation from the third part is ``EnergyBarriersController``, whose view is
+  created *lazily* (only when the workflow route is first opened): it takes a
+  ``view_getter: Callable[[], EnergyBarriersWidget | None]`` instead of a view
+  instance, and its ``refresh_view`` no-ops when the getter returns ``None``.
+  The controller is still constructed and registered in ``MainWindow.__init__``
+  regardless, so a completed NEB job dispatches through its ``build_result`` even
+  when the view was never opened.
 - :meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.submit`
   is a template method mirroring the former
   ``MainWindow._submit_workflow_selection`` funnel; workflow-specific behavior
@@ -212,11 +219,30 @@ previously accreted on ``MainWindow``.
   re-parses on the validated success path. Task farming for the phonon stage is
   applied by the shared ``_submit_jobs_locally`` backend (not the controller), so
   ``QuantumCorrectionsController`` keeps the base single-group ``submission_groups``.
+  ``EnergyBarriersController`` is the seventh and **last** of the per-workflow
+  migrations. Its ``materialize`` keys jobs by their diffusion-path *source key*
+  (writing ``job_ids_by_label`` keyed by source key and stamping each expanded
+  spec with ``provenance={"source_key": key}``), aligns the reactant/product
+  endpoints into the pristine host via ``prepare_transition_state_structures`` and
+  seeds the band's middle image with ``idpp_intermediate_structure`` before
+  expanding through ``expand_nudged_elastic_band_jobs``; its ``pre_submit_check``
+  runs the former ``_check_energy_barrier_neb_host`` guard (validating the selected
+  paths' endpoint structures/sites against the active host); and its
+  ``build_result`` parses the completed ``.ts`` transition-state file into the
+  ``transition_state_file`` / ``barrier_height_eV`` / ``num_images`` /
+  ``image_labels`` / ``reaction_coordinates`` / ``image_energies_eV`` payload. Both
+  the NEB and transition-state-search calc types are ``handles_job``-owned so the
+  ``.ts``-producing pair is coherent. Following the no-failure-channel convention,
+  the ``.ts`` guard (missing/unparseable file) stays inline in
+  ``_on_local_job_finished``; only the payload moves into ``build_result``.
 
 The set of ``_on_submit_*`` / ``_materialize_*`` handlers still on
 ``MainWindow`` is pinned by ``tests/test_agent_harness.py`` as a ratchet: it may
 only shrink as workflows migrate onto controllers, and no new handler may appear
-on ``MainWindow``.
+on ``MainWindow``. With energy barriers migrated the per-workflow migration
+series is complete: the only pinned entries that remain are the two cross-workflow
+dashboard handlers (``_on_submit_from_dashboard`` / ``_on_submit_local_from_dashboard``),
+which fan out to every workflow's controller and legitimately stay on ``MainWindow``.
 
 Workflow parameter surface policy
 ---------------------------------

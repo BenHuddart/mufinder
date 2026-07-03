@@ -24,6 +24,10 @@ from mufinder.app.workflow_controllers.convergence_kpoint import (
     ConvergenceKpointController,
     ConvergenceKpointDeps,
 )
+from mufinder.app.workflow_controllers.energy_barriers import (
+    EnergyBarriersController,
+    EnergyBarriersDeps,
+)
 from mufinder.app.workflow_controllers.muon_relaxation import (
     MuonRelaxationController,
     MuonRelaxationDeps,
@@ -47,6 +51,8 @@ __all__ = [
     "ConvergenceCutoffDeps",
     "ConvergenceKpointController",
     "ConvergenceKpointDeps",
+    "EnergyBarriersController",
+    "EnergyBarriersDeps",
     "MuonRelaxationController",
     "MuonRelaxationDeps",
     "PristineRelaxationController",
