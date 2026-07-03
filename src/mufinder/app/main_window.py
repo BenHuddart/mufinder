@@ -75,7 +75,7 @@ from mufinder.branding import (
 from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_cluster_configs
 from mufinder.castep_io.gui_metadata import make_block_section, make_keyword_assignment, normalize_gui_value
 from mufinder.castep_io.schema import KeywordSpec, canonical_keyword_name, get_keyword_spec
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure, utc_now
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
@@ -262,14 +262,8 @@ from mufinder.workflow.renderer import render_job
 from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamTemplate
 
 
-_ACTIVE_LOCAL_JOB_STATES = {
-    JobStatus.SUBMITTING,
-    JobStatus.QUEUED,
-    JobStatus.RUNNING,
-    JobStatus.RETRIEVING,
-}
 _RESUBMITTABLE_JOB_STATES = {JobStatus.FAILED, JobStatus.CANCELLED}
-_VISIBLE_DASHBOARD_STATES = _ACTIVE_LOCAL_JOB_STATES | {JobStatus.STOPPED} | _RESUBMITTABLE_JOB_STATES
+_VISIBLE_DASHBOARD_STATES = ACTIVE_JOB_STATUSES | {JobStatus.STOPPED} | _RESUBMITTABLE_JOB_STATES
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _WorkflowKey = TypeVar("_WorkflowKey")
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {"lattice_cart", "lattice_abc", "positions_frac", "positions_abs"}
@@ -3520,7 +3514,7 @@ class MainWindow(QMainWindow):
             )
 
             can_resubmit = job.status in _RESUBMITTABLE_JOB_STATES
-            can_cancel = job.status in _ACTIVE_LOCAL_JOB_STATES
+            can_cancel = job.status in ACTIVE_JOB_STATUSES
             can_inspect = job.status in {JobStatus.FAILED, JobStatus.STOPPED}
             can_reset = job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
 
@@ -4325,7 +4319,7 @@ class MainWindow(QMainWindow):
 
         eligible_statuses = {
             "resubmit": _RESUBMITTABLE_JOB_STATES,
-            "cancel": _ACTIVE_LOCAL_JOB_STATES,
+            "cancel": ACTIVE_JOB_STATUSES,
             "inspect": {JobStatus.FAILED, JobStatus.STOPPED},
             "reset": {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
         }[kind]
@@ -4382,14 +4376,14 @@ class MainWindow(QMainWindow):
         if not jobs:
             return
 
-        active_jobs = [job for job in jobs if job.status in _ACTIVE_LOCAL_JOB_STATES]
+        active_jobs = [job for job in jobs if job.status in ACTIVE_JOB_STATUSES]
         resettable_jobs = [
             job for job in jobs if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
         ]
         deletable_jobs = [
             job
             for job in jobs
-            if job.status not in _ACTIVE_LOCAL_JOB_STATES
+            if job.status not in ACTIVE_JOB_STATUSES
             and job.status not in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
         ]
 
@@ -4436,7 +4430,7 @@ class MainWindow(QMainWindow):
         deletable_jobs = [
             job
             for job in self._dedupe_jobs(jobs)
-            if job.status not in _ACTIVE_LOCAL_JOB_STATES
+            if job.status not in ACTIVE_JOB_STATUSES
             and job.status not in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
         ]
         if not deletable_jobs:
@@ -6581,7 +6575,7 @@ class MainWindow(QMainWindow):
 
         cancelled = 0
         for job in jobs:
-            if job.status not in _ACTIVE_LOCAL_JOB_STATES:
+            if job.status not in ACTIVE_JOB_STATUSES:
                 continue
             if job.execution_target == "local":
                 self._local_runner.cancel(job.id)
@@ -6726,6 +6720,12 @@ class MainWindow(QMainWindow):
             request_dashboard_flush=lambda **kwargs: self._request_dashboard_flush(**kwargs),
             persist_ui_state=lambda **kwargs: self._persist_document_ui_state(**kwargs),
             status_message=lambda message: self.statusBar().showMessage(message),
+            definition_output_directory=lambda definition: self._definition_output_directory(definition),
+            job_output_directory=lambda job: self._job_output_directory(job),
+            job_seed_name=lambda job: self._job_seed_name(job),
+            run_for_job=lambda job_id: self._run_for_job(job_id),
+            total_energy_for_job=lambda job_id: self._total_energy_for_job(job_id),
+            max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
         )
 
     def _build_convergence_cutoff_deps(self) -> ConvergenceCutoffDeps:
@@ -6746,10 +6746,7 @@ class MainWindow(QMainWindow):
             job_for_definition_cutoff=(
                 lambda definition, cutoff: self._job_for_definition_cutoff(definition, cutoff)
             ),
-            definition_output_directory=lambda definition: self._definition_output_directory(definition),
             cutoff_key=lambda value: self._cutoff_key(value),
-            total_energy_for_job=lambda job_id: self._total_energy_for_job(job_id),
-            max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
             max_stress_for_job=lambda job_id: self._max_stress_for_job(job_id),
         )
 
@@ -6758,10 +6755,11 @@ class MainWindow(QMainWindow):
 
         These helpers stay on ``MainWindow`` because non-migrating convergence
         code still calls them; the controller reaches them only through these
-        late-bound wrappers. Several fields overlap ``ConvergenceCutoffDeps``
-        (``deserialize_convergence_config``, ``definition_output_directory``, the
-        energy/force/stress readers) but the two sweeps deliberately keep
-        separate deps types.
+        late-bound wrappers. ``deserialize_convergence_config`` overlaps
+        ``ConvergenceCutoffDeps`` but the two sweeps deliberately keep separate
+        deps types. Cross-workflow job/definition readers live on the shared
+        context, not here; ``max_stress_for_job`` stays because only the two
+        convergence sweeps use it.
         """
 
         return ConvergenceKpointDeps(
@@ -6770,14 +6768,7 @@ class MainWindow(QMainWindow):
             sync_equivalent_convergence_kpoint_mappings=(
                 lambda definition: self._sync_equivalent_convergence_kpoint_mappings(definition)
             ),
-            definition_for_kpoint_grid=lambda grid: self._definition_for_kpoint_grid(grid),
-            job_for_definition_grid=(
-                lambda definition, grid: self._job_for_definition_grid(definition, grid)
-            ),
-            definition_output_directory=lambda definition: self._definition_output_directory(definition),
             grid_key=lambda grid: self._grid_key(grid),
-            total_energy_for_job=lambda job_id: self._total_energy_for_job(job_id),
-            max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
             max_stress_for_job=lambda job_id: self._max_stress_for_job(job_id),
         )
 
@@ -6785,10 +6776,12 @@ class MainWindow(QMainWindow):
         """Build the pristine-relaxation controller's deps.
 
         These helpers stay on ``MainWindow`` because non-migrating code still
-        calls them; several are shared with the still-inline muon-relaxation
-        result branch (``parse_relaxed_out_cell``, ``job_output_directory``,
-        ``job_seed_name``, ``run_for_job``). The controller reaches them only
-        through these late-bound wrappers.
+        calls them; ``parse_relaxed_out_cell`` is shared with the still-inline
+        muon-relaxation result branch. Cross-workflow job/definition readers
+        (``job_output_directory``, ``job_seed_name``, ``run_for_job``,
+        ``definition_output_directory``, the energy/force readers) now live on
+        the shared context. The controller reaches them only through late-bound
+        wrappers.
         """
 
         return PristineRelaxationDeps(
@@ -6808,20 +6801,12 @@ class MainWindow(QMainWindow):
             job_for_pristine_relaxation_label=(
                 lambda definition, label: self._job_for_pristine_relaxation_label(definition, label)
             ),
-            definition_output_directory=(
-                lambda definition: self._definition_output_directory(definition)
-            ),
             expand_pristine_relaxation_jobs=(
                 lambda definition, config: self._expand_pristine_relaxation_jobs_for_controller(
                     definition, config
                 )
             ),
-            job_output_directory=lambda job: self._job_output_directory(job),
-            job_seed_name=lambda job: self._job_seed_name(job),
             parse_relaxed_out_cell=lambda path: self._parse_relaxed_out_cell(path),
-            run_for_job=lambda job_id: self._run_for_job(job_id),
-            total_energy_for_job=lambda job_id: self._total_energy_for_job(job_id),
-            max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
         )
 
     def _expand_pristine_relaxation_jobs_for_controller(
@@ -6885,10 +6870,6 @@ class MainWindow(QMainWindow):
                     definition, label, charge_state
                 )
             ),
-            job_is_active_local=lambda job: job.status in _ACTIVE_LOCAL_JOB_STATES,
-            definition_output_directory=(
-                lambda definition: self._definition_output_directory(definition)
-            ),
             handle_site_host_mismatch=(
                 lambda mismatch: self._handle_site_host_mismatch(mismatch)
             ),
@@ -6901,12 +6882,7 @@ class MainWindow(QMainWindow):
             coerce_fractional_triplet=(
                 lambda value: self._coerce_fractional_triplet(value)
             ),
-            job_output_directory=lambda job: self._job_output_directory(job),
-            job_seed_name=lambda job: self._job_seed_name(job),
             parse_relaxed_out_cell=lambda path: self._parse_relaxed_out_cell(path),
-            run_for_job=lambda job_id: self._run_for_job(job_id),
-            total_energy_for_job=lambda job_id: self._total_energy_for_job(job_id),
-            max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
         )
 
     def _build_uep_deps(self) -> UepDeps:
@@ -6916,10 +6892,11 @@ class MainWindow(QMainWindow):
         calls them: the definition/config/mapping helpers are shared with the
         UEP configure path, row removal, the analysis wizard, and dashboard
         cluster-source sync; ``_uep_potential_grid_result_for_job`` still feeds
-        the wizard's "already analysed" detection; and
-        ``_definition_output_directory`` / ``_job_output_directory`` /
-        ``_job_seed_name`` / ``_run_for_job`` are shared across workflows. The
-        controller reaches them only through these late-bound wrappers.
+        the wizard's "already analysed" detection. The cross-workflow job/
+        definition readers (``definition_output_directory``,
+        ``job_output_directory``, ``job_seed_name``, ``run_for_job``) now live on
+        the shared context. The controller reaches these deps only through
+        late-bound wrappers.
         """
 
         return UepDeps(
@@ -6931,15 +6908,9 @@ class MainWindow(QMainWindow):
             job_for_uep_label=(
                 lambda definition, label: self._job_for_uep_label(definition, label)
             ),
-            definition_output_directory=(
-                lambda definition: self._definition_output_directory(definition)
-            ),
             uep_potential_grid_result_for_job=(
                 lambda job_id: self._uep_potential_grid_result_for_job(job_id)
             ),
-            run_for_job=lambda job_id: self._run_for_job(job_id),
-            job_output_directory=lambda job: self._job_output_directory(job),
-            job_seed_name=lambda job: self._job_seed_name(job),
         )
 
     def _build_quantum_corrections_deps(self) -> QuantumCorrectionsDeps:
@@ -6951,9 +6922,9 @@ class MainWindow(QMainWindow):
         ``_check_definition_host`` is shared with the NEB / energy-barriers
         workflow; the source-candidate and row-configuration helpers are shared
         across the quantum surface and the energy-barriers path; and
-        ``_definition_output_directory`` / ``_job_output_directory`` /
-        ``_job_seed_name`` / ``_dedupe_jobs`` are shared across workflows. The
-        module-level ``_input_template_from_keyword_values`` / ``_format_energy``
+        ``_dedupe_jobs`` is shared across workflows (the cross-workflow job/
+        definition readers now live on the shared context). The module-level
+        ``_input_template_from_keyword_values`` / ``_format_energy``
         helpers and the ``_quantum_method_from_gui_value`` lookup are also reached
         through these late-bound wrappers (the controller must not import
         ``main_window``). The controller reaches them only through these callables.
@@ -6965,9 +6936,6 @@ class MainWindow(QMainWindow):
             ),
             ensure_quantum_corrections_definition=(
                 lambda keys: self._ensure_quantum_corrections_definition(keys)
-            ),
-            definition_output_directory=(
-                lambda definition: self._definition_output_directory(definition)
             ),
             eligible_quantum_source_candidates=(
                 lambda: self._eligible_quantum_source_candidates()
@@ -7044,8 +7012,6 @@ class MainWindow(QMainWindow):
             check_definition_host=(
                 lambda definition: self._check_definition_host(definition)
             ),
-            job_output_directory=lambda job: self._job_output_directory(job),
-            job_seed_name=lambda job: self._job_seed_name(job),
             format_energy=lambda value: _format_energy(value),
         )
 
@@ -7116,9 +7082,6 @@ class MainWindow(QMainWindow):
                     structure
                 )
             ),
-            definition_output_directory=(
-                lambda definition: self._definition_output_directory(definition)
-            ),
             dedupe_jobs=lambda jobs: self._dedupe_jobs(jobs),
             project_convergence_input_defaults=(
                 lambda: self._project_convergence_input_defaults()
@@ -7134,8 +7097,6 @@ class MainWindow(QMainWindow):
             charge_state_label_for_job=(
                 lambda job: self._charge_state_label_for_job(job)
             ),
-            job_output_directory=lambda job: self._job_output_directory(job),
-            job_seed_name=lambda job: self._job_seed_name(job),
             energy_barrier_endpoint_rows=(
                 lambda: self._energy_barrier_endpoint_rows()
             ),
@@ -8283,7 +8244,7 @@ class MainWindow(QMainWindow):
         targets: list[str] = []
         seen: set[str] = set()
         for job in self._document.jobs.values():
-            if job.status not in _ACTIVE_LOCAL_JOB_STATES:
+            if job.status not in ACTIVE_JOB_STATUSES:
                 continue
             target = job.execution_target.strip()
             if not target or target.casefold() == "local":
@@ -8300,7 +8261,7 @@ class MainWindow(QMainWindow):
             return
 
         for job in self._document.jobs.values():
-            if job.status not in _ACTIVE_LOCAL_JOB_STATES:
+            if job.status not in ACTIVE_JOB_STATUSES:
                 continue
 
             target = job.execution_target.strip()
@@ -9300,48 +9261,6 @@ class MainWindow(QMainWindow):
         definitions = self._kpoint_definitions()
         return definitions[0] if definitions else None
 
-    def _definition_for_kpoint_grid(self, grid: tuple[int, int, int]):
-        active_definition = self._active_kpoint_definition()
-        if active_definition is None:
-            return None, None
-
-        self._sync_equivalent_convergence_kpoint_mappings(active_definition)
-        config = self._deserialize_convergence_config(active_definition.parameters.get("configuration", {}))
-        if config is None or config.sweep_parameter != "kpoint_mp_grid":
-            return None, None
-
-        if grid in config.sweep_values:
-            return active_definition, config
-        return None, None
-
-    def _job_for_definition_grid(self, definition, grid: tuple[int, int, int]) -> Job | None:
-        if self._document is None:
-            return None
-
-        mapping = definition.parameters.get("job_ids_by_grid")
-        if isinstance(mapping, dict):
-            raw_job_id = mapping.get(self._grid_key(grid))
-            if isinstance(raw_job_id, str):
-                try:
-                    job_id = UUID(raw_job_id)
-                except ValueError:
-                    job_id = None
-                if job_id is not None:
-                    job = self._document.jobs.get(job_id)
-                    if job is not None:
-                        return job
-            return None
-
-        label = convergence_job_name(
-            definition.parameters.get("configuration", {}).get("name_prefix", "kpoint_convergence"),
-            grid,
-            sweep_parameter="kpoint_mp_grid",
-        )
-        for job in reversed(tuple(self._document.jobs.values())):
-            if job.label == label:
-                return job
-        return None
-
     def _on_kpoint_convergence_configured(self, config: ConvergenceConfig) -> None:
         if self._document is None:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -10215,7 +10134,7 @@ class MainWindow(QMainWindow):
                 if job.workflow_stage == WorkflowStage.MUON_RELAXATION
                 and job.calc_type == expected_calc_type
                 and job.label == row.label
-                and job.status in _ACTIVE_LOCAL_JOB_STATES
+                and job.status in ACTIVE_JOB_STATUSES
             ]
             if not candidates:
                 continue
@@ -11999,7 +11918,7 @@ class MainWindow(QMainWindow):
             return False
         phonon_job = self._phonon_job_for_quantum_source_key(definition, candidate.key)
         if phonon_job is not None:
-            return phonon_job.status not in _ACTIVE_LOCAL_JOB_STATES
+            return phonon_job.status not in ACTIVE_JOB_STATUSES
         return singlepoint_job.status == JobStatus.COMPLETED
 
     def _ensure_quantum_corrections_definition(self, source_keys: list[str]):

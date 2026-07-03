@@ -56,12 +56,13 @@ class PristineRelaxationDeps:
     """Pristine-relaxation-specific handles, late-bound to ``MainWindow`` helpers.
 
     These helpers stay on ``MainWindow`` because non-migrating code still calls
-    them there — several are shared with the muon-relaxation controller's deps
-    (``parse_relaxed_out_cell``, ``job_output_directory``,
-    ``job_seed_name``, ``run_for_job``). The controller reaches them only through
-    these required callables. Workflow-specific dependencies like these never go
-    in the shared
-    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`.
+    them there — ``parse_relaxed_out_cell`` is shared with the muon-relaxation
+    controller's deps. The controller reaches them only through these required
+    callables. Workflow-specific dependencies like these never go in the shared
+    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`;
+    cross-workflow job/definition readers (``job_output_directory``,
+    ``job_seed_name``, ``run_for_job``, ``definition_output_directory``, the
+    energy/force readers) live there instead.
     """
 
     active_pristine_relaxation_definition: Callable[[], CalculationDefinition | None]
@@ -76,17 +77,11 @@ class PristineRelaxationDeps:
     job_for_pristine_relaxation_label: Callable[
         [CalculationDefinition, str], Job | None
     ]
-    definition_output_directory: Callable[[CalculationDefinition], Path | None]
     expand_pristine_relaxation_jobs: Callable[
         [CalculationDefinition, PristineRelaxationConfig], AdapterExpansion | None
     ]
     # Shared with the muon-relaxation controller (via its own deps):
-    job_output_directory: Callable[[Job], Path | None]
-    job_seed_name: Callable[[Job], str]
     parse_relaxed_out_cell: Callable[[Path], tuple[object, float, float, float]]
-    run_for_job: Callable[[UUID], CalculationRun | None]
-    total_energy_for_job: Callable[[UUID], float | None]
-    max_force_for_job: Callable[[UUID], float | None]
 
 
 class PristineRelaxationController(WorkflowJobController):
@@ -156,7 +151,7 @@ class PristineRelaxationController(WorkflowJobController):
                 continue
 
             status_value = "ready" if job.status == JobStatus.DEFINED else job.status.value
-            run = self._deps.run_for_job(job.id)
+            run = self._context.run_for_job(job.id)
             if (
                 status_value == JobStatus.COMPLETED.value
                 and run is not None
@@ -176,8 +171,8 @@ class PristineRelaxationController(WorkflowJobController):
 
             states[row.label] = RelaxationRunState(
                 status=status_value,
-                total_energy=self._deps.total_energy_for_job(job.id),
-                max_force=self._deps.max_force_for_job(job.id),
+                total_energy=self._context.total_energy_for_job(job.id),
+                max_force=self._context.max_force_for_job(job.id),
                 lattice_a=float(lattice_a) if isinstance(lattice_a, (int, float)) else None,
                 lattice_b=float(lattice_b) if isinstance(lattice_b, (int, float)) else None,
                 lattice_c=float(lattice_c) if isinstance(lattice_c, (int, float)) else None,
@@ -226,7 +221,7 @@ class PristineRelaxationController(WorkflowJobController):
         if not definition.input_structure_ids:
             return []
 
-        output_root = self._deps.definition_output_directory(definition)
+        output_root = self._context.definition_output_directory(definition)
         if output_root is None:
             return []
 
@@ -301,12 +296,17 @@ class PristineRelaxationController(WorkflowJobController):
         if document is None:
             return ControllerResult()
 
-        output_dir = self._deps.job_output_directory(job)
-        seed_name = self._deps.job_seed_name(job)
+        output_dir = self._context.job_output_directory(job)
+        seed_name = self._context.job_seed_name(job)
         if output_dir is None:
             return ControllerResult()
         out_cell_path = output_dir / f"{seed_name}-out.cell"
 
+        # Intentional double parse: the inline ``_on_local_job_finished`` guard
+        # already parsed this ``-out.cell`` to validate it (and discarded the
+        # result), and here ``build_result`` re-derives the payload on the
+        # validated success path. This is an accepted cost — do NOT "fix" it by
+        # caching parse state on the controller.
         relaxed, lattice_a, lattice_b, lattice_c = self._deps.parse_relaxed_out_cell(
             out_cell_path
         )
