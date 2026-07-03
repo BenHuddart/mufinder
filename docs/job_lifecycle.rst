@@ -70,9 +70,9 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
    * - ``defined``
      - ``submitting``, ``cancelled``
    * - ``submitting``
-     - ``queued``, ``running``, ``failed``, ``cancelled``
+     - ``queued``, ``running``, ``stopped``, ``failed``, ``cancelled``
    * - ``queued``
-     - ``running``, ``failed``, ``cancelled``
+     - ``running``, ``stopped``, ``failed``, ``cancelled``
    * - ``running``
      - ``retrieving``, ``stopped``, ``completed``, ``failed``, ``cancelled``
    * - ``retrieving``
@@ -99,8 +99,11 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
   copy/parsing.
 - ``complete_job`` moves ``running`` or ``retrieving`` to ``completed``, stamps
   ``completed_at``, and clears ``error_message``.
-- ``stop_job`` moves ``running`` or ``retrieving`` to ``stopped`` and records a
-  message.
+- ``stop_job`` moves an active job (``submitting``, ``queued``, ``running``, or
+  ``retrieving``) to ``stopped`` and records a message. The ``submitting`` and
+  ``queued`` source edges exist so orphaned local jobs left mid-submission when
+  MuFinder closed can be reconciled on the next project open (see
+  ``reconcile_orphaned_local_jobs`` below).
 - ``fail_job`` moves an in-flight job to ``failed`` and records a message.
 - ``cancel_job`` moves a cancellable job to ``cancelled``.
 - ``reset_failed_job`` moves ``failed``, ``stopped``, or ``cancelled`` back to
@@ -316,15 +319,32 @@ The current design has a sensible central transition service, but several
 failure modes can still leave jobs in the dashboard indefinitely. The following
 changes are recommended.
 
-1. Add explicit stale active-job reconciliation on project open.
-   Local active jobs cannot be reattached after an application restart, and
-   cluster jobs may lack enough metadata to re-register. On project load,
-   MuFinder should scan ``submitting``, ``queued``, ``running``, and
-   ``retrieving`` jobs and classify jobs that cannot be actively monitored.
-   For local jobs, mark them ``stopped`` or introduce a ``needs_attention``
-   state with a clear explanation. For cluster jobs, surface missing remote id,
-   missing remote directory, missing cluster config, or missing local output
-   directory as actionable diagnostics.
+1. Orphaned local-job reconciliation on project open (implemented).
+   A local job left ``submitting``, ``queued``, ``running``, or ``retrieving``
+   when MuFinder closes has no live process behind it on the next launch, yet
+   would otherwise show as running forever. On every project open/switch,
+   ``ProjectService.reconcile_orphaned_local_jobs`` selects active jobs whose
+   ``execution_target`` is blank/empty or ``"local"`` (case-insensitively),
+   moves each to ``stopped`` with the message *"MuFinder was closed while this
+   job was in progress locally; reset or resubmit it."*, and closes out the
+   job's latest non-terminal ``CalculationRun`` (``stopped`` with a
+   ``completed_at`` stamp) to keep run and job status consistent. A
+   ``job_stopped`` provenance milestone is recorded per reconciled job. The
+   stopped rows remain visible and resettable, and the reset/resubmit action
+   is unchanged. Reconciliation runs from ``MainWindow`` inside
+   ``_refresh_ui_after_project_change`` — before the jobs table is rendered, so
+   the user never sees a phantom running row — and ``_open_project_from_path``
+   surfaces a status-bar message such as *"N local job(s) were stopped because
+   MuFinder closed while they were in progress."* when any jobs are reconciled.
+
+   Cluster jobs are deliberately left untouched by this path: they re-attach to
+   the cluster runner instead, via
+   ``MainWindow._sync_cluster_tracking_from_document`` (which re-registers
+   active cluster jobs, including ``submitting``, that still carry a remote job
+   id and directory). Remaining gaps for cluster jobs that lack enough metadata
+   to re-register — missing remote id, remote directory, cluster config, or
+   local output directory — are covered by recommendations 2–3 below and are
+   not yet surfaced as explicit diagnostics.
 
 2. Persist monitor metadata and last-observed status.
    Store fields such as ``last_checked_at``, ``last_status_source``, and
