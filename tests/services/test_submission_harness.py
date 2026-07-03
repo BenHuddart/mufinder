@@ -117,3 +117,52 @@ def test_harness_cluster_job_stopped_is_terminal(qapp, tmp_path: Path) -> None:
     assert run.status == JobStatus.STOPPED
     assert harness.controller.active_run_by_job == {}
     assert harness.document.provenance[-1].action == "job_stopped"
+
+
+def test_harness_local_queued_status_routes_through_project_service(
+    qapp, tmp_path: Path
+) -> None:
+    # Decision 2 pin: a local runner status_changed(queued) on a SUBMITTING job
+    # advances it to QUEUED via ProjectService.mark_job_queued (not by the runner
+    # or controller mutating Job.status directly). The transition is validated,
+    # so remote_job_id stays None for a local job.
+    harness = build_submission_harness(tmp_path)
+    job = harness.add_job("local-queued")
+
+    harness.submit_local(job)
+    assert job.status == JobStatus.SUBMITTING
+
+    harness.emit_local_status(job.id, JobStatus.QUEUED)
+    assert job.status == JobStatus.QUEUED
+    assert job.remote_job_id is None
+    run = harness.controller.run_for_job(job.id)
+    assert run is not None
+    assert run.status == JobStatus.QUEUED
+
+
+def test_harness_local_queued_status_is_noop_for_already_queued_job(
+    qapp, tmp_path: Path
+) -> None:
+    # Decision 2 pin: mark_local_status_changed is QUEUED-only and gated on the
+    # job being SUBMITTING. A second queued notification for an already-QUEUED
+    # job (or any job that is not SUBMITTING) is an inert no-op -- it must not
+    # corrupt the job, re-run the transition, or disturb the active run.
+    harness = build_submission_harness(tmp_path)
+    job = harness.add_job("local-requeued")
+
+    harness.submit_local(job)
+    harness.emit_local_status(job.id, JobStatus.QUEUED)
+    assert job.status == JobStatus.QUEUED
+    run_id_before = harness.controller.active_run_by_job.get(job.id)
+
+    # A redundant queued signal for the (now) QUEUED job is ignored.
+    harness.emit_local_status(job.id, JobStatus.QUEUED)
+    assert job.status == JobStatus.QUEUED
+    assert harness.controller.active_run_by_job.get(job.id) == run_id_before
+
+    # Once the job is RUNNING, a stray queued signal is likewise ignored (RUNNING
+    # is not SUBMITTING, so the guard short-circuits) and does not regress state.
+    harness.emit_local_started(job.id)
+    assert job.status == JobStatus.RUNNING
+    harness.emit_local_status(job.id, JobStatus.QUEUED)
+    assert job.status == JobStatus.RUNNING
