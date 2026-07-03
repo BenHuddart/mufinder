@@ -183,6 +183,7 @@ from mufinder.app.workflow_submission import (
 )
 from mufinder.app.workflow_controllers import (
     ConvergenceCutoffController,
+    ConvergenceCutoffDeps,
     WorkflowControllerContext,
     WorkflowJobController,
     merge_controller_result,
@@ -1761,6 +1762,7 @@ class MainWindow(QMainWindow):
         # first. See mufinder.app.workflow_controllers.
         self._convergence_controller = ConvergenceCutoffController(
             self._build_workflow_controller_context(),
+            self._build_convergence_cutoff_deps(),
             self._convergence_view,
         )
         self._workflow_controllers: list[WorkflowJobController] = [
@@ -6605,11 +6607,13 @@ class MainWindow(QMainWindow):
         return deduped
 
     def _build_workflow_controller_context(self) -> WorkflowControllerContext:
-        """Build the narrow, late-bound context passed to workflow controllers.
+        """Build the narrow, late-bound context shared by all workflow controllers.
 
         Every callable is a small wrapper so the controller always sees the
         current document and any test-time monkeypatching of these methods
         (see the ``monkeypatch.setattr(window, "_submit_jobs_*", ...)`` tests).
+        Workflow-specific handles never go here — they live in a per-controller
+        deps dataclass (see :meth:`_build_convergence_cutoff_deps`).
         """
 
         return WorkflowControllerContext(
@@ -6623,6 +6627,17 @@ class MainWindow(QMainWindow):
             request_dashboard_flush=lambda **kwargs: self._request_dashboard_flush(**kwargs),
             persist_ui_state=lambda **kwargs: self._persist_document_ui_state(**kwargs),
             status_message=lambda message: self.statusBar().showMessage(message),
+        )
+
+    def _build_convergence_cutoff_deps(self) -> ConvergenceCutoffDeps:
+        """Build the cutoff controller's deps: shared convergence helpers.
+
+        These helpers stay on ``MainWindow`` because non-migrating convergence
+        code still calls them; the controller reaches them only through these
+        late-bound wrappers.
+        """
+
+        return ConvergenceCutoffDeps(
             active_convergence_definition=lambda: self._active_convergence_definition(),
             deserialize_convergence_config=lambda payload: self._deserialize_convergence_config(payload),
             sync_equivalent_convergence_cutoff_mappings=(

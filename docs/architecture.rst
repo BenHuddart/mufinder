@@ -146,11 +146,15 @@ per-workflow tangle of ``_on_submit_*`` / ``_materialize_*`` handlers that
 previously accreted on ``MainWindow``.
 
 - Controllers are plain Python objects (not ``QObject``): they own no signals.
-- A controller receives everything it needs from the window through a
-  :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext` of
-  narrow, late-bound callables (plus its own widget/view reference). It holds
-  **no** reference to ``MainWindow`` and never imports the ``main_window``
-  module, which keeps controllers unit-testable without constructing a window.
+- A controller's constructor inputs follow a three-part pattern: the shared
+  :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
+  (exactly the narrow, late-bound callables every workflow controller needs —
+  workflow-specific dependencies never go in it), an optional per-controller
+  deps dataclass of required, precisely-typed callables defined in the
+  controller's own module (e.g. ``ConvergenceCutoffDeps``), and the
+  controller's own widget/view reference. A controller holds **no** reference
+  to ``MainWindow`` and never imports the ``main_window`` module, which keeps
+  controllers unit-testable without constructing a window.
 - :meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.submit`
   is a template method mirroring the former
   ``MainWindow._submit_workflow_selection`` funnel; workflow-specific behavior

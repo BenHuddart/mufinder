@@ -7,16 +7,21 @@ here is a behavior-preserving move of the former ``MainWindow`` methods
 ``_materialize_convergence_jobs``, ``_build_convergence_cutoff_states``,
 ``_jobs_for_convergence_cutoffs``, ``_refresh_convergence_cutoff_rows``, and
 ``_convergence_form_snapshot``. Shared convergence helpers that non-migrating
-code still calls remain on ``MainWindow`` and are reached via the context.
+code still calls remain on ``MainWindow`` and are reached via
+:class:`ConvergenceCutoffDeps` — the per-controller deps dataclass this module
+defines, following the shared-context + per-controller-deps + view pattern
+documented in :mod:`mufinder.app.workflow_controllers.base`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from uuid import UUID
 
 from mufinder.domain.enums import JobStatus
-from mufinder.domain.models import Job
+from mufinder.domain.models import CalculationDefinition, Job
 from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
 
 from mufinder.app.convergence_adapter import convergence_job_name, expand_convergence_jobs
@@ -29,6 +34,30 @@ from mufinder.app.workflow_controllers.base import (
 from mufinder.app.workflow_submission import sweep_point_state_is_ready
 
 
+@dataclass(frozen=True)
+class ConvergenceCutoffDeps:
+    """Cutoff-convergence-specific handles, late-bound to ``MainWindow`` helpers.
+
+    These helpers stay on ``MainWindow`` because non-migrating convergence code
+    still calls them there; the controller reaches them only through these
+    required callables. Workflow-specific dependencies like these never go in
+    the shared :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`.
+    """
+
+    active_convergence_definition: Callable[[], CalculationDefinition | None]
+    deserialize_convergence_config: Callable[[object], ConvergenceConfig | None]
+    sync_equivalent_convergence_cutoff_mappings: Callable[[CalculationDefinition], None]
+    definition_for_convergence_cutoff: Callable[
+        [float], tuple[CalculationDefinition | None, ConvergenceConfig | None]
+    ]
+    job_for_definition_cutoff: Callable[[CalculationDefinition, float], Job | None]
+    definition_output_directory: Callable[[CalculationDefinition], Path | None]
+    cutoff_key: Callable[[float], str]
+    total_energy_for_job: Callable[[UUID], float | None]
+    max_force_for_job: Callable[[UUID], float | None]
+    max_stress_for_job: Callable[[UUID], float | None]
+
+
 class ConvergenceCutoffController(WorkflowJobController):
     """Controller for the cutoff-energy convergence sweep."""
 
@@ -36,9 +65,13 @@ class ConvergenceCutoffController(WorkflowJobController):
     no_ready_message = "Only configured cutoffs in the 'ready' state can be submitted."
 
     def __init__(
-        self, context: WorkflowControllerContext, view: ConvergenceWidget
+        self,
+        context: WorkflowControllerContext,
+        deps: ConvergenceCutoffDeps,
+        view: ConvergenceWidget,
     ) -> None:
         super().__init__(context)
+        self._deps = deps
         self._view = view
 
     # --- submission contract ---
@@ -66,12 +99,12 @@ class ConvergenceCutoffController(WorkflowJobController):
                 ),
             )
 
-        definition = self._context.active_convergence_definition()
+        definition = self._deps.active_convergence_definition()
         if definition is None:
             return states
 
-        self._context.sync_equivalent_convergence_cutoff_mappings(definition)
-        config = self._context.deserialize_convergence_config(
+        self._deps.sync_equivalent_convergence_cutoff_mappings(definition)
+        config = self._deps.deserialize_convergence_config(
             definition.parameters.get("configuration", {})
         )
         if config is None:
@@ -84,7 +117,7 @@ class ConvergenceCutoffController(WorkflowJobController):
             return states
 
         for cutoff in config.cutoff_energies:
-            job = self._context.job_for_definition_cutoff(definition, cutoff)
+            job = self._deps.job_for_definition_cutoff(definition, cutoff)
             if job is None:
                 states[cutoff] = SweepPointRunState(
                     status="ready",
@@ -100,9 +133,9 @@ class ConvergenceCutoffController(WorkflowJobController):
 
             states[cutoff] = SweepPointRunState(
                 status=status_value,
-                total_energy=self._context.total_energy_for_job(job.id),
-                max_force=self._context.max_force_for_job(job.id),
-                max_stress=self._context.max_stress_for_job(job.id),
+                total_energy=self._deps.total_energy_for_job(job.id),
+                max_force=self._deps.max_force_for_job(job.id),
+                max_stress=self._deps.max_stress_for_job(job.id),
                 job_id=job.id,
                 job_label=job.label,
             )
@@ -136,10 +169,10 @@ class ConvergenceCutoffController(WorkflowJobController):
         created: list[Job] = []
         grouped: dict[UUID, tuple[object, ConvergenceConfig, set[float]]] = {}
         for cutoff in keys:
-            definition, config = self._context.definition_for_convergence_cutoff(cutoff)
+            definition, config = self._deps.definition_for_convergence_cutoff(cutoff)
             if definition is None or config is None:
                 continue
-            existing = self._context.job_for_definition_cutoff(definition, cutoff)
+            existing = self._deps.job_for_definition_cutoff(definition, cutoff)
             if existing is not None:
                 created.append(existing)
                 continue
@@ -153,7 +186,7 @@ class ConvergenceCutoffController(WorkflowJobController):
             if not definition.input_structure_ids:
                 continue
             structure = document.structures.get(definition.input_structure_ids[0])
-            output_root = self._context.definition_output_directory(definition)
+            output_root = self._deps.definition_output_directory(definition)
             if structure is None or output_root is None:
                 continue
             self._context.project_service.repair_supercell_asset_if_needed(
@@ -191,7 +224,7 @@ class ConvergenceCutoffController(WorkflowJobController):
                     workflow_stage=job_spec.workflow_stage,
                     calc_type="castep_convergence_cutoff",
                 )
-                mapping[self._context.cutoff_key(cutoff)] = str(job.id)
+                mapping[self._deps.cutoff_key(cutoff)] = str(job.id)
                 created.append(job)
 
         deduped: list[Job] = []
@@ -250,4 +283,4 @@ class ConvergenceCutoffController(WorkflowJobController):
         return "cutoff_convergence", ()
 
 
-__all__ = ["ConvergenceCutoffController"]
+__all__ = ["ConvergenceCutoffController", "ConvergenceCutoffDeps"]

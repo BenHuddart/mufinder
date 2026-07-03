@@ -34,6 +34,7 @@ from mufinder.app.workflow_controllers.base import (
 )
 from mufinder.app.workflow_controllers.convergence_cutoff import (
     ConvergenceCutoffController,
+    ConvergenceCutoffDeps,
 )
 from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
 
@@ -409,14 +410,32 @@ class _FakeConvergenceView:
         self.runtime_states.append(dict(states))
 
 
-def _cutoff_context(
+def _stub_deps() -> ConvergenceCutoffDeps:
+    """Deps whose helpers all report 'nothing found' — for tests that never
+    reach the definition-backed paths."""
+
+    return ConvergenceCutoffDeps(
+        active_convergence_definition=lambda: None,
+        deserialize_convergence_config=lambda _payload: None,
+        sync_equivalent_convergence_cutoff_mappings=lambda _definition: None,
+        definition_for_convergence_cutoff=lambda _cutoff: (None, None),
+        job_for_definition_cutoff=lambda _definition, _cutoff: None,
+        definition_output_directory=lambda _definition: None,
+        cutoff_key=lambda value: f"{float(value):.12g}",
+        total_energy_for_job=lambda _job_id: None,
+        max_force_for_job=lambda _job_id: None,
+        max_stress_for_job=lambda _job_id: None,
+    )
+
+
+def _cutoff_context_and_deps(
     service: ProjectService,
     document: ProjectDocument,
     *,
     local_backend: _RecordingBackend,
     cluster_backend: _RecordingBackend,
-) -> WorkflowControllerContext:
-    """Context wired for cutoff convergence with fake shared helpers.
+) -> tuple[WorkflowControllerContext, ConvergenceCutoffDeps]:
+    """Shared context + cutoff deps wired with fake helpers.
 
     The cutoff-specific helpers below mirror the (unchanged) MainWindow versions
     closely enough to drive materialize/build_states without a MainWindow.
@@ -436,7 +455,7 @@ def _cutoff_context(
         job_id = mapping.get(f"{float(cutoff):.12g}")
         return document.jobs.get(job_id) if job_id else None
 
-    return WorkflowControllerContext(
+    context = WorkflowControllerContext(
         document=lambda: document,
         project_service=service,
         job_execution=None,  # type: ignore[arg-type]
@@ -447,6 +466,8 @@ def _cutoff_context(
         request_dashboard_flush=lambda **_: None,
         persist_ui_state=lambda **_: None,
         status_message=lambda _m: None,
+    )
+    deps = ConvergenceCutoffDeps(
         active_convergence_definition=lambda: active_definition,
         deserialize_convergence_config=deserialize,
         sync_equivalent_convergence_cutoff_mappings=lambda _d: None,
@@ -458,6 +479,7 @@ def _cutoff_context(
         max_force_for_job=lambda _job_id: None,
         max_stress_for_job=lambda _job_id: None,
     )
+    return context, deps
 
 
 def _seed_convergence_document(service: ProjectService, document: ProjectDocument):
@@ -501,8 +523,10 @@ def test_convergence_controller_materialize_writes_job_ids_by_cutoff(tmp_path: P
     local = _RecordingBackend()
     cluster = _RecordingBackend()
     view = _FakeConvergenceView(form_state={"name_prefix": "conv", "cutoff_energies": [300.0]})
-    context = _cutoff_context(service, document, local_backend=local, cluster_backend=cluster)
-    controller = ConvergenceCutoffController(context, view)
+    context, deps = _cutoff_context_and_deps(
+        service, document, local_backend=local, cluster_backend=cluster
+    )
+    controller = ConvergenceCutoffController(context, deps, view)
 
     jobs = controller.materialize([300.0])
 
@@ -526,8 +550,10 @@ def test_convergence_controller_submit_local_reaches_local_backend(tmp_path: Pat
     local = _RecordingBackend()
     cluster = _RecordingBackend()
     view = _FakeConvergenceView(form_state={"name_prefix": "conv", "cutoff_energies": [300.0]})
-    context = _cutoff_context(service, document, local_backend=local, cluster_backend=cluster)
-    controller = ConvergenceCutoffController(context, view)
+    context, deps = _cutoff_context_and_deps(
+        service, document, local_backend=local, cluster_backend=cluster
+    )
+    controller = ConvergenceCutoffController(context, deps, view)
 
     controller.submit([300.0], target="local")
 
@@ -546,8 +572,10 @@ def test_convergence_controller_submit_cluster_reaches_cluster_backend(tmp_path:
     local = _RecordingBackend()
     cluster = _RecordingBackend()
     view = _FakeConvergenceView(form_state={"name_prefix": "conv", "cutoff_energies": [300.0]})
-    context = _cutoff_context(service, document, local_backend=local, cluster_backend=cluster)
-    controller = ConvergenceCutoffController(context, view)
+    context, deps = _cutoff_context_and_deps(
+        service, document, local_backend=local, cluster_backend=cluster
+    )
+    controller = ConvergenceCutoffController(context, deps, view)
 
     controller.submit([300.0], target="cluster")
 
@@ -556,7 +584,7 @@ def test_convergence_controller_submit_cluster_reaches_cluster_backend(tmp_path:
 
 
 def test_convergence_controller_uses_sweep_point_ready_predicate() -> None:
-    controller = ConvergenceCutoffController(_make_context(), _FakeConvergenceView())
+    controller = ConvergenceCutoffController(_make_context(), _stub_deps(), _FakeConvergenceView())
     # Cutoff readiness is the strict "ready"-only predicate, not the wider
     # workflow-row set — a "defined" row must not be treated as ready.
     from mufinder.app.convergence_types import SweepPointRunState
@@ -569,7 +597,7 @@ def test_convergence_controller_uses_sweep_point_ready_predicate() -> None:
 
 def test_convergence_controller_refresh_view_without_document_clears_rows() -> None:
     view = _FakeConvergenceView()
-    controller = ConvergenceCutoffController(_make_context(document=None), view)
+    controller = ConvergenceCutoffController(_make_context(document=None), _stub_deps(), view)
 
     controller.refresh_view()
 
@@ -579,7 +607,9 @@ def test_convergence_controller_refresh_view_without_document_clears_rows() -> N
 def test_convergence_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "conv.mufinder", "Conv")
-    controller = ConvergenceCutoffController(_make_context(document=document), _FakeConvergenceView())
+    controller = ConvergenceCutoffController(
+        _make_context(document=document), _stub_deps(), _FakeConvergenceView()
+    )
     handled = _job(service, document, "j", calc_type="castep_convergence_cutoff")
     other = _job(service, document, "k", calc_type="castep_uep_source")
     assert controller.handles_job(handled) is True

@@ -2,9 +2,12 @@
 
 This package holds a thin controller layer between the ``MainWindow`` widgets
 and the services/workflow layers. Each controller owns one workflow's job
-lifecycle and receives everything it needs through a
-:class:`WorkflowControllerContext` of narrow callables, so controllers never
-import or reference ``mufinder.app.main_window``.
+lifecycle and receives its inputs in three parts: the shared
+:class:`WorkflowControllerContext` of narrow callables every controller needs,
+an optional per-controller deps dataclass of workflow-specific callables
+defined in the controller's own module (e.g. :class:`ConvergenceCutoffDeps`),
+and the controller's own view widget. Controllers never import or reference
+``mufinder.app.main_window``.
 """
 
 from mufinder.app.workflow_controllers.base import (
@@ -15,11 +18,13 @@ from mufinder.app.workflow_controllers.base import (
 )
 from mufinder.app.workflow_controllers.convergence_cutoff import (
     ConvergenceCutoffController,
+    ConvergenceCutoffDeps,
 )
 
 __all__ = [
     "ControllerResult",
     "ConvergenceCutoffController",
+    "ConvergenceCutoffDeps",
     "WorkflowControllerContext",
     "WorkflowJobController",
     "merge_controller_result",

@@ -4,10 +4,23 @@ Each :class:`WorkflowJobController` owns one workflow's
 ``submit → materialize → result → refresh`` cycle. Controllers are plain
 Python objects (not :class:`~PySide6.QtCore.QObject`): they own no signals and,
 critically, hold **no reference to** :class:`~mufinder.app.main_window.MainWindow`
-and never import that module. Everything a controller needs from the window is
-supplied through the narrow callables on :class:`WorkflowControllerContext`,
-which keeps the controllers testable in isolation and the window free of another
-tangle of per-workflow methods.
+and never import that module.
+
+A controller's constructor inputs follow a three-part pattern:
+
+- **shared context** — :class:`WorkflowControllerContext`, exactly the ten
+  narrow, late-bound callables that *every* workflow controller needs. This
+  dataclass never grows workflow-specific fields.
+- **per-controller deps** — each concrete controller that needs additional
+  handles (e.g. shared MainWindow helpers its moved logic still calls) defines
+  its own frozen deps dataclass of required, precisely-typed callables in its
+  own module, and takes it as a constructor argument. The base class knows
+  nothing about deps.
+- **view** — the controller's own widget reference, also a subclass-constructor
+  concern.
+
+This split keeps controllers testable in isolation and prevents the shared
+context from re-accreting into a god object as workflows migrate.
 
 See ``docs/architecture.rst`` (Workflow controllers) for the layer contract.
 """
@@ -16,7 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
@@ -50,19 +63,14 @@ class WorkflowControllerContext:
     request_dashboard_flush: Callable[..., None]
     persist_ui_state: Callable[..., None]
     status_message: Callable[[str], None]
-    # --- convergence-cutoff shared helpers (bound to MainWindow methods that
-    # stay in the window because non-migrating code still calls them). Added
-    # for the cutoff migration; future migrations may extend this surface.
-    active_convergence_definition: Callable[[], Any] | None = None
-    deserialize_convergence_config: Callable[[object], Any] | None = None
-    sync_equivalent_convergence_cutoff_mappings: Callable[[Any], None] | None = None
-    definition_for_convergence_cutoff: Callable[[float], Any] | None = None
-    job_for_definition_cutoff: Callable[[Any, float], Job | None] | None = None
-    definition_output_directory: Callable[[Any], Any] | None = None
-    cutoff_key: Callable[[float], str] | None = None
-    total_energy_for_job: Callable[[UUID], float | None] | None = None
-    max_force_for_job: Callable[[UUID], float | None] | None = None
-    max_stress_for_job: Callable[[UUID], float | None] | None = None
+
+    # RULE: workflow-specific dependencies NEVER go in this shared context.
+    # This dataclass holds exactly the handles that every workflow controller
+    # needs. Anything a single workflow needs beyond these (for example shared
+    # MainWindow helpers its moved logic still calls) belongs in a per-controller
+    # deps dataclass of REQUIRED, precisely-typed fields, defined in that
+    # controller's own module and passed to its constructor — see
+    # ``ConvergenceCutoffDeps`` in ``convergence_cutoff.py`` for the pattern.
 
 
 @dataclass
