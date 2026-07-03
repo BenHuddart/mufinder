@@ -157,6 +157,7 @@ def test_quantum_widget_emits_analysis_for_completed_result(qapp) -> None:
                 zpe="0.1 eV",
                 eigenvalues="1:100.0, 2:400.0",
                 witness="-0.1",
+                status="completed",
             )
         ]
     )
@@ -165,9 +166,19 @@ def test_quantum_widget_emits_analysis_for_completed_result(qapp) -> None:
     widget.analysis_requested.connect(launched.append)
 
     assert widget._results_table.horizontalHeaderItem(2).text() == "Eigenvalues (cm⁻¹)"
+    assert widget._results_table.horizontalHeaderItem(4).text() == "Status"
     assert widget._results_table.columnWidth(2) >= widget._results_table.columnWidth(3)
 
-    button = widget._results_table.cellWidget(0, 4)
+    # Status is column 4; it uses the shared per-status palette.
+    status_item = widget._results_table.item(0, 4)
+    assert status_item is not None
+    assert status_item.text() == "completed"
+    assert (
+        status_item.foreground().color().name()
+        == status_brush("completed").color().name()
+    )
+
+    button = widget._results_table.cellWidget(0, 5)
     assert isinstance(button, QPushButton)
     assert button.text() == "Launch Analysis"
 
@@ -186,7 +197,7 @@ def test_energy_barriers_widget_emits_configure_and_view_for_source_row(qapp) ->
                 product="B",
                 charge_state="Muonium",
                 path_length="1.2 ang",
-                neb_status="ready",
+                status="ready",
             )
         ]
     )
@@ -220,12 +231,12 @@ def test_energy_barriers_widget_uses_shared_status_text_colors(qapp) -> None:
                 product="B",
                 charge_state="Muonium",
                 path_length="1.2 ang",
-                neb_status="failed",
+                status="failed",
             )
         ]
     )
 
-    # NEB Status is column 4 in the Diffusion Paths table; it uses the shared per-status palette.
+    # Status is column 4 in the Diffusion Paths table; it uses the shared per-status palette.
     status_item = widget._sources_table.item(0, 4)
     assert status_item is not None
     assert status_item.foreground().color().name() == status_brush("failed").color().name()
@@ -241,7 +252,7 @@ def test_energy_barriers_widget_batch_configure_emits_selected_source_keys(qapp)
                 product="B",
                 charge_state="Muonium",
                 path_length="1.2 ang",
-                neb_status="ready",
+                status="ready",
             ),
             EnergyBarrierSourceRow(
                 key="path-b",
@@ -249,7 +260,7 @@ def test_energy_barriers_widget_batch_configure_emits_selected_source_keys(qapp)
                 product="C",
                 charge_state="Muonium",
                 path_length="1.4 ang",
-                neb_status="ready",
+                status="ready",
             ),
         ]
     )
@@ -300,7 +311,7 @@ def test_energy_barriers_widget_delete_key_removes_selected_source_from_child_fo
                 product="A",
                 charge_state="Muonium",
                 path_length="1.2 ang",
-                neb_status="ready",
+                status="ready",
             ),
             EnergyBarrierSourceRow(
                 key="path-b",
@@ -308,7 +319,7 @@ def test_energy_barriers_widget_delete_key_removes_selected_source_from_child_fo
                 product="B",
                 charge_state="Muonium",
                 path_length="1.8 ang",
-                neb_status="ready",
+                status="ready",
             ),
         ]
     )
@@ -338,7 +349,7 @@ def test_energy_barriers_widget_marks_configured_path_row(qapp) -> None:
                 product="B",
                 charge_state="Muonium",
                 path_length="1.2 ang",
-                neb_status="ready",
+                status="ready",
                 configured=True,
             )
         ]
@@ -434,7 +445,7 @@ def test_energy_barriers_widget_neb_results_show_barriers_not_trajectory_paths(q
     widget = EnergyBarriersWidget()
     table = widget._neb_results_table
     headers = [table.horizontalHeaderItem(index).text() for index in range(table.columnCount())]
-    assert headers == ["Path", "Charge", "Length", "Barrier (fwd)", "Barrier (rev)", "ΔE", "Images"]
+    assert headers == ["Path", "Charge", "Length", "Barrier (fwd)", "Barrier (rev)", "ΔE", "Images", "Status"]
     assert not table.wordWrap()
 
     selected: list[str] = []
@@ -451,6 +462,7 @@ def test_energy_barriers_widget_neb_results_show_barriers_not_trajectory_paths(q
                 barrier_reverse="0.1 eV",
                 delta_energy="0.1 eV",
                 images="11",
+                status="completed",
                 transition_state_file=trajectory,
             )
         ]
@@ -461,6 +473,12 @@ def test_energy_barriers_widget_neb_results_show_barriers_not_trajectory_paths(q
     assert table.item(0, 0).text() == "site A → site B"
     assert table.item(0, 3).text() == "0.2 eV"
     assert table.item(0, 4).text() == "0.1 eV"
+    # Status is the last column; it uses the shared per-status palette.
+    assert table.item(0, 7).text() == "completed"
+    assert (
+        table.item(0, 7).foreground().color().name()
+        == status_brush("completed").color().name()
+    )
     row_texts = [table.item(0, column).text() for column in range(table.columnCount())]
     assert trajectory not in row_texts
     assert trajectory in table.item(0, 0).toolTip()
@@ -610,8 +628,8 @@ def test_energy_barriers_source_configure_applies_to_snapshot_rows(
     widget = EnergyBarriersWidget()
     widget.set_sources(
         [
-            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", neb_status="ready"),
-            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", neb_status="ready"),
+            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", status="ready"),
+            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", status="ready"),
         ]
     )
     configured: list[object] = []
@@ -634,7 +652,7 @@ def test_energy_barriers_source_configure_single_row_no_prompt(
 
     widget = EnergyBarriersWidget()
     widget.set_sources(
-        [EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", neb_status="ready")]
+        [EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", status="ready")]
     )
     configured: list[object] = []
     widget.configure_result_requested.connect(configured.append)
@@ -656,8 +674,8 @@ def test_energy_barriers_view_button_opens_clicked_row_without_prompt(
     widget = EnergyBarriersWidget()
     widget.set_sources(
         [
-            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", neb_status="ready"),
-            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", neb_status="ready"),
+            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", status="ready"),
+            EnergyBarrierSourceRow(key="path-b", reactant="B", product="C", charge_state="M", path_length="1.2", status="ready"),
         ]
     )
     viewed: list[str] = []

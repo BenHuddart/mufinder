@@ -138,7 +138,10 @@ tab, the completed-calculations table summarises each result with:
 - the forward barrier (peak energy minus the initial image energy);
 - the reverse barrier (peak energy minus the final image energy);
 - the energy difference ``ΔE`` between the final and initial images;
-- the number of images in the band.
+- the number of images in the band;
+- a ``Status`` column carrying the producing job's status, coloured with the
+  same per-status palette used across the workflow tables (the ``Status`` column
+  in the ``Diffusion Paths`` table uses this same vocabulary and colouring).
 
 The CASTEP trajectory (``.ts``) file path is not shown as a column; it is
 available as a tooltip on each row, and right-clicking a row offers ``Open

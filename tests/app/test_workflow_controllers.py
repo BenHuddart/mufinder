@@ -437,7 +437,7 @@ class _FakeConvergenceView:
     def collect_state(self) -> dict:
         return self._form_state
 
-    def set_cutoff_runtime_states(self, states) -> None:
+    def set_runtime_states(self, states) -> None:
         self.runtime_states.append(dict(states))
 
 
@@ -2330,6 +2330,37 @@ def test_quantum_controller_refresh_view_without_document_clears_tables() -> Non
     assert view.results == [[]]
 
 
+def test_quantum_controller_refresh_view_populates_result_row_status(tmp_path: Path) -> None:
+    """A completed phonon result becomes a result row whose ``status`` mirrors the
+    producing job's status, so the results table can colour it with the shared palette."""
+
+    from mufinder.domain.models import Result
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
+    job.status = JobStatus.COMPLETED
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
+    document.runs[run.id] = run
+    result = Result(
+        result_type=QUANTUM_PHONON_CALC_TYPE,
+        calculation_run_id=run.id,
+        data={"muon_zpe_total_eV": 0.1},
+    )
+    document.results[result.id] = result
+
+    view = _FakeQuantumView()
+    controller = QuantumCorrectionsController(
+        _make_context(document=document, project_service=service), _stub_quantum_deps(), view
+    )
+    controller.refresh_view()
+
+    assert len(view.results[-1]) == 1
+    result_row = view.results[-1][0]
+    assert result_row.label == "quantum_phonon_s"
+    assert result_row.status == "completed"
+
+
 def test_quantum_controller_pre_submit_check_blocks_submission(tmp_path: Path) -> None:
     """An unresolved host mismatch silently refuses the submission: the host guard
     returns False, so no submission plan is built and nothing is dispatched."""
@@ -2894,6 +2925,7 @@ def test_energy_barriers_controller_refresh_view_renders_sources_and_results(
     service = ProjectService()
     document = service.create_project(tmp_path / "eb.mufinder", "EB")
     job = _neb_job(service, document, "barrier_neb", NUDGED_ELASTIC_BAND_CALC_TYPE)
+    job.status = JobStatus.COMPLETED
 
     @_dataclass
     class _Endpoint:
@@ -2969,6 +3001,8 @@ def test_energy_barriers_controller_refresh_view_renders_sources_and_results(
     assert result_row.images == "7"
     assert result_row.charge_state == "mu+(positive)"
     assert result_row.path_length == "2.5 Å"
+    # The result row carries the producing job's status so the results table can colour it.
+    assert result_row.status == "completed"
 
 
 def test_energy_barriers_controller_build_result_ts_payload(tmp_path: Path) -> None:

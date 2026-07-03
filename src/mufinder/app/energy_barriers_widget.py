@@ -85,7 +85,7 @@ class EnergyBarrierSourceRow:
     product: str
     charge_state: str
     path_length: str
-    neb_status: str
+    status: str
     configured: bool = False
 
 
@@ -101,6 +101,7 @@ class EnergyBarrierNebResultRow:
     barrier_reverse: str
     delta_energy: str
     images: str
+    status: str
     transition_state_file: str
 
 
@@ -641,7 +642,7 @@ class EnergyBarriersWidget(QWidget):
         style_hint_text(source_hint)
         sources_layout.addWidget(source_hint)
         self._sources_table = create_workflow_table(
-            ("Reactant", "Product", "Charge", "Path Length", "NEB Status", "Parameters", "View"),
+            ("Reactant", "Product", "Charge", "Path Length", "Status", "Parameters", "View"),
             resize_to_contents_columns=(5, 6),
         )
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -691,7 +692,7 @@ class EnergyBarriersWidget(QWidget):
         style_hint_text(neb_results_hint)
         neb_results_layout.addWidget(neb_results_hint)
         self._neb_results_table = create_workflow_table(
-            ("Path", "Charge", "Length", "Barrier (fwd)", "Barrier (rev)", "ΔE", "Images")
+            ("Path", "Charge", "Length", "Barrier (fwd)", "Barrier (rev)", "ΔE", "Images", "Status")
         )
         self._neb_results_table.itemSelectionChanged.connect(self._emit_neb_result_selected)
         self._neb_results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -848,6 +849,7 @@ class EnergyBarriersWidget(QWidget):
                 row.barrier_reverse,
                 row.delta_energy,
                 row.images,
+                row.status,
             )
             tooltip = f"Trajectory file: {row.transition_state_file}" if row.transition_state_file else ""
             for column, value in enumerate(values):
@@ -855,6 +857,11 @@ class EnergyBarriersWidget(QWidget):
                 item = table.item(row_index, column)
                 if item is not None:
                     item.setToolTip(tooltip)
+            # Colour the Status cell with the project-standard per-status palette, matching the
+            # Diffusion Paths sources table and the relaxation/convergence tables.
+            status_item = table.item(row_index, _NEB_RESULT_STATUS_COLUMN)
+            if status_item is not None:
+                status_item.setForeground(status_brush(row.status))
         table.resizeRowsToContents()
         self._cap_neb_results_table_height()
         target_row = 0 if rows else -1
@@ -1108,9 +1115,14 @@ class EnergyBarriersWidget(QWidget):
         if combo.count():
             combo.setCurrentIndex(max(0, min(fallback_index, combo.count() - 1)))
 
-# Column index of the "NEB Status" header in the Diffusion Paths table (see create_workflow_table
-# call); the row tuple writes reactant, product, charge, path length, then NEB status.
+# Column index of the "Status" header in the Diffusion Paths table (see create_workflow_table
+# call); the row tuple writes reactant, product, charge, path length, then status.
 _NEB_STATUS_COLUMN = 4
+
+# Column index of the "Status" header in the Completed NEB Calculations table (see
+# create_workflow_table call); the row tuple writes path, charge, length, barriers, ΔE,
+# images, then status.
+_NEB_RESULT_STATUS_COLUMN = 7
 
 
 def _open_containing_folder(path_text: str) -> None:
@@ -1127,20 +1139,20 @@ def _fill_source_table(
     table.setRowCount(len(rows))
     key_by_row: dict[int, str] = {i: row.key for i, row in enumerate(rows)}
     for row_index, row in enumerate(rows):
-        for column, value in enumerate((row.reactant, row.product, row.charge_state, row.path_length, row.neb_status)):
+        for column, value in enumerate((row.reactant, row.product, row.charge_state, row.path_length, row.status)):
             set_workflow_table_item(table, row_index, column, value)
-        # Colour the NEB Status cell with the project-standard per-status palette (matching the
+        # Colour the Status cell with the project-standard per-status palette (matching the
         # relaxation/convergence tables), so a path's state reads at a glance.
         status_item = table.item(row_index, _NEB_STATUS_COLUMN)
         if status_item is not None:
-            status_item.setForeground(status_brush(row.neb_status))
+            status_item.setForeground(status_brush(row.status))
         configure_button = SelectionSnapshotPushButton(table)
         configure_button.selection_snapshot_key = row.key
         style_workflow_configure_button(
             configure_button,
             workflow_label="Energy Barriers",
             configured=row.configured,
-            locked=workflow_row_is_locked(row.neb_status),
+            locked=workflow_row_is_locked(row.status),
         )
         configure_button.clicked.connect(
             lambda _checked=False, key=row.key, btn=configure_button: configure_requested(

@@ -25,7 +25,9 @@ The Quantum Corrections page is split into two user-facing sections:
 - ``Quantum Phonon Jobs`` lists eligible relaxed muon sites and their current
   Quantum Corrections stage.
 - ``Completed Results`` lists completed phonon jobs with the parsed ZPE,
-  Gamma-point phonon eigenvalues, witness summary, and analysis launcher.
+  Gamma-point phonon eigenvalues, witness summary, a ``Status`` column (the
+  producing job's status, coloured with the same per-status palette as the
+  ``Quantum Phonon Jobs`` table), and an analysis launcher.
 
 Typical use is:
 

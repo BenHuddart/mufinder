@@ -54,6 +54,7 @@ class QuantumResultRow:
     zpe: str
     eigenvalues: str
     witness: str
+    status: str
 
 
 class QuantumCorrectionsWidget(QWidget):
@@ -159,13 +160,16 @@ class QuantumCorrectionsWidget(QWidget):
         result_hint.setWordWrap(True)
         style_hint_text(result_hint)
         results_layout.addWidget(result_hint)
-        self._results_table = create_workflow_table(("Job", "ZPE", "Eigenvalues (cm⁻¹)", "w1", "Analysis"))
+        self._results_table = create_workflow_table(
+            ("Job", "ZPE", "Eigenvalues (cm⁻¹)", "w1", "Status", "Analysis")
+        )
         results_header = self._results_table.horizontalHeader()
         results_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         results_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         results_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         results_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         results_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        results_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         results_layout.addWidget(self._results_table)
         layout.addWidget(results_group, 1)
 
@@ -190,18 +194,24 @@ class QuantumCorrectionsWidget(QWidget):
         _fill_table(
             self._results_table,
             [
-                (row.label, row.zpe, row.eigenvalues, row.witness)
+                (row.label, row.zpe, row.eigenvalues, row.witness, row.status)
                 for row in rows
             ],
         )
         for row_index, row in enumerate(rows):
+            # Colour the Status cell with the project-standard per-status palette, matching the
+            # eligible-sources table and the relaxation/convergence tables.
+            status_item = self._results_table.item(row_index, 4)
+            if status_item is not None:
+                status_item.setForeground(status_brush(row.status))
             button = QPushButton("Launch Analysis")
             button.clicked.connect(lambda _checked=False, key=row.key: self.analysis_requested.emit(key))
-            self._results_table.setCellWidget(row_index, 4, button)
+            self._results_table.setCellWidget(row_index, 5, button)
         if self._results_table.rowCount() > 0:
             self._results_table.resizeColumnToContents(1)
             self._results_table.resizeColumnToContents(3)
             self._results_table.resizeColumnToContents(4)
+            self._results_table.resizeColumnToContents(5)
             self._results_table.setColumnWidth(3, max(56, self._results_table.columnWidth(3)))
 
     def selected_source_keys(self) -> list[str]:

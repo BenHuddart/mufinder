@@ -3470,7 +3470,7 @@ class MainWindow(QMainWindow):
             self._job_runtime_timer.stop()
             self._cluster_elapsed_seconds_by_job = {}
             self._cluster_elapsed_checked_at = None
-            self._convergence_view.set_cutoff_runtime_states({})
+            self._convergence_view.set_runtime_states({})
             self._kpoint_convergence_view.set_runtime_states({})
             self._pristine_relaxation_view.set_runtime_states({})
             self._muon_relaxation_view.set_runtime_states({})
