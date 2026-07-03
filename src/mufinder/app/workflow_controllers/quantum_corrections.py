@@ -123,20 +123,20 @@ class QuantumCorrectionsDeps:
     configure path, source-label rename, and stage-one reset; ``check_definition_host``
     is shared with the NEB / energy-barriers workflow; the source-candidate and
     row-configuration helpers are shared across the quantum surface and the energy
-    barriers path; and ``job_output_directory`` / ``job_seed_name`` /
-    ``definition_output_directory`` / ``dedupe_jobs`` / ``format_energy`` are shared
-    across workflows. ``input_template_from_keyword_values`` wraps the shared
+    barriers path; and ``dedupe_jobs`` / ``format_energy`` are shared across
+    workflows. ``input_template_from_keyword_values`` wraps the shared
     ``main_window`` module-level keyword→template helper. The controller reaches
     them only through these required callables. Workflow-specific dependencies like
     these never go in the shared
-    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`.
+    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`;
+    cross-workflow job/definition readers (``definition_output_directory``,
+    ``job_output_directory``, ``job_seed_name``) live there instead.
     """
 
     active_quantum_corrections_definition: Callable[[], CalculationDefinition | None]
     ensure_quantum_corrections_definition: Callable[
         [list[str]], CalculationDefinition | None
     ]
-    definition_output_directory: Callable[[CalculationDefinition], Path | None]
     eligible_quantum_source_candidates: Callable[[], list[object]]
     quantum_source_candidate_by_key: Callable[[str], object | None]
     quantum_stage_state: Callable[[CalculationDefinition | None, object], object]
@@ -171,8 +171,6 @@ class QuantumCorrectionsDeps:
     write_quantum_job_directory: Callable[..., Path]
     dedupe_jobs: Callable[[list[Job]], list[Job]]
     check_definition_host: Callable[[CalculationDefinition | None], bool]
-    job_output_directory: Callable[[Job], Path | None]
-    job_seed_name: Callable[[Job], str]
     format_energy: Callable[[object], str]
 
 
@@ -233,7 +231,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         definition = self._deps.ensure_quantum_corrections_definition(str_keys)
         if definition is None:
             return []
-        output_root = self._deps.definition_output_directory(definition)
+        output_root = self._context.definition_output_directory(definition)
         if output_root is None:
             return []
 
@@ -408,12 +406,17 @@ class QuantumCorrectionsController(WorkflowJobController):
         if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
             return ControllerResult()
 
-        output_dir = self._deps.job_output_directory(job)
-        seed_name = self._deps.job_seed_name(job)
+        output_dir = self._context.job_output_directory(job)
+        seed_name = self._context.job_seed_name(job)
         if output_dir is None:
             return ControllerResult()
         phonon_path = output_dir / f"{seed_name}.phonon"
 
+        # Intentional double parse: the inline ``_on_local_job_finished`` guard
+        # already parsed this ``.phonon`` file to validate it (and the ZPE /
+        # Gamma recompute) and discarded the result; here ``build_result``
+        # re-parses and recomputes on the validated success path. Accepted cost
+        # — do NOT "fix" it by caching parse state on the controller.
         phonon = parse_phonon_path(phonon_path)
         zpe = muon_zpe(phonon)
         payload: dict[str, object] = {

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID
 
 from mufinder.domain.enums import JobStatus
@@ -51,10 +50,7 @@ class ConvergenceCutoffDeps:
         [float], tuple[CalculationDefinition | None, ConvergenceConfig | None]
     ]
     job_for_definition_cutoff: Callable[[CalculationDefinition, float], Job | None]
-    definition_output_directory: Callable[[CalculationDefinition], Path | None]
     cutoff_key: Callable[[float], str]
-    total_energy_for_job: Callable[[UUID], float | None]
-    max_force_for_job: Callable[[UUID], float | None]
     max_stress_for_job: Callable[[UUID], float | None]
 
 
@@ -133,8 +129,8 @@ class ConvergenceCutoffController(WorkflowJobController):
 
             states[cutoff] = SweepPointRunState(
                 status=status_value,
-                total_energy=self._deps.total_energy_for_job(job.id),
-                max_force=self._deps.max_force_for_job(job.id),
+                total_energy=self._context.total_energy_for_job(job.id),
+                max_force=self._context.max_force_for_job(job.id),
                 max_stress=self._deps.max_stress_for_job(job.id),
                 job_id=job.id,
                 job_label=job.label,
@@ -186,7 +182,7 @@ class ConvergenceCutoffController(WorkflowJobController):
             if not definition.input_structure_ids:
                 continue
             structure = document.structures.get(definition.input_structure_ids[0])
-            output_root = self._deps.definition_output_directory(definition)
+            output_root = self._context.definition_output_directory(definition)
             if structure is None or output_root is None:
                 continue
             self._context.project_service.repair_supercell_asset_if_needed(
