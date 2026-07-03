@@ -20,11 +20,17 @@ from mufinder.app.workflow_controllers.convergence_cutoff import (
     ConvergenceCutoffController,
     ConvergenceCutoffDeps,
 )
+from mufinder.app.workflow_controllers.convergence_kpoint import (
+    ConvergenceKpointController,
+    ConvergenceKpointDeps,
+)
 
 __all__ = [
     "ControllerResult",
     "ConvergenceCutoffController",
     "ConvergenceCutoffDeps",
+    "ConvergenceKpointController",
+    "ConvergenceKpointDeps",
     "WorkflowControllerContext",
     "WorkflowJobController",
     "merge_controller_result",
