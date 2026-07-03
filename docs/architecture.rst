@@ -94,11 +94,40 @@ policy, move the reusable part into the appropriate shared layer:
 - job lifecycle transitions belong in ``mufinder.services``
 - scientific calculation behavior belongs in ``mufinder.science``
 - reusable PySide styling belongs in ``mufinder.app.theme``
+- shared adapter logic that turns GUI value dicts into workflow templates
+  belongs in ``mufinder.app.adapter_common``
 - persisted compatibility behavior belongs in ``mufinder.persistence`` or the
   owning service, with a ledger entry in :doc:`compatibility_policy`
 
 The preferred outcome is code that future agents can navigate by package name,
 not by remembering where a previous implementation happened to grow.
+
+Workflow adapters
+-----------------
+
+The per-workflow adapters in ``mufinder.app`` (``convergence_adapter``,
+``relaxation_adapter``, ``uep_adapter``) translate GUI configuration objects
+into workflow-layer ``expand_*`` calls. Their shared machinery lives in
+``mufinder.app.adapter_common``:
+
+- :func:`~mufinder.app.adapter_common.build_input_template` parses a GUI value
+  dict into an :class:`~mufinder.workflow.types.InputTemplate`. Each adapter
+  passes its own ``context_label`` (for the unsupported-keyword error), its own
+  ``forbidden`` map (canonical keyword → exact validation message, covering
+  sweep-list, structure-controlled, and row-controlled keywords), and its own
+  ``kpoints_list_reset`` sentinel (``()`` for convergence to clear an inherited
+  list layer, ``None`` for relaxation/UEP to inherit).
+- :func:`~mufinder.app.adapter_common.rescale_kpoint_grid` rescales a project
+  k-point grid to an equivalent reciprocal-space density for supercell rows and
+  returns an optional adjustment message. Convergence sweeps a fixed structure
+  and never rescales.
+- :class:`~mufinder.app.adapter_common.AdapterExpansion` is the uniform return
+  shape (``jobs`` plus UI-facing ``messages``) for every adapter's public
+  ``expand_*`` function. ``main_window`` surfaces non-empty ``messages`` from
+  the configure path.
+
+``adapter_common`` must remain free of PySide imports; it depends only on
+``workflow``, ``castep_io``, ``science``, and ``domain``.
 
 Workflow parameter surface policy
 ---------------------------------

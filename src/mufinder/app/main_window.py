@@ -121,6 +121,7 @@ from mufinder.app.relaxation_adapter import (
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
+from mufinder.app.adapter_common import AdapterExpansion
 from mufinder.app.relaxation_types import (
     MuonRelaxationConfig,
     MuonRelaxationRow,
@@ -5331,7 +5332,7 @@ class MainWindow(QMainWindow):
 
             try:
                 structure_spec = structure_to_spec(structure)
-                all_jobs = expand_convergence_jobs(structure=structure_spec, config=config)
+                all_jobs = expand_convergence_jobs(structure=structure_spec, config=config).jobs
             except (ValueError, StructureBridgeError):
                 continue
 
@@ -9118,7 +9119,7 @@ class MainWindow(QMainWindow):
 
             try:
                 structure_spec = structure_to_spec(structure)
-                all_jobs = expand_convergence_jobs(structure=structure_spec, config=config)
+                all_jobs = expand_convergence_jobs(structure=structure_spec, config=config).jobs
             except (ValueError, StructureBridgeError):
                 continue
 
@@ -11596,6 +11597,25 @@ class MainWindow(QMainWindow):
         self._muon_relaxation_view.set_row_supercell(row_id, matrix)
         self.statusBar().showMessage("Selected muon-relaxation simulation cell")
 
+    def _notify_adapter_messages(self, expansion: AdapterExpansion) -> None:
+        """Surface any adapter adjustment messages (e.g. k-point rescaling).
+
+        Every workflow adapter reports adjustment notes on
+        :attr:`AdapterExpansion.messages`; convergence has none, while
+        relaxation/UEP report supercell k-point rescaling. Shown as an
+        information dialog so the note is not overwritten by the trailing
+        ``statusBar`` confirmation on the configure path.
+        """
+
+        messages = expansion.messages
+        if not messages:
+            return
+        QMessageBox.information(
+            self,
+            "K-point grid adjusted",
+            "\n".join(messages),
+        )
+
     def _on_pristine_relaxation_configured(self, config: PristineRelaxationConfig) -> None:
         if self._document is None:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -11611,7 +11631,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            expand_pristine_relaxation_jobs(
+            expansion = expand_pristine_relaxation_jobs(
                 host_structure=host,
                 config=config,
                 project_cutoff_energy=self._document.project.recommended_cutoff_energy,
@@ -11621,6 +11641,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "Pristine relaxation setup invalid", str(exc))
             return
+        self._notify_adapter_messages(expansion)
 
         output_root = self._document.project_root / "files" / "pristine_relaxation"
         definition = self._project_service.register_pristine_relaxation_definition(
@@ -11651,7 +11672,7 @@ class MainWindow(QMainWindow):
             )
             return
         try:
-            expand_muon_relaxation_jobs(
+            expansion = expand_muon_relaxation_jobs(
                 host_structure=host,
                 config=config,
                 project_cutoff_energy=self._document.project.recommended_cutoff_energy,
@@ -11661,6 +11682,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "Muon relaxation setup invalid", str(exc))
             return
+        self._notify_adapter_messages(expansion)
         output_root = self._document.project_root / "files" / "muon_relaxation"
         definition = self._project_service.register_muon_relaxation_definition(
             self._document,
@@ -13756,7 +13778,7 @@ class MainWindow(QMainWindow):
             )
             return
         try:
-            expand_uep_jobs(
+            expansion = expand_uep_jobs(
                 host_structure=source_structure,
                 config=config,
                 project_cutoff_energy=self._document.project.recommended_cutoff_energy,
@@ -13766,6 +13788,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "UEP setup invalid", str(exc))
             return
+        self._notify_adapter_messages(expansion)
 
         output_root = self._document.project_root / "files" / "uep"
         definition = self._project_service.register_uep_definition(

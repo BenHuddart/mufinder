@@ -7919,6 +7919,52 @@ def test_materialize_pristine_relaxation_rewrites_defined_job_inputs_when_projec
     window.close()
 
 
+def test_on_pristine_relaxation_configured_surfaces_kpoint_message(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A supercell row rescales the project k-point grid; the adjustment message
+    # from AdapterExpansion.messages must be surfaced to the user, not dropped.
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "pristine_msg.mufinder", "PristineMsg")
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    doc.project.recommended_kpoint_grid = (4, 4, 4)
+    doc.project.recommended_kpoint_lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    window._document = doc
+
+    infos: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda _parent, title, text, *args, **kwargs: infos.append((title, text)),
+    )
+
+    window._on_pristine_relaxation_configured(
+        main_window_module.PristineRelaxationConfig(
+            name_prefix="pristine_relax",
+            rows=(
+                main_window_module.PristineRelaxationRow(
+                    label="super",
+                    fix_all_cell=False,
+                    supercell_matrix=((2, 0, 0), (0, 1, 0), (0, 0, 1)),
+                    parameter_values={},
+                ),
+            ),
+        )
+    )
+
+    assert any("K-point grid adjusted" in text for _title, text in infos)
+    window.close()
+
+
 def test_main_window_form_pristine_relaxation_shows_ready_before_submission(
     qapp, tmp_path: Path
 ) -> None:
