@@ -58,20 +58,21 @@ FORBIDDEN_LAYER_IMPORTS = {
 # intentionally absent here. Pristine relaxation migrated next (the first
 # migration with real build_result logic), so its
 # ``_on_submit_*_from_pristine_relaxation`` / ``_materialize_pristine_relaxation_jobs``
-# handlers are intentionally absent here too.
+# handlers are intentionally absent here too. Muon relaxation followed (the
+# first migration exercising ``pre_submit_check`` and ``submission_groups``),
+# so its ``_on_submit_*_from_muon_relaxation`` /
+# ``_materialize_muon_relaxation_jobs`` handlers are intentionally absent as
+# well.
 PINNED_MAIN_WINDOW_SUBMIT_HANDLERS = frozenset(
     {
         "_materialize_energy_barrier_neb_jobs",
-        "_materialize_muon_relaxation_jobs",
         "_materialize_quantum_corrections_jobs",
         "_materialize_uep_jobs",
-        "_on_submit_cluster_from_muon_relaxation",
         "_on_submit_cluster_from_quantum_corrections",
         "_on_submit_cluster_from_uep",
         "_on_submit_cluster_neb_from_energy_barriers",
         "_on_submit_from_dashboard",
         "_on_submit_local_from_dashboard",
-        "_on_submit_local_from_muon_relaxation",
         "_on_submit_local_from_quantum_corrections",
         "_on_submit_local_from_uep",
         "_on_submit_local_neb_from_energy_barriers",

@@ -40,6 +40,10 @@ from mufinder.app.workflow_controllers.convergence_kpoint import (
     ConvergenceKpointController,
     ConvergenceKpointDeps,
 )
+from mufinder.app.workflow_controllers.muon_relaxation import (
+    MuonRelaxationController,
+    MuonRelaxationDeps,
+)
 from mufinder.app.workflow_controllers.pristine_relaxation import (
     PristineRelaxationController,
     PristineRelaxationDeps,
@@ -1216,3 +1220,545 @@ def test_pristine_controller_submit_local_reaches_local_backend(tmp_path: Path) 
     assert extras == {}
     assert len(submitted) == 1
     assert submitted[0].calc_type == "castep_pristine_relaxation"
+
+
+# --------------------------------------------------------------------------- #
+# MuonRelaxationController
+# --------------------------------------------------------------------------- #
+#
+# The first migration exercising the two base hooks beyond their defaults:
+# ``pre_submit_check`` (staged-site/host validation runs BEFORE any submission
+# plan is built) and ``submission_groups`` (a mixed job list is split into
+# per-charge-state groups, each dispatched separately through the base template
+# loop). ``build_result`` carries the richest result logic so far — muon
+# position payload (supercell + folded host coordinates), derived structure,
+# and the sanctioned source-site mutation — driven below with a REAL
+# ``-out.cell`` fixture containing an ``H:mu`` muon.
+
+
+class _FakeMuonRelaxationView:
+    """Minimal MuonRelaxationWidget stand-in for controller tests."""
+
+    def __init__(self) -> None:
+        self.runtime_states: list[dict] = []
+
+    def set_runtime_states(self, states) -> None:
+        self.runtime_states.append(dict(states))
+
+
+_MUON_OUT_CELL_TEXT = """
+%BLOCK LATTICE_CART
+ang
+8.0 0.0 0.0
+0.0 8.0 0.0
+0.0 0.0 4.0
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Si 0.0 0.0 0.0
+H:mu 0.3 0.4 0.5
+%ENDBLOCK POSITIONS_FRAC
+"""
+
+
+def _real_muon_position_from_cell(cell):
+    """Extract the H:mu position exactly as MainWindow._muon_fractional_position_from_cell does."""
+
+    species = getattr(cell, "species", ())
+    positions = getattr(cell, "fractional_positions", ())
+    for atom_species, position in reversed(list(zip(species, positions, strict=False))):
+        if str(atom_species).strip().casefold() != "h:mu":
+            continue
+        if not isinstance(position, (list, tuple)) or len(position) != 3:
+            return None
+        return (float(position[0]), float(position[1]), float(position[2]))
+    return None
+
+
+def _real_coerce_fractional_triplet(value):
+    """Coerce exactly as MainWindow._coerce_fractional_triplet does."""
+
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return None
+    try:
+        return (float(value[0]), float(value[1]), float(value[2]))
+    except (TypeError, ValueError):
+        return None
+
+
+def _stub_muon_deps(**overrides) -> MuonRelaxationDeps:
+    from mufinder.app.relaxation_adapter import muon_charge_state_prefix
+
+    base = dict(
+        active_muon_relaxation_definition=lambda: None,
+        deserialize_muon_relaxation_config=lambda _payload: None,
+        sync_equivalent_muon_relaxation_mappings=lambda _definition: None,
+        sync_active_muon_relaxation_dashboard_jobs=lambda _definition: None,
+        muon_relaxation_form_config=lambda: None,
+        muon_relaxation_row_signature=lambda row: (row.label, row.charge_state),
+        muon_relaxation_row_key=(
+            lambda row: f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
+        ),
+        job_for_muon_relaxation_label=lambda _definition, _label, _charge_state: None,
+        job_is_active_local=lambda _job: False,
+        definition_output_directory=lambda _definition: None,
+        handle_site_host_mismatch=lambda _mismatch: False,
+        muon_relaxation_definition_and_row_for_job=lambda _job: (None, None),
+        muon_fractional_position_from_cell=_real_muon_position_from_cell,
+        coerce_fractional_triplet=_real_coerce_fractional_triplet,
+        job_output_directory=lambda _job: None,
+        job_seed_name=lambda job: job.label,
+        parse_relaxed_out_cell=_real_parse_relaxed_out_cell,
+        run_for_job=lambda _job_id: None,
+        total_energy_for_job=lambda _job_id: None,
+        max_force_for_job=lambda _job_id: None,
+    )
+    base.update(overrides)
+    return MuonRelaxationDeps(**base)
+
+
+def _muon_job(
+    service: ProjectService, document: ProjectDocument, label: str, calc_type: str
+) -> Job:
+    return service.add_job(
+        document,
+        label=label,
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type=calc_type,
+    )
+
+
+def _muon_host_document(service: ProjectService, tmp_path: Path):
+    from mufinder.domain.models import Structure
+
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+    return document, host
+
+
+def test_muon_controller_handles_both_charge_state_calc_types(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _host = _muon_host_document(service, tmp_path)
+    controller = MuonRelaxationController(
+        _make_context(document=document), _stub_muon_deps(), _FakeMuonRelaxationView()
+    )
+    positive = _muon_job(service, document, "s1", "castep_positivemuon_relaxation")
+    muonium = _muon_job(service, document, "s2", "castep_muonium_relaxation")
+    pristine = service.add_job(
+        document,
+        label="p",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    assert controller.handles_job(positive) is True
+    assert controller.handles_job(muonium) is True
+    # Pristine relaxation is owned by its own controller, not this one.
+    assert controller.handles_job(pristine) is False
+
+
+def test_muon_controller_ready_predicate_matches_bare_and_qualified_labels() -> None:
+    controller = MuonRelaxationController(
+        _make_context(), _stub_muon_deps(), _FakeMuonRelaxationView()
+    )
+    states = {
+        "muonium:Site 1": _State("ready"),
+        "positivemuon:Site 2": _State("failed"),
+    }
+    # Charge-qualified keys match their own state only.
+    assert controller.is_ready(states, "muonium:Site 1") is True
+    assert controller.is_ready(states, "positivemuon:Site 2") is False
+    # A bare label matches any charge-qualified key ending in ":{label}".
+    assert controller.is_ready(states, "Site 1") is True
+    assert controller.is_ready(states, "Site 2") is False
+    # "defined" and "not generated" also count as ready (unlike the sweep predicate).
+    assert controller.is_ready({"s": _State("defined")}, "s") is True
+    assert controller.is_ready({"s": _State("not generated")}, "s") is True
+
+
+def test_muon_controller_refresh_view_without_document_clears_rows() -> None:
+    view = _FakeMuonRelaxationView()
+    controller = MuonRelaxationController(
+        _make_context(document=None), _stub_muon_deps(), view
+    )
+    controller.refresh_view()
+    assert view.runtime_states == [{}]
+
+
+def test_muon_controller_pre_submit_check_blocks_submission(tmp_path: Path) -> None:
+    """An unresolved staged-site/host mismatch silently refuses the submission:
+    no submission plan is built, no jobs are materialized or dispatched, and no
+    'no ready jobs' dialog appears."""
+
+    from mufinder.domain.models import CalculationDefinition, MuonSite, Structure
+
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    other = Structure(
+        label="Other",
+        lattice_vectors=[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, other)
+    # The staged site was generated for a different host than the active one.
+    site = MuonSite(
+        label="Site 1",
+        status="staged",
+        fractional_position=[0.1, 0.2, 0.3],
+        source_structure_id=other.id,
+    )
+    document.sites[site.id] = site
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muon_relaxation",
+        parameters={},
+        input_structure_ids=[host.id],
+        input_site_ids=[site.id],
+    )
+    document.calculations[definition.id] = definition
+
+    mismatches: list[object] = []
+    form_config_calls: list[bool] = []
+    deps = _stub_muon_deps(
+        active_muon_relaxation_definition=lambda: definition,
+        handle_site_host_mismatch=lambda mismatch: (mismatches.append(mismatch), False)[1],
+        muon_relaxation_form_config=lambda: (form_config_calls.append(True), None)[1],
+    )
+    local = _RecordingBackend()
+    infos: list[tuple[str, str]] = []
+    context = _make_context(
+        document=document, project_service=service, local_backend=local, infos=infos
+    )
+    controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
+
+    controller.submit(["positivemuon:Site 1"], target="local")
+
+    assert len(mismatches) == 1  # the host check ran and surfaced the mismatch
+    assert local.calls == []  # nothing dispatched
+    assert infos == []  # the refusal is silent (no "no ready jobs" dialog)
+    assert form_config_calls == []  # no submission plan was even built
+    assert document.jobs == {}  # nothing materialized
+
+
+def test_muon_controller_pre_submit_check_passes_when_sites_match_host(
+    tmp_path: Path,
+) -> None:
+    from mufinder.domain.models import CalculationDefinition, MuonSite
+
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    site = MuonSite(
+        label="Site 1",
+        status="staged",
+        fractional_position=[0.1, 0.2, 0.3],
+        source_structure_id=host.id,
+    )
+    document.sites[site.id] = site
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muon_relaxation",
+        parameters={},
+        input_structure_ids=[host.id],
+        input_site_ids=[site.id],
+    )
+    document.calculations[definition.id] = definition
+
+    mismatches: list[object] = []
+    deps = _stub_muon_deps(
+        active_muon_relaxation_definition=lambda: definition,
+        handle_site_host_mismatch=lambda mismatch: (mismatches.append(mismatch), False)[1],
+    )
+    local = _RecordingBackend()
+    infos: list[tuple[str, str]] = []
+    context = _make_context(
+        document=document, project_service=service, local_backend=local, infos=infos
+    )
+    controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
+
+    controller.submit(["positivemuon:Site 1"], target="local")
+
+    # No mismatch dialog; the check passed and the plan ran (and found no
+    # configured rows, hence the standard no-ready dialog).
+    assert mismatches == []
+    assert infos == [("No ready jobs", MuonRelaxationController.no_ready_message)]
+    assert local.calls == []
+
+
+def test_muon_controller_submission_groups_split_by_charge_state(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _host = _muon_host_document(service, tmp_path)
+    controller = MuonRelaxationController(
+        _make_context(document=document), _stub_muon_deps(), _FakeMuonRelaxationView()
+    )
+    pos_a = _muon_job(service, document, "a", "castep_positivemuon_relaxation")
+    mu_b = _muon_job(service, document, "b", "castep_muonium_relaxation")
+    pos_c = _muon_job(service, document, "c", "castep_positivemuon_relaxation")
+
+    # Mixed list splits into positive-muon group first, then muonium, no extra
+    # kwargs; a duplicate job id is deduped.
+    groups = controller.submission_groups([pos_a, mu_b, pos_c, pos_a])
+    assert groups == [([pos_a, pos_c], {}), ([mu_b], {})]
+
+    # A single-charge-state list yields one group (no empty groups).
+    assert controller.submission_groups([mu_b]) == [([mu_b], {})]
+
+
+def _muon_two_row_submission_fixture(service: ProjectService, tmp_path: Path):
+    """Document + config with one positive-muon and one muonium row, wired for
+    real materialization through expand_muon_relaxation_jobs."""
+
+    from uuid import UUID
+
+    from mufinder.app.relaxation_adapter import muon_charge_state_prefix
+    from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow
+    from mufinder.domain.models import MuonSite
+
+    document, host = _muon_host_document(service, tmp_path)
+    site1 = MuonSite(
+        label="Site 1",
+        status="staged",
+        fractional_position=[0.1, 0.2, 0.3],
+        source_structure_id=host.id,
+    )
+    site2 = MuonSite(
+        label="Site 2",
+        status="staged",
+        fractional_position=[0.4, 0.1, 0.2],
+        source_structure_id=host.id,
+    )
+    document.sites[site1.id] = site1
+    document.sites[site2.id] = site2
+
+    config = MuonRelaxationConfig(
+        rows=(
+            MuonRelaxationRow(
+                site_id=site1.id,
+                label="Site 1",
+                initial_fractional_position=(0.1, 0.2, 0.3),
+                charge_state="positive_muon",
+            ),
+            MuonRelaxationRow(
+                site_id=site2.id,
+                label="Site 2",
+                initial_fractional_position=(0.4, 0.1, 0.2),
+                charge_state="muonium",
+            ),
+        )
+    )
+    output_root = document.project_root / "files" / "muon_relaxation"
+    definition = service.register_muon_relaxation_definition(
+        document,
+        input_structure_id=host.id,
+        parameters={"configuration": {}},
+        output_directory=output_root,
+    )
+
+    def job_for_label(defn, label, charge_state):
+        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
+        keys = (
+            [f"{muon_charge_state_prefix(charge_state)}:{label}"] if charge_state else []
+        )
+        keys.append(label)
+        for key in keys:
+            job_id = mapping.get(key)
+            if isinstance(job_id, str):
+                return document.jobs.get(UUID(job_id))
+        return None
+
+    deps = _stub_muon_deps(
+        active_muon_relaxation_definition=lambda: definition,
+        deserialize_muon_relaxation_config=lambda _payload: config,
+        muon_relaxation_form_config=lambda: config,
+        job_for_muon_relaxation_label=job_for_label,
+        definition_output_directory=lambda _defn: output_root,
+    )
+    return document, definition, deps, output_root
+
+
+def test_muon_controller_materialize_writes_charge_prefixed_mappings_and_persists(
+    tmp_path: Path,
+) -> None:
+    import dataclasses
+
+    service = ProjectService()
+    document, definition, deps, output_root = _muon_two_row_submission_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    context = dataclasses.replace(
+        _make_context(document=document, project_service=service),
+        persist_ui_state=lambda **kwargs: persists.append(dict(kwargs)),
+    )
+    controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
+
+    jobs = controller.materialize(["muonium:Site 2"])
+
+    assert [job.calc_type for job in jobs] == ["castep_muonium_relaxation"]
+    assert [job.label for job in jobs] == ["Site 2"]
+    mapping = definition.parameters["job_ids_by_label"]
+    seed_mapping = definition.parameters["job_seed_names_by_label"]
+    assert mapping == {"muonium:Site 2": str(jobs[0].id)}
+    assert set(seed_mapping) == {"muonium:Site 2"}
+    # Rendered inputs were written under the charge-state root.
+    seed = seed_mapping["muonium:Site 2"]
+    job_dir = output_root / "muonium" / seed
+    assert (job_dir / f"{seed}.cell").exists()
+    assert (job_dir / f"{seed}.param").exists()
+    # The document was persisted with the muon-specific failure message.
+    assert persists == [
+        {"failure_message": "Muon relaxation jobs were generated, but autosave failed."}
+    ]
+
+
+def test_muon_controller_submit_local_splits_groups_across_backend_calls(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, deps, _output_root = _muon_two_row_submission_fixture(
+        service, tmp_path
+    )
+    local = _RecordingBackend()
+    cluster = _RecordingBackend()
+    context = _make_context(
+        document=document,
+        project_service=service,
+        local_backend=local,
+        cluster_backend=cluster,
+    )
+    controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
+
+    controller.submit(["positivemuon:Site 1", "muonium:Site 2"], target="local")
+
+    assert cluster.calls == []
+    # One backend call per charge-state group: positive muon first, then muonium.
+    assert len(local.calls) == 2
+    first_group, first_extras = local.calls[0]
+    second_group, second_extras = local.calls[1]
+    assert first_extras == {} and second_extras == {}
+    assert [job.calc_type for job in first_group] == ["castep_positivemuon_relaxation"]
+    assert [job.label for job in first_group] == ["Site 1"]
+    assert [job.calc_type for job in second_group] == ["castep_muonium_relaxation"]
+    assert [job.label for job in second_group] == ["Site 2"]
+    # Both jobs were recorded under charge-prefixed mapping keys.
+    mapping = definition.parameters["job_ids_by_label"]
+    assert set(mapping) == {"positivemuon:Site 1", "muonium:Site 2"}
+
+
+def test_muon_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, deps, _output_root = _muon_two_row_submission_fixture(
+        service, tmp_path
+    )
+    local = _RecordingBackend()
+    cluster = _RecordingBackend()
+    context = _make_context(
+        document=document,
+        project_service=service,
+        local_backend=local,
+        cluster_backend=cluster,
+    )
+    controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
+
+    controller.submit(["positivemuon:Site 1", "muonium:Site 2"], target="cluster")
+
+    assert local.calls == []
+    assert [
+        [job.calc_type for job in group] for group, _extras in cluster.calls
+    ] == [["castep_positivemuon_relaxation"], ["castep_muonium_relaxation"]]
+
+
+def test_muon_controller_build_result_records_position_structure_and_site_mutation(
+    tmp_path: Path,
+) -> None:
+    """build_result with a REAL -out.cell containing an H:mu muon contributes
+    the lattice + folded-position payload, creates the derived structure, and
+    mutates the source site (the sanctioned document side effect)."""
+
+    from mufinder.app.relaxation_types import MuonRelaxationRow
+    from mufinder.domain.models import CalculationDefinition, MuonSite
+
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    site = MuonSite(
+        label="Shared Site",
+        status="staged",
+        fractional_position=[0.1, 0.2, 0.3],
+        source_structure_id=host.id,
+    )
+    document.sites[site.id] = site
+
+    row = MuonRelaxationRow(
+        site_id=site.id,
+        label="Shared Site",
+        initial_fractional_position=(0.1, 0.2, 0.3),
+        charge_state="muonium",
+        supercell_matrix=((2, 0, 0), (0, 2, 0), (0, 0, 1)),
+    )
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muon_relaxation",
+        parameters={},
+        input_structure_ids=[host.id],
+        input_site_ids=[site.id],
+    )
+    document.calculations[definition.id] = definition
+
+    job = _muon_job(service, document, "Shared Site", "castep_muonium_relaxation")
+    run = CalculationRun(job_id=job.id)
+    document.runs[run.id] = run
+
+    # A REAL -out.cell fixture (2x2x1 supercell of the 4 A host) on disk, fed
+    # through the controller's parse + position-extraction helpers.
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    (output_dir / f"{job.label}-out.cell").write_text(_MUON_OUT_CELL_TEXT, encoding="utf-8")
+
+    deps = _stub_muon_deps(
+        active_muon_relaxation_definition=lambda: definition,
+        muon_relaxation_definition_and_row_for_job=lambda _job: (definition, row),
+        job_output_directory=lambda _job: output_dir,
+    )
+    context = _make_context(document=document, project_service=service)
+    controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
+
+    parsed = CastepResult(completed=True, total_energy=-12.0, warnings=())
+    result = controller.build_result(job, parsed, run)
+
+    # Relaxed supercell lattice payload.
+    assert result.payload["lattice_a"] == pytest.approx(8.0)
+    assert result.payload["lattice_b"] == pytest.approx(8.0)
+    assert result.payload["lattice_c"] == pytest.approx(4.0)
+    # Muon position: raw supercell fraction, and folded back to host coordinates
+    # through the row's 2x2x1 supercell matrix.
+    assert result.payload["muon_final_fractional_position_supercell"] == pytest.approx(
+        [0.3, 0.4, 0.5]
+    )
+    assert result.payload["muon_final_fractional_position_host"] == pytest.approx(
+        [0.6, 0.8, 0.5]
+    )
+    # No output_files contributed — the call site already passes them generically.
+    assert result.output_files == []
+
+    # Exactly one derived structure created on the document, with the right
+    # origin, parentage, and the muon present.
+    assert len(result.derived_structure_ids) == 1
+    derived = document.structures[result.derived_structure_ids[0]]
+    assert derived.origin == "muon_relaxation"
+    assert derived.parent_structure_id == host.id
+    assert derived.label == "Shared Site relaxed"
+    assert derived.properties["source_job_id"] == str(job.id)
+    assert derived.properties["source_workflow_stage"] == WorkflowStage.MUON_RELAXATION.value
+    assert any(str(s).strip().casefold() == "h:mu" for s in derived.species)
+
+    # Sanctioned document side effect: the source site is marked relaxed and
+    # linked to this run with the job's total energy.
+    assert site.status == "relaxed"
+    assert site.relaxation_run_id == run.id
+    assert site.relative_energy_eV == pytest.approx(-12.0)

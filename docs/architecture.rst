@@ -160,7 +160,13 @@ previously accreted on ``MainWindow``.
   ``MainWindow._submit_workflow_selection`` funnel; workflow-specific behavior
   is supplied by overriding ``normalize`` / ``build_states`` / ``jobs_for_keys``
   / ``materialize`` / ``is_ready`` and, where needed, ``pre_submit_check`` and
-  ``submission_groups``.
+  ``submission_groups``. ``MuonRelaxationController`` is the first migration
+  exercising the latter two hooks: its ``pre_submit_check`` validates that
+  every staged site matches the active host (silently refusing the submission
+  before any plan is built when the mismatch is not resolved), and its
+  ``submission_groups`` splits a mixed job list into per-charge-state groups
+  (positive muon first, then muonium), each dispatched by the base template
+  loop as a separate backend call with no extra kwargs.
 - Result dispatch is registry-based:
   :func:`~mufinder.app.workflow_controllers.base.merge_controller_result`
   consults the registered controllers in ``MainWindow._on_local_job_finished``
@@ -171,12 +177,18 @@ previously accreted on ``MainWindow``.
   :meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.build_result`
   implementation: it parses the relaxed ``-out.cell``, contributes the relaxed
   ``lattice_a/b/c`` payload, and creates the derived relaxed structure on the
-  document. Because ``ControllerResult`` has no failure channel,
-  failure-detection prologues that must abort a job before any result is built
-  (the ``geom_converged`` guard, and the shared ``-out.cell`` existence/parse
-  guard reused by the still-inline muon-relaxation branch) stay inline in
-  ``_on_local_job_finished``; the controller re-parses the already-validated
-  file on the success path via a shared ``parse_relaxed_out_cell`` dep.
+  document. ``MuonRelaxationController.build_result`` carries the richest
+  result logic so far: in addition to the lattice payload and the derived
+  structure, it contributes the muon's final fractional position in supercell
+  and folded host coordinates, and mutates the source muon site
+  (``status``/``relaxation_run_id``/``relative_energy_eV``) — a sanctioned
+  document side effect per the ``ControllerResult`` contract. Because
+  ``ControllerResult`` has no failure channel, failure-detection prologues that
+  must abort a job before any result is built (the ``geom_converged`` guard,
+  the shared ``-out.cell`` existence/parse guard, and the muon ``H:mu``
+  position guard) stay inline in ``_on_local_job_finished``; the controllers
+  re-parse the already-validated file on the success path via a shared
+  ``parse_relaxed_out_cell`` dep.
 
 The set of ``_on_submit_*`` / ``_materialize_*`` handlers still on
 ``MainWindow`` is pinned by ``tests/test_agent_harness.py`` as a ratchet: it may
