@@ -51,18 +51,18 @@ FORBIDDEN_LAYER_IMPORTS = {
 # that have NOT yet migrated, so it acts as a ratchet against the god object:
 # the test fails if a NEW ``_on_submit_*`` / ``_materialize_*`` name appears on
 # ``MainWindow``. Each migration PR removes the migrated workflow's names from
-# this set (the set may only shrink). Cutoff convergence migrated first, so its
-# former ``_on_submit_local_from_convergence`` / ``_on_submit_cluster_from_convergence``
-# / ``_materialize_convergence_jobs`` handlers are intentionally absent here.
+# this set (the set may only shrink). Cutoff and k-point convergence migrated
+# first, so their former ``_on_submit_*_from_convergence`` /
+# ``_on_submit_*_from_kpoint_convergence`` /
+# ``_materialize_convergence_jobs`` / ``_materialize_kpoint_jobs`` handlers are
+# intentionally absent here.
 PINNED_MAIN_WINDOW_SUBMIT_HANDLERS = frozenset(
     {
         "_materialize_energy_barrier_neb_jobs",
-        "_materialize_kpoint_jobs",
         "_materialize_muon_relaxation_jobs",
         "_materialize_pristine_relaxation_jobs",
         "_materialize_quantum_corrections_jobs",
         "_materialize_uep_jobs",
-        "_on_submit_cluster_from_kpoint_convergence",
         "_on_submit_cluster_from_muon_relaxation",
         "_on_submit_cluster_from_pristine_relaxation",
         "_on_submit_cluster_from_quantum_corrections",
@@ -70,7 +70,6 @@ PINNED_MAIN_WINDOW_SUBMIT_HANDLERS = frozenset(
         "_on_submit_cluster_neb_from_energy_barriers",
         "_on_submit_from_dashboard",
         "_on_submit_local_from_dashboard",
-        "_on_submit_local_from_kpoint_convergence",
         "_on_submit_local_from_muon_relaxation",
         "_on_submit_local_from_pristine_relaxation",
         "_on_submit_local_from_quantum_corrections",

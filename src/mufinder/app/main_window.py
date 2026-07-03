@@ -178,12 +178,13 @@ from mufinder.app.workflow_dialogs import EnergyBarrierPathViewerDialog, Quantum
 from mufinder.app.workflow_parameters import build_workflow_parameter_surface, kpoint_exclusive_hint, workflow_basic_parameter_names
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
-    sweep_point_state_is_ready,
     workflow_row_state_is_ready,
 )
 from mufinder.app.workflow_controllers import (
     ConvergenceCutoffController,
     ConvergenceCutoffDeps,
+    ConvergenceKpointController,
+    ConvergenceKpointDeps,
     WorkflowControllerContext,
     WorkflowJobController,
     merge_controller_result,
@@ -1791,11 +1792,20 @@ class MainWindow(QMainWindow):
         self._kpoint_convergence_view.simulation_cell_use_unit_cell_requested.connect(
             self._on_kpoint_simulation_cell_use_unit_cell_requested
         )
+        # K-point convergence controller: sibling of the cutoff controller. Built
+        # here (after its view exists) and appended to the registry so completed
+        # castep_convergence_kpoint jobs route through its build_result.
+        self._kpoint_convergence_controller = ConvergenceKpointController(
+            self._build_workflow_controller_context(),
+            self._build_convergence_kpoint_deps(),
+            self._kpoint_convergence_view,
+        )
+        self._workflow_controllers.append(self._kpoint_convergence_controller)
         self._kpoint_convergence_view.submit_local_requested.connect(
-            self._on_submit_local_from_kpoint_convergence
+            lambda values: self._kpoint_convergence_controller.submit(values, target="local")
         )
         self._kpoint_convergence_view.submit_cluster_requested.connect(
-            self._on_submit_cluster_from_kpoint_convergence
+            lambda values: self._kpoint_convergence_controller.submit(values, target="cluster")
         )
         self._kpoint_convergence_view.cancel_requested.connect(self._on_cancel_from_kpoint_convergence)
         self._kpoint_convergence_view.inspect_failed_requested.connect(
@@ -2690,7 +2700,7 @@ class MainWindow(QMainWindow):
             self._document.ui_state.get("kpoint_convergence_form", {})
         )
         self._refresh_kpoint_convergence_simulation_cell()
-        self._refresh_kpoint_convergence_rows()
+        self._kpoint_convergence_controller.refresh_view()
         self._pristine_relaxation_view.set_form_state(
             self._document.ui_state.get("pristine_relaxation_form", {})
         )
@@ -3460,7 +3470,7 @@ class MainWindow(QMainWindow):
         self._sync_job_runtime_timer()
 
         self._convergence_controller.refresh_view()
-        self._refresh_kpoint_convergence_rows()
+        self._kpoint_convergence_controller.refresh_view()
         self._refresh_pristine_relaxation_rows()
         self._refresh_muon_relaxation_rows()
         self._refresh_uep_rows()
@@ -4365,7 +4375,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_jobs_table()
         self._convergence_controller.refresh_view()
-        self._refresh_kpoint_convergence_rows()
+        self._kpoint_convergence_controller.refresh_view()
         self.statusBar().showMessage(f"Deleted {len(deletable_jobs)} job(s)")
 
     @staticmethod
@@ -5867,7 +5877,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_jobs_table()
         self._convergence_controller.refresh_view()
-        self._refresh_kpoint_convergence_rows()
+        self._kpoint_convergence_controller.refresh_view()
         self._refresh_quantum_corrections_view()
         if outcome.journal_changed:
             self._refresh_journal_view()
@@ -6145,7 +6155,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_jobs_table()
         self._convergence_controller.refresh_view()
-        self._refresh_kpoint_convergence_rows()
+        self._kpoint_convergence_controller.refresh_view()
         self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
 
@@ -6577,7 +6587,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_jobs_table()
         self._convergence_controller.refresh_view()
-        self._refresh_kpoint_convergence_rows()
+        self._kpoint_convergence_controller.refresh_view()
 
         if cleanup_errors:
             QMessageBox.warning(
@@ -6649,6 +6659,34 @@ class MainWindow(QMainWindow):
             ),
             definition_output_directory=lambda definition: self._definition_output_directory(definition),
             cutoff_key=lambda value: self._cutoff_key(value),
+            total_energy_for_job=lambda job_id: self._total_energy_for_job(job_id),
+            max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
+            max_stress_for_job=lambda job_id: self._max_stress_for_job(job_id),
+        )
+
+    def _build_convergence_kpoint_deps(self) -> ConvergenceKpointDeps:
+        """Build the k-point controller's deps: shared convergence helpers.
+
+        These helpers stay on ``MainWindow`` because non-migrating convergence
+        code still calls them; the controller reaches them only through these
+        late-bound wrappers. Several fields overlap ``ConvergenceCutoffDeps``
+        (``deserialize_convergence_config``, ``definition_output_directory``, the
+        energy/force/stress readers) but the two sweeps deliberately keep
+        separate deps types.
+        """
+
+        return ConvergenceKpointDeps(
+            active_kpoint_definition=lambda: self._active_kpoint_definition(),
+            deserialize_convergence_config=lambda payload: self._deserialize_convergence_config(payload),
+            sync_equivalent_convergence_kpoint_mappings=(
+                lambda definition: self._sync_equivalent_convergence_kpoint_mappings(definition)
+            ),
+            definition_for_kpoint_grid=lambda grid: self._definition_for_kpoint_grid(grid),
+            job_for_definition_grid=(
+                lambda definition, grid: self._job_for_definition_grid(definition, grid)
+            ),
+            definition_output_directory=lambda definition: self._definition_output_directory(definition),
+            grid_key=lambda grid: self._grid_key(grid),
             total_energy_for_job=lambda job_id: self._total_energy_for_job(job_id),
             max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
             max_stress_for_job=lambda job_id: self._max_stress_for_job(job_id),
@@ -7430,7 +7468,7 @@ class MainWindow(QMainWindow):
         if update.changed:
             self._refresh_jobs_table()
             self._convergence_controller.refresh_view()
-            self._refresh_kpoint_convergence_rows()
+            self._kpoint_convergence_controller.refresh_view()
             self._refresh_quantum_corrections_view()
             self._refresh_energy_barriers_view()
             self._persist_document_ui_state(
@@ -8956,183 +8994,6 @@ class MainWindow(QMainWindow):
                 return job
         return None
 
-    def _kpoint_form_snapshot(self) -> tuple[str, tuple[tuple[int, int, int], ...]]:
-        if self._document is None:
-            return "kpoint_convergence", ()
-
-        persisted = self._document.ui_state.get("kpoint_convergence_form", {})
-        if not isinstance(persisted, dict):
-            return "kpoint_convergence", ()
-
-        name_prefix = str(persisted.get("name_prefix", "kpoint_convergence")).strip() or "kpoint_convergence"
-        raw_grids = persisted.get("kpoint_grids", [])
-        grids: list[tuple[int, int, int]] = []
-        if isinstance(raw_grids, list):
-            for entry in raw_grids:
-                if not isinstance(entry, list) or len(entry) != 3:
-                    continue
-                try:
-                    grid = (int(entry[0]), int(entry[1]), int(entry[2]))
-                except (TypeError, ValueError):
-                    continue
-                grids.append(grid)
-        return name_prefix, tuple(dict.fromkeys(grids))
-
-    def _refresh_kpoint_convergence_rows(self) -> None:
-        if self._document is None:
-            self._kpoint_convergence_view.set_runtime_states({})
-            return
-        self._kpoint_convergence_view.set_runtime_states(self._build_convergence_kpoint_states())
-
-    def _build_convergence_kpoint_states(self) -> dict[tuple[int, int, int], SweepPointRunState]:
-        if self._document is None:
-            return {}
-
-        states: dict[tuple[int, int, int], SweepPointRunState] = {}
-        form_prefix, form_grids = self._kpoint_form_snapshot()
-        for grid in form_grids:
-            states[grid] = SweepPointRunState(
-                status="ready",
-                job_label=convergence_job_name(
-                    form_prefix,
-                    grid,
-                    sweep_parameter="kpoint_mp_grid",
-                ),
-            )
-
-        definition = self._active_kpoint_definition()
-        if definition is None:
-            return states
-
-        self._sync_equivalent_convergence_kpoint_mappings(definition)
-        config = self._deserialize_convergence_config(definition.parameters.get("configuration", {}))
-        if config is None or config.sweep_parameter != "kpoint_mp_grid":
-            return states
-
-        config_grids = tuple(
-            tuple(int(component) for component in value)
-            for value in config.sweep_values
-            if isinstance(value, tuple)
-        )
-        if form_grids and (form_prefix != config.name_prefix or form_grids != config_grids):
-            return states
-
-        for grid in config_grids:
-            job = self._job_for_definition_grid(definition, grid)
-            if job is None:
-                states[grid] = SweepPointRunState(
-                    status="ready",
-                    job_label=convergence_job_name(
-                        config.name_prefix,
-                        grid,
-                        sweep_parameter="kpoint_mp_grid",
-                    ),
-                )
-                continue
-
-            status_value = "ready" if job.status == JobStatus.DEFINED else job.status.value
-            states[grid] = SweepPointRunState(
-                status=status_value,
-                total_energy=self._total_energy_for_job(job.id),
-                max_force=self._max_force_for_job(job.id),
-                max_stress=self._max_stress_for_job(job.id),
-                job_id=job.id,
-                job_label=job.label,
-            )
-        return states
-
-    def _jobs_for_convergence_kpoint_grids(self, grids: list[tuple[int, int, int]]) -> list[Job]:
-        if self._document is None:
-            return []
-
-        states = self._build_convergence_kpoint_states()
-        selected: list[Job] = []
-        seen: set[UUID] = set()
-        for grid in grids:
-            state = states.get(tuple(grid))
-            if state is None:
-                continue
-            job = self._document.jobs.get(state.job_id) if state.job_id is not None else None
-            if job is None or job.id in seen:
-                continue
-            selected.append(job)
-            seen.add(job.id)
-        return selected
-
-    def _materialize_kpoint_jobs(self, grids: list[tuple[int, int, int]]) -> list[Job]:
-        if self._document is None:
-            return []
-
-        created: list[Job] = []
-        grouped: dict[UUID, tuple[object, ConvergenceConfig, set[tuple[int, int, int]]]] = {}
-        for grid in grids:
-            definition, config = self._definition_for_kpoint_grid(grid)
-            if definition is None or config is None:
-                continue
-            existing = self._job_for_definition_grid(definition, grid)
-            if existing is not None:
-                created.append(existing)
-                continue
-            record = grouped.get(definition.id)
-            if record is None:
-                grouped[definition.id] = (definition, config, {tuple(grid)})
-            else:
-                record[2].add(tuple(grid))
-
-        for definition, config, grouped_grids in grouped.values():
-            if not definition.input_structure_ids:
-                continue
-            structure = self._document.structures.get(definition.input_structure_ids[0])
-            output_root = self._definition_output_directory(definition)
-            if structure is None or output_root is None:
-                continue
-            self._project_service.repair_supercell_asset_if_needed(
-                self._document,
-                structure_id=structure.id,
-            )
-
-            try:
-                structure_spec = structure_to_spec(structure)
-                all_jobs = expand_convergence_jobs(structure=structure_spec, config=config).jobs
-            except (ValueError, StructureBridgeError):
-                continue
-
-            desired_labels = {
-                convergence_job_name(
-                    config.name_prefix,
-                    grid,
-                    sweep_parameter="kpoint_mp_grid",
-                ): grid
-                for grid in grouped_grids
-            }
-            mapping = definition.parameters.setdefault("job_ids_by_grid", {})
-            if not isinstance(mapping, dict):
-                mapping = {}
-                definition.parameters["job_ids_by_grid"] = mapping
-
-            for job_spec in all_jobs:
-                grid = desired_labels.get(job_spec.name)
-                if grid is None:
-                    continue
-                write_job_directory(job_spec, output_root)
-                job = self._project_service.add_job(
-                    self._document,
-                    label=job_spec.name,
-                    workflow_stage=job_spec.workflow_stage,
-                    calc_type="castep_convergence_kpoint",
-                )
-                mapping[self._grid_key(grid)] = str(job.id)
-                created.append(job)
-
-        deduped: list[Job] = []
-        seen: set[UUID] = set()
-        for job in created:
-            if job.id in seen:
-                continue
-            seen.add(job.id)
-            deduped.append(job)
-        return deduped
-
     def _on_kpoint_convergence_configured(self, config: ConvergenceConfig) -> None:
         if self._document is None:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -9177,7 +9038,7 @@ class MainWindow(QMainWindow):
         self._document.ui_state[self._ACTIVE_KPOINT_DEFINITION_KEY] = str(definition.id)
 
         self._refresh_jobs_table()
-        self._refresh_kpoint_convergence_rows()
+        self._kpoint_convergence_controller.refresh_view()
         self._refresh_journal_view()
         self.statusBar().showMessage(
             f"Configured {len(config.sweep_values)} k-point jobs; input files will be generated on submission"
@@ -9187,7 +9048,7 @@ class MainWindow(QMainWindow):
         if self._document is None or self._shutting_down:
             return
         self._document.ui_state["kpoint_convergence_form"] = state
-        self._refresh_kpoint_convergence_rows()
+        self._kpoint_convergence_controller.refresh_view()
 
     def _refresh_kpoint_convergence_simulation_cell(self) -> None:
         if self._document is None:
@@ -9318,46 +9179,16 @@ class MainWindow(QMainWindow):
         )
         self._refresh_kpoint_convergence_simulation_cell()
 
-    def _on_submit_local_from_kpoint_convergence(
-        self,
-        grids: list[tuple[int, int, int]],
-    ) -> None:
-        self._submit_workflow_selection(
-            grids,
-            normalize=lambda grid: (int(grid[0]), int(grid[1]), int(grid[2])),
-            build_states=self._build_convergence_kpoint_states,
-            jobs_for_values=self._jobs_for_convergence_kpoint_grids,
-            materialize_values=self._materialize_kpoint_jobs,
-            is_ready=sweep_point_state_is_ready,
-            no_ready_message="Only configured grids in the 'ready' state can be submitted.",
-            submit=self._submit_jobs_locally,
-        )
-
-    def _on_submit_cluster_from_kpoint_convergence(
-        self,
-        grids: list[tuple[int, int, int]],
-    ) -> None:
-        self._submit_workflow_selection(
-            grids,
-            normalize=lambda grid: (int(grid[0]), int(grid[1]), int(grid[2])),
-            build_states=self._build_convergence_kpoint_states,
-            jobs_for_values=self._jobs_for_convergence_kpoint_grids,
-            materialize_values=self._materialize_kpoint_jobs,
-            is_ready=sweep_point_state_is_ready,
-            no_ready_message="Only configured grids in the 'ready' state can be submitted.",
-            submit=self._submit_jobs_on_cluster,
-        )
-
     def _on_cancel_from_kpoint_convergence(self, grids: list[tuple[int, int, int]]) -> None:
-        jobs = self._jobs_for_convergence_kpoint_grids(grids)
+        jobs = self._kpoint_convergence_controller.jobs_for_keys(grids)
         self._cancel_jobs(jobs)
 
     def _on_inspect_failed_from_kpoint_convergence(self, grids: list[tuple[int, int, int]]) -> None:
-        jobs = self._jobs_for_convergence_kpoint_grids(grids)
+        jobs = self._kpoint_convergence_controller.jobs_for_keys(grids)
         self._inspect_failed_jobs(jobs)
 
     def _on_reset_failed_from_kpoint_convergence(self, grids: list[tuple[int, int, int]]) -> None:
-        jobs = self._jobs_for_convergence_kpoint_grids(grids)
+        jobs = self._kpoint_convergence_controller.jobs_for_keys(grids)
         self._reset_failed_jobs(jobs)
 
     def _on_remove_grids_from_kpoint_convergence(self, grids: list[tuple[int, int, int]]) -> None:
@@ -9370,7 +9201,7 @@ class MainWindow(QMainWindow):
             self._remove_kpoint_grids_from_definition(definition, target_keys)
 
         self._kpoint_convergence_view.remove_grids(grids)
-        self._refresh_kpoint_convergence_rows()
+        self._kpoint_convergence_controller.refresh_view()
 
     def _remove_kpoint_grids_from_definition(self, definition, target_keys: set[str]) -> None:
         if self._document is None or not target_keys:
@@ -9414,7 +9245,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        states = self._build_convergence_kpoint_states()
+        states = self._kpoint_convergence_controller.build_states()
         counts_map: dict[float, SweepPointRunState] = {}
         labels: dict[float, str] = {}
         for grid, state in states.items():

@@ -36,6 +36,10 @@ from mufinder.app.workflow_controllers.convergence_cutoff import (
     ConvergenceCutoffController,
     ConvergenceCutoffDeps,
 )
+from mufinder.app.workflow_controllers.convergence_kpoint import (
+    ConvergenceKpointController,
+    ConvergenceKpointDeps,
+)
 from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
 
 
@@ -612,5 +616,252 @@ def test_convergence_controller_handles_only_its_calc_type(tmp_path: Path) -> No
     )
     handled = _job(service, document, "j", calc_type="castep_convergence_cutoff")
     other = _job(service, document, "k", calc_type="castep_uep_source")
+    assert controller.handles_job(handled) is True
+    assert controller.handles_job(other) is False
+
+
+# --------------------------------------------------------------------------- #
+# ConvergenceKpointController
+# --------------------------------------------------------------------------- #
+
+
+class _FakeKpointView:
+    """Minimal KPointConvergenceWidget stand-in for controller tests."""
+
+    def __init__(self) -> None:
+        self.runtime_states: list[dict] = []
+
+    def set_runtime_states(self, states) -> None:
+        self.runtime_states.append(dict(states))
+
+
+def _grid_key(grid: tuple[int, int, int]) -> str:
+    return f"{int(grid[0])}x{int(grid[1])}x{int(grid[2])}"
+
+
+def _stub_kpoint_deps() -> ConvergenceKpointDeps:
+    """Deps whose helpers all report 'nothing found' — for tests that never
+    reach the definition-backed paths."""
+
+    return ConvergenceKpointDeps(
+        active_kpoint_definition=lambda: None,
+        deserialize_convergence_config=lambda _payload: None,
+        sync_equivalent_convergence_kpoint_mappings=lambda _definition: None,
+        definition_for_kpoint_grid=lambda _grid: (None, None),
+        job_for_definition_grid=lambda _definition, _grid: None,
+        definition_output_directory=lambda _definition: None,
+        grid_key=_grid_key,
+        total_energy_for_job=lambda _job_id: None,
+        max_force_for_job=lambda _job_id: None,
+        max_stress_for_job=lambda _job_id: None,
+    )
+
+
+def _kpoint_context_and_deps(
+    service: ProjectService,
+    document: ProjectDocument,
+    *,
+    local_backend: _RecordingBackend,
+    cluster_backend: _RecordingBackend,
+) -> tuple[WorkflowControllerContext, ConvergenceKpointDeps]:
+    """Shared context + kpoint deps wired with fake helpers.
+
+    The kpoint-specific helpers below mirror the (unchanged) MainWindow versions
+    closely enough to drive materialize/build_states without a MainWindow.
+    """
+
+    active_definition = next(iter(document.calculations.values()), None)
+
+    def deserialize(payload):
+        return document.ui_state.get("_test_config")
+
+    def definition_for_grid(grid):
+        return active_definition, document.ui_state.get("_test_config")
+
+    def job_for_definition_grid(definition, grid):
+        mapping = definition.parameters.get("job_ids_by_grid", {}) if definition else {}
+        job_id = mapping.get(_grid_key(grid))
+        return document.jobs.get(job_id) if job_id else None
+
+    context = WorkflowControllerContext(
+        document=lambda: document,
+        project_service=service,
+        job_execution=None,  # type: ignore[arg-type]
+        submission_coordinator=WorkflowSubmissionCoordinator(),
+        submit_jobs_locally=local_backend,
+        submit_jobs_on_cluster=cluster_backend,
+        show_info=lambda *_: None,
+        request_dashboard_flush=lambda **_: None,
+        persist_ui_state=lambda **_: None,
+        status_message=lambda _m: None,
+    )
+    deps = ConvergenceKpointDeps(
+        active_kpoint_definition=lambda: active_definition,
+        deserialize_convergence_config=deserialize,
+        sync_equivalent_convergence_kpoint_mappings=lambda _d: None,
+        definition_for_kpoint_grid=definition_for_grid,
+        job_for_definition_grid=job_for_definition_grid,
+        definition_output_directory=lambda d: document.project_root / "files" / "convergence_kpoint",
+        grid_key=_grid_key,
+        total_energy_for_job=lambda _job_id: None,
+        max_force_for_job=lambda _job_id: None,
+        max_stress_for_job=lambda _job_id: None,
+    )
+    return context, deps
+
+
+def _seed_kpoint_document(service: ProjectService, document: ProjectDocument):
+    from mufinder.app.convergence_types import ConvergenceConfig
+    from mufinder.domain.models import Structure
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+
+    config = ConvergenceConfig(
+        name_prefix="kconv",
+        sweep_parameter="kpoint_mp_grid",
+        sweep_values=((2, 2, 2),),
+        shared_params={"task": "SINGLEPOINT"},
+    )
+    definition = service.register_convergence_kpoint_definition(
+        document,
+        input_structure_id=host.id,
+        parameters={
+            "name_prefix": "kconv",
+            "sweep_parameter": "kpoint_mp_grid",
+            "sweep_values": [[2, 2, 2]],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=document.project_root / "files" / "convergence_kpoint",
+    )
+    document.ui_state["_test_config"] = config
+    # Persist the form so _kpoint_form_snapshot agrees with the active definition.
+    document.ui_state["kpoint_convergence_form"] = {
+        "name_prefix": "kconv",
+        "kpoint_grids": [[2, 2, 2]],
+    }
+    return definition, config
+
+
+def test_kpoint_controller_materialize_writes_job_ids_by_grid(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kconv.mufinder", "KConv")
+    definition, _config = _seed_kpoint_document(service, document)
+
+    local = _RecordingBackend()
+    cluster = _RecordingBackend()
+    view = _FakeKpointView()
+    context, deps = _kpoint_context_and_deps(
+        service, document, local_backend=local, cluster_backend=cluster
+    )
+    controller = ConvergenceKpointController(context, deps, view)
+
+    jobs = controller.materialize([(2, 2, 2)])
+
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.calc_type == "castep_convergence_kpoint"
+    mapping = definition.parameters["job_ids_by_grid"]
+    assert mapping[_grid_key((2, 2, 2))] == str(job.id)
+    # Rendered inputs were written.
+    root = document.project_root / "files" / "convergence_kpoint" / job.label
+    assert (root / f"{job.label}.cell").exists()
+    assert (root / f"{job.label}.param").exists()
+
+
+def test_kpoint_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kconv.mufinder", "KConv")
+    _seed_kpoint_document(service, document)
+
+    local = _RecordingBackend()
+    cluster = _RecordingBackend()
+    view = _FakeKpointView()
+    context, deps = _kpoint_context_and_deps(
+        service, document, local_backend=local, cluster_backend=cluster
+    )
+    controller = ConvergenceKpointController(context, deps, view)
+
+    controller.submit([(2, 2, 2)], target="local")
+
+    assert cluster.calls == []
+    assert len(local.calls) == 1
+    submitted, extras = local.calls[0]
+    assert extras == {}
+    assert len(submitted) == 1
+    assert submitted[0].calc_type == "castep_convergence_kpoint"
+
+
+def test_kpoint_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kconv.mufinder", "KConv")
+    _seed_kpoint_document(service, document)
+
+    local = _RecordingBackend()
+    cluster = _RecordingBackend()
+    view = _FakeKpointView()
+    context, deps = _kpoint_context_and_deps(
+        service, document, local_backend=local, cluster_backend=cluster
+    )
+    controller = ConvergenceKpointController(context, deps, view)
+
+    controller.submit([(2, 2, 2)], target="cluster")
+
+    assert local.calls == []
+    assert len(cluster.calls) == 1
+    assert cluster.calls[0][0][0].calc_type == "castep_convergence_kpoint"
+
+
+def test_kpoint_controller_uses_sweep_point_ready_predicate() -> None:
+    controller = ConvergenceKpointController(_make_context(), _stub_kpoint_deps(), _FakeKpointView())
+    from mufinder.app.convergence_types import SweepPointRunState
+
+    states = {(2, 2, 2): SweepPointRunState(status="defined")}
+    assert controller.is_ready(states, (2, 2, 2)) is False
+    states = {(2, 2, 2): SweepPointRunState(status="ready")}
+    assert controller.is_ready(states, (2, 2, 2)) is True
+
+
+def test_kpoint_controller_refresh_view_without_document_clears_rows() -> None:
+    view = _FakeKpointView()
+    controller = ConvergenceKpointController(
+        _make_context(document=None), _stub_kpoint_deps(), view
+    )
+
+    controller.refresh_view()
+
+    assert view.runtime_states == [{}]
+
+
+def test_kpoint_controller_build_states_reflects_form_ready_grids(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kconv.mufinder", "KConv")
+    _seed_kpoint_document(service, document)
+    context, deps = _kpoint_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceKpointController(context, deps, _FakeKpointView())
+
+    states = controller.build_states()
+
+    assert (2, 2, 2) in states
+    assert states[(2, 2, 2)].status == "ready"
+
+
+def test_kpoint_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kconv.mufinder", "KConv")
+    controller = ConvergenceKpointController(
+        _make_context(document=document), _stub_kpoint_deps(), _FakeKpointView()
+    )
+    handled = _job(service, document, "j", calc_type="castep_convergence_kpoint")
+    other = _job(service, document, "k", calc_type="castep_convergence_cutoff")
     assert controller.handles_job(handled) is True
     assert controller.handles_job(other) is False

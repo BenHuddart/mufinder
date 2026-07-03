@@ -7786,7 +7786,7 @@ def test_main_window_submit_from_kpoint_shows_info_when_no_matching_jobs(
         lambda _parent, title, _message: infos.append(title),
     )
 
-    window._on_submit_local_from_kpoint_convergence([(2, 2, 2)])
+    window._kpoint_convergence_controller.submit([(2, 2, 2)], target="local")
 
     assert infos == ["No ready jobs"]
     window.close()
@@ -7861,7 +7861,7 @@ def test_main_window_submit_from_kpoint_materializes_job_inputs(
     monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(window._local_runner, "submit", lambda **kwargs: submitted.append(kwargs))
 
-    window._on_submit_local_from_kpoint_convergence([(2, 2, 2)])
+    window._kpoint_convergence_controller.submit([(2, 2, 2)], target="local")
 
     assert len(doc.jobs) == 1
     job = next(iter(doc.jobs.values()))
@@ -9013,7 +9013,7 @@ def test_kpoint_convergence_preserves_running_grid_across_reconfiguration(
     )
     doc.ui_state[window._ACTIVE_KPOINT_DEFINITION_KEY] = str(new_definition.id)
 
-    states = window._build_convergence_kpoint_states()
+    states = window._kpoint_convergence_controller.build_states()
 
     assert states[(2, 2, 2)].status == JobStatus.RUNNING.value
     assert states[(2, 2, 2)].job_id == running_job.id
@@ -9085,7 +9085,7 @@ def test_kpoint_deleted_grid_does_not_reinherit_stale_status(qapp, tmp_path: Pat
     )
     doc.ui_state[window._ACTIVE_KPOINT_DEFINITION_KEY] = str(new_definition.id)
 
-    states = window._build_convergence_kpoint_states()
+    states = window._kpoint_convergence_controller.build_states()
 
     assert states[(2, 2, 2)].status == "ready"
     assert new_definition.parameters.get("job_ids_by_grid", {}) == {}
@@ -9146,7 +9146,7 @@ def test_main_window_submit_from_kpoint_dedupes_existing_ready_jobs(
     submitted_ids: list[list[object]] = []
     monkeypatch.setattr(window, "_submit_jobs_locally", lambda jobs: submitted_ids.append([job.id for job in jobs]))
 
-    window._on_submit_local_from_kpoint_convergence([(2, 2, 2), (2, 2, 2), (3, 3, 2)])
+    window._kpoint_convergence_controller.submit([(2, 2, 2), (2, 2, 2), (3, 3, 2)], target="local")
 
     assert submitted_ids == [[job_a.id, job_b.id]]
     window.close()
@@ -9233,7 +9233,7 @@ def test_main_window_examine_kpoint_convergence_launches_dialog(
         (2, 2, 2): main_window_module.SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.2),
         (3, 3, 3): main_window_module.SweepPointRunState(status="completed", total_energy=-10.02, max_force=0.15),
     }
-    monkeypatch.setattr(window, "_build_convergence_kpoint_states", lambda: states)
+    monkeypatch.setattr(window._kpoint_convergence_controller, "build_states", lambda: states)
 
     captured: dict[str, object] = {}
 
