@@ -33,6 +33,7 @@ from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.uep_types import SupercellMatrix, UepConfig, UepRunState, UepSourceRow
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
+from mufinder.app.workflow_table_utils import style_workflow_configure_button
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     normalize_gui_value,
@@ -1035,15 +1036,13 @@ class UEPWidget(QWidget):
         configure_button = self._table.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
             customized = bool(self._row_parameter_values.get(row_id, {}))
-            configure_button.setText("Configured..." if customized or locked else "Configure...")
-            configure_button.setToolTip(
-                "Inspect the CASTEP parameters used for this UEP source job."
-                if locked
-                else (
-                    "Edit custom CASTEP parameters for this UEP source job."
-                    if customized
-                    else "Configure CASTEP parameters for this UEP source job."
-                )
+            style_workflow_configure_button(
+                configure_button,
+                workflow_label="CASTEP",
+                configured=customized,
+                locked=locked,
+                noun="UEP source job",
+                used=True,
             )
 
         wizard_button = self._table.cellWidget(row, self._WIZARD_COLUMN)

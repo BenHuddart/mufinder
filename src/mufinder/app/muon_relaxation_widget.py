@@ -40,6 +40,7 @@ from mufinder.app.relaxation_adapter import (
     suggested_grid_for_row,
 )
 from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow, RelaxationRunState, SupercellMatrix
+from mufinder.app.workflow_table_utils import style_workflow_configure_button
 from mufinder.app.theme import (
     current_palette,
     status_brush,
@@ -1015,15 +1016,13 @@ class MuonRelaxationWidget(QWidget):
         configure_button = target.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
             customized = bool(self._row_parameter_values.get(row_id, {}))
-            configure_button.setText("Configured..." if customized or locked else "Configure...")
-            configure_button.setToolTip(
-                "Inspect the CASTEP parameters used for this row."
-                if locked
-                else (
-                    "Edit custom CASTEP parameters for this row."
-                    if customized
-                    else "Configure CASTEP parameters for this row."
-                )
+            style_workflow_configure_button(
+                configure_button,
+                workflow_label="CASTEP",
+                configured=customized,
+                locked=locked,
+                noun="row",
+                used=True,
             )
 
     def _set_status_item(self, row: int, status: str, *, table: QTableWidget | None = None) -> None:

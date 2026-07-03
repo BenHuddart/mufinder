@@ -40,6 +40,7 @@ from mufinder.app.relaxation_adapter import suggested_grid_for_row
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
+from mufinder.app.workflow_table_utils import style_workflow_configure_button
 from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
@@ -878,15 +879,13 @@ class PristineRelaxationWidget(QWidget):
         configure_button = self._table.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
             customized = bool(self._row_parameter_values.get(row_id, {}))
-            configure_button.setText("Configured..." if customized or locked else "Configure...")
-            configure_button.setToolTip(
-                "Inspect the CASTEP parameters used for this row."
-                if locked
-                else (
-                    "Edit custom CASTEP parameters for this row."
-                    if customized
-                    else "Configure CASTEP parameters for this row."
-                )
+            style_workflow_configure_button(
+                configure_button,
+                workflow_label="CASTEP",
+                configured=customized,
+                locked=locked,
+                noun="row",
+                used=True,
             )
 
     def _set_float_item(self, row: int, column: int, value: float | None) -> None:
