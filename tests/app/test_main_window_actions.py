@@ -8512,7 +8512,7 @@ def test_materialize_uep_rewrites_defined_job_inputs_when_project_defaults_chang
         )
     )
 
-    jobs = window._materialize_uep_jobs(["row_1"])
+    jobs = window._uep_controller.materialize(["row_1"])
     assert len(jobs) == 1
     job = jobs[0]
     assert job.status == JobStatus.DEFINED
@@ -8523,7 +8523,7 @@ def test_materialize_uep_rewrites_defined_job_inputs_when_project_defaults_chang
 
     doc.project.recommended_kpoint_grid = (5, 5, 5)
 
-    jobs = window._materialize_uep_jobs(["row_1"])
+    jobs = window._uep_controller.materialize(["row_1"])
     assert len(jobs) == 1
     assert jobs[0].id == job.id
 
@@ -8683,7 +8683,7 @@ def test_uep_preserves_running_row_across_reconfiguration(qapp, tmp_path: Path) 
     )
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(new_definition.id)
 
-    states = window._build_uep_states()
+    states = window._uep_controller.build_states()
 
     assert states["row_1"].status == JobStatus.RUNNING.value
     assert states["row_1"].job_id == running_job.id
@@ -9007,7 +9007,7 @@ def test_uep_deleted_row_does_not_reinherit_stale_status(qapp, tmp_path: Path) -
     )
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(new_definition.id)
 
-    states = window._build_uep_states()
+    states = window._uep_controller.build_states()
 
     assert states["row_1"].status == "ready"
     assert new_definition.parameters.get("job_ids_by_label", {}) == {}

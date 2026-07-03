@@ -140,7 +140,7 @@ from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.muon_sites_summary_widget import MuonSitesSummaryWidget
 from mufinder.app.uep_adapter import expand_uep_jobs
-from mufinder.app.uep_types import UepConfig, UepRunState, UepSourceRow
+from mufinder.app.uep_types import UepConfig, UepSourceRow
 from mufinder.app.uep_wizard import UepAnalysisDialog
 from mufinder.app.uep_widget import UEPWidget
 from mufinder.app.active_host_badge import ActiveHostBadge
@@ -189,6 +189,8 @@ from mufinder.app.workflow_controllers import (
     MuonRelaxationDeps,
     PristineRelaxationController,
     PristineRelaxationDeps,
+    UepController,
+    UepDeps,
     WorkflowControllerContext,
     WorkflowJobController,
     merge_controller_result,
@@ -1863,8 +1865,25 @@ class MainWindow(QMainWindow):
             self._on_uep_source_structure_selection_requested
         )
         self._uep_view.wizard_requested.connect(self._on_open_uep_analysis_requested)
-        self._uep_view.submit_local_requested.connect(self._on_submit_local_from_uep)
-        self._uep_view.submit_cluster_requested.connect(self._on_submit_cluster_from_uep)
+        # UEP controller: one of the simpler migrations — no pre_submit_check, no
+        # submission_groups override, and a small build_result contributing only
+        # the ``density_available`` flag (no derived structures, no document
+        # mutation). Built here (after its view exists) and appended to the
+        # registry so completed castep_uep_source jobs route through its
+        # build_result. The den_fmt *guard* (missing-output failure) stays inline
+        # in _on_local_job_finished per the base convention; only the flag moves.
+        self._uep_controller = UepController(
+            self._build_workflow_controller_context(),
+            self._build_uep_deps(),
+            self._uep_view,
+        )
+        self._workflow_controllers.append(self._uep_controller)
+        self._uep_view.submit_local_requested.connect(
+            lambda values: self._uep_controller.submit(values, target="local")
+        )
+        self._uep_view.submit_cluster_requested.connect(
+            lambda values: self._uep_controller.submit(values, target="cluster")
+        )
         self._uep_view.cancel_requested.connect(self._on_cancel_from_uep)
         self._uep_view.inspect_failed_requested.connect(self._on_inspect_failed_from_uep)
         self._uep_view.reset_failed_requested.connect(self._on_reset_failed_from_uep)
@@ -6853,6 +6872,39 @@ class MainWindow(QMainWindow):
             max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
         )
 
+    def _build_uep_deps(self) -> UepDeps:
+        """Build the UEP controller's deps.
+
+        These helpers stay on ``MainWindow`` because non-migrating code still
+        calls them: the definition/config/mapping helpers are shared with the
+        UEP configure path, row removal, the analysis wizard, and dashboard
+        cluster-source sync; ``_uep_potential_grid_result_for_job`` still feeds
+        the wizard's "already analysed" detection; and
+        ``_definition_output_directory`` / ``_job_output_directory`` /
+        ``_job_seed_name`` / ``_run_for_job`` are shared across workflows. The
+        controller reaches them only through these late-bound wrappers.
+        """
+
+        return UepDeps(
+            active_uep_definition=lambda: self._active_uep_definition(),
+            deserialize_uep_config=lambda payload: self._deserialize_uep_config(payload),
+            sync_equivalent_uep_mappings=(
+                lambda definition: self._sync_equivalent_uep_mappings(definition)
+            ),
+            job_for_uep_label=(
+                lambda definition, label: self._job_for_uep_label(definition, label)
+            ),
+            definition_output_directory=(
+                lambda definition: self._definition_output_directory(definition)
+            ),
+            uep_potential_grid_result_for_job=(
+                lambda job_id: self._uep_potential_grid_result_for_job(job_id)
+            ),
+            run_for_job=lambda job_id: self._run_for_job(job_id),
+            job_output_directory=lambda job: self._job_output_directory(job),
+            job_seed_name=lambda job: self._job_seed_name(job),
+        )
+
     def _parse_relaxed_out_cell(self, path: Path) -> tuple[object, float, float, float]:
         """Parse a relaxation ``-out.cell`` into ``(relaxed, a, b, c)``.
 
@@ -7699,6 +7751,12 @@ class MainWindow(QMainWindow):
         }
 
         if job.calc_type == "castep_uep_source":
+            # Missing-output guard (fails the job when {seed}.den_fmt is absent):
+            # kept inline per the base convention, like the -out.cell prologue,
+            # because ControllerResult has no failure channel. The
+            # ``density_available`` *flag* itself now moves to
+            # ``UepController.build_result`` (via merge_controller_result below),
+            # which re-checks the (here-guaranteed) den_fmt on the success path.
             output_dir = self._job_output_directory(job)
             seed_name = self._job_seed_name(job)
             density_path = None if output_dir is None else output_dir / f"{seed_name}.den_fmt"
@@ -7708,7 +7766,6 @@ class MainWindow(QMainWindow):
                     f"Expected formatted density output was not found: {seed_name}.den_fmt",
                 )
                 return
-            result_payload["density_available"] = True
 
         if job.calc_type == QUANTUM_PHONON_CALC_TYPE:
             output_dir = self._job_output_directory(job)
@@ -10274,40 +10331,12 @@ class MainWindow(QMainWindow):
         )
         return rows
 
-    def _build_uep_states(self) -> dict[str, UepRunState]:
-        states: dict[str, UepRunState] = {}
-        if self._document is None:
-            return states
-        definition = self._active_uep_definition()
-        if definition is None:
-            return states
-        self._sync_equivalent_uep_mappings(definition)
-        config = self._deserialize_uep_config(definition.parameters.get("configuration", {}))
-        if config is None:
-            return states
-
-        for row in config.rows:
-            job = self._job_for_uep_label(definition, row.label)
-            if job is None:
-                states[row.label] = UepRunState(status="ready")
-                continue
-            run = self._run_for_job(job.id)
-            result = self._document.results.get(run.result_id) if run is not None and run.result_id is not None else None
-            data = result.data if result is not None and isinstance(result.data, dict) else {}
-            potential_grid_available = self._uep_potential_grid_result_for_job(job.id) is not None
-            states[row.label] = UepRunState(
-                status=("ready" if job.status == JobStatus.DEFINED else job.status.value),
-                total_energy=float(data["total_energy"]) if isinstance(data.get("total_energy"), (int, float)) else None,
-                potential_grid_available=potential_grid_available,
-                job_id=job.id,
-                job_label=job.label,
-                error_message=job.error_message,
-                density_available=bool(data.get("density_available")) if data.get("density_available") is not None else None,
-            )
-        return states
-
     def _refresh_uep_rows(self) -> None:
-        self._uep_view.set_runtime_states(self._build_uep_states())
+        # UEP row state building moved to ``UepController.build_states``; this thin
+        # wrapper delegates to the controller's ``refresh_view`` (mirroring
+        # ``_refresh_muon_relaxation_rows``) so its many call sites — and the test
+        # that monkeypatches ``_refresh_uep_rows`` — keep working unchanged.
+        self._uep_controller.refresh_view()
 
     @staticmethod
     def _removed_row_labels(payload: object) -> set[str]:
@@ -13315,109 +13344,14 @@ class MainWindow(QMainWindow):
             f"Configured {len(config.rows)} UEP source job(s); input files will be generated on submission"
         )
 
-    def _jobs_for_uep_labels(self, labels: list[str]) -> list[Job]:
-        if self._document is None:
-            return []
-        definition = self._active_uep_definition()
-        if definition is None:
-            return []
-        self._sync_equivalent_uep_mappings(definition)
-        selected: list[Job] = []
-        seen: set[UUID] = set()
-        for label in labels:
-            job = self._job_for_uep_label(definition, label)
-            if job is None or job.id in seen:
-                continue
-            selected.append(job)
-            seen.add(job.id)
-        return selected
-
-    def _materialize_uep_jobs(self, labels: list[str]) -> list[Job]:
-        if self._document is None:
-            return []
-        definition = self._active_uep_definition()
-        if definition is None or not definition.input_structure_ids:
-            return []
-        self._sync_equivalent_uep_mappings(definition)
-        config = self._deserialize_uep_config(definition.parameters.get("configuration", {}))
-        if config is None:
-            return []
-        source_structure = self._document.structures.get(definition.input_structure_ids[0])
-        output_root = self._definition_output_directory(definition)
-        if source_structure is None or output_root is None:
-            return []
-
-        try:
-            expansion = expand_uep_jobs(
-                host_structure=source_structure,
-                config=config,
-                project_cutoff_energy=self._document.project.recommended_cutoff_energy,
-                project_kpoint_grid=self._document.project.recommended_kpoint_grid,
-                project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
-            )
-        except (ValueError, StructureBridgeError):
-            return []
-
-        mapping = definition.parameters.setdefault("job_ids_by_label", {})
-        if not isinstance(mapping, dict):
-            mapping = {}
-            definition.parameters["job_ids_by_label"] = mapping
-
-        spec_by_label = {str(spec.provenance.get("label", "")): spec for spec in expansion.jobs}
-        created: list[Job] = []
-        for label in labels:
-            spec = spec_by_label.get(label)
-            existing = self._job_for_uep_label(definition, label)
-            if existing is not None:
-                if existing.status == JobStatus.DEFINED and spec is not None:
-                    write_job_directory(spec, output_root)
-                created.append(existing)
-                continue
-            if spec is None:
-                continue
-            write_job_directory(spec, output_root)
-            job = self._project_service.add_job(
-                self._document,
-                label=spec.name,
-                workflow_stage=spec.workflow_stage,
-                calc_type="castep_uep_source",
-            )
-            mapping[label] = str(job.id)
-            created.append(job)
-        return self._dedupe_jobs(created)
-
-    def _on_submit_local_from_uep(self, labels: list[str]) -> None:
-        self._submit_workflow_selection(
-            labels,
-            normalize=str,
-            build_states=self._build_uep_states,
-            jobs_for_values=self._jobs_for_uep_labels,
-            materialize_values=self._materialize_uep_jobs,
-            is_ready=workflow_row_state_is_ready,
-            no_ready_message="Only configured UEP rows in the 'ready' state can be submitted.",
-            submit=self._submit_jobs_locally,
-        )
-
-    def _on_submit_cluster_from_uep(self, labels: list[str]) -> None:
-        self._submit_workflow_selection(
-            labels,
-            normalize=str,
-            build_states=self._build_uep_states,
-            jobs_for_values=self._jobs_for_uep_labels,
-            materialize_values=self._materialize_uep_jobs,
-            is_ready=workflow_row_state_is_ready,
-            no_ready_message="Only configured UEP rows in the 'ready' state can be submitted.",
-            submit=self._submit_jobs_on_cluster,
-        )
-
     def _on_cancel_from_uep(self, labels: list[str]) -> None:
-        self._cancel_jobs(self._jobs_for_uep_labels(labels))
+        self._cancel_jobs(self._uep_controller.jobs_for_keys(labels))
 
     def _on_inspect_failed_from_uep(self, labels: list[str]) -> None:
-        self._inspect_failed_jobs(self._jobs_for_uep_labels(labels))
+        self._inspect_failed_jobs(self._uep_controller.jobs_for_keys(labels))
 
     def _on_reset_failed_from_uep(self, labels: list[str]) -> None:
-        self._reset_failed_jobs(self._jobs_for_uep_labels(labels))
+        self._reset_failed_jobs(self._uep_controller.jobs_for_keys(labels))
 
     def _on_open_uep_analysis_requested(self, label: object) -> None:
         if self._document is None:

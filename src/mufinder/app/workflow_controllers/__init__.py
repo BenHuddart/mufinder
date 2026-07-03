@@ -32,6 +32,10 @@ from mufinder.app.workflow_controllers.pristine_relaxation import (
     PristineRelaxationController,
     PristineRelaxationDeps,
 )
+from mufinder.app.workflow_controllers.uep import (
+    UepController,
+    UepDeps,
+)
 
 __all__ = [
     "ControllerResult",
@@ -43,6 +47,8 @@ __all__ = [
     "MuonRelaxationDeps",
     "PristineRelaxationController",
     "PristineRelaxationDeps",
+    "UepController",
+    "UepDeps",
     "WorkflowControllerContext",
     "WorkflowJobController",
     "merge_controller_result",

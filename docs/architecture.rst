@@ -188,7 +188,13 @@ previously accreted on ``MainWindow``.
   the shared ``-out.cell`` existence/parse guard, and the muon ``H:mu``
   position guard) stay inline in ``_on_local_job_finished``; the controllers
   re-parse the already-validated file on the success path via a shared
-  ``parse_relaxed_out_cell`` dep.
+  ``parse_relaxed_out_cell`` dep. ``UepController`` is a simpler migration whose
+  ``build_result`` contributes only the ``density_available`` boolean flag (no
+  derived structures, no document mutation): the *guard* that fails a UEP job
+  whose ``{seed}.den_fmt`` output is missing is a missing-output guard and stays
+  inline for the same no-failure-channel reason, while only the flag assignment
+  moves into ``build_result`` (which re-checks the here-guaranteed ``den_fmt`` on
+  the success path).
 
 The set of ``_on_submit_*`` / ``_materialize_*`` handlers still on
 ``MainWindow`` is pinned by ``tests/test_agent_harness.py`` as a ratchet: it may
