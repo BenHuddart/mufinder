@@ -2130,3 +2130,524 @@ def test_uep_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -
     assert extras == {}
     assert len(submitted) == 1
     assert submitted[0].calc_type == "castep_uep_source"
+
+
+# --------------------------------------------------------------------------- #
+# QuantumCorrectionsController
+# --------------------------------------------------------------------------- #
+#
+# The two-stage (singlepoint → phonon) migration. Its ``build_result`` carries the
+# richest result logic — parsing a real ``.phonon`` file into the muon ZPE,
+# eigenvalues, mode participations, and the ``w1`` entanglement witness — for a
+# quantum-*phonon* job, while a quantum-*singlepoint* job contributes an empty
+# result (but is still ``handles_job``-owned so the two-stage pair is coherent).
+# ``pre_submit_check`` runs the shared host guard; ``materialize`` dispatches each
+# selected source to its current stage. Driven below with narrow fakes (no
+# MainWindow) and a REAL ``.phonon`` fixture containing an ``H:mu`` muon.
+
+from dataclasses import dataclass as _dataclass
+
+from mufinder.workflow.quantum import (
+    QUANTUM_PHONON_CALC_TYPE,
+    QUANTUM_SINGLEPOINT_CALC_TYPE,
+)
+from mufinder.workflow.types import InputTemplate
+from mufinder.app.workflow_controllers.quantum_corrections import (
+    QUANTUM_STAGE_PHONON,
+    QUANTUM_STAGE_SINGLEPOINT,
+    QuantumCorrectionsController,
+    QuantumCorrectionsDeps,
+)
+
+
+# A minimal, valid CASTEP ``.phonon`` file with one Gamma q-point and an H:mu
+# atom (mirrors the fixture used by tests/app/test_main_window.py so build_result
+# exercises the same real science path the inline guard validates).
+_QUANTUM_PHONON_TEXT = """ BEGIN header
+ Number of ions         2
+ Number of branches     6
+ Number of wavevectors  1
+ Frequencies in         cm-1
+ Unit cell vectors (A)
+    1.000000    0.000000    0.000000
+    0.000000    1.000000    0.000000
+    0.000000    0.000000    1.000000
+ Fractional Co-ordinates
+     1     0.000000    0.000000    0.000000   N        14.006740
+     2     0.500000    0.500000    0.500000   H:mu      0.113429
+ END header
+     q-pt=    1    0.000000  0.000000  0.000000      1.0000000000
+       1     100.000000
+       2     400.000000
+       3     900.000000
+       4    1600.000000
+       5    2500.000000
+       6    3600.000000
+                        Phonon Eigenvectors
+Mode Ion                X                                   Y                                   Z
+   1   1  0.408248000000  0.000000000000      0.408248000000  0.000000000000      0.408248000000  0.000000000000
+   1   2  0.408248000000  0.000000000000      0.408248000000  0.000000000000      0.408248000000  0.000000000000
+   2   1 -0.336650000000  0.000000000000      0.019803000000  0.000000000000      0.138621000000  0.000000000000
+   2   2 -0.693103000000  0.000000000000      0.376256000000  0.000000000000      0.495074000000  0.000000000000
+   3   1 -0.080432200000  0.000000000000     -0.350117000000  0.000000000000      0.230257000000  0.000000000000
+   3   2  0.189252000000  0.000000000000     -0.619801000000  0.000000000000      0.407510000000  0.000000000000
+   4   1  0.408248000000  0.000000000000      0.408248000000  0.000000000000      0.408248000000  0.000000000000
+   4   2  0.408248000000  0.000000000000      0.408248000000  0.000000000000      0.408248000000  0.000000000000
+   5   1 -0.336650000000  0.000000000000      0.019803000000  0.000000000000      0.138621000000  0.000000000000
+   5   2 -0.693103000000  0.000000000000      0.376256000000  0.000000000000      0.495074000000  0.000000000000
+   6   1 -0.080432200000  0.000000000000     -0.350117000000  0.000000000000      0.230257000000  0.000000000000
+   6   2  0.189252000000  0.000000000000     -0.619801000000  0.000000000000      0.407510000000  0.000000000000
+"""
+
+
+class _FakeQuantumView:
+    """Minimal QuantumCorrectionsWidget stand-in for controller tests."""
+
+    def __init__(self) -> None:
+        self.sources: list[list] = []
+        self.results: list[list] = []
+
+    def set_sources(self, rows) -> None:
+        self.sources.append(list(rows))
+
+    def set_results(self, rows) -> None:
+        self.results.append(list(rows))
+
+
+@_dataclass
+class _FakeQuantumStageState:
+    stage: str
+    status: str
+    current_job: Job | None = None
+
+
+@_dataclass
+class _FakeQuantumCandidate:
+    key: str
+    site: object
+    run: object
+    job: object
+    structure: object
+
+
+def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
+    base = dict(
+        active_quantum_corrections_definition=lambda: None,
+        ensure_quantum_corrections_definition=lambda _keys: None,
+        definition_output_directory=lambda _definition: None,
+        eligible_quantum_source_candidates=lambda: [],
+        quantum_source_candidate_by_key=lambda _key: None,
+        quantum_stage_state=lambda _definition, _candidate: _FakeQuantumStageState(
+            stage=QUANTUM_STAGE_SINGLEPOINT, status="ready"
+        ),
+        build_quantum_corrections_states=lambda: {},
+        jobs_for_quantum_source_keys=lambda _keys: [],
+        singlepoint_job_for_quantum_source_key=lambda _definition, _key: None,
+        phonon_job_for_quantum_source_key=lambda _definition, _key: None,
+        quantum_seed_name_for_key=lambda _definition, key: f"quantum_{key}",
+        quantum_runtime_configuration=lambda _definition, _key: ({}, "unknown"),
+        workflow_row_configuration=lambda _definition, _key: ({}, (), {}),
+        workflow_row_configuration_exists=lambda _definition, _key: False,
+        quantum_num_farms_from_extras=lambda _extras: 1,
+        quantum_source_label=lambda candidate: candidate.site.label,
+        quantum_method_from_gui_value=lambda _value: "finite_displacement",
+        charge_state_for_job=lambda _job: None,
+        charge_state_label_for_job=lambda _job: "",
+        quantum_can_reset_to_stage_one=lambda _definition, _candidate: False,
+        input_template_from_keyword_values=lambda _values: InputTemplate(),
+        write_quantum_job_directory=lambda _spec, _root, *, seed_name: Path("/tmp") / seed_name,
+        dedupe_jobs=lambda jobs: jobs,
+        check_definition_host=lambda _definition: True,
+        job_output_directory=lambda _job: None,
+        job_seed_name=lambda job: job.label,
+        format_energy=_format_energy_stub,
+    )
+    base.update(overrides)
+    return QuantumCorrectionsDeps(**base)
+
+
+def _format_energy_stub(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        return f"{float(value):.6g} eV"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _quantum_job(service: ProjectService, document: ProjectDocument, label: str, calc_type: str) -> Job:
+    return service.add_job(
+        document,
+        label=label,
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=calc_type,
+    )
+
+
+def test_quantum_controller_handles_both_stage_calc_types(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    controller = QuantumCorrectionsController(
+        _make_context(document=document), _stub_quantum_deps(), _FakeQuantumView()
+    )
+    singlepoint = _quantum_job(service, document, "quantum_singlepoint_s", QUANTUM_SINGLEPOINT_CALC_TYPE)
+    phonon = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
+    other = service.add_job(
+        document,
+        label="u",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_uep_source",
+    )
+    # Both stage calc types are owned so the two-stage pair is coherent.
+    assert controller.handles_job(singlepoint) is True
+    assert controller.handles_job(phonon) is True
+    assert controller.handles_job(other) is False
+
+
+def test_quantum_controller_refresh_view_without_document_clears_tables() -> None:
+    view = _FakeQuantumView()
+    controller = QuantumCorrectionsController(
+        _make_context(document=None), _stub_quantum_deps(), view
+    )
+    controller.refresh_view()
+    assert view.sources == [[]]
+    assert view.results == [[]]
+
+
+def test_quantum_controller_pre_submit_check_blocks_submission(tmp_path: Path) -> None:
+    """An unresolved host mismatch silently refuses the submission: the host guard
+    returns False, so no submission plan is built and nothing is dispatched."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    materialize_calls: list[list] = []
+    deps = _stub_quantum_deps(
+        check_definition_host=lambda _definition: False,
+    )
+    local = _RecordingBackend()
+    infos: list[tuple[str, str]] = []
+    context = _make_context(
+        document=document, project_service=service, local_backend=local, infos=infos
+    )
+    controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
+    # Prove materialize is never reached by making it record + explode if called.
+    controller.materialize = lambda keys: materialize_calls.append(list(keys)) or []  # type: ignore[assignment]
+
+    controller.submit(["site-key"], target="local")
+
+    assert local.calls == []  # nothing dispatched
+    assert infos == []  # the refusal is silent (no "no ready jobs" dialog)
+    assert materialize_calls == []  # no submission plan was even built
+
+
+def test_quantum_controller_pre_submit_check_passes_when_host_matches(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    deps = _stub_quantum_deps(check_definition_host=lambda _definition: True)
+    controller = QuantumCorrectionsController(
+        _make_context(document=document, project_service=service), deps, _FakeQuantumView()
+    )
+    assert controller.pre_submit_check(["site-key"]) is True
+
+
+def test_quantum_controller_build_result_singlepoint_is_empty_but_handled(tmp_path: Path) -> None:
+    """A quantum-singlepoint job contributes an empty ControllerResult (base
+    payload only), yet is still owned by the controller so the two-stage pair is
+    coherent for result dispatch."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    job = _quantum_job(service, document, "quantum_singlepoint_s", QUANTUM_SINGLEPOINT_CALC_TYPE)
+    run = CalculationRun(job_id=job.id)
+    controller = QuantumCorrectionsController(
+        _make_context(document=document, project_service=service), _stub_quantum_deps(), _FakeQuantumView()
+    )
+
+    assert controller.handles_job(job) is True
+    result = controller.build_result(job, _parsed(), run)
+    assert result.payload == {}
+    assert result.output_files == []
+    assert result.derived_structure_ids == []
+    assert result.warnings == []
+
+
+def test_quantum_controller_build_result_phonon_parses_zpe_and_witness(tmp_path: Path) -> None:
+    """A quantum-phonon job's build_result parses the real ``.phonon`` file and
+    contributes the ZPE / eigenvalue / mode / witness payload — matching the
+    fields the former inline result block assigned."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
+    run = CalculationRun(job_id=job.id)
+
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    phonon_path = output_dir / "quantum_s.phonon"
+    phonon_path.write_text(_QUANTUM_PHONON_TEXT, encoding="utf-8")
+
+    deps = _stub_quantum_deps(
+        job_output_directory=lambda _job: output_dir,
+        job_seed_name=lambda _job: "quantum_s",
+    )
+    controller = QuantumCorrectionsController(
+        _make_context(document=document, project_service=service), deps, _FakeQuantumView()
+    )
+
+    result = controller.build_result(job, _parsed(), run)
+
+    payload = result.payload
+    assert payload["phonon_file"] == str(phonon_path)
+    assert payload["gamma_only"] is True
+    assert payload["phonon_mode_eigenvalues_cm"] == [100.0, 400.0, 900.0, 1600.0, 2500.0, 3600.0]
+    assert isinstance(payload["muon_zpe_total_eV"], float)
+    assert payload["muon_zpe_total_eV"] > 0.0
+    assert len(payload["muon_zpe_modes"]) == 3
+    assert all("mode_index" in mode and "frequency_cm" in mode for mode in payload["muon_zpe_modes"])
+    assert isinstance(payload["w1_entanglement_witness"], float)
+    # No output_files or derived structures contributed by build_result.
+    assert result.output_files == []
+    assert result.derived_structure_ids == []
+
+
+def test_quantum_controller_build_result_phonon_missing_dir_is_empty(tmp_path: Path) -> None:
+    """If the job's output directory can't be resolved, build_result yields an
+    empty result rather than crashing (the inline guard fails such jobs first)."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
+    run = CalculationRun(job_id=job.id)
+    deps = _stub_quantum_deps(job_output_directory=lambda _job: None)
+    controller = QuantumCorrectionsController(
+        _make_context(document=document, project_service=service), deps, _FakeQuantumView()
+    )
+    assert controller.build_result(job, _parsed(), run).payload == {}
+
+
+def _seed_quantum_two_stage_document(service: ProjectService, tmp_path: Path):
+    """Seed a document with two eligible relaxed sources sharing one definition."""
+
+    from mufinder.domain.models import CalculationDefinition, MuonSite, Structure
+
+    document = service.create_project(tmp_path / "q2.mufinder", "Q2")
+    output_root = document.project_root / "files" / "quantum_corrections"
+
+    candidates = {}
+    site_ids = []
+    structure_ids = []
+    for label in ("siteA", "siteB"):
+        relaxed = Structure(
+            label=f"{label} relaxed",
+            origin="muon_relaxation",
+            lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+            species=["Si", "H:mu"],
+            fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+            properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+        )
+        document.structures[relaxed.id] = relaxed
+        source_job = service.add_job(
+            document,
+            label=f"mu-{label}",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_positivemuon_relaxation",
+        )
+        source_job.status = JobStatus.COMPLETED
+        run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+        document.runs[run.id] = run
+        site = MuonSite(label=label, status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+        document.sites[site.id] = site
+        site_ids.append(site.id)
+        structure_ids.append(relaxed.id)
+        candidates[str(site.id)] = _FakeQuantumCandidate(
+            key=str(site.id), site=site, run=run, job=source_job, structure=relaxed
+        )
+
+    definition = service.register_quantum_phonon_definition(
+        document,
+        input_structure_ids=structure_ids,
+        input_site_ids=site_ids,
+        parameters={
+            "method": "finite_displacement",
+            "pseudopotential_family": "unknown",
+            "singlepoint_job_ids_by_label": {},
+            "phonon_job_ids_by_label": {},
+            "job_seed_names_by_label": {},
+        },
+        output_directory=output_root,
+    )
+    return document, definition, candidates, output_root
+
+
+def test_quantum_controller_materialize_two_stage_mixed_keys(tmp_path: Path) -> None:
+    """Mixed selection where one source is at the singlepoint stage and another at
+    the phonon stage: materialize writes each key into the correct per-stage
+    mapping with the correct calc_type, in one pass."""
+
+    from mufinder.app.relaxation_types import SupercellMatrix  # noqa: F401  (import parity)
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(
+        service, tmp_path
+    )
+    keys = list(candidates.keys())
+    singlepoint_key, phonon_key = keys[0], keys[1]
+
+    # siteA is fresh (singlepoint stage); siteB already has a COMPLETED singlepoint
+    # job, so its stage has advanced to phonon.
+    completed_singlepoint = _quantum_job(
+        service, document, "quantum_singlepoint_siteB", QUANTUM_SINGLEPOINT_CALC_TYPE
+    )
+    completed_singlepoint.status = JobStatus.COMPLETED
+    definition.parameters["singlepoint_job_ids_by_label"][phonon_key] = str(completed_singlepoint.id)
+
+    stage_by_key = {
+        singlepoint_key: _FakeQuantumStageState(stage=QUANTUM_STAGE_SINGLEPOINT, status="ready"),
+        phonon_key: _FakeQuantumStageState(stage=QUANTUM_STAGE_PHONON, status="ready"),
+    }
+
+    def write_dir(spec, root, *, seed_name):
+        job_dir = root / seed_name
+        job_dir.mkdir(parents=True, exist_ok=True)
+        return job_dir
+
+    def singlepoint_job_for_key(_definition, key):
+        job_id = _definition.parameters.get("singlepoint_job_ids_by_label", {}).get(key)
+        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
+
+    def phonon_job_for_key(_definition, key):
+        job_id = _definition.parameters.get("phonon_job_ids_by_label", {}).get(key)
+        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
+
+    deps = _stub_quantum_deps(
+        ensure_quantum_corrections_definition=lambda _keys: definition,
+        definition_output_directory=lambda _definition: output_root,
+        quantum_source_candidate_by_key=lambda key: candidates.get(key),
+        quantum_stage_state=lambda _definition, candidate: stage_by_key[candidate.key],
+        singlepoint_job_for_quantum_source_key=singlepoint_job_for_key,
+        phonon_job_for_quantum_source_key=phonon_job_for_key,
+        write_quantum_job_directory=write_dir,
+    )
+    context = _make_context(document=document, project_service=service)
+    controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
+
+    jobs = controller.materialize([singlepoint_key, phonon_key])
+
+    assert len(jobs) == 2
+    calc_types = {job.calc_type for job in jobs}
+    assert calc_types == {QUANTUM_SINGLEPOINT_CALC_TYPE, QUANTUM_PHONON_CALC_TYPE}
+
+    singlepoint_mapping = definition.parameters["singlepoint_job_ids_by_label"]
+    phonon_mapping = definition.parameters["phonon_job_ids_by_label"]
+    # siteA got a fresh singlepoint job; siteB got a fresh phonon continuation.
+    assert singlepoint_key in singlepoint_mapping
+    new_singlepoint_id = singlepoint_mapping[singlepoint_key]
+    assert document.jobs[UUID(new_singlepoint_id)].calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
+    assert phonon_key in phonon_mapping
+    new_phonon_id = phonon_mapping[phonon_key]
+    assert document.jobs[UUID(new_phonon_id)].calc_type == QUANTUM_PHONON_CALC_TYPE
+    # The pre-existing completed singlepoint for siteB is untouched (not re-created).
+    assert singlepoint_mapping.get(phonon_key) == str(completed_singlepoint.id)
+    # Both seed names were recorded.
+    seed_mapping = definition.parameters["job_seed_names_by_label"]
+    assert singlepoint_key in seed_mapping and phonon_key in seed_mapping
+    # The phonon mapping stays aliased into job_ids_by_label (load-bearing fallback).
+    assert definition.parameters["job_ids_by_label"] is phonon_mapping
+
+
+def test_quantum_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:
+    """End-to-end submit wiring: build_states → is_ready (base default) →
+    jobs_for_keys → materialize → local backend, dispatched as a single group with
+    no extra kwargs (task farming lives in the shared backend, not the controller)."""
+
+    from mufinder.app.relaxation_types import RelaxationRunState
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(
+        service, tmp_path
+    )
+    key = next(iter(candidates))
+
+    stage_state = _FakeQuantumStageState(stage=QUANTUM_STAGE_SINGLEPOINT, status="ready")
+
+    def write_dir(spec, root, *, seed_name):
+        job_dir = root / seed_name
+        job_dir.mkdir(parents=True, exist_ok=True)
+        return job_dir
+
+    deps = _stub_quantum_deps(
+        active_quantum_corrections_definition=lambda: definition,
+        ensure_quantum_corrections_definition=lambda _keys: definition,
+        definition_output_directory=lambda _definition: output_root,
+        eligible_quantum_source_candidates=lambda: list(candidates.values()),
+        quantum_source_candidate_by_key=lambda k: candidates.get(k),
+        quantum_stage_state=lambda _definition, _candidate: stage_state,
+        build_quantum_corrections_states=lambda: {key: RelaxationRunState(status="ready")},
+        jobs_for_quantum_source_keys=lambda _keys: [],
+        singlepoint_job_for_quantum_source_key=lambda _definition, _key: None,
+        phonon_job_for_quantum_source_key=lambda _definition, _key: None,
+        write_quantum_job_directory=write_dir,
+    )
+    local = _RecordingBackend()
+    cluster = _RecordingBackend()
+    context = _make_context(
+        document=document,
+        project_service=service,
+        local_backend=local,
+        cluster_backend=cluster,
+    )
+    controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
+
+    controller.submit([key], target="local")
+
+    assert cluster.calls == []
+    assert len(local.calls) == 1
+    submitted, extras = local.calls[0]
+    assert extras == {}
+    assert len(submitted) == 1
+    assert submitted[0].calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
+
+
+def test_quantum_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:
+    from mufinder.app.relaxation_types import RelaxationRunState
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(
+        service, tmp_path
+    )
+    key = next(iter(candidates))
+    stage_state = _FakeQuantumStageState(stage=QUANTUM_STAGE_SINGLEPOINT, status="ready")
+
+    def write_dir(spec, root, *, seed_name):
+        job_dir = root / seed_name
+        job_dir.mkdir(parents=True, exist_ok=True)
+        return job_dir
+
+    deps = _stub_quantum_deps(
+        active_quantum_corrections_definition=lambda: definition,
+        ensure_quantum_corrections_definition=lambda _keys: definition,
+        definition_output_directory=lambda _definition: output_root,
+        eligible_quantum_source_candidates=lambda: list(candidates.values()),
+        quantum_source_candidate_by_key=lambda k: candidates.get(k),
+        quantum_stage_state=lambda _definition, _candidate: stage_state,
+        build_quantum_corrections_states=lambda: {key: RelaxationRunState(status="ready")},
+        jobs_for_quantum_source_keys=lambda _keys: [],
+        singlepoint_job_for_quantum_source_key=lambda _definition, _key: None,
+        phonon_job_for_quantum_source_key=lambda _definition, _key: None,
+        write_quantum_job_directory=write_dir,
+    )
+    local = _RecordingBackend()
+    cluster = _RecordingBackend()
+    context = _make_context(
+        document=document,
+        project_service=service,
+        local_backend=local,
+        cluster_backend=cluster,
+    )
+    controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
+
+    controller.submit([key], target="cluster")
+
+    assert local.calls == []
+    assert len(cluster.calls) == 1
+    assert cluster.calls[0][0][0].calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
