@@ -69,14 +69,19 @@ FORBIDDEN_LAYER_IMPORTS = {
 # singlepoint → phonon migration with a pre_submit host check and the richest
 # ``build_result`` — phonon ZPE/eigenvalue/witness payload), so its
 # ``_on_submit_*_from_quantum_corrections`` / ``_materialize_quantum_corrections_jobs``
-# handlers are intentionally absent here too.
+# handlers are intentionally absent here too. Energy barriers (NEB) followed last
+# (the source-key-provenance migration with IDPP intermediate interpolation, a
+# ``.ts`` transition-state ``build_result`` payload, and a lazily-created view
+# behind a ``view_getter``), so its ``_on_submit_*_neb_from_energy_barriers`` /
+# ``_materialize_energy_barrier_neb_jobs`` handlers are intentionally absent here
+# too. With energy barriers migrated, the per-workflow migration series is
+# COMPLETE: the only entries that remain are the two dashboard handlers, which are
+# cross-workflow submit entry points (they fan out to every workflow's controller)
+# and legitimately stay on ``MainWindow`` — not per-workflow submit logic.
 PINNED_MAIN_WINDOW_SUBMIT_HANDLERS = frozenset(
     {
-        "_materialize_energy_barrier_neb_jobs",
-        "_on_submit_cluster_neb_from_energy_barriers",
         "_on_submit_from_dashboard",
         "_on_submit_local_from_dashboard",
-        "_on_submit_local_neb_from_energy_barriers",
     }
 )
 

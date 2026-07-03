@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QDockWidget, QFrame, QHeaderView, QLabel, QMessage
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.app.main_window as main_window_module
+import mufinder.app.workflow_controllers.energy_barriers as energy_barriers_controller_module
 from mufinder.app import theme as theme_module
 import mufinder.castep_io.schema as schema_module
 from mufinder.app.main_window import MainWindow
@@ -1237,7 +1238,7 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
     configure_button = window._energy_barriers_view._sources_table.cellWidget(0, 5)
     assert configure_button.text() == "Configured..."
 
-    jobs = window._materialize_energy_barrier_neb_jobs([candidate.key])
+    jobs = window._energy_barriers_controller.materialize([candidate.key])
 
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
@@ -1462,7 +1463,7 @@ def test_main_window_energy_barrier_defaults_apply_equivalent_density_kpoints_fo
     window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
     candidate = window._eligible_energy_barrier_source_candidates()[0]
 
-    jobs = window._materialize_energy_barrier_neb_jobs([candidate.key])
+    jobs = window._energy_barriers_controller.materialize([candidate.key])
 
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
@@ -1677,7 +1678,7 @@ def test_main_window_energy_barrier_strips_legacy_tss_params_from_stored_config(
         }
     }
 
-    jobs = window._materialize_energy_barrier_neb_jobs([candidate.key])
+    jobs = window._energy_barriers_controller.materialize([candidate.key])
 
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
@@ -1808,7 +1809,7 @@ def test_main_window_neb_inherits_kpoints_from_reactant_relaxation_cell_file(qap
 
     window._on_generate_energy_barrier_paths(str(site_a.id), str(site_b.id))
     candidate = window._eligible_energy_barrier_source_candidates()[0]
-    jobs = window._materialize_energy_barrier_neb_jobs([candidate.key])
+    jobs = window._energy_barriers_controller.materialize([candidate.key])
 
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
@@ -2086,10 +2087,8 @@ def test_main_window_records_energy_barrier_result_from_ts_file(
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / f"{output_dir.name}.ts").write_text("placeholder", encoding="utf-8")
 
-    monkeypatch.setattr(
-        main_window_module,
-        "parse_transition_state_file",
-        lambda _path: TransitionStatePath(
+    def _fake_parse(_path):
+        return TransitionStatePath(
             images=(
                 TransitionStateImage(
                     label="REA",
@@ -2122,7 +2121,14 @@ def test_main_window_records_energy_barrier_result_from_ts_file(
                     forces=((0.0, 0.0, 0.0),),
                 ),
             )
-        ),
+        )
+
+    # Both the inline ``_on_local_job_finished`` ``.ts`` guard (on
+    # ``main_window``) and ``EnergyBarriersController.build_result`` (on the
+    # controller module) re-parse the ``.ts`` on the success path, so patch both.
+    monkeypatch.setattr(main_window_module, "parse_transition_state_file", _fake_parse)
+    monkeypatch.setattr(
+        energy_barriers_controller_module, "parse_transition_state_file", _fake_parse
     )
 
     window._on_local_job_finished(job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0))
@@ -2210,7 +2216,7 @@ def test_main_window_materializes_neb_jobs_directly_from_endpoints(
         output_directory=doc.project_root / "files" / "energy_barriers",
     )
 
-    jobs = window._materialize_energy_barrier_neb_jobs(["source-key"])
+    jobs = window._energy_barriers_controller.materialize(["source-key"])
 
     assert len(jobs) == 1
     assert jobs[0].calc_type == NUDGED_ELASTIC_BAND_CALC_TYPE
@@ -2384,7 +2390,7 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
         }
     }
 
-    jobs = window._materialize_energy_barrier_neb_jobs(["source-key"])
+    jobs = window._energy_barriers_controller.materialize(["source-key"])
 
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
@@ -2457,10 +2463,8 @@ def test_main_window_records_neb_result_and_loads_preview(
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / f"{output_dir.name}.ts").write_text("placeholder", encoding="utf-8")
 
-    monkeypatch.setattr(
-        main_window_module,
-        "parse_transition_state_file",
-        lambda _path: TransitionStatePath(
+    def _fake_parse(_path):
+        return TransitionStatePath(
             images=(
                 TransitionStateImage(
                     label="REA",
@@ -2493,7 +2497,14 @@ def test_main_window_records_neb_result_and_loads_preview(
                     forces=((0.0, 0.0, 0.0),) * 3,
                 ),
             )
-        ),
+        )
+
+    # Both the inline ``.ts`` guard (on ``main_window``) and
+    # ``EnergyBarriersController.build_result`` (on the controller module)
+    # re-parse the ``.ts`` on the success path, so patch both.
+    monkeypatch.setattr(main_window_module, "parse_transition_state_file", _fake_parse)
+    monkeypatch.setattr(
+        energy_barriers_controller_module, "parse_transition_state_file", _fake_parse
     )
 
     window._on_local_job_finished(job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0))
