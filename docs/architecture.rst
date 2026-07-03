@@ -52,7 +52,12 @@ Package layers
 ``mufinder.services``
    Project-level state management, local and remote execution, journals,
    scheduling, and service orchestration. Services own lifecycle transitions and
-   persistence-facing workflows, but they must not import PySide widgets.
+   persistence-facing workflows, but they must not import PySide widgets. The
+   local and cluster job runners share a structural contract, ``JobRunner``
+   (``mufinder.services.runner_protocol``), which documents the runner signal
+   surface, the deliberately-different submit error contracts, and the rule that
+   runners never mutate ``Job`` objects; see :doc:`job_lifecycle` for the full
+   state-authority contract.
 
 ``mufinder.app``
    PySide widgets, dialogs, theme helpers, and main-window wiring. UI code may

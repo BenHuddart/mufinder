@@ -318,6 +318,8 @@ def test_submit_batch_emits_progress_results_and_finished(controller) -> None:
 
 
 def test_submit_batch_reports_per_job_failure(controller) -> None:
+    # JobRunner design decision 1: ClusterJobRunner.submit may raise; the batch
+    # worker converts it per job into job_submit_finished(job_id, None, error).
     ctrl, fake = controller
     fake.submit_should_raise = True
     results: list[tuple] = []

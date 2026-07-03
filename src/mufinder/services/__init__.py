@@ -9,9 +9,11 @@ from mufinder.services.project_service import (
     SiteHostMismatch,
     StructureHostMismatch,
 )
+from mufinder.services.runner_protocol import JobRunner
 
 __all__ = [
     "ClusterJobRunner",
+    "JobRunner",
     "LocalJobRunner",
     "ProjectDocument",
     "ProjectService",

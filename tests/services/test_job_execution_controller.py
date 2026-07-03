@@ -357,6 +357,8 @@ def test_cluster_resubmission_accepts_cancelled_job(tmp_path: Path) -> None:
 
 
 def test_cluster_submission_failure_marks_job_failed_and_records_terminal_event(tmp_path: Path) -> None:
+    # JobRunner design decision 1: ClusterJobRunner.submit may raise; this
+    # controller caller converts the exception into a failed outcome.
     service, document = _document(tmp_path)
     job_id = _job(service, document, "bad-cluster-job")
     controller = _controller(

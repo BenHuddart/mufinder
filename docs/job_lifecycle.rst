@@ -106,6 +106,50 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
 - ``reset_failed_job`` moves ``failed``, ``stopped``, or ``cancelled`` back to
   ``defined`` and clears remote/process metadata.
 
+State authority and runner contract
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Job state transitions are owned **exclusively** by the ``ProjectService``
+primitives listed above. The layering around them is deliberate and is codified
+by the ``JobRunner`` protocol in ``mufinder.services.runner_protocol``:
+
+- **ProjectService** performs every validated ``JobStatus`` transition. Nothing
+  else writes ``Job.status``.
+- **JobExecutionController** mutates only bookkeeping fields on the ``Job``
+  (``execution_target``, ``num_processes``, and remote-metadata clears) and
+  routes all status changes through the service primitives. For example, when
+  the local runner reports ``status_changed(job_id, "queued")`` for a
+  ``submitting`` job, ``mark_local_status_changed`` calls
+  ``ProjectService.mark_job_queued``; a queued notification for a job that is not
+  ``submitting`` is an inert no-op.
+- **Runners never touch ``Job`` objects.** ``LocalJobRunner`` and
+  ``ClusterJobRunner`` operate on their own in-memory tracking state and
+  communicate solely by emitting signals keyed by job id (``job_started``,
+  ``job_finished``, ``job_failed``, ``job_cancelled``, ``status_changed``). The
+  controller translates those signals into ``ProjectService`` calls.
+
+The two runners share the signal surface above and the identical
+``cancel(job_id)`` method, but their ``submit`` error contracts are
+**deliberately different** and are not to be unified:
+
+- ``LocalJobRunner.submit`` **never raises** for bad input. It validates the
+  request (CASTEP executable, ``mpirun`` for multi-core, job directory) and
+  reports any problem by emitting ``job_failed`` (and
+  ``status_changed`` -> ``failed``). ``submit_local_jobs`` still wraps the call
+  defensively, but the runner's own contract is "validation failures are
+  reported via ``job_failed``, not raised".
+- ``ClusterJobRunner.submit`` **may raise** (``ConnectionError`` and similar)
+  because it performs blocking SSH/SFTP work, and it returns the remote scheduler
+  id on success. Its two callers convert the exception rather than letting it
+  escape: ``JobExecutionController.submit_cluster_job`` catches it and returns a
+  failed ``ClusterJobSubmissionOutcome`` (via ``fail_cluster_submission``), and
+  ``ClusterController._run_submit_batch`` catches per job and emits
+  ``job_submit_finished(job_id, None, str(exc))``.
+
+Because the two ``submit`` methods take different arguments and return different
+types, ``JobRunner`` models ``submit`` loosely and pins these per-implementation
+contracts in its docstring; ``cancel`` is modeled precisely.
+
 Execution orchestration
 ~~~~~~~~~~~~~~~~~~~~~~~
 
