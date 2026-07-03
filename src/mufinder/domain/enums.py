@@ -32,3 +32,16 @@ class JobStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+#: Statuses of a job that is still active in the local execution pipeline
+#: (submitted but not yet stopped, completed, failed, or cancelled). Used for
+#: cancel-eligibility, dashboard visibility, and reattachment across the app.
+ACTIVE_JOB_STATUSES: frozenset[JobStatus] = frozenset(
+    {
+        JobStatus.SUBMITTING,
+        JobStatus.QUEUED,
+        JobStatus.RUNNING,
+        JobStatus.RETRIEVING,
+    }
+)

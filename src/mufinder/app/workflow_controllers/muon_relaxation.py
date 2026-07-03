@@ -50,7 +50,7 @@ from pathlib import Path
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -121,11 +121,15 @@ class MuonRelaxationDeps:
     is still called by the inline ``H:mu`` failure guard in
     ``_on_local_job_finished``; ``coerce_fractional_triplet`` and
     ``muon_relaxation_row_key`` have other view-refresh callers; and
-    ``job_output_directory`` / ``job_seed_name`` / ``parse_relaxed_out_cell`` /
-    ``run_for_job`` are shared across workflows. The controller reaches them
-    only through these required callables. Workflow-specific dependencies like
-    these never go in the shared
-    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`.
+    ``parse_relaxed_out_cell`` is shared with the pristine-relaxation controller.
+    The controller reaches them only through these required callables.
+    Workflow-specific dependencies like these never go in the shared
+    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`;
+    cross-workflow job/definition readers (``job_output_directory``,
+    ``job_seed_name``, ``run_for_job``, ``definition_output_directory``, the
+    energy/force readers) live there instead. Active-job membership uses the
+    domain-layer :data:`~mufinder.domain.enums.ACTIVE_JOB_STATUSES` constant
+    directly (``app`` → ``domain`` is a legal import).
     """
 
     active_muon_relaxation_definition: Callable[[], CalculationDefinition | None]
@@ -138,8 +142,6 @@ class MuonRelaxationDeps:
     job_for_muon_relaxation_label: Callable[
         [CalculationDefinition, str, str | None], Job | None
     ]
-    job_is_active_local: Callable[[Job], bool]
-    definition_output_directory: Callable[[CalculationDefinition], Path | None]
     handle_site_host_mismatch: Callable[[SiteHostMismatch], bool]
     # Shared with the still-inline result-block failure guards:
     muon_relaxation_definition_and_row_for_job: Callable[
@@ -149,12 +151,7 @@ class MuonRelaxationDeps:
         [object], tuple[float, float, float] | None
     ]
     coerce_fractional_triplet: Callable[[object], tuple[float, float, float] | None]
-    job_output_directory: Callable[[Job], Path | None]
-    job_seed_name: Callable[[Job], str]
     parse_relaxed_out_cell: Callable[[Path], tuple[object, float, float, float]]
-    run_for_job: Callable[[UUID], CalculationRun | None]
-    total_energy_for_job: Callable[[UUID], float | None]
-    max_force_for_job: Callable[[UUID], float | None]
 
 
 class MuonRelaxationController(WorkflowJobController):
@@ -226,20 +223,19 @@ class MuonRelaxationController(WorkflowJobController):
         """Split jobs into per-charge-state groups, positive muon first.
 
         Behavior-preserving move of
-        ``MainWindow._submit_muon_relaxation_jobs_grouped``: jobs are deduped by
-        id, grouped by charge-state calc_type, and each non-empty group is
-        submitted separately (the base template loop calls the backend once per
-        group, with no extra kwargs — exactly the former per-group
-        ``_submit_jobs_locally`` / ``_submit_jobs_on_cluster`` calls). Jobs with
-        a non-muon calc_type are dropped, as before.
+        ``MainWindow._submit_muon_relaxation_jobs_grouped``: jobs are grouped by
+        charge-state calc_type, and each non-empty group is submitted separately
+        (the base template loop calls the backend once per group, with no extra
+        kwargs — exactly the former per-group ``_submit_jobs_locally`` /
+        ``_submit_jobs_on_cluster`` calls). Jobs with a non-muon calc_type are
+        dropped, as before.
         """
 
+        # The submission coordinator's plan already dedupes ``jobs`` by id
+        # (``submission_plan`` returns ``tuple(self._dedupe_jobs(jobs))``), so no
+        # id-dedupe is repeated here.
         grouped: dict[str, list[Job]] = {}
-        seen: set[UUID] = set()
         for job in jobs:
-            if job.id in seen:
-                continue
-            seen.add(job.id)
             grouped.setdefault(job.calc_type, []).append(job)
         return [
             (grouped[calc_type], {})
@@ -293,7 +289,7 @@ class MuonRelaxationController(WorkflowJobController):
                     definition_row.label,
                     definition_row.charge_state,
                 )
-                if job is not None and self._deps.job_is_active_local(job):
+                if job is not None and job.status in ACTIVE_JOB_STATUSES:
                     rows_for_status.append(definition_row)
         else:
             rows_for_status = list(config.rows)
@@ -307,7 +303,7 @@ class MuonRelaxationController(WorkflowJobController):
                 states[state_key] = RelaxationRunState(status="ready")
                 continue
             status_value = job.status.value
-            run = self._deps.run_for_job(job.id)
+            run = self._context.run_for_job(job.id)
             if (
                 status_value == JobStatus.COMPLETED.value
                 and run is not None
@@ -327,8 +323,8 @@ class MuonRelaxationController(WorkflowJobController):
                     )
             states[state_key] = RelaxationRunState(
                 status=status_value,
-                total_energy=self._deps.total_energy_for_job(job.id),
-                max_force=self._deps.max_force_for_job(job.id),
+                total_energy=self._context.total_energy_for_job(job.id),
+                max_force=self._context.max_force_for_job(job.id),
                 lattice_a=float(lattice_a) if isinstance(lattice_a, (int, float)) else None,
                 lattice_b=float(lattice_b) if isinstance(lattice_b, (int, float)) else None,
                 lattice_c=float(lattice_c) if isinstance(lattice_c, (int, float)) else None,
@@ -386,7 +382,7 @@ class MuonRelaxationController(WorkflowJobController):
         if config is None or not definition.input_structure_ids:
             return []
         host = document.structures.get(definition.input_structure_ids[0])
-        output_root = self._deps.definition_output_directory(definition)
+        output_root = self._context.definition_output_directory(definition)
         if host is None or output_root is None:
             return []
         try:
@@ -485,12 +481,17 @@ class MuonRelaxationController(WorkflowJobController):
         if document is None:
             return ControllerResult()
 
-        output_dir = self._deps.job_output_directory(job)
-        seed_name = self._deps.job_seed_name(job)
+        output_dir = self._context.job_output_directory(job)
+        seed_name = self._context.job_seed_name(job)
         if output_dir is None:
             return ControllerResult()
         out_cell_path = output_dir / f"{seed_name}-out.cell"
 
+        # Intentional double parse: the inline ``_on_local_job_finished`` guard
+        # already parsed this ``-out.cell`` to validate it (and the ``H:mu``
+        # position) and discarded the result; here ``build_result`` re-derives
+        # the payload on the validated success path. Accepted cost — do NOT
+        # "fix" it by caching parse state on the controller.
         relaxed, lattice_a, lattice_b, lattice_c = self._deps.parse_relaxed_out_cell(
             out_cell_path
         )

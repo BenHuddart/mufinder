@@ -8,8 +8,9 @@ and never import that module.
 
 A controller's constructor inputs follow a three-part pattern:
 
-- **shared context** — :class:`WorkflowControllerContext`, exactly the ten
-  narrow, late-bound callables that *every* workflow controller needs. This
+- **shared context** — :class:`WorkflowControllerContext`, the narrow,
+  late-bound callables that *every* workflow controller needs plus the
+  cross-workflow job/definition readers used by three or more controllers. This
   dataclass never grows workflow-specific fields.
 - **per-controller deps** — each concrete controller that needs additional
   handles (e.g. shared MainWindow helpers its moved logic still calls) defines
@@ -29,11 +30,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.models import CalculationRun, Job
+from mufinder.domain.models import CalculationDefinition, CalculationRun, Job
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
@@ -64,12 +66,25 @@ class WorkflowControllerContext:
     persist_ui_state: Callable[..., None]
     status_message: Callable[[str], None]
 
-    # RULE: workflow-specific dependencies NEVER go in this shared context.
-    # This dataclass holds exactly the handles that every workflow controller
-    # needs. Anything a single workflow needs beyond these (for example shared
-    # MainWindow helpers its moved logic still calls) belongs in a per-controller
-    # deps dataclass of REQUIRED, precisely-typed fields, defined in that
-    # controller's own module and passed to its constructor — see
+    # Cross-workflow job/definition readers. These belong here (not in any Deps
+    # class) because they read durable job/definition state the same way for
+    # every workflow, and three or more controllers each need them. See the RULE
+    # below for the promotion boundary.
+    definition_output_directory: Callable[[CalculationDefinition], Path | None]
+    job_output_directory: Callable[[Job], Path | None]
+    job_seed_name: Callable[[Job], str]
+    run_for_job: Callable[[UUID], CalculationRun | None]
+    total_energy_for_job: Callable[[UUID], float | None]
+    max_force_for_job: Callable[[UUID], float | None]
+
+    # RULE: workflow-specific dependencies NEVER enter this shared context, but
+    # genuinely cross-workflow job/definition readers do. A handle belongs here
+    # only when it reads durable job/definition state uniformly and three or more
+    # workflow controllers need it (for example the readers above). Anything a
+    # single workflow — or only one or two — needs (a workflow-family-specific
+    # helper, or shared MainWindow helpers its moved logic still calls) belongs
+    # in a per-controller deps dataclass of REQUIRED, precisely-typed fields,
+    # defined in that controller's own module and passed to its constructor — see
     # ``ConvergenceCutoffDeps`` in ``convergence_cutoff.py`` for the pattern.
 
 

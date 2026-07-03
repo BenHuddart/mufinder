@@ -8,8 +8,10 @@ migrated onto
 here is a behavior-preserving move of the former ``MainWindow`` methods
 ``_materialize_kpoint_jobs``, ``_build_convergence_kpoint_states``,
 ``_jobs_for_convergence_kpoint_grids``, ``_refresh_kpoint_convergence_rows``, and
-``_kpoint_form_snapshot``. Shared convergence helpers that non-migrating code
-still calls remain on ``MainWindow`` and are reached via
+``_kpoint_form_snapshot``, plus (as of the PR 4.8 cleanup) the private
+``_definition_for_kpoint_grid`` / ``_job_for_definition_grid`` helpers inlined
+from ``MainWindow`` once no other caller needed them. Shared convergence helpers
+that non-migrating code still calls remain on ``MainWindow`` and are reached via
 :class:`ConvergenceKpointDeps` — the per-controller deps dataclass this module
 defines, following the shared-context + per-controller-deps + view pattern
 documented in :mod:`mufinder.app.workflow_controllers.base`.
@@ -19,7 +21,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID
 
 from mufinder.domain.enums import JobStatus
@@ -54,14 +55,7 @@ class ConvergenceKpointDeps:
     active_kpoint_definition: Callable[[], CalculationDefinition | None]
     deserialize_convergence_config: Callable[[object], ConvergenceConfig | None]
     sync_equivalent_convergence_kpoint_mappings: Callable[[CalculationDefinition], None]
-    definition_for_kpoint_grid: Callable[
-        [_Grid], tuple[CalculationDefinition | None, ConvergenceConfig | None]
-    ]
-    job_for_definition_grid: Callable[[CalculationDefinition, _Grid], Job | None]
-    definition_output_directory: Callable[[CalculationDefinition], Path | None]
     grid_key: Callable[[_Grid], str]
-    total_energy_for_job: Callable[[UUID], float | None]
-    max_force_for_job: Callable[[UUID], float | None]
     max_stress_for_job: Callable[[UUID], float | None]
 
 
@@ -127,7 +121,7 @@ class ConvergenceKpointController(WorkflowJobController):
             return states
 
         for grid in config_grids:
-            job = self._deps.job_for_definition_grid(definition, grid)
+            job = self._job_for_definition_grid(definition, grid)
             if job is None:
                 states[grid] = SweepPointRunState(
                     status="ready",
@@ -142,8 +136,8 @@ class ConvergenceKpointController(WorkflowJobController):
             status_value = "ready" if job.status == JobStatus.DEFINED else job.status.value
             states[grid] = SweepPointRunState(
                 status=status_value,
-                total_energy=self._deps.total_energy_for_job(job.id),
-                max_force=self._deps.max_force_for_job(job.id),
+                total_energy=self._context.total_energy_for_job(job.id),
+                max_force=self._context.max_force_for_job(job.id),
                 max_stress=self._deps.max_stress_for_job(job.id),
                 job_id=job.id,
                 job_label=job.label,
@@ -177,10 +171,10 @@ class ConvergenceKpointController(WorkflowJobController):
         created: list[Job] = []
         grouped: dict[UUID, tuple[object, ConvergenceConfig, set[_Grid]]] = {}
         for grid in keys:
-            definition, config = self._deps.definition_for_kpoint_grid(grid)  # type: ignore[arg-type]
+            definition, config = self._definition_for_kpoint_grid(grid)  # type: ignore[arg-type]
             if definition is None or config is None:
                 continue
-            existing = self._deps.job_for_definition_grid(definition, grid)  # type: ignore[arg-type]
+            existing = self._job_for_definition_grid(definition, grid)  # type: ignore[arg-type]
             if existing is not None:
                 created.append(existing)
                 continue
@@ -194,7 +188,7 @@ class ConvergenceKpointController(WorkflowJobController):
             if not definition.input_structure_ids:
                 continue
             structure = document.structures.get(definition.input_structure_ids[0])
-            output_root = self._deps.definition_output_directory(definition)
+            output_root = self._context.definition_output_directory(definition)
             if structure is None or output_root is None:
                 continue
             self._context.project_service.repair_supercell_asset_if_needed(
@@ -254,6 +248,71 @@ class ConvergenceKpointController(WorkflowJobController):
         self._view.set_runtime_states(self.build_states())
 
     # --- private helpers moved from MainWindow (kpoint-only) ---
+
+    def _definition_for_kpoint_grid(
+        self, grid: _Grid
+    ) -> tuple[CalculationDefinition | None, ConvergenceConfig | None]:
+        """Return the active k-point definition/config that owns ``grid``.
+
+        Inlined from the former ``MainWindow._definition_for_kpoint_grid`` (PR 4.8
+        cleanup): the wrapped helpers already live in this controller's deps and
+        no other caller needed the MainWindow original.
+        """
+
+        active_definition = self._deps.active_kpoint_definition()
+        if active_definition is None:
+            return None, None
+
+        self._deps.sync_equivalent_convergence_kpoint_mappings(active_definition)
+        config = self._deps.deserialize_convergence_config(
+            active_definition.parameters.get("configuration", {})
+        )
+        if config is None or config.sweep_parameter != "kpoint_mp_grid":
+            return None, None
+
+        if grid in config.sweep_values:
+            return active_definition, config
+        return None, None
+
+    def _job_for_definition_grid(
+        self, definition: CalculationDefinition, grid: _Grid
+    ) -> Job | None:
+        """Return the existing job for ``definition``'s ``grid`` sweep point.
+
+        Inlined from the former ``MainWindow._job_for_definition_grid`` (PR 4.8
+        cleanup); reads the document via the shared context and the grid-key
+        helper via this controller's deps.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return None
+
+        mapping = definition.parameters.get("job_ids_by_grid")
+        if isinstance(mapping, dict):
+            raw_job_id = mapping.get(self._deps.grid_key(grid))
+            if isinstance(raw_job_id, str):
+                try:
+                    job_id = UUID(raw_job_id)
+                except ValueError:
+                    job_id = None
+                if job_id is not None:
+                    job = document.jobs.get(job_id)
+                    if job is not None:
+                        return job
+            return None
+
+        label = convergence_job_name(
+            definition.parameters.get("configuration", {}).get(
+                "name_prefix", "kpoint_convergence"
+            ),
+            grid,
+            sweep_parameter="kpoint_mp_grid",
+        )
+        for job in reversed(tuple(document.jobs.values())):
+            if job.label == label:
+                return job
+        return None
 
     def _kpoint_form_snapshot(self) -> tuple[str, tuple[_Grid, ...]]:
         document = self._context.document()
