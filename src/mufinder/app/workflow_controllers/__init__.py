@@ -32,6 +32,10 @@ from mufinder.app.workflow_controllers.pristine_relaxation import (
     PristineRelaxationController,
     PristineRelaxationDeps,
 )
+from mufinder.app.workflow_controllers.quantum_corrections import (
+    QuantumCorrectionsController,
+    QuantumCorrectionsDeps,
+)
 from mufinder.app.workflow_controllers.uep import (
     UepController,
     UepDeps,
@@ -47,6 +51,8 @@ __all__ = [
     "MuonRelaxationDeps",
     "PristineRelaxationController",
     "PristineRelaxationDeps",
+    "QuantumCorrectionsController",
+    "QuantumCorrectionsDeps",
     "UepController",
     "UepDeps",
     "WorkflowControllerContext",

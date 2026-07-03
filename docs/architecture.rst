@@ -194,7 +194,24 @@ previously accreted on ``MainWindow``.
   whose ``{seed}.den_fmt`` output is missing is a missing-output guard and stays
   inline for the same no-failure-channel reason, while only the flag assignment
   moves into ``build_result`` (which re-checks the here-guaranteed ``den_fmt`` on
-  the success path).
+  the success path). ``QuantumCorrectionsController`` is the two-stage
+  (singlepoint → phonon) migration and the richest of the six: its
+  ``materialize`` dispatches each selected relaxed source to its current stage,
+  building singlepoint *and* phonon configs in one pass and writing the two
+  per-stage job-id mappings (``singlepoint_job_ids_by_label`` /
+  ``phonon_job_ids_by_label``) plus the shared ``job_seed_names_by_label``; its
+  ``pre_submit_check`` runs the host guard shared with the energy-barriers
+  workflow; and its ``build_result`` parses the completed ``.phonon`` file into
+  the muon ZPE, gamma-point eigenvalues, mode participations, and the ``w1``
+  entanglement witness for a quantum-*phonon* job while a quantum-*singlepoint*
+  job contributes an empty result (both calc types are ``handles_job``-owned so
+  the two-stage pair is coherent). Following the no-failure-channel convention,
+  the ``.phonon`` guards (missing/unparseable file, and any downstream
+  ``PhononParseError`` from the ZPE / gamma / witness computation) stay inline in
+  ``_on_local_job_finished``; only the payload moves into ``build_result``, which
+  re-parses on the validated success path. Task farming for the phonon stage is
+  applied by the shared ``_submit_jobs_locally`` backend (not the controller), so
+  ``QuantumCorrectionsController`` keeps the base single-group ``submission_groups``.
 
 The set of ``_on_submit_*`` / ``_materialize_*`` handlers still on
 ``MainWindow`` is pinned by ``tests/test_agent_harness.py`` as a ratchet: it may

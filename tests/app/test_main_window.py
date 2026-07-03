@@ -695,7 +695,7 @@ def test_main_window_materializes_quantum_singlepoint_jobs_from_relaxed_sources(
         encoding="utf-8",
     )
 
-    jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+    jobs = window._quantum_corrections_controller.materialize([str(site.id)])
 
     assert len(jobs) == 1
     assert jobs[0].calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
@@ -777,7 +777,7 @@ def test_main_window_materializes_quantum_phonon_continuation_after_singlepoint(
         }
     }
 
-    singlepoint_jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+    singlepoint_jobs = window._quantum_corrections_controller.materialize([str(site.id)])
     assert len(singlepoint_jobs) == 1
     singlepoint_job = singlepoint_jobs[0]
     assert singlepoint_job.calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
@@ -788,7 +788,7 @@ def test_main_window_materializes_quantum_phonon_continuation_after_singlepoint(
     assert window._quantum_corrections_view._sources_table.item(0, 6).text() == "4"
     assert window._quantum_corrections_view._sources_table.item(0, 7).text() == "ready"
 
-    phonon_jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+    phonon_jobs = window._quantum_corrections_controller.materialize([str(site.id)])
 
     assert len(phonon_jobs) == 1
     assert phonon_jobs[0].calc_type == QUANTUM_PHONON_CALC_TYPE
@@ -887,7 +887,7 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp,
     configure_button = window._quantum_corrections_view._sources_table.cellWidget(0, 8)
     assert configure_button.text() == "Configured..."
 
-    jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+    jobs = window._quantum_corrections_controller.materialize([str(site.id)])
 
     assert len(jobs) == 1
     output_dir = window._job_output_directory(jobs[0])
@@ -1023,7 +1023,7 @@ def test_main_window_quantum_corrections_uses_numeric_suffixes_for_duplicate_sit
 
     assert labels == ["siteA", "siteA_2"]
 
-    jobs = window._materialize_quantum_corrections_jobs(
+    jobs = window._quantum_corrections_controller.materialize(
         [candidate.key for candidate in window._eligible_quantum_source_candidates()]
     )
 
@@ -1081,7 +1081,7 @@ def test_main_window_materialize_quantum_corrections_repairs_stale_suffixed_job_
     )
     definition.parameters["singlepoint_job_ids_by_label"] = {str(site.id): str(stale_job.id)}
 
-    jobs = window._materialize_quantum_corrections_jobs([str(site.id)])
+    jobs = window._quantum_corrections_controller.materialize([str(site.id)])
 
     assert [job.id for job in jobs] == [stale_job.id]
     assert stale_job.label == "quantum_singlepoint_siteA"

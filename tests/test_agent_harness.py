@@ -65,16 +65,17 @@ FORBIDDEN_LAYER_IMPORTS = {
 # well. UEP followed (a simpler migration: no pre_submit_check, no grouping, a
 # small ``build_result`` contributing only the ``density_available`` flag), so
 # its ``_on_submit_*_from_uep`` / ``_materialize_uep_jobs`` handlers are
-# intentionally absent here too.
+# intentionally absent here too. Quantum corrections followed (the two-stage
+# singlepoint → phonon migration with a pre_submit host check and the richest
+# ``build_result`` — phonon ZPE/eigenvalue/witness payload), so its
+# ``_on_submit_*_from_quantum_corrections`` / ``_materialize_quantum_corrections_jobs``
+# handlers are intentionally absent here too.
 PINNED_MAIN_WINDOW_SUBMIT_HANDLERS = frozenset(
     {
         "_materialize_energy_barrier_neb_jobs",
-        "_materialize_quantum_corrections_jobs",
-        "_on_submit_cluster_from_quantum_corrections",
         "_on_submit_cluster_neb_from_energy_barriers",
         "_on_submit_from_dashboard",
         "_on_submit_local_from_dashboard",
-        "_on_submit_local_from_quantum_corrections",
         "_on_submit_local_neb_from_energy_barriers",
     }
 )
