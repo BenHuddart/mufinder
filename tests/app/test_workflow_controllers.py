@@ -17,6 +17,7 @@ layer is meant to provide.
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -47,6 +48,11 @@ from mufinder.app.workflow_controllers.muon_relaxation import (
 from mufinder.app.workflow_controllers.pristine_relaxation import (
     PristineRelaxationController,
     PristineRelaxationDeps,
+)
+from mufinder.app.uep_types import UepConfig, UepSourceRow
+from mufinder.app.workflow_controllers.uep import (
+    UepController,
+    UepDeps,
 )
 from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
 
@@ -1822,3 +1828,305 @@ def test_muon_controller_build_result_fails_loudly_on_muonless_cell(tmp_path: Pa
     # No partial side effects: site untouched, no derived structure added.
     assert site.status == "staged"
     assert site.relaxation_run_id is None
+
+
+# --------------------------------------------------------------------------- #
+# UepController
+# --------------------------------------------------------------------------- #
+#
+# One of the simpler migrations: no pre_submit_check, no submission_groups
+# override (single group, normalize=str, base-default is_ready), and a small
+# build_result contributing only the ``density_available`` boolean flag — no
+# derived structures and no document mutation. The tests drive it with narrow
+# fakes (no MainWindow) and a real ``.den_fmt`` file on disk to exercise the
+# present-vs-absent flag branches.
+
+
+class _FakeUepView:
+    """Minimal UEPWidget stand-in for controller tests."""
+
+    def __init__(self) -> None:
+        self.runtime_states: list[dict] = []
+
+    def set_runtime_states(self, states) -> None:
+        self.runtime_states.append(dict(states))
+
+
+def _stub_uep_deps(**overrides) -> UepDeps:
+    base = dict(
+        active_uep_definition=lambda: None,
+        deserialize_uep_config=lambda _payload: None,
+        sync_equivalent_uep_mappings=lambda _definition: None,
+        job_for_uep_label=lambda _definition, _label: None,
+        definition_output_directory=lambda _definition: None,
+        uep_potential_grid_result_for_job=lambda _job_id: None,
+        run_for_job=lambda _job_id: None,
+        job_output_directory=lambda _job: None,
+        job_seed_name=lambda job: job.label,
+    )
+    base.update(overrides)
+    return UepDeps(**base)
+
+
+def _uep_job(service: ProjectService, document: ProjectDocument, label: str) -> Job:
+    return service.add_job(
+        document,
+        label=label,
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+    )
+
+
+def test_uep_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    controller = UepController(
+        _make_context(document=document), _stub_uep_deps(), _FakeUepView()
+    )
+    handled = _uep_job(service, document, "uep_row1")
+    other = service.add_job(
+        document,
+        label="row1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    assert controller.handles_job(handled) is True
+    assert controller.handles_job(other) is False
+
+
+def test_uep_controller_uses_workflow_row_ready_predicate() -> None:
+    controller = UepController(_make_context(), _stub_uep_deps(), _FakeUepView())
+    # UEP uses the base-default (wider) workflow-row predicate: "not generated"
+    # / "defined" / "ready" rows are ready, only "failed" is excluded.
+    assert controller.is_ready({"r": _State("not generated")}, "r") is True
+    assert controller.is_ready({"r": _State("ready")}, "r") is True
+    assert controller.is_ready({"r": _State("failed")}, "r") is False
+
+
+def test_uep_controller_refresh_view_without_document_clears_rows() -> None:
+    view = _FakeUepView()
+    controller = UepController(
+        _make_context(document=None), _stub_uep_deps(), view
+    )
+    controller.refresh_view()
+    assert view.runtime_states == [{}]
+
+
+def test_uep_controller_build_result_flag_true_when_den_fmt_present(tmp_path: Path) -> None:
+    """build_result reports ``density_available: True`` when the completed job's
+    ``{seed}.den_fmt`` output exists on disk — byte-for-byte parity with the
+    former inline ``result_payload["density_available"] = True`` on the success
+    path (where the inline guard has already guaranteed the file)."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    job = _uep_job(service, document, "uep_row1")
+    run = CalculationRun(job_id=job.id)
+    document.runs[run.id] = run
+
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    (output_dir / f"{job.label}.den_fmt").write_text("density", encoding="utf-8")
+
+    deps = _stub_uep_deps(job_output_directory=lambda _job: output_dir)
+    context = _make_context(document=document, project_service=service)
+    controller = UepController(context, deps, _FakeUepView())
+
+    parsed = CastepResult(completed=True, total_energy=-20.5, warnings=())
+    result = controller.build_result(job, parsed, run)
+
+    assert result.payload == {"density_available": True}
+    # No output_files contributed — the call site already passes them generically.
+    assert result.output_files == []
+    assert result.derived_structure_ids == []
+
+
+def test_uep_controller_build_result_flag_false_when_den_fmt_absent(tmp_path: Path) -> None:
+    """With no ``{seed}.den_fmt`` on disk, build_result reports
+    ``density_available: False``. In production the inline guard fails the job
+    before build_result is ever reached, so this branch is only exercised by a
+    direct unit call — mirroring the pristine missing-out.cell unit test."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    job = _uep_job(service, document, "uep_row1")
+    run = CalculationRun(job_id=job.id)
+    document.runs[run.id] = run
+
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()  # deliberately empty — no den_fmt written
+
+    deps = _stub_uep_deps(job_output_directory=lambda _job: output_dir)
+    context = _make_context(document=document, project_service=service)
+    controller = UepController(context, deps, _FakeUepView())
+
+    parsed = CastepResult(completed=True, total_energy=-20.5, warnings=())
+    result = controller.build_result(job, parsed, run)
+
+    assert result.payload == {"density_available": False}
+
+
+def test_uep_controller_materialize_writes_job_ids_by_label(tmp_path: Path) -> None:
+    from mufinder.domain.models import Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+
+    config = UepConfig(name_prefix="uep", rows=(UepSourceRow(label="row1"),))
+    output_root = document.project_root / "files" / "uep"
+    definition = service.register_uep_definition(
+        document,
+        host_structure_id=host.id,
+        parameters={"name_prefix": "uep", "rows": [{"label": "row1"}]},
+        output_directory=output_root,
+    )
+
+    def job_for_label(defn, label):
+        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
+        job_id = mapping.get(label)
+        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
+
+    deps = _stub_uep_deps(
+        active_uep_definition=lambda: definition,
+        deserialize_uep_config=lambda _payload: config,
+        job_for_uep_label=job_for_label,
+        definition_output_directory=lambda _defn: output_root,
+    )
+    context = _make_context(document=document, project_service=service)
+    controller = UepController(context, deps, _FakeUepView())
+
+    jobs = controller.materialize(["row1"])
+
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.calc_type == "castep_uep_source"
+    mapping = definition.parameters["job_ids_by_label"]
+    assert mapping["row1"] == str(job.id)
+    # Rendered inputs were written under the output root.
+    job_dir = output_root / job.label
+    assert (job_dir / f"{job.label}.cell").exists()
+    assert (job_dir / f"{job.label}.param").exists()
+
+    # Re-materializing an existing DEFINED job returns the same job (no dup).
+    again = controller.materialize(["row1"])
+    assert len(again) == 1
+    assert again[0].id == job.id
+
+
+def test_uep_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:
+    from mufinder.domain.models import Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+
+    config = UepConfig(name_prefix="uep", rows=(UepSourceRow(label="row1"),))
+    output_root = document.project_root / "files" / "uep"
+    definition = service.register_uep_definition(
+        document,
+        host_structure_id=host.id,
+        parameters={"name_prefix": "uep", "rows": [{"label": "row1"}]},
+        output_directory=output_root,
+    )
+
+    def job_for_label(defn, label):
+        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
+        job_id = mapping.get(label)
+        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
+
+    deps = _stub_uep_deps(
+        active_uep_definition=lambda: definition,
+        deserialize_uep_config=lambda _payload: config,
+        job_for_uep_label=job_for_label,
+        definition_output_directory=lambda _defn: output_root,
+    )
+
+    local = _RecordingBackend()
+    cluster = _RecordingBackend()
+    context = _make_context(
+        document=document,
+        project_service=service,
+        local_backend=local,
+        cluster_backend=cluster,
+    )
+    controller = UepController(context, deps, _FakeUepView())
+
+    controller.submit(["row1"], target="local")
+
+    assert cluster.calls == []
+    assert len(local.calls) == 1
+    submitted, extras = local.calls[0]
+    assert extras == {}
+    assert len(submitted) == 1
+    assert submitted[0].calc_type == "castep_uep_source"
+
+
+def test_uep_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:
+    from mufinder.domain.models import Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+
+    config = UepConfig(name_prefix="uep", rows=(UepSourceRow(label="row1"),))
+    output_root = document.project_root / "files" / "uep"
+    definition = service.register_uep_definition(
+        document,
+        host_structure_id=host.id,
+        parameters={"name_prefix": "uep", "rows": [{"label": "row1"}]},
+        output_directory=output_root,
+    )
+
+    def job_for_label(defn, label):
+        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
+        job_id = mapping.get(label)
+        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
+
+    deps = _stub_uep_deps(
+        active_uep_definition=lambda: definition,
+        deserialize_uep_config=lambda _payload: config,
+        job_for_uep_label=job_for_label,
+        definition_output_directory=lambda _defn: output_root,
+    )
+
+    local = _RecordingBackend()
+    cluster = _RecordingBackend()
+    context = _make_context(
+        document=document,
+        project_service=service,
+        local_backend=local,
+        cluster_backend=cluster,
+    )
+    controller = UepController(context, deps, _FakeUepView())
+
+    controller.submit(["row1"], target="cluster")
+
+    assert local.calls == []
+    assert len(cluster.calls) == 1
+    submitted, extras = cluster.calls[0]
+    assert extras == {}
+    assert len(submitted) == 1
+    assert submitted[0].calc_type == "castep_uep_source"
