@@ -505,6 +505,14 @@ class MuonRelaxationController(WorkflowJobController):
         if definition is None:
             definition = self._deps.active_muon_relaxation_definition()
         final_supercell_position = self._deps.muon_fractional_position_from_cell(relaxed)
+        if final_supercell_position is None:
+            # build_result runs only on the validated success path: the inline
+            # H:mu guard in the job-finished handler fails muon-less cells
+            # before dispatch reaches this controller. Fail loudly if violated.
+            raise ValueError(
+                "Muon-relaxation build_result requires a relaxed cell containing "
+                "the muon; the inline guard must reject muon-less cells first."
+            )
         final_host_position = _fold_supercell_fractional_to_host(
             final_supercell_position,
             row.supercell_matrix if row is not None else None,

@@ -1762,3 +1762,63 @@ def test_muon_controller_build_result_records_position_structure_and_site_mutati
     assert site.status == "relaxed"
     assert site.relaxation_run_id == run.id
     assert site.relative_energy_eV == pytest.approx(-12.0)
+
+
+def test_muon_controller_build_result_fails_loudly_on_muonless_cell(tmp_path: Path) -> None:
+    """The success-path invariant is self-contained: if build_result is ever
+    reached with a relaxed cell that lacks the muon (the inline guard's job to
+    prevent), it raises a descriptive error instead of a deep TypeError."""
+
+    from mufinder.app.relaxation_types import MuonRelaxationRow
+    from mufinder.domain.models import CalculationDefinition, MuonSite
+
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    site = MuonSite(
+        label="Shared Site",
+        status="staged",
+        fractional_position=[0.1, 0.2, 0.3],
+        source_structure_id=host.id,
+    )
+    document.sites[site.id] = site
+    row = MuonRelaxationRow(
+        site_id=site.id,
+        label="Shared Site",
+        initial_fractional_position=(0.1, 0.2, 0.3),
+        charge_state="muonium",
+        supercell_matrix=((2, 0, 0), (0, 2, 0), (0, 0, 1)),
+    )
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muon_relaxation",
+        parameters={},
+        input_structure_ids=[host.id],
+        input_site_ids=[site.id],
+    )
+    document.calculations[definition.id] = definition
+    job = _muon_job(service, document, "Shared Site", "castep_muonium_relaxation")
+    run = CalculationRun(job_id=job.id)
+    document.runs[run.id] = run
+
+    # Same fixture with the muon line removed: extraction returns None.
+    muonless_text = "\n".join(
+        line for line in _MUON_OUT_CELL_TEXT.splitlines() if "h:mu" not in line.casefold()
+    )
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    (output_dir / f"{job.label}-out.cell").write_text(muonless_text, encoding="utf-8")
+
+    deps = _stub_muon_deps(
+        active_muon_relaxation_definition=lambda: definition,
+        muon_relaxation_definition_and_row_for_job=lambda _job: (definition, row),
+        job_output_directory=lambda _job: output_dir,
+    )
+    context = _make_context(document=document, project_service=service)
+    controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
+
+    parsed = CastepResult(completed=True, total_energy=-12.0, warnings=())
+    with pytest.raises(ValueError, match="relaxed cell containing"):
+        controller.build_result(job, parsed, run)
+    # No partial side effects: site untouched, no derived structure added.
+    assert site.status == "staged"
+    assert site.relaxation_run_id is None
