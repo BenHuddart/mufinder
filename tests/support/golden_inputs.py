@@ -114,7 +114,7 @@ def build_convergence_cutoff() -> list[tuple[str, JobSpec]]:
         },
         name_prefix="convergence",
     )
-    jobs = expand_convergence_jobs(structure=structure_to_spec(_si_structure()), config=config)
+    jobs = expand_convergence_jobs(structure=structure_to_spec(_si_structure()), config=config).jobs
     return [(job.name, job) for job in jobs]
 
 
@@ -129,7 +129,7 @@ def build_convergence_kpoint() -> list[tuple[str, JobSpec]]:
         },
         name_prefix="convergence",
     )
-    jobs = expand_convergence_jobs(structure=structure_to_spec(_si_structure()), config=config)
+    jobs = expand_convergence_jobs(structure=structure_to_spec(_si_structure()), config=config).jobs
     return [(job.name, job) for job in jobs]
 
 

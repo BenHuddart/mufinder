@@ -41,7 +41,7 @@ def test_expand_convergence_jobs_shared_defaults_only() -> None:
         },
     )
 
-    jobs = expand_convergence_jobs(structure=_base_structure_spec(), config=config)
+    jobs = expand_convergence_jobs(structure=_base_structure_spec(), config=config).jobs
 
     assert [job.name for job in jobs] == ["convergence_ecut_300", "convergence_ecut_360"]
     assert _keyword_value(jobs[0], "max_scf_cycles") == 80
@@ -68,7 +68,7 @@ def test_expand_convergence_jobs_sets_atomic_spins_only_when_spin_polarized() ->
             cutoff_energies=(300.0,),
             shared_params={"task": "SINGLEPOINT", "spin_polarized": True},
         ),
-    )
+    ).jobs
     non_spin_jobs = expand_convergence_jobs(
         structure=structure_spec,
         config=ConvergenceConfig(
@@ -77,7 +77,7 @@ def test_expand_convergence_jobs_sets_atomic_spins_only_when_spin_polarized() ->
             cutoff_energies=(300.0,),
             shared_params={"task": "SINGLEPOINT"},
         ),
-    )
+    ).jobs
 
     assert spin_jobs[0].cell_file.atomic_spins == pytest.approx((2.0,))
     assert non_spin_jobs[0].cell_file.atomic_spins is None
@@ -97,7 +97,7 @@ def test_expand_convergence_jobs_applies_subset_override() -> None:
         name_prefix="conv",
     )
 
-    jobs = expand_convergence_jobs(structure=_base_structure_spec(), config=config)
+    jobs = expand_convergence_jobs(structure=_base_structure_spec(), config=config).jobs
 
     assert [job.name for job in jobs] == ["conv_ecut_300", "conv_ecut_360"]
     assert _keyword_value(jobs[0], "max_scf_cycles") == 60
@@ -131,7 +131,7 @@ def test_build_convergence_workflow_happy_path_matches_direct_expansion() -> Non
 
     workflow = adapter_module.build_convergence_workflow(structure=structure, config=config)
     shim_jobs = workflow.expand()
-    direct_jobs = expand_convergence_jobs(structure=structure, config=config)
+    direct_jobs = expand_convergence_jobs(structure=structure, config=config).jobs
 
     assert [job.name for job in shim_jobs] == [job.name for job in direct_jobs]
     assert [job.name for job in shim_jobs] == ["convergence_ecut_300", "convergence_ecut_360"]
@@ -190,7 +190,7 @@ def test_expand_convergence_jobs_merges_multiple_override_layers_same_cutoff() -
         },
     )
 
-    jobs = expand_convergence_jobs(structure=_base_structure_spec(), config=config)
+    jobs = expand_convergence_jobs(structure=_base_structure_spec(), config=config).jobs
 
     assert _keyword_value(jobs[0], "max_scf_cycles") == 80
     assert _keyword_value(jobs[1], "max_scf_cycles") == 80
@@ -222,6 +222,23 @@ def test_template_from_values_handles_cell_params_and_errors() -> None:
         adapter_module._template_from_values({"cut_off_energy": 340.0})
 
 
+def test_expand_convergence_jobs_returns_empty_messages() -> None:
+    # Convergence sweeps a fixed structure, so no supercell rescaling happens
+    # and the shared AdapterExpansion messages must stay empty.
+    config = ConvergenceConfig(
+        sweep_parameter="cut_off_energy",
+        sweep_values=(300.0, 360.0),
+        cutoff_energies=(300.0, 360.0),
+        shared_params={"task": "SINGLEPOINT"},
+    )
+
+    expansion = expand_convergence_jobs(structure=_base_structure_spec(), config=config)
+
+    assert expansion.messages == ()
+    assert expansion.kpoint_messages == ()
+    assert len(expansion.jobs) == 2
+
+
 def test_expand_convergence_jobs_kpoint_sweep() -> None:
     config = ConvergenceConfig(
         sweep_parameter="kpoint_mp_grid",
@@ -232,7 +249,7 @@ def test_expand_convergence_jobs_kpoint_sweep() -> None:
         },
     )
 
-    jobs = expand_convergence_jobs(structure=_base_structure_spec(), config=config)
+    jobs = expand_convergence_jobs(structure=_base_structure_spec(), config=config).jobs
 
     assert [job.name for job in jobs] == [
         "convergence_kgrid_2x2x2",

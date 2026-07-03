@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Mapping
 
 import numpy as np
 
+from mufinder.app.adapter_common import (
+    STRUCTURE_CONTROLLED_CELL_KEYWORDS,
+    AdapterExpansion,
+    build_input_template,
+    rescale_kpoint_grid,
+    row_values_has_keyword,
+    template_has_explicit_kpoints,
+)
 from mufinder.app.relaxation_types import (
     MuonRelaxationConfig,
     MuonRelaxationRow,
@@ -14,17 +22,9 @@ from mufinder.app.relaxation_types import (
     PristineRelaxationRow,
     SupercellMatrix,
 )
-from mufinder.castep_io.gui_metadata import make_block_section, make_keyword_assignment
-from mufinder.castep_io.schema import canonical_keyword_name, get_keyword_spec
 from mufinder.castep_io.types import (
-    AtomicPosition,
     BlockSection,
-    KPoint,
     KeywordAssignment,
-    LatticeABC,
-    LatticeCart,
-    PositionBlock,
-    SpeciesPotential,
 )
 from mufinder.domain.models import Structure
 from mufinder.domain.enums import WorkflowStage
@@ -61,213 +61,25 @@ MUON_RELAXATION_CHARGES = {
     MUONIUM_CHARGE_STATE: 0,
 }
 
-_STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
-    "lattice_cart",
-    "lattice_abc",
-    "positions_frac",
-    "positions_abs",
-}
-_ROW_CONTROLLED_CELL_KEYWORDS = {
-    "fix_all_cell",
-}
-
-
-@dataclass(frozen=True, slots=True)
-class RelaxationExpansion:
-    """Expanded relaxation jobs plus UI-facing scaling messages."""
-
-    jobs: tuple[JobSpec, ...]
-    kpoint_messages: tuple[str, ...] = ()
-
-
-def _find_keyword_spec(name: str):
-    for file_kind in ("param", "cell"):
-        spec = get_keyword_spec(file_kind, name)
-        if spec is not None:
-            return spec
-    return None
-
-
-def _row_values_has_keyword(row_values: Mapping[str, object], target: str) -> bool:
-    """Return true if the user's row parameter values include the given canonical keyword."""
-
-    for raw_name in row_values:
-        spec = _find_keyword_spec(raw_name)
-        if spec is not None and canonical_keyword_name(spec.file, spec.name) == target:
-            return True
-    return False
-
-
-def _lattice_cart_from_block(block: BlockSection) -> LatticeCart:
-    return LatticeCart(
-        vectors=tuple(tuple(float(component) for component in row) for row in block.rows),  # type: ignore[arg-type]
-        unit=block.unit,
-    )
-
-
-def _lattice_abc_from_block(block: BlockSection) -> LatticeABC:
-    return LatticeABC(
-        lengths=tuple(float(component) for component in block.rows[0]),  # type: ignore[arg-type]
-        angles=tuple(float(component) for component in block.rows[1]),  # type: ignore[arg-type]
-        unit=block.unit,
-    )
-
-
-def _positions_from_block(block: BlockSection) -> PositionBlock:
-    return PositionBlock(
-        positions=tuple(
-            AtomicPosition(
-                species=str(row[0]),
-                coordinates=tuple(float(component) for component in row[1:4]),  # type: ignore[arg-type]
-            )
-            for row in block.rows
-        ),
-        unit=block.unit,
-    )
-
-
-def _species_pot_from_block(block: BlockSection) -> tuple[SpeciesPotential, ...]:
-    return tuple(SpeciesPotential(species=str(row[0]), potential=str(row[1])) for row in block.rows)
-
-
-def _kpoints_list_from_block(block: BlockSection) -> tuple[KPoint, ...]:
-    return tuple(
-        KPoint(
-            coordinates=tuple(float(component) for component in row[0:3]),  # type: ignore[arg-type]
-            weight=float(row[3]),
-        )
-        for row in block.rows
-    )
+# ``RelaxationExpansion`` is a thin backward-compatible alias for the generic
+# :class:`~mufinder.app.adapter_common.AdapterExpansion`. The former per-workflow
+# ``kpoint_messages`` field is exposed as a property on ``AdapterExpansion``.
+RelaxationExpansion = AdapterExpansion
 
 
 def _template_from_values(values: Mapping[str, object]) -> InputTemplate:
-    lattice_cart = None
-    lattice_abc = None
-    positions_frac = None
-    positions_abs = None
-    cell_scalars: list[KeywordAssignment] = []
-    cell_blocks: list[BlockSection] = []
-    param_keywords: list[KeywordAssignment] = []
-    param_blocks: list[BlockSection] = []
+    forbidden: dict[str, str] = {
+        name: f"{name} is controlled by the selected structure."
+        for name in STRUCTURE_CONTROLLED_CELL_KEYWORDS
+    }
+    forbidden["fix_all_cell"] = "fix_all_cell is controlled by the row controls."
 
-    species_pot = None
-    kpoint_mp_grid = None
-    kpoint_mp_spacing = None
-    kpoints_list = None
-    symmetry_generate = None
-
-    for raw_name, raw_value in values.items():
-        spec = _find_keyword_spec(raw_name)
-        if spec is None:
-            raise ValueError(f"Unsupported CASTEP keyword '{raw_name}' in pristine-relaxation settings.")
-
-        canonical_name = canonical_keyword_name(spec.file, spec.name)
-        if spec.file == "cell" and canonical_name in _STRUCTURE_CONTROLLED_CELL_KEYWORDS:
-            raise ValueError(f"{canonical_name} is controlled by the selected structure.")
-        if spec.file == "cell" and canonical_name in _ROW_CONTROLLED_CELL_KEYWORDS:
-            raise ValueError(f"{canonical_name} is controlled by the row controls.")
-
-        if spec.kind == "block":
-            block = make_block_section(spec, raw_value)
-            if block is None:
-                continue
-            if spec.file == "cell":
-                if canonical_name == "lattice_cart":
-                    lattice_cart = _lattice_cart_from_block(block)
-                    lattice_abc = None
-                    continue
-                if canonical_name == "lattice_abc":
-                    lattice_abc = _lattice_abc_from_block(block)
-                    lattice_cart = None
-                    continue
-                if canonical_name == "positions_frac":
-                    positions_frac = _positions_from_block(block)
-                    positions_abs = None
-                    continue
-                if canonical_name == "positions_abs":
-                    positions_abs = _positions_from_block(block)
-                    positions_frac = None
-                    continue
-                if canonical_name == "species_pot":
-                    species_pot = _species_pot_from_block(block)
-                    continue
-                if canonical_name == "kpoints_list":
-                    kpoints_list = _kpoints_list_from_block(block)
-                    kpoint_mp_grid = None
-                    kpoint_mp_spacing = None
-                    continue
-                cell_blocks.append(block)
-                continue
-            param_blocks.append(block)
-            continue
-
-        if spec.file == "cell":
-            if canonical_name == "symmetry_generate":
-                symmetry_generate = bool(raw_value)
-                continue
-            if canonical_name == "kpoint_mp_grid":
-                assignment = make_keyword_assignment(spec, raw_value)
-                if assignment is None:
-                    continue
-                triplet = tuple(int(component) for component in assignment.value)  # type: ignore[arg-type]
-                if len(triplet) != 3:
-                    raise ValueError("kpoint_mp_grid requires three integer values.")
-                kpoint_mp_grid = (triplet[0], triplet[1], triplet[2])
-                kpoint_mp_spacing = None
-                kpoints_list = None
-                continue
-            if canonical_name == "kpoint_mp_spacing":
-                assignment = make_keyword_assignment(spec, raw_value)
-                if assignment is None:
-                    continue
-                kpoint_mp_spacing = assignment.value  # type: ignore[assignment]
-                kpoint_mp_grid = None
-                kpoints_list = None
-                continue
-
-        assignment = make_keyword_assignment(spec, raw_value)
-        if assignment is None:
-            continue
-
-        if spec.file == "param":
-            param_keywords.append(assignment)
-        else:
-            cell_scalars.append(assignment)
-
-    cell_template = None
-    if (
-        lattice_cart is not None
-        or lattice_abc is not None
-        or positions_frac is not None
-        or positions_abs is not None
-        or species_pot is not None
-        or kpoint_mp_grid is not None
-        or kpoint_mp_spacing is not None
-        or kpoints_list is not None
-        or symmetry_generate is not None
-        or cell_scalars
-        or cell_blocks
-    ):
-        cell_template = CellTemplate(
-            lattice_cart=lattice_cart,
-            lattice_abc=lattice_abc,
-            positions_frac=positions_frac,
-            positions_abs=positions_abs,
-            species_pot=species_pot,
-            kpoint_mp_grid=kpoint_mp_grid,
-            kpoint_mp_spacing=kpoint_mp_spacing,
-            kpoints_list=kpoints_list,
-            symmetry_generate=symmetry_generate,
-            extra_scalars=tuple(cell_scalars),
-            extra_blocks=tuple(cell_blocks),
-        )
-
-    param_template = (
-        ParamTemplate(keywords=tuple(param_keywords), extra_blocks=tuple(param_blocks))
-        if param_keywords or param_blocks
-        else None
+    return build_input_template(
+        values,
+        context_label="pristine-relaxation settings",
+        forbidden=forbidden,
+        kpoints_list_reset=None,
     )
-    return InputTemplate(cell=cell_template, param=param_template)
 
 
 def _is_identity_supercell(matrix: SupercellMatrix | None) -> bool:
@@ -461,34 +273,18 @@ def expand_pristine_relaxation_jobs(
         row_values.pop("write_cell_structure", None)
         row_template = _template_from_values(row_values)
 
-        explicit_cell = row_template.cell
-        explicit_kpoint_settings = (
-            explicit_cell is not None
-            and (
-                explicit_cell.kpoint_mp_grid is not None
-                or explicit_cell.kpoint_mp_spacing is not None
-                or explicit_cell.kpoints_list is not None
-            )
-        )
-
         kpoint_grid = None
-        if project_kpoint_grid is not None and not explicit_kpoint_settings:
-            if _is_identity_supercell(row.supercell_matrix):
-                kpoint_grid = project_kpoint_grid
-            else:
-                row_lattice = row_structure.lattice_vectors
-                kpoint_grid = equivalent_grid_for_supercell(
-                    reference_lattice,
-                    project_kpoint_grid,
-                    row_lattice,
-                )
-            if row.supercell_matrix is not None and kpoint_grid != project_kpoint_grid:
-                messages.append(
-                    "K-point grid adjusted from "
-                    f"{project_kpoint_grid[0]}x{project_kpoint_grid[1]}x{project_kpoint_grid[2]} to "
-                    f"{kpoint_grid[0]}x{kpoint_grid[1]}x{kpoint_grid[2]} for "
-                    f"{_matrix_token(row.supercell_matrix)} (equivalent density)."
-                )
+        if not template_has_explicit_kpoints(row_template):
+            kpoint_grid, message = rescale_kpoint_grid(
+                project_kpoint_grid=project_kpoint_grid,
+                reference_lattice=reference_lattice,
+                row_lattice=row_structure.lattice_vectors,
+                is_identity_supercell=_is_identity_supercell(row.supercell_matrix),
+                has_supercell=row.supercell_matrix is not None,
+                target_description=f"{_matrix_token(row.supercell_matrix)} (equivalent density).",
+            )
+            if message is not None:
+                messages.append(message)
 
         jobs.append(
             RelaxationJobConfig(
@@ -514,7 +310,7 @@ def expand_pristine_relaxation_jobs(
         workflow_defaults=workflow_defaults,
         tags=("pristine_relaxation",),
     )
-    return RelaxationExpansion(jobs=tuple(expanded), kpoint_messages=tuple(messages))
+    return AdapterExpansion(jobs=tuple(expanded), messages=tuple(messages))
 
 
 def expand_muon_relaxation_jobs(
@@ -574,40 +370,24 @@ def expand_muon_relaxation_jobs(
             row_values.pop(locked, None)
         row_template = _template_from_values(row_values)
 
-        explicit_cell = row_template.cell
-        explicit_kpoint_settings = (
-            explicit_cell is not None
-            and (
-                explicit_cell.kpoint_mp_grid is not None
-                or explicit_cell.kpoint_mp_spacing is not None
-                or explicit_cell.kpoints_list is not None
-            )
-        )
-
         kpoint_grid = None
-        if project_kpoint_grid is not None and not explicit_kpoint_settings:
-            if _is_identity_supercell(row.supercell_matrix):
-                kpoint_grid = project_kpoint_grid
-            else:
-                row_lattice = row_structure.lattice_vectors
-                kpoint_grid = equivalent_grid_for_supercell(
-                    reference_lattice,
-                    project_kpoint_grid,
-                    row_lattice,
-                )
-            if row.supercell_matrix is not None and kpoint_grid != project_kpoint_grid:
-                messages.append(
-                    "K-point grid adjusted from "
-                    f"{project_kpoint_grid[0]}x{project_kpoint_grid[1]}x{project_kpoint_grid[2]} to "
-                    f"{kpoint_grid[0]}x{kpoint_grid[1]}x{kpoint_grid[2]} for "
-                    f"{_matrix_token(row.supercell_matrix)} (equivalent density)."
-                )
+        if not template_has_explicit_kpoints(row_template):
+            kpoint_grid, message = rescale_kpoint_grid(
+                project_kpoint_grid=project_kpoint_grid,
+                reference_lattice=reference_lattice,
+                row_lattice=row_structure.lattice_vectors,
+                is_identity_supercell=_is_identity_supercell(row.supercell_matrix),
+                has_supercell=row.supercell_matrix is not None,
+                target_description=f"{_matrix_token(row.supercell_matrix)} (equivalent density).",
+            )
+            if message is not None:
+                messages.append(message)
 
         param = row_template.param
         forced_keywords = [KeywordAssignment("charge", muon_charge_for_state(charge_state))]
         # Muonium is open-shell, so default to a spin-polarised SCF. Left as a default (not locked
         # like charge) so the user can still override it from the param dialog.
-        if charge_state == MUONIUM_CHARGE_STATE and not _row_values_has_keyword(row_values, "spin_polarized"):
+        if charge_state == MUONIUM_CHARGE_STATE and not row_values_has_keyword(row_values, "spin_polarized"):
             forced_keywords.append(KeywordAssignment("spin_polarized", True))
         param_overrides = ParamTemplate(
             keywords=(tuple(param.keywords) if param is not None else ()) + tuple(forced_keywords),
@@ -657,7 +437,7 @@ def expand_muon_relaxation_jobs(
             for spec in row_jobs
         )
 
-    return RelaxationExpansion(jobs=tuple(expanded_jobs), kpoint_messages=tuple(messages))
+    return AdapterExpansion(jobs=tuple(expanded_jobs), messages=tuple(messages))
 
 
 def suggested_grid_for_row(
