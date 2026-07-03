@@ -106,12 +106,14 @@ def render_job_script(
 ) -> str:
     """Render a cluster scheduler submission script from its runtime inputs.
 
-    This is the pure rendering step that ``ClusterJobRunner.submit`` used to
-    inline. It loads the configured (or built-in) template, derives the node
-    count from ``num_processes`` / ``cores_per_node``, builds the launcher
-    command (``srun`` for slurm, ``mpirun`` otherwise), and substitutes the
-    eight template variables. It returns only the rendered script text; the
-    caller remains responsible for writing, uploading, and chmod-ing it.
+    This is the rendering step that ``ClusterJobRunner.submit`` used to
+    inline. It loads the configured (or built-in) template — reading from
+    disk when ``template_script_path`` names a file — derives the node count
+    from ``num_processes`` / ``cores_per_node``, builds the launcher command
+    (``srun`` for slurm, ``mpirun`` otherwise), and substitutes the eight
+    template variables. It returns only the rendered script text; the caller
+    remains responsible for writing, uploading, and chmod-ing it. Beyond the
+    template read it is stateless and touches no runner or SSH machinery.
 
     Design note — why this lives here and not in
     ``JobExecutionController.prepare_cluster_submission``: rendering consumes
@@ -120,9 +122,9 @@ def render_job_script(
     CASTEP executable is resolved there against the runner's cluster config
     fallback. Relocating rendering to the controller's GUI-thread prepare step
     would force that same resolution to be duplicated there. So the extraction
-    keeps this a pure function called from ``submit`` at exactly the same
-    point, with the already-resolved ``remote_dir`` and ``castep_executable``
-    passed in.
+    keeps this a self-contained rendering function called from ``submit`` at
+    exactly the same point, with the already-resolved ``remote_dir`` and
+    ``castep_executable`` passed in.
 
     :param template_script_path: Configured template path, or "" to fall back
         to a built-in template for the cluster/queue.
