@@ -614,16 +614,18 @@ def test_convergence_controller_submit_cluster_reaches_cluster_backend(tmp_path:
     assert [j.label for j in cluster.calls[0][0]] == ["conv_ecut_300"]
 
 
-def test_convergence_controller_uses_sweep_point_ready_predicate() -> None:
+def test_convergence_controller_uses_shared_ready_predicate() -> None:
     controller = ConvergenceCutoffController(_make_context(), _stub_deps(), _FakeConvergenceView())
-    # Cutoff readiness is the strict "ready"-only predicate, not the wider
-    # workflow-row set — a "defined" row must not be treated as ready.
+    # Cutoff readiness now uses the shared workflow-row predicate, so the same
+    # states that are submittable for every other workflow ("ready", "defined",
+    # "not generated") are submittable here too; active states are not.
     from mufinder.app.convergence_types import SweepPointRunState
 
-    states = {300.0: SweepPointRunState(status="defined")}
+    for ready_status in ("ready", "defined", "not generated"):
+        states = {300.0: SweepPointRunState(status=ready_status)}
+        assert controller.is_ready(states, 300.0) is True
+    states = {300.0: SweepPointRunState(status="running")}
     assert controller.is_ready(states, 300.0) is False
-    states = {300.0: SweepPointRunState(status="ready")}
-    assert controller.is_ready(states, 300.0) is True
 
 
 def test_convergence_controller_refresh_view_without_document_clears_rows() -> None:
@@ -834,14 +836,15 @@ def test_kpoint_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path
     assert cluster.calls[0][0][0].calc_type == "castep_convergence_kpoint"
 
 
-def test_kpoint_controller_uses_sweep_point_ready_predicate() -> None:
+def test_kpoint_controller_uses_shared_ready_predicate() -> None:
     controller = ConvergenceKpointController(_make_context(), _stub_kpoint_deps(), _FakeKpointView())
     from mufinder.app.convergence_types import SweepPointRunState
 
-    states = {(2, 2, 2): SweepPointRunState(status="defined")}
+    for ready_status in ("ready", "defined", "not generated"):
+        states = {(2, 2, 2): SweepPointRunState(status=ready_status)}
+        assert controller.is_ready(states, (2, 2, 2)) is True
+    states = {(2, 2, 2): SweepPointRunState(status="running")}
     assert controller.is_ready(states, (2, 2, 2)) is False
-    states = {(2, 2, 2): SweepPointRunState(status="ready")}
-    assert controller.is_ready(states, (2, 2, 2)) is True
 
 
 def test_kpoint_controller_refresh_view_without_document_clears_rows() -> None:

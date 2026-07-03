@@ -85,7 +85,9 @@ class UepController(WorkflowJobController):
     """Controller for the UEP source-job workflow."""
 
     calc_types = frozenset({"castep_uep_source"})
-    no_ready_message = "Only configured UEP rows in the 'ready' state can be submitted."
+    no_ready_message = (
+        "Only configured UEP source rows that have not yet been submitted can be submitted."
+    )
 
     def __init__(
         self,

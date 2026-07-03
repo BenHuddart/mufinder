@@ -40,6 +40,10 @@ from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
+from mufinder.app.workflow_table_utils import (
+    create_workflow_table,
+    style_workflow_configure_button,
+)
 from mufinder.app.theme import (
     status_brush,
     style_section_subtitle,
@@ -234,27 +238,29 @@ class KPointConvergenceWidget(QWidget):
         }
         self._parameter_species_options: tuple[str, ...] = ()
 
-        self._table = QTableWidget(0, 6)
-        self._table.setHorizontalHeaderLabels(
-            [
+        self._table = create_workflow_table(
+            (
                 "K-Point Grid",
                 "Status",
                 "Total Energy (eV)",
                 "Max |Force| (eV/Ang)",
                 "Parameters",
                 "",
-            ]
+            )
         )
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # Per-widget settings the shared helper does not cover (or that this
+        # editable table overrides): extended multi-select, in-place editing,
+        # a fixed row height, per-column resize modes, and a non-stretching
+        # last (Remove) column.
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
             | QAbstractItemView.EditTrigger.SelectedClicked
         )
-        self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(self._ROW_HEIGHT)
         header = self._table.horizontalHeader()
+        header.setStretchLastSection(False)
         header.setSectionResizeMode(self._GRID_COLUMN, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(self._STATUS_COLUMN, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(self._TOTAL_ENERGY_COLUMN, QHeaderView.ResizeMode.Stretch)
@@ -1012,15 +1018,13 @@ class KPointConvergenceWidget(QWidget):
         if isinstance(configure_button, QPushButton):
             customized = grid is not None and self._is_grid_customized(grid)
             locked = status_normalized in _LOCKED_GRID_EDIT_STATUSES
-            configure_button.setText("Configured..." if customized or locked else "Configure...")
-            configure_button.setToolTip(
-                "Inspect the CASTEP parameters used for this grid."
-                if locked
-                else (
-                    "Edit custom parameters for this grid."
-                    if customized
-                    else "Configure CASTEP parameters for this grid."
-                )
+            style_workflow_configure_button(
+                configure_button,
+                workflow_label="CASTEP",
+                configured=customized,
+                locked=locked,
+                noun="grid",
+                used=True,
             )
 
     def _refresh_batch_button_state(self) -> None:

@@ -9,7 +9,13 @@ from typing import Generic, TypeVar
 from mufinder.domain.models import Job
 
 _WorkflowKey = TypeVar("_WorkflowKey")
-_READY_WORKFLOW_ROW_STATUSES = {"ready", "defined", "not generated"}
+
+#: Runtime/display statuses a workflow row may be in and still be submittable.
+#: This is the single source of truth shared by the submit predicate
+#: (:func:`workflow_row_state_is_ready`) and by widget-level submit-enablement
+#: gates, so run-button enablement and the submit filter cannot drift apart.
+READY_WORKFLOW_ROW_STATUSES = frozenset({"ready", "defined", "not generated"})
+_READY_WORKFLOW_ROW_STATUSES = READY_WORKFLOW_ROW_STATUSES
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,15 +40,6 @@ def workflow_row_state_is_ready(
     """Return whether a workflow row can be materialized and submitted."""
 
     return str(getattr(states.get(key), "status", "")) in _READY_WORKFLOW_ROW_STATUSES
-
-
-def sweep_point_state_is_ready(
-    states: Mapping[_WorkflowKey, object],
-    key: _WorkflowKey,
-) -> bool:
-    """Return whether a convergence sweep point can be materialized and submitted."""
-
-    return str(getattr(states.get(key), "status", "")) == "ready"
 
 
 class WorkflowSubmissionCoordinator:

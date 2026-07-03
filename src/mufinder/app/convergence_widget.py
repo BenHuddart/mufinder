@@ -39,6 +39,11 @@ from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
+from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
+from mufinder.app.workflow_table_utils import (
+    create_workflow_table,
+    style_workflow_configure_button,
+)
 from mufinder.app.theme import (
     status_brush,
     style_section_subtitle,
@@ -68,7 +73,11 @@ _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
 }
 _ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
 _PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
-_SUBMITTABLE_JOB_STATUSES = {"ready", "defined"}
+# Submit-enablement gate for the row context menu. It shares the single source
+# of truth used by the submit predicate (workflow_row_state_is_ready) so the
+# context-menu Submit action agrees with the always-enabled Run buttons, which
+# already submit "not generated" rows through the same materialize path.
+_SUBMITTABLE_JOB_STATUSES = set(READY_WORKFLOW_ROW_STATUSES)
 _RESETTABLE_JOB_STATUSES = {"failed", "stopped", "cancelled"}
 _LOCKED_CUTOFF_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"cancelled"}
 
@@ -214,28 +223,30 @@ class CutoffConvergenceWidget(QWidget):
         }
         self._parameter_species_options: tuple[str, ...] = ()
 
-        self._cutoff_table = QTableWidget(0, 6)
-        self._cutoff_table.setHorizontalHeaderLabels(
-            [
+        self._cutoff_table = create_workflow_table(
+            (
                 "Cutoff Energy (eV)",
                 "Status",
                 "Total Energy (eV)",
                 "Max |Force| (eV/Ang)",
                 "Parameters",
                 "",
-            ]
+            )
         )
-        self._cutoff_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # Per-widget settings the shared helper does not cover (or that this
+        # editable table overrides): extended multi-select, in-place editing,
+        # a fixed row height, a custom context menu, per-column resize modes,
+        # and a non-stretching last (Remove) column.
         self._cutoff_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._cutoff_table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
             | QAbstractItemView.EditTrigger.SelectedClicked
         )
-        self._cutoff_table.verticalHeader().setVisible(False)
         self._cutoff_table.verticalHeader().setDefaultSectionSize(self._ROW_HEIGHT)
         self._cutoff_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header = self._cutoff_table.horizontalHeader()
+        header.setStretchLastSection(False)
         header.setSectionResizeMode(self._CUTOFF_COLUMN, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(self._STATUS_COLUMN, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(self._TOTAL_ENERGY_COLUMN, QHeaderView.ResizeMode.Stretch)
@@ -1151,15 +1162,14 @@ class CutoffConvergenceWidget(QWidget):
         if isinstance(configure_button, QPushButton):
             customized = cutoff is not None and self._is_cutoff_customized(cutoff)
             locked = status_normalized in _LOCKED_CUTOFF_EDIT_STATUSES
-            configure_button.setText("Configured..." if customized or locked else "Configure...")
-            if locked:
-                configure_button.setToolTip("Inspect the CASTEP parameters used for this cutoff.")
-            else:
-                configure_button.setToolTip(
-                    "Edit custom parameters for this cutoff."
-                    if customized
-                    else "Configure CASTEP parameters for this cutoff."
-                )
+            style_workflow_configure_button(
+                configure_button,
+                workflow_label="CASTEP",
+                configured=customized,
+                locked=locked,
+                noun="cutoff",
+                used=True,
+            )
 
     def _refresh_batch_button_state(self) -> None:
         self._batch_configure_button.setEnabled(bool(self._selected_cutoffs()))

@@ -173,7 +173,9 @@ class EnergyBarriersController(WorkflowJobController):
     calc_types = frozenset(
         {NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE}
     )
-    no_ready_message = "Only paths in the 'ready' state can be submitted as NEB jobs."
+    no_ready_message = (
+        "Only NEB paths that have not yet been submitted can be submitted."
+    )
 
     def __init__(
         self,

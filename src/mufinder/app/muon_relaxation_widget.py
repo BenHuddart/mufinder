@@ -40,7 +40,10 @@ from mufinder.app.relaxation_adapter import (
     suggested_grid_for_row,
 )
 from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow, RelaxationRunState, SupercellMatrix
-from mufinder.app.workflow_table_utils import style_workflow_configure_button
+from mufinder.app.workflow_table_utils import (
+    create_workflow_table,
+    style_workflow_configure_button,
+)
 from mufinder.app.theme import (
     current_palette,
     status_brush,
@@ -277,7 +280,24 @@ class MuonRelaxationWidget(QWidget):
         self._backspace_shortcut.activated.connect(self._delete_selected_rows)
 
     def _create_table(self) -> QTableWidget:
-        table = QTableWidget(0, 12)
+        column_labels = (
+            "Label",
+            "Supercell",
+            "fX",
+            "fY",
+            "fZ",
+            "fX",
+            "fY",
+            "fZ",
+            "Total Energy\n(eV)",
+            "Status",
+            "Parameters",
+            "",
+        )
+        table = create_workflow_table(column_labels)
+        # This table carries a custom grouped header spanning the coordinate
+        # columns; install it and re-apply the labels the helper set on the
+        # default header it replaces.
         table.setHorizontalHeader(
             _GroupedCoordinateHeader(
                 (
@@ -287,32 +307,20 @@ class MuonRelaxationWidget(QWidget):
                 table,
             )
         )
-        table.setHorizontalHeaderLabels(
-            [
-                "Label",
-                "Supercell",
-                "fX",
-                "fY",
-                "fZ",
-                "fX",
-                "fY",
-                "fZ",
-                "Total Energy\n(eV)",
-                "Status",
-                "Parameters",
-                "",
-            ]
-        )
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setHorizontalHeaderLabels(list(column_labels))
+        # Per-widget settings the shared helper does not cover (or that this
+        # editable table overrides): extended multi-select, in-place editing,
+        # a fixed row height, centered header text, per-column resize modes,
+        # a non-stretching last (Remove) column, and tabbed-pane corners.
         table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
             | QAbstractItemView.EditTrigger.SelectedClicked
         )
-        table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(32)
         header = table.horizontalHeader()
+        header.setStretchLastSection(False)
         header.setSectionResizeMode(self._LABEL_COLUMN, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(self._SUPERCELL_COLUMN, QHeaderView.ResizeMode.Stretch)
         for column in (

@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
-    sweep_point_state_is_ready,
     workflow_row_state_is_ready,
 )
 from mufinder.domain.enums import WorkflowStage
@@ -40,7 +39,7 @@ def test_submission_plan_normalizes_dedupes_and_materializes_ready_values() -> N
         build_states=lambda: {300: _State("queued"), 360: _State("ready"), 420: _State("failed")},
         jobs_for_values=_existing_jobs,
         materialize_values=_materialized_jobs,
-        is_ready=sweep_point_state_is_ready,
+        is_ready=workflow_row_state_is_ready,
     )
 
     assert plan.ordered_values == (300, 360, 420)

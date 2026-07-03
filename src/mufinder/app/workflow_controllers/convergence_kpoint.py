@@ -19,7 +19,7 @@ documented in :mod:`mufinder.app.workflow_controllers.base`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -34,7 +34,6 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
 )
-from mufinder.app.workflow_submission import sweep_point_state_is_ready
 
 _Grid = tuple[int, int, int]
 
@@ -63,7 +62,9 @@ class ConvergenceKpointController(WorkflowJobController):
     """Controller for the k-point-grid convergence sweep."""
 
     calc_types = frozenset({"castep_convergence_kpoint"})
-    no_ready_message = "Only configured grids in the 'ready' state can be submitted."
+    no_ready_message = (
+        "Only configured k-point grids that have not yet been submitted can be submitted."
+    )
 
     def __init__(
         self,
@@ -81,8 +82,10 @@ class ConvergenceKpointController(WorkflowJobController):
         grid = value  # type: ignore[assignment]
         return (int(grid[0]), int(grid[1]), int(grid[2]))
 
-    def is_ready(self, states: Mapping[object, object], key: object) -> bool:
-        return sweep_point_state_is_ready(states, key)
+    # ``is_ready`` uses the shared base default
+    # (:func:`~mufinder.app.workflow_submission.workflow_row_state_is_ready`),
+    # so convergence rows use the same submit-eligibility predicate as every
+    # other workflow.
 
     def build_states(self) -> dict[_Grid, SweepPointRunState]:
         document = self._context.document()

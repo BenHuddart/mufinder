@@ -159,7 +159,7 @@ class MuonRelaxationController(WorkflowJobController):
 
     calc_types = frozenset(MUON_RELAXATION_CALC_TYPES.values())
     no_ready_message = (
-        "Only configured muon-relaxation rows in the 'ready' state can be submitted."
+        "Only configured muon-relaxation rows that have not yet been submitted can be submitted."
     )
 
     def __init__(
