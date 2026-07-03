@@ -356,7 +356,7 @@ class MuonGenerationWidget(QWidget):
         self._cluster_btn.setEnabled(False)
         self._cluster_btn.clicked.connect(self._open_cluster_positions_dialog)
         action_row.addWidget(self._cluster_btn)
-        self._delete_btn = QPushButton("Delete Selected")
+        self._delete_btn = QPushButton("Remove Selected")
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._emit_delete_selected)
         action_row.addWidget(self._delete_btn)
