@@ -39,7 +39,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
@@ -65,24 +64,21 @@ class UepDeps:
     them there: ``active_uep_definition`` / ``deserialize_uep_config`` /
     ``sync_equivalent_uep_mappings`` / ``job_for_uep_label`` are shared with the
     UEP configure path, row removal, the analysis wizard, and dashboard
-    cluster-source sync; ``definition_output_directory`` /
-    ``job_output_directory`` / ``job_seed_name`` / ``run_for_job`` are shared
-    across workflows; and ``uep_potential_grid_result_for_job`` still feeds the
-    analysis wizard's "already analysed" detection. The controller reaches them
-    only through these required callables. Workflow-specific dependencies like
-    these never go in the shared
-    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`.
+    cluster-source sync; and ``uep_potential_grid_result_for_job`` still feeds
+    the analysis wizard's "already analysed" detection. The controller reaches
+    them only through these required callables. Workflow-specific dependencies
+    like these never go in the shared
+    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`;
+    cross-workflow job/definition readers (``definition_output_directory``,
+    ``job_output_directory``, ``job_seed_name``, ``run_for_job``) live there
+    instead.
     """
 
     active_uep_definition: Callable[[], CalculationDefinition | None]
     deserialize_uep_config: Callable[[object], UepConfig | None]
     sync_equivalent_uep_mappings: Callable[[CalculationDefinition], None]
     job_for_uep_label: Callable[[CalculationDefinition, str], Job | None]
-    definition_output_directory: Callable[[CalculationDefinition], Path | None]
     uep_potential_grid_result_for_job: Callable[[UUID], Result | None]
-    run_for_job: Callable[[UUID], CalculationRun | None]
-    job_output_directory: Callable[[Job], Path | None]
-    job_seed_name: Callable[[Job], str]
 
 
 class UepController(WorkflowJobController):
@@ -130,7 +126,7 @@ class UepController(WorkflowJobController):
             if job is None:
                 states[row.label] = UepRunState(status="ready")
                 continue
-            run = self._deps.run_for_job(job.id)
+            run = self._context.run_for_job(job.id)
             result = (
                 document.results.get(run.result_id)
                 if run is not None and run.result_id is not None
@@ -187,7 +183,7 @@ class UepController(WorkflowJobController):
         if config is None:
             return []
         source_structure = document.structures.get(definition.input_structure_ids[0])
-        output_root = self._deps.definition_output_directory(definition)
+        output_root = self._context.definition_output_directory(definition)
         if source_structure is None or output_root is None:
             return []
 
@@ -263,8 +259,8 @@ class UepController(WorkflowJobController):
         already passes ``_output_files_for_job(job)``, which includes it.
         """
 
-        output_dir = self._deps.job_output_directory(job)
-        seed_name = self._deps.job_seed_name(job)
+        output_dir = self._context.job_output_directory(job)
+        seed_name = self._context.job_seed_name(job)
         density_available = (
             output_dir is not None and (output_dir / f"{seed_name}.den_fmt").exists()
         )

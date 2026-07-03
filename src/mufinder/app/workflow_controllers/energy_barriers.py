@@ -64,7 +64,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID
 
 from mufinder.castep_io import parse_transition_state_file
@@ -111,8 +110,7 @@ class EnergyBarriersDeps:
     across every host-guarded workflow; the endpoint-row / max-path-length /
     selected-endpoint helpers back the path-generation UI the controller now
     renders; ``neb_barrier_summaries`` and the completed-candidate / result-row
-    helpers back the result table; and ``definition_output_directory`` /
-    ``dedupe_jobs`` / ``job_output_directory`` / ``job_seed_name`` /
+    helpers back the result table; and ``dedupe_jobs`` /
     ``charge_state_label_for_job`` / ``workflow_row_configuration_exists`` /
     ``project_convergence_input_defaults`` are shared across workflows. The
     source-decoding helpers (``uuid_from_source`` / ``float_from_source`` /
@@ -124,7 +122,9 @@ class EnergyBarriersDeps:
     formatting helpers (the controller must not import ``main_window``). The
     controller reaches them only through these required callables. Workflow-specific
     dependencies like these never go in the shared
-    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`.
+    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`;
+    cross-workflow job/definition readers (``definition_output_directory``,
+    ``job_output_directory``, ``job_seed_name``) live there instead.
     """
 
     # Definition / source / candidate helpers
@@ -149,15 +149,11 @@ class EnergyBarriersDeps:
     ]
     fractional_position_block_from_structure: Callable[[Structure], object]
     # Shared workflow helpers
-    definition_output_directory: Callable[[object], Path | None]
     dedupe_jobs: Callable[[list[Job]], list[Job]]
     project_convergence_input_defaults: Callable[[], object]
     input_template_from_keyword_values: Callable[[Mapping[str, object]], InputTemplate]
     workflow_row_configuration_exists: Callable[[object, str], bool]
     charge_state_label_for_job: Callable[[Job | None], str]
-    # Result parsing / dispatch
-    job_output_directory: Callable[[Job], Path | None]
-    job_seed_name: Callable[[Job], str]
     # View-refresh helpers (endpoint options + result table)
     energy_barrier_endpoint_rows: Callable[[], list[EnergyBarrierEndpointRow]]
     selected_energy_barrier_endpoint_keys: Callable[[], tuple[str, str]]
@@ -278,7 +274,7 @@ class EnergyBarriersController(WorkflowJobController):
         definition = self._deps.ensure_energy_barrier_neb_definition(str_keys)
         if definition is None:
             return []
-        output_root = self._deps.definition_output_directory(definition)
+        output_root = self._context.definition_output_directory(definition)
         host_id = document.project.host_structure_id
         host = document.structures.get(host_id) if host_id is not None else None
         if output_root is None or host is None:
@@ -469,12 +465,17 @@ class EnergyBarriersController(WorkflowJobController):
         payload is identical for either.
         """
 
-        output_dir = self._deps.job_output_directory(job)
-        seed_name = self._deps.job_seed_name(job)
+        output_dir = self._context.job_output_directory(job)
+        seed_name = self._context.job_seed_name(job)
         if output_dir is None:
             return ControllerResult()
         ts_path = output_dir / f"{seed_name}.ts"
 
+        # Intentional double parse: the inline ``_on_local_job_finished`` guard
+        # already parsed this ``.ts`` file to validate it and discarded the
+        # result; here ``build_result`` re-parses on the validated success path.
+        # Accepted cost — do NOT "fix" it by caching parse state on the
+        # controller.
         transition_state = parse_transition_state_file(ts_path)
         payload: dict[str, object] = {
             "transition_state_file": str(ts_path),

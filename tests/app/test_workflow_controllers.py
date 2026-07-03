@@ -16,6 +16,7 @@ layer is meant to provide.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
@@ -79,6 +80,12 @@ def _make_context(
     local_backend: _RecordingBackend | None = None,
     cluster_backend: _RecordingBackend | None = None,
     infos: list[tuple[str, str]] | None = None,
+    definition_output_directory: Callable[[object], object] = lambda _d: None,
+    job_output_directory: Callable[[object], object] = lambda _j: None,
+    job_seed_name: Callable[[object], str] = lambda j: j.label,
+    run_for_job: Callable[[object], object] = lambda _r: None,
+    total_energy_for_job: Callable[[object], object] = lambda _j: None,
+    max_force_for_job: Callable[[object], object] = lambda _j: None,
 ) -> WorkflowControllerContext:
     service = project_service or ProjectService()
     return WorkflowControllerContext(
@@ -92,6 +99,12 @@ def _make_context(
         request_dashboard_flush=lambda **_: None,
         persist_ui_state=lambda **_: None,
         status_message=lambda _message: None,
+        definition_output_directory=definition_output_directory,
+        job_output_directory=job_output_directory,
+        job_seed_name=job_seed_name,
+        run_for_job=run_for_job,
+        total_energy_for_job=total_energy_for_job,
+        max_force_for_job=max_force_for_job,
     )
 
 
@@ -438,10 +451,7 @@ def _stub_deps() -> ConvergenceCutoffDeps:
         sync_equivalent_convergence_cutoff_mappings=lambda _definition: None,
         definition_for_convergence_cutoff=lambda _cutoff: (None, None),
         job_for_definition_cutoff=lambda _definition, _cutoff: None,
-        definition_output_directory=lambda _definition: None,
         cutoff_key=lambda value: f"{float(value):.12g}",
-        total_energy_for_job=lambda _job_id: None,
-        max_force_for_job=lambda _job_id: None,
         max_stress_for_job=lambda _job_id: None,
     )
 
@@ -484,6 +494,12 @@ def _cutoff_context_and_deps(
         request_dashboard_flush=lambda **_: None,
         persist_ui_state=lambda **_: None,
         status_message=lambda _m: None,
+        definition_output_directory=lambda d: document.project_root / "files" / "convergence_cutoff",
+        job_output_directory=lambda _job: None,
+        job_seed_name=lambda job: job.label,
+        run_for_job=lambda _job_id: None,
+        total_energy_for_job=lambda _job_id: None,
+        max_force_for_job=lambda _job_id: None,
     )
     deps = ConvergenceCutoffDeps(
         active_convergence_definition=lambda: active_definition,
@@ -491,10 +507,7 @@ def _cutoff_context_and_deps(
         sync_equivalent_convergence_cutoff_mappings=lambda _d: None,
         definition_for_convergence_cutoff=definition_for_cutoff,
         job_for_definition_cutoff=job_for_definition_cutoff,
-        definition_output_directory=lambda d: document.project_root / "files" / "convergence_cutoff",
         cutoff_key=lambda value: f"{float(value):.12g}",
-        total_energy_for_job=lambda _job_id: None,
-        max_force_for_job=lambda _job_id: None,
         max_stress_for_job=lambda _job_id: None,
     )
     return context, deps
@@ -661,12 +674,7 @@ def _stub_kpoint_deps() -> ConvergenceKpointDeps:
         active_kpoint_definition=lambda: None,
         deserialize_convergence_config=lambda _payload: None,
         sync_equivalent_convergence_kpoint_mappings=lambda _definition: None,
-        definition_for_kpoint_grid=lambda _grid: (None, None),
-        job_for_definition_grid=lambda _definition, _grid: None,
-        definition_output_directory=lambda _definition: None,
         grid_key=_grid_key,
-        total_energy_for_job=lambda _job_id: None,
-        max_force_for_job=lambda _job_id: None,
         max_stress_for_job=lambda _job_id: None,
     )
 
@@ -689,14 +697,6 @@ def _kpoint_context_and_deps(
     def deserialize(payload):
         return document.ui_state.get("_test_config")
 
-    def definition_for_grid(grid):
-        return active_definition, document.ui_state.get("_test_config")
-
-    def job_for_definition_grid(definition, grid):
-        mapping = definition.parameters.get("job_ids_by_grid", {}) if definition else {}
-        job_id = mapping.get(_grid_key(grid))
-        return document.jobs.get(job_id) if job_id else None
-
     context = WorkflowControllerContext(
         document=lambda: document,
         project_service=service,
@@ -708,17 +708,18 @@ def _kpoint_context_and_deps(
         request_dashboard_flush=lambda **_: None,
         persist_ui_state=lambda **_: None,
         status_message=lambda _m: None,
+        definition_output_directory=lambda d: document.project_root / "files" / "convergence_kpoint",
+        job_output_directory=lambda _job: None,
+        job_seed_name=lambda job: job.label,
+        run_for_job=lambda _job_id: None,
+        total_energy_for_job=lambda _job_id: None,
+        max_force_for_job=lambda _job_id: None,
     )
     deps = ConvergenceKpointDeps(
         active_kpoint_definition=lambda: active_definition,
         deserialize_convergence_config=deserialize,
         sync_equivalent_convergence_kpoint_mappings=lambda _d: None,
-        definition_for_kpoint_grid=definition_for_grid,
-        job_for_definition_grid=job_for_definition_grid,
-        definition_output_directory=lambda d: document.project_root / "files" / "convergence_kpoint",
         grid_key=_grid_key,
-        total_energy_for_job=lambda _job_id: None,
-        max_force_for_job=lambda _job_id: None,
         max_stress_for_job=lambda _job_id: None,
     )
     return context, deps
@@ -934,14 +935,8 @@ def _stub_pristine_deps(**overrides) -> PristineRelaxationDeps:
         pristine_relaxation_form_config=lambda: None,
         pristine_relaxation_row_signature=lambda _row: (),
         job_for_pristine_relaxation_label=lambda _definition, _label: None,
-        definition_output_directory=lambda _definition: None,
         expand_pristine_relaxation_jobs=lambda _definition, _config: None,
-        job_output_directory=lambda _job: None,
-        job_seed_name=lambda job: job.label,
         parse_relaxed_out_cell=_real_parse_relaxed_out_cell,
-        run_for_job=lambda _job_id: None,
-        total_energy_for_job=lambda _job_id: None,
-        max_force_for_job=lambda _job_id: None,
     )
     base.update(overrides)
     return PristineRelaxationDeps(**base)
@@ -1029,9 +1024,12 @@ def test_pristine_controller_build_result_parses_lattice_and_creates_structure(
 
     deps = _stub_pristine_deps(
         active_pristine_relaxation_definition=lambda: definition,
+    )
+    context = _make_context(
+        document=document,
+        project_service=service,
         job_output_directory=lambda _job: output_dir,
     )
-    context = _make_context(document=document, project_service=service)
     controller = PristineRelaxationController(context, deps, _FakeRelaxationView())
 
     parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
@@ -1074,8 +1072,12 @@ def test_pristine_controller_build_result_missing_out_cell_raises(tmp_path: Path
 
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
-    deps = _stub_pristine_deps(job_output_directory=lambda _job: empty_dir)
-    context = _make_context(document=document, project_service=service)
+    deps = _stub_pristine_deps()
+    context = _make_context(
+        document=document,
+        project_service=service,
+        job_output_directory=lambda _job: empty_dir,
+    )
     controller = PristineRelaxationController(context, deps, _FakeRelaxationView())
 
     parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
@@ -1137,10 +1139,13 @@ def test_pristine_controller_materialize_writes_job_ids_by_label(tmp_path: Path)
         active_pristine_relaxation_definition=lambda: definition,
         deserialize_pristine_relaxation_config=lambda _payload: config,
         job_for_pristine_relaxation_label=job_for_label,
-        definition_output_directory=lambda _defn: output_root,
         expand_pristine_relaxation_jobs=expand,
     )
-    context = _make_context(document=document, project_service=service)
+    context = _make_context(
+        document=document,
+        project_service=service,
+        definition_output_directory=lambda _defn: output_root,
+    )
     controller = PristineRelaxationController(context, deps, _FakeRelaxationView())
 
     jobs = controller.materialize(["row1"])
@@ -1204,7 +1209,6 @@ def test_pristine_controller_submit_local_reaches_local_backend(tmp_path: Path) 
         pristine_relaxation_form_config=lambda: config,
         pristine_relaxation_row_signature=lambda row: (row.label,),
         job_for_pristine_relaxation_label=job_for_label,
-        definition_output_directory=lambda _defn: output_root,
         expand_pristine_relaxation_jobs=expand,
     )
 
@@ -1215,6 +1219,7 @@ def test_pristine_controller_submit_local_reaches_local_backend(tmp_path: Path) 
         project_service=service,
         local_backend=local,
         cluster_backend=cluster,
+        definition_output_directory=lambda _defn: output_root,
     )
     controller = PristineRelaxationController(context, deps, _FakeRelaxationView())
 
@@ -1306,18 +1311,11 @@ def _stub_muon_deps(**overrides) -> MuonRelaxationDeps:
             lambda row: f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
         ),
         job_for_muon_relaxation_label=lambda _definition, _label, _charge_state: None,
-        job_is_active_local=lambda _job: False,
-        definition_output_directory=lambda _definition: None,
         handle_site_host_mismatch=lambda _mismatch: False,
         muon_relaxation_definition_and_row_for_job=lambda _job: (None, None),
         muon_fractional_position_from_cell=_real_muon_position_from_cell,
         coerce_fractional_triplet=_real_coerce_fractional_triplet,
-        job_output_directory=lambda _job: None,
-        job_seed_name=lambda job: job.label,
         parse_relaxed_out_cell=_real_parse_relaxed_out_cell,
-        run_for_job=lambda _job_id: None,
-        total_energy_for_job=lambda _job_id: None,
-        max_force_for_job=lambda _job_id: None,
     )
     base.update(overrides)
     return MuonRelaxationDeps(**base)
@@ -1508,9 +1506,12 @@ def test_muon_controller_submission_groups_split_by_charge_state(tmp_path: Path)
     pos_c = _muon_job(service, document, "c", "castep_positivemuon_relaxation")
 
     # Mixed list splits into positive-muon group first, then muonium, no extra
-    # kwargs; a duplicate job id is deduped.
+    # kwargs. ``submission_groups`` no longer dedupes by id — the submission
+    # coordinator's plan already does that before this hook runs — so a duplicate
+    # job id passed straight to this hook is preserved within its charge-state
+    # group rather than collapsed.
     groups = controller.submission_groups([pos_a, mu_b, pos_c, pos_a])
-    assert groups == [([pos_a, pos_c], {}), ([mu_b], {})]
+    assert groups == [([pos_a, pos_c, pos_a], {}), ([mu_b], {})]
 
     # A single-charge-state list yields one group (no empty groups).
     assert controller.submission_groups([mu_b]) == [([mu_b], {})]
@@ -1583,7 +1584,6 @@ def _muon_two_row_submission_fixture(service: ProjectService, tmp_path: Path):
         deserialize_muon_relaxation_config=lambda _payload: config,
         muon_relaxation_form_config=lambda: config,
         job_for_muon_relaxation_label=job_for_label,
-        definition_output_directory=lambda _defn: output_root,
     )
     return document, definition, deps, output_root
 
@@ -1599,7 +1599,11 @@ def test_muon_controller_materialize_writes_charge_prefixed_mappings_and_persist
     )
     persists: list[dict] = []
     context = dataclasses.replace(
-        _make_context(document=document, project_service=service),
+        _make_context(
+            document=document,
+            project_service=service,
+            definition_output_directory=lambda _defn: output_root,
+        ),
         persist_ui_state=lambda **kwargs: persists.append(dict(kwargs)),
     )
     controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
@@ -1627,7 +1631,7 @@ def test_muon_controller_submit_local_splits_groups_across_backend_calls(
     tmp_path: Path,
 ) -> None:
     service = ProjectService()
-    document, definition, deps, _output_root = _muon_two_row_submission_fixture(
+    document, definition, deps, output_root = _muon_two_row_submission_fixture(
         service, tmp_path
     )
     local = _RecordingBackend()
@@ -1637,6 +1641,7 @@ def test_muon_controller_submit_local_splits_groups_across_backend_calls(
         project_service=service,
         local_backend=local,
         cluster_backend=cluster,
+        definition_output_directory=lambda _defn: output_root,
     )
     controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
 
@@ -1659,7 +1664,7 @@ def test_muon_controller_submit_local_splits_groups_across_backend_calls(
 
 def test_muon_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:
     service = ProjectService()
-    document, _definition, deps, _output_root = _muon_two_row_submission_fixture(
+    document, _definition, deps, output_root = _muon_two_row_submission_fixture(
         service, tmp_path
     )
     local = _RecordingBackend()
@@ -1669,6 +1674,7 @@ def test_muon_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) 
         project_service=service,
         local_backend=local,
         cluster_backend=cluster,
+        definition_output_directory=lambda _defn: output_root,
     )
     controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
 
@@ -1729,9 +1735,12 @@ def test_muon_controller_build_result_records_position_structure_and_site_mutati
     deps = _stub_muon_deps(
         active_muon_relaxation_definition=lambda: definition,
         muon_relaxation_definition_and_row_for_job=lambda _job: (definition, row),
+    )
+    context = _make_context(
+        document=document,
+        project_service=service,
         job_output_directory=lambda _job: output_dir,
     )
-    context = _make_context(document=document, project_service=service)
     controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
 
     parsed = CastepResult(completed=True, total_energy=-12.0, warnings=())
@@ -1817,9 +1826,12 @@ def test_muon_controller_build_result_fails_loudly_on_muonless_cell(tmp_path: Pa
     deps = _stub_muon_deps(
         active_muon_relaxation_definition=lambda: definition,
         muon_relaxation_definition_and_row_for_job=lambda _job: (definition, row),
+    )
+    context = _make_context(
+        document=document,
+        project_service=service,
         job_output_directory=lambda _job: output_dir,
     )
-    context = _make_context(document=document, project_service=service)
     controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
 
     parsed = CastepResult(completed=True, total_energy=-12.0, warnings=())
@@ -1858,11 +1870,7 @@ def _stub_uep_deps(**overrides) -> UepDeps:
         deserialize_uep_config=lambda _payload: None,
         sync_equivalent_uep_mappings=lambda _definition: None,
         job_for_uep_label=lambda _definition, _label: None,
-        definition_output_directory=lambda _definition: None,
         uep_potential_grid_result_for_job=lambda _job_id: None,
-        run_for_job=lambda _job_id: None,
-        job_output_directory=lambda _job: None,
-        job_seed_name=lambda job: job.label,
     )
     base.update(overrides)
     return UepDeps(**base)
@@ -1928,8 +1936,12 @@ def test_uep_controller_build_result_flag_true_when_den_fmt_present(tmp_path: Pa
     output_dir.mkdir()
     (output_dir / f"{job.label}.den_fmt").write_text("density", encoding="utf-8")
 
-    deps = _stub_uep_deps(job_output_directory=lambda _job: output_dir)
-    context = _make_context(document=document, project_service=service)
+    deps = _stub_uep_deps()
+    context = _make_context(
+        document=document,
+        project_service=service,
+        job_output_directory=lambda _job: output_dir,
+    )
     controller = UepController(context, deps, _FakeUepView())
 
     parsed = CastepResult(completed=True, total_energy=-20.5, warnings=())
@@ -1956,8 +1968,12 @@ def test_uep_controller_build_result_flag_false_when_den_fmt_absent(tmp_path: Pa
     output_dir = tmp_path / "job_out"
     output_dir.mkdir()  # deliberately empty — no den_fmt written
 
-    deps = _stub_uep_deps(job_output_directory=lambda _job: output_dir)
-    context = _make_context(document=document, project_service=service)
+    deps = _stub_uep_deps()
+    context = _make_context(
+        document=document,
+        project_service=service,
+        job_output_directory=lambda _job: output_dir,
+    )
     controller = UepController(context, deps, _FakeUepView())
 
     parsed = CastepResult(completed=True, total_energy=-20.5, warnings=())
@@ -1999,9 +2015,12 @@ def test_uep_controller_materialize_writes_job_ids_by_label(tmp_path: Path) -> N
         active_uep_definition=lambda: definition,
         deserialize_uep_config=lambda _payload: config,
         job_for_uep_label=job_for_label,
+    )
+    context = _make_context(
+        document=document,
+        project_service=service,
         definition_output_directory=lambda _defn: output_root,
     )
-    context = _make_context(document=document, project_service=service)
     controller = UepController(context, deps, _FakeUepView())
 
     jobs = controller.materialize(["row1"])
@@ -2054,7 +2073,6 @@ def test_uep_controller_submit_local_reaches_local_backend(tmp_path: Path) -> No
         active_uep_definition=lambda: definition,
         deserialize_uep_config=lambda _payload: config,
         job_for_uep_label=job_for_label,
-        definition_output_directory=lambda _defn: output_root,
     )
 
     local = _RecordingBackend()
@@ -2064,6 +2082,7 @@ def test_uep_controller_submit_local_reaches_local_backend(tmp_path: Path) -> No
         project_service=service,
         local_backend=local,
         cluster_backend=cluster,
+        definition_output_directory=lambda _defn: output_root,
     )
     controller = UepController(context, deps, _FakeUepView())
 
@@ -2109,7 +2128,6 @@ def test_uep_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -
         active_uep_definition=lambda: definition,
         deserialize_uep_config=lambda _payload: config,
         job_for_uep_label=job_for_label,
-        definition_output_directory=lambda _defn: output_root,
     )
 
     local = _RecordingBackend()
@@ -2119,6 +2137,7 @@ def test_uep_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -
         project_service=service,
         local_backend=local,
         cluster_backend=cluster,
+        definition_output_directory=lambda _defn: output_root,
     )
     controller = UepController(context, deps, _FakeUepView())
 
@@ -2234,7 +2253,6 @@ def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
     base = dict(
         active_quantum_corrections_definition=lambda: None,
         ensure_quantum_corrections_definition=lambda _keys: None,
-        definition_output_directory=lambda _definition: None,
         eligible_quantum_source_candidates=lambda: [],
         quantum_source_candidate_by_key=lambda _key: None,
         quantum_stage_state=lambda _definition, _candidate: _FakeQuantumStageState(
@@ -2258,8 +2276,6 @@ def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
         write_quantum_job_directory=lambda _spec, _root, *, seed_name: Path("/tmp") / seed_name,
         dedupe_jobs=lambda jobs: jobs,
         check_definition_host=lambda _definition: True,
-        job_output_directory=lambda _job: None,
-        job_seed_name=lambda job: job.label,
         format_energy=_format_energy_stub,
     )
     base.update(overrides)
@@ -2386,12 +2402,16 @@ def test_quantum_controller_build_result_phonon_parses_zpe_and_witness(tmp_path:
     phonon_path = output_dir / "quantum_s.phonon"
     phonon_path.write_text(_QUANTUM_PHONON_TEXT, encoding="utf-8")
 
-    deps = _stub_quantum_deps(
-        job_output_directory=lambda _job: output_dir,
-        job_seed_name=lambda _job: "quantum_s",
-    )
+    deps = _stub_quantum_deps()
     controller = QuantumCorrectionsController(
-        _make_context(document=document, project_service=service), deps, _FakeQuantumView()
+        _make_context(
+            document=document,
+            project_service=service,
+            job_output_directory=lambda _job: output_dir,
+            job_seed_name=lambda _job: "quantum_s",
+        ),
+        deps,
+        _FakeQuantumView(),
     )
 
     result = controller.build_result(job, _parsed(), run)
@@ -2418,9 +2438,15 @@ def test_quantum_controller_build_result_phonon_missing_dir_is_empty(tmp_path: P
     document = service.create_project(tmp_path / "q.mufinder", "Q")
     job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
     run = CalculationRun(job_id=job.id)
-    deps = _stub_quantum_deps(job_output_directory=lambda _job: None)
+    deps = _stub_quantum_deps()
     controller = QuantumCorrectionsController(
-        _make_context(document=document, project_service=service), deps, _FakeQuantumView()
+        _make_context(
+            document=document,
+            project_service=service,
+            job_output_directory=lambda _job: None,
+        ),
+        deps,
+        _FakeQuantumView(),
     )
     assert controller.build_result(job, _parsed(), run).payload == {}
 
@@ -2521,14 +2547,17 @@ def test_quantum_controller_materialize_two_stage_mixed_keys(tmp_path: Path) -> 
 
     deps = _stub_quantum_deps(
         ensure_quantum_corrections_definition=lambda _keys: definition,
-        definition_output_directory=lambda _definition: output_root,
         quantum_source_candidate_by_key=lambda key: candidates.get(key),
         quantum_stage_state=lambda _definition, candidate: stage_by_key[candidate.key],
         singlepoint_job_for_quantum_source_key=singlepoint_job_for_key,
         phonon_job_for_quantum_source_key=phonon_job_for_key,
         write_quantum_job_directory=write_dir,
     )
-    context = _make_context(document=document, project_service=service)
+    context = _make_context(
+        document=document,
+        project_service=service,
+        definition_output_directory=lambda _definition: output_root,
+    )
     controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
 
     jobs = controller.materialize([singlepoint_key, phonon_key])
@@ -2578,7 +2607,6 @@ def test_quantum_controller_submit_local_reaches_local_backend(tmp_path: Path) -
     deps = _stub_quantum_deps(
         active_quantum_corrections_definition=lambda: definition,
         ensure_quantum_corrections_definition=lambda _keys: definition,
-        definition_output_directory=lambda _definition: output_root,
         eligible_quantum_source_candidates=lambda: list(candidates.values()),
         quantum_source_candidate_by_key=lambda k: candidates.get(k),
         quantum_stage_state=lambda _definition, _candidate: stage_state,
@@ -2595,6 +2623,7 @@ def test_quantum_controller_submit_local_reaches_local_backend(tmp_path: Path) -
         project_service=service,
         local_backend=local,
         cluster_backend=cluster,
+        definition_output_directory=lambda _definition: output_root,
     )
     controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
 
@@ -2626,7 +2655,6 @@ def test_quantum_controller_submit_cluster_reaches_cluster_backend(tmp_path: Pat
     deps = _stub_quantum_deps(
         active_quantum_corrections_definition=lambda: definition,
         ensure_quantum_corrections_definition=lambda _keys: definition,
-        definition_output_directory=lambda _definition: output_root,
         eligible_quantum_source_candidates=lambda: list(candidates.values()),
         quantum_source_candidate_by_key=lambda k: candidates.get(k),
         quantum_stage_state=lambda _definition, _candidate: stage_state,
@@ -2643,6 +2671,7 @@ def test_quantum_controller_submit_cluster_reaches_cluster_backend(tmp_path: Pat
         project_service=service,
         local_backend=local,
         cluster_backend=cluster,
+        definition_output_directory=lambda _definition: output_root,
     )
     controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
 
@@ -2723,14 +2752,11 @@ def _stub_energy_barriers_deps(**overrides) -> EnergyBarriersDeps:
             source.get(key, (0.0, 0.0, 0.0))
         ),
         fractional_position_block_from_structure=lambda structure: structure,
-        definition_output_directory=lambda _definition: None,
         dedupe_jobs=lambda jobs: jobs,
         project_convergence_input_defaults=lambda: None,
         input_template_from_keyword_values=lambda _values: InputTemplate(),
         workflow_row_configuration_exists=lambda _definition, _key: False,
         charge_state_label_for_job=lambda _job: "",
-        job_output_directory=lambda _job: None,
-        job_seed_name=lambda job: job.label,
         energy_barrier_endpoint_rows=lambda: [],
         selected_energy_barrier_endpoint_keys=lambda: ("", ""),
         energy_barrier_max_path_length_text=lambda: "",
@@ -2795,7 +2821,6 @@ def _neb_materialize_deps(definition, candidate, output_root, **overrides) -> En
         energy_barrier_neb_definitions=lambda: [definition],
         energy_barrier_neb_source_candidates=lambda: [candidate],
         eligible_energy_barrier_source_candidates=lambda: [],
-        definition_output_directory=lambda _definition: output_root,
         fractional_position_block_from_structure=_neb_frac_block,
         job_for_energy_barrier_neb_source_key=lambda _definition, _key: None,
         build_energy_barrier_neb_states=lambda: {
@@ -2962,12 +2987,14 @@ def test_energy_barriers_controller_build_result_ts_payload(tmp_path: Path) -> N
     ts_path = output_dir / "barrier.ts"
     ts_path.write_text(_NEB_TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
 
-    deps = _stub_energy_barriers_deps(
-        job_output_directory=lambda _job: output_dir,
-        job_seed_name=lambda _job: "barrier",
-    )
+    deps = _stub_energy_barriers_deps()
     controller = EnergyBarriersController(
-        _make_context(document=document, project_service=service),
+        _make_context(
+            document=document,
+            project_service=service,
+            job_output_directory=lambda _job: output_dir,
+            job_seed_name=lambda _job: "barrier",
+        ),
         deps,
         lambda: None,  # view never created: result dispatch must still work
     )
@@ -2995,9 +3022,15 @@ def test_energy_barriers_controller_build_result_missing_dir_is_empty(tmp_path: 
     document = service.create_project(tmp_path / "eb.mufinder", "EB")
     job = _neb_job(service, document, "barrier_neb", NUDGED_ELASTIC_BAND_CALC_TYPE)
     run = CalculationRun(job_id=job.id)
-    deps = _stub_energy_barriers_deps(job_output_directory=lambda _job: None)
+    deps = _stub_energy_barriers_deps()
     controller = EnergyBarriersController(
-        _make_context(document=document, project_service=service), deps, lambda: None
+        _make_context(
+            document=document,
+            project_service=service,
+            job_output_directory=lambda _job: None,
+        ),
+        deps,
+        lambda: None,
     )
     assert controller.build_result(job, _parsed(), run).payload == {}
 
@@ -3135,20 +3168,17 @@ def test_energy_barriers_controller_materialize_source_key_provenance(tmp_path: 
     )
     candidate = _FakeNebCandidate(key="source-key", source=source)
 
+    import dataclasses
+
     persisted: list[str] = []
     deps = _neb_materialize_deps(definition, candidate, output_root)
-    context = _make_context(document=document, project_service=service)
-    context = WorkflowControllerContext(
-        document=context.document,
-        project_service=service,
-        job_execution=context.job_execution,
-        submission_coordinator=context.submission_coordinator,
-        submit_jobs_locally=context.submit_jobs_locally,
-        submit_jobs_on_cluster=context.submit_jobs_on_cluster,
-        show_info=context.show_info,
-        request_dashboard_flush=context.request_dashboard_flush,
+    context = dataclasses.replace(
+        _make_context(
+            document=document,
+            project_service=service,
+            definition_output_directory=lambda _definition: output_root,
+        ),
         persist_ui_state=lambda **_: persisted.append("persist"),
-        status_message=context.status_message,
     )
     controller = EnergyBarriersController(context, deps, lambda: None)
 
@@ -3183,6 +3213,7 @@ def test_energy_barriers_controller_submit_local_reaches_local_backend(tmp_path:
         project_service=service,
         local_backend=local,
         cluster_backend=cluster,
+        definition_output_directory=lambda _definition: output_root,
     )
     controller = EnergyBarriersController(context, deps, lambda: None)
 
@@ -3208,6 +3239,7 @@ def test_energy_barriers_controller_submit_cluster_reaches_cluster_backend(tmp_p
         project_service=service,
         local_backend=local,
         cluster_backend=cluster,
+        definition_output_directory=lambda _definition: output_root,
     )
     controller = EnergyBarriersController(context, deps, lambda: None)
 
