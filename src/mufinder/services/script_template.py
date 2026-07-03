@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from math import ceil
 from pathlib import Path
 import re
+import shlex
 from string import Template
 
 
@@ -88,6 +90,89 @@ def populate_template(template: Template, variables: dict[str, str]) -> str:
 
     stringified = {key: str(value) for key, value in variables.items()}
     return template.safe_substitute(stringified)
+
+
+def render_job_script(
+    *,
+    template_script_path: str,
+    cluster_name: str,
+    queue_system: str,
+    seed_name: str,
+    num_processes: int,
+    cores_per_node: int,
+    walltime: str,
+    remote_dir: str,
+    castep_executable: str,
+) -> str:
+    """Render a cluster scheduler submission script from its runtime inputs.
+
+    This is the rendering step that ``ClusterJobRunner.submit`` used to
+    inline. It loads the configured (or built-in) template — reading from
+    disk when ``template_script_path`` names a file — derives the node count
+    from ``num_processes`` / ``cores_per_node``, builds the launcher command
+    (``srun`` for slurm, ``mpirun`` otherwise), and substitutes the eight
+    template variables. It returns only the rendered script text; the caller
+    remains responsible for writing, uploading, and chmod-ing it. Beyond the
+    template read it is stateless and touches no runner or SSH machinery.
+
+    Design note — why this lives here and not in
+    ``JobExecutionController.prepare_cluster_submission``: rendering consumes
+    values that are only resolved at submit time. ``remote_dir`` is computed
+    inside ``submit`` (from the working directory and seed name), and the
+    CASTEP executable is resolved there against the runner's cluster config
+    fallback. Relocating rendering to the controller's GUI-thread prepare step
+    would force that same resolution to be duplicated there. So the extraction
+    keeps this a self-contained rendering function called from ``submit`` at
+    exactly the same point, with the already-resolved ``remote_dir`` and
+    ``castep_executable`` passed in.
+
+    :param template_script_path: Configured template path, or "" to fall back
+        to a built-in template for the cluster/queue.
+    :param cluster_name: Raw cluster name (normalized by the template loader).
+    :param queue_system: Raw queue system (normalized here for the launcher
+        choice and by the template loader for its fallback selection).
+    :param seed_name: CASTEP seed; populates both ``job_name`` and
+        ``seed_name`` template variables.
+    :param num_processes: Total MPI ranks (clamped to at least 1).
+    :param cores_per_node: Cores per node used for the node ceiling math
+        (clamped to at least 1).
+    :param walltime: Scheduler walltime string.
+    :param remote_dir: Resolved remote working directory; populates the
+        ``working_directory`` template variable.
+    :param castep_executable: Already-resolved CASTEP executable (the submit
+        caller applies its config fallback before calling this). Shell-quoted
+        into the launcher command.
+    """
+
+    template = load_template_for_cluster(
+        template_script_path,
+        cluster_name=cluster_name,
+        queue_system=queue_system,
+    )
+    nodes = max(1, int(ceil(max(1, int(num_processes)) / max(1, int(cores_per_node)))))
+    if queue_system.strip().lower() == "slurm":
+        command = (
+            f"srun -n {max(1, int(num_processes))} "
+            f"{shlex.quote(castep_executable)} {seed_name}"
+        )
+    else:
+        command = (
+            f"mpirun -np {max(1, int(num_processes))} "
+            f"{shlex.quote(castep_executable)} {seed_name}"
+        )
+    return populate_template(
+        template,
+        {
+            "job_name": seed_name,
+            "num_processes": str(max(1, int(num_processes))),
+            "num_nodes": str(nodes),
+            "cores_per_node": str(max(1, int(cores_per_node))),
+            "walltime": walltime,
+            "working_directory": remote_dir,
+            "seed_name": seed_name,
+            "castep_command": command,
+        },
+    )
 
 
 def validate_template(template: Template) -> list[str]:

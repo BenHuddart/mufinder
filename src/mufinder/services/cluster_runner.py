@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from math import ceil
 from pathlib import Path
 import posixpath
 import re
-import shlex
 import tempfile
 from uuid import UUID
 
@@ -19,7 +17,7 @@ from mufinder.castep_io.output_parser import CastepResult, parse_castep_output
 from mufinder.domain.enums import JobStatus
 from mufinder.services.cluster_security import invalid_remote_job_labels
 from mufinder.services.scheduler import Scheduler, SchedulerSubmitRequest, create_scheduler
-from mufinder.services.script_template import load_template_for_cluster, populate_template
+from mufinder.services.script_template import render_job_script
 from mufinder.services.ssh_client import SSHConnection, SSHCredentials
 
 
@@ -211,34 +209,16 @@ class ClusterJobRunner(QObject):
         if queue != "addqueue":
             remote_script = posixpath.join(remote_dir, "run.sh")
             if not reuse_existing_files:
-                template = load_template_for_cluster(
-                    template_script_path,
+                script_content = render_job_script(
+                    template_script_path=template_script_path,
                     cluster_name=cluster_name,
                     queue_system=queue_system,
-                )
-                nodes = max(1, int(ceil(max(1, int(num_processes)) / max(1, int(cores_per_node)))))
-                if queue == "slurm":
-                    command = (
-                        f"srun -n {max(1, int(num_processes))} "
-                        f"{shlex.quote(resolved_castep_executable)} {seed_name}"
-                    )
-                else:
-                    command = (
-                        f"mpirun -np {max(1, int(num_processes))} "
-                        f"{shlex.quote(resolved_castep_executable)} {seed_name}"
-                    )
-                script_content = populate_template(
-                    template,
-                    {
-                        "job_name": seed_name,
-                        "num_processes": str(max(1, int(num_processes))),
-                        "num_nodes": str(nodes),
-                        "cores_per_node": str(max(1, int(cores_per_node))),
-                        "walltime": walltime,
-                        "working_directory": remote_dir,
-                        "seed_name": seed_name,
-                        "castep_command": command,
-                    },
+                    seed_name=seed_name,
+                    num_processes=num_processes,
+                    cores_per_node=cores_per_node,
+                    walltime=walltime,
+                    remote_dir=remote_dir,
+                    castep_executable=resolved_castep_executable,
                 )
 
                 with tempfile.NamedTemporaryFile(
