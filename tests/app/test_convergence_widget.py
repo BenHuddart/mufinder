@@ -279,7 +279,7 @@ def test_convergence_widget_queued_cutoff_parameter_dialog_is_read_only(
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget._cutoff_parameter_values[300.0] = {"max_scf_cycles": 50}
-    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="queued")})
+    widget.set_runtime_states({300.0: CutoffRunState(status="queued")})
 
     observed: dict[str, object] = {}
 
@@ -310,7 +310,7 @@ def test_convergence_widget_cancelled_cutoff_parameters_are_editable(
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget._cutoff_parameter_values[300.0] = {"max_scf_cycles": 50}
-    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="cancelled")})
+    widget.set_runtime_states({300.0: CutoffRunState(status="cancelled")})
 
     observed: dict[str, object] = {}
 
@@ -412,7 +412,7 @@ def test_convergence_widget_updates_runtime_columns(qapp) -> None:
     widget._add_cutoff(300.0)
     widget._add_cutoff(360.0)
 
-    widget.set_cutoff_runtime_states(
+    widget.set_runtime_states(
         {
             300.0: CutoffRunState(status="running"),
             360.0: CutoffRunState(status="completed", total_energy=-1234.567, max_force=0.0123),
@@ -444,10 +444,10 @@ def test_convergence_widget_ready_rows_lock_cutoff_editing(qapp) -> None:
     assert bool(cutoff_item.flags() & Qt.ItemFlag.ItemIsEditable)
 
     # 'ready' state alone should not lock direct editing; lock when queued or later
-    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="ready")})
+    widget.set_runtime_states({300.0: CutoffRunState(status="ready")})
     assert bool(cutoff_item.flags() & Qt.ItemFlag.ItemIsEditable)
 
-    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="queued")})
+    widget.set_runtime_states({300.0: CutoffRunState(status="queued")})
     assert not bool(cutoff_item.flags() & Qt.ItemFlag.ItemIsEditable)
 
 
@@ -457,7 +457,7 @@ def test_convergence_widget_runtime_columns_use_higher_precision(qapp) -> None:
 
     total_energy = -1234.56789012345
     max_force = 0.012345678901234
-    widget.set_cutoff_runtime_states(
+    widget.set_runtime_states(
         {
             300.0: CutoffRunState(status="completed", total_energy=total_energy, max_force=max_force),
         }
@@ -472,7 +472,7 @@ def test_convergence_widget_remove_cutoff_warns_for_completed_jobs(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="completed")})
+    widget.set_runtime_states({300.0: CutoffRunState(status="completed")})
 
     answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
     monkeypatch.setattr(
@@ -496,7 +496,7 @@ def test_convergence_widget_remove_cutoff_running_emits_cancel_request(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="running")})
+    widget.set_runtime_states({300.0: CutoffRunState(status="running")})
 
     cancelled: list[object] = []
     widget.cancel_requested.connect(lambda payload: cancelled.append(payload))
@@ -654,7 +654,7 @@ def test_convergence_widget_batch_confirm_uses_yes_to_all_for_progressed_rows(
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget._add_cutoff(360.0)
-    widget.set_cutoff_runtime_states(
+    widget.set_runtime_states(
         {
             300.0: CutoffRunState(status="completed"),
             360.0: CutoffRunState(status="failed"),
@@ -747,7 +747,7 @@ def test_convergence_widget_context_menu_emits_submit_for_ready_rows(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="ready")})
+    widget.set_runtime_states({300.0: CutoffRunState(status="ready")})
 
     submitted: list[object] = []
     widget.submit_local_requested.connect(lambda payload: submitted.append(payload))
@@ -799,7 +799,7 @@ def test_convergence_widget_context_menu_emits_inspect_for_failed_rows(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="failed")})
+    widget.set_runtime_states({300.0: CutoffRunState(status="failed")})
 
     inspected: list[object] = []
     widget.inspect_failed_requested.connect(lambda payload: inspected.append(payload))
@@ -851,7 +851,7 @@ def test_convergence_widget_context_menu_emits_reset_for_failed_rows(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="failed")})
+    widget.set_runtime_states({300.0: CutoffRunState(status="failed")})
 
     reset_payloads: list[object] = []
     widget.reset_failed_requested.connect(lambda payload: reset_payloads.append(payload))
@@ -903,7 +903,7 @@ def test_convergence_widget_context_menu_emits_reset_for_cancelled_rows(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_cutoff_runtime_states({300.0: CutoffRunState(status="cancelled")})
+    widget.set_runtime_states({300.0: CutoffRunState(status="cancelled")})
 
     reset_payloads: list[object] = []
     widget.reset_failed_requested.connect(lambda payload: reset_payloads.append(payload))
@@ -955,7 +955,7 @@ def test_convergence_widget_enables_examine_button_for_completed_results(qapp) -
     widget._add_cutoff(300.0)
     widget._add_cutoff(400.0)
 
-    widget.set_cutoff_runtime_states(
+    widget.set_runtime_states(
         {
             300.0: CutoffRunState(status="completed", total_energy=-10.0, max_force=0.2),
             400.0: CutoffRunState(status="completed", total_energy=-10.01, max_force=0.18),
@@ -970,7 +970,7 @@ def test_convergence_widget_disables_examine_button_without_complete_metrics(qap
     widget._add_cutoff(300.0)
     widget._add_cutoff(400.0)
 
-    widget.set_cutoff_runtime_states(
+    widget.set_runtime_states(
         {
             300.0: CutoffRunState(status="completed", total_energy=-10.0, max_force=0.2),
             400.0: CutoffRunState(status="completed", total_energy=-10.01, max_force=None),

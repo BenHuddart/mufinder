@@ -543,7 +543,7 @@ class EnergyBarriersController(WorkflowJobController):
                         candidate.reactant.job
                     ),
                     path_length=f"{candidate.path.length_ang:.4g} Å",
-                    neb_status=getattr(neb_states.get(candidate.key), "status", "ready")
+                    status=getattr(neb_states.get(candidate.key), "status", "ready")
                     or "ready",
                     configured=self._deps.workflow_row_configuration_exists(
                         neb_definition, candidate.key
@@ -583,6 +583,7 @@ class EnergyBarriersController(WorkflowJobController):
                     barrier_reverse=reverse,
                     delta_energy=delta,
                     images=str(data.get("num_images", "")),
+                    status=candidate.job.status.value,
                     transition_state_file=str(data.get("transition_state_file", "")),
                 )
             )

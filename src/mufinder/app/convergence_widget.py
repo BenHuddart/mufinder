@@ -1084,7 +1084,7 @@ class CutoffConvergenceWidget(QWidget):
 
         menu.exec(self._cutoff_table.viewport().mapToGlobal(position))
 
-    def set_cutoff_runtime_states(self, states: Mapping[float, SweepPointRunState]) -> None:
+    def set_runtime_states(self, states: Mapping[float, SweepPointRunState]) -> None:
         """Update row status/energy display using project job/result state."""
         self._cutoff_runtime_states = {float(key): value for key, value in states.items()}
         self._refresh_all_cutoff_rows()

@@ -500,6 +500,7 @@ class QuantumCorrectionsController(WorkflowJobController):
             if result.result_type != QUANTUM_PHONON_CALC_TYPE:
                 continue
             job_label = ""
+            job_status = "completed"
             run = (
                 document.runs.get(result.calculation_run_id)
                 if result.calculation_run_id is not None
@@ -509,6 +510,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                 job = document.jobs.get(run.job_id)
                 if job is not None:
                     job_label = job.label
+                    job_status = job.status.value
             eigenvalue_text = (
                 _format_phonon_eigenvalues(result.data.get("phonon_mode_eigenvalues_cm"))
                 if isinstance(result.data, dict)
@@ -538,6 +540,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                         and "w1_entanglement_witness" in result.data
                         else ""
                     ),
+                    status=job_status,
                 )
             )
 

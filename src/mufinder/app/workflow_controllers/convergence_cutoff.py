@@ -237,9 +237,9 @@ class ConvergenceCutoffController(WorkflowJobController):
     def refresh_view(self) -> None:
         document = self._context.document()
         if document is None:
-            self._view.set_cutoff_runtime_states({})
+            self._view.set_runtime_states({})
             return
-        self._view.set_cutoff_runtime_states(self.build_states())
+        self._view.set_runtime_states(self.build_states())
 
     # --- private helpers moved from MainWindow (cutoff-only) ---
 
