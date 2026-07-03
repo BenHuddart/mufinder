@@ -24,6 +24,10 @@ from mufinder.app.workflow_controllers.convergence_kpoint import (
     ConvergenceKpointController,
     ConvergenceKpointDeps,
 )
+from mufinder.app.workflow_controllers.pristine_relaxation import (
+    PristineRelaxationController,
+    PristineRelaxationDeps,
+)
 
 __all__ = [
     "ControllerResult",
@@ -31,6 +35,8 @@ __all__ = [
     "ConvergenceCutoffDeps",
     "ConvergenceKpointController",
     "ConvergenceKpointDeps",
+    "PristineRelaxationController",
+    "PristineRelaxationDeps",
     "WorkflowControllerContext",
     "WorkflowJobController",
     "merge_controller_result",

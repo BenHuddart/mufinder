@@ -167,6 +167,16 @@ previously accreted on ``MainWindow``.
   and additively merges the owning controller's
   :class:`~mufinder.app.workflow_controllers.base.ControllerResult`. Unmigrated
   workflows fall through to the existing inline handling unchanged.
+  ``PristineRelaxationController`` is the first genuine
+  :meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.build_result`
+  implementation: it parses the relaxed ``-out.cell``, contributes the relaxed
+  ``lattice_a/b/c`` payload, and creates the derived relaxed structure on the
+  document. Because ``ControllerResult`` has no failure channel,
+  failure-detection prologues that must abort a job before any result is built
+  (the ``geom_converged`` guard, and the shared ``-out.cell`` existence/parse
+  guard reused by the still-inline muon-relaxation branch) stay inline in
+  ``_on_local_job_finished``; the controller re-parses the already-validated
+  file on the success path via a shared ``parse_relaxed_out_cell`` dep.
 
 The set of ``_on_submit_*`` / ``_materialize_*`` handlers still on
 ``MainWindow`` is pinned by ``tests/test_agent_harness.py`` as a ratchet: it may

@@ -185,6 +185,8 @@ from mufinder.app.workflow_controllers import (
     ConvergenceCutoffDeps,
     ConvergenceKpointController,
     ConvergenceKpointDeps,
+    PristineRelaxationController,
+    PristineRelaxationDeps,
     WorkflowControllerContext,
     WorkflowJobController,
     merge_controller_result,
@@ -1827,11 +1829,23 @@ class MainWindow(QMainWindow):
         self._pristine_relaxation_view.row_supercell_edit_requested.connect(
             self._on_pristine_relaxation_supercell_edit_requested
         )
+        # Pristine-relaxation controller: the first migration with real
+        # build_result logic (relaxed lattice payload + derived structure). Built
+        # here (after its view exists) and appended to the registry so completed
+        # castep_pristine_relaxation jobs route through its build_result. The
+        # still-inline muon-relaxation branch of _on_local_job_finished is not
+        # migrated and falls through to that inline code via registry-fallback.
+        self._pristine_relaxation_controller = PristineRelaxationController(
+            self._build_workflow_controller_context(),
+            self._build_pristine_relaxation_deps(),
+            self._pristine_relaxation_view,
+        )
+        self._workflow_controllers.append(self._pristine_relaxation_controller)
         self._pristine_relaxation_view.submit_local_requested.connect(
-            self._on_submit_local_from_pristine_relaxation
+            lambda values: self._pristine_relaxation_controller.submit(values, target="local")
         )
         self._pristine_relaxation_view.submit_cluster_requested.connect(
-            self._on_submit_cluster_from_pristine_relaxation
+            lambda values: self._pristine_relaxation_controller.submit(values, target="cluster")
         )
         self._pristine_relaxation_view.generate_comparison_requested.connect(
             self._on_generate_comparison_table_requested
@@ -2729,7 +2743,7 @@ class MainWindow(QMainWindow):
             self._document.project.recommended_cutoff_energy
         )
         self._refresh_pristine_relaxation_defaults()
-        self._refresh_pristine_relaxation_rows()
+        self._pristine_relaxation_controller.refresh_view()
         self._refresh_muon_relaxation_defaults()
         self._refresh_muon_relaxation_rows()
         self._refresh_relaxation_analysis_context()
@@ -3471,7 +3485,7 @@ class MainWindow(QMainWindow):
 
         self._convergence_controller.refresh_view()
         self._kpoint_convergence_controller.refresh_view()
-        self._refresh_pristine_relaxation_rows()
+        self._pristine_relaxation_controller.refresh_view()
         self._refresh_muon_relaxation_rows()
         self._refresh_uep_rows()
         self._refresh_workflow_stage_icons()
@@ -6692,6 +6706,90 @@ class MainWindow(QMainWindow):
             max_stress_for_job=lambda job_id: self._max_stress_for_job(job_id),
         )
 
+    def _build_pristine_relaxation_deps(self) -> PristineRelaxationDeps:
+        """Build the pristine-relaxation controller's deps.
+
+        These helpers stay on ``MainWindow`` because non-migrating code still
+        calls them; several are shared with the still-inline muon-relaxation
+        result branch (``parse_relaxed_out_cell``, ``job_output_directory``,
+        ``job_seed_name``, ``run_for_job``). The controller reaches them only
+        through these late-bound wrappers.
+        """
+
+        return PristineRelaxationDeps(
+            active_pristine_relaxation_definition=(
+                lambda: self._active_pristine_relaxation_definition()
+            ),
+            deserialize_pristine_relaxation_config=(
+                lambda payload: self._deserialize_pristine_relaxation_config(payload)
+            ),
+            sync_equivalent_pristine_relaxation_mappings=(
+                lambda definition: self._sync_equivalent_pristine_relaxation_mappings(definition)
+            ),
+            pristine_relaxation_form_config=lambda: self._pristine_relaxation_form_config(),
+            pristine_relaxation_row_signature=(
+                lambda row: self._pristine_relaxation_row_signature(row)
+            ),
+            job_for_pristine_relaxation_label=(
+                lambda definition, label: self._job_for_pristine_relaxation_label(definition, label)
+            ),
+            definition_output_directory=(
+                lambda definition: self._definition_output_directory(definition)
+            ),
+            expand_pristine_relaxation_jobs=(
+                lambda definition, config: self._expand_pristine_relaxation_jobs_for_controller(
+                    definition, config
+                )
+            ),
+            job_output_directory=lambda job: self._job_output_directory(job),
+            job_seed_name=lambda job: self._job_seed_name(job),
+            parse_relaxed_out_cell=lambda path: self._parse_relaxed_out_cell(path),
+            run_for_job=lambda job_id: self._run_for_job(job_id),
+            total_energy_for_job=lambda job_id: self._total_energy_for_job(job_id),
+            max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
+        )
+
+    def _expand_pristine_relaxation_jobs_for_controller(
+        self, definition: CalculationDefinition, config: PristineRelaxationConfig
+    ) -> AdapterExpansion | None:
+        """Look up the definition's host structure and expand its relaxation jobs.
+
+        Returns ``None`` when the host structure is missing, mirroring the guard
+        in the former ``_materialize_pristine_relaxation_jobs``. The
+        ``ValueError`` / ``StructureBridgeError`` raised by
+        :func:`expand_pristine_relaxation_jobs` propagate to the controller, which
+        catches them (as the former handler did).
+        """
+
+        if self._document is None or not definition.input_structure_ids:
+            return None
+        host = self._document.structures.get(definition.input_structure_ids[0])
+        if host is None:
+            return None
+        return expand_pristine_relaxation_jobs(
+            host_structure=host,
+            config=config,
+            project_cutoff_energy=self._document.project.recommended_cutoff_energy,
+            project_kpoint_grid=self._document.project.recommended_kpoint_grid,
+            project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+        )
+
+    def _parse_relaxed_out_cell(self, path: Path) -> tuple[object, float, float, float]:
+        """Parse a relaxation ``-out.cell`` into ``(relaxed, a, b, c)``.
+
+        Shared by the pristine-relaxation controller's ``build_result`` and the
+        still-inline muon-relaxation result branch, so both go through exactly one
+        parse implementation. Uses the module-global ``parse_cell_file`` /
+        ``lattice_parameters`` (which tests monkeypatch). Raises
+        :class:`~mufinder.castep_io.cell_parser.CellParseError` on an unparseable
+        file — the inline ``_on_local_job_finished`` prologue converts that to a
+        failed job before any controller result is built.
+        """
+
+        relaxed = parse_cell_file(path)
+        lattice_a, lattice_b, lattice_c = lattice_parameters(relaxed.lattice_vectors)[:3]
+        return relaxed, lattice_a, lattice_b, lattice_c
+
     def _submit_workflow_selection(
         self,
         values: list[_WorkflowKey],
@@ -7592,6 +7690,12 @@ class MainWindow(QMainWindow):
 
         derived_structure_ids: list[UUID] = []
         if job.calc_type == "castep_pristine_relaxation" or is_muon_relaxation_calc_type(job.calc_type):
+            # Shared failure-detection prologue for both relaxation workflows: the
+            # -out.cell must exist and parse before any result is built. This
+            # guard is deliberately kept inline (like the geom_converged prologue)
+            # because it guards both the migrated pristine workflow and the
+            # still-inline muon workflow; the pristine controller's build_result
+            # re-parses the (now validated) file on the success path.
             output_dir = self._job_output_directory(job)
             seed_name = self._job_seed_name(job)
             out_cell_path = None if output_dir is None else output_dir / f"{seed_name}-out.cell"
@@ -7603,26 +7707,25 @@ class MainWindow(QMainWindow):
                 return
 
             try:
-                relaxed = parse_cell_file(out_cell_path)
+                relaxed, _lattice_a, _lattice_b, _lattice_c = self._parse_relaxed_out_cell(
+                    out_cell_path
+                )
             except CellParseError as exc:
                 self._on_local_job_failed(job_id, f"Failed to parse relaxed CELL output: {exc}")
                 return
 
-            lattice_a, lattice_b, lattice_c = lattice_parameters(relaxed.lattice_vectors)[:3]
-            result_payload["lattice_a"] = lattice_a
-            result_payload["lattice_b"] = lattice_b
-            result_payload["lattice_c"] = lattice_c
+            # Pristine relaxation's lattice payload and derived structure are now
+            # contributed by PristineRelaxationController.build_result (via the
+            # merge_controller_result call below). Only the muon-relaxation branch
+            # — not migrated in this PR — builds its result inline here.
+            if is_muon_relaxation_calc_type(job.calc_type):
+                result_payload["lattice_a"] = _lattice_a
+                result_payload["lattice_b"] = _lattice_b
+                result_payload["lattice_c"] = _lattice_c
 
-            if job.calc_type == "castep_pristine_relaxation":
-                definition = self._active_pristine_relaxation_definition()
-                origin = "pristine_relaxation"
-                stage = WorkflowStage.PRISTINE_RELAXATION
-            else:
                 definition, row = self._muon_relaxation_definition_and_row_for_job(job)
                 if definition is None:
                     definition = self._active_muon_relaxation_definition()
-                origin = "muon_relaxation"
-                stage = WorkflowStage.MUON_RELAXATION
                 final_supercell_position = self._muon_fractional_position_from_cell(relaxed)
                 if final_supercell_position is None:
                     self._on_local_job_failed(
@@ -7636,22 +7739,21 @@ class MainWindow(QMainWindow):
                 )
                 result_payload["muon_final_fractional_position_supercell"] = list(final_supercell_position)
                 result_payload["muon_final_fractional_position_host"] = list(final_host_position)
-            parent_structure_id = definition.input_structure_ids[0] if definition is not None and definition.input_structure_ids else None
-            relaxed_structure = Structure(
-                label=f"{job.label} relaxed",
-                origin=origin,
-                lattice_vectors=[list(row) for row in relaxed.lattice_vectors],
-                species=list(relaxed.species),
-                fractional_positions=[list(row) for row in relaxed.fractional_positions],
-                parent_structure_id=parent_structure_id,
-                properties={
-                    "source_job_id": str(job.id),
-                    "source_workflow_stage": stage.value,
-                },
-            )
-            self._project_service.add_structure(self._document, relaxed_structure)
-            derived_structure_ids.append(relaxed_structure.id)
-            if is_muon_relaxation_calc_type(job.calc_type):
+                parent_structure_id = definition.input_structure_ids[0] if definition is not None and definition.input_structure_ids else None
+                relaxed_structure = Structure(
+                    label=f"{job.label} relaxed",
+                    origin="muon_relaxation",
+                    lattice_vectors=[list(row) for row in relaxed.lattice_vectors],
+                    species=list(relaxed.species),
+                    fractional_positions=[list(row) for row in relaxed.fractional_positions],
+                    parent_structure_id=parent_structure_id,
+                    properties={
+                        "source_job_id": str(job.id),
+                        "source_workflow_stage": WorkflowStage.MUON_RELAXATION.value,
+                    },
+                )
+                self._project_service.add_structure(self._document, relaxed_structure)
+                derived_structure_ids.append(relaxed_structure.id)
                 site = self._site_for_muon_relaxation_job(job)
                 if site is not None:
                     site.status = "relaxed"
@@ -8114,7 +8216,7 @@ class MainWindow(QMainWindow):
         self._refresh_convergence_simulation_cell()
         self._refresh_kpoint_convergence_simulation_cell()
         self._refresh_pristine_relaxation_defaults()
-        self._refresh_pristine_relaxation_rows()
+        self._pristine_relaxation_controller.refresh_view()
         self._refresh_convergence_overview()
         self._populate_project_tree()
         self._refresh_journal_view()
@@ -9417,7 +9519,7 @@ class MainWindow(QMainWindow):
         if self._document is None or self._shutting_down:
             return
         self._document.ui_state["pristine_relaxation_form"] = state
-        self._refresh_pristine_relaxation_rows()
+        self._pristine_relaxation_controller.refresh_view()
 
     def _refresh_muon_relaxation_defaults(self) -> None:
         if self._document is None:
@@ -10183,7 +10285,7 @@ class MainWindow(QMainWindow):
             return
         for definition in definitions:
             self._remove_pristine_relaxation_labels_from_definition(definition, labels)
-        self._refresh_pristine_relaxation_rows()
+        self._pristine_relaxation_controller.refresh_view()
         if should_autosave:
             self._persist_document_ui_state(
                 failure_message="Pristine relaxation rows were removed, but autosave failed."
@@ -10539,7 +10641,7 @@ class MainWindow(QMainWindow):
         self._pristine_relaxation_view.set_form_state(state)
         if self._document is not None:
             self._document.ui_state["pristine_relaxation_form"] = state
-        self._refresh_pristine_relaxation_rows()
+        self._pristine_relaxation_controller.refresh_view()
 
     def _restore_muon_relaxation_form_from_definition(self) -> None:
         definition = self._active_muon_relaxation_definition()
@@ -10881,75 +10983,6 @@ class MainWindow(QMainWindow):
             if config is not None and config.rows:
                 return config
         return None
-
-    def _build_pristine_relaxation_states(self) -> dict[str, RelaxationRunState]:
-        states: dict[str, RelaxationRunState] = {}
-        if self._document is None:
-            return states
-
-        form_config = self._pristine_relaxation_form_config()
-        if form_config is not None:
-            for row in form_config.rows:
-                states[row.label] = RelaxationRunState(status="ready")
-
-        definition = self._active_pristine_relaxation_definition()
-        if definition is None:
-            return states
-        self._sync_equivalent_pristine_relaxation_mappings(definition)
-        config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
-        if config is None:
-            return states
-
-        if form_config is not None:
-            definition_rows_by_label = {row.label: row for row in config.rows}
-            rows_for_status = [
-                definition_row
-                for row in form_config.rows
-                if (definition_row := definition_rows_by_label.get(row.label)) is not None
-                and self._pristine_relaxation_row_signature(row)
-                == self._pristine_relaxation_row_signature(definition_row)
-            ]
-        else:
-            rows_for_status = list(config.rows)
-
-        for row in rows_for_status:
-            job = self._job_for_pristine_relaxation_label(definition, row.label)
-            if job is None:
-                states[row.label] = RelaxationRunState(status="ready")
-                continue
-
-            status_value = "ready" if job.status == JobStatus.DEFINED else job.status.value
-            run = self._run_for_job(job.id)
-            if status_value == JobStatus.COMPLETED.value and run is not None and run.convergence_achieved is False:
-                status_value = "not converged"
-
-            lattice_a = None
-            lattice_b = None
-            lattice_c = None
-            if run is not None and run.result_id is not None:
-                result = self._document.results.get(run.result_id)
-                if result is not None:
-                    lattice_a = result.data.get("lattice_a") if isinstance(result.data, dict) else None
-                    lattice_b = result.data.get("lattice_b") if isinstance(result.data, dict) else None
-                    lattice_c = result.data.get("lattice_c") if isinstance(result.data, dict) else None
-
-            states[row.label] = RelaxationRunState(
-                status=status_value,
-                total_energy=self._total_energy_for_job(job.id),
-                max_force=self._max_force_for_job(job.id),
-                lattice_a=float(lattice_a) if isinstance(lattice_a, (int, float)) else None,
-                lattice_b=float(lattice_b) if isinstance(lattice_b, (int, float)) else None,
-                lattice_c=float(lattice_c) if isinstance(lattice_c, (int, float)) else None,
-                job_id=job.id,
-                job_label=job.label,
-                geom_converged=(run.convergence_achieved if run is not None else None),
-                error_message=job.error_message,
-            )
-
-        return states
-
-    def _refresh_pristine_relaxation_rows(self) -> None:
-        self._pristine_relaxation_view.set_runtime_states(self._build_pristine_relaxation_states())
 
     def _muon_relaxation_definitions(self) -> list:
         if self._document is None:
@@ -11458,7 +11491,7 @@ class MainWindow(QMainWindow):
         self._sync_equivalent_pristine_relaxation_mappings(definition)
         self._document.ui_state[self._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
 
-        self._refresh_pristine_relaxation_rows()
+        self._pristine_relaxation_controller.refresh_view()
         self._refresh_journal_view()
         self.statusBar().showMessage(
             f"Configured {len(config.rows)} pristine-relaxation jobs; input files will be generated on submission"
@@ -11529,7 +11562,7 @@ class MainWindow(QMainWindow):
                 ) + "]"
 
         completed: list[CompletedPristineJob] = []
-        for row_label, state in sorted(self._build_pristine_relaxation_states().items()):
+        for row_label, state in sorted(self._pristine_relaxation_controller.build_states().items()):
             if state.status != JobStatus.COMPLETED.value:
                 continue
             if state.job_id is None:
@@ -11746,90 +11779,6 @@ class MainWindow(QMainWindow):
         self._refresh_journal_view()
         self.statusBar().showMessage(f"Generated comparison table '{table.label}'")
 
-    def _jobs_for_pristine_relaxation_labels(self, labels: list[str]) -> list[Job]:
-        if self._document is None:
-            return []
-        definition = self._active_pristine_relaxation_definition()
-        if definition is None:
-            return []
-        self._sync_equivalent_pristine_relaxation_mappings(definition)
-
-        selected: list[Job] = []
-        seen: set[UUID] = set()
-        for label in labels:
-            job = self._job_for_pristine_relaxation_label(definition, label)
-            if job is None or job.id in seen:
-                continue
-            selected.append(job)
-            seen.add(job.id)
-        return selected
-
-    def _materialize_pristine_relaxation_jobs(self, labels: list[str]) -> list[Job]:
-        if self._document is None:
-            return []
-
-        definition = self._active_pristine_relaxation_definition()
-        if definition is None:
-            return []
-        self._sync_equivalent_pristine_relaxation_mappings(definition)
-
-        config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
-        if config is None:
-            return []
-        if not definition.input_structure_ids:
-            return []
-
-        host = self._document.structures.get(definition.input_structure_ids[0])
-        output_root = self._definition_output_directory(definition)
-        if host is None or output_root is None:
-            return []
-
-        try:
-            expansion = expand_pristine_relaxation_jobs(
-                host_structure=host,
-                config=config,
-                project_cutoff_energy=self._document.project.recommended_cutoff_energy,
-                project_kpoint_grid=self._document.project.recommended_kpoint_grid,
-                project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
-            )
-        except (ValueError, StructureBridgeError):
-            return []
-
-        mapping = definition.parameters.setdefault("job_ids_by_label", {})
-        if not isinstance(mapping, dict):
-            mapping = {}
-            definition.parameters["job_ids_by_label"] = mapping
-
-        spec_by_label = {
-            str(spec.provenance.get("label", "")): spec
-            for spec in expansion.jobs
-        }
-
-        created: list[Job] = []
-        for label in labels:
-            spec = spec_by_label.get(label)
-            existing_job = self._job_for_pristine_relaxation_label(definition, label)
-            if existing_job is not None:
-                if existing_job.status == JobStatus.DEFINED and spec is not None:
-                    write_job_directory(spec, output_root)
-                created.append(existing_job)
-                continue
-
-            if spec is None:
-                continue
-
-            write_job_directory(spec, output_root)
-            job = self._project_service.add_job(
-                self._document,
-                label=spec.name,
-                workflow_stage=spec.workflow_stage,
-                calc_type="castep_pristine_relaxation",
-            )
-            mapping[label] = str(job.id)
-            created.append(job)
-
-        return self._dedupe_jobs(created)
-
     def _jobs_for_muon_relaxation_labels(self, labels: list[str]) -> list[Job]:
         if self._document is None:
             return []
@@ -11927,30 +11876,6 @@ class MainWindow(QMainWindow):
                 failure_message="Muon relaxation jobs were generated, but autosave failed."
             )
         return jobs
-
-    def _on_submit_local_from_pristine_relaxation(self, labels: list[str]) -> None:
-        self._submit_workflow_selection(
-            labels,
-            normalize=str,
-            build_states=self._build_pristine_relaxation_states,
-            jobs_for_values=self._jobs_for_pristine_relaxation_labels,
-            materialize_values=self._materialize_pristine_relaxation_jobs,
-            is_ready=workflow_row_state_is_ready,
-            no_ready_message="Only configured pristine-relaxation rows in the 'ready' state can be submitted.",
-            submit=self._submit_jobs_locally,
-        )
-
-    def _on_submit_cluster_from_pristine_relaxation(self, labels: list[str]) -> None:
-        self._submit_workflow_selection(
-            labels,
-            normalize=str,
-            build_states=self._build_pristine_relaxation_states,
-            jobs_for_values=self._jobs_for_pristine_relaxation_labels,
-            materialize_values=self._materialize_pristine_relaxation_jobs,
-            is_ready=workflow_row_state_is_ready,
-            no_ready_message="Only configured pristine-relaxation rows in the 'ready' state can be submitted.",
-            submit=self._submit_jobs_on_cluster,
-        )
 
     @staticmethod
     def _muon_relaxation_label_is_ready(states: dict[str, RelaxationRunState], label: str) -> bool:
