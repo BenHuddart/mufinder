@@ -134,6 +134,41 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
 ``adapter_common`` must remain free of PySide imports; it depends only on
 ``workflow``, ``castep_io``, ``science``, and ``domain``.
 
+Workflow controllers
+--------------------
+
+``mufinder.app.workflow_controllers`` is a thin controller layer *within* the
+app layer, sitting between the ``MainWindow`` widgets and the
+services/workflow/science layers. Each
+:class:`~mufinder.app.workflow_controllers.base.WorkflowJobController` owns one
+workflow's ``submit → materialize → result → refresh`` cycle, replacing the
+per-workflow tangle of ``_on_submit_*`` / ``_materialize_*`` handlers that
+previously accreted on ``MainWindow``.
+
+- Controllers are plain Python objects (not ``QObject``): they own no signals.
+- A controller receives everything it needs from the window through a
+  :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext` of
+  narrow, late-bound callables (plus its own widget/view reference). It holds
+  **no** reference to ``MainWindow`` and never imports the ``main_window``
+  module, which keeps controllers unit-testable without constructing a window.
+- :meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.submit`
+  is a template method mirroring the former
+  ``MainWindow._submit_workflow_selection`` funnel; workflow-specific behavior
+  is supplied by overriding ``normalize`` / ``build_states`` / ``jobs_for_keys``
+  / ``materialize`` / ``is_ready`` and, where needed, ``pre_submit_check`` and
+  ``submission_groups``.
+- Result dispatch is registry-based:
+  :func:`~mufinder.app.workflow_controllers.base.merge_controller_result`
+  consults the registered controllers in ``MainWindow._on_local_job_finished``
+  and additively merges the owning controller's
+  :class:`~mufinder.app.workflow_controllers.base.ControllerResult`. Unmigrated
+  workflows fall through to the existing inline handling unchanged.
+
+The set of ``_on_submit_*`` / ``_materialize_*`` handlers still on
+``MainWindow`` is pinned by ``tests/test_agent_harness.py`` as a ratchet: it may
+only shrink as workflows migrate onto controllers, and no new handler may appear
+on ``MainWindow``.
+
 Workflow parameter surface policy
 ---------------------------------
 

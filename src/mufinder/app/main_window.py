@@ -181,6 +181,12 @@ from mufinder.app.workflow_submission import (
     sweep_point_state_is_ready,
     workflow_row_state_is_ready,
 )
+from mufinder.app.workflow_controllers import (
+    ConvergenceCutoffController,
+    WorkflowControllerContext,
+    WorkflowJobController,
+    merge_controller_result,
+)
 from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.castep_io.ts_parser import (
@@ -1748,8 +1754,24 @@ class MainWindow(QMainWindow):
         self._convergence_view.simulation_cell_use_unit_cell_requested.connect(
             self._on_convergence_simulation_cell_use_unit_cell_requested
         )
-        self._convergence_view.submit_local_requested.connect(self._on_submit_local_from_convergence)
-        self._convergence_view.submit_cluster_requested.connect(self._on_submit_cluster_from_convergence)
+        # Per-workflow controllers own their submit → materialize → result →
+        # refresh cycle. Built before signal wiring and before any job-completion
+        # handler can fire (see _on_local_job_finished, which consults the
+        # registry). Each migration PR adds one entry; cutoff convergence is the
+        # first. See mufinder.app.workflow_controllers.
+        self._convergence_controller = ConvergenceCutoffController(
+            self._build_workflow_controller_context(),
+            self._convergence_view,
+        )
+        self._workflow_controllers: list[WorkflowJobController] = [
+            self._convergence_controller,
+        ]
+        self._convergence_view.submit_local_requested.connect(
+            lambda values: self._convergence_controller.submit(values, target="local")
+        )
+        self._convergence_view.submit_cluster_requested.connect(
+            lambda values: self._convergence_controller.submit(values, target="cluster")
+        )
         self._convergence_view.cancel_requested.connect(self._on_cancel_from_convergence)
         self._convergence_view.inspect_failed_requested.connect(self._on_inspect_failed_from_convergence)
         self._convergence_view.reset_failed_requested.connect(self._on_reset_failed_from_convergence)
@@ -2661,7 +2683,7 @@ class MainWindow(QMainWindow):
         self._refresh_muon_generation_table()
         self._convergence_view.set_form_state(self._convergence_form_restore_state())
         self._refresh_convergence_simulation_cell()
-        self._refresh_convergence_cutoff_rows()
+        self._convergence_controller.refresh_view()
         self._kpoint_convergence_view.set_form_state(
             self._document.ui_state.get("kpoint_convergence_form", {})
         )
@@ -3435,7 +3457,7 @@ class MainWindow(QMainWindow):
         self._configure_jobs_table_columns()
         self._sync_job_runtime_timer()
 
-        self._refresh_convergence_cutoff_rows()
+        self._convergence_controller.refresh_view()
         self._refresh_kpoint_convergence_rows()
         self._refresh_pristine_relaxation_rows()
         self._refresh_muon_relaxation_rows()
@@ -4340,27 +4362,9 @@ class MainWindow(QMainWindow):
             self._delete_job_records(job.id)
 
         self._refresh_jobs_table()
-        self._refresh_convergence_cutoff_rows()
+        self._convergence_controller.refresh_view()
         self._refresh_kpoint_convergence_rows()
         self.statusBar().showMessage(f"Deleted {len(deletable_jobs)} job(s)")
-
-    def _jobs_for_convergence_cutoffs(self, cutoff_values: list[float]) -> list[Job]:
-        if self._document is None:
-            return []
-
-        states = self._build_convergence_cutoff_states()
-        selected: list[Job] = []
-        seen: set[UUID] = set()
-        for cutoff in cutoff_values:
-            state = states.get(float(cutoff))
-            if state is None:
-                continue
-            job = self._document.jobs.get(state.job_id) if state.job_id is not None else None
-            if job is None or job.id in seen:
-                continue
-            selected.append(job)
-            seen.add(job.id)
-        return selected
 
     @staticmethod
     def _cutoff_key(value: float) -> str:
@@ -5298,104 +5302,6 @@ class MainWindow(QMainWindow):
                 return stamp.timestamp()
         return 0.0
 
-    def _materialize_convergence_jobs(self, cutoff_values: list[float]) -> list[Job]:
-        if self._document is None:
-            return []
-
-        created: list[Job] = []
-        grouped: dict[UUID, tuple[object, ConvergenceConfig, set[float]]] = {}
-        for cutoff in cutoff_values:
-            definition, config = self._definition_for_convergence_cutoff(cutoff)
-            if definition is None or config is None:
-                continue
-            existing = self._job_for_definition_cutoff(definition, cutoff)
-            if existing is not None:
-                created.append(existing)
-                continue
-            record = grouped.get(definition.id)
-            if record is None:
-                grouped[definition.id] = (definition, config, {float(cutoff)})
-            else:
-                record[2].add(float(cutoff))
-
-        for definition, config, cutoffs in grouped.values():
-            if not definition.input_structure_ids:
-                continue
-            structure = self._document.structures.get(definition.input_structure_ids[0])
-            output_root = self._definition_output_directory(definition)
-            if structure is None or output_root is None:
-                continue
-            self._project_service.repair_supercell_asset_if_needed(
-                self._document,
-                structure_id=structure.id,
-            )
-
-            try:
-                structure_spec = structure_to_spec(structure)
-                all_jobs = expand_convergence_jobs(structure=structure_spec, config=config).jobs
-            except (ValueError, StructureBridgeError):
-                continue
-
-            desired_labels = {
-                convergence_job_name(
-                    config.name_prefix,
-                    cutoff,
-                    sweep_parameter="cut_off_energy",
-                ): cutoff
-                for cutoff in cutoffs
-            }
-            mapping = definition.parameters.setdefault("job_ids_by_cutoff", {})
-            if not isinstance(mapping, dict):
-                mapping = {}
-                definition.parameters["job_ids_by_cutoff"] = mapping
-
-            for job_spec in all_jobs:
-                cutoff = desired_labels.get(job_spec.name)
-                if cutoff is None:
-                    continue
-                write_job_directory(job_spec, output_root)
-                job = self._project_service.add_job(
-                    self._document,
-                    label=job_spec.name,
-                    workflow_stage=job_spec.workflow_stage,
-                    calc_type="castep_convergence_cutoff",
-                )
-                mapping[self._cutoff_key(cutoff)] = str(job.id)
-                created.append(job)
-
-        deduped: list[Job] = []
-        seen: set[UUID] = set()
-        for job in created:
-            if job.id in seen:
-                continue
-            seen.add(job.id)
-            deduped.append(job)
-        return deduped
-
-    def _on_submit_local_from_convergence(self, cutoff_values: list[float]) -> None:
-        self._submit_workflow_selection(
-            cutoff_values,
-            normalize=float,
-            build_states=self._build_convergence_cutoff_states,
-            jobs_for_values=self._jobs_for_convergence_cutoffs,
-            materialize_values=self._materialize_convergence_jobs,
-            is_ready=sweep_point_state_is_ready,
-            no_ready_message="Only configured cutoffs in the 'ready' state can be submitted.",
-            submit=self._submit_jobs_locally,
-        )
-
-    def _on_submit_cluster_from_convergence(self, cutoff_values: list[float]) -> None:
-        self._submit_workflow_selection(
-            cutoff_values,
-            normalize=float,
-            build_states=self._build_convergence_cutoff_states,
-            jobs_for_values=self._jobs_for_convergence_cutoffs,
-            materialize_values=self._materialize_convergence_jobs,
-            is_ready=sweep_point_state_is_ready,
-            no_ready_message="Only configured cutoffs in the 'ready' state can be submitted.",
-            submit=self._submit_jobs_on_cluster,
-        )
-
     def _on_examine_convergence(self) -> None:
         if self._document is None:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -5416,7 +5322,7 @@ class MainWindow(QMainWindow):
             persisted_state = {}
 
         dialog = ConvergenceExaminerDialog(
-            self._build_convergence_cutoff_states(),
+            self._convergence_controller.build_states(),
             num_atoms=len(host.species),
             initial_state=persisted_state,
             parent=self,
@@ -5499,15 +5405,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Project default cutoff set to {float(cutoff_energy):.8g} eV")
 
     def _on_cancel_from_convergence(self, cutoff_values: list[float]) -> None:
-        jobs = self._jobs_for_convergence_cutoffs(cutoff_values)
+        jobs = self._convergence_controller.jobs_for_keys(cutoff_values)
         self._cancel_jobs(jobs)
 
     def _on_inspect_failed_from_convergence(self, cutoff_values: list[float]) -> None:
-        jobs = self._jobs_for_convergence_cutoffs(cutoff_values)
+        jobs = self._convergence_controller.jobs_for_keys(cutoff_values)
         self._inspect_failed_jobs(jobs)
 
     def _on_reset_failed_from_convergence(self, cutoff_values: list[float]) -> None:
-        jobs = self._jobs_for_convergence_cutoffs(cutoff_values)
+        jobs = self._convergence_controller.jobs_for_keys(cutoff_values)
         self._reset_failed_jobs(jobs)
 
     def _on_remove_cutoffs_from_convergence(self, cutoff_values: list[float]) -> None:
@@ -5535,7 +5441,7 @@ class MainWindow(QMainWindow):
         if removed_cutoffs:
             self._convergence_view.remove_cutoffs(removed_cutoffs)
             self._refresh_jobs_table()
-            self._refresh_convergence_cutoff_rows()
+            self._convergence_controller.refresh_view()
             self.statusBar().showMessage(
                 f"Removed {len(removed_cutoffs)} convergence cutoff entr{('y' if len(removed_cutoffs) == 1 else 'ies')}"
             )
@@ -5958,7 +5864,7 @@ class MainWindow(QMainWindow):
         )
 
         self._refresh_jobs_table()
-        self._refresh_convergence_cutoff_rows()
+        self._convergence_controller.refresh_view()
         self._refresh_kpoint_convergence_rows()
         self._refresh_quantum_corrections_view()
         if outcome.journal_changed:
@@ -6236,7 +6142,7 @@ class MainWindow(QMainWindow):
             failed_submit.extend(batch_failed)
 
         self._refresh_jobs_table()
-        self._refresh_convergence_cutoff_rows()
+        self._convergence_controller.refresh_view()
         self._refresh_kpoint_convergence_rows()
         self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
@@ -6668,7 +6574,7 @@ class MainWindow(QMainWindow):
             reset_count += 1
 
         self._refresh_jobs_table()
-        self._refresh_convergence_cutoff_rows()
+        self._convergence_controller.refresh_view()
         self._refresh_kpoint_convergence_rows()
 
         if cleanup_errors:
@@ -6697,6 +6603,41 @@ class MainWindow(QMainWindow):
             seen.add(job.id)
             deduped.append(job)
         return deduped
+
+    def _build_workflow_controller_context(self) -> WorkflowControllerContext:
+        """Build the narrow, late-bound context passed to workflow controllers.
+
+        Every callable is a small wrapper so the controller always sees the
+        current document and any test-time monkeypatching of these methods
+        (see the ``monkeypatch.setattr(window, "_submit_jobs_*", ...)`` tests).
+        """
+
+        return WorkflowControllerContext(
+            document=lambda: self._document,
+            project_service=self._project_service,
+            job_execution=self._job_execution,
+            submission_coordinator=self._workflow_submission,
+            submit_jobs_locally=lambda *args, **kwargs: self._submit_jobs_locally(*args, **kwargs),
+            submit_jobs_on_cluster=lambda *args, **kwargs: self._submit_jobs_on_cluster(*args, **kwargs),
+            show_info=lambda title, text: QMessageBox.information(self, title, text),
+            request_dashboard_flush=lambda **kwargs: self._request_dashboard_flush(**kwargs),
+            persist_ui_state=lambda **kwargs: self._persist_document_ui_state(**kwargs),
+            status_message=lambda message: self.statusBar().showMessage(message),
+            active_convergence_definition=lambda: self._active_convergence_definition(),
+            deserialize_convergence_config=lambda payload: self._deserialize_convergence_config(payload),
+            sync_equivalent_convergence_cutoff_mappings=(
+                lambda definition: self._sync_equivalent_convergence_cutoff_mappings(definition)
+            ),
+            definition_for_convergence_cutoff=lambda cutoff: self._definition_for_convergence_cutoff(cutoff),
+            job_for_definition_cutoff=(
+                lambda definition, cutoff: self._job_for_definition_cutoff(definition, cutoff)
+            ),
+            definition_output_directory=lambda definition: self._definition_output_directory(definition),
+            cutoff_key=lambda value: self._cutoff_key(value),
+            total_energy_for_job=lambda job_id: self._total_energy_for_job(job_id),
+            max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
+            max_stress_for_job=lambda job_id: self._max_stress_for_job(job_id),
+        )
 
     def _submit_workflow_selection(
         self,
@@ -7473,7 +7414,7 @@ class MainWindow(QMainWindow):
         update = self._job_execution.mark_local_status_changed(job_id, status_value)
         if update.changed:
             self._refresh_jobs_table()
-            self._refresh_convergence_cutoff_rows()
+            self._convergence_controller.refresh_view()
             self._refresh_kpoint_convergence_rows()
             self._refresh_quantum_corrections_view()
             self._refresh_energy_barriers_view()
@@ -7664,11 +7605,29 @@ class MainWindow(QMainWindow):
                     site.relaxation_run_id = run.id
                     site.relative_energy_eV = parsed.total_energy
 
+        # Give the owning workflow controller (if any) a chance to contribute
+        # payload/file/structure additions before the Result is built. This is a
+        # strict no-op for unmigrated workflows and for controllers that return
+        # an empty ControllerResult (e.g. cutoff convergence), so behavior is
+        # unchanged until a workflow overrides build_result.
+        result_payload, output_files, derived_structure_ids, merged_warnings = (
+            merge_controller_result(
+                self._workflow_controllers,
+                job,
+                parsed,
+                run,
+                payload=result_payload,
+                output_files=self._output_files_for_job(job),
+                derived_structure_ids=derived_structure_ids,
+                warnings=list(parsed.warnings),
+            )
+        )
+
         result = Result(
             calculation_run_id=run.id,
             result_type=job.calc_type,
             data=result_payload,
-            output_files=self._output_files_for_job(job),
+            output_files=output_files,
             derived_structure_ids=derived_structure_ids,
         )
         self._document.results[result.id] = result
@@ -7676,7 +7635,7 @@ class MainWindow(QMainWindow):
         self._job_execution.complete_job_with_result(
             job,
             result=result,
-            warnings=parsed.warnings,
+            warnings=merged_warnings,
             convergence_achieved=parsed.geom_converged,
         )
         self._request_dashboard_flush(
@@ -8043,7 +8002,7 @@ class MainWindow(QMainWindow):
             self._sync_equivalent_convergence_cutoff_mappings(matching_definition)
             self._document.ui_state[self._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(matching_definition.id)
             self._refresh_jobs_table()
-            self._refresh_convergence_cutoff_rows()
+            self._convergence_controller.refresh_view()
             self._refresh_journal_view()
             self.statusBar().showMessage(
                 f"Using existing cutoff setup with {len(config.cutoff_energies)} cutoff job(s)"
@@ -8069,7 +8028,7 @@ class MainWindow(QMainWindow):
         self._document.ui_state[self._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(latest_definition.id)
 
         self._refresh_jobs_table()
-        self._refresh_convergence_cutoff_rows()
+        self._convergence_controller.refresh_view()
         self._refresh_journal_view()
         self.statusBar().showMessage(
             f"Configured {len(config.cutoff_energies)} cutoff jobs; input files will be generated on submission"
@@ -8717,7 +8676,7 @@ class MainWindow(QMainWindow):
         if self._document is None or self._shutting_down:
             return
         self._document.ui_state["convergence_form"] = state
-        self._refresh_convergence_cutoff_rows()
+        self._convergence_controller.refresh_view()
 
     def _refresh_convergence_simulation_cell(self) -> None:
         if self._document is None:
@@ -14517,48 +14476,6 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(f"Deleted magnetic field workspace '{title}'")
 
-    def _refresh_convergence_cutoff_rows(self) -> None:
-        if self._document is None:
-            self._convergence_view.set_cutoff_runtime_states({})
-            return
-        self._convergence_view.set_cutoff_runtime_states(
-            self._build_convergence_cutoff_states()
-        )
-
-    def _convergence_form_snapshot(self) -> tuple[str, tuple[float, ...]]:
-        if self._document is None:
-            return "cutoff_convergence", ()
-
-        form_sources: list[dict] = []
-        widget_state = self._convergence_view.collect_state()
-        if isinstance(widget_state, dict):
-            form_sources.append(widget_state)
-
-        persisted = self._document.ui_state.get("convergence_form", {})
-        if isinstance(persisted, dict):
-            form_sources.append(persisted)
-
-        for form_state in form_sources:
-            name_prefix = (
-                str(form_state.get("name_prefix", "cutoff_convergence")).strip()
-                or "cutoff_convergence"
-            )
-
-            cutoffs: list[float] = []
-            raw_cutoffs = form_state.get("cutoff_energies", [])
-            if isinstance(raw_cutoffs, list):
-                for value in raw_cutoffs:
-                    try:
-                        cutoffs.append(float(value))
-                    except (TypeError, ValueError):
-                        continue
-
-            unique = tuple(dict.fromkeys(cutoffs))
-            if unique:
-                return name_prefix, unique
-
-        return "cutoff_convergence", ()
-
     def _detach_convergence_job(self, job_id: UUID) -> None:
         if self._document is None:
             return
@@ -14569,63 +14486,6 @@ class MainWindow(QMainWindow):
             stale_keys = [key for key, value in mapping.items() if str(value) == str(job_id)]
             for key in stale_keys:
                 mapping.pop(key, None)
-
-    def _build_convergence_cutoff_states(self) -> dict[float, SweepPointRunState]:
-        if self._document is None:
-            return {}
-
-        states: dict[float, SweepPointRunState] = {}
-        form_prefix, form_cutoffs = self._convergence_form_snapshot()
-        for cutoff in form_cutoffs:
-            states[cutoff] = SweepPointRunState(
-                status="ready",
-                job_label=convergence_job_name(
-                    form_prefix,
-                    cutoff,
-                    sweep_parameter="cut_off_energy",
-                ),
-            )
-
-        definition = self._active_convergence_definition()
-        if definition is None:
-            return states
-
-        self._sync_equivalent_convergence_cutoff_mappings(definition)
-        config = self._deserialize_convergence_config(definition.parameters.get("configuration", {}))
-        if config is None:
-            return states
-
-        config_cutoffs = tuple(dict.fromkeys(float(value) for value in config.cutoff_energies))
-        # If the editable convergence form has diverged from the active definition,
-        # do not project old runtime results into the regenerated cutoff table.
-        if form_cutoffs and (form_prefix != config.name_prefix or form_cutoffs != config_cutoffs):
-            return states
-
-        for cutoff in config.cutoff_energies:
-            job = self._job_for_definition_cutoff(definition, cutoff)
-            if job is None:
-                states[cutoff] = SweepPointRunState(
-                    status="ready",
-                    job_label=convergence_job_name(
-                        config.name_prefix,
-                        cutoff,
-                        sweep_parameter="cut_off_energy",
-                    ),
-                )
-                continue
-
-            status_value = "ready" if job.status == JobStatus.DEFINED else job.status.value
-
-            states[cutoff] = SweepPointRunState(
-                status=status_value,
-                total_energy=self._total_energy_for_job(job.id),
-                max_force=self._max_force_for_job(job.id),
-                max_stress=self._max_stress_for_job(job.id),
-                job_id=job.id,
-                job_label=job.label,
-            )
-
-        return states
 
     def _total_energy_for_job(self, job_id: UUID) -> float | None:
         if self._document is None:

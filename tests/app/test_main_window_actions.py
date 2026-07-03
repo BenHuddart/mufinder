@@ -1010,7 +1010,7 @@ def test_materialize_convergence_jobs_writes_saved_supercell_structure(qapp, tmp
     doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(definition.id)
     window._document = doc
 
-    jobs = window._materialize_convergence_jobs([300.0])
+    jobs = window._convergence_controller.materialize([300.0])
 
     assert len(jobs) == 1
     cell_path = doc.project_root / "files" / "convergence_cutoff" / "conv_ecut_300" / "conv_ecut_300.cell"
@@ -1066,7 +1066,7 @@ def test_submit_convergence_ignores_stale_same_label_jobs_for_ready_cutoffs(
     submitted: list[list[Job]] = []
     monkeypatch.setattr(window, "_submit_jobs_on_cluster", lambda jobs: submitted.append(jobs))
 
-    window._on_submit_cluster_from_convergence([300.0, 1300.0, 1400.0])
+    window._convergence_controller.submit([300.0, 1300.0, 1400.0], target="cluster")
 
     assert len(submitted) == 1
     assert [job.label for job in submitted[0]] == [
@@ -1153,7 +1153,7 @@ def test_convergence_states_merge_equivalent_definition_mappings(
     doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(active.id)
     window._document = doc
 
-    states = window._build_convergence_cutoff_states()
+    states = window._convergence_controller.build_states()
 
     assert states[300.0].status == "running"
     assert states[300.0].job_id == running_300.id
@@ -1218,7 +1218,7 @@ def test_materialize_convergence_jobs_repairs_legacy_zero_spin_supercell_asset(
     doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(definition.id)
     window._document = doc
 
-    jobs = window._materialize_convergence_jobs([300.0])
+    jobs = window._convergence_controller.materialize([300.0])
 
     assert len(jobs) == 1
     cell_path = doc.project_root / "files" / "convergence_cutoff" / "conv_ecut_300" / "conv_ecut_300.cell"
@@ -1412,7 +1412,7 @@ def test_main_window_convergence_status_uses_cutoff_energies_when_legacy_sweep_v
     )
 
     window._document = doc
-    states = window._build_convergence_cutoff_states()
+    states = window._convergence_controller.build_states()
 
     assert set(states) == {400.0, 500.0}
     assert states[400.0].status == "completed"
@@ -1605,7 +1605,7 @@ def test_main_window_build_states_merges_equivalent_convergence_definition_jobs(
     doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(new_definition.id)
     window._document = doc
 
-    states = window._build_convergence_cutoff_states()
+    states = window._convergence_controller.build_states()
 
     assert old_definition.id != new_definition.id
     assert states[300.0].status == "completed"
@@ -1676,7 +1676,7 @@ def test_convergence_states_merge_matching_cutoffs_from_reshaped_configuration(
     doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(active_definition.id)
     window._document = doc
 
-    states = window._build_convergence_cutoff_states()
+    states = window._convergence_controller.build_states()
 
     assert old_definition.id != active_definition.id
     assert states[300.0].status == "ready"
@@ -1737,7 +1737,7 @@ def test_main_window_regenerated_cutoff_list_does_not_inherit_stale_results(
     }
     window._document = doc
 
-    states = window._build_convergence_cutoff_states()
+    states = window._convergence_controller.build_states()
 
     assert set(states) == {300.0, 340.0}
     assert states[300.0].status == "ready"
@@ -6642,7 +6642,7 @@ def test_main_window_submit_from_convergence_shows_info_when_no_matching_jobs(
         lambda _parent, title, _message: infos.append(title),
     )
 
-    window._on_submit_local_from_convergence([300.0])
+    window._convergence_controller.submit([300.0], target="local")
 
     assert infos == ["No ready jobs"]
     window.close()
@@ -6817,7 +6817,7 @@ def test_main_window_submit_from_convergence_materializes_job_inputs(
     monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
     monkeypatch.setattr(window._local_runner, "submit", lambda **kwargs: submitted.append(kwargs))
 
-    window._on_submit_local_from_convergence([300.0])
+    window._convergence_controller.submit([300.0], target="local")
 
     assert len(doc.jobs) == 1
     job = next(iter(doc.jobs.values()))
@@ -6884,7 +6884,7 @@ def test_main_window_submit_from_convergence_dedupes_existing_ready_jobs(
         lambda jobs: submitted_ids.append([job.id for job in jobs]),
     )
 
-    window._on_submit_local_from_convergence([300.0, 360.0])
+    window._convergence_controller.submit([300.0, 360.0], target="local")
 
     assert submitted_ids == [[job_a.id, job_b.id]]
     window.close()
@@ -6934,7 +6934,7 @@ def test_main_window_reset_failed_convergence_job_restores_ready_state(
     window._reset_failed_jobs([job])
 
     assert window._jobs_table.rowCount() == 0
-    assert window._build_convergence_cutoff_states()[300.0].status == "ready"
+    assert window._convergence_controller.build_states()[300.0].status == "ready"
     window.close()
 
 
@@ -7270,7 +7270,7 @@ def test_main_window_remove_convergence_cutoff_clears_equivalent_definition_mapp
     )
     doc.ui_state[window._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(new_definition.id)
 
-    states = window._build_convergence_cutoff_states()
+    states = window._convergence_controller.build_states()
 
     assert states[300.0].status == "ready"
     assert new_definition.parameters.get("job_ids_by_cutoff", {}) == {}
@@ -7524,7 +7524,7 @@ def test_main_window_examine_convergence_launches_dialog(
         300.0: main_window_module.CutoffRunState(status="completed", total_energy=-10.0, max_force=0.2),
         400.0: main_window_module.CutoffRunState(status="completed", total_energy=-10.02, max_force=0.15),
     }
-    monkeypatch.setattr(window, "_build_convergence_cutoff_states", lambda: states)
+    monkeypatch.setattr(window._convergence_controller, "build_states", lambda: states)
 
     captured: dict[str, object] = {}
 
