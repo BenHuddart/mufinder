@@ -145,6 +145,17 @@ there are no active jobs (early-return path).
 Local runs never enter `retrieving` (only cluster retrieval does), so there is
 no local-runner condition to check; the rule set intentionally omits it.
 
+### `closeEvent` timer-stop is a conscious extra edit site
+The enumerated scope for `main_window.py` was "the timer-creation block in
+`__init__` plus ONE handler." One additional line was added: a
+`_job_watchdog_timer.stop()` in `closeEvent`, right beside the existing
+`_job_runtime_timer` / `_dashboard_flush_timer` stops. It is defensible — the
+handler does not guard `_shutting_down`, so stopping the timer prevents a tick
+firing into a half-torn-down document during close — and it lives in
+`closeEvent`, not the dashboard table/actions region owned by Stream C, so the
+merge-conflict risk with Stream C is low. Flagged here for the maintainer's
+awareness.
+
 ---
 
 ## 3. Tests run and results
@@ -157,8 +168,13 @@ All run as focused suites with:
 - `tests/services/test_job_watchdog.py` — 28 passed (detection matrix, grace
   period, cluster disconnect/other-cluster, two-tick + recovery + forget/reset,
   controller stop path).
-- `tests/app/test_job_watchdog_wiring.py` — 10 passed (cluster mirror add/remove/
-  clear/disconnect-survival/track_existing_job).
+- `tests/app/test_job_watchdog_wiring.py` — 12 passed. The cluster mirror
+  (add/remove/clear/disconnect-survival/track_existing_job) **and** the actual
+  `MainWindow._on_job_watchdog_tick` integration path: a real `MainWindow` with a
+  stuck local `running` job is ticked twice and asserts the two-tick gate (one
+  tick = no stop) then the stop (`status == STOPPED`,
+  `last_status_source == "watchdog"`, active run closed out and unmapped), plus a
+  no-active-jobs no-op tick.
 - Regression suites: `tests/app/test_cluster_controller.py`,
   `tests/services/test_job_execution_controller.py`,
   `tests/services/test_cluster_runner.py`, `tests/services/test_job_monitoring.py`

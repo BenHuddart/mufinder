@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -18,7 +19,10 @@ from PySide6.QtWidgets import QApplication
 
 from mufinder.app import cluster_controller
 from mufinder.app.cluster_controller import ClusterController
-from mufinder.domain.enums import JobStatus
+from mufinder.app.main_window import MainWindow
+from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.models import CalculationRun
+from mufinder.services.project_service import ProjectService
 
 
 def _process_until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> bool:
@@ -161,3 +165,63 @@ def test_mirror_survives_disconnect(controller) -> None:
     fake.connection_status_changed.emit(False)
     assert _process_until(lambda: ctrl.is_connected is False)
     assert ctrl.tracked_active_job_ids() == frozenset({job_id})
+
+
+# ----------------------------------------------------------------------------
+# MainWindow handler wiring (timer -> snapshots -> evaluate -> stop_stuck_job)
+# ----------------------------------------------------------------------------
+def _running_local_job(window: MainWindow, service: ProjectService, document) -> object:
+    job = service.add_job(
+        document,
+        label="stuck-local",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_cutoff",
+    )
+    # Drive it to RUNNING through the primitives, exactly as a real submission
+    # would, then register an active run so close-out has something to touch.
+    service.submit_job(job)
+    service.start_job(job)
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.RUNNING)
+    document.runs[run.id] = run
+    window._active_run_by_job[job.id] = run.id
+    return job
+
+
+def test_watchdog_handler_stops_confirmed_stuck_local_job(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    document = service.create_project(tmp_path / "watchdog_wiring.mufinder", "Watchdog Wiring")
+    window._document = document
+    window._refresh_ui_after_project_change()
+
+    job = _running_local_job(window, service, document)
+    # No local runner entry and no cluster tracking: the job is genuinely stuck.
+
+    # First tick: two-tick gate means nothing is stopped yet.
+    window._on_job_watchdog_tick()
+    assert document.jobs[job.id].status == JobStatus.RUNNING
+
+    # Second consecutive tick: confirmed and stopped.
+    window._on_job_watchdog_tick()
+    stopped = document.jobs[job.id]
+    assert stopped.status == JobStatus.STOPPED
+    assert stopped.last_status_source == "watchdog"
+    assert stopped.last_status_message
+    # The active run was closed out and unmapped, mirroring the walltime-stop path.
+    assert job.id not in window._active_run_by_job
+    stopped_runs = [run for run in document.runs.values() if run.job_id == job.id]
+    assert stopped_runs and all(run.status == JobStatus.STOPPED for run in stopped_runs)
+    window.close()
+
+
+def test_watchdog_handler_noop_without_active_jobs(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    document = service.create_project(tmp_path / "watchdog_empty.mufinder", "Watchdog Empty")
+    window._document = document
+    window._refresh_ui_after_project_change()
+
+    # No active jobs: the handler returns early and does not raise.
+    window._on_job_watchdog_tick()
+    window._on_job_watchdog_tick()
+    window.close()
