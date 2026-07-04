@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from math import isnan
 import os
 from pathlib import Path
@@ -21,6 +21,7 @@ import numpy as np
 from PySide6.QtCore import QEventLoop, QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import (
     QActionGroup,
+    QBrush,
     QColor,
     QFont,
     QFontMetricsF,
@@ -218,6 +219,7 @@ from mufinder.services.job_execution_controller import (
     JobExecutionController,
     PreparedClusterSubmission,
 )
+from mufinder.services.job_monitoring import job_staleness
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.services.project_service import ProjectDocument, ProjectService
@@ -1608,14 +1610,17 @@ class MainWindow(QMainWindow):
     _JOB_WORKFLOW_COLUMN = 1
     _JOB_CALC_TYPE_COLUMN = 2
     _JOB_STATUS_COLUMN = 3
-    _JOB_CLUSTER_COLUMN = 4
-    _JOB_REMOTE_ID_COLUMN = 5
-    _JOB_RUNTIME_COLUMN = 6
-    _JOB_PROCESSES_COLUMN = 7
-    _JOB_SUBMIT_COLUMN = 8
-    _JOB_CANCEL_COLUMN = 9
-    _JOB_INSPECT_COLUMN = 10
-    _JOB_RESET_COLUMN = 11
+    _JOB_LAST_CHECKED_COLUMN = 4
+    _JOB_CLUSTER_COLUMN = 5
+    _JOB_REMOTE_ID_COLUMN = 6
+    _JOB_RUNTIME_COLUMN = 7
+    _JOB_PROCESSES_COLUMN = 8
+    _JOB_SUBMIT_COLUMN = 9
+    _JOB_RETRY_RETRIEVAL_COLUMN = 10
+    _JOB_CANCEL_COLUMN = 11
+    _JOB_INSPECT_COLUMN = 12
+    _JOB_RESET_COLUMN = 13
+    _JOB_DISMISS_COLUMN = 14
     _PROJECT_TREE_MIN_WIDTH = 220
     _PROJECT_TREE_MAX_WIDTH = 300
     _ACTIVE_CONVERGENCE_DEFINITION_KEY = "active_convergence_cutoff_definition_id"
@@ -2002,21 +2007,24 @@ class MainWindow(QMainWindow):
         self._main_stack.addWidget(self._quantum_corrections_view)
         self._main_stack.addWidget(self._journal_view)
 
-        self._jobs_table = QTableWidget(0, 12)
+        self._jobs_table = QTableWidget(0, 15)
         self._jobs_table.setHorizontalHeaderLabels(
             [
                 "Label",
                 "Workflow",
                 "Calc Type",
                 "Status",
+                "Last Checked",
                 "Cluster",
                 "Remote Job ID",
                 "Runtime",
                 "Processes",
                 "Resubmit",
+                "Retry retrieval",
                 "Cancel",
                 "Inspect",
                 "Reset",
+                "Dismiss",
             ]
         )
         use_square_top_table_corners(self._jobs_table)
@@ -3508,8 +3516,11 @@ class MainWindow(QMainWindow):
             )
             return
 
+        now = utc_now()
         for job in self._document.jobs.values():
             if job.status not in _VISIBLE_DASHBOARD_STATES:
+                continue
+            if job.dismissed_at is not None:
                 continue
             row = self._jobs_table.rowCount()
             self._jobs_table.insertRow(row)
@@ -3522,6 +3533,10 @@ class MainWindow(QMainWindow):
             status_item = QTableWidgetItem(job.status.value)
             status_item.setForeground(self._status_brush(job.status.value))
             self._jobs_table.setItem(row, self._JOB_STATUS_COLUMN, status_item)
+
+            last_checked_item = QTableWidgetItem()
+            self._apply_last_checked_cell(last_checked_item, job, now=now)
+            self._jobs_table.setItem(row, self._JOB_LAST_CHECKED_COLUMN, last_checked_item)
 
             cluster_name = "local" if job.execution_target == "local" else job.execution_target
             self._jobs_table.setItem(row, self._JOB_CLUSTER_COLUMN, QTableWidgetItem(cluster_name))
@@ -3538,15 +3553,27 @@ class MainWindow(QMainWindow):
             )
 
             can_resubmit = job.status in _RESUBMITTABLE_JOB_STATES
+            can_retry_retrieval = self._can_retry_retrieval(job)
             can_cancel = job.status in ACTIVE_JOB_STATUSES
             can_inspect = job.status in {JobStatus.FAILED, JobStatus.STOPPED}
             can_reset = job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+            can_dismiss = job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
 
             resubmit_btn = self._make_job_action_button("Resubmit", job_id=job.id, enabled=can_resubmit)
             resubmit_btn.clicked.connect(
                 lambda _checked=False, jid=job.id, btn=resubmit_btn: self._dispatch_dashboard_action(btn, jid, "resubmit")
             )
             self._jobs_table.setCellWidget(row, self._JOB_SUBMIT_COLUMN, resubmit_btn)
+
+            retry_btn = self._make_job_action_button(
+                "Retry retrieval", job_id=job.id, enabled=can_retry_retrieval
+            )
+            retry_btn.clicked.connect(
+                lambda _checked=False, jid=job.id, btn=retry_btn: self._dispatch_dashboard_action(
+                    btn, jid, "retry_retrieval"
+                )
+            )
+            self._jobs_table.setCellWidget(row, self._JOB_RETRY_RETRIEVAL_COLUMN, retry_btn)
 
             cancel_btn = self._make_job_action_button("Cancel", job_id=job.id, enabled=can_cancel)
             cancel_btn.clicked.connect(
@@ -3565,6 +3592,12 @@ class MainWindow(QMainWindow):
                 lambda _checked=False, jid=job.id, btn=reset_btn: self._dispatch_dashboard_action(btn, jid, "reset")
             )
             self._jobs_table.setCellWidget(row, self._JOB_RESET_COLUMN, reset_btn)
+
+            dismiss_btn = self._make_job_action_button("Dismiss", job_id=job.id, enabled=can_dismiss)
+            dismiss_btn.clicked.connect(
+                lambda _checked=False, jid=job.id, btn=dismiss_btn: self._dispatch_dashboard_action(btn, jid, "dismiss")
+            )
+            self._jobs_table.setCellWidget(row, self._JOB_DISMISS_COLUMN, dismiss_btn)
 
         self._configure_jobs_table_columns()
         self._sync_job_runtime_timer()
@@ -3651,12 +3684,15 @@ class MainWindow(QMainWindow):
             self._JOB_REMOTE_ID_COLUMN,
         )
         contents_columns = (
+            self._JOB_LAST_CHECKED_COLUMN,
             self._JOB_RUNTIME_COLUMN,
             self._JOB_PROCESSES_COLUMN,
             self._JOB_SUBMIT_COLUMN,
+            self._JOB_RETRY_RETRIEVAL_COLUMN,
             self._JOB_CANCEL_COLUMN,
             self._JOB_INSPECT_COLUMN,
             self._JOB_RESET_COLUMN,
+            self._JOB_DISMISS_COLUMN,
         )
 
         for column in stretch_columns:
@@ -3676,6 +3712,79 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _status_brush(status_value: str):
         return status_brush(status_value)
+
+    def _can_retry_retrieval(self, job: Job) -> bool:
+        """Return True when the "Retry retrieval" action is eligible for a job.
+
+        Eligible iff the job is failed/stopped, targets a cluster with both a
+        remote job id and remote directory persisted, and the cluster runner is
+        currently connected to that job's cluster.
+        """
+
+        if job.status not in {JobStatus.FAILED, JobStatus.STOPPED}:
+            return False
+        if not (job.remote_job_id or "").strip() or not (job.remote_directory or "").strip():
+            return False
+        return self._is_cluster_connected_for_job(job)
+
+    def _is_cluster_connected_for_job(self, job: Job) -> bool:
+        """Return True when the cluster runner is connected to this job's cluster.
+
+        Mirrors the casefold comparison used by cluster resubmission
+        (``_submit_jobs_on_cluster``). Local jobs are never "cluster connected".
+        """
+
+        target = (job.execution_target or "").strip()
+        if not target or target.casefold() == "local":
+            return False
+        if not self._cluster_runner.is_connected:
+            return False
+        connected = (self._cluster_runner.connected_cluster_name or "").strip()
+        return bool(connected) and connected.casefold() == target.casefold()
+
+    @staticmethod
+    def _format_relative_age(then, *, now) -> str:
+        """Render a compact relative age such as ``just now`` / ``2 min ago``."""
+
+        if then is None:
+            return "—"
+        stamp = then if then.tzinfo is not None else then.replace(tzinfo=UTC)
+        seconds = max(0, int((now - stamp).total_seconds()))
+        if seconds < 45:
+            return "just now"
+        minutes = seconds // 60
+        if minutes < 60:
+            return f"{max(1, minutes)} min ago"
+        hours = minutes // 60
+        if hours < 24:
+            return f"{hours} hr ago"
+        days = hours // 24
+        return f"{days} day{'s' if days != 1 else ''} ago"
+
+    def _apply_last_checked_cell(self, item, job: Job, *, now) -> None:
+        """Fill one Last-checked cell: relative age, stale marker, and tooltip."""
+
+        base_text = self._format_relative_age(job.last_checked_at, now=now)
+        stale_reason = job_staleness(
+            job,
+            now=now,
+            cluster_connected=self._is_cluster_connected_for_job(job),
+        )
+        if stale_reason is not None:
+            item.setText(f"{base_text} — stale")
+            item.setForeground(QBrush(QColor(current_palette().warning)))
+        else:
+            item.setText(base_text)
+
+        tooltip_lines: list[str] = []
+        if job.last_status_source:
+            tooltip_lines.append(f"Source: {job.last_status_source}")
+        if job.last_status_message:
+            tooltip_lines.append(f"Message: {job.last_status_message}")
+        if stale_reason is not None:
+            tooltip_lines.append(f"Stale: {stale_reason}")
+        if tooltip_lines:
+            item.setToolTip("\n".join(tooltip_lines))
 
     @staticmethod
     def _format_runtime_seconds(elapsed_seconds: int) -> str:
@@ -4324,6 +4433,84 @@ class MainWindow(QMainWindow):
                 success_message=lambda count, cluster: f"Resubmitted {count} cluster job(s) on {cluster}",
             )
 
+    def _on_retry_retrieval_from_dashboard(self, job_ids: list[UUID]) -> None:
+        if self._document is None:
+            return
+
+        jobs = [self._document.jobs.get(job_id) for job_id in job_ids]
+        eligible = [job for job in jobs if job is not None and self._can_retry_retrieval(job)]
+        if not eligible:
+            QMessageBox.information(
+                self,
+                "No jobs to retry",
+                "Retry retrieval is available for failed or stopped cluster jobs that still "
+                "have remote metadata while their cluster is connected.",
+            )
+            return
+
+        retried = 0
+        for job in self._dedupe_jobs(eligible):
+            output_dir = self._job_output_directory(job)
+            if output_dir is None:
+                continue
+            prepared = self._job_execution.prepare_retry_retrieval(job.id)
+            if prepared is None:
+                continue
+            self._cluster_runner.retrieve_outputs_for(
+                job.id,
+                remote_job_id=(job.remote_job_id or "").strip(),
+                remote_directory=(job.remote_directory or "").strip(),
+                seed_name=self._job_seed_name(job),
+                local_output_dir=output_dir,
+                cluster_name=job.execution_target,
+                task_farming_enabled=self._quantum_task_farming_for_job(job)[0],
+                num_farms=self._quantum_task_farming_for_job(job)[1],
+                **self._cluster_retrieve_flags(job),
+            )
+            retried += 1
+
+        if retried:
+            self._request_dashboard_flush(
+                failure_message="Retry retrieval was requested, but autosave failed.",
+            )
+            self.statusBar().showMessage(f"Retrying retrieval for {retried} cluster job(s)")
+
+    def _on_dismiss_from_dashboard(self, job_ids: list[UUID]) -> None:
+        if self._document is None:
+            return
+
+        jobs = [self._document.jobs.get(job_id) for job_id in job_ids]
+        dismissable = [
+            job
+            for job in jobs
+            if job is not None
+            and job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+            and job.dismissed_at is None
+        ]
+        if not dismissable:
+            QMessageBox.information(
+                self,
+                "No jobs to dismiss",
+                "Only failed, stopped, or cancelled jobs can be dismissed from the dashboard.",
+            )
+            return
+
+        dismissed = 0
+        for job in self._dedupe_jobs(dismissable):
+            try:
+                self._project_service.dismiss_job(job)
+            except ValueError:
+                continue
+            self._project_service.record_job_dismissed(self._document, job=job)
+            dismissed += 1
+
+        if dismissed:
+            self._refresh_journal_view()
+            self._request_dashboard_flush(
+                failure_message="Jobs were dismissed, but autosave failed.",
+            )
+            self.statusBar().showMessage(f"Dismissed {dismissed} job(s) from the dashboard")
+
     def _dispatch_dashboard_action(
         self, button: SelectionSnapshotPushButton, job_id: UUID, kind: str
     ) -> None:
@@ -4346,17 +4533,25 @@ class MainWindow(QMainWindow):
             "cancel": ACTIVE_JOB_STATUSES,
             "inspect": {JobStatus.FAILED, JobStatus.STOPPED},
             "reset": {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
-        }[kind]
+            "dismiss": {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
+        }
 
         def eligibility(uid: UUID) -> bool:
             job = self._document.jobs.get(uid)  # type: ignore[union-attr]
-            return job is not None and job.status in eligible_statuses
+            if job is None:
+                return False
+            if kind == "retry_retrieval":
+                # Retry needs remote metadata + a live connection, not just a status.
+                return self._can_retry_retrieval(job)
+            return job.status in eligible_statuses[kind]
 
         titles = {
             "resubmit": "Resubmit jobs",
+            "retry_retrieval": "Retry retrieval",
             "cancel": "Cancel jobs",
             "inspect": "Inspect jobs",
             "reset": "Reset jobs",
+            "dismiss": "Dismiss jobs",
         }
 
         target_ids = resolve_target_keys(
@@ -4371,9 +4566,11 @@ class MainWindow(QMainWindow):
 
         handlers = {
             "resubmit": self._on_resubmit_from_dashboard,
+            "retry_retrieval": self._on_retry_retrieval_from_dashboard,
             "cancel": self._on_cancel_from_dashboard,
             "inspect": self._on_inspect_failed_from_dashboard,
             "reset": self._on_reset_failed_from_dashboard,
+            "dismiss": self._on_dismiss_from_dashboard,
         }
         handlers[kind](list(target_ids))
 
@@ -8308,6 +8505,7 @@ class MainWindow(QMainWindow):
             if output_dir is None:
                 continue
 
+            task_farming_enabled, num_farms = self._quantum_task_farming_for_job(job)
             self._cluster_runner.track_existing_job(
                 job_id=job.id,
                 remote_job_id=remote_job_id,
@@ -8316,14 +8514,28 @@ class MainWindow(QMainWindow):
                 local_output_dir=output_dir,
                 cluster_name=target,
                 status=job.status,
-                retrieve_den_fmt=job.calc_type == "castep_uep_source",
-                retrieve_out_cell=job.calc_type == "castep_pristine_relaxation"
-                or is_muon_relaxation_calc_type(job.calc_type),
-                retrieve_phonon=job.calc_type == QUANTUM_PHONON_CALC_TYPE,
-                retrieve_ts=job.calc_type in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE},
-                task_farming_enabled=self._quantum_task_farming_for_job(job)[0],
-                num_farms=self._quantum_task_farming_for_job(job)[1],
+                task_farming_enabled=task_farming_enabled,
+                num_farms=num_farms,
+                **self._cluster_retrieve_flags(job),
             )
+
+    @staticmethod
+    def _cluster_retrieve_flags(job: Job) -> dict[str, bool]:
+        """Return the per-calc-type retrieval flags for a cluster job.
+
+        Shared by cluster re-attachment (``_sync_cluster_tracking_from_document``)
+        and the dashboard "Retry retrieval" action so both download the same
+        optional outputs (``.den_fmt`` / ``-out.cell`` / ``.phonon`` / ``.ts``).
+        """
+
+        return {
+            "retrieve_den_fmt": job.calc_type == "castep_uep_source",
+            "retrieve_out_cell": job.calc_type == "castep_pristine_relaxation"
+            or is_muon_relaxation_calc_type(job.calc_type),
+            "retrieve_phonon": job.calc_type == QUANTUM_PHONON_CALC_TYPE,
+            "retrieve_ts": job.calc_type
+            in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE},
+        }
 
     def _infer_remote_job_directory(self, job: Job, cluster_name: str) -> str:
         config = load_cluster_config(self._settings, cluster_name)
