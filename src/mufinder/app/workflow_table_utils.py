@@ -53,14 +53,29 @@ def style_workflow_configure_button(
     workflow_label: str,
     configured: bool,
     locked: bool,
+    noun: str = "row",
+    used: bool = False,
 ) -> None:
+    """Apply the shared Configure/Configured text and tooltip to ``button``.
+
+    ``noun`` names the per-row entity in the tooltip (default ``"row"``; e.g.
+    ``"UEP source job"``). ``used`` selects the ``"parameters used for"`` phrasing
+    of the locked (inspect) tooltip; the default ``"parameters for"`` phrasing is
+    preserved for callers that do not opt in.
+    """
+
     button.setText("Configured..." if configured or locked else "Configure...")
+    inspect_phrase = (
+        f"Inspect the {workflow_label} parameters used for this {noun}."
+        if used
+        else f"Inspect the {workflow_label} parameters for this {noun}."
+    )
     button.setToolTip(
-        f"Inspect the {workflow_label} parameters for this row."
+        inspect_phrase
         if locked
         else (
-            f"Edit custom {workflow_label} parameters for this row."
+            f"Edit custom {workflow_label} parameters for this {noun}."
             if configured
-            else f"Configure {workflow_label} parameters for this row."
+            else f"Configure {workflow_label} parameters for this {noun}."
         )
     )

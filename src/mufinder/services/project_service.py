@@ -12,7 +12,7 @@ from typing import Any
 from uuid import UUID
 
 from mufinder._version import current_version
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -48,6 +48,13 @@ _IDENTITY_SUPERCELL_MATRIX = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
 _GENERATED_SITE_STATUS = "generated"
 _LEGACY_GENERATED_SITE_STATUSES = {_GENERATED_SITE_STATUS, "candidate"}
 _STAGEABLE_SITE_STATUSES = {*_LEGACY_GENERATED_SITE_STATUSES, "staged"}
+
+#: Message stamped on a local job that was still in progress when MuFinder was
+#: closed and is reconciled to STOPPED on the next project open. See
+#: ``ProjectService.reconcile_orphaned_local_jobs`` and docs/job_lifecycle.rst.
+ORPHANED_LOCAL_JOB_STOP_MESSAGE = (
+    "MuFinder was closed while this job was in progress locally; reset or resubmit it."
+)
 
 
 @dataclass(slots=True)
@@ -1942,6 +1949,62 @@ class ProjectService:
         self._assert_transition(job.status, JobStatus.RETRIEVING)
         job.status = JobStatus.RETRIEVING
 
+    def reconcile_orphaned_local_jobs(self, document: ProjectDocument) -> list[Job]:
+        """Stop local jobs left mid-flight when MuFinder closed.
+
+        A local job left in an active state (submitting/queued/running/
+        retrieving) when the app exits has no live process behind it on the next
+        launch, yet the dashboard would keep showing it as running. Cluster jobs
+        are re-attached separately (see
+        ``MainWindow._sync_cluster_tracking_from_document``) and are left
+        untouched here.
+
+        Selection matches the local semantics pinned by the cluster
+        reattachment characterization tests: an ``execution_target`` that is
+        blank/empty or equals ``"local"`` (case-insensitively). Each selected
+        job is moved to STOPPED with ``ORPHANED_LOCAL_JOB_STOP_MESSAGE`` and its
+        latest non-terminal run is closed out to keep run/job status consistent.
+        A ``job_stopped`` provenance milestone is recorded per job.
+
+        :param document: Loaded project document to reconcile in place.
+        :returns: The jobs that were stopped, for the caller's status message.
+        """
+
+        reconciled: list[Job] = []
+        for job in document.jobs.values():
+            if job.status not in ACTIVE_JOB_STATUSES:
+                continue
+            target = (job.execution_target or "").strip()
+            if target and target.casefold() != "local":
+                continue
+
+            self.stop_job(job, ORPHANED_LOCAL_JOB_STOP_MESSAGE)
+            self._close_orphaned_run_for_job(document, job)
+            self.record_job_terminal_event(
+                document,
+                action="job_stopped",
+                job=job,
+                error_message=job.error_message,
+            )
+            reconciled.append(job)
+
+        return reconciled
+
+    @staticmethod
+    def _close_orphaned_run_for_job(document: ProjectDocument, job: Job) -> None:
+        """Mark the job's latest in-flight run as stopped, mirroring walltime stops."""
+
+        active_runs = [
+            run
+            for run in document.runs.values()
+            if run.job_id == job.id and run.status in ACTIVE_JOB_STATUSES
+        ]
+        if not active_runs:
+            return
+        run = max(active_runs, key=lambda run: run.run_index)
+        run.status = JobStatus.STOPPED
+        run.completed_at = utc_now()
+
     def generate_candidate_sites(
         self,
         document: ProjectDocument,
@@ -2615,8 +2678,19 @@ class ProjectService:
     def _assert_transition(self, current: JobStatus, target: JobStatus) -> None:
         allowed: dict[JobStatus, set[JobStatus]] = {
             JobStatus.DEFINED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
-            JobStatus.SUBMITTING: {JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.FAILED, JobStatus.CANCELLED},
-            JobStatus.QUEUED: {JobStatus.RUNNING, JobStatus.FAILED, JobStatus.CANCELLED},
+            JobStatus.SUBMITTING: {
+                JobStatus.QUEUED,
+                JobStatus.RUNNING,
+                JobStatus.STOPPED,
+                JobStatus.FAILED,
+                JobStatus.CANCELLED,
+            },
+            JobStatus.QUEUED: {
+                JobStatus.RUNNING,
+                JobStatus.STOPPED,
+                JobStatus.FAILED,
+                JobStatus.CANCELLED,
+            },
             JobStatus.RUNNING: {
                 JobStatus.RETRIEVING,
                 JobStatus.STOPPED,

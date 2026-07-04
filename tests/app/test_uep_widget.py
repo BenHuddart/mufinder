@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QComboBox, QPushButton, QToolButton
+from PySide6.QtWidgets import QComboBox, QDialog, QPushButton, QToolButton
 
+from mufinder.app import uep_widget as uep_widget_module
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.uep_types import UepRunState
 from mufinder.app.uep_widget import UEPWidget
@@ -400,3 +401,144 @@ def test_uep_widget_restores_structured_parameter_values_from_form_state(qapp) -
     assert row_id is not None
     assert widget._row_parameter_values[row_id]["cut_off_energy"] == ValueWithUnit(500.0, "eV")
     assert widget._row_parameter_values[row_id]["kpoint_mp_grid"] == (2, 2, 2)
+
+
+def _select_uep_rows(widget: UEPWidget, rows: tuple[int, ...]) -> None:
+    selection = widget._table.selectionModel()
+    assert selection is not None
+    selection.clearSelection()
+    for row in rows:
+        selection.select(
+            widget._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+
+def test_uep_batch_configure_button_tracks_selection(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+
+    assert widget._batch_configure_button.text() == "Configure Selected Parameters..."
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is False
+
+    _select_uep_rows(widget, (0, 1))
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is True
+
+    widget._table.clearSelection()
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is False
+
+
+def test_uep_batch_configure_applies_to_all_selected_rows(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    third_id = widget._row_id_at(2)
+    unselected_id = widget._row_id_at(1)
+    assert first_id is not None and third_id is not None and unselected_id is not None
+
+    monkeypatch.setattr(
+        uep_widget_module.ParameterDialog,
+        "exec",
+        lambda _self: QDialog.DialogCode.Accepted,
+    )
+    monkeypatch.setattr(
+        uep_widget_module.ParameterDialog,
+        "collect_values",
+        lambda _self: {"cut_off_energy": 555.0},
+    )
+    monkeypatch.setattr(
+        uep_widget_module.ParameterDialog,
+        "advanced_names",
+        lambda _self: (),
+    )
+
+    _select_uep_rows(widget, (0, 2))
+    widget._on_batch_configure_clicked()
+
+    # The collected value is round-tripped through the widget's structured
+    # sanitizer, which restores the eV unit on cut_off_energy.
+    expected_cutoff = ValueWithUnit(555.0, "eV")
+    assert widget._row_parameter_values[first_id]["cut_off_energy"] == expected_cutoff
+    assert widget._row_parameter_values[third_id]["cut_off_energy"] == expected_cutoff
+    # UEP always pins the source-job task/density flags on batch apply.
+    assert widget._row_parameter_values[first_id]["task"] == "SINGLEPOINT"
+    assert widget._row_parameter_values[first_id]["write_formatted_density"] is True
+    # Row 1 was not selected → no custom parameters applied.
+    assert "cut_off_energy" not in widget._row_parameter_values.get(unselected_id, {})
+
+
+def test_uep_batch_configure_empty_selection_is_noop(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+
+    opened: list[int] = []
+    monkeypatch.setattr(
+        uep_widget_module.ParameterDialog,
+        "exec",
+        lambda _self: opened.append(1) or QDialog.DialogCode.Accepted,
+    )
+
+    widget._table.clearSelection()
+    widget._on_batch_configure_clicked()
+
+    assert opened == []
+
+
+def test_uep_configure_uses_selection_snapshot_not_collapsed(qapp, monkeypatch) -> None:
+    # The per-row Configure button snapshots the selection so a platform
+    # focus-collapse to the clicked row does not shrink a multi-row batch.
+    from mufinder.app import selection_snapshot as selection_snapshot_module
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    assert first_id is not None and second_id is not None
+
+    captured: list[tuple[int, ...]] = []
+    # Multi-row snapshots route to _configure_rows (single-row → _configure_row).
+    monkeypatch.setattr(
+        UEPWidget,
+        "_configure_rows",
+        lambda _self, ids: captured.append(tuple(ids)),
+    )
+    monkeypatch.setattr(
+        selection_snapshot_module.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: selection_snapshot_module.QMessageBox.StandardButton.Yes,
+    )
+
+    _select_uep_rows(widget, (0, 1))
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, SelectionSnapshotPushButton)
+    configure_button.selection_snapshot_rows = (0, 1)
+    configure_button.clicked.emit()
+
+    assert captured, "per-row Configure did not open the multi-row dialog"
+    assert set(captured[0]) == {first_id, second_id}
+
+
+def test_uep_batch_configure_does_not_swallow_delete_shortcut(qapp) -> None:
+    # The batch-configure button must not consume the widget-scoped
+    # Delete/Backspace shortcuts (WidgetWithChildrenShortcut) that remove rows.
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+
+    widget._table.selectRow(0)
+    widget._delete_shortcut.activated.emit()
+    assert removed and widget._table.rowCount() == 1
+
+    widget._table.selectRow(0)
+    widget._backspace_shortcut.activated.emit()
+    assert widget._table.rowCount() == 0

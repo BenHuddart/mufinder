@@ -6,8 +6,9 @@ from uuid import uuid4
 
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QComboBox, QMessageBox, QPushButton, QToolButton
+from PySide6.QtWidgets import QComboBox, QDialog, QMessageBox, QPushButton, QToolButton
 
+from mufinder.app import muon_relaxation_widget as muon_relaxation_widget_module
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_types import RelaxationRunState
@@ -643,3 +644,161 @@ def test_muon_relaxation_widget_supercell_selection_can_apply_to_selected_rows(
     expected = ((2, 0, 0), (0, 2, 0), (0, 0, 1))
     assert widget.row_supercell_matrix(first_id) == expected
     assert widget.row_supercell_matrix(second_id) == expected
+
+
+def _stage_muon_rows(widget: MuonRelaxationWidget, count: int) -> None:
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(uuid4()),
+                "label": f"Site {index}",
+                "fractional_position": [0.1 * index, 0.2, 0.3],
+            }
+            for index in range(count)
+        ]
+    )
+
+
+def _select_muon_rows(widget: MuonRelaxationWidget, rows: tuple[int, ...]) -> None:
+    table = widget._active_table()
+    selection = table.selectionModel()
+    assert selection is not None
+    selection.clearSelection()
+    for row in rows:
+        selection.select(
+            table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+
+def test_muon_relaxation_batch_configure_button_tracks_selection(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+
+    assert widget._batch_configure_button.text() == "Configure Selected Parameters..."
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is False
+
+    _select_muon_rows(widget, (0, 1))
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is True
+
+    widget._active_table().clearSelection()
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is False
+
+
+def test_muon_relaxation_batch_configure_applies_to_all_selected_rows(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 3)
+    first_id = widget._row_id_at(0)
+    third_id = widget._row_id_at(2)
+    unselected_id = widget._row_id_at(1)
+    assert first_id is not None and third_id is not None and unselected_id is not None
+
+    monkeypatch.setattr(
+        muon_relaxation_widget_module.ParameterDialog,
+        "exec",
+        lambda _self: QDialog.DialogCode.Accepted,
+    )
+    monkeypatch.setattr(
+        muon_relaxation_widget_module.ParameterDialog,
+        "collect_values",
+        lambda _self: {"task": "GEOMETRYOPTIMIZATION", "max_scf_cycles": 88},
+    )
+    monkeypatch.setattr(
+        muon_relaxation_widget_module.ParameterDialog,
+        "advanced_names",
+        lambda _self: (),
+    )
+
+    _select_muon_rows(widget, (0, 2))
+    widget._configure_selected_rows()
+
+    assert widget._row_parameter_values[first_id]["max_scf_cycles"] == 88
+    assert widget._row_parameter_values[third_id]["max_scf_cycles"] == 88
+    assert widget._row_parameter_values.get(unselected_id, {}) == {}
+
+
+def test_muon_relaxation_batch_configure_empty_selection_shows_info(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 1)
+
+    infos: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, _message: infos.append(title),
+    )
+    opened: list[int] = []
+    monkeypatch.setattr(
+        MuonRelaxationWidget,
+        "_open_row_parameter_dialog",
+        lambda _self, _ids: opened.append(1),
+    )
+
+    widget._active_table().clearSelection()
+    widget._configure_selected_rows()
+
+    assert infos == ["No rows selected"]
+    assert opened == []
+
+
+def test_muon_relaxation_configure_uses_selection_snapshot_not_collapsed(
+    qapp, monkeypatch
+) -> None:
+    # The per-row Configure button snapshots the selection so a platform
+    # focus-collapse to the clicked row does not shrink a multi-row batch.
+    from PySide6.QtWidgets import QPushButton as _QPushButton
+
+    from mufinder.app import selection_snapshot as selection_snapshot_module
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    assert first_id is not None and second_id is not None
+
+    captured: list[tuple[int, ...]] = []
+    monkeypatch.setattr(
+        MuonRelaxationWidget,
+        "_open_row_parameter_dialog",
+        lambda _self, ids: captured.append(ids),
+    )
+    monkeypatch.setattr(
+        selection_snapshot_module.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: selection_snapshot_module.QMessageBox.StandardButton.Yes,
+    )
+
+    _select_muon_rows(widget, (0, 1))
+    configure_button = widget._active_table().cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, SelectionSnapshotPushButton)
+    assert isinstance(configure_button, _QPushButton)
+    configure_button.selection_snapshot_rows = (0, 1)
+    configure_button.clicked.emit()
+
+    assert captured, "per-row Configure did not open the dialog"
+    assert set(captured[0]) == {first_id, second_id}
+
+
+def test_muon_relaxation_batch_configure_does_not_swallow_delete_shortcut(qapp) -> None:
+    # Adding the batch-configure button must not consume the widget-scoped
+    # Delete/Backspace shortcuts (WidgetWithChildrenShortcut) that remove rows.
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+
+    _select_muon_rows(widget, (0,))
+    widget._delete_shortcut.activated.emit()
+    assert removed and widget._table.rowCount() == 1
+
+    _select_muon_rows(widget, (0,))
+    widget._backspace_shortcut.activated.emit()
+    assert widget._table.rowCount() == 0

@@ -8248,7 +8248,7 @@ def test_main_window_muon_relaxation_sync_ignores_historical_defined_jobs(
 
 
 def test_main_window_muon_relaxation_recovers_active_dashboard_job_mapping(
-    qapp, tmp_path: Path
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = MainWindow()
     service = ProjectService()
@@ -8263,6 +8263,12 @@ def test_main_window_muon_relaxation_recovers_active_dashboard_job_mapping(
     site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
     doc.sites[site.id] = site
     window._document = doc
+    # Post-Milestone-6.3, the only active jobs still present on project open are
+    # cluster jobs (active local jobs are reconciled to STOPPED). Use a cluster
+    # target so this test keeps exercising the active-mapping recovery path.
+    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: None)
+    monkeypatch.setattr(window, "_job_output_directory", lambda job: tmp_path / "out" / job.label)
+    monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
 
     row = main_window_module.MuonRelaxationRow(
         site_id=site.id,
@@ -8284,9 +8290,12 @@ def test_main_window_muon_relaxation_recovers_active_dashboard_job_mapping(
         label="Site 1",
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
+        execution_target="SCARF",
     )
     queued_job.status = JobStatus.QUEUED
     queued_job.submitted_at = datetime(2026, 5, 1, tzinfo=UTC)
+    queued_job.remote_job_id = "12345"
+    queued_job.remote_directory = "/remote/work/site1"
     doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
     doc.ui_state["muon_relaxation_form"] = serialized
 
@@ -8300,7 +8309,7 @@ def test_main_window_muon_relaxation_recovers_active_dashboard_job_mapping(
 
 
 def test_main_window_muon_relaxation_added_form_rows_preserve_existing_job_states(
-    qapp, tmp_path: Path
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = MainWindow()
     service = ProjectService()
@@ -8338,13 +8347,22 @@ def test_main_window_muon_relaxation_added_form_rows_preserve_existing_job_state
         ),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
+    # Cluster target so the running job survives orphaned-local-job
+    # reconciliation on refresh (Milestone 6.3); this test is about existing
+    # row-status preservation when a new row is added, not local reconciliation.
+    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: None)
+    monkeypatch.setattr(window, "_job_output_directory", lambda job: tmp_path / "out" / job.label)
+    monkeypatch.setattr(window, "_job_seed_name", lambda job: job.label)
     job = service.add_job(
         doc,
         label="Site 1",
         workflow_stage=WorkflowStage.MUON_RELAXATION,
         calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
+        execution_target="SCARF",
     )
     job.status = JobStatus.RUNNING
+    job.remote_job_id = "12345"
+    job.remote_directory = "/remote/work/site1"
     definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
     doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
     doc.ui_state["muon_relaxation_form"] = window._serialize_muon_relaxation_config(

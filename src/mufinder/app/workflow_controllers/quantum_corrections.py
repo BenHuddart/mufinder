@@ -181,7 +181,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         {QUANTUM_SINGLEPOINT_CALC_TYPE, QUANTUM_PHONON_CALC_TYPE}
     )
     no_ready_message = (
-        "Only eligible relaxed muon sites in the 'ready' state can be submitted."
+        "Only eligible muon sites that have not yet been submitted can be submitted."
     )
 
     def __init__(

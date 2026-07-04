@@ -1673,6 +1673,9 @@ class MainWindow(QMainWindow):
         # whole document to disk once per job, which freezes the GUI.
         self._dashboard_flush_pending = False
         self._dashboard_autosave_failure_message = ""
+        # Jobs stopped by the most recent orphaned-local-job reconciliation on
+        # project open; surfaced as a status-bar message by _open_project_from_path.
+        self._reconciled_orphaned_local_jobs: list[Job] = []
         self._dashboard_flush_timer = QTimer(self)
         self._dashboard_flush_timer.setSingleShot(True)
         self._dashboard_flush_timer.setInterval(300)
@@ -2550,7 +2553,15 @@ class MainWindow(QMainWindow):
                 "Project loaded with integrity warnings:\n\n"
                 + "\n".join(f"- {warning}" for warning in integrity_warnings),
             )
-        self.statusBar().showMessage(f"Opened project {self._document.project.name}")
+        reconciled = self._reconciled_orphaned_local_jobs
+        if reconciled:
+            count = len(reconciled)
+            self.statusBar().showMessage(
+                f"{count} local job(s) were stopped because MuFinder closed "
+                "while they were in progress."
+            )
+        else:
+            self.statusBar().showMessage(f"Opened project {self._document.project.name}")
         return True
 
     def _recent_projects(self) -> list[str]:
@@ -2739,6 +2750,19 @@ class MainWindow(QMainWindow):
 
         self._cluster_runner.clear_tracked_jobs()
         self._sync_cluster_tracking_from_document()
+
+        # Reconcile local jobs that were still in progress when MuFinder closed.
+        # This must run BEFORE the jobs table is rebuilt below so the user never
+        # sees phantom "running" rows for local jobs with no live process.
+        self._reconciled_orphaned_local_jobs = (
+            self._project_service.reconcile_orphaned_local_jobs(self._document)
+        )
+        if self._reconciled_orphaned_local_jobs:
+            self._request_dashboard_flush(
+                failure_message=(
+                    "Reconciled orphaned local jobs, but saving the project failed."
+                )
+            )
 
         if self._document.project.recommended_cutoff_energy is not None:
             self._document.ui_state["default_cut_off_energy"] = float(

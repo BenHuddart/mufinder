@@ -89,7 +89,7 @@ class PristineRelaxationController(WorkflowJobController):
 
     calc_types = frozenset({"castep_pristine_relaxation"})
     no_ready_message = (
-        "Only configured pristine-relaxation rows in the 'ready' state can be submitted."
+        "Only configured pristine-relaxation rows that have not yet been submitted can be submitted."
     )
 
     def __init__(

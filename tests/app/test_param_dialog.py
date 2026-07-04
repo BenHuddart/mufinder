@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtWidgets import QDialogButtonBox, QLabel, QPushButton
 
 import mufinder.app.param_dialog as param_dialog_module
 from mufinder.app.param_widgets import HubbardUParamEditor
@@ -435,3 +435,206 @@ def test_parameter_dialog_ignores_malformed_real_vector_values_in_set_values(qap
     dialog.set_values({"quantization_axis": "D"})
 
     assert dialog.collect_values()["quantization_axis"] == (0.0, 0.0, 0.0)
+
+
+def _invalid_when_incomplete_specs() -> list[KeywordSpec]:
+    """Specs where ``xc_functional`` is active but requires a missing keyword.
+
+    The ``requires`` constraint yields a validation error that survives
+    ``collect_values`` (unlike, e.g., a negative spinbox value that the editor
+    would clamp), giving a deterministic way to drive the accept-blocking path.
+    ``max_scf_cycles`` is a real CASTEP keyword so that, once added, the values
+    also pass the per-keyword validators (a fictional companion would trip an
+    "unsupported keyword" error and never validate clean).
+    """
+
+    return [
+        KeywordSpec(
+            name="task",
+            file="param",
+            kind="scalar",
+            value_type="enum",
+            allowed_values=("SINGLEPOINT",),
+            widget_hint="dropdown",
+            category="workflow",
+            basic_workflows=("convergence_kpoint",),
+            default_value="SINGLEPOINT",
+        ),
+        KeywordSpec(
+            name="xc_functional",
+            file="param",
+            kind="scalar",
+            value_type="enum",
+            allowed_values=("PBE", "LDA"),
+            widget_hint="dropdown",
+            category="electronic",
+            basic_workflows=("convergence_kpoint",),
+            default_value="PBE",
+            requires=("max_scf_cycles",),
+        ),
+        KeywordSpec(
+            name="max_scf_cycles",
+            file="param",
+            kind="scalar",
+            value_type="positive_int",
+            widget_hint="int",
+            category="electronic",
+            advanced_workflows=("convergence_kpoint",),
+            default_value=30,
+        ),
+    ]
+
+
+def _spy_on_accept(dialog: ParameterDialog) -> dict[str, bool]:
+    """Replace ``dialog.accept`` with a recorder that never closes the dialog.
+
+    ``dialog.result()`` reads 0 both before and after a *blocked* accept, so it
+    is a weak "stayed open" signal. Spying on ``accept`` gives an unambiguous
+    assertion: it fires only when validation passes.
+    """
+
+    calls = {"accepted": False}
+
+    def _record() -> None:
+        calls["accepted"] = True
+
+    dialog.accept = _record  # type: ignore[method-assign]
+    return calls
+
+
+def test_parameter_dialog_ok_blocks_accept_when_invalid(qapp, monkeypatch) -> None:
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        param_dialog_module.QMessageBox,
+        "warning",
+        lambda _parent, title, text, *args, **kwargs: warnings.append((title, text)),
+    )
+
+    dialog = ParameterDialog(
+        specs=_invalid_when_incomplete_specs(),
+        workflow_stage="convergence_kpoint",
+    )
+    # xc_functional is active by default and requires max_scf_cycles, which is
+    # an advanced row not currently added -> validation must report an error.
+    assert dialog.validate()
+    accepted = _spy_on_accept(dialog)
+
+    dialog._accept_if_valid()
+
+    assert accepted["accepted"] is False, "invalid parameters must not accept the dialog"
+    assert warnings, "a warning must surface the validation errors"
+    assert warnings[0][0] == "Invalid parameters"
+    assert "max_scf_cycles" in warnings[0][1]
+    # Values are preserved so the user can correct them in place.
+    assert dialog.collect_values()["xc_functional"] == "PBE"
+
+
+def test_parameter_dialog_ok_accepts_when_valid(qapp, monkeypatch) -> None:
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        param_dialog_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: warnings.append(args),
+    )
+
+    dialog = ParameterDialog(
+        specs=_invalid_when_incomplete_specs(),
+        workflow_stage="convergence_kpoint",
+    )
+    # Adding the required companion keyword makes it active -> no errors.
+    dialog.set_advanced_names({"max_scf_cycles"})
+    assert dialog.validate() == []
+    accepted = _spy_on_accept(dialog)
+
+    dialog._accept_if_valid()
+
+    assert accepted["accepted"] is True
+    assert warnings == []
+
+
+def test_parameter_dialog_read_only_closes_without_validation(qapp, monkeypatch) -> None:
+    called: list[str] = []
+    monkeypatch.setattr(
+        ParameterDialog,
+        "validate",
+        lambda self: called.append("validated") or [],
+    )
+
+    dialog = ParameterDialog(
+        specs=_invalid_when_incomplete_specs(),
+        workflow_stage="convergence_kpoint",
+        read_only=True,
+    )
+
+    button_box = dialog.findChild(QDialogButtonBox)
+    assert button_box is not None
+    assert button_box.button(QDialogButtonBox.StandardButton.Close) is not None
+    assert button_box.button(QDialogButtonBox.StandardButton.Ok) is None
+    # Read-only has no OK button and no accept path, so nothing validates.
+    assert called == []
+
+
+def test_quantum_corrections_dialog_inherits_accept_blocking(qapp, monkeypatch) -> None:
+    from mufinder.app.workflow_dialogs import QuantumCorrectionsConfigDialog
+
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        param_dialog_module.QMessageBox,
+        "warning",
+        lambda _parent, title, text, *args, **kwargs: warnings.append((title, text)),
+    )
+
+    specs = [
+        KeywordSpec(
+            name="task",
+            file="param",
+            kind="scalar",
+            value_type="enum",
+            allowed_values=("SINGLEPOINT", "PHONON"),
+            widget_hint="dropdown",
+            category="workflow",
+            basic_workflows=("quantum_corrections",),
+            default_value="SINGLEPOINT",
+        ),
+        KeywordSpec(
+            name="xc_functional",
+            file="param",
+            kind="scalar",
+            value_type="enum",
+            allowed_values=("PBE", "LDA"),
+            widget_hint="dropdown",
+            category="electronic",
+            basic_workflows=("quantum_corrections",),
+            default_value="PBE",
+            requires=("max_scf_cycles",),
+        ),
+        KeywordSpec(
+            name="max_scf_cycles",
+            file="param",
+            kind="scalar",
+            value_type="positive_int",
+            widget_hint="int",
+            category="electronic",
+            advanced_workflows=("quantum_corrections",),
+            default_value=30,
+        ),
+    ]
+
+    dialog = QuantumCorrectionsConfigDialog(
+        specs=specs,
+        pseudopotential_family="norm_conserving",
+        num_farms=4,
+    )
+    assert dialog.validate()
+
+    accepted = {"accepted": False}
+    dialog.accept = lambda: accepted.__setitem__("accepted", True)  # type: ignore[method-assign]
+
+    dialog._accept_if_valid()
+
+    assert accepted["accepted"] is False
+    assert warnings and warnings[0][0] == "Invalid parameters"
+    # The extra Quantum Corrections controls do not flow through
+    # validate_gui_values and remain untouched by the blocked accept.
+    assert dialog.pseudopotential_family() == "norm_conserving"
+    assert dialog.num_farms() == 4

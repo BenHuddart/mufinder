@@ -794,6 +794,60 @@ def test_convergence_widget_context_menu_emits_submit_for_ready_rows(
     assert submitted == [[300.0]]
 
 
+def test_convergence_widget_context_menu_submit_enabled_for_not_generated_rows(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A row with no runtime state displays "not generated". The always-enabled
+    # Run buttons already submit such rows (the controller materializes them),
+    # so the context-menu Submit action must agree and stay enabled.
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+
+    submitted: list[object] = []
+    widget.submit_local_requested.connect(lambda payload: submitted.append(payload))
+
+    class _FakeSignal:
+        def __init__(self) -> None:
+            self._callbacks = []
+
+        def connect(self, callback) -> None:
+            self._callbacks.append(callback)
+
+        def emit(self) -> None:
+            for callback in self._callbacks:
+                callback(False)
+
+    class _FakeAction:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.enabled = True
+            self.triggered = _FakeSignal()
+
+        def setEnabled(self, enabled: bool) -> None:
+            self.enabled = enabled
+
+    class _FakeMenu:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.actions: list[_FakeAction] = []
+
+        def addAction(self, text: str) -> _FakeAction:
+            action = _FakeAction(text)
+            self.actions.append(action)
+            return action
+
+        def exec(self, *_args, **_kwargs) -> None:
+            for action in self.actions:
+                if action.text == "Submit Local Calculation" and action.enabled:
+                    action.triggered.emit()
+                    return
+
+    monkeypatch.setattr(convergence_widget_module, "QMenu", _FakeMenu)
+
+    widget._open_cutoff_context_menu(QPoint(10, 10))
+
+    assert submitted == [[300.0]]
+
+
 def test_convergence_widget_context_menu_emits_inspect_for_failed_rows(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:

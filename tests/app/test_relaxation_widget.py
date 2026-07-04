@@ -5,8 +5,9 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QComboBox, QHeaderView, QMessageBox, QPushButton, QToolButton
+from PySide6.QtWidgets import QComboBox, QDialog, QHeaderView, QMessageBox, QPushButton, QToolButton
 
+from mufinder.app import relaxation_widget as relaxation_widget_module
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint
@@ -876,3 +877,135 @@ def test_relaxation_remove_button_applies_to_snapshot_rows(qapp, monkeypatch):
     btn.clicked.emit()
 
     assert set(removed) == {first_id, second_id}
+
+
+def _select_relaxation_rows(widget: PristineRelaxationWidget, rows: tuple[int, ...]) -> None:
+    selection = widget._table.selectionModel()
+    assert selection is not None
+    selection.clearSelection()
+    for row in rows:
+        selection.select(
+            widget._table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+
+def test_relaxation_batch_configure_button_tracks_selection(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+
+    assert widget._batch_configure_button.text() == "Configure Selected Parameters..."
+    # Nothing selected on construction → disabled.
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is False
+
+    _select_relaxation_rows(widget, (0, 1))
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is True
+
+    widget._table.clearSelection()
+    widget._refresh_batch_button_state()
+    assert widget._batch_configure_button.isEnabled() is False
+
+
+def test_relaxation_batch_configure_applies_to_all_selected_rows(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    third_id = widget._row_id_at(2)
+    unselected_id = widget._row_id_at(1)
+    assert first_id is not None and third_id is not None and unselected_id is not None
+
+    monkeypatch.setattr(
+        relaxation_widget_module.ParameterDialog,
+        "exec",
+        lambda _self: QDialog.DialogCode.Accepted,
+    )
+    monkeypatch.setattr(
+        relaxation_widget_module.ParameterDialog,
+        "collect_values",
+        lambda _self: {"task": "GEOMETRYOPTIMIZATION", "max_scf_cycles": 77},
+    )
+    monkeypatch.setattr(
+        relaxation_widget_module.ParameterDialog,
+        "advanced_names",
+        lambda _self: ("basis_precision",),
+    )
+
+    _select_relaxation_rows(widget, (0, 2))
+    widget._configure_selected_rows()
+
+    assert widget._row_parameter_values[first_id]["max_scf_cycles"] == 77
+    assert widget._row_parameter_values[third_id]["max_scf_cycles"] == 77
+    # Row 1 was not selected, so it must remain untouched.
+    assert widget._row_parameter_values.get(unselected_id, {}) == {}
+
+
+def test_relaxation_batch_configure_empty_selection_shows_info(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+
+    infos: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, _message: infos.append(title),
+    )
+    opened: list[int] = []
+    monkeypatch.setattr(
+        PristineRelaxationWidget,
+        "_open_row_parameter_dialog",
+        lambda _self, _ids: opened.append(1),
+    )
+
+    widget._table.clearSelection()
+    widget._configure_selected_rows()
+
+    assert infos == ["No rows selected"]
+    assert opened == []
+
+
+def test_relaxation_batch_configure_uses_selection_snapshot_not_collapsed(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The per-row Configure button snapshots the selection so a platform
+    # focus-collapse to the clicked row does not shrink a multi-row batch.
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    assert first_id is not None and second_id is not None
+
+    captured: list[tuple[int, ...]] = []
+    monkeypatch.setattr(
+        PristineRelaxationWidget,
+        "_open_row_parameter_dialog",
+        lambda _self, ids: captured.append(ids),
+    )
+    # A multi-row snapshot prompts (via selection_snapshot.resolve_target_keys)
+    # to confirm applying to all selected rows.
+    from mufinder.app import selection_snapshot as selection_snapshot_module
+
+    monkeypatch.setattr(
+        selection_snapshot_module.QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: selection_snapshot_module.QMessageBox.StandardButton.Yes,
+    )
+
+    _select_relaxation_rows(widget, (0, 1))
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert isinstance(configure_button, SelectionSnapshotPushButton)
+    # Simulate the press-time snapshot capturing both rows.
+    configure_button.selection_snapshot_rows = (0, 1)
+    configure_button.clicked.emit()
+
+    assert captured, "per-row Configure did not open the dialog"
+    assert set(captured[0]) == {first_id, second_id}

@@ -712,7 +712,7 @@ Setup integration includes:
 
 Submission entry points include:
 
-- Dedicated ``Run Local Calculation(s)`` action in the cutoff convergence panel,
+- Dedicated ``Run Local Calculations`` action in the cutoff convergence panel,
   operating on the current selection (or current row when a single cutoff is in focus).
 - Right-click context menu in cutoff convergence rows.
 - Delete/Backspace keyboard removal for the current cutoff row or a selected set of rows.
@@ -758,8 +758,12 @@ Ready jobs are submitted from their workflow tables. Active jobs appear in the
 dashboard while they are submitting, queued, running, or retrieving outputs.
 Completed jobs leave the dashboard after successful result handling. Failed,
 stopped, and cancelled jobs remain visible so they can be inspected,
-resubmitted, or reset. See :doc:`job_lifecycle` for the full lifecycle contract
-and the current stuck-row prevention recommendations.
+resubmitted, or reset. On project open, local jobs left mid-flight when
+MuFinder was previously closed are reconciled to ``stopped`` (rather than
+showing as running forever) and a status-bar message reports how many were
+stopped; the stopped rows remain visible and resettable. See
+:doc:`job_lifecycle` for the full lifecycle contract and the current stuck-row
+prevention recommendations.
 
 Failure diagnostics include:
 

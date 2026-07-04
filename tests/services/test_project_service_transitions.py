@@ -19,13 +19,22 @@ from mufinder.services.project_service import ProjectService
 # refactor that changes an edge must consciously update this table too.
 ALLOWED: dict[JobStatus, set[JobStatus]] = {
     JobStatus.DEFINED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
+    # Milestone 6.3: SUBMITTING/QUEUED -> STOPPED added so orphaned local jobs
+    # left mid-submission when MuFinder closed can be reconciled to STOPPED on
+    # the next project open (reconcile_orphaned_local_jobs).
     JobStatus.SUBMITTING: {
         JobStatus.QUEUED,
         JobStatus.RUNNING,
+        JobStatus.STOPPED,
         JobStatus.FAILED,
         JobStatus.CANCELLED,
     },
-    JobStatus.QUEUED: {JobStatus.RUNNING, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.QUEUED: {
+        JobStatus.RUNNING,
+        JobStatus.STOPPED,
+        JobStatus.FAILED,
+        JobStatus.CANCELLED,
+    },
     JobStatus.RUNNING: {
         JobStatus.RETRIEVING,
         JobStatus.STOPPED,

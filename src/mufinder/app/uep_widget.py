@@ -33,6 +33,10 @@ from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.uep_types import SupercellMatrix, UepConfig, UepRunState, UepSourceRow
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
+from mufinder.app.workflow_table_utils import (
+    create_workflow_table,
+    style_workflow_configure_button,
+)
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     normalize_gui_value,
@@ -155,9 +159,8 @@ class UEPWidget(QWidget):
         style_hint_text(self._kpoint_message)
         self._kpoint_message.hide()
 
-        self._table = QTableWidget(0, 8)
-        self._table.setHorizontalHeaderLabels(
-            [
+        self._table = create_workflow_table(
+            (
                 "Label",
                 "Supercell",
                 "Status",
@@ -166,19 +169,22 @@ class UEPWidget(QWidget):
                 "Parameters",
                 "Analysis",
                 "",
-            ]
+            )
         )
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # Per-widget settings the shared helper does not cover (or that this
+        # editable table overrides): extended multi-select, in-place editing,
+        # a fixed row height, per-column resize modes, and a non-stretching
+        # last (Remove) column.
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
             | QAbstractItemView.EditTrigger.SelectedClicked
         )
-        self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(32)
 
         header = self._table.horizontalHeader()
+        header.setStretchLastSection(False)
         header.setSectionResizeMode(self._LABEL_COLUMN, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(self._SUPERCELL_COLUMN, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(self._STATUS_COLUMN, QHeaderView.ResizeMode.ResizeToContents)
@@ -1035,15 +1041,13 @@ class UEPWidget(QWidget):
         configure_button = self._table.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
             customized = bool(self._row_parameter_values.get(row_id, {}))
-            configure_button.setText("Configured..." if customized or locked else "Configure...")
-            configure_button.setToolTip(
-                "Inspect the CASTEP parameters used for this UEP source job."
-                if locked
-                else (
-                    "Edit custom CASTEP parameters for this UEP source job."
-                    if customized
-                    else "Configure CASTEP parameters for this UEP source job."
-                )
+            style_workflow_configure_button(
+                configure_button,
+                workflow_label="CASTEP",
+                configured=customized,
+                locked=locked,
+                noun="UEP source job",
+                used=True,
             )
 
         wizard_button = self._table.cellWidget(row, self._WIZARD_COLUMN)
