@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
+from PySide6.QtCore import QProcess
+
 import mufinder.services.local_runner as local_runner_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
@@ -12,18 +14,23 @@ from mufinder.services.local_runner import LocalJobRunner
 
 
 class _DummyProcess:
-    def __init__(self) -> None:
+    def __init__(self, error_string: str = "") -> None:
         self.killed = False
         self.stderr = b""
+        self.deleted = False
+        self._error_string = error_string
 
     def kill(self) -> None:
         self.killed = True
 
     def deleteLater(self) -> None:
-        return
+        self.deleted = True
 
     def readAllStandardError(self) -> bytes:
         return self.stderr
+
+    def errorString(self) -> str:
+        return self._error_string
 
 
 class _FakeSignal:
@@ -562,3 +569,157 @@ def test_local_runner_shutdown_clears_state(
     assert runner.running_count() == 0
     assert runner.queued_count() == 0
     assert process.killed is True
+
+
+def _active_failed_to_start_job(runner: LocalJobRunner, tmp_path: Path, *, error_string: str):
+    job_id = uuid4()
+    request = local_runner_module._PendingJob(
+        job_id=job_id,
+        job_dir=tmp_path,
+        seed_name="seed",
+        castep_executable="/usr/bin/castep",
+        mpirun_path="",
+        num_cores=1,
+    )
+    process = _DummyProcess(error_string=error_string)
+    runner._active[job_id] = local_runner_module._ActiveJob(request=request, process=process)
+    return job_id, process
+
+
+def test_local_runner_failed_to_start_fails_fast(qapp, monkeypatch, tmp_path: Path) -> None:
+    # REC #6: FailedToStart reports failure immediately (no finished event),
+    # cleans up the active entry, and starts the next pending job.
+    runner = LocalJobRunner()
+    job_id, process = _active_failed_to_start_job(
+        runner, tmp_path, error_string="No such file or directory"
+    )
+
+    pending_id = uuid4()
+    runner._pending.append(
+        local_runner_module._PendingJob(
+            job_id=pending_id,
+            job_dir=tmp_path,
+            seed_name="next",
+            castep_executable="/usr/bin/castep",
+            mpirun_path="",
+            num_cores=1,
+        )
+    )
+    launched: list[object] = []
+    monkeypatch.setattr(runner, "_launch_process", lambda request: launched.append(request.job_id))
+
+    failures: list[tuple[object, str]] = []
+    statuses: list[tuple[object, str]] = []
+    runner.job_failed.connect(lambda jid, msg: failures.append((jid, msg)))
+    runner.status_changed.connect(lambda jid, status: statuses.append((jid, status)))
+
+    runner._on_process_error(job_id, QProcess.ProcessError.FailedToStart)
+
+    assert failures == [
+        (
+            job_id,
+            "The CASTEP process failed to start: No such file or directory. "
+            "Check the CASTEP executable path and file permissions.",
+        )
+    ]
+    assert statuses == [(job_id, JobStatus.FAILED.value)]
+    assert job_id not in runner._active
+    assert process.deleted is True
+    assert launched == [pending_id]
+
+
+def test_local_runner_failed_to_start_uses_enum_name_when_no_detail(
+    qapp, tmp_path: Path
+) -> None:
+    # REC #6: when errorString() is empty the message falls back to the enum name.
+    runner = LocalJobRunner()
+    job_id, _process = _active_failed_to_start_job(runner, tmp_path, error_string="")
+
+    failures: list[tuple[object, str]] = []
+    runner.job_failed.connect(lambda jid, msg: failures.append((jid, msg)))
+
+    runner._on_process_error(job_id, QProcess.ProcessError.FailedToStart)
+
+    assert failures[0][1] == (
+        "The CASTEP process failed to start: FailedToStart. "
+        "Check the CASTEP executable path and file permissions."
+    )
+
+
+def test_local_runner_failed_to_start_then_finished_is_noop(qapp, tmp_path: Path) -> None:
+    # REC #6: a finished event arriving after the fail-fast report must not
+    # re-emit failure — the active entry is already gone.
+    runner = LocalJobRunner()
+    job_id, _process = _active_failed_to_start_job(runner, tmp_path, error_string="boom")
+
+    failures: list[object] = []
+    statuses: list[tuple[object, str]] = []
+    runner.job_failed.connect(lambda jid, _msg: failures.append(jid))
+    runner.status_changed.connect(lambda jid, status: statuses.append((jid, status)))
+
+    runner._on_process_error(job_id, QProcess.ProcessError.FailedToStart)
+    runner._on_process_finished(job_id, 1)
+
+    assert failures == [job_id]
+    assert statuses == [(job_id, JobStatus.FAILED.value)]
+
+
+def test_local_runner_non_fatal_process_error_stores_and_waits(qapp, tmp_path: Path) -> None:
+    # REC #6: only FailedToStart is fail-fast; other errors keep the
+    # store-and-wait behaviour so the finish handler reports the outcome.
+    runner = LocalJobRunner()
+    job_id = uuid4()
+    request = local_runner_module._PendingJob(
+        job_id=job_id,
+        job_dir=tmp_path,
+        seed_name="seed",
+        castep_executable="/usr/bin/castep",
+        mpirun_path="",
+        num_cores=1,
+    )
+    active = local_runner_module._ActiveJob(request=request, process=_DummyProcess())
+    runner._active[job_id] = active
+
+    failures: list[object] = []
+    runner.job_failed.connect(lambda jid, _msg: failures.append(jid))
+
+    runner._on_process_error(job_id, QProcess.ProcessError.Crashed)
+
+    # No fail-fast: entry retained, error stored, nothing emitted yet.
+    assert failures == []
+    assert job_id in runner._active
+    assert active.process_error == str(QProcess.ProcessError.Crashed)
+
+
+def test_local_runner_active_and_pending_id_accessors(qapp, tmp_path: Path) -> None:
+    # REC #7: watchdog introspection accessors reflect live runner state.
+    runner = LocalJobRunner()
+    assert runner.active_job_ids() == frozenset()
+    assert runner.pending_job_ids() == frozenset()
+
+    active_id = uuid4()
+    pending_id = uuid4()
+    request = local_runner_module._PendingJob(
+        job_id=active_id,
+        job_dir=tmp_path,
+        seed_name="active",
+        castep_executable="/usr/bin/castep",
+        mpirun_path="",
+        num_cores=1,
+    )
+    runner._active[active_id] = local_runner_module._ActiveJob(
+        request=request, process=_DummyProcess()
+    )
+    runner._pending.append(
+        local_runner_module._PendingJob(
+            job_id=pending_id,
+            job_dir=tmp_path,
+            seed_name="pending",
+            castep_executable="/usr/bin/castep",
+            mpirun_path="",
+            num_cores=1,
+        )
+    )
+
+    assert runner.active_job_ids() == frozenset({active_id})
+    assert runner.pending_job_ids() == frozenset({pending_id})
