@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from uuid import UUID
 
 from PySide6.QtCore import (
     QMetaObject,
@@ -40,8 +41,14 @@ from PySide6.QtCore import (
 )
 
 from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus
 from mufinder.services.cluster_runner import ClusterJobRunner
 from mufinder.services.ssh_client import SSHCredentials
+
+# Status values that mean a tracked cluster job is still active (mirror of the
+# domain ACTIVE_JOB_STATUSES as their serialised strings, which is what the
+# runner emits via ``status_changed``).
+_ACTIVE_STATUS_VALUES = frozenset(status.value for status in ACTIVE_JOB_STATUSES)
 
 
 class _SshTaskRunner(QObject):
@@ -130,6 +137,18 @@ class ClusterController(QObject):
         self._pending_connect: tuple[str, str | None] | None = None
         self._batch_cancelled = False
 
+        # GUI-thread mirror of the runner's active tracked-job ids, maintained
+        # from the signals/calls this controller already sees. The runner's own
+        # ``_tracked_jobs`` live on the worker thread and must not be read from
+        # the GUI thread; this set lets the job watchdog ask "is this cluster job
+        # still being tracked?" without crossing threads. It is deliberately NOT
+        # cleared on disconnect: the runner keeps its tracked jobs across a
+        # disconnect (only ``clear_tracked_jobs`` drops them, on project switch),
+        # so clearing here would make the watchdog stop live jobs after a
+        # reconnect. The watchdog never flags cluster jobs while disconnected, so
+        # retaining the mirror across a disconnect is safe.
+        self._tracked_active_job_ids: set[UUID] = set()
+
         # Forward worker signals to the GUI thread. These cross-thread
         # connections are queued automatically.
         self._runner.job_started.connect(self.job_started)
@@ -137,6 +156,9 @@ class ClusterController(QObject):
         self._runner.job_failed.connect(self.job_failed)
         self._runner.job_cancelled.connect(self.job_cancelled)
         self._runner.status_changed.connect(self.status_changed)
+        # Maintain the GUI-thread tracked-id mirror from the same status stream.
+        # Queued automatically (cross-thread) and runs on the GUI thread.
+        self._runner.status_changed.connect(self._mirror_status_changed)
         self._runner.queue_checked.connect(self.queue_checked)
         self._runner.poll_failed.connect(self.poll_failed)
         self._runner.connection_status_changed.connect(self._on_connection_status_changed)
@@ -159,6 +181,33 @@ class ClusterController(QObject):
     @property
     def connected_username(self) -> str | None:
         return self._connected_username if self._connected else None
+
+    # ------------------------------------------------------------------
+    # Tracked-job mirror (GUI-thread safe; never touches the runner's dicts)
+    # ------------------------------------------------------------------
+    def tracked_active_job_ids(self) -> frozenset[UUID]:
+        """Return the ids of cluster jobs the runner is actively tracking.
+
+        A GUI-thread mirror of the runner's non-terminal ``_tracked_jobs``. Used
+        by the job watchdog to detect active cluster jobs the runner has silently
+        stopped tracking. Conservative by construction: a job is only dropped
+        when a terminal ``status_changed`` is observed for it, so an in-flight
+        job is never briefly absent.
+        """
+
+        return frozenset(self._tracked_active_job_ids)
+
+    @Slot(object, object)
+    def _mirror_status_changed(self, job_id: Any, status_value: Any) -> None:
+        try:
+            normalized = job_id if isinstance(job_id, UUID) else UUID(str(job_id))
+        except (TypeError, ValueError, AttributeError):
+            return
+        value = status_value.value if isinstance(status_value, JobStatus) else str(status_value)
+        if value in _ACTIVE_STATUS_VALUES:
+            self._tracked_active_job_ids.add(normalized)
+        else:
+            self._tracked_active_job_ids.discard(normalized)
 
     @Slot(bool)
     def _on_connection_status_changed(self, connected: bool) -> None:
@@ -229,7 +278,9 @@ class ClusterController(QObject):
     def clear_tracked_jobs(self) -> None:
         # Fast, but must run on the worker thread because it mutates state the
         # poll loop also touches. Bridged (not async) so switching projects has
-        # synchronous semantics for the caller.
+        # synchronous semantics for the caller. Clear the GUI mirror to match:
+        # this is the only place the runner drops all tracked jobs.
+        self._tracked_active_job_ids.clear()
         self._call_blocking(self._runner.clear_tracked_jobs)
 
     # ------------------------------------------------------------------
@@ -242,6 +293,14 @@ class ClusterController(QObject):
         self._async_task.emit(lambda: self._runner.cancel(job_id))
 
     def track_existing_job(self, **kwargs: Any) -> None:
+        # The runner emits no signal when re-tracking a persisted job, so mirror
+        # the addition here on the GUI thread. Only active jobs are tracked; a
+        # terminal status means the runner will mark it terminal and never poll,
+        # so it must not enter the active mirror.
+        status = kwargs.get("status")
+        job_id = kwargs.get("job_id")
+        if status in ACTIVE_JOB_STATUSES and isinstance(job_id, UUID):
+            self._tracked_active_job_ids.add(job_id)
         self._async_task.emit(lambda: self._runner.track_existing_job(**kwargs))
 
     def connect_async(self, config: ClusterConfig, *, credentials: SSHCredentials) -> None:

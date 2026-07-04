@@ -67,6 +67,16 @@ class LocalJobRunner(QObject):
     def is_running(self, job_id: UUID) -> bool:
         return job_id in self._active
 
+    def active_job_ids(self) -> frozenset[UUID]:
+        """Return the ids of jobs with a live ``QProcess`` (running)."""
+
+        return frozenset(self._active)
+
+    def pending_job_ids(self) -> frozenset[UUID]:
+        """Return the ids of jobs queued but not yet started."""
+
+        return frozenset(request.job_id for request in self._pending)
+
     def submit(
         self,
         *,
@@ -197,6 +207,27 @@ class LocalJobRunner(QObject):
         if active is None:
             return
         active.process_error = str(process_error)
+
+        # FailedToStart is fatal and Qt may never deliver a subsequent finished
+        # event, which would strand the job in ``submitting`` forever. Report the
+        # failure immediately and clean up the active entry exactly as the finish
+        # path does, so a late finished event for this job is a no-op (its entry
+        # is already gone). Other ProcessError values keep the store-and-wait
+        # behaviour and are reported by the finish handler.
+        if process_error != QProcess.ProcessError.FailedToStart:
+            return
+
+        self._active.pop(job_id, None)
+        self._cancel_requested.discard(job_id)
+        detail = active.process.errorString().strip() or process_error.name
+        active.process.deleteLater()
+        message = (
+            f"The CASTEP process failed to start: {detail}. "
+            "Check the CASTEP executable path and file permissions."
+        )
+        self.job_failed.emit(job_id, message)
+        self.status_changed.emit(job_id, JobStatus.FAILED.value)
+        self._start_queued_jobs()
 
     def _on_process_finished(self, job_id: UUID, exit_code: int) -> None:
         active = self._active.pop(job_id, None)
