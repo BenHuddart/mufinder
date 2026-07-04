@@ -36,6 +36,19 @@ def _last_checked_item(window, job_id):
     return None
 
 
+def test_format_relative_age_branches(qapp) -> None:
+    now = datetime.now(UTC)
+    assert MainWindow._format_relative_age(None, now=now) == "—"
+    assert MainWindow._format_relative_age(now, now=now) == "just now"
+    assert MainWindow._format_relative_age(now - timedelta(minutes=3), now=now) == "3 min ago"
+    assert MainWindow._format_relative_age(now - timedelta(hours=5), now=now) == "5 hr ago"
+    assert MainWindow._format_relative_age(now - timedelta(days=1), now=now) == "1 day ago"
+    assert MainWindow._format_relative_age(now - timedelta(days=3), now=now) == "3 days ago"
+    # Naive stamps are treated as UTC (older-build compatibility).
+    naive = (now - timedelta(minutes=2)).replace(tzinfo=None)
+    assert MainWindow._format_relative_age(naive, now=now) == "2 min ago"
+
+
 def test_last_checked_column_header_present(qapp) -> None:
     window = MainWindow()
     headers = [

@@ -327,7 +327,16 @@ from the active dashboard without deleting its data."
     PYTHONPATH=<worktree>/src .venv/bin/python -m pytest --no-cov -n 4 --dist load \
       tests/app/test_main_window_actions.py tests/app/test_main_window.py \
       tests/app/test_dashboard_monitoring_columns.py tests/services/test_cluster_runner.py \
-      tests/services/test_job_execution_controller.py \
+      tests/services/test_job_execution_controller.py tests/services/test_project_service.py \
       tests/services/test_project_service_transitions.py \
       tests/services/test_retry_retrieval.py tests/services/test_job_dismissal.py \
-      tests/app/test_orphaned_local_job_load_path.py    # 441 passed
+      tests/persistence/test_codec_json_store.py tests/test_agent_harness.py   # 522 passed
+
+Added after advisor review:
+- `test_retry_completion_lands_on_fresh_run_not_the_prior_terminal_run` — proves the
+  central run-bookkeeping claim end-to-end (retry → complete lands on the fresh
+  RETRIEVING run; the prior FAILED run is untouched). Also confirms
+  `complete_job_with_result` accepts a RETRIEVING-origin finish.
+- `test_format_relative_age_branches` — covers the hr/day/naive-stamp age branches.
+- Confirmed `grep -rn "_jobs_table" tests/` outside the four known files is empty,
+  so the column renumber has no regression surface beyond the one-line columnCount edit.

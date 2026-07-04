@@ -278,6 +278,47 @@ def test_prepare_retry_retrieval_increments_run_index_over_prior_run(tmp_path: P
     assert prior.status == JobStatus.FAILED
 
 
+def test_retry_completion_lands_on_fresh_run_not_the_prior_terminal_run(
+    tmp_path: Path,
+) -> None:
+    """The whole point of the fresh RETRIEVING run: a successful re-retrieval must
+    complete the NEW run and leave the original FAILED run untouched, rather than
+    overwriting a terminal run to COMPLETED."""
+
+    from mufinder.domain.models import CalculationRun, Result
+
+    job = _job(
+        JobStatus.FAILED,
+        execution_target="scarf",
+        remote_job_id="99",
+        remote_directory="/remote/job",
+    )
+    controller, document = _controller_with_job(tmp_path, job)
+    prior = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.FAILED)
+    document.runs[prior.id] = prior
+
+    controller.prepare_retry_retrieval(job.id)
+    # Capture the active (fresh) run before complete_job_with_result pops it.
+    fresh_run_id = controller.active_run_by_job[job.id]
+
+    result = Result(result_type="castep_cutoff", data={"total_energy": -1.0})
+    document.results[result.id] = result
+    assert (
+        controller.complete_job_with_result(
+            job, result=result, warnings=[], convergence_achieved=None
+        )
+        is True
+    )
+
+    # The job completes from the RETRIEVING state the retry established.
+    assert job.status == JobStatus.COMPLETED
+    # The completion landed on the fresh run, not the prior terminal run.
+    assert document.runs[fresh_run_id].status == JobStatus.COMPLETED
+    assert document.runs[fresh_run_id].result_id == result.id
+    assert prior.status == JobStatus.FAILED
+    assert prior.result_id is None
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
