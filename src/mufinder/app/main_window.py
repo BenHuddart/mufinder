@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+import logging
 from math import isnan
 import os
 from pathlib import Path
@@ -223,6 +224,7 @@ from mufinder.services.job_monitoring import job_staleness
 from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
+from mufinder.services.perf_trace import PerfTrace
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
@@ -264,6 +266,8 @@ from mufinder.workflow.quantum import (
 from mufinder.workflow.renderer import render_job
 from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamTemplate
 
+
+_LOG = logging.getLogger(__name__)
 
 _RESUBMITTABLE_JOB_STATES = {JobStatus.FAILED, JobStatus.CANCELLED}
 _VISIBLE_DASHBOARD_STATES = ACTIVE_JOB_STATUSES | {JobStatus.STOPPED} | _RESUBMITTABLE_JOB_STATES
@@ -3901,15 +3905,24 @@ class MainWindow(QMainWindow):
         self._dashboard_flush_pending = False
         if self._document is None:
             return
+        trace = PerfTrace(label="dashboard flush", logger=_LOG)
         # _refresh_jobs_table already refreshes the convergence/kpoint/pristine/
         # muon-relaxation/uep rows, so only the views it does not cover are added.
-        self._refresh_jobs_table()
-        self._refresh_journal_view()
-        self._refresh_host_structure_view()
-        self._refresh_muon_generation_table()
-        self._refresh_quantum_corrections_view()
-        self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(failure_message=self._dashboard_autosave_failure_message)
+        with trace.stage("_refresh_jobs_table"):
+            self._refresh_jobs_table()
+        with trace.stage("_refresh_journal_view"):
+            self._refresh_journal_view()
+        with trace.stage("_refresh_host_structure_view"):
+            self._refresh_host_structure_view()
+        with trace.stage("_refresh_muon_generation_table"):
+            self._refresh_muon_generation_table()
+        with trace.stage("_refresh_quantum_corrections_view"):
+            self._refresh_quantum_corrections_view()
+        with trace.stage("_refresh_energy_barriers_view"):
+            self._refresh_energy_barriers_view()
+        with trace.stage("_persist_document_ui_state"):
+            self._persist_document_ui_state(failure_message=self._dashboard_autosave_failure_message)
+        trace.log_summary()
 
     def _store_convergence_overview_snapshot(self, kind: str, snapshot: Mapping[str, object] | None) -> None:
         if self._document is None:

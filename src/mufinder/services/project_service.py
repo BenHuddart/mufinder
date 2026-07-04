@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+import logging
 from pathlib import Path
 import re
 import shutil
@@ -27,6 +28,7 @@ from mufinder.domain.models import (
 )
 from mufinder.persistence.codec import parse_datetime, parse_uuid, to_jsonable
 from mufinder.persistence.json_store import ProjectStore
+from mufinder.services.perf_trace import PerfTrace
 from mufinder.science.site_generation import (
     SiteGenerationError,
     closest_symmetry_equivalent_position,
@@ -40,6 +42,8 @@ from mufinder.science.site_generation import (
 )
 from mufinder.science.structure_io import load_structure_file
 from mufinder.science.supercell import build_supercell_structure
+
+_LOG = logging.getLogger(__name__)
 
 _WORKFLOW_SUPERCELLS_STATE_KEY = "workflow_supercells"
 _WORKFLOW_SUPERCELL_UNIT_CELL = "unit_cell"
@@ -198,31 +202,39 @@ class ProjectService:
             issue_text = "\n".join(f"- {issue}" for issue in issues)
             raise ValueError(f"Project integrity check failed:\n{issue_text}")
 
+        trace = PerfTrace(label="save_project", logger=_LOG)
         document.project.modified_at = utc_now()
         store = ProjectStore(document.project_root)
         store.initialize_layout()
 
         store.write_json(store.project_manifest_path, to_jsonable(document.project))
 
+        entity_file_count = 0
+
         store.prune_entities("structures", {str(structure.id) for structure in document.structures.values()})
         for structure in document.structures.values():
             store.write_entity("structures", str(structure.id), to_jsonable(structure))
+            entity_file_count += 1
 
         store.prune_entities("sites", {str(site.id) for site in document.sites.values()})
         for site in document.sites.values():
             store.write_entity("sites", str(site.id), to_jsonable(site))
+            entity_file_count += 1
 
         store.prune_entities("calculations", {str(calculation.id) for calculation in document.calculations.values()})
         for calculation in document.calculations.values():
             store.write_entity("calculations", str(calculation.id), to_jsonable(calculation))
+            entity_file_count += 1
 
         store.prune_entities("runs", {str(run.id) for run in document.runs.values()})
         for run in document.runs.values():
             store.write_entity("runs", str(run.id), to_jsonable(run))
+            entity_file_count += 1
 
         store.prune_entities("results", {str(result.id) for result in document.results.values()})
         for result in document.results.values():
             store.write_entity("results", str(result.id), to_jsonable(result))
+            entity_file_count += 1
 
         store.prune_entities(
             "comparison_tables",
@@ -230,12 +242,15 @@ class ProjectService:
         )
         for table in document.comparison_tables.values():
             store.write_entity("comparison_tables", str(table.id), to_jsonable(table))
+            entity_file_count += 1
 
         store.prune_entities("jobs", {str(job.id) for job in document.jobs.values()})
         for job in document.jobs.values():
             store.write_entity("jobs", str(job.id), to_jsonable(job))
+            entity_file_count += 1
 
         store.write_json(store.state_path, to_jsonable(document.ui_state))
+        trace.log_summary(extra=f"entity_files={entity_file_count}")
 
     def append_provenance(self, document: ProjectDocument, record: ProvenanceRecord) -> None:
         """Append a provenance record in-memory and to disk."""
