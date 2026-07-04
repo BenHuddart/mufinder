@@ -2776,6 +2776,11 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
 
+        # Clear then re-register tracked cluster jobs. Both are queued onto the
+        # cluster worker thread and return immediately (never blocking the GUI,
+        # even mid-retrieval); FIFO ordering guarantees the clear runs before the
+        # re-registrations, and the GUI-side tracked-id mirror is cleared eagerly
+        # inside clear_tracked_jobs so the watchdog observes the drop at once.
         self._cluster_runner.clear_tracked_jobs()
         self._sync_cluster_tracking_from_document()
 

@@ -1,13 +1,16 @@
 """Tests for the threaded cluster controller facade.
 
-These verify the Phase 1 guarantee: cluster SSH work runs on a dedicated worker
-thread (never the GUI thread), while the controller preserves the public surface
-that ``main_window`` relies on — forwarded signals, mirrored connection state,
-blocking return values, and exception propagation.
+These verify the guarantee: cluster SSH work runs on a dedicated worker thread
+(never the GUI thread), and **no GUI-thread call blocks on the worker**. The
+controller preserves the public surface that ``main_window`` relies on —
+forwarded signals, mirrored connection state, and now a request/completion bridge
+(``operation_finished``) that delivers each op's outcome asynchronously with a
+per-request id so continuations route correctly and always fire.
 """
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable, Iterator
 
@@ -65,6 +68,9 @@ class _FakeRunner(QObject):
         self.exists_should_raise: set[str] = set()
         self.on_submit = None
         self.connect_should_raise: Exception | None = None
+        # When set, ``block_worker`` holds the worker thread inside a long op so a
+        # test can prove a later GUI-thread call does not wait for it.
+        self.block_worker: threading.Event | None = None
 
     def connect_to_cluster(self, config, password=None, *, credentials=None) -> None:
         self.threads["connect"] = QThread.currentThread()
@@ -111,6 +117,15 @@ class _FakeRunner(QObject):
         self.threads["clear"] = QThread.currentThread()
         self.calls.append(("clear",))
 
+    def hold(self) -> str:
+        """A long op that pins the worker thread until ``block_worker`` is set."""
+
+        self.threads["hold"] = QThread.currentThread()
+        self.calls.append(("hold",))
+        if self.block_worker is not None:
+            self.block_worker.wait(2.0)
+        return "held"
+
     def shutdown(self) -> None:
         self.calls.append(("shutdown",))
 
@@ -134,18 +149,74 @@ def controller(qapp, monkeypatch) -> Iterator[tuple[ClusterController, _FakeRunn
         ctrl.shutdown()
 
 
-def test_blocking_calls_run_on_worker_thread(controller) -> None:
+def _collect_ops(ctrl: ClusterController) -> list[tuple]:
+    """Record every ``operation_finished`` payload as ``(request_id, kind, result, error)``."""
+
+    ops: list[tuple] = []
+    ctrl.operation_finished.connect(
+        lambda rid, kind, result, error: ops.append((rid, kind, result, error))
+    )
+    return ops
+
+
+def test_bridge_ops_run_on_worker_thread_and_report_via_signal(controller) -> None:
     ctrl, fake = controller
     gui_thread = QThread.currentThread()
+    ops = _collect_ops(ctrl)
 
-    assert ctrl.submit(seed_name="seed") == "JOB-1"
-    assert ctrl.remote_directory_exists("/remote/dir") is True
-    ctrl.remove_remote_directory("/remote/dir")
-    ctrl.clear_tracked_jobs()
+    rid_submit = ctrl.submit(seed_name="seed")
+    rid_exists = ctrl.remote_directory_exists("/remote/dir")
+    rid_rm = ctrl.remove_remote_directory("/remote/dir")
+    rid_clear = ctrl.clear_tracked_jobs()
+
+    # Every call returned a distinct request id immediately.
+    assert len({rid_submit, rid_exists, rid_rm, rid_clear}) == 4
+
+    assert _process_until(lambda: len(ops) == 4)
+    by_kind = {kind: (result, error) for _rid, kind, result, error in ops}
+    assert by_kind[ctrl.OP_SUBMIT] == ("JOB-1", None)
+    assert by_kind[ctrl.OP_REMOTE_DIR_EXISTS] == (True, None)
+    assert by_kind[ctrl.OP_REMOVE_REMOTE_DIR][1] is None
+    assert by_kind[ctrl.OP_CLEAR_TRACKED][1] is None
 
     for key in ("submit", "exists", "rmtree", "clear"):
         assert fake.threads[key] is ctrl._thread
         assert fake.threads[key] is not gui_thread
+
+
+def test_clear_tracked_jobs_clears_mirror_eagerly(controller) -> None:
+    # The GUI-thread mirror is cleared synchronously so the watchdog sees the drop
+    # immediately, even before the queued worker op runs.
+    ctrl, _fake = controller
+    from uuid import uuid4
+
+    job_id = uuid4()
+    ctrl._tracked_active_job_ids.add(job_id)
+    ctrl.clear_tracked_jobs()
+    assert ctrl.tracked_active_job_ids() == frozenset()
+
+
+def test_bridge_op_does_not_block_gui_while_worker_is_busy(controller) -> None:
+    # A slow op pins the worker; a second GUI-thread call must return at once
+    # rather than waiting for the first to finish.
+    ctrl, fake = controller
+    gate = threading.Event()
+    fake.block_worker = gate
+    ops = _collect_ops(ctrl)
+
+    # Kick off the long op (worker will block inside fake.hold()).
+    rid_slow = ctrl._run_async_op("hold", fake.hold)
+    assert _process_until(lambda: "hold" in fake.threads)  # worker is now blocked
+
+    # This call must return immediately even though the worker is busy.
+    start = time.monotonic()
+    rid_fast = ctrl.clear_tracked_jobs()
+    assert time.monotonic() - start < 0.2
+    assert rid_fast != rid_slow
+
+    # Release the worker; both completions arrive, each keyed to its request id.
+    gate.set()
+    assert _process_until(lambda: {rid_slow, rid_fast} <= {op[0] for op in ops})
 
 
 def test_async_calls_run_on_worker_thread(controller) -> None:
@@ -167,18 +238,24 @@ def test_connect_mirrors_state_and_forwards_signal(controller) -> None:
     ctrl, fake = controller
     received: list[bool] = []
     ctrl.connection_status_changed.connect(received.append)
+    ops = _collect_ops(ctrl)
     assert ctrl.is_connected is False
 
-    ctrl.connect_to_cluster(_FakeConfig(name="hpc", username="alice"))
+    rid = ctrl.connect_to_cluster(_FakeConfig(name="hpc", username="alice"))
+    assert rid is not None
 
-    # Mirror is updated eagerly after a successful blocking connect.
-    assert ctrl.is_connected is True
+    # The connect runs on the worker; the mirror adopts the pending identity from
+    # the forwarded connection_status_changed once events are pumped (no blocking).
+    assert _process_until(lambda: ctrl.is_connected is True)
     assert ctrl.connected_cluster_name == "hpc"
     assert ctrl.connected_username == "alice"
     assert fake.threads["connect"] is ctrl._thread
+    assert received == [True]
 
-    # The forwarded signal arrives on the GUI thread once events are pumped.
-    assert _process_until(lambda: received == [True])
+    # The op completion also fires (success -> no error).
+    assert _process_until(lambda: any(k == ctrl.OP_CONNECT for _r, k, _res, _e in ops))
+    connect_op = next(op for op in ops if op[1] == ctrl.OP_CONNECT)
+    assert connect_op[3] is None
 
 
 def test_connect_async_success_mirrors_and_signals_none(controller) -> None:
@@ -226,7 +303,7 @@ def test_connect_async_failure_emits_exception(controller) -> None:
 def test_disconnect_signal_clears_mirror(controller) -> None:
     ctrl, fake = controller
     ctrl.connect_to_cluster(_FakeConfig())
-    assert ctrl.is_connected is True
+    assert _process_until(lambda: ctrl.is_connected is True)
 
     fake.connection_status_changed.emit(False)
 
@@ -235,11 +312,41 @@ def test_disconnect_signal_clears_mirror(controller) -> None:
     assert ctrl.connected_username is None
 
 
-def test_blocking_call_propagates_exception(controller) -> None:
+def test_bridge_op_delivers_exception_via_completion(controller) -> None:
+    # A raising op does not propagate on the GUI thread; the exception is carried
+    # on the completion so a pending-state UI is always restored (never stuck).
     ctrl, fake = controller
     fake.submit_should_raise = True
-    with pytest.raises(ConnectionError, match="boom"):
-        ctrl.submit(seed_name="seed")
+    ops = _collect_ops(ctrl)
+
+    rid = ctrl.submit(seed_name="seed")
+
+    assert _process_until(lambda: any(op[0] == rid for op in ops))
+    op = next(op for op in ops if op[0] == rid)
+    _rid, kind, result, error = op
+    assert kind == ctrl.OP_SUBMIT
+    assert result is None
+    assert isinstance(error, ConnectionError)
+    assert str(error) == "boom"
+
+
+def test_two_ops_queued_back_to_back_route_to_own_continuation(controller) -> None:
+    # Regression: distinct request ids let two in-flight ops route to their own
+    # continuation even though the worker processes them serially.
+    ctrl, fake = controller
+    fake.existing_dirs = {"/yes"}
+    routed: dict[object, tuple] = {}
+    ctrl.operation_finished.connect(
+        lambda rid, kind, result, error: routed.__setitem__(rid, (kind, result, error))
+    )
+
+    rid_a = ctrl.remote_directory_exists("/yes")
+    rid_b = ctrl.remote_directory_exists("/no")
+    assert rid_a != rid_b
+
+    assert _process_until(lambda: {rid_a, rid_b} <= set(routed))
+    assert routed[rid_a] == (ctrl.OP_REMOTE_DIR_EXISTS, True, None)
+    assert routed[rid_b] == (ctrl.OP_REMOTE_DIR_EXISTS, False, None)
 
 
 def test_worker_signals_forward_to_gui(controller) -> None:
@@ -439,14 +546,35 @@ def test_ssh_task_runner_executes_and_captures(qapp) -> None:
     assert runner._pending_result is None
 
 
-def test_blocking_call_falls_back_after_shutdown(controller) -> None:
+def test_ssh_task_runner_run_async_op_reports_success_and_error(qapp) -> None:
+    runner = cluster_controller._SshTaskRunner()
+    seen: list[tuple] = []
+    runner.op_finished.connect(
+        lambda rid, kind, result, error: seen.append((rid, kind, result, error))
+    )
+
+    runner.run_async_op(1, "k", lambda: 42)
+    assert seen[-1] == (1, "k", 42, None)
+
+    def boom() -> None:
+        raise ValueError("nope")
+
+    runner.run_async_op(2, "k", boom)
+    rid, kind, result, error = seen[-1]
+    assert (rid, kind, result) == (2, "k", None)
+    assert isinstance(error, ValueError)
+
+
+def test_bridge_op_falls_back_after_shutdown(controller) -> None:
     ctrl, fake = controller
+    ops = _collect_ops(ctrl)
     ctrl.shutdown()
     assert ctrl._thread.isRunning() is False
-    # With the worker stopped, the blocking bridge runs the call directly so the
-    # GUI does not deadlock waiting on a dead thread.
-    ctrl.clear_tracked_jobs()
+    # With the worker stopped, the bridge runs the call directly (no dead-thread
+    # queue) and emits the completion synchronously so continuations still fire.
+    rid = ctrl.clear_tracked_jobs()
     assert ("clear",) in fake.calls
+    assert ops and ops[-1] == (rid, ctrl.OP_CLEAR_TRACKED, None, None)
 
 
 def test_shutdown_stops_worker_thread(qapp, monkeypatch) -> None:

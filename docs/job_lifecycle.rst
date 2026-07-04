@@ -268,6 +268,35 @@ The controller mirrors connection state (``is_connected``,
 ``connected_cluster_name``, ``connected_username``) on the GUI thread so callers
 never touch the live transport across threads.
 
+**No GUI-thread call blocks on the worker.** Every GUI-initiated cluster
+operation is queued onto the worker and returns immediately; its outcome is
+delivered back to the GUI thread via a signal. This is essential precisely
+because the worker also runs the serial queue poll — a single poll can spend
+minutes downloading and parsing a whole batch of finished jobs — so a GUI call
+that waited on the worker would freeze the window until that batch drained. The
+controller uses two asynchronous styles:
+
+- *Fire-and-forget with a purpose-built signal* for the high-level flows:
+  ``connect_async`` / ``connect_finished``, ``check_remote_dirs`` /
+  ``remote_dirs_checked``, and ``submit_batch`` with its progress signals, plus
+  ``refresh_queue`` / ``cancel`` / ``track_existing_job`` (results arrive via the
+  forwarded runner signals).
+- *A request/completion bridge* for the low-level helpers and
+  ``clear_tracked_jobs``: the op is queued on the worker and its outcome is
+  delivered via ``ClusterController.operation_finished`` ``(request_id, kind,
+  result, error)``, keyed by a per-call ``request_id`` and a ``kind``
+  discriminator so multiple in-flight ops route to their own continuation. The
+  completion fires on **every** exit path — success, a caught exception, or an
+  exception escaping the queued task — so a UI element disabled while an op is
+  pending is always re-enabled and never stuck. ``clear_tracked_jobs`` (run on
+  project switch) additionally clears the GUI-thread tracked-id mirror eagerly and
+  relies on worker FIFO ordering so the subsequent ``track_existing_job``
+  re-registrations are never wiped by a late clear.
+
+The single deliberate exception is ``ClusterController.shutdown``, which stops
+the worker's poll ``QTimer`` on the worker thread with a blocking call at teardown
+(the app is already closing); no responsiveness-sensitive path blocks.
+
 Connecting is also asynchronous (``connect_async`` / ``connect_finished``): the
 multi-second SSH handshake runs on the worker behind a modal "Connecting…"
 dialog instead of freezing the window. Host-key trust is handled by the GUI
