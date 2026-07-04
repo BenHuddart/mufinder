@@ -27,6 +27,7 @@ from PySide6.QtCore import QObject, Signal
 
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.domain.models import Job, Result
 from mufinder.services.job_execution_controller import (
     ClusterJobSubmission,
@@ -39,7 +40,7 @@ class FakeLocalRunner(QObject):
     """Fake local runner exposing LocalJobRunner's public signal surface."""
 
     job_started = Signal(object)
-    job_finished = Signal(object, object)
+    job_finished = Signal(object, object, object)
     job_failed = Signal(object, str)
     job_cancelled = Signal(object)
     status_changed = Signal(object, object)
@@ -57,7 +58,7 @@ class FakeClusterRunner(QObject):
     """Fake cluster runner exposing the runner signals MainWindow connects."""
 
     job_started = Signal(object)
-    job_finished = Signal(object, object)
+    job_finished = Signal(object, object, object)
     job_failed = Signal(object, str)
     job_cancelled = Signal(object)
     status_changed = Signal(object, object)
@@ -151,7 +152,7 @@ class SubmissionHarness:
         self.local_runner.job_cancelled.emit(job_id)
 
     def emit_local_finished(self, job_id: UUID, parsed: CastepResult) -> None:
-        self.local_runner.job_finished.emit(job_id, parsed)
+        self.local_runner.job_finished.emit(job_id, parsed, ParsedJobArtifacts())
 
     def emit_cluster_status(self, job_id: UUID, status: JobStatus) -> None:
         self.cluster_runner.status_changed.emit(job_id, status.value)
@@ -166,7 +167,7 @@ class SubmissionHarness:
         self.cluster_runner.job_cancelled.emit(job_id)
 
     def emit_cluster_finished(self, job_id: UUID, parsed: CastepResult) -> None:
-        self.cluster_runner.job_finished.emit(job_id, parsed)
+        self.cluster_runner.job_finished.emit(job_id, parsed, ParsedJobArtifacts())
 
     # -- result materialization convenience ------------------------------
     def record_result(self, job: Job, *, result_type: str, data: dict[str, object]) -> Result:
@@ -186,7 +187,7 @@ def _make_finished_handler(harness: SubmissionHarness):
     scope for a submission-flow harness and is exercised elsewhere.
     """
 
-    def _handle(job_id: UUID, parsed: CastepResult) -> None:
+    def _handle(job_id: UUID, parsed: CastepResult, artifacts: object = None) -> None:
         job = harness.document.jobs.get(job_id)
         if job is None:
             return

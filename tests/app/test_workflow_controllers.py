@@ -25,6 +25,7 @@ import pytest
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job
+from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
@@ -61,6 +62,12 @@ from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
 # --------------------------------------------------------------------------- #
 # Shared fakes
 # --------------------------------------------------------------------------- #
+
+
+def _no_artifacts() -> ParsedJobArtifacts:
+    """An empty artifacts carrier for controllers that consume no secondary output."""
+
+    return ParsedJobArtifacts()
 
 
 class _RecordingBackend:
@@ -164,9 +171,15 @@ class _FakeController(WorkflowJobController):
         # override path forwards extra kwargs to the backend.
         return [([job], {"index": i}) for i, job in enumerate(jobs)]
 
-    def build_result(self, job: Job, parsed: CastepResult, run: CalculationRun) -> ControllerResult:
+    def build_result(
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
+    ) -> ControllerResult:
         if self._build_result_payload is None:
-            return super().build_result(job, parsed, run)
+            return super().build_result(job, parsed, run, artifacts)
         return ControllerResult(
             payload=dict(self._build_result_payload),
             output_files=["extra.out"],
@@ -331,6 +344,7 @@ def test_merge_controller_result_no_matching_controller_is_noop(tmp_path: Path) 
         job,
         _parsed(),
         run,
+        _no_artifacts(),
         payload=payload,
         output_files=["seed.castep"],
         derived_structure_ids=[],
@@ -355,6 +369,7 @@ def test_merge_controller_result_empty_result_is_noop(tmp_path: Path) -> None:
         job,
         _parsed(),
         run,
+        _no_artifacts(),
         payload={"total_energy": -1.0},
         output_files=["seed.castep"],
         derived_structure_ids=[],
@@ -383,6 +398,7 @@ def test_merge_controller_result_additively_merges_matching_controller(tmp_path:
         job,
         _parsed(),
         run,
+        _no_artifacts(),
         payload={"total_energy": -1.0, "completed": True},
         output_files=["seed.castep"],
         derived_structure_ids=[],
@@ -413,6 +429,7 @@ def test_merge_controller_result_selects_first_handling_controller(tmp_path: Pat
         job,
         _parsed(),
         run,
+        _no_artifacts(),
         payload={},
         output_files=[],
         derived_structure_ids=[],
@@ -919,17 +936,6 @@ Si 0.0 0.0 0.0
 """
 
 
-def _real_parse_relaxed_out_cell(path: Path):
-    """Parse an ``-out.cell`` exactly as MainWindow._parse_relaxed_out_cell does."""
-
-    from mufinder.castep_io.cell_parser import parse_cell_file
-    from mufinder.science.kpoint_grids import lattice_parameters
-
-    relaxed = parse_cell_file(path)
-    a, b, c = lattice_parameters(relaxed.lattice_vectors)[:3]
-    return relaxed, a, b, c
-
-
 def _stub_pristine_deps(**overrides) -> PristineRelaxationDeps:
     base = dict(
         active_pristine_relaxation_definition=lambda: None,
@@ -939,7 +945,6 @@ def _stub_pristine_deps(**overrides) -> PristineRelaxationDeps:
         pristine_relaxation_row_signature=lambda _row: (),
         job_for_pristine_relaxation_label=lambda _definition, _label: None,
         expand_pristine_relaxation_jobs=lambda _definition, _config: None,
-        parse_relaxed_out_cell=_real_parse_relaxed_out_cell,
     )
     base.update(overrides)
     return PristineRelaxationDeps(**base)
@@ -1036,7 +1041,8 @@ def test_pristine_controller_build_result_parses_lattice_and_creates_structure(
     controller = PristineRelaxationController(context, deps, _FakeRelaxationView())
 
     parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
-    result = controller.build_result(job, parsed, run)
+    artifacts = collect_job_artifacts(output_dir, job.label, want_out_cell=True)
+    result = controller.build_result(job, parsed, run, artifacts)
 
     # Payload gains the first three lattice parameters from the relaxed cell.
     assert result.payload["lattice_a"] == pytest.approx(5.1)
@@ -1058,14 +1064,14 @@ def test_pristine_controller_build_result_parses_lattice_and_creates_structure(
     assert derived.label == "pristine_relax_row1 relaxed"
 
 
-def test_pristine_controller_build_result_missing_out_cell_raises(tmp_path: Path) -> None:
-    """build_result surfaces the parse error rather than silently fabricating a
-    structure when the -out.cell is absent. In production the inline prologue in
-    ``_on_local_job_finished`` guards this case (see the FAILED-job regression in
-    tests/app/test_main_window_actions.py) so build_result is never reached with a
-    missing file; this test pins only build_result's own parse contract."""
-
-    from mufinder.castep_io.cell_parser import CellParseError
+def test_pristine_controller_build_result_missing_out_cell_is_empty(tmp_path: Path) -> None:
+    """build_result no longer parses or raises on a missing ``-out.cell``: it now
+    consumes the pre-parsed carrier and returns an empty ControllerResult when
+    ``artifacts.relaxed_cell`` is ``None``. In production the missing-file failure
+    is detected by the inline handler guard from the carrier (the ``cell_missing``
+    flag surfaced on :class:`ParsedJobArtifacts`), not by build_result — so
+    build_result is never reached with a missing file, and its own contract when
+    handed an empty carrier is simply to contribute nothing."""
 
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
@@ -1084,8 +1090,9 @@ def test_pristine_controller_build_result_missing_out_cell_raises(tmp_path: Path
     controller = PristineRelaxationController(context, deps, _FakeRelaxationView())
 
     parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
-    with pytest.raises((CellParseError, FileNotFoundError, OSError)):
-        controller.build_result(job, parsed, run)
+    result = controller.build_result(job, parsed, run, ParsedJobArtifacts())
+    assert result.payload == {}
+    assert result.derived_structure_ids == []
     # No derived structure was created.
     assert document.structures == {} or all(
         s.origin != "pristine_relaxation" for s in document.structures.values()
@@ -1318,7 +1325,6 @@ def _stub_muon_deps(**overrides) -> MuonRelaxationDeps:
         muon_relaxation_definition_and_row_for_job=lambda _job: (None, None),
         muon_fractional_position_from_cell=_real_muon_position_from_cell,
         coerce_fractional_triplet=_real_coerce_fractional_triplet,
-        parse_relaxed_out_cell=_real_parse_relaxed_out_cell,
     )
     base.update(overrides)
     return MuonRelaxationDeps(**base)
@@ -1747,7 +1753,8 @@ def test_muon_controller_build_result_records_position_structure_and_site_mutati
     controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
 
     parsed = CastepResult(completed=True, total_energy=-12.0, warnings=())
-    result = controller.build_result(job, parsed, run)
+    artifacts = collect_job_artifacts(output_dir, job.label, want_out_cell=True)
+    result = controller.build_result(job, parsed, run, artifacts)
 
     # Relaxed supercell lattice payload.
     assert result.payload["lattice_a"] == pytest.approx(8.0)
@@ -1838,8 +1845,12 @@ def test_muon_controller_build_result_fails_loudly_on_muonless_cell(tmp_path: Pa
     controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
 
     parsed = CastepResult(completed=True, total_energy=-12.0, warnings=())
+    # The muonless cell still parses (lattice + Si present), so the carrier's
+    # ``relaxed_cell``/``lattice_abc`` are populated — build_result proceeds past
+    # the empty-carrier guard and only then raises on the missing H:mu position.
+    artifacts = collect_job_artifacts(output_dir, job.label, want_out_cell=True)
     with pytest.raises(ValueError, match="relaxed cell containing"):
-        controller.build_result(job, parsed, run)
+        controller.build_result(job, parsed, run, artifacts)
     # No partial side effects: site untouched, no derived structure added.
     assert site.status == "staged"
     assert site.relaxation_run_id is None
@@ -1948,7 +1959,7 @@ def test_uep_controller_build_result_flag_true_when_den_fmt_present(tmp_path: Pa
     controller = UepController(context, deps, _FakeUepView())
 
     parsed = CastepResult(completed=True, total_energy=-20.5, warnings=())
-    result = controller.build_result(job, parsed, run)
+    result = controller.build_result(job, parsed, run, _no_artifacts())
 
     assert result.payload == {"density_available": True}
     # No output_files contributed — the call site already passes them generically.
@@ -1980,7 +1991,7 @@ def test_uep_controller_build_result_flag_false_when_den_fmt_absent(tmp_path: Pa
     controller = UepController(context, deps, _FakeUepView())
 
     parsed = CastepResult(completed=True, total_energy=-20.5, warnings=())
-    result = controller.build_result(job, parsed, run)
+    result = controller.build_result(job, parsed, run, _no_artifacts())
 
     assert result.payload == {"density_available": False}
 
@@ -2414,7 +2425,7 @@ def test_quantum_controller_build_result_singlepoint_is_empty_but_handled(tmp_pa
     )
 
     assert controller.handles_job(job) is True
-    result = controller.build_result(job, _parsed(), run)
+    result = controller.build_result(job, _parsed(), run, _no_artifacts())
     assert result.payload == {}
     assert result.output_files == []
     assert result.derived_structure_ids == []
@@ -2448,7 +2459,8 @@ def test_quantum_controller_build_result_phonon_parses_zpe_and_witness(tmp_path:
         _FakeQuantumView(),
     )
 
-    result = controller.build_result(job, _parsed(), run)
+    artifacts = collect_job_artifacts(output_dir, "quantum_s", want_phonon=True)
+    result = controller.build_result(job, _parsed(), run, artifacts)
 
     payload = result.payload
     assert payload["phonon_file"] == str(phonon_path)
@@ -2482,7 +2494,7 @@ def test_quantum_controller_build_result_phonon_missing_dir_is_empty(tmp_path: P
         deps,
         _FakeQuantumView(),
     )
-    assert controller.build_result(job, _parsed(), run).payload == {}
+    assert controller.build_result(job, _parsed(), run, ParsedJobArtifacts()).payload == {}
 
 
 def _seed_quantum_two_stage_document(service: ProjectService, tmp_path: Path):
@@ -3036,7 +3048,8 @@ def test_energy_barriers_controller_build_result_ts_payload(tmp_path: Path) -> N
         lambda: None,  # view never created: result dispatch must still work
     )
 
-    result = controller.build_result(job, _parsed(), run)
+    artifacts = collect_job_artifacts(output_dir, "barrier", want_ts=True)
+    result = controller.build_result(job, _parsed(), run, artifacts)
 
     payload = result.payload
     assert payload["transition_state_file"] == str(ts_path)
@@ -3069,7 +3082,7 @@ def test_energy_barriers_controller_build_result_missing_dir_is_empty(tmp_path: 
         deps,
         lambda: None,
     )
-    assert controller.build_result(job, _parsed(), run).payload == {}
+    assert controller.build_result(job, _parsed(), run, ParsedJobArtifacts()).payload == {}
 
 
 def test_energy_barriers_controller_pre_submit_check_blocks_on_structure_mismatch(

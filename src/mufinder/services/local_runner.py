@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, QProcess, Signal
 
 from mufinder.castep_io.output_parser import parse_castep_output
 from mufinder.domain.enums import JobStatus
+from mufinder.services.job_artifacts import collect_job_artifacts
 
 
 @dataclass(slots=True)
@@ -24,6 +25,11 @@ class _PendingJob:
     num_cores: int
     task_farming_enabled: bool = False
     num_farms: int | None = None
+    # Which secondary outputs this job produces, mirroring the cluster runner's
+    # retrieval flags. Drive off-thread artifact collection on completion.
+    retrieve_out_cell: bool = False
+    retrieve_phonon: bool = False
+    retrieve_ts: bool = False
 
 
 @dataclass(slots=True)
@@ -37,7 +43,10 @@ class LocalJobRunner(QObject):
     """Run local CASTEP calculations without blocking the GUI thread."""
 
     job_started = Signal(object)
-    job_finished = Signal(object, object)
+    #: ``(job_id, CastepResult, ParsedJobArtifacts)``. The third payload carries
+    #: the secondary outputs (relaxed cell, phonon, transition state) parsed on
+    #: the completion callback so the GUI handler never re-parses them.
+    job_finished = Signal(object, object, object)
     job_failed = Signal(object, str)
     job_cancelled = Signal(object)
     status_changed = Signal(object, object)
@@ -88,6 +97,9 @@ class LocalJobRunner(QObject):
         num_cores: int,
         task_farming_enabled: bool = False,
         num_farms: int | None = None,
+        retrieve_out_cell: bool = False,
+        retrieve_phonon: bool = False,
+        retrieve_ts: bool = False,
     ) -> None:
         """Submit one local CASTEP job for execution."""
 
@@ -100,6 +112,9 @@ class LocalJobRunner(QObject):
             num_cores=max(1, int(num_cores)),
             task_farming_enabled=bool(task_farming_enabled),
             num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
+            retrieve_out_cell=bool(retrieve_out_cell),
+            retrieve_phonon=bool(retrieve_phonon),
+            retrieve_ts=bool(retrieve_ts),
         )
 
         validation_error = self._validate_request(request)
@@ -278,7 +293,19 @@ class LocalJobRunner(QObject):
             self._start_queued_jobs()
             return
 
-        self.job_finished.emit(job_id, result)
+        # Parse the secondary outputs (relaxed cell / phonon / transition state)
+        # here on the completion callback, exactly once, driven by the retrieval
+        # flags this job carries. The GUI handler decides failure from the
+        # carrier and the owning controller consumes the pre-parsed data —
+        # neither re-reads disk. Errors are captured on the carrier, never raised.
+        artifacts = collect_job_artifacts(
+            request.job_dir,
+            request.seed_name,
+            want_out_cell=request.retrieve_out_cell,
+            want_phonon=request.retrieve_phonon,
+            want_ts=request.retrieve_ts,
+        )
+        self.job_finished.emit(job_id, result, artifacts)
         self.status_changed.emit(job_id, JobStatus.COMPLETED.value)
         self._start_queued_jobs()
 
