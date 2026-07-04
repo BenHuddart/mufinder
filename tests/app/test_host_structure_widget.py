@@ -2352,3 +2352,103 @@ def test_host_structure_widget_auto_enables_spin_rendering_on_nonzero_edit(qapp)
 
     assert widget._viewer._show_spins.isChecked()
     widget.close()
+
+
+def test_set_structure_skips_viewer_rebuild_when_unchanged(qapp, monkeypatch) -> None:
+    widget = HostStructureWidget()
+    calls: list[object] = []
+    monkeypatch.setattr(widget._viewer, "set_structure", lambda structure: calls.append(structure))
+
+    host = _sample_structure()
+    widget.set_structure(host)
+    assert len(calls) == 1
+    assert widget._atom_table.rowCount() == 2
+
+    # Same structure re-pushed on a flush must not rebuild table or viewer.
+    widget.set_structure(host)
+    assert len(calls) == 1
+
+    # Different structure id must re-render.
+    widget.set_structure(_hexagonal_structure())
+    assert len(calls) == 2
+
+
+def test_set_structure_none_transitions_render(qapp, monkeypatch) -> None:
+    widget = HostStructureWidget()
+    calls: list[object] = []
+    monkeypatch.setattr(widget._viewer, "set_structure", lambda structure: calls.append(structure))
+
+    host = _sample_structure()
+    widget.set_structure(host)
+    widget.set_structure(None)
+    widget.set_structure(None)  # skipped
+    widget.set_structure(host)
+    assert calls == [host, None, host]
+    assert widget._summary.text().startswith("Loaded structure")
+
+
+def test_set_structure_rerenders_after_geometry_swap(qapp, monkeypatch) -> None:
+    widget = HostStructureWidget()
+    calls: list[object] = []
+    monkeypatch.setattr(widget._viewer, "set_structure", lambda structure: calls.append(structure))
+
+    host = _sample_structure()
+    widget.set_structure(host)
+    assert len(calls) == 1
+
+    host.species = ["Si", "O", "H"]
+    host.fractional_positions = [[0.0, 0.0, 0.0], [0.25, 0.5, 0.75], [0.5, 0.5, 0.5]]
+    widget.set_structure(host)
+    assert len(calls) == 2
+    assert widget._atom_table.rowCount() == 3
+
+
+def test_set_structure_rerenders_after_in_place_spin_edit(qapp, monkeypatch) -> None:
+    # atomic_spins live in the in-place-mutated properties dict; the host
+    # fingerprint folds them in so a spin change still refreshes.
+    widget = HostStructureWidget()
+    calls: list[object] = []
+    monkeypatch.setattr(widget._viewer, "set_structure", lambda structure: calls.append(structure))
+
+    host = _sample_structure()
+    widget.set_structure(host)
+    assert len(calls) == 1
+
+    host.properties["atomic_spins"] = [2.0, -2.0]
+    widget.set_structure(host)
+    assert len(calls) == 2
+
+    # Mutating the *same* spins list in place (identical list identity) must
+    # also invalidate the fingerprint — the properties snapshot is content-based.
+    spins_id = id(host.properties["atomic_spins"])
+    host.properties["atomic_spins"][0] = 3.0
+    assert id(host.properties["atomic_spins"]) == spins_id
+    widget.set_structure(host)
+    assert len(calls) == 3
+
+
+def test_set_structure_rerenders_after_in_place_element_mutation(qapp, monkeypatch) -> None:
+    # Regression for the id()-recycling hazard: the fingerprint is content-based,
+    # so mutating geometry *elements* while keeping the very same list objects
+    # (identical identities) must still invalidate the guard and re-render.
+    widget = HostStructureWidget()
+    calls: list[object] = []
+    monkeypatch.setattr(widget._viewer, "set_structure", lambda structure: calls.append(structure))
+
+    host = _sample_structure()
+    widget.set_structure(host)
+    assert len(calls) == 1
+
+    species_id = id(host.species)
+    positions_id = id(host.fractional_positions)
+    lattice_id = id(host.lattice_vectors)
+    host.species[1] = "N"
+    host.fractional_positions[0][2] = 0.5
+    host.lattice_vectors[2][2] = 7.5
+    assert id(host.species) == species_id
+    assert id(host.fractional_positions) == positions_id
+    assert id(host.lattice_vectors) == lattice_id
+
+    widget.set_structure(host)
+    assert len(calls) == 2
+    assert widget._atom_table.item(1, 0).text() == "N"

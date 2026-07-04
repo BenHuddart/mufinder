@@ -3477,7 +3477,11 @@ def test_close_persists_pending_dashboard_flush(qapp, tmp_path: Path) -> None:
     assert save_calls == ["save"]
 
 
-def test_cluster_queue_checked_flushes_pending_dashboard(qapp, tmp_path: Path) -> None:
+def test_cluster_queue_checked_schedules_deferred_flush(qapp, tmp_path: Path) -> None:
+    # _on_cluster_queue_checked used to call _flush_dashboard() directly,
+    # bypassing the debounce/rate-limit entirely. It must now route through
+    # _request_dashboard_flush like every other lifecycle handler: the queue
+    # check drains any already-pending flush, but does not write synchronously.
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "queue_flush.mufinder", "QueueFlush")
@@ -3496,7 +3500,120 @@ def test_cluster_queue_checked_flushes_pending_dashboard(qapp, tmp_path: Path) -
     assert save_calls == []
 
     window._on_cluster_queue_checked(SimpleNamespace(checked_at=None, elapsed_by_job_id={}))
+    # Not synchronous: the write is still only scheduled.
+    assert save_calls == []
+    assert window._dashboard_flush_pending is True
+
+    # The metadata stamp landed in the in-memory document regardless of when
+    # the flush itself runs.
+    window._flush_dashboard()
     assert save_calls == ["save"]
+    window.close()
+
+
+def test_cluster_queue_checked_with_no_activity_does_not_schedule_flush(
+    qapp, tmp_path: Path
+) -> None:
+    # A routine queue poll that stamps nothing and has no pending completion
+    # must not start scheduling flushes on its own — only actual job activity
+    # (via mark_queue_checked stamping a job, or a completion handler already
+    # having marked pending) should arm the timer.
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "queue_no_activity.mufinder", "QueueNoActivity")
+    window._document = doc
+
+    window._on_cluster_queue_checked(SimpleNamespace(checked_at=None, elapsed_by_job_id={}))
+    assert window._dashboard_flush_pending is False
+    assert window._dashboard_flush_timer.isActive() is False
+    window.close()
+
+
+def test_dashboard_flush_isolated_event_uses_short_debounce(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An isolated lifecycle event (nothing nearby) should still arm the short
+    # debounce, not the longer min-flush-interval floor, preserving the
+    # existing prompt-flush feel.
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "isolated_event.mufinder", "IsolatedEvent")
+    window._document = doc
+
+    clock = [1_000.0]
+    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock[0])
+
+    window._request_dashboard_flush(failure_message="x")
+    assert window._dashboard_flush_timer.isActive() is True
+    assert window._dashboard_flush_timer.interval() == window._DASHBOARD_FLUSH_DEBOUNCE_MS
+    window.close()
+
+
+def test_dashboard_flush_stream_is_rate_limited_to_min_interval(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A steady stream of requests spaced closer than the min flush interval
+    # (but further apart than the debounce) must flush on a bounded ~2s
+    # cadence during the stream, not only once the stream stops, and must not
+    # have each new request push the deadline further into the future.
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "flush_stream.mufinder", "FlushStream")
+    window._document = doc
+
+    save_calls: list[str] = []
+    original_save = window._project_service.save_project
+
+    def _save_project(document) -> None:
+        save_calls.append("save")
+        original_save(document)
+
+    window._project_service.save_project = _save_project
+
+    clock = [0.0]
+    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock[0])
+
+    # First request: isolated so far -> short debounce deadline at t=0.3s.
+    window._request_dashboard_flush(failure_message="x")
+    first_deadline = window._dashboard_flush_deadline
+    assert first_deadline == pytest.approx(0.3)
+
+    # Fire the debounce timer as Qt would once its interval elapses.
+    clock[0] = 0.3
+    window._dashboard_flush_timer.timeout.emit()
+    assert save_calls == ["save"]
+    assert window._dashboard_last_flush_at == pytest.approx(0.3)
+
+    # A request 0.5s after the last flush: within the 2s floor, so the
+    # deadline should land 2s after the last flush (t=2.3s), not 0.3s later.
+    clock[0] = 0.8
+    window._request_dashboard_flush(failure_message="x")
+    assert window._dashboard_flush_deadline == pytest.approx(2.3)
+
+    # Further requests inside the same armed window must not push the
+    # deadline further out.
+    clock[0] = 1.3
+    window._request_dashboard_flush(failure_message="x")
+    assert window._dashboard_flush_deadline == pytest.approx(2.3)
+
+    clock[0] = 1.8
+    window._request_dashboard_flush(failure_message="x")
+    assert window._dashboard_flush_deadline == pytest.approx(2.3)
+
+    # The armed deadline fires on schedule, bounding the burst to one flush
+    # per ~2s rather than starving until the stream ends.
+    clock[0] = 2.3
+    window._dashboard_flush_timer.timeout.emit()
+    assert save_calls == ["save", "save"]
+    assert window._dashboard_last_flush_at == pytest.approx(2.3)
+
+    # Trailing request after the stream ends still schedules a guaranteed
+    # final flush.
+    clock[0] = 2.5
+    window._request_dashboard_flush(failure_message="x")
+    assert window._dashboard_flush_pending is True
+    window._flush_dashboard()
+    assert save_calls == ["save", "save", "save"]
     window.close()
 
 

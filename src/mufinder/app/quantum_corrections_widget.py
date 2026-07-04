@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QGroupBox,
@@ -71,6 +71,12 @@ class QuantumCorrectionsWidget(QWidget):
         super().__init__(parent)
         self.setAccessibleName("Quantum Corrections workflow")
         self._source_rows: list[QuantumSourceRow] = []
+        # Flush-path guards: cache the last-rendered rows so set_sources /
+        # set_results can skip the table rebuild when nothing changed. The rows
+        # are frozen dataclasses, so list equality is an exact value compare.
+        self._source_rows_valid = False
+        self._result_rows: list[QuantumResultRow] = []
+        self._result_rows_valid = False
         self._updating_sources = False
 
         layout = QVBoxLayout(self)
@@ -176,9 +182,18 @@ class QuantumCorrectionsWidget(QWidget):
         layout.addStretch(1)
 
     def set_sources(self, rows: list[QuantumSourceRow]) -> None:
-        """Replace the displayed eligible-source rows."""
+        """Replace the displayed eligible-source rows.
 
+        Skips the table rebuild when the rows are unchanged since the last
+        render; ``QuantumSourceRow`` is a frozen dataclass so list equality is an
+        exact value compare. Skipping the rebuild also preserves the user's
+        current selection across dashboard flushes.
+        """
+
+        if self._source_rows_valid and list(rows) == self._source_rows:
+            return
         self._source_rows = list(rows)
+        self._source_rows_valid = True
         self._source_label.setText(f"Eligible relaxed sites ({len(rows)})")
         self._updating_sources = True
         try:
@@ -188,8 +203,18 @@ class QuantumCorrectionsWidget(QWidget):
         self._update_actions()
 
     def set_results(self, rows: list[QuantumResultRow]) -> None:
-        """Replace the displayed quantum-result rows."""
+        """Replace the displayed quantum-result rows.
 
+        Skips the table rebuild (and the per-row ``QPushButton`` creation and
+        column-resize passes) when the rows are unchanged. ``QuantumResultRow``
+        is a frozen dataclass, so list equality is exact. Status-cell colours are
+        palette-derived and re-applied on theme change by :meth:`changeEvent`.
+        """
+
+        if self._result_rows_valid and list(rows) == self._result_rows:
+            return
+        self._result_rows = list(rows)
+        self._result_rows_valid = True
         self._result_label.setText(f"Completed phonon analyses ({len(rows)})")
         _fill_table(
             self._results_table,
@@ -213,6 +238,32 @@ class QuantumCorrectionsWidget(QWidget):
             self._results_table.resizeColumnToContents(4)
             self._results_table.resizeColumnToContents(5)
             self._results_table.setColumnWidth(3, max(56, self._results_table.columnWidth(3)))
+
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt API naming.
+        """Re-apply palette-derived status colours on a theme change.
+
+        ``set_sources`` / ``set_results`` now skip rebuilds when their rows are
+        unchanged, so the status-cell foreground brushes would otherwise stay
+        frozen at the previous theme's colours after a palette flip.
+        """
+
+        super().changeEvent(event)
+        if event.type() in {
+            QEvent.Type.PaletteChange,
+            QEvent.Type.ApplicationPaletteChange,
+            QEvent.Type.StyleChange,
+        }:
+            self._reapply_status_colors()
+
+    def _reapply_status_colors(self) -> None:
+        for row_index, row in enumerate(self._source_rows):
+            status_item = self._sources_table.item(row_index, 7)
+            if status_item is not None:
+                status_item.setForeground(status_brush(row.status))
+        for row_index, row in enumerate(self._result_rows):
+            status_item = self._results_table.item(row_index, 4)
+            if status_item is not None:
+                status_item.setForeground(status_brush(row.status))
 
     def selected_source_keys(self) -> list[str]:
         """Return selected source keys in table order."""

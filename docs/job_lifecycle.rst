@@ -384,11 +384,32 @@ The per-job document mutation happens synchronously, but the **heavy dashboard
 work is coalesced**: rebuilding the journal (whole provenance), the jobs table
 (which recreates per-row action buttons), and the workflow views, plus the
 full-document autosave. Lifecycle handlers call ``_request_dashboard_flush``
-instead of refreshing and saving inline; the pending flush runs once after each
-queue poll (``_on_cluster_queue_checked``), on a short debounce timer, and before
-save/close/project-switch (``_flush_dashboard``). A burst of cluster jobs
-finishing in one poll therefore rebuilds the views and writes the document once
-rather than once per job, which previously froze the GUI for large batches.
+instead of refreshing and saving inline; the pending flush runs on
+``_flush_dashboard``, scheduled via ``_dashboard_flush_timer``, and also
+before save/close/project-switch.
+
+``_request_dashboard_flush`` combines two rules so both an isolated
+completion and a multi-minute completion stream behave well:
+
+- **Quiet-period debounce** (``_DASHBOARD_FLUSH_DEBOUNCE_MS`` = 300 ms): an
+  isolated event flushes shortly after it arrives, giving the same prompt
+  feel as before.
+- **Minimum-interval floor** (``_DASHBOARD_MIN_FLUSH_INTERVAL_MS`` = 2000 ms):
+  during a burst — e.g. a serial cluster retrieval where jobs complete a few
+  seconds apart, each just outside the debounce window — flushes are bounded
+  to roughly one every 2 seconds instead of one per completion. The armed
+  deadline is only ever tightened (moved earlier), never pushed further into
+  the future, so a steady stream of requests cannot re-arm the timer forever
+  and starve the flush until the stream ends.
+
+``_on_cluster_queue_checked`` stamps per-job monitor metadata
+(``last_checked_at``/source/message) and then also goes through
+``_request_dashboard_flush`` rather than flushing synchronously — it no
+longer bypasses the debounce/rate-limit, since a queue poll can itself fire
+every few seconds during a retrieval. A burst of cluster jobs finishing
+across one or several polls therefore rebuilds the views and writes the
+document at a bounded cadence rather than once per job, which previously
+froze the GUI for large batches.
 
 The dashboard displays active states plus ``failed``, ``stopped``, and
 ``cancelled``; rows whose job carries a ``dismissed_at`` stamp are filtered
