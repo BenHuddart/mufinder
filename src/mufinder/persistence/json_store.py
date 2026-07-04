@@ -55,10 +55,22 @@ class ProjectStore:
         for entity_dir in self.ENTITY_DIRS:
             (self.entities_root / entity_dir).mkdir(exist_ok=True)
 
+    @staticmethod
+    def canonical_json(payload: dict[str, Any]) -> str:
+        """Return the canonical on-disk serialization for a JSON payload.
+
+        This is the single source of truth for how MuFinder serializes JSON to
+        disk. :meth:`write_json` writes exactly this string, and callers that
+        need a content hash of what *would* be written (e.g. the dirty-tracking
+        cache in ``ProjectService``) hash exactly this string, so the two can
+        never drift.
+        """
+        return json.dumps(payload, indent=2, sort_keys=True)
+
     def write_json(self, path: Path, payload: dict[str, Any]) -> None:
         """Write JSON payload with stable formatting."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        path.write_text(self.canonical_json(payload), encoding="utf-8")
 
     @staticmethod
     def _is_dataless_file(path: Path) -> bool:

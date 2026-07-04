@@ -59,6 +59,12 @@ Persistence includes:
 - JSON entity-per-file storage under ``entities/``.
 - Project manifest, state snapshot, and provenance JSONL stream.
 - Validation of cross-entity references before save.
+- Content-hash dirty tracking: ``ProjectService.save_project`` skips rewriting
+  any entity file (and ``state.json``) whose canonical serialized payload is
+  unchanged since the last save/load, guarding each skip with a file-existence
+  check so externally-deleted files are always regenerated. The manifest is
+  always written because its ``modified_at`` is bumped on every save. This is a
+  save-time optimization only and does not change the on-disk format.
 
 User-facing save behavior is intentionally split between autosave and manual
 save:
