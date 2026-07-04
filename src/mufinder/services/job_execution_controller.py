@@ -549,6 +549,49 @@ class JobExecutionController:
             journal_changed = True
         return LifecycleUpdate(job=job, changed=True, journal_changed=journal_changed)
 
+    def stop_stuck_job(self, job_id: UUID, message: str) -> LifecycleUpdate:
+        """Stop an active job the watchdog found untracked by any runner.
+
+        Routes the transition through ``ProjectService.stop_job`` (the single
+        authority for the ``-> stopped`` edge), closes out the job's active run
+        the same way the walltime-stop and failure paths do, records a
+        ``job_stopped`` journal event, and stamps the watchdog bookkeeping fields
+        (``last_checked_at``/``last_status_source``/``last_status_message``).
+        """
+
+        job = self._job_for_id(job_id)
+        if job is None:
+            return LifecycleUpdate()
+        if job.status not in {
+            JobStatus.SUBMITTING,
+            JobStatus.QUEUED,
+            JobStatus.RUNNING,
+            JobStatus.RETRIEVING,
+        }:
+            return LifecycleUpdate(job=job)
+
+        try:
+            self._project_service.stop_job(job, message)
+        except ValueError:
+            return LifecycleUpdate(job=job)
+
+        # Watchdog bookkeeping (mutated directly by the controller, per contract).
+        stamped_at = utc_now()
+        job.last_checked_at = stamped_at
+        job.last_status_source = "watchdog"
+        job.last_status_message = message
+
+        run = self.run_for_job(job_id)
+        if run is not None:
+            if run.started_at is None:
+                run.started_at = stamped_at
+            run.completed_at = stamped_at
+            run.status = JobStatus.STOPPED
+
+        self._active_run_by_job.pop(job_id, None)
+        self._record_terminal_event("job_stopped", job, error_message=message)
+        return LifecycleUpdate(job=job, changed=True, journal_changed=True)
+
     def _create_active_run(
         self,
         document: ProjectDocument,

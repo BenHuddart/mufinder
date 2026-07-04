@@ -218,6 +218,7 @@ from mufinder.services.job_execution_controller import (
     JobExecutionController,
     PreparedClusterSubmission,
 )
+from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.services.project_service import ProjectDocument, ProjectService
@@ -1680,6 +1681,17 @@ class MainWindow(QMainWindow):
         self._dashboard_flush_timer.setSingleShot(True)
         self._dashboard_flush_timer.setInterval(300)
         self._dashboard_flush_timer.timeout.connect(self._flush_dashboard)
+        # Active-job watchdog: every minute, look for jobs left active with no
+        # runner tracking them (a dead local QProcess, an untracked cluster job)
+        # and stop them so they cannot linger in the dashboard forever. Findings
+        # are two-tick confirmed inside StuckJobWatchdog to ride out in-flight
+        # runner signals. The timer runs unconditionally; the handler is cheap
+        # when there are no active jobs.
+        self._stuck_job_watchdog = StuckJobWatchdog()
+        self._job_watchdog_timer = QTimer(self)
+        self._job_watchdog_timer.setInterval(60_000)
+        self._job_watchdog_timer.timeout.connect(self._on_job_watchdog_tick)
+        self._job_watchdog_timer.start()
         self._cluster_elapsed_seconds_by_job: dict[UUID, int] = {}
         self._cluster_elapsed_checked_at: datetime | None = None
         self._shutting_down = False
@@ -2128,6 +2140,9 @@ class MainWindow(QMainWindow):
         dashboard_flush_timer = getattr(self, "_dashboard_flush_timer", None)
         if dashboard_flush_timer is not None:
             dashboard_flush_timer.stop()
+        job_watchdog_timer = getattr(self, "_job_watchdog_timer", None)
+        if job_watchdog_timer is not None:
+            job_watchdog_timer.stop()
         if self._document is not None and self.isVisible():
             answer = QMessageBox.question(
                 self,
@@ -8279,6 +8294,58 @@ class MainWindow(QMainWindow):
             seen.add(key)
             targets.append(target)
         return targets
+
+    def _on_job_watchdog_tick(self) -> None:
+        """Stop active jobs that no runner is tracking (two-tick confirmed).
+
+        Runs off a 60 s timer. Collects live introspection snapshots from the
+        local runner and the cluster controller's tracked-id mirror, asks the
+        watchdog for confirmed stuck jobs, stops each via
+        ``JobExecutionController.stop_stuck_job``, and coalesces the dashboard
+        refresh/autosave. Cheap when there are no active jobs.
+        """
+
+        if self._document is None:
+            return
+
+        active_jobs = [
+            job for job in self._document.jobs.values() if job.status in ACTIVE_JOB_STATUSES
+        ]
+        if not active_jobs:
+            # Nothing active: keep the two-tick state from accumulating stale
+            # strikes and return early.
+            self._stuck_job_watchdog.reset()
+            return
+
+        confirmed = self._stuck_job_watchdog.evaluate(
+            active_jobs,
+            local_active_ids=self._local_runner.active_job_ids(),
+            local_pending_ids=self._local_runner.pending_job_ids(),
+            cluster_tracked_ids=self._cluster_runner.tracked_active_job_ids(),
+            cluster_connected=self._cluster_runner.is_connected,
+            now=utc_now(),
+            connected_cluster_name=self._cluster_runner.connected_cluster_name,
+        )
+        if not confirmed:
+            return
+
+        stopped = 0
+        for job, message in confirmed:
+            update = self._job_execution.stop_stuck_job(job.id, message)
+            if update.changed:
+                stopped += 1
+                self._stuck_job_watchdog.forget(job.id)
+
+        if stopped == 0:
+            return
+
+        self._request_dashboard_flush(
+            failure_message="Jobs were stopped by the watchdog, but autosave failed."
+        )
+        self.statusBar().showMessage(
+            f"{stopped} job(s) were stopped by the job watchdog because no runner "
+            "was tracking them."
+        )
 
     def _sync_cluster_tracking_from_document(self) -> None:
         if self._document is None:
