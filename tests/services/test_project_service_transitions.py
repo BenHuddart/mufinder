@@ -51,9 +51,21 @@ ALLOWED: dict[JobStatus, set[JobStatus]] = {
         JobStatus.FAILED,
         JobStatus.CANCELLED,
     },
-    JobStatus.STOPPED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
+    # Job-lifecycle hardening: FAILED/STOPPED -> RETRIEVING added so the
+    # dashboard "Retry retrieval" action can re-attempt output retrieval for a
+    # cluster job that finished on the scheduler but whose retrieval or parsing
+    # failed, without resubmitting a duplicate scheduler job.
+    JobStatus.STOPPED: {
+        JobStatus.SUBMITTING,
+        JobStatus.RETRIEVING,
+        JobStatus.CANCELLED,
+    },
     JobStatus.COMPLETED: set(),
-    JobStatus.FAILED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
+    JobStatus.FAILED: {
+        JobStatus.SUBMITTING,
+        JobStatus.RETRIEVING,
+        JobStatus.CANCELLED,
+    },
     JobStatus.CANCELLED: {JobStatus.SUBMITTING},
 }
 
@@ -118,6 +130,12 @@ _PRIMITIVES = {
     "stop_job": (JobStatus.STOPPED, lambda s, j: s.stop_job(j)),
     "fail_job": (JobStatus.FAILED, lambda s, j: s.fail_job(j, "boom")),
     "cancel_job": (JobStatus.CANCELLED, lambda s, j: s.cancel_job(j)),
+    # retry_job_retrieval drives the same RETRIEVING target as mark_job_retrieving
+    # but exists for the dashboard "Retry retrieval" action (FAILED/STOPPED ->
+    # RETRIEVING). It only calls _assert_transition; the failed/stopped-only
+    # precondition is enforced by JobExecutionController, not this primitive, so
+    # the generic guard test exercises the shared RUNNING -> RETRIEVING edge.
+    "retry_job_retrieval": (JobStatus.RETRIEVING, lambda s, j: s.retry_job_retrieval(j)),
 }
 
 

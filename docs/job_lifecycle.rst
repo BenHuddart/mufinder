@@ -47,10 +47,12 @@ monitored, and finished:
 
 The dashboard shows jobs that still need attention: active jobs, failed jobs,
 stopped jobs, and cancelled jobs. Completed jobs disappear after successful
-result handling. ``Resubmit`` is available for failed and cancelled jobs.
-Cluster resubmission reuses existing remote files when the job still records a
-remote directory, so continuation runs can start from the previous working
-directory.
+result handling, and terminal jobs that have been ``Dismiss``-ed are hidden
+without losing their records. ``Resubmit`` is available for failed and
+cancelled jobs. Cluster resubmission reuses existing remote files when the job
+still records a remote directory, so continuation runs can start from the
+previous working directory, and failed or stopped cluster jobs that kept their
+remote metadata can ``Retry retrieval`` instead of resubmitting.
 
 Technical API behavior
 ----------------------
@@ -107,7 +109,17 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
 - ``fail_job`` moves an in-flight job to ``failed`` and records a message.
 - ``cancel_job`` moves a cancellable job to ``cancelled``.
 - ``reset_failed_job`` moves ``failed``, ``stopped``, or ``cancelled`` back to
-  ``defined`` and clears remote/process metadata.
+  ``defined`` and clears remote/process metadata (including the monitor
+  metadata and any ``dismissed_at`` stamp).
+- ``retry_job_retrieval`` moves a ``failed`` or ``stopped`` job back to
+  ``retrieving`` (the FAILED/STOPPED → RETRIEVING edges), clears
+  ``error_message``, and preserves remote metadata. The failed/stopped-only
+  and remote-metadata preconditions are enforced by
+  ``JobExecutionController.prepare_retry_retrieval``, not the primitive.
+- ``dismiss_job`` stamps ``dismissed_at`` for a ``failed``/``stopped``/
+  ``cancelled`` job. It is not a status transition and rejects
+  already-dismissed jobs; ``record_job_dismissed`` appends a ``job_dismissed``
+  provenance milestone.
 
 State authority and runner contract
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -174,6 +186,20 @@ Local submission uses ``submit_local_jobs``:
 - Submitted jobs are recorded in the project journal once at least one runner
   accepts the batch.
 
+Monitor metadata (``last_checked_at``, ``last_status_source``,
+``last_status_message``) is stamped by ``JobExecutionController`` as
+bookkeeping (never a status transition), with a fixed source vocabulary:
+``"scheduler_poll"`` (queue-poll observations via ``mark_queue_checked``),
+``"retrieval"`` (cluster output retrieval outcomes), ``"local_runner"``
+(local lifecycle events such as "queued locally", "process started",
+"process completed", "process failed"), ``"reconciliation"`` (orphaned
+local-job reconciliation on project open), ``"watchdog"`` (active-job
+watchdog stops), and ``"user"`` (dashboard retry-retrieval requests). The
+shared completion/failure paths infer the source from the job's execution
+target; explicit ``source=`` / ``status_message=`` keyword overrides are
+available. Failure stamps hold a short observation ("output retrieval
+failed"); the full diagnostic remains on ``job.error_message``.
+
 Cluster submission uses ``submit_cluster_job``:
 
 - The controller accepts ``defined``, ``failed``, and ``cancelled`` jobs.
@@ -204,6 +230,14 @@ Local runner behavior
   ``job_cancelled`` and ``cancelled`` when it sees the cancellation marker.
 - Non-zero exit status, missing ``.castep`` output, parser failure, or a parsed
   unsuccessful CASTEP result emits ``job_failed`` and ``failed``.
+- A ``QProcess`` ``FailedToStart`` error (for example a missing or
+  non-executable CASTEP binary) is reported immediately as ``job_failed`` and
+  ``failed`` rather than waiting for a ``finished`` event that Qt may never
+  deliver. The active entry is cleaned up and the next queued job starts, so a
+  job cannot remain ``submitting`` behind a process that never launched. The
+  failure message is *"The CASTEP process failed to start: {detail}. Check the
+  CASTEP executable path and file permissions."* Other ``QProcess`` errors
+  keep the store-and-wait behaviour and are reported by the finish handler.
 - Successful parsing of a completed CASTEP output emits ``job_finished`` and
   ``completed``.
 
@@ -261,20 +295,38 @@ During polling:
 
 - Only non-terminal tracked jobs for the currently connected cluster are polled.
 - Scheduler states are mapped to MuFinder states by the scheduler backend.
-- A missing scheduler entry is treated as ``completed`` so MuFinder attempts
-  retrieval.
 - ``queued`` and ``running`` emit status updates.
 - ``cancelled`` marks the tracked job terminal and emits cancellation.
 - ``stopped`` marks the tracked job terminal and emits ``stopped``.
 - ``failed`` marks the tracked job terminal, retrieves available error files,
   emits ``job_failed``, and emits ``failed``.
-- ``completed`` triggers retrieval of ``.castep`` plus optional ``.den_fmt`` or
-  ``-out.cell`` outputs. Retrieval/parsing failure becomes ``failed``. Parsed
-  incomplete CASTEP output becomes ``stopped`` when it looks like walltime;
-  otherwise it becomes ``failed``. Parsed completed output emits
-  ``job_finished`` and ``completed``.
+- ``completed`` triggers retrieval of ``.castep`` plus optional ``.den_fmt``,
+  ``-out.cell``, ``.phonon``, or ``.ts`` outputs. Retrieval or parsing failure
+  becomes ``failed``. Parsed incomplete CASTEP output becomes ``stopped`` when
+  it looks like walltime; otherwise it becomes ``failed``. Parsed completed
+  output emits ``job_finished`` and ``completed``.
+- A missing scheduler entry usually means completion, so retrieval is
+  attempted immediately — but with a grace window: if the output cannot be
+  downloaded (SFTP error, missing remote ``.castep``, connection hiccup), the
+  job is *not* failed yet. The runner retries on up to
+  ``MISSING_ENTRY_RETRIEVAL_ATTEMPTS`` (3) consecutive polls, keeping the
+  entry non-terminal, and only then emits ``job_failed`` with a diagnostic
+  explaining that scheduler history may have expired, the queue command may be
+  filtered, or the wrong cluster may be connected. Parse failures of
+  successfully downloaded output fail immediately. The attempt counter resets
+  if the job reappears in the queue.
+- Every poll emits a ``queue_checked`` snapshot carrying ``checked_at``
+  (``utc_now()``), per-job elapsed runtimes, and per-job human-readable
+  observations (``observations_by_job_id``) describing what the scheduler
+  reported for each polled job (for example "scheduler reports RUNNING" or
+  "missing from scheduler queue; waiting for output (attempt 1 of 3)").
+  ``JobExecutionController.mark_queue_checked`` persists these observations as
+  per-job monitor metadata: ``last_checked_at``, ``last_status_source``
+  (``"scheduler_poll"``), and ``last_status_message``.
 - Poll failure disconnects the runner, clears the connected state, and emits a
-  warning through the UI.
+  warning through the UI. Tracked job state is left untouched — active cluster
+  rows go stale rather than failing, and the dashboard derives staleness from
+  ``last_checked_at`` plus the disconnect (``services.job_monitoring``).
 
 Main-window integration
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -300,24 +352,93 @@ finishing in one poll therefore rebuilds the views and writes the document once
 rather than once per job, which previously froze the GUI for large batches.
 
 The dashboard displays active states plus ``failed``, ``stopped``, and
-``cancelled``. Actions are enabled as follows:
+``cancelled``; rows whose job carries a ``dismissed_at`` stamp are filtered
+out. A ``Last Checked`` column shows the relative age of ``last_checked_at``
+with a stale marker for active cluster jobs whose cluster is disconnected or
+whose last check is older than the ``services.job_monitoring`` threshold, and
+a tooltip carrying ``last_status_source`` / ``last_status_message`` / the
+staleness reason. Actions are enabled as follows:
 
 - ``Resubmit``: ``failed`` and ``cancelled``.
+- ``Retry retrieval``: ``failed`` and ``stopped`` cluster jobs that still
+  carry both a ``remote_job_id`` and ``remote_directory``, while the cluster
+  runner is connected to that job's cluster. It re-attempts output retrieval
+  from the existing remote directory (via
+  ``ClusterJobRunner.retrieve_outputs_for``) instead of resubmitting a
+  duplicate scheduler job, moving the job back to ``retrieving`` under a
+  fresh ``CalculationRun``.
 - ``Cancel``: ``submitting``, ``queued``, ``running``, and ``retrieving``.
 - ``Inspect``: ``failed`` and ``stopped``.
 - ``Reset``: ``failed``, ``stopped``, and ``cancelled``.
+- ``Dismiss``: ``failed``, ``stopped``, and ``cancelled``. Dismissal hides
+  the row from the active dashboard by stamping ``dismissed_at``; it is not a
+  status transition, so the job record, runs, results, and provenance all
+  remain in the document. There is no un-dismiss UI — a dismissed job is
+  recoverable only by clearing ``dismissed_at`` at the data level.
 
 When a project is opened or refreshed, ``_sync_cluster_tracking_from_document``
 re-registers persisted active cluster jobs that have enough metadata to poll:
 non-local execution target, active status, remote job id, remote directory or an
 inferable remote directory, and a local output directory.
 
+Active-job watchdog
+~~~~~~~~~~~~~~~~~~~
+
+Orphaned-local reconciliation (recommendation 1) only covers the app-restart
+case. A running session can still leave a job active with nothing executing it:
+a local ``QProcess`` that died without a finish event, a cluster job the runner
+silently stopped tracking, or a queue entry that never reached a runner. A
+once-a-minute watchdog closes this gap.
+
+The detection core, ``mufinder.services.job_watchdog.detect_stuck_jobs``, is a
+pure, Qt-free function. Given the project's jobs plus runner-introspection
+snapshots, it flags:
+
+- a local ``queued`` job absent from both the local runner's pending and
+  active id sets;
+- a local ``running`` job absent from the local runner's active id set;
+- a local ``submitting`` job older than a 120-second grace period (by
+  ``submitted_at``; skipped when ``submitted_at`` is ``None``) and absent from
+  the pending and active id sets;
+- a cluster job in an active state whose id is not in the cluster controller's
+  tracked-id mirror, **only** when the connected cluster is the one that job
+  targets. When the cluster is disconnected, cluster jobs are never flagged —
+  that is the staleness marker's responsibility (recommendations 2–3), not the
+  watchdog's.
+
+Runner introspection is exposed by ``LocalJobRunner.active_job_ids()`` /
+``pending_job_ids()`` and, on the GUI thread, by
+``ClusterController.tracked_active_job_ids()`` — a mirror of the runner's
+non-terminal ``_tracked_jobs`` maintained from the ``status_changed`` stream
+plus ``track_existing_job``/``clear_tracked_jobs``. The mirror is deliberately
+retained across a disconnect (the runner keeps its tracked jobs across a
+disconnect, and the watchdog never flags cluster jobs while disconnected), so
+reconnecting cannot trigger a false positive.
+
+To ride out an in-flight runner signal that has not yet reached the document, a
+finding is acted on only when it is confirmed in **two consecutive**
+evaluations (``StuckJobWatchdog``). A confirmed finding is applied by
+``JobExecutionController.stop_stuck_job``, which routes the transition through
+``ProjectService.stop_job`` (the single authority for the ``-> stopped`` edge),
+closes out the job's active ``CalculationRun``, records a ``job_stopped``
+journal event, and stamps the monitor bookkeeping fields
+(``last_checked_at``, ``last_status_source = "watchdog"``,
+``last_status_message``). Stopped rows remain visible and resettable, exactly
+like a walltime stop.
+
+``MainWindow`` owns the 60-second ``QTimer`` (services must not create widgets)
+and a single handler that snapshots the runners, runs the watchdog, applies
+``stop_stuck_job`` per confirmed finding, requests a coalesced dashboard flush,
+and shows *"N job(s) were stopped by the job watchdog because no runner was
+tracking them."* when any were stopped. The handler is cheap when no jobs are
+active.
+
 Recommendations
 ---------------
 
-The current design has a sensible central transition service, but several
-failure modes can still leave jobs in the dashboard indefinitely. The following
-changes are recommended.
+This section began as a review of failure modes that could leave jobs in the
+dashboard indefinitely. All nine recommendations have since been implemented;
+each entry below records what shipped and where the behavior lives.
 
 1. Orphaned local-job reconciliation on project open (implemented).
    A local job left ``submitting``, ``queued``, ``running``, or ``retrieving``
@@ -341,58 +462,81 @@ changes are recommended.
    the cluster runner instead, via
    ``MainWindow._sync_cluster_tracking_from_document`` (which re-registers
    active cluster jobs, including ``submitting``, that still carry a remote job
-   id and directory). Remaining gaps for cluster jobs that lack enough metadata
-   to re-register — missing remote id, remote directory, cluster config, or
-   local output directory — are covered by recommendations 2–3 below and are
-   not yet surfaced as explicit diagnostics.
+   id and directory). Cluster jobs that lack enough metadata to re-register —
+   missing remote id, remote directory, cluster config, or local output
+   directory — are surfaced by the staleness marker and the active-job
+   watchdog (recommendations 2–3 and 7).
 
-2. Persist monitor metadata and last-observed status.
-   Store fields such as ``last_checked_at``, ``last_status_source``, and
-   ``last_status_message`` for cluster jobs. The dashboard can then distinguish
-   "still queued" from "not checked since yesterday" and warn about stale rows.
+2. Persist monitor metadata and last-observed status (implemented).
+   ``Job`` carries ``last_checked_at``, ``last_status_source``, and
+   ``last_status_message`` (optional, ``None``-defaulted, persisted through the
+   codec and cleared by ``reset_failed_job``). They are stamped from queue
+   polls (``JobExecutionController.mark_queue_checked``), retrieval outcomes,
+   local-runner lifecycle events, project-open reconciliation, watchdog stops,
+   and user retry requests, with the fixed source vocabulary described under
+   "Execution orchestration". The dashboard's ``Last Checked`` column renders
+   the age plus a tooltip with the source and observation.
 
-3. Make disconnected cluster jobs visibly stale.
-   A queue poll failure currently disconnects the runner and leaves active
-   jobs in their last known state. The dashboard should show a stale/offline
-   marker for active cluster jobs when their cluster is disconnected or their
-   last queue check is older than a threshold.
+3. Make disconnected cluster jobs visibly stale (implemented).
+   A queue poll failure still disconnects the runner and deliberately leaves
+   job state untouched; staleness is derived, not stored.
+   ``services.job_monitoring.job_staleness`` marks an active cluster job stale
+   when its cluster is disconnected or its last check is older than the
+   threshold (180 s), and the dashboard renders a " — stale" marker with the
+   reason in the tooltip.
 
-4. Add a retry-retrieval action for stopped/failed cluster jobs.
-   Retrieval or parsing failure currently converts a scheduler-completed job to
-   ``failed``. If the remote output appeared late or a transient SSH failure
-   occurred, resubmitting may be the wrong recovery. A ``Retry retrieval``
-   action for jobs with remote metadata would avoid unnecessary duplicate
-   scheduler jobs.
+4. Add a retry-retrieval action for stopped/failed cluster jobs (implemented).
+   A ``Retry retrieval`` dashboard action re-attempts output retrieval for a
+   scheduler-completed cluster job that kept its remote metadata, avoiding an
+   unnecessary duplicate scheduler job. It routes through
+   ``JobExecutionController.prepare_retry_retrieval`` →
+   ``ProjectService.retry_job_retrieval`` (the FAILED/STOPPED → RETRIEVING
+   edges) and ``ClusterJobRunner.retrieve_outputs_for``, registers a fresh
+   ``CalculationRun`` so the outcome cannot overwrite the prior terminal run,
+   and resolves a not-connected cluster to ``failed`` rather than stranding
+   the job in ``retrieving``.
 
-5. Avoid treating every missing scheduler entry as completed without context.
-   The current cluster poller treats absent scheduler status as completion and
-   attempts retrieval. That is a useful recovery path, but it can hide cases
-   where the scheduler command is filtered, history expired, or the wrong
-   cluster is connected. Prefer a short retrieval attempt window followed by a
-   diagnostic state if outputs are unavailable.
+5. Avoid treating every missing scheduler entry as completed without context
+   (implemented).
+   A missing scheduler entry still attempts retrieval immediately, but
+   output-unavailable failures are retried across a three-poll grace window
+   before the job is failed with a diagnostic naming the likely causes
+   (expired scheduler history, filtered queue command, wrong cluster) and
+   suggesting retry or resubmission. Parse failures of downloaded output fail
+   immediately. See "During polling" above.
 
-6. Fail fast on local process start errors.
-   ``LocalJobRunner`` records ``QProcess`` errors and relies on the finish path
-   to emit a failure. Add targeted handling for ``FailedToStart`` and related
-   startup errors so a job cannot remain ``submitting`` if Qt does not deliver a
-   normal finish event.
+6. Fail fast on local process start errors (implemented).
+   ``LocalJobRunner._on_process_error`` handles
+   ``QProcess.ProcessError.FailedToStart`` directly: it emits ``job_failed``
+   and ``failed``, cleans up the active entry, and starts the next queued job,
+   so a job cannot remain ``submitting`` when Qt does not deliver a finish
+   event. A late ``finished`` event for that job is a no-op. Other
+   ``ProcessError`` values keep the store-and-wait behaviour.
 
-7. Add an active-job watchdog.
-   Periodically check active jobs for impossible combinations, such as
-   ``queued`` local jobs with no pending runner entry, ``running`` local jobs
-   with no active ``QProcess``, or active cluster jobs with no tracked runner
-   entry. Convert these to a diagnosable terminal or attention state instead of
-   leaving them as active forever.
+7. Add an active-job watchdog (implemented).
+   A once-a-minute watchdog (``mufinder.services.job_watchdog``) detects
+   active jobs with no runner tracking them — ``queued``/``running``/
+   ``submitting`` local jobs missing from the local runner's pending/active
+   sets, and active cluster jobs missing from the cluster controller's
+   tracked-id mirror while their cluster is connected — and, after two-tick
+   confirmation, stops them via ``JobExecutionController.stop_stuck_job``
+   (through ``ProjectService.stop_job``) with a diagnostic message and
+   ``last_status_source = "watchdog"``. See "Active-job watchdog" above.
 
-8. Separate terminal history from the active dashboard.
-   Failed, stopped, and cancelled jobs intentionally remain visible for
-   recovery, but they can become clutter. Add an explicit ``Dismiss`` or
-   ``Archive`` action for terminal jobs that have already been inspected or
-   intentionally abandoned, while keeping provenance and run records intact.
+8. Separate terminal history from the active dashboard (implemented).
+   A ``Dismiss`` action stamps ``dismissed_at`` on a failed/stopped/cancelled
+   job so the dashboard filters the row out, while keeping the job record,
+   runs, results, and provenance intact (a ``job_dismissed`` milestone is
+   recorded). There is no un-dismiss UI; a dismissed job is recoverable only
+   at the data level.
 
-9. Strengthen tests around stuck-row prevention.
-   Add tests for project-open reconciliation, local restart with active jobs,
-   cluster active job with missing metadata, poll failure stale UI, and
-   ``QProcess`` startup failure. These should live beside the existing
-   ``JobExecutionController``, ``LocalJobRunner``, ``ClusterJobRunner``, and
-   main-window action tests.
+9. Strengthen tests around stuck-row prevention (implemented alongside 1–8).
+   Project-open reconciliation, poll-failure inertness, the missing-entry
+   grace window, ``QProcess`` startup failure, watchdog detection and wiring,
+   retry-retrieval run bookkeeping, and dismissal visibility are all pinned by
+   tests beside the existing ``JobExecutionController``, ``LocalJobRunner``,
+   ``ClusterJobRunner``, and main-window action suites (see
+   ``tests/services/test_job_watchdog.py``,
+   ``tests/services/test_retry_retrieval.py``,
+   ``tests/services/test_job_dismissal.py``, and
+   ``tests/app/test_dashboard_monitoring_columns.py``).

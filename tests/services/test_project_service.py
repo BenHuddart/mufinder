@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,7 +11,7 @@ from ase import Atoms
 from ase.io import write as ase_write
 
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result, Structure
+from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result, Structure, utc_now
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.project_service import (
@@ -663,6 +664,72 @@ def test_job_num_processes_roundtrip(tmp_path: Path) -> None:
     loaded_job = loaded.jobs[job.id]
     assert loaded_job.num_processes == 32
     assert loaded_job.remote_directory == "/remote/work/ProcJob"
+
+
+def test_job_monitor_metadata_and_dismissal_roundtrip(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "job_monitor_roundtrip.mufinder"
+    doc = service.create_project(root, "JobMonitorRoundtrip")
+    job = service.add_job(
+        doc,
+        label="MonitorJob",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    checked_at = datetime(2026, 7, 4, 12, 30, tzinfo=UTC)
+    dismissed_at = datetime(2026, 7, 4, 13, 0, tzinfo=UTC)
+    job.last_checked_at = checked_at
+    job.last_status_source = "scheduler_poll"
+    job.last_status_message = "scheduler reports RUNNING"
+    job.dismissed_at = dismissed_at
+
+    service.save_project(doc)
+    loaded = service.load_project(root)
+
+    loaded_job = loaded.jobs[job.id]
+    assert loaded_job.last_checked_at == checked_at
+    assert loaded_job.last_status_source == "scheduler_poll"
+    assert loaded_job.last_status_message == "scheduler reports RUNNING"
+    assert loaded_job.dismissed_at == dismissed_at
+
+
+def test_job_monitor_metadata_defaults_when_absent_from_payload(tmp_path: Path) -> None:
+    # Projects saved before the monitor-metadata fields existed must load with
+    # None defaults; the decoder tolerates the missing keys.
+    service = ProjectService()
+    payload = {
+        "id": str(uuid4()),
+        "workflow_stage": WorkflowStage.CONVERGENCE_CUTOFF.value,
+        "status": JobStatus.DEFINED.value,
+    }
+
+    job = service._job_from_dict(payload)
+
+    assert job.last_checked_at is None
+    assert job.last_status_source is None
+    assert job.last_status_message is None
+    assert job.dismissed_at is None
+
+
+def test_reset_failed_job_clears_monitor_metadata_and_dismissal() -> None:
+    service = ProjectService()
+    job = Job(
+        label="ResetMonitor",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+        status=JobStatus.FAILED,
+    )
+    job.last_checked_at = utc_now()
+    job.last_status_source = "watchdog"
+    job.last_status_message = "stopped by the job watchdog"
+    job.dismissed_at = utc_now()
+
+    service.reset_failed_job(job)
+
+    assert job.last_checked_at is None
+    assert job.last_status_source is None
+    assert job.last_status_message is None
+    assert job.dismissed_at is None
 
 
 def test_import_structure_file_sets_active_host_and_copies_source(tmp_path: Path) -> None:

@@ -717,7 +717,9 @@ Submission entry points include:
 - Right-click context menu in cutoff convergence rows.
 - Delete/Backspace keyboard removal for the current cutoff row or a selected set of rows.
 - Per-row action buttons in the shared job dashboard table after a job has entered the queue/submission lifecycle.
-- Failed/cancelled-job resubmit plus failed-job inspection and reset actions in the shared job dashboard.
+- Failed/cancelled-job resubmit, failed/stopped cluster-job retry-retrieval,
+  failed-job inspection, reset, and terminal-job dismiss actions in the shared
+  job dashboard.
 
 Submission controls include:
 
@@ -752,18 +754,47 @@ Runtime behavior includes:
 	id with the new id.
 - Save-on-close prompting for open visible projects.
 - Color-coded status text for dashboard and convergence status displays.
+- Per-job monitor metadata: every queue poll, retrieval outcome, local-runner
+  lifecycle event, and project-open reconciliation stamps ``last_checked_at``,
+  ``last_status_source``, and ``last_status_message`` on the job, so the
+  dashboard can distinguish "still queued" from "not checked recently" and
+  show what the scheduler last reported.
+- A ``Last Checked`` dashboard column showing the relative age of the last
+  queue check, with a stale marker (and tooltip reason) for active cluster
+  jobs whose cluster is disconnected or whose last check is overdue.
+- Missing-scheduler-entry grace window: a cluster job that disappears from the
+  scheduler queue is retried for up to three polls when its output cannot be
+  downloaded yet, instead of failing on the first attempt; after three failed
+  checks it fails with a diagnostic suggesting expired scheduler history, a
+  filtered queue command, or a wrong-cluster connection, and offering retry or
+  resubmission. Unreadable (downloaded but unparseable) output still fails
+  immediately.
+- Local jobs whose CASTEP process fails to start are failed immediately with a
+  diagnostic message, rather than remaining stuck in ``submitting``.
+- Retrying output retrieval for a failed/stopped cluster job from the
+  dashboard, reusing the existing remote directory without resubmitting a
+  duplicate scheduler job.
+- Dismissing failed/stopped/cancelled jobs from the active dashboard
+  (stamping ``dismissed_at``) while preserving their record, runs, results,
+  and provenance; dismissed jobs are recoverable only at the data level.
 
 The shared job dashboard is intended to show jobs that still need attention.
 Ready jobs are submitted from their workflow tables. Active jobs appear in the
 dashboard while they are submitting, queued, running, or retrieving outputs.
 Completed jobs leave the dashboard after successful result handling. Failed,
 stopped, and cancelled jobs remain visible so they can be inspected,
-resubmitted, or reset. On project open, local jobs left mid-flight when
-MuFinder was previously closed are reconciled to ``stopped`` (rather than
-showing as running forever) and a status-bar message reports how many were
-stopped; the stopped rows remain visible and resettable. See
-:doc:`job_lifecycle` for the full lifecycle contract and the current stuck-row
-prevention recommendations.
+resubmitted, or reset. Failed or stopped cluster jobs that kept their remote
+metadata can also retry retrieval, and any terminal job can be dismissed to
+remove its row from the active dashboard without deleting its data. On project
+open, local jobs left mid-flight when MuFinder was previously closed are
+reconciled to ``stopped`` (rather than showing as running forever) and a
+status-bar message reports how many were stopped; the stopped rows remain
+visible and resettable. During a running session, an active-job watchdog
+additionally stops jobs that are left active with no runner tracking them (a
+dead local process, an untracked active cluster job) and reports how many were
+stopped in the status bar; those rows also remain visible and resettable. See
+:doc:`job_lifecycle` for the full lifecycle contract and the implemented
+stuck-row prevention measures.
 
 Failure diagnostics include:
 
@@ -782,6 +813,7 @@ Status transitions across local and cluster execution now also include:
 - ``running``/``retrieving`` -> ``stopped`` (for walltime/time-limit stops)
 - ``failed``/``stopped``/``cancelled`` -> ``defined`` via reset for resubmission
 - ``failed``/``cancelled`` -> ``submitting`` via dashboard resubmission
+- ``failed``/``stopped`` -> ``retrieving`` via dashboard retry-retrieval
 
 Output handling includes:
 

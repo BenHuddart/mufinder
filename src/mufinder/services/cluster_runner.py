@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 import posixpath
 import re
@@ -15,10 +15,30 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from mufinder.cluster_setup import ClusterConfig
 from mufinder.castep_io.output_parser import CastepResult, parse_castep_output
 from mufinder.domain.enums import JobStatus
+from mufinder.domain.models import utc_now
 from mufinder.services.cluster_security import invalid_remote_job_labels
 from mufinder.services.scheduler import Scheduler, SchedulerSubmitRequest, create_scheduler
 from mufinder.services.script_template import render_job_script
 from mufinder.services.ssh_client import SSHConnection, SSHCredentials
+
+MISSING_ENTRY_RETRIEVAL_ATTEMPTS = 3
+"""Polls a scheduler-missing job may fail output retrieval before it is failed.
+
+A job absent from the scheduler queue has usually just completed, so retrieval
+is attempted immediately. But the absence can also mean expired scheduler
+history, a filtered queue command, or the wrong cluster — and the output may
+simply not be flushed yet. Output-unavailable retrieval errors are therefore
+retried for this many polls before the job is declared failed; parse failures
+of successfully downloaded output still fail immediately.
+"""
+
+MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE = (
+    "Job disappeared from the scheduler queue and its output could not be "
+    "retrieved after 3 checks. The scheduler history may have expired, the "
+    "queue status command may be filtered, or a different cluster may be "
+    "connected. Retry retrieval or resubmit."
+)
+"""Diagnostic emitted when a scheduler-missing job exhausts retrieval attempts."""
 
 
 @dataclass(slots=True)
@@ -37,6 +57,9 @@ class _TrackedClusterJob:
     retrieve_ts: bool = False
     task_farming_enabled: bool = False
     num_farms: int | None = None
+    #: Consecutive polls where this job was missing from the scheduler queue
+    #: and its output could not be downloaded. Reset when the job reappears.
+    missing_retrieval_attempts: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +68,11 @@ class QueueCheckSnapshot:
 
     checked_at: datetime
     elapsed_by_job_id: dict[UUID, str]
+    #: Short human-readable statement of what the scheduler reported for each
+    #: polled job this cycle (e.g. "scheduler reports RUNNING"). Consumed by
+    #: ``JobExecutionController.mark_queue_checked`` to stamp per-job monitor
+    #: metadata on the document.
+    observations_by_job_id: dict[UUID, str] = field(default_factory=dict)
 
 
 class ClusterJobRunner(QObject):
@@ -353,6 +381,73 @@ class ClusterJobRunner(QObject):
         ):
             self._poll_timer.start()
 
+    def retrieve_outputs_for(
+        self,
+        job_id: UUID,
+        *,
+        remote_job_id: str,
+        remote_directory: str,
+        seed_name: str,
+        local_output_dir: Path,
+        cluster_name: str = "",
+        retrieve_den_fmt: bool = False,
+        retrieve_out_cell: bool = False,
+        retrieve_phonon: bool = False,
+        retrieve_ts: bool = False,
+        task_farming_enabled: bool = False,
+        num_farms: int | None = None,
+    ) -> None:
+        """Re-attempt output retrieval for a scheduler-completed job on demand.
+
+        Backs the dashboard "Retry retrieval" action: it (re-)registers a tracked
+        entry from the persisted remote metadata and performs one retrieval pass
+        through the same :meth:`_retrieve_results` used by the poll loop, so the
+        normal signal flow (``status_changed`` -> retrieving, then
+        ``job_finished`` + completed / ``job_failed`` + failed / stopped) reaches
+        the GUI unchanged.
+
+        If the cluster is not connected (or does not match this job's cluster) a
+        retrieval pass would strand the job in RETRIEVING, so the not-connected
+        case is resolved to ``failed`` via ``job_failed`` + ``status_changed``
+        instead. ``_retrieve_results`` already converts any SSH/parse error to
+        ``failed`` internally, and the surrounding guard here catches the
+        pre-``try`` ``_require_ssh`` raise for the same reason.
+        """
+
+        tracked = _TrackedClusterJob(
+            job_id=job_id,
+            remote_job_id=remote_job_id.strip(),
+            remote_dir=remote_directory.strip(),
+            seed_name=seed_name,
+            local_output_dir=Path(local_output_dir),
+            cluster_name=cluster_name.strip(),
+            status=JobStatus.RETRIEVING,
+            terminal=False,
+            retrieve_den_fmt=bool(retrieve_den_fmt),
+            retrieve_out_cell=bool(retrieve_out_cell),
+            retrieve_phonon=bool(retrieve_phonon),
+            retrieve_ts=bool(retrieve_ts),
+            task_farming_enabled=bool(task_farming_enabled),
+            num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
+        )
+        self._tracked_jobs[job_id] = tracked
+
+        if not self.is_connected or not self._tracked_job_matches_connected_cluster(tracked):
+            tracked.terminal = True
+            self.job_failed.emit(
+                job_id,
+                "Cannot retry retrieval: not connected to the job's cluster.",
+            )
+            self.status_changed.emit(job_id, JobStatus.FAILED.value)
+            return
+
+        try:
+            self._retrieve_results(tracked)
+        except Exception as exc:  # noqa: BLE001 - resolve rather than strand in RETRIEVING
+            tracked.terminal = True
+            self.job_failed.emit(job_id, f"Failed to retrieve or parse remote output: {exc}")
+            self.status_changed.emit(job_id, JobStatus.FAILED.value)
+
     def shutdown(self) -> None:
         """Best-effort shutdown during application close."""
 
@@ -425,7 +520,13 @@ class ClusterJobRunner(QObject):
             )
         ]
         if not active:
-            self.queue_checked.emit(QueueCheckSnapshot(checked_at=datetime.now(UTC), elapsed_by_job_id={}))
+            self.queue_checked.emit(
+                QueueCheckSnapshot(
+                    checked_at=utc_now(),
+                    elapsed_by_job_id={},
+                    observations_by_job_id={},
+                )
+            )
             return
 
         try:
@@ -436,10 +537,28 @@ class ClusterJobRunner(QObject):
             self.poll_failed.emit(f"Queue polling failed for {cluster_name}: {exc}")
             return
 
+        observations_by_job_id: dict[UUID, str] = {}
         for entry in active:
             info = statuses.get(entry.remote_job_id)
-            mapped = JobStatus.COMPLETED if info is None else scheduler.map_to_job_status(info.state)
 
+            if info is None:
+                # Missing scheduler entry: usually completion, so retrieval is
+                # attempted, but output-unavailable errors are retried across a
+                # short grace window instead of failing the job immediately.
+                observations_by_job_id[entry.job_id] = self._retrieve_results(
+                    entry, missing_from_queue=True
+                )
+                continue
+
+            entry.missing_retrieval_attempts = 0
+            mapped = scheduler.map_to_job_status(info.state)
+
+            if mapped == JobStatus.COMPLETED:
+                entry.status = mapped
+                observations_by_job_id[entry.job_id] = self._retrieve_results(entry)
+                continue
+
+            observations_by_job_id[entry.job_id] = f"scheduler reports {mapped.value.upper()}"
             if mapped == entry.status:
                 continue
 
@@ -465,8 +584,6 @@ class ClusterJobRunner(QObject):
                 self.job_failed.emit(entry.job_id, "Scheduler reported job failure.")
                 self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
                 continue
-            if mapped == JobStatus.COMPLETED:
-                self._retrieve_results(entry)
 
         elapsed_by_job_id = {
             entry.job_id: info.elapsed_runtime
@@ -475,13 +592,27 @@ class ClusterJobRunner(QObject):
         }
         self.queue_checked.emit(
             QueueCheckSnapshot(
-                checked_at=datetime.now(UTC),
+                checked_at=utc_now(),
                 elapsed_by_job_id=elapsed_by_job_id,
+                observations_by_job_id=observations_by_job_id,
             )
         )
 
-    def _retrieve_results(self, entry: _TrackedClusterJob) -> None:
+    def _retrieve_results(self, entry: _TrackedClusterJob, *, missing_from_queue: bool = False) -> str:
+        """Retrieve and parse remote output; return a short observation.
+
+        ``missing_from_queue`` distinguishes retrieval triggered because the
+        scheduler no longer lists the job (usually completion, but possibly
+        expired history or a filtered queue command) from retrieval for a job
+        the scheduler explicitly reported as completed. In the missing case,
+        output-unavailable download errors are retried for up to
+        ``MISSING_ENTRY_RETRIEVAL_ATTEMPTS`` polls before the job is failed;
+        parse failures of successfully downloaded output fail immediately in
+        both cases.
+        """
+
         ssh = self._require_ssh()
+        prefix = "missing from scheduler queue; " if missing_from_queue else ""
 
         self.status_changed.emit(entry.job_id, JobStatus.RETRIEVING.value)
         remote_castep = posixpath.join(entry.remote_dir, f"{entry.seed_name}.castep")
@@ -515,28 +646,57 @@ class ClusterJobRunner(QObject):
                 ssh.get(remote_phonon, local_phonon)
             if entry.retrieve_ts and ssh.exists(remote_ts):
                 ssh.get(remote_ts, local_ts)
-            parsed = parse_castep_output(primary_output)
         except Exception as exc:  # noqa: BLE001
+            # Output-unavailable failure (SFTP download error, missing remote
+            # .castep, connection hiccup). For a scheduler-missing job the
+            # output may simply not exist yet, so defer the failure across a
+            # short grace window and retry on subsequent polls.
+            if missing_from_queue:
+                entry.missing_retrieval_attempts += 1
+                if entry.missing_retrieval_attempts < MISSING_ENTRY_RETRIEVAL_ATTEMPTS:
+                    return (
+                        f"{prefix}waiting for output "
+                        f"(attempt {entry.missing_retrieval_attempts} of "
+                        f"{MISSING_ENTRY_RETRIEVAL_ATTEMPTS})"
+                    )
+                entry.terminal = True
+                self.job_failed.emit(entry.job_id, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
+                self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
+                return (
+                    f"{prefix}output could not be retrieved after "
+                    f"{MISSING_ENTRY_RETRIEVAL_ATTEMPTS} checks"
+                )
             entry.terminal = True
             self.job_failed.emit(entry.job_id, f"Failed to retrieve or parse remote output: {exc}")
             self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
-            return
+            return f"{prefix}output retrieval failed"
+
+        try:
+            parsed = parse_castep_output(primary_output)
+        except Exception as exc:  # noqa: BLE001
+            # The output was downloaded but is unreadable: a real failure in
+            # both trigger modes, so no grace window applies.
+            entry.terminal = True
+            self.job_failed.emit(entry.job_id, f"Failed to retrieve or parse remote output: {exc}")
+            self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
+            return f"{prefix}output parsing failed"
 
         if not parsed.completed:
             entry.terminal = True
             if self._looks_like_walltime(parsed):
                 self.status_changed.emit(entry.job_id, JobStatus.STOPPED.value)
-            else:
-                self.job_failed.emit(
-                    entry.job_id,
-                    parsed.error_message or "CASTEP did not report successful completion.",
-                )
-                self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
-            return
+                return f"{prefix}output incomplete; stopped (walltime)"
+            self.job_failed.emit(
+                entry.job_id,
+                parsed.error_message or "CASTEP did not report successful completion.",
+            )
+            self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
+            return f"{prefix}output incomplete; job failed"
 
         entry.terminal = True
         self.job_finished.emit(entry.job_id, parsed)
         self.status_changed.emit(entry.job_id, JobStatus.COMPLETED.value)
+        return f"{prefix}output retrieved and parsed"
 
     def _retrieve_error_files(self, entry: _TrackedClusterJob) -> None:
         ssh = self._require_ssh()

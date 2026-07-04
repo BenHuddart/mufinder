@@ -125,6 +125,10 @@ class Job:
     num_processes: int | None = None
     tags: list[str] = field(default_factory=list)
     error_message: str | None = None
+    last_checked_at: datetime | None = None
+    last_status_source: str | None = None
+    last_status_message: str | None = None
+    dismissed_at: datetime | None = None
 
 
 @dataclass(slots=True)

@@ -499,6 +499,37 @@ class ProjectService:
             ),
         )
 
+    def record_job_dismissed(
+        self,
+        document: ProjectDocument,
+        *,
+        job: Job,
+    ) -> None:
+        """Append one provenance milestone when a terminal job is dismissed.
+
+        Dismissal hides the job from the active dashboard without deleting its
+        record, runs, results, or provenance (see :meth:`dismiss_job`). The
+        milestone lets the journal show that the row was intentionally removed
+        from view.
+        """
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="job_dismissed",
+                workflow_stage=job.workflow_stage,
+                actor="user",
+                description=f"Dismissed calculation {job.label} from the dashboard",
+                parameters={
+                    "job_label": job.label,
+                    "calc_type": job.calc_type,
+                    "execution_target": job.execution_target,
+                },
+                output_entity_ids=[job.id],
+                job_id=job.id,
+            ),
+        )
+
     def record_comparison_table_created(
         self,
         document: ProjectDocument,
@@ -1943,11 +1974,50 @@ class ProjectService:
         job.remote_directory = None
         job.num_processes = None
         job.error_message = None
+        job.last_checked_at = None
+        job.last_status_source = None
+        job.last_status_message = None
+        job.dismissed_at = None
 
     def mark_job_retrieving(self, job: Job) -> None:
         """Set job to retrieval stage before completion for remote runs."""
         self._assert_transition(job.status, JobStatus.RETRIEVING)
         job.status = JobStatus.RETRIEVING
+
+    def retry_job_retrieval(self, job: Job) -> None:
+        """Re-enter the RETRIEVING stage to re-attempt output retrieval.
+
+        This primitive exists for the dashboard "Retry retrieval" action: a
+        cluster job whose scheduler run finished but whose output retrieval or
+        parsing failed keeps its remote metadata (``remote_job_id`` /
+        ``remote_directory``), so retrieval can be re-attempted without
+        resubmitting a duplicate scheduler job. The FAILED/STOPPED -> RETRIEVING
+        edges are validated by :meth:`_assert_transition`; the caller
+        (``JobExecutionController.prepare_retry_retrieval``) enforces the
+        failed/stopped-only and remote-metadata preconditions before calling
+        this. The remote metadata is deliberately preserved so the runner can
+        re-download from the same remote directory.
+        """
+
+        self._assert_transition(job.status, JobStatus.RETRIEVING)
+        job.status = JobStatus.RETRIEVING
+        job.error_message = None
+
+    def dismiss_job(self, job: Job) -> None:
+        """Hide a terminal job from the active dashboard without deleting it.
+
+        Dismissal is **not** a status transition: the job keeps its FAILED /
+        STOPPED / CANCELLED status and its record, runs, results, and provenance
+        all remain in the document. Only ``dismissed_at`` is stamped so
+        ``_refresh_jobs_table`` can filter the row out of the active dashboard.
+        Already-dismissed jobs are rejected so the milestone is recorded once.
+        """
+
+        if job.status not in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}:
+            raise ValueError("Only failed, stopped, or cancelled jobs can be dismissed.")
+        if job.dismissed_at is not None:
+            raise ValueError("Only failed, stopped, or cancelled jobs can be dismissed.")
+        job.dismissed_at = utc_now()
 
     def reconcile_orphaned_local_jobs(self, document: ProjectDocument) -> list[Job]:
         """Stop local jobs left mid-flight when MuFinder closed.
@@ -1979,6 +2049,11 @@ class ProjectService:
                 continue
 
             self.stop_job(job, ORPHANED_LOCAL_JOB_STOP_MESSAGE)
+            # Monitor metadata is bookkeeping, not a status transition: record
+            # that reconciliation was the last observer of this job.
+            job.last_checked_at = utc_now()
+            job.last_status_source = "reconciliation"
+            job.last_status_message = ORPHANED_LOCAL_JOB_STOP_MESSAGE
             self._close_orphaned_run_for_job(document, job)
             self.record_job_terminal_event(
                 document,
@@ -2704,9 +2779,21 @@ class ProjectService:
                 JobStatus.FAILED,
                 JobStatus.CANCELLED,
             },
-            JobStatus.STOPPED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
+            # FAILED/STOPPED -> RETRIEVING supports the dashboard
+            # "Retry retrieval" action: a cluster job whose scheduler run
+            # finished but whose output retrieval failed keeps its remote
+            # metadata, so retrieval can be re-attempted without resubmitting.
+            JobStatus.STOPPED: {
+                JobStatus.SUBMITTING,
+                JobStatus.RETRIEVING,
+                JobStatus.CANCELLED,
+            },
             JobStatus.COMPLETED: set(),
-            JobStatus.FAILED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
+            JobStatus.FAILED: {
+                JobStatus.SUBMITTING,
+                JobStatus.RETRIEVING,
+                JobStatus.CANCELLED,
+            },
             JobStatus.CANCELLED: {JobStatus.SUBMITTING},
         }
         if target not in allowed[current]:
@@ -2928,6 +3015,10 @@ class ProjectService:
             num_processes=num_processes,
             tags=payload.get("tags", []),
             error_message=payload.get("error_message"),
+            last_checked_at=parse_datetime(payload.get("last_checked_at")),
+            last_status_source=payload.get("last_status_source"),
+            last_status_message=payload.get("last_status_message"),
+            dismissed_at=parse_datetime(payload.get("dismissed_at")),
         )
 
     def _site_from_dict(self, payload: dict[str, Any]) -> MuonSite:
