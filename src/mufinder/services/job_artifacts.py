@@ -32,16 +32,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from mufinder.castep_io.cell_parser import CellParseError, ParsedCell, parse_cell_file
-from mufinder.castep_io.ts_parser import (
-    TransitionStateParseError,
-    TransitionStatePath,
-    parse_transition_state_file,
-)
+from mufinder.castep_io.cell_parser import ParsedCell, parse_cell_file
+from mufinder.castep_io.ts_parser import TransitionStatePath, parse_transition_state_file
 from mufinder.science.kpoint_grids import lattice_parameters
 from mufinder.science.quantum_phonons import (
     PhononCalculation,
-    PhononParseError,
     muon_zpe,
     parse_phonon_path,
     w1_entanglement_witness,
@@ -135,11 +130,16 @@ def collect_job_artifacts(
         if out_cell_path is None or not out_cell_path.exists():
             cell_missing = True
         else:
+            # Catch broadly, not just CellParseError: the parser reads the file
+            # via Path.read_text, so OSError / UnicodeDecodeError can also
+            # surface here, and this function must never raise on the worker
+            # thread — an escaping exception would skip the job_finished emit
+            # and leave the job stuck.
             try:
                 relaxed_cell = parse_cell_file(out_cell_path)
                 a, b, c = lattice_parameters(relaxed_cell.lattice_vectors)[:3]
                 lattice_abc = (a, b, c)
-            except CellParseError as exc:
+            except Exception as exc:
                 relaxed_cell = None
                 lattice_abc = None
                 cell_error = str(exc)
@@ -159,7 +159,10 @@ def collect_job_artifacts(
                 muon_zpe(phonon)
                 phonon.gamma_point()
                 w1_entanglement_witness(phonon)
-            except PhononParseError as exc:
+            except Exception as exc:
+                # Broader than PhononParseError for the same never-raise reason
+                # as the cell branch: read_text I/O errors and unexpected
+                # failures in the downstream compute must surface as data.
                 phonon = None
                 phonon_error = str(exc)
 
@@ -172,7 +175,9 @@ def collect_job_artifacts(
         else:
             try:
                 transition_state = parse_transition_state_file(ts_path)
-            except TransitionStateParseError as exc:
+            except Exception as exc:
+                # Broader than TransitionStateParseError for the same
+                # never-raise reason as the cell branch.
                 transition_state = None
                 ts_error = str(exc)
 

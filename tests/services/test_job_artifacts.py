@@ -218,6 +218,57 @@ def test_collect_ts_unparseable_captures_error(tmp_path: Path) -> None:
     assert artifacts.transition_state is None
 
 
+# --- I/O errors are captured as data, never raised (worker-thread contract) ---
+
+
+def test_collect_out_cell_io_error_captured_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "seed-out.cell").write_text("irrelevant", encoding="utf-8")
+
+    def _io_boom(_path):
+        raise OSError("disk unplugged")
+
+    monkeypatch.setattr(job_artifacts_module, "parse_cell_file", _io_boom)
+
+    artifacts = collect_job_artifacts(tmp_path, "seed", want_out_cell=True)
+
+    assert artifacts.relaxed_cell is None
+    assert artifacts.cell_error == "disk unplugged"
+
+
+def test_collect_phonon_io_error_captured_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "seed.phonon").write_text("irrelevant", encoding="utf-8")
+
+    def _io_boom(_path):
+        raise OSError("disk unplugged")
+
+    monkeypatch.setattr(job_artifacts_module, "parse_phonon_path", _io_boom)
+
+    artifacts = collect_job_artifacts(tmp_path, "seed", want_phonon=True)
+
+    assert artifacts.phonon is None
+    assert artifacts.phonon_error == "disk unplugged"
+
+
+def test_collect_ts_io_error_captured_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "seed.ts").write_text("irrelevant", encoding="utf-8")
+
+    def _io_boom(_path):
+        raise OSError("disk unplugged")
+
+    monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _io_boom)
+
+    artifacts = collect_job_artifacts(tmp_path, "seed", want_ts=True)
+
+    assert artifacts.transition_state is None
+    assert artifacts.ts_error == "disk unplugged"
+
+
 # --- only requested outputs are read ---
 
 
