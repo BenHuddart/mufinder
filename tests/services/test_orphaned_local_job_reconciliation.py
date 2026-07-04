@@ -187,3 +187,16 @@ def test_mixed_document_only_reconciles_active_local_jobs(tmp_path) -> None:
     reconciled = service.reconcile_orphaned_local_jobs(document)
 
     assert {job.id for job in reconciled} == {local_active.id, blank_active.id}
+
+
+def test_reconciled_job_records_monitor_metadata(tmp_path) -> None:
+    # Job-lifecycle hardening rec #2: reconciliation stamps the monitor
+    # metadata so the dashboard can show who last observed the job and why.
+    service, document = _service_and_document(tmp_path)
+    job = _add_job(service, document, label="local", status=JobStatus.RUNNING)
+
+    service.reconcile_orphaned_local_jobs(document)
+
+    assert job.last_checked_at is not None
+    assert job.last_status_source == "reconciliation"
+    assert job.last_status_message == ORPHANED_LOCAL_JOB_STOP_MESSAGE

@@ -1983,6 +1983,11 @@ class ProjectService:
                 continue
 
             self.stop_job(job, ORPHANED_LOCAL_JOB_STOP_MESSAGE)
+            # Monitor metadata is bookkeeping, not a status transition: record
+            # that reconciliation was the last observer of this job.
+            job.last_checked_at = utc_now()
+            job.last_status_source = "reconciliation"
+            job.last_status_message = ORPHANED_LOCAL_JOB_STOP_MESSAGE
             self._close_orphaned_run_for_job(document, job)
             self.record_job_terminal_event(
                 document,

@@ -432,3 +432,202 @@ def test_cluster_stopped_status_is_terminal_and_clears_active_run(tmp_path: Path
     assert run.status == JobStatus.STOPPED
     assert controller.active_run_by_job == {}
     assert document.provenance[-1].action == "job_stopped"
+
+
+# ---------------------------------------------------------------------------
+# Monitor-metadata stamping (job-lifecycle hardening, rec #2).
+# ---------------------------------------------------------------------------
+
+
+def test_mark_queue_checked_stamps_observed_jobs(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    service, document = _document(tmp_path)
+    observed_id = _job(service, document, "observed")
+    unobserved_id = _job(service, document, "unobserved")
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+
+    checked_at = datetime(2026, 7, 4, 12, 0, tzinfo=UTC)
+    snapshot = SimpleNamespace(
+        checked_at=checked_at,
+        observations_by_job_id={
+            observed_id: "scheduler reports RUNNING",
+            uuid4(): "not in this document",
+        },
+    )
+
+    assert controller.mark_queue_checked(snapshot) is True
+
+    observed = document.jobs[observed_id]
+    assert observed.last_checked_at == checked_at
+    assert observed.last_status_source == "scheduler_poll"
+    assert observed.last_status_message == "scheduler reports RUNNING"
+    # No status transition and no run mutation happened.
+    assert observed.status == JobStatus.DEFINED
+    assert controller.run_for_job(observed_id) is None
+
+    unobserved = document.jobs[unobserved_id]
+    assert unobserved.last_checked_at is None
+    assert unobserved.last_status_source is None
+    assert unobserved.last_status_message is None
+
+
+def test_mark_queue_checked_tolerates_malformed_snapshots(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    service, document = _document(tmp_path)
+    job_id = _job(service, document, "untouched")
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+
+    # Legacy emissions may pass a bare datetime instead of a snapshot object.
+    assert controller.mark_queue_checked(datetime(2026, 7, 4, tzinfo=UTC)) is False
+    # A snapshot without a datetime stamp is ignored too.
+    assert (
+        controller.mark_queue_checked(
+            SimpleNamespace(checked_at=None, observations_by_job_id={job_id: "x"})
+        )
+        is False
+    )
+    assert document.jobs[job_id].last_checked_at is None
+    assert document.jobs[job_id].last_status_source is None
+
+
+def _cluster_running_job(service, document, label: str):
+    job = document.jobs[_job(service, document, label)]
+    job.execution_target = "scarf"
+    job.status = JobStatus.RUNNING
+    return job
+
+
+def _local_running_job(service, document, label: str):
+    job = document.jobs[_job(service, document, label)]
+    job.execution_target = "local"
+    job.status = JobStatus.RUNNING
+    return job
+
+
+def test_complete_job_with_result_stamps_retrieval_for_cluster_jobs(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = _cluster_running_job(service, document, "cluster-done")
+    result = Result(result_type="castep_cutoff", data={"total_energy": -1.0})
+
+    controller.complete_job_with_result(
+        job, result=result, warnings=[], convergence_achieved=True
+    )
+
+    assert job.status == JobStatus.COMPLETED
+    assert job.last_status_source == "retrieval"
+    assert job.last_status_message == "output retrieved and parsed"
+    assert job.last_checked_at is not None
+
+
+def test_complete_job_with_result_stamps_local_runner_for_local_jobs(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = _local_running_job(service, document, "local-done")
+    result = Result(result_type="castep_cutoff", data={"total_energy": -1.0})
+
+    controller.complete_job_with_result(
+        job, result=result, warnings=[], convergence_achieved=True
+    )
+
+    assert job.status == JobStatus.COMPLETED
+    assert job.last_status_source == "local_runner"
+    assert job.last_status_message == "process completed"
+    assert job.last_checked_at is not None
+
+
+def test_fail_job_stamps_retrieval_for_cluster_jobs(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = _cluster_running_job(service, document, "cluster-broken")
+
+    controller.fail_job(job.id, "Failed to retrieve or parse remote output: boom")
+
+    assert job.status == JobStatus.FAILED
+    # The full diagnostic stays on error_message; the stamp is the short
+    # observation, not a duplicate of the error text.
+    assert job.error_message == "Failed to retrieve or parse remote output: boom"
+    assert job.last_status_source == "retrieval"
+    assert job.last_status_message == "output retrieval failed"
+    assert job.last_checked_at is not None
+
+
+def test_fail_job_stamps_local_runner_for_local_jobs(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = _local_running_job(service, document, "local-broken")
+
+    controller.fail_job(job.id, "process exited with code 1")
+
+    assert job.status == JobStatus.FAILED
+    assert job.error_message == "process exited with code 1"
+    assert job.last_status_source == "local_runner"
+    assert job.last_status_message == "process failed"
+    assert job.last_checked_at is not None
+
+
+def test_fail_job_stamp_accepts_explicit_source_override(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = _cluster_running_job(service, document, "cluster-override")
+
+    controller.fail_job(
+        job.id,
+        "watchdog detected an impossible state",
+        source="watchdog",
+        status_message="impossible state detected",
+    )
+
+    assert job.last_status_source == "watchdog"
+    assert job.last_status_message == "impossible state detected"
+
+
+def test_mark_started_stamps_local_jobs_only(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+
+    local_job = document.jobs[_job(service, document, "local-start")]
+    local_job.execution_target = "local"
+    local_job.status = JobStatus.QUEUED
+    controller.mark_started(local_job.id)
+    assert local_job.status == JobStatus.RUNNING
+    assert local_job.last_status_source == "local_runner"
+    assert local_job.last_status_message == "process started"
+    assert local_job.last_checked_at is not None
+
+    # Cluster jobs are stamped from queue polls, not from mark_started.
+    cluster_job = document.jobs[_job(service, document, "cluster-start")]
+    cluster_job.execution_target = "scarf"
+    cluster_job.status = JobStatus.QUEUED
+    controller.mark_started(cluster_job.id)
+    assert cluster_job.status == JobStatus.RUNNING
+    assert cluster_job.last_checked_at is None
+    assert cluster_job.last_status_source is None
+
+
+def test_mark_local_status_changed_stamps_queued_locally(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = document.jobs[_job(service, document, "local-queued")]
+    job.execution_target = "local"
+    job.status = JobStatus.SUBMITTING
+
+    update = controller.mark_local_status_changed(job.id, JobStatus.QUEUED.value)
+
+    assert update.changed is True
+    assert job.status == JobStatus.QUEUED
+    assert job.last_status_source == "local_runner"
+    assert job.last_status_message == "queued locally"
+    assert job.last_checked_at is not None
+
+    # An inert notification (wrong current status) does not stamp.
+    other = document.jobs[_job(service, document, "local-inert")]
+    other.execution_target = "local"
+    update = controller.mark_local_status_changed(other.id, JobStatus.QUEUED.value)
+    assert update.changed is False
+    assert other.last_checked_at is None
