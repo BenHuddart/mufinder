@@ -6,12 +6,14 @@ every tick, forcing a full mesh rebuild even when nothing changed. These helpers
 produce a cheap fingerprint so a widget entry point can skip the expensive
 re-render when its input is unchanged.
 
-**Contract: content-based fingerprint.** The fingerprint hashes the *content* of
-the rendered geometry fields (``species``, ``fractional_positions``,
-``lattice_vectors``) together with ``Structure.id``. Two calls return equal
-fingerprints iff the id and the geometry values are equal, regardless of which
-list objects hold them. This makes the guard safe against every mutation
-pattern:
+**Contract: content-based fingerprint.** The fingerprint carries the *content*
+of the rendered geometry fields (``species``, ``fractional_positions``,
+``lattice_vectors``) as normalized tuples together with ``Structure.id``. Two
+calls return equal fingerprints iff the id and the geometry values are equal,
+regardless of which list objects hold them — an exact equality guarantee, not a
+probabilistic one (storing ``hash(...)`` digests instead would admit a hash
+collision falsely skipping a render). This makes the guard safe against every
+mutation pattern:
 
 - reassignment of the geometry lists (the pattern used by
   ``ProjectService._repair_supercell_asset`` / ``regenerate_supercell_asset``,
@@ -22,8 +24,9 @@ pattern:
   (list_A -> list_B -> list_C between two renders can leave
   ``id(list_C) == id(list_A)``), so identities must not be used here.
 
-Hashing tuples of a few thousand floats/strings costs tens of microseconds —
-negligible next to the multi-second viewer rebuild the guard exists to skip.
+Building tuples of a few thousand floats/strings costs tens of microseconds and
+a few kilobytes per cached fingerprint — negligible next to the multi-second
+viewer rebuild the guard exists to skip.
 
 ``properties`` is deliberately excluded here because widgets render different
 slices of it. Callers that render property-derived data (e.g. atomic spins) must
@@ -44,33 +47,30 @@ NO_STRUCTURE: tuple[object, ...] = ()
 def structure_geometry_fingerprint(structure: Structure | None) -> tuple[object, ...]:
     """Return a content-based fingerprint of a structure's rendered geometry.
 
-    The fingerprint combines ``structure.id`` with hashes of the ``species``,
-    ``fractional_positions`` and ``lattice_vectors`` contents, so it changes
-    whenever the rendered geometry values change — however that change was made
-    (list reassignment or in-place element mutation). ``None`` maps to
-    :data:`NO_STRUCTURE`, which never compares equal to a real structure's
-    fingerprint (a real structure always contributes its ``id`` as the first
-    element).
+    The fingerprint combines ``structure.id`` with normalized tuples of the
+    ``species``, ``fractional_positions`` and ``lattice_vectors`` contents, so
+    it compares unequal whenever the rendered geometry values change — however
+    that change was made (list reassignment or in-place element mutation), and
+    with exact equality semantics (no hash-collision false matches). ``None``
+    maps to :data:`NO_STRUCTURE`, which never compares equal to a real
+    structure's fingerprint (a real structure always contributes its ``id`` as
+    the first element).
     """
 
     if structure is None:
         return NO_STRUCTURE
     return (
         structure.id,
-        hash(tuple(structure.species)),
-        hash(
-            tuple(
-                float(value)
-                for position in structure.fractional_positions
-                for value in position
-            )
+        tuple(structure.species),
+        tuple(
+            float(value)
+            for position in structure.fractional_positions
+            for value in position
         ),
-        hash(
-            tuple(
-                float(value)
-                for vector in structure.lattice_vectors
-                for value in vector
-            )
+        tuple(
+            float(value)
+            for vector in structure.lattice_vectors
+            for value in vector
         ),
     )
 
