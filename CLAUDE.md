@@ -45,6 +45,10 @@ Dependencies flow inward: `app` → `services/workflow/science` → `domain/cast
 
 These boundaries are enforced by `tests/test_agent_harness.py`. If a new dependency direction is genuinely required, update `docs/architecture.rst` and the structural test in the same change.
 
+## Workflow submission
+
+Per-workflow submission logic lives in `mufinder.app.workflow_controllers`, not on `MainWindow`. Each workflow has a `WorkflowJobController` subclass owning its `submit → materialize → result → refresh` cycle, constructed from the shared `WorkflowControllerContext`, an optional per-controller deps dataclass (required, precisely-typed callables), and its own view. `tests/test_agent_harness.py` ratchets the `_on_submit_*` / `_materialize_*` handlers remaining on `MainWindow` (only the two cross-workflow dashboard handlers): the set may only shrink. Add a new workflow by writing a controller — never a new `MainWindow` submit/materialize handler. See `docs/architecture.rst` (Workflow controllers) for the full contract.
+
 ## Quality gates
 
 All changes must satisfy:

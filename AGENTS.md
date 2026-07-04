@@ -8,6 +8,10 @@ architecture, and quality expectations without relying on thread context.
   the expected agent workflow.
 - Use `docs/architecture.rst` for package boundaries and allowed dependency
   directions before moving code between layers.
+- Per-workflow submission logic lives in `mufinder.app.workflow_controllers`
+  (see `docs/architecture.rst`, "Workflow controllers"): add a new workflow by
+  writing a `WorkflowJobController`, never a new `MainWindow` submit/materialize
+  handler, which the harness test pins.
 - Use `docs/project_specification.rst` for product requirements and durable
   workflow contracts.
 - Use `docs/quality_and_automation.rst` for local commands, CI gates, and

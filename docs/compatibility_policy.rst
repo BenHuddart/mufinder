@@ -46,6 +46,20 @@ Compatibility ledger
        and UEP setup flows.
      - Current project data, not deprecated. Do not remove without a schema
        migration and replacement project-default model.
+   * - ``execution_target`` / ``num_processes`` /
+       ``remote_job_id`` / ``remote_directory`` job fields
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - Load-bearing persisted job-contract state, not deprecation shims.
+       ``execution_target`` and ``num_processes`` drive resubmission and
+       dashboard columns; ``remote_job_id`` and ``remote_directory`` are the
+       metadata that lets ``_sync_cluster_tracking_from_document`` re-register
+       persisted active cluster jobs after a project is reopened. Orphaned
+       local-job reconciliation also reads ``execution_target`` to decide which
+       active jobs to stop on project open.
+     - Current job data, not deprecated. Renaming or removing any of these
+       fields breaks reload of saved projects and cluster re-attachment, so it
+       requires a schema-version bump with a migration entry (and an update to
+       the persistence codec and the reconciliation/tracking call sites).
    * - ``ConvergenceWorkflow``
      - ``mufinder.workflow.convergence`` (re-exported from
        ``mufinder.workflow``)
