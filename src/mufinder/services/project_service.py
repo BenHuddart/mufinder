@@ -1993,7 +1993,7 @@ class ProjectService:
         ``remote_directory``), so retrieval can be re-attempted without
         resubmitting a duplicate scheduler job. The FAILED/STOPPED -> RETRIEVING
         edges are validated by :meth:`_assert_transition`; the caller
-        (``JobExecutionController.retry_cluster_retrieval``) enforces the
+        (``JobExecutionController.prepare_retry_retrieval``) enforces the
         failed/stopped-only and remote-metadata preconditions before calling
         this. The remote metadata is deliberately preserved so the runner can
         re-download from the same remote directory.
