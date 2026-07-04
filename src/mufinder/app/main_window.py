@@ -3516,8 +3516,8 @@ class MainWindow(QMainWindow):
         self._sync_project_home_trail()
 
     def _refresh_jobs_table(self) -> None:
-        self._jobs_table.setRowCount(0)
         if self._document is None:
+            self._jobs_table.setRowCount(0)
             self._job_runtime_timer.stop()
             self._cluster_elapsed_seconds_by_job = {}
             self._cluster_elapsed_checked_at = None
@@ -3536,87 +3536,12 @@ class MainWindow(QMainWindow):
             return
 
         now = utc_now()
-        for job in self._document.jobs.values():
-            if job.status not in _VISIBLE_DASHBOARD_STATES:
-                continue
-            if job.dismissed_at is not None:
-                continue
-            row = self._jobs_table.rowCount()
-            self._jobs_table.insertRow(row)
-            label_item = QTableWidgetItem(job.label)
-            label_item.setData(Qt.ItemDataRole.UserRole, str(job.id))
-            self._jobs_table.setItem(row, self._JOB_LABEL_COLUMN, label_item)
-            self._jobs_table.setItem(row, self._JOB_WORKFLOW_COLUMN, QTableWidgetItem(job.workflow_stage.value))
-            self._jobs_table.setItem(row, self._JOB_CALC_TYPE_COLUMN, QTableWidgetItem(job.calc_type))
-
-            status_item = QTableWidgetItem(job.status.value)
-            status_item.setForeground(self._status_brush(job.status.value))
-            self._jobs_table.setItem(row, self._JOB_STATUS_COLUMN, status_item)
-
-            last_checked_item = QTableWidgetItem()
-            self._apply_last_checked_cell(last_checked_item, job, now=now)
-            self._jobs_table.setItem(row, self._JOB_LAST_CHECKED_COLUMN, last_checked_item)
-
-            cluster_name = "local" if job.execution_target == "local" else job.execution_target
-            self._jobs_table.setItem(row, self._JOB_CLUSTER_COLUMN, QTableWidgetItem(cluster_name))
-            self._jobs_table.setItem(
-                row,
-                self._JOB_REMOTE_ID_COLUMN,
-                QTableWidgetItem(job.remote_job_id or ""),
-            )
-            self._jobs_table.setItem(row, self._JOB_RUNTIME_COLUMN, QTableWidgetItem(self._job_runtime_text(job)))
-            self._jobs_table.setItem(
-                row,
-                self._JOB_PROCESSES_COLUMN,
-                QTableWidgetItem("" if job.num_processes is None else str(job.num_processes)),
-            )
-
-            can_resubmit = job.status in _RESUBMITTABLE_JOB_STATES
-            can_retry_retrieval = self._can_retry_retrieval(job)
-            can_cancel = job.status in ACTIVE_JOB_STATUSES
-            can_inspect = job.status in {JobStatus.FAILED, JobStatus.STOPPED}
-            can_reset = job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-            can_dismiss = job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-
-            resubmit_btn = self._make_job_action_button("Resubmit", job_id=job.id, enabled=can_resubmit)
-            resubmit_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=resubmit_btn: self._dispatch_dashboard_action(btn, jid, "resubmit")
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_SUBMIT_COLUMN, resubmit_btn)
-
-            retry_btn = self._make_job_action_button(
-                "Retry retrieval", job_id=job.id, enabled=can_retry_retrieval
-            )
-            retry_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=retry_btn: self._dispatch_dashboard_action(
-                    btn, jid, "retry_retrieval"
-                )
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_RETRY_RETRIEVAL_COLUMN, retry_btn)
-
-            cancel_btn = self._make_job_action_button("Cancel", job_id=job.id, enabled=can_cancel)
-            cancel_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=cancel_btn: self._dispatch_dashboard_action(btn, jid, "cancel")
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_CANCEL_COLUMN, cancel_btn)
-
-            inspect_btn = self._make_job_action_button("Inspect", job_id=job.id, enabled=can_inspect)
-            inspect_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=inspect_btn: self._dispatch_dashboard_action(btn, jid, "inspect")
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_INSPECT_COLUMN, inspect_btn)
-
-            reset_btn = self._make_job_action_button("Reset", job_id=job.id, enabled=can_reset)
-            reset_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=reset_btn: self._dispatch_dashboard_action(btn, jid, "reset")
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_RESET_COLUMN, reset_btn)
-
-            dismiss_btn = self._make_job_action_button("Dismiss", job_id=job.id, enabled=can_dismiss)
-            dismiss_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=dismiss_btn: self._dispatch_dashboard_action(btn, jid, "dismiss")
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_DISMISS_COLUMN, dismiss_btn)
+        desired_jobs = [
+            job
+            for job in self._document.jobs.values()
+            if job.status in _VISIBLE_DASHBOARD_STATES and job.dismissed_at is None
+        ]
+        self._sync_jobs_table_rows(desired_jobs, now=now)
 
         self._configure_jobs_table_columns()
         self._sync_job_runtime_timer()
@@ -3628,6 +3553,211 @@ class MainWindow(QMainWindow):
         self._refresh_uep_rows()
         self._refresh_workflow_stage_icons()
         self._sync_project_home_trail()
+
+    def _job_button_specs(self, job: Job) -> tuple[tuple[int, str, str, bool], ...]:
+        """Return ``(column, text, action_kind, enabled)`` for each action button.
+
+        Single source of truth shared by row insertion and in-place updates so
+        the button set, labels, dispatch kinds, and enable rules stay identical.
+        """
+
+        return (
+            (self._JOB_SUBMIT_COLUMN, "Resubmit", "resubmit", job.status in _RESUBMITTABLE_JOB_STATES),
+            (
+                self._JOB_RETRY_RETRIEVAL_COLUMN,
+                "Retry retrieval",
+                "retry_retrieval",
+                self._can_retry_retrieval(job),
+            ),
+            (self._JOB_CANCEL_COLUMN, "Cancel", "cancel", job.status in ACTIVE_JOB_STATUSES),
+            (
+                self._JOB_INSPECT_COLUMN,
+                "Inspect",
+                "inspect",
+                job.status in {JobStatus.FAILED, JobStatus.STOPPED},
+            ),
+            (
+                self._JOB_RESET_COLUMN,
+                "Reset",
+                "reset",
+                job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
+            ),
+            (
+                self._JOB_DISMISS_COLUMN,
+                "Dismiss",
+                "dismiss",
+                job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
+            ),
+        )
+
+    @staticmethod
+    def _jobs_table_row_job_id(label_item) -> UUID | None:
+        """Return the job id stashed on a label item's UserRole, or ``None``."""
+
+        if label_item is None:
+            return None
+        try:
+            return UUID(str(label_item.data(Qt.ItemDataRole.UserRole)))
+        except (TypeError, ValueError, AttributeError):
+            return None
+
+    def _sync_jobs_table_rows(self, desired_jobs: list[Job], *, now) -> None:
+        """Reconcile visible dashboard rows against ``desired_jobs`` by job id.
+
+        Rows whose job disappeared are removed; brand-new jobs get a freshly
+        built row inserted at the correct position; rows whose job id is
+        unchanged are updated in place so their ``QTableWidgetItem`` and
+        ``QPushButton`` cell widgets are never recreated (no widget churn, no
+        stale button closures). A row is never repurposed for a different job
+        id — mismatches are removed and re-inserted so each button's captured
+        job id stays correct.
+        """
+
+        desired_ids = [job.id for job in desired_jobs]
+
+        # Remove rows whose job is no longer desired. Iterate top-down so row
+        # indexes stay valid as we delete.
+        desired_id_set = set(desired_ids)
+        self._jobs_table.setUpdatesEnabled(False)
+        try:
+            for row in range(self._jobs_table.rowCount() - 1, -1, -1):
+                existing_id = self._jobs_table_row_job_id(
+                    self._jobs_table.item(row, self._JOB_LABEL_COLUMN)
+                )
+                if existing_id is None or existing_id not in desired_id_set:
+                    self._jobs_table.removeRow(row)
+        finally:
+            self._jobs_table.setUpdatesEnabled(True)
+
+        # Walk the desired order; align each row to the expected job id,
+        # inserting new rows and evicting mismatched rows as needed.
+        for target_row, job in enumerate(desired_jobs):
+            current_id = self._jobs_table_row_job_id(
+                self._jobs_table.item(target_row, self._JOB_LABEL_COLUMN)
+            )
+            if current_id == job.id:
+                self._update_jobs_table_row(target_row, job, now=now)
+                continue
+
+            # Either the slot is empty/beyond the current rows, or it holds a
+            # different job id (order changed / new job). A row must never be
+            # reused for a different job id, so insert a fresh row here. Any row
+            # that previously held this job (further down) is left to be handled
+            # when its own turn comes; but because a mismatched row can only be
+            # a not-yet-visited desired job or removed above, inserting keeps
+            # closures correct.
+            self._jobs_table.setUpdatesEnabled(False)
+            try:
+                self._insert_jobs_table_row(target_row, job, now=now)
+            finally:
+                self._jobs_table.setUpdatesEnabled(True)
+
+        # Trim any trailing rows left over (e.g. when the desired list shrank
+        # but the removal pass above could not have caught reordered leftovers).
+        if self._jobs_table.rowCount() > len(desired_jobs):
+            self._jobs_table.setUpdatesEnabled(False)
+            try:
+                while self._jobs_table.rowCount() > len(desired_jobs):
+                    self._jobs_table.removeRow(self._jobs_table.rowCount() - 1)
+            finally:
+                self._jobs_table.setUpdatesEnabled(True)
+
+    def _insert_jobs_table_row(self, row: int, job: Job, *, now) -> None:
+        """Insert a fully built dashboard row for ``job`` at ``row``.
+
+        Creates every ``QTableWidgetItem`` and action ``QPushButton`` once. Each
+        button captures ``job.id`` in its click closure, so this row must only
+        ever be used for this job (callers guarantee that via id-keyed
+        reconciliation).
+        """
+
+        self._jobs_table.insertRow(row)
+
+        label_item = QTableWidgetItem(job.label)
+        label_item.setData(Qt.ItemDataRole.UserRole, str(job.id))
+        self._jobs_table.setItem(row, self._JOB_LABEL_COLUMN, label_item)
+        self._jobs_table.setItem(row, self._JOB_WORKFLOW_COLUMN, QTableWidgetItem(job.workflow_stage.value))
+        self._jobs_table.setItem(row, self._JOB_CALC_TYPE_COLUMN, QTableWidgetItem(job.calc_type))
+
+        status_item = QTableWidgetItem(job.status.value)
+        status_item.setForeground(self._status_brush(job.status.value))
+        self._jobs_table.setItem(row, self._JOB_STATUS_COLUMN, status_item)
+
+        last_checked_item = QTableWidgetItem()
+        self._apply_last_checked_cell(last_checked_item, job, now=now)
+        self._jobs_table.setItem(row, self._JOB_LAST_CHECKED_COLUMN, last_checked_item)
+
+        cluster_name = "local" if job.execution_target == "local" else job.execution_target
+        self._jobs_table.setItem(row, self._JOB_CLUSTER_COLUMN, QTableWidgetItem(cluster_name))
+        self._jobs_table.setItem(
+            row,
+            self._JOB_REMOTE_ID_COLUMN,
+            QTableWidgetItem(job.remote_job_id or ""),
+        )
+        self._jobs_table.setItem(row, self._JOB_RUNTIME_COLUMN, QTableWidgetItem(self._job_runtime_text(job)))
+        self._jobs_table.setItem(
+            row,
+            self._JOB_PROCESSES_COLUMN,
+            QTableWidgetItem("" if job.num_processes is None else str(job.num_processes)),
+        )
+
+        for column, text, kind, enabled in self._job_button_specs(job):
+            button = self._make_job_action_button(text, job_id=job.id, enabled=enabled)
+            button.clicked.connect(
+                lambda _checked=False, jid=job.id, btn=button, action=kind: self._dispatch_dashboard_action(
+                    btn, jid, action
+                )
+            )
+            self._jobs_table.setCellWidget(row, column, button)
+
+    def _update_jobs_table_row(self, row: int, job: Job, *, now) -> None:
+        """Refresh an existing row in place without recreating items or widgets.
+
+        Updates cell texts, the status foreground brush, the last-checked cell,
+        the runtime text, and each button's enabled state. The label item's
+        job-id UserRole and every button widget (with its captured closure) are
+        left untouched, so button clicks keep dispatching the correct job id.
+        """
+
+        label_item = self._jobs_table.item(row, self._JOB_LABEL_COLUMN)
+        if label_item is not None:
+            label_item.setText(job.label)
+
+        self._set_row_item_text(row, self._JOB_WORKFLOW_COLUMN, job.workflow_stage.value)
+        self._set_row_item_text(row, self._JOB_CALC_TYPE_COLUMN, job.calc_type)
+
+        status_item = self._jobs_table.item(row, self._JOB_STATUS_COLUMN)
+        if status_item is not None:
+            status_item.setText(job.status.value)
+            status_item.setForeground(self._status_brush(job.status.value))
+
+        last_checked_item = self._jobs_table.item(row, self._JOB_LAST_CHECKED_COLUMN)
+        if last_checked_item is not None:
+            self._apply_last_checked_cell(last_checked_item, job, now=now)
+
+        cluster_name = "local" if job.execution_target == "local" else job.execution_target
+        self._set_row_item_text(row, self._JOB_CLUSTER_COLUMN, cluster_name)
+        self._set_row_item_text(row, self._JOB_REMOTE_ID_COLUMN, job.remote_job_id or "")
+        self._set_row_item_text(row, self._JOB_RUNTIME_COLUMN, self._job_runtime_text(job))
+        self._set_row_item_text(
+            row,
+            self._JOB_PROCESSES_COLUMN,
+            "" if job.num_processes is None else str(job.num_processes),
+        )
+
+        for column, _text, _kind, enabled in self._job_button_specs(job):
+            button = self._jobs_table.cellWidget(row, column)
+            if button is not None:
+                button.setEnabled(enabled)
+
+    def _set_row_item_text(self, row: int, column: int, text: str) -> None:
+        """Set a cell's text in place, or create the item if it is missing."""
+
+        item = self._jobs_table.item(row, column)
+        if item is None:
+            self._jobs_table.setItem(row, column, QTableWidgetItem(text))
+        else:
+            item.setText(text)
 
     def _refresh_active_job_runtime_cells(self) -> None:
         if self._document is None:

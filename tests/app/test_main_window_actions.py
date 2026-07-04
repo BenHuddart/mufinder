@@ -9739,3 +9739,185 @@ def test_dashboard_dismiss_multi_select(
     assert job1.dismissed_at is not None
     assert window._jobs_table.rowCount() == 0
     window.close()
+
+
+def _add_dashboard_job(service, doc, label, status):
+    job = service.add_job(
+        doc,
+        label=label,
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job.status = status
+    return job
+
+
+def _dashboard_row_widgets(window, row):
+    """Snapshot the cell widgets + items for a dashboard row (identity checks)."""
+    return {
+        "label": window._jobs_table.item(row, window._JOB_LABEL_COLUMN),
+        "status": window._jobs_table.item(row, window._JOB_STATUS_COLUMN),
+        "resubmit": window._jobs_table.cellWidget(row, window._JOB_SUBMIT_COLUMN),
+        "retry": window._jobs_table.cellWidget(row, window._JOB_RETRY_RETRIEVAL_COLUMN),
+        "cancel": window._jobs_table.cellWidget(row, window._JOB_CANCEL_COLUMN),
+        "inspect": window._jobs_table.cellWidget(row, window._JOB_INSPECT_COLUMN),
+        "reset": window._jobs_table.cellWidget(row, window._JOB_RESET_COLUMN),
+        "dismiss": window._jobs_table.cellWidget(row, window._JOB_DISMISS_COLUMN),
+    }
+
+
+def test_dashboard_reconcile_reuses_widgets_when_jobs_unchanged(
+    qapp, tmp_path: Path
+) -> None:
+    """Two consecutive refreshes with the same jobs must reuse every cell widget."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reconcile_reuse.mufinder", "ReconcileReuse")
+    _add_dashboard_job(service, doc, "r0", JobStatus.RUNNING)
+    _add_dashboard_job(service, doc, "r1", JobStatus.FAILED)
+    window._document = doc
+
+    window._refresh_jobs_table()
+    before = [_dashboard_row_widgets(window, row) for row in range(window._jobs_table.rowCount())]
+    assert len(before) == 2
+
+    window._refresh_jobs_table()
+    after = [_dashboard_row_widgets(window, row) for row in range(window._jobs_table.rowCount())]
+    assert len(after) == 2
+
+    # Every item and every button is the identical object after re-refresh.
+    for row_before, row_after in zip(before, after, strict=True):
+        for key in row_before:
+            assert row_before[key] is row_after[key], f"row widget {key} was recreated"
+    window.close()
+
+
+def test_dashboard_reconcile_status_change_updates_in_place(
+    qapp, tmp_path: Path
+) -> None:
+    """A status change updates the status cell + button enablement without widget churn."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reconcile_status.mufinder", "ReconcileStatus")
+    job = _add_dashboard_job(service, doc, "s0", JobStatus.RUNNING)
+    window._document = doc
+
+    window._refresh_jobs_table()
+    before = _dashboard_row_widgets(window, 0)
+    assert before["status"].text() == JobStatus.RUNNING.value
+    # Running: cancel enabled, resubmit/inspect/reset disabled.
+    assert before["cancel"].isEnabled() is True
+    assert before["resubmit"].isEnabled() is False
+    assert before["inspect"].isEnabled() is False
+    assert before["reset"].isEnabled() is False
+
+    job.status = JobStatus.FAILED
+    window._refresh_jobs_table()
+    after = _dashboard_row_widgets(window, 0)
+
+    # Same widget objects, updated text + enablement.
+    for key in before:
+        assert before[key] is after[key], f"row widget {key} was recreated on status change"
+    assert after["status"].text() == JobStatus.FAILED.value
+    assert after["cancel"].isEnabled() is False
+    assert after["resubmit"].isEnabled() is True
+    assert after["inspect"].isEnabled() is True
+    assert after["reset"].isEnabled() is True
+    window.close()
+
+
+def test_dashboard_reconcile_remove_job_removes_only_its_row(
+    qapp, tmp_path: Path
+) -> None:
+    """Dismissing a job removes exactly its row; the surviving row keeps its widgets."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reconcile_remove.mufinder", "ReconcileRemove")
+    job0 = _add_dashboard_job(service, doc, "x0", JobStatus.FAILED)
+    _add_dashboard_job(service, doc, "x1", JobStatus.RUNNING)
+    window._document = doc
+
+    window._refresh_jobs_table()
+    assert window._jobs_table.rowCount() == 2
+    # Capture the surviving (running) row's widgets before removal.
+    survivor_before = _dashboard_row_widgets(window, 1)
+
+    job0.dismissed_at = utc_now_for_test()
+    window._refresh_jobs_table()
+
+    assert window._jobs_table.rowCount() == 1
+    remaining_id = window._jobs_table.item(0, window._JOB_LABEL_COLUMN).data(Qt.ItemDataRole.UserRole)
+    assert remaining_id != str(job0.id)
+    # The survivor's widgets are preserved (moved up to row 0 identity intact).
+    survivor_after = _dashboard_row_widgets(window, 0)
+    for key in survivor_before:
+        assert survivor_before[key] is survivor_after[key], f"survivor widget {key} was recreated"
+    window.close()
+
+
+def test_dashboard_reconcile_add_job_inserts_row_preserving_others(
+    qapp, tmp_path: Path
+) -> None:
+    """Adding a job appends a row; existing rows keep their widgets."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reconcile_add.mufinder", "ReconcileAdd")
+    _add_dashboard_job(service, doc, "a0", JobStatus.RUNNING)
+    window._document = doc
+
+    window._refresh_jobs_table()
+    assert window._jobs_table.rowCount() == 1
+    first_before = _dashboard_row_widgets(window, 0)
+
+    new_job = _add_dashboard_job(service, doc, "a1", JobStatus.FAILED)
+    window._refresh_jobs_table()
+
+    assert window._jobs_table.rowCount() == 2
+    first_after = _dashboard_row_widgets(window, 0)
+    for key in first_before:
+        assert first_before[key] is first_after[key], f"existing widget {key} was recreated on insert"
+    # New job landed in the appended row (document iteration order).
+    assert window._jobs_table.item(1, window._JOB_LABEL_COLUMN).data(Qt.ItemDataRole.UserRole) == str(new_job.id)
+    window.close()
+
+
+def test_dashboard_reconcile_button_dispatches_correct_job_id_after_churn(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After several reconciliations, a button still dispatches its own job id."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reconcile_closure.mufinder", "ReconcileClosure")
+    job0 = _add_dashboard_job(service, doc, "c0", JobStatus.FAILED)
+    job1 = _add_dashboard_job(service, doc, "c1", JobStatus.FAILED)
+    window._document = doc
+
+    resubmitted: list[list[object]] = []
+    monkeypatch.setattr(window, "_on_resubmit_from_dashboard", lambda ids: resubmitted.append(list(ids)))
+
+    window._refresh_jobs_table()
+    # Churn: remove job0 (dismiss), refresh, re-add nothing but refresh again.
+    job0.dismissed_at = utc_now_for_test()
+    window._refresh_jobs_table()
+    job0.dismissed_at = None
+    window._refresh_jobs_table()  # job0 comes back (fresh row/closure)
+
+    # Locate job1's resubmit button by id and click it — must dispatch job1.
+    def resubmit_btn_for(job_id):
+        for row in range(window._jobs_table.rowCount()):
+            item = window._jobs_table.item(row, window._JOB_LABEL_COLUMN)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == str(job_id):
+                return window._jobs_table.cellWidget(row, window._JOB_SUBMIT_COLUMN)
+        return None
+
+    resubmit_btn_for(job1.id).click()
+    resubmit_btn_for(job0.id).click()
+
+    assert resubmitted == [[job1.id], [job0.id]]
+    window.close()
+
+
+def utc_now_for_test():
+    from datetime import datetime
+
+    return datetime.now(UTC)
