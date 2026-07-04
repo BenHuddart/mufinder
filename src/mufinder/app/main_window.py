@@ -8116,6 +8116,9 @@ class MainWindow(QMainWindow):
         self._cluster_connection_label.setStyleSheet(f"color: {colour};")
 
     def _on_cluster_queue_checked(self, checked_at) -> None:
+        # Stamp per-job monitor metadata (last_checked_at/source/message) from
+        # the snapshot's observations before the flush below persists them.
+        self._job_execution.mark_queue_checked(checked_at)
         # A queue poll fires this once after any jobs it retrieved have been
         # applied, so flush the autosave those completions coalesced into a single
         # write here.

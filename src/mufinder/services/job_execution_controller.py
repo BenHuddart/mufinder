@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import CalculationRun, Job, Result, utc_now
+from mufinder.services.job_monitoring import is_cluster_job
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 
@@ -377,13 +379,27 @@ class JobExecutionController:
             self._project_service.mark_job_queued(job, remote_job_id=None)
         except ValueError:
             return LifecycleUpdate(job=job)
+        self._stamp_monitor_metadata(job, source="local_runner", message="queued locally")
         run = self.run_for_job(job_id)
         if run is not None:
             run.status = JobStatus.QUEUED
         return LifecycleUpdate(job=job, changed=True)
 
-    def mark_started(self, job_id: UUID) -> LifecycleUpdate:
-        """Mark a job and its active run as running."""
+    def mark_started(
+        self,
+        job_id: UUID,
+        *,
+        source: str | None = None,
+        status_message: str | None = None,
+    ) -> LifecycleUpdate:
+        """Mark a job and its active run as running.
+
+        ``source``/``status_message`` override the monitor-metadata stamp.
+        When both are ``None`` (the runner signal path), local jobs are stamped
+        ``local_runner`` / ``"process started"``; cluster jobs are left
+        unchanged because their monitor metadata is stamped from queue polls
+        via :meth:`mark_queue_checked`.
+        """
 
         job = self._job_for_id(job_id)
         if job is None:
@@ -394,6 +410,13 @@ class JobExecutionController:
                 self._project_service.start_job(job)
             except ValueError:
                 pass
+
+        if source is not None:
+            self._stamp_monitor_metadata(job, source=source, message=status_message or "process started")
+        elif not is_cluster_job(job):
+            self._stamp_monitor_metadata(
+                job, source="local_runner", message=status_message or "process started"
+            )
 
         run = self.run_for_job(job_id)
         if run is not None:
@@ -409,8 +432,18 @@ class JobExecutionController:
         result: Result,
         warnings: Sequence[str],
         convergence_achieved: bool | None,
+        source: str | None = None,
+        status_message: str | None = None,
     ) -> bool:
-        """Complete a job after workflow-specific result materialization."""
+        """Complete a job after workflow-specific result materialization.
+
+        ``source``/``status_message`` override the monitor-metadata stamp.
+        When ``None`` (the shared local/cluster ``job_finished`` path), the
+        stamp is inferred from the job's execution target: cluster jobs reach
+        this method through output retrieval (``"retrieval"`` /
+        ``"output retrieved and parsed"``), local jobs through the local
+        runner (``"local_runner"`` / ``"process completed"``).
+        """
 
         run = self.run_for_job(job.id)
         if run is None:
@@ -437,12 +470,37 @@ class JobExecutionController:
             except ValueError:
                 pass
 
+        if is_cluster_job(job):
+            resolved_source = source or "retrieval"
+            resolved_message = status_message or "output retrieved and parsed"
+        else:
+            resolved_source = source or "local_runner"
+            resolved_message = status_message or "process completed"
+        self._stamp_monitor_metadata(job, source=resolved_source, message=resolved_message)
+
         self._active_run_by_job.pop(job.id, None)
         self._record_terminal_event("job_completed", job, result=result)
         return True
 
-    def fail_job(self, job_id: UUID, message: str) -> LifecycleUpdate:
-        """Mark a job as failed and record a terminal provenance event."""
+    def fail_job(
+        self,
+        job_id: UUID,
+        message: str,
+        *,
+        source: str | None = None,
+        status_message: str | None = None,
+    ) -> LifecycleUpdate:
+        """Mark a job as failed and record a terminal provenance event.
+
+        ``source``/``status_message`` override the monitor-metadata stamp.
+        When ``None`` (the shared local/cluster ``job_failed`` path), the
+        stamp is inferred from the job's execution target: cluster failures
+        reach this method through output retrieval (``"retrieval"`` /
+        ``"output retrieval failed"``), local failures through the local
+        runner (``"local_runner"`` / ``"process failed"``). The short
+        observation deliberately does not duplicate the full ``message``,
+        which is persisted on ``job.error_message``.
+        """
 
         job = self._job_for_id(job_id)
         if job is None:
@@ -458,6 +516,14 @@ class JobExecutionController:
                 self._project_service.fail_job(job, message)
             except ValueError:
                 pass
+
+        if is_cluster_job(job):
+            resolved_source = source or "retrieval"
+            resolved_message = status_message or "output retrieval failed"
+        else:
+            resolved_source = source or "local_runner"
+            resolved_message = status_message or "process failed"
+        self._stamp_monitor_metadata(job, source=resolved_source, message=resolved_message)
 
         run = self.run_for_job(job_id)
         if run is not None:
@@ -548,6 +614,50 @@ class JobExecutionController:
             )
             journal_changed = True
         return LifecycleUpdate(job=job, changed=True, journal_changed=journal_changed)
+
+    def mark_queue_checked(self, snapshot: Any) -> bool:
+        """Stamp per-job monitor metadata from one queue polling pass.
+
+        ``snapshot`` is a ``QueueCheckSnapshot`` (duck-typed: any object with a
+        ``checked_at`` datetime and an ``observations_by_job_id`` mapping).
+        Every observed job that exists in the document gets
+        ``last_checked_at``/``last_status_source``/``last_status_message``
+        stamped with the poll observation. No status transitions and no run
+        mutations happen here — this is bookkeeping only.
+
+        :returns: ``True`` when at least one job was stamped.
+        """
+
+        document = self._document_getter()
+        if document is None:
+            return False
+        checked_at = getattr(snapshot, "checked_at", None)
+        observations = getattr(snapshot, "observations_by_job_id", None)
+        if not isinstance(checked_at, datetime) or not isinstance(observations, Mapping):
+            return False
+
+        changed = False
+        for job_id, observation in observations.items():
+            job = document.jobs.get(job_id)
+            if job is None:
+                continue
+            job.last_checked_at = checked_at
+            job.last_status_source = "scheduler_poll"
+            job.last_status_message = str(observation)
+            changed = True
+        return changed
+
+    @staticmethod
+    def _stamp_monitor_metadata(job: Job, *, source: str, message: str) -> None:
+        """Record when, from where, and with what observation a job was last seen.
+
+        These are bookkeeping fields (not status transitions), so the
+        controller mutates them directly per the state-authority contract.
+        """
+
+        job.last_checked_at = utc_now()
+        job.last_status_source = source
+        job.last_status_message = message
 
     def _create_active_run(
         self,

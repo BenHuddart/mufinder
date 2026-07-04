@@ -1354,3 +1354,217 @@ def test_cluster_runner_poll_only_updates_jobs_for_connected_cluster(qapp, tmp_p
     assert all(event_job_id != tracked_scarf for event_job_id, _status in status_events)
     assert runner._tracked_jobs[tracked_redwood].status == JobStatus.RUNNING
     assert runner._tracked_jobs[tracked_scarf].status == JobStatus.QUEUED
+
+
+# ---------------------------------------------------------------------------
+# Missing-scheduler-entry grace window (job-lifecycle hardening, rec #5) and
+# per-job poll observations (rec #2).
+# ---------------------------------------------------------------------------
+
+
+class _OutputUnavailableSSH(_FakeSSH):
+    """SSH stub whose downloads fail, simulating unavailable remote output."""
+
+    def get(self, remote_path: str, local_path: Path) -> None:
+        raise OSError(f"SFTP download failed: {remote_path}")
+
+
+def _submitted_runner(
+    tmp_path: Path, seed: str, *, ssh: _FakeSSH | None = None
+) -> tuple[ClusterJobRunner, _FakeScheduler, object]:
+    runner = ClusterJobRunner()
+    runner._ssh = ssh or _FakeSSH()
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+    job_id = uuid4()
+    job_dir = _prepare_local_job(tmp_path, seed)
+    template = _template_file(tmp_path)
+    runner.submit(
+        job_id=job_id,
+        local_job_dir=job_dir,
+        seed_name=seed,
+        num_processes=8,
+        walltime="01:00:00",
+        working_directory="/remote/work",
+        template_script_path=str(template),
+        cores_per_node=32,
+    )
+    return runner, scheduler, job_id
+
+
+def test_cluster_runner_missing_entry_defers_failure_within_grace_window(
+    qapp, tmp_path: Path
+) -> None:
+    runner, scheduler, job_id = _submitted_runner(
+        tmp_path, "grace_seed", ssh=_OutputUnavailableSSH()
+    )
+    scheduler._states["12345"] = "MISSING"
+
+    failed: list[tuple[object, str]] = []
+    snapshots: list[object] = []
+    runner.job_failed.connect(lambda jid, message: failed.append((jid, message)))
+    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
+
+    # Attempts 1 and 2: output unavailable, but the job is NOT failed yet.
+    runner._poll_queue()
+    assert failed == []
+    assert runner._tracked_jobs[job_id].terminal is False
+    assert runner._tracked_jobs[job_id].missing_retrieval_attempts == 1
+    assert snapshots[-1].observations_by_job_id[job_id] == (
+        "missing from scheduler queue; waiting for output (attempt 1 of 3)"
+    )
+
+    runner._poll_queue()
+    assert failed == []
+    assert runner._tracked_jobs[job_id].terminal is False
+    assert snapshots[-1].observations_by_job_id[job_id] == (
+        "missing from scheduler queue; waiting for output (attempt 2 of 3)"
+    )
+
+    # Third failed attempt: the diagnostic failure is emitted verbatim.
+    status_events: list[tuple[object, object]] = []
+    runner.status_changed.connect(lambda jid, status: status_events.append((jid, status)))
+    runner._poll_queue()
+    assert len(failed) == 1
+    assert failed[0][0] == job_id
+    assert failed[0][1] == (
+        "Job disappeared from the scheduler queue and its output could not be "
+        "retrieved after 3 checks. The scheduler history may have expired, the "
+        "queue status command may be filtered, or a different cluster may be "
+        "connected. Retry retrieval or resubmit."
+    )
+    assert runner._tracked_jobs[job_id].terminal is True
+    assert (job_id, JobStatus.FAILED.value) in status_events
+    assert snapshots[-1].observations_by_job_id[job_id] == (
+        "missing from scheduler queue; output could not be retrieved after 3 checks"
+    )
+
+
+def test_cluster_runner_missing_entry_reappearance_resets_counter(
+    qapp, tmp_path: Path
+) -> None:
+    runner, scheduler, job_id = _submitted_runner(
+        tmp_path, "reappear_seed", ssh=_OutputUnavailableSSH()
+    )
+    snapshots: list[object] = []
+    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
+
+    scheduler._states["12345"] = "MISSING"
+    runner._poll_queue()
+    assert runner._tracked_jobs[job_id].missing_retrieval_attempts == 1
+
+    # The job reappears in the scheduler queue: the counter resets.
+    scheduler._states["12345"] = "R"
+    runner._poll_queue()
+    assert runner._tracked_jobs[job_id].missing_retrieval_attempts == 0
+    assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports RUNNING"
+
+    # Vanishing again starts a fresh grace window.
+    scheduler._states["12345"] = "MISSING"
+    runner._poll_queue()
+    assert runner._tracked_jobs[job_id].missing_retrieval_attempts == 1
+    assert snapshots[-1].observations_by_job_id[job_id] == (
+        "missing from scheduler queue; waiting for output (attempt 1 of 3)"
+    )
+    assert runner._tracked_jobs[job_id].terminal is False
+
+
+def test_cluster_runner_missing_entry_parse_failure_fails_immediately(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner, scheduler, job_id = _submitted_runner(tmp_path, "parse_fail_seed")
+    scheduler._states["12345"] = "MISSING"
+
+    def _raise(_path: Path) -> CastepResult:
+        raise ValueError("bad output")
+
+    monkeypatch.setattr(cluster_runner_module, "parse_castep_output", _raise)
+
+    failed: list[tuple[object, str]] = []
+    snapshots: list[object] = []
+    runner.job_failed.connect(lambda jid, message: failed.append((jid, message)))
+    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
+
+    runner._poll_queue()
+
+    # Downloaded-but-unreadable output is a real failure: no grace window.
+    assert failed == [(job_id, "Failed to retrieve or parse remote output: bad output")]
+    assert runner._tracked_jobs[job_id].terminal is True
+    assert snapshots[-1].observations_by_job_id[job_id] == (
+        "missing from scheduler queue; output parsing failed"
+    )
+
+
+def test_cluster_runner_missing_entry_successful_retrieval_completes(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner, scheduler, job_id = _submitted_runner(tmp_path, "late_success_seed")
+    scheduler._states["12345"] = "MISSING"
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+
+    finished: list[tuple[object, object]] = []
+    snapshots: list[object] = []
+    runner.job_finished.connect(lambda jid, parsed: finished.append((jid, parsed)))
+    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
+
+    runner._poll_queue()
+
+    assert len(finished) == 1
+    assert finished[0][0] == job_id
+    assert runner._tracked_jobs[job_id].terminal is True
+    assert snapshots[-1].observations_by_job_id[job_id] == (
+        "missing from scheduler queue; output retrieved and parsed"
+    )
+
+
+def test_cluster_runner_snapshot_observations_and_utc_checked_at(
+    qapp, tmp_path: Path
+) -> None:
+    runner, scheduler, job_id = _submitted_runner(tmp_path, "observed_seed")
+    scheduler._states["12345"] = "R"
+
+    snapshots: list[object] = []
+    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
+
+    runner._poll_queue()
+    assert snapshots[-1].checked_at.tzinfo is not None
+    assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports RUNNING"
+
+    # Unchanged scheduler state emits no status event but is still observed.
+    runner._poll_queue()
+    assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports RUNNING"
+
+    scheduler._states["12345"] = "PD"
+    runner._poll_queue()
+    assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports QUEUED"
+
+
+def test_cluster_runner_poll_failure_leaves_tracked_jobs_untouched(
+    qapp, tmp_path: Path
+) -> None:
+    # Rec #3: a poll failure disconnects and emits poll_failed, but must not
+    # mutate tracked job state or emit any job lifecycle signal — staleness is
+    # derived by the dashboard from last_checked_at plus the disconnect.
+    runner, _scheduler, job_id = _submitted_runner(tmp_path, "poll_fail_seed")
+    runner._scheduler = _RaisingScheduler()
+
+    job_events: list[tuple[str, object]] = []
+    poll_failures: list[str] = []
+    runner.job_failed.connect(lambda jid, message: job_events.append(("failed", jid)))
+    runner.job_finished.connect(lambda jid, parsed: job_events.append(("finished", jid)))
+    runner.job_cancelled.connect(lambda jid: job_events.append(("cancelled", jid)))
+    runner.status_changed.connect(lambda jid, status: job_events.append(("status", jid)))
+    runner.poll_failed.connect(poll_failures.append)
+
+    runner._poll_queue()
+
+    assert len(poll_failures) == 1
+    assert job_events == []
+    entry = runner._tracked_jobs[job_id]
+    assert entry.terminal is False
+    assert entry.status == JobStatus.QUEUED
+    assert entry.missing_retrieval_attempts == 0
