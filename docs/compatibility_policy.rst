@@ -60,6 +60,32 @@ Compatibility ledger
        fields breaks reload of saved projects and cluster re-attachment, so it
        requires a schema-version bump with a migration entry (and an update to
        the persistence codec and the reconciliation/tracking call sites).
+   * - ``last_checked_at`` / ``last_status_source`` /
+       ``last_status_message`` job fields
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - Persisted monitor metadata, not deprecation shims. ``last_checked_at``
+       records when a job's status was last confirmed (scheduler poll, local
+       runner event, reconciliation, or watchdog); ``last_status_source`` names
+       that origin; ``last_status_message`` carries non-failure context such as
+       the raw scheduler state or retrieval-retry progress. The dashboard uses
+       them to distinguish "still queued" from "not checked recently" and to
+       render stale/offline markers. All three are optional and default to
+       ``None``, so projects saved before their introduction load unchanged.
+     - Current job data, not deprecated. Removing or renaming any of these
+       fields silently degrades staleness display for existing projects, so it
+       requires a schema-version bump with a migration entry and updates to the
+       persistence codec and dashboard rendering.
+   * - ``dismissed_at`` job field
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - Persisted dismissal timestamp for terminal jobs (failed, stopped, or
+       cancelled) hidden from the dashboard via the Dismiss action. The job
+       record, its runs, results, and provenance remain in the project;
+       only dashboard visibility changes. Optional with a ``None`` default, so
+       older projects load unchanged and are fully visible.
+     - Current job data, not deprecated. Removing the field un-dismisses jobs
+       in existing projects, so it requires a schema-version bump with a
+       migration entry and an update to the persistence codec and the
+       dashboard visibility filter.
    * - ``ConvergenceWorkflow``
      - ``mufinder.workflow.convergence`` (re-exported from
        ``mufinder.workflow``)

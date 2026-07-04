@@ -1943,6 +1943,10 @@ class ProjectService:
         job.remote_directory = None
         job.num_processes = None
         job.error_message = None
+        job.last_checked_at = None
+        job.last_status_source = None
+        job.last_status_message = None
+        job.dismissed_at = None
 
     def mark_job_retrieving(self, job: Job) -> None:
         """Set job to retrieval stage before completion for remote runs."""
@@ -2704,9 +2708,21 @@ class ProjectService:
                 JobStatus.FAILED,
                 JobStatus.CANCELLED,
             },
-            JobStatus.STOPPED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
+            # FAILED/STOPPED -> RETRIEVING supports the dashboard
+            # "Retry retrieval" action: a cluster job whose scheduler run
+            # finished but whose output retrieval failed keeps its remote
+            # metadata, so retrieval can be re-attempted without resubmitting.
+            JobStatus.STOPPED: {
+                JobStatus.SUBMITTING,
+                JobStatus.RETRIEVING,
+                JobStatus.CANCELLED,
+            },
             JobStatus.COMPLETED: set(),
-            JobStatus.FAILED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
+            JobStatus.FAILED: {
+                JobStatus.SUBMITTING,
+                JobStatus.RETRIEVING,
+                JobStatus.CANCELLED,
+            },
             JobStatus.CANCELLED: {JobStatus.SUBMITTING},
         }
         if target not in allowed[current]:
@@ -2928,6 +2944,10 @@ class ProjectService:
             num_processes=num_processes,
             tags=payload.get("tags", []),
             error_message=payload.get("error_message"),
+            last_checked_at=parse_datetime(payload.get("last_checked_at")),
+            last_status_source=payload.get("last_status_source"),
+            last_status_message=payload.get("last_status_message"),
+            dismissed_at=parse_datetime(payload.get("dismissed_at")),
         )
 
     def _site_from_dict(self, payload: dict[str, Any]) -> MuonSite:

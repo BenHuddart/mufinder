@@ -51,9 +51,21 @@ ALLOWED: dict[JobStatus, set[JobStatus]] = {
         JobStatus.FAILED,
         JobStatus.CANCELLED,
     },
-    JobStatus.STOPPED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
+    # Job-lifecycle hardening: FAILED/STOPPED -> RETRIEVING added so the
+    # dashboard "Retry retrieval" action can re-attempt output retrieval for a
+    # cluster job that finished on the scheduler but whose retrieval or parsing
+    # failed, without resubmitting a duplicate scheduler job.
+    JobStatus.STOPPED: {
+        JobStatus.SUBMITTING,
+        JobStatus.RETRIEVING,
+        JobStatus.CANCELLED,
+    },
     JobStatus.COMPLETED: set(),
-    JobStatus.FAILED: {JobStatus.SUBMITTING, JobStatus.CANCELLED},
+    JobStatus.FAILED: {
+        JobStatus.SUBMITTING,
+        JobStatus.RETRIEVING,
+        JobStatus.CANCELLED,
+    },
     JobStatus.CANCELLED: {JobStatus.SUBMITTING},
 }
 
