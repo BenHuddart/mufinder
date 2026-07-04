@@ -353,6 +353,73 @@ class ClusterJobRunner(QObject):
         ):
             self._poll_timer.start()
 
+    def retrieve_outputs_for(
+        self,
+        job_id: UUID,
+        *,
+        remote_job_id: str,
+        remote_directory: str,
+        seed_name: str,
+        local_output_dir: Path,
+        cluster_name: str = "",
+        retrieve_den_fmt: bool = False,
+        retrieve_out_cell: bool = False,
+        retrieve_phonon: bool = False,
+        retrieve_ts: bool = False,
+        task_farming_enabled: bool = False,
+        num_farms: int | None = None,
+    ) -> None:
+        """Re-attempt output retrieval for a scheduler-completed job on demand.
+
+        Backs the dashboard "Retry retrieval" action: it (re-)registers a tracked
+        entry from the persisted remote metadata and performs one retrieval pass
+        through the same :meth:`_retrieve_results` used by the poll loop, so the
+        normal signal flow (``status_changed`` -> retrieving, then
+        ``job_finished`` + completed / ``job_failed`` + failed / stopped) reaches
+        the GUI unchanged.
+
+        If the cluster is not connected (or does not match this job's cluster) a
+        retrieval pass would strand the job in RETRIEVING, so the not-connected
+        case is resolved to ``failed`` via ``job_failed`` + ``status_changed``
+        instead. ``_retrieve_results`` already converts any SSH/parse error to
+        ``failed`` internally, and the surrounding guard here catches the
+        pre-``try`` ``_require_ssh`` raise for the same reason.
+        """
+
+        tracked = _TrackedClusterJob(
+            job_id=job_id,
+            remote_job_id=remote_job_id.strip(),
+            remote_dir=remote_directory.strip(),
+            seed_name=seed_name,
+            local_output_dir=Path(local_output_dir),
+            cluster_name=cluster_name.strip(),
+            status=JobStatus.RETRIEVING,
+            terminal=False,
+            retrieve_den_fmt=bool(retrieve_den_fmt),
+            retrieve_out_cell=bool(retrieve_out_cell),
+            retrieve_phonon=bool(retrieve_phonon),
+            retrieve_ts=bool(retrieve_ts),
+            task_farming_enabled=bool(task_farming_enabled),
+            num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
+        )
+        self._tracked_jobs[job_id] = tracked
+
+        if not self.is_connected or not self._tracked_job_matches_connected_cluster(tracked):
+            tracked.terminal = True
+            self.job_failed.emit(
+                job_id,
+                "Cannot retry retrieval: not connected to the job's cluster.",
+            )
+            self.status_changed.emit(job_id, JobStatus.FAILED.value)
+            return
+
+        try:
+            self._retrieve_results(tracked)
+        except Exception as exc:  # noqa: BLE001 - resolve rather than strand in RETRIEVING
+            tracked.terminal = True
+            self.job_failed.emit(job_id, f"Failed to retrieve or parse remote output: {exc}")
+            self.status_changed.emit(job_id, JobStatus.FAILED.value)
+
     def shutdown(self) -> None:
         """Best-effort shutdown during application close."""
 
