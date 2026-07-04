@@ -25,6 +25,10 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.structure_render_guard import (
+    NO_STRUCTURE,
+    structure_geometry_fingerprint,
+)
 from mufinder.app.theme import style_section_subtitle, style_section_title
 from mufinder.domain.models import Structure
 from mufinder.services.project_service import PromotableHost
@@ -54,6 +58,11 @@ class HostStructureWidget(QWidget):
         self._propagation_vector: list[float] = [0.0, 0.0, 0.0]
         self._supercell_matrix: list[list[int]] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
         self._updating = False
+        # Flush-path guard: skip the full atom-table + 3D viewer rebuild when the
+        # rendered structure (geometry + spin/propagation properties) is
+        # unchanged. Content-based — see structure_render_guard for the contract.
+        self._structure_fingerprint: tuple[object, ...] = NO_STRUCTURE
+        self._structure_fingerprint_valid = False
 
         self._file_label = QLabel("Source: -")
         self._atom_count_label = QLabel("Atoms: -")
@@ -186,8 +195,51 @@ class HostStructureWidget(QWidget):
             + (spacing * (control_count - 1))
         )
 
+    @staticmethod
+    def _render_fingerprint(structure: Structure | None) -> tuple[object, ...]:
+        """Fingerprint the fields ``set_structure`` renders. Content-based.
+
+        Combines the content-based geometry fingerprint from
+        ``structure_render_guard`` with a ``repr`` serialization of the
+        spin/propagation ``properties`` this widget reads. The ``repr`` string is
+        built from the property *values* at fingerprint time, so later in-place
+        mutation of those lists/dicts (the normal edit pattern for
+        ``properties``) still produces a differing fingerprint — no object
+        identities are involved anywhere. ``source_file`` and ``label`` feed the
+        info labels and are included so a rename still refreshes.
+        """
+        geometry = structure_geometry_fingerprint(structure)
+        if structure is None:
+            return geometry
+        properties = structure.properties
+        property_signature = repr(
+            (
+                properties.get("atomic_spins"),
+                properties.get("initial_magnetic_moments"),
+                properties.get("propagation_vector"),
+                properties.get("magnetic_structure"),
+            )
+        )
+        return (
+            *geometry,
+            structure.label,
+            structure.source_file,
+            property_signature,
+        )
+
     def set_structure(self, structure: Structure | None) -> None:
-        """Render structure metadata and first rows of atom coordinates."""
+        """Render structure metadata and first rows of atom coordinates.
+
+        No-op (beyond storing the reference) when the rendered structure is
+        unchanged since the last call, avoiding the atom-table repopulation and
+        full 3D viewer mesh rebuild on every dashboard flush.
+        """
+        fingerprint = self._render_fingerprint(structure)
+        if self._structure_fingerprint_valid and fingerprint == self._structure_fingerprint:
+            self._current_structure = structure
+            return
+        self._structure_fingerprint = fingerprint
+        self._structure_fingerprint_valid = True
         self._current_structure = structure
         self._atom_table.setRowCount(0)
         self._viewer.set_structure(structure)
