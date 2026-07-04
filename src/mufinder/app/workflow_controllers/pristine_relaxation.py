@@ -28,10 +28,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
+from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
@@ -56,13 +56,15 @@ class PristineRelaxationDeps:
     """Pristine-relaxation-specific handles, late-bound to ``MainWindow`` helpers.
 
     These helpers stay on ``MainWindow`` because non-migrating code still calls
-    them there — ``parse_relaxed_out_cell`` is shared with the muon-relaxation
-    controller's deps. The controller reaches them only through these required
+    them there. The controller reaches them only through these required
     callables. Workflow-specific dependencies like these never go in the shared
     :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`;
     cross-workflow job/definition readers (``job_output_directory``,
     ``job_seed_name``, ``run_for_job``, ``definition_output_directory``, the
-    energy/force readers) live there instead.
+    energy/force readers) live there instead. The relaxed ``-out.cell`` is parsed
+    once on the runner worker thread and delivered to ``build_result`` via
+    :class:`~mufinder.services.job_artifacts.ParsedJobArtifacts`, so no parse dep
+    is needed here.
     """
 
     active_pristine_relaxation_definition: Callable[[], CalculationDefinition | None]
@@ -80,8 +82,6 @@ class PristineRelaxationDeps:
     expand_pristine_relaxation_jobs: Callable[
         [CalculationDefinition, PristineRelaxationConfig], AdapterExpansion | None
     ]
-    # Shared with the muon-relaxation controller (via its own deps):
-    parse_relaxed_out_cell: Callable[[Path], tuple[object, float, float, float]]
 
 
 class PristineRelaxationController(WorkflowJobController):
@@ -277,14 +277,20 @@ class PristineRelaxationController(WorkflowJobController):
     # --- result contract ---
 
     def build_result(
-        self, job: Job, parsed: CastepResult, run: CalculationRun
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
     ) -> ControllerResult:
         """Contribute the relaxed lattice parameters and derived structure.
 
         The inline ``_on_local_job_finished`` prologue has already validated that
         the ``-out.cell`` exists and parses (it aborts the job otherwise, shared
-        with the muon branch), so the parse here — the second invocation of the
-        same shared helper on the success path — will not hit the failure branch.
+        with the muon branch), so the carried ``artifacts.relaxed_cell`` is
+        present on this success path. The file is parsed **once** on the runner
+        worker thread; this controller consumes the carried cell rather than
+        re-reading disk.
 
         Output files are **not** contributed here: the ``_on_local_job_finished``
         call site already passes ``_output_files_for_job(job)`` for every job, and
@@ -296,20 +302,10 @@ class PristineRelaxationController(WorkflowJobController):
         if document is None:
             return ControllerResult()
 
-        output_dir = self._context.job_output_directory(job)
-        seed_name = self._context.job_seed_name(job)
-        if output_dir is None:
+        relaxed = artifacts.relaxed_cell
+        if relaxed is None or artifacts.lattice_abc is None:
             return ControllerResult()
-        out_cell_path = output_dir / f"{seed_name}-out.cell"
-
-        # Intentional double parse: the inline ``_on_local_job_finished`` guard
-        # already parsed this ``-out.cell`` to validate it (and discarded the
-        # result), and here ``build_result`` re-derives the payload on the
-        # validated success path. This is an accepted cost — do NOT "fix" it by
-        # caching parse state on the controller.
-        relaxed, lattice_a, lattice_b, lattice_c = self._deps.parse_relaxed_out_cell(
-            out_cell_path
-        )
+        lattice_a, lattice_b, lattice_c = artifacts.lattice_abc
 
         payload: dict[str, object] = {
             "lattice_a": lattice_a,

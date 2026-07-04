@@ -239,7 +239,13 @@ Local runner behavior
   CASTEP executable path and file permissions."* Other ``QProcess`` errors
   keep the store-and-wait behaviour and are reported by the finish handler.
 - Successful parsing of a completed CASTEP output emits ``job_finished`` and
-  ``completed``.
+  ``completed``. On the same completion callback the runner also parses the
+  job's *secondary* outputs (relaxed ``-out.cell``, ``.phonon``, ``.ts``) once
+  via :func:`~mufinder.services.job_artifacts.collect_job_artifacts` and delivers
+  the resulting :class:`~mufinder.services.job_artifacts.ParsedJobArtifacts` as
+  the third ``job_finished`` payload, so the GUI handler and the owning workflow
+  controller never re-read those files (see :doc:`architecture`, Workflow
+  controllers → Parse-once off the GUI thread).
 
 Local runner state is not persisted. If the application is closed while local
 jobs are active, the runner performs a best-effort cancellation during shutdown,
@@ -304,7 +310,11 @@ During polling:
   ``-out.cell``, ``.phonon``, or ``.ts`` outputs. Retrieval or parsing failure
   becomes ``failed``. Parsed incomplete CASTEP output becomes ``stopped`` when
   it looks like walltime; otherwise it becomes ``failed``. Parsed completed
-  output emits ``job_finished`` and ``completed``.
+  output emits ``job_finished`` and ``completed``. The secondary outputs
+  (``-out.cell`` / ``.phonon`` / ``.ts``) are parsed once here on the worker
+  thread via :func:`~mufinder.services.job_artifacts.collect_job_artifacts` and
+  carried to the GUI as the third ``job_finished`` payload, so the completion
+  handler and controllers never re-parse them.
 - A missing scheduler entry usually means completion, so retrieval is
   attempted immediately — but with a grace window: if the output cannot be
   downloaded (SFTP error, missing remote ``.castep``, connection hiccup), the

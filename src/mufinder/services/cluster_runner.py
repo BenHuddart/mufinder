@@ -17,6 +17,7 @@ from mufinder.castep_io.output_parser import CastepResult, parse_castep_output
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import utc_now
 from mufinder.services.cluster_security import invalid_remote_job_labels
+from mufinder.services.job_artifacts import collect_job_artifacts
 from mufinder.services.scheduler import Scheduler, SchedulerSubmitRequest, create_scheduler
 from mufinder.services.script_template import render_job_script
 from mufinder.services.ssh_client import SSHConnection, SSHCredentials
@@ -79,7 +80,10 @@ class ClusterJobRunner(QObject):
     """Run CASTEP jobs on a remote scheduler over SSH."""
 
     job_started = Signal(object)
-    job_finished = Signal(object, object)
+    #: ``(job_id, CastepResult, ParsedJobArtifacts)``. The third payload carries
+    #: the secondary outputs (relaxed cell, phonon, transition state) parsed on
+    #: this worker thread so the GUI handler never re-parses them.
+    job_finished = Signal(object, object, object)
     job_failed = Signal(object, str)
     job_cancelled = Signal(object)
     status_changed = Signal(object, object)
@@ -694,7 +698,19 @@ class ClusterJobRunner(QObject):
             return f"{prefix}output incomplete; job failed"
 
         entry.terminal = True
-        self.job_finished.emit(entry.job_id, parsed)
+        # Parse the secondary outputs (relaxed cell / phonon / transition state)
+        # here on the worker thread, exactly once, driven by the retrieval flags
+        # this job tracked. The GUI handler decides failure from the carrier and
+        # the owning controller consumes the pre-parsed data — neither re-reads
+        # disk. Errors are captured on the carrier, never raised.
+        artifacts = collect_job_artifacts(
+            entry.local_output_dir,
+            entry.seed_name,
+            want_out_cell=entry.retrieve_out_cell,
+            want_phonon=entry.retrieve_phonon,
+            want_ts=entry.retrieve_ts,
+        )
+        self.job_finished.emit(entry.job_id, parsed, artifacts)
         self.status_changed.emit(entry.job_id, JobStatus.COMPLETED.value)
         return f"{prefix}output retrieved and parsed"
 

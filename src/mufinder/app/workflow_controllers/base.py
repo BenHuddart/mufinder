@@ -36,6 +36,7 @@ from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job
+from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
@@ -202,13 +203,23 @@ class WorkflowJobController:
         return job.calc_type in self.calc_types
 
     def build_result(
-        self, job: Job, parsed: CastepResult, run: CalculationRun
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
     ) -> ControllerResult:
         """Return payload/file/structure additions for a completed job.
 
+        ``artifacts`` carries the job's secondary outputs (relaxed cell, phonon,
+        transition state) parsed **once** on the runner worker thread. Overriding
+        controllers consume them instead of re-reading disk. The inline guards in
+        ``MainWindow._on_local_job_finished`` have already validated whatever
+        this controller relies on before dispatch reaches here.
+
         Default: empty :class:`ControllerResult` (base payload only). Cutoff
         convergence uses the default; workflows that derive structures or mutate
-        the document (relaxation, muon sites) override this later.
+        the document (relaxation, muon sites) override this.
         """
 
         return ControllerResult()
@@ -226,6 +237,7 @@ def merge_controller_result(
     job: Job,
     parsed: CastepResult,
     run: CalculationRun,
+    artifacts: ParsedJobArtifacts,
     *,
     payload: dict[str, object],
     output_files: list[str],
@@ -254,7 +266,7 @@ def merge_controller_result(
     if controller is None:
         return merged_payload, merged_files, merged_structures, merged_warnings
 
-    contribution = controller.build_result(job, parsed, run)
+    contribution = controller.build_result(job, parsed, run, artifacts)
     merged_payload.update(contribution.payload)
     merged_files.extend(contribution.output_files)
     merged_structures.extend(contribution.derived_structure_ids)

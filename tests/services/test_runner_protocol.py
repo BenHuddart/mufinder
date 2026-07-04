@@ -38,9 +38,11 @@ from mufinder.services.cluster_runner import ClusterJobRunner
 from mufinder.services.local_runner import LocalJobRunner
 
 # Signal name -> expected parameter count of the emit signature.
+# ``job_finished`` carries ``(job_id, CastepResult, ParsedJobArtifacts)`` — the
+# third payload is the secondary outputs parsed once on the runner worker thread.
 _EXPECTED_SIGNALS = {
     "job_started": 1,
-    "job_finished": 2,
+    "job_finished": 3,
     "job_failed": 2,
     "job_cancelled": 1,
     "status_changed": 2,

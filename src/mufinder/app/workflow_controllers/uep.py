@@ -44,6 +44,7 @@ from uuid import UUID
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
+from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.workflow import StructureBridgeError, write_job_directory
 
 from mufinder.app.uep_adapter import expand_uep_jobs
@@ -247,7 +248,11 @@ class UepController(WorkflowJobController):
     # --- result contract ---
 
     def build_result(
-        self, job: Job, parsed: CastepResult, run: CalculationRun
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
     ) -> ControllerResult:
         """Contribute the ``density_available`` flag for a completed UEP job.
 

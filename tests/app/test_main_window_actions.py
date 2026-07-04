@@ -14,6 +14,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QTreeWidgetItem
 
 import mufinder.app.main_window as main_window_module
+import mufinder.services.job_artifacts as job_artifacts_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.app.comparison_job_dialog import CompletedPristineJob
 from mufinder.app.convergence_types import ConvergenceConfig
@@ -4697,8 +4698,11 @@ def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_p
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / f"{job.label}-out.cell").write_text("dummy", encoding="utf-8")
 
+    # The relaxed -out.cell is parsed once by the off-thread collector
+    # (mufinder.services.job_artifacts), so patch the collector's parse helpers
+    # rather than main_window's (which no longer parses secondary outputs).
     monkeypatch.setattr(
-        main_window_module,
+        job_artifacts_module,
         "parse_cell_file",
         lambda _path: SimpleNamespace(
             lattice_vectors=((5.1, 0.0, 0.0), (0.0, 5.2, 0.0), (0.0, 0.0, 5.3)),
@@ -4707,7 +4711,7 @@ def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_p
         ),
     )
     monkeypatch.setattr(
-        main_window_module,
+        job_artifacts_module,
         "lattice_parameters",
         lambda _vectors: (5.1, 5.2, 5.3, 90.0, 90.0, 90.0),
     )
@@ -5480,8 +5484,10 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
     output_dir = doc.project_root / "files" / "muon_relaxation" / "muonium" / "muonium_Shared_Site"
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "muonium_Shared_Site-out.cell").write_text("dummy", encoding="utf-8")
+    # The relaxed -out.cell is parsed once by the off-thread collector
+    # (mufinder.services.job_artifacts); patch its helpers, not main_window's.
     monkeypatch.setattr(
-        main_window_module,
+        job_artifacts_module,
         "parse_cell_file",
         lambda _path: SimpleNamespace(
             lattice_vectors=((8.0, 0.0, 0.0), (0.0, 8.0, 0.0), (0.0, 0.0, 4.0)),
@@ -5490,7 +5496,7 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
         ),
     )
     monkeypatch.setattr(
-        main_window_module,
+        job_artifacts_module,
         "lattice_parameters",
         lambda _vectors: (8.0, 8.0, 4.0, 90.0, 90.0, 90.0),
     )

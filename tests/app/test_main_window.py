@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QDockWidget, QFrame, QHeaderView, QLabel, QMessage
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.app.main_window as main_window_module
-import mufinder.app.workflow_controllers.energy_barriers as energy_barriers_controller_module
+import mufinder.services.job_artifacts as job_artifacts_module
 from mufinder.app import theme as theme_module
 import mufinder.castep_io.schema as schema_module
 from mufinder.app.main_window import MainWindow
@@ -2123,13 +2123,10 @@ def test_main_window_records_energy_barrier_result_from_ts_file(
             )
         )
 
-    # Both the inline ``_on_local_job_finished`` ``.ts`` guard (on
-    # ``main_window``) and ``EnergyBarriersController.build_result`` (on the
-    # controller module) re-parse the ``.ts`` on the success path, so patch both.
-    monkeypatch.setattr(main_window_module, "parse_transition_state_file", _fake_parse)
-    monkeypatch.setattr(
-        energy_barriers_controller_module, "parse_transition_state_file", _fake_parse
-    )
+    # The ``.ts`` is parsed once by the off-thread collector
+    # (mufinder.services.job_artifacts) and carried to both the inline guard and
+    # the controller's build_result, so patch the collector's parse helper.
+    monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
 
     window._on_local_job_finished(job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0))
 
@@ -2499,13 +2496,12 @@ def test_main_window_records_neb_result_and_loads_preview(
             )
         )
 
-    # Both the inline ``.ts`` guard (on ``main_window``) and
-    # ``EnergyBarriersController.build_result`` (on the controller module)
-    # re-parse the ``.ts`` on the success path, so patch both.
+    # Completion parses the ``.ts`` once via the off-thread collector
+    # (mufinder.services.job_artifacts). The later result-preview selection
+    # (``_on_energy_barrier_neb_result_selected``) is a separate on-demand parse
+    # through main_window's module-level helper, so patch both.
+    monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
     monkeypatch.setattr(main_window_module, "parse_transition_state_file", _fake_parse)
-    monkeypatch.setattr(
-        energy_barriers_controller_module, "parse_transition_state_file", _fake_parse
-    )
 
     window._on_local_job_finished(job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0))
 
