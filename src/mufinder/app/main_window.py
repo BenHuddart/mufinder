@@ -1611,6 +1611,17 @@ class MainWindow(QMainWindow):
     _LAST_DIALOG_DIR_KEY = "ui/last_dialog_dir"
     _LAST_DIALOG_DIR_BY_CONTEXT_PREFIX = "ui/last_dialog_dir_by_context"
     _RECENT_PROJECTS_KEY = "ui/recent_projects"
+    # Quiet-period debounce for dashboard flushes: an isolated lifecycle event
+    # (a single job completing with nothing else nearby) flushes this long
+    # after the last request, so it still feels prompt.
+    _DASHBOARD_FLUSH_DEBOUNCE_MS = 300
+    # Floor on the gap between two flushes during a burst of lifecycle events
+    # (e.g. many cluster jobs completing across a serial retrieval). Without
+    # this floor, a steady stream of events spaced further apart than the
+    # debounce (but closer than this) would re-arm the debounce forever and
+    # never flush until the stream stopped; field traces showed 15 flushes in
+    # 80s. With the floor, the burst still flushes on a bounded ~2s cadence.
+    _DASHBOARD_MIN_FLUSH_INTERVAL_MS = 2000
     _MAX_RECENT_PROJECTS = 10
     _JOB_LABEL_COLUMN = 0
     _JOB_WORKFLOW_COLUMN = 1
@@ -1684,12 +1695,19 @@ class MainWindow(QMainWindow):
         # whole document to disk once per job, which freezes the GUI.
         self._dashboard_flush_pending = False
         self._dashboard_autosave_failure_message = ""
+        # Monotonic timestamp (time.monotonic(), never wall-clock) of the last
+        # completed flush, and of the deadline currently armed on
+        # _dashboard_flush_timer. Both None until the first request. Used by
+        # _request_dashboard_flush to enforce _DASHBOARD_MIN_FLUSH_INTERVAL_MS
+        # without re-arming (and thereby postponing) an already-pending deadline.
+        self._dashboard_last_flush_at: float | None = None
+        self._dashboard_flush_deadline: float | None = None
         # Jobs stopped by the most recent orphaned-local-job reconciliation on
         # project open; surfaced as a status-bar message by _open_project_from_path.
         self._reconciled_orphaned_local_jobs: list[Job] = []
         self._dashboard_flush_timer = QTimer(self)
         self._dashboard_flush_timer.setSingleShot(True)
-        self._dashboard_flush_timer.setInterval(300)
+        self._dashboard_flush_timer.setInterval(self._DASHBOARD_FLUSH_DEBOUNCE_MS)
         self._dashboard_flush_timer.timeout.connect(self._flush_dashboard)
         # Active-job watchdog: every minute, look for jobs left active with no
         # runner tracking them (a dead local QProcess, an untracked cluster job)
@@ -2678,6 +2696,8 @@ class MainWindow(QMainWindow):
         # This writes the whole document, so any coalesced flush is subsumed.
         self._dashboard_flush_pending = False
         self._dashboard_flush_timer.stop()
+        self._dashboard_flush_deadline = None
+        self._dashboard_last_flush_at = time.monotonic()
         try:
             self._project_service.save_project(self._document)
         except ValueError as exc:
@@ -4020,27 +4040,62 @@ class MainWindow(QMainWindow):
     def _request_dashboard_flush(self, *, failure_message: str) -> None:
         """Schedule a coalesced dashboard refresh + autosave for lifecycle handlers.
 
-        Many cluster jobs can finish in a single queue poll; rebuilding every view
-        and saving the whole document per job freezes the GUI. Instead, mark a
-        flush pending and let it run once after the burst (via ``_flush_dashboard``,
-        called from the queue-check handler and a short debounce timer).
+        Many cluster jobs can finish in a single queue poll — or a few seconds
+        apart across a serial cluster retrieval — and rebuilding every view plus
+        saving the whole document per job freezes the GUI. Instead, mark a flush
+        pending and arm ``_dashboard_flush_timer`` to run it once via
+        ``_flush_dashboard``.
+
+        Two goals in tension: an isolated event should still flush promptly
+        (the ``_DASHBOARD_FLUSH_DEBOUNCE_MS`` quiet period), but a steady stream
+        of events spaced further apart than that debounce must not re-arm it
+        forever and starve the flush until the stream ends. So the delay used
+        is ``max(debounce, min_interval - elapsed_since_last_flush)``: during a
+        burst this floors the gap between flushes at
+        ``_DASHBOARD_MIN_FLUSH_INTERVAL_MS``. Critically, an already-armed
+        deadline is only ever tightened (moved earlier), never pushed further
+        into the future — otherwise a steady stream of requests, each re-arming
+        the timer, would never let it fire.
         """
 
         if self._document is None:
             return
         self._dashboard_flush_pending = True
         self._dashboard_autosave_failure_message = failure_message
-        self._dashboard_flush_timer.start()
+
+        now = time.monotonic()
+        if self._dashboard_last_flush_at is None:
+            elapsed_since_flush_ms = None
+        else:
+            elapsed_since_flush_ms = (now - self._dashboard_last_flush_at) * 1000.0
+        if elapsed_since_flush_ms is None:
+            min_interval_delay_ms = 0.0
+        else:
+            min_interval_delay_ms = self._DASHBOARD_MIN_FLUSH_INTERVAL_MS - elapsed_since_flush_ms
+        delay_ms = max(self._DASHBOARD_FLUSH_DEBOUNCE_MS, min_interval_delay_ms)
+        candidate_deadline = now + delay_ms / 1000.0
+
+        pending_deadline = self._dashboard_flush_deadline
+        if pending_deadline is not None and self._dashboard_flush_timer.isActive():
+            if candidate_deadline >= pending_deadline:
+                # The armed deadline already covers this request (or is
+                # earlier) — leave it alone so the stream cannot push it out
+                # indefinitely.
+                return
+        self._dashboard_flush_deadline = candidate_deadline
+        self._dashboard_flush_timer.start(max(0, int(round(delay_ms))))
 
     def _flush_dashboard(self) -> None:
         """Rebuild the dashboard views and persist the document, if a flush is due."""
 
         self._dashboard_flush_timer.stop()
+        self._dashboard_flush_deadline = None
         if not self._dashboard_flush_pending:
             return
         self._dashboard_flush_pending = False
         if self._document is None:
             return
+        self._dashboard_last_flush_at = time.monotonic()
         trace = PerfTrace(label="dashboard flush", logger=_LOG)
         # _refresh_jobs_table already refreshes the convergence/kpoint/pristine/
         # muon-relaxation/uep rows, so only the views it does not cover are added.
@@ -8490,12 +8545,21 @@ class MainWindow(QMainWindow):
 
     def _on_cluster_queue_checked(self, checked_at) -> None:
         # Stamp per-job monitor metadata (last_checked_at/source/message) from
-        # the snapshot's observations before the flush below persists them.
-        self._job_execution.mark_queue_checked(checked_at)
+        # the snapshot's observations; these land in the in-memory document
+        # either way, so a deferred flush (below) is fine — nothing is lost by
+        # not persisting them immediately.
+        stamped = self._job_execution.mark_queue_checked(checked_at)
         # A queue poll fires this once after any jobs it retrieved have been
-        # applied, so flush the autosave those completions coalesced into a single
-        # write here.
-        self._flush_dashboard()
+        # applied, so this also drains whatever those completions' own handlers
+        # already marked pending. Routed through the debounced/rate-limited
+        # scheduler rather than flushing synchronously: on a serial cluster
+        # retrieval, queue polls land every few seconds, and flushing every
+        # poll defeats the burst coalescing (this was the bypass that caused
+        # 15 flushes in 80s in the field trace).
+        if stamped or self._dashboard_flush_pending:
+            self._request_dashboard_flush(
+                failure_message="Queue check was recorded, but autosave failed.",
+            )
         elapsed_by_job_id = getattr(checked_at, "elapsed_by_job_id", None)
         if isinstance(elapsed_by_job_id, Mapping):
             parsed: dict[UUID, int] = {}
