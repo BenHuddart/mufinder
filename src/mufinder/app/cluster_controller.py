@@ -303,6 +303,16 @@ class ClusterController(QObject):
             self._tracked_active_job_ids.add(job_id)
         self._async_task.emit(lambda: self._runner.track_existing_job(**kwargs))
 
+    def retrieve_outputs_for(self, job_id: Any, **kwargs: Any) -> None:
+        """Re-attempt output retrieval for one job on the worker thread.
+
+        Fire-and-forget, mirroring :meth:`refresh_queue`: the blocking SSH
+        download runs off the GUI thread and results arrive via the forwarded
+        ``job_finished`` / ``job_failed`` / ``status_changed`` signals.
+        """
+
+        self._async_task.emit(lambda: self._runner.retrieve_outputs_for(job_id, **kwargs))
+
     def connect_async(self, config: ClusterConfig, *, credentials: SSHCredentials) -> None:
         """Connect on the worker thread; result is delivered via connect_finished.
 

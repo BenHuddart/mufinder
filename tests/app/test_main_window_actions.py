@@ -9559,3 +9559,183 @@ def test_main_window_convergence_overview_hides_stale_snapshot_when_host_changes
     )
     assert window._convergence_overview_view._cutoff_card._plot._canvas.isHidden() is True
     window.close()
+
+
+# ---------------------------------------------------------------------------
+# Job-lifecycle hardening: retry retrieval (rec #4) + dismiss (rec #8)
+# ---------------------------------------------------------------------------
+def _connect_cluster_runner(window, cluster_name: str) -> None:
+    """Put the ClusterController into a connected state for the given cluster."""
+
+    window._cluster_runner._connected = True
+    window._cluster_runner._connected_cluster_name = cluster_name
+
+
+def _make_failed_cluster_job(service, doc, *, label: str, cluster: str = "scarf") -> Job:
+    job = service.add_job(
+        doc,
+        label=label,
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job.status = JobStatus.FAILED
+    job.execution_target = cluster
+    job.remote_job_id = "99123"
+    job.remote_directory = "/remote/work/" + label
+    return job
+
+
+def test_dashboard_retry_retrieval_button_enablement(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "retry.mufinder", "Retry")
+
+    connected_job = _make_failed_cluster_job(service, doc, label="conn", cluster="scarf")
+    disconnected_job = _make_failed_cluster_job(service, doc, label="disc", cluster="other")
+    no_meta_job = _make_failed_cluster_job(service, doc, label="nometa", cluster="scarf")
+    no_meta_job.remote_directory = None
+    local_job = service.add_job(
+        doc,
+        label="localjob",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    local_job.status = JobStatus.FAILED
+    local_job.execution_target = "local"
+
+    window._document = doc
+    _connect_cluster_runner(window, "scarf")
+    window._refresh_jobs_table()
+
+    def retry_btn_for(job_id):
+        for row in range(window._jobs_table.rowCount()):
+            item = window._jobs_table.item(row, window._JOB_LABEL_COLUMN)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == str(job_id):
+                return window._jobs_table.cellWidget(row, window._JOB_RETRY_RETRIEVAL_COLUMN)
+        return None
+
+    assert retry_btn_for(connected_job.id).text() == "Retry retrieval"
+    assert retry_btn_for(connected_job.id).isEnabled() is True
+    # Cluster not connected for this job's target -> disabled.
+    assert retry_btn_for(disconnected_job.id).isEnabled() is False
+    # Missing remote directory -> disabled.
+    assert retry_btn_for(no_meta_job.id).isEnabled() is False
+    # Local job -> disabled.
+    assert retry_btn_for(local_job.id).isEnabled() is False
+    window.close()
+
+
+def test_dashboard_retry_retrieval_click_dispatches_to_runner(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "retry_click.mufinder", "RetryClick")
+    job = _make_failed_cluster_job(service, doc, label="conn", cluster="scarf")
+
+    window._document = doc
+    _connect_cluster_runner(window, "scarf")
+    monkeypatch.setattr(window, "_job_output_directory", lambda _job: tmp_path)
+
+    retrieve_calls: list[tuple[object, dict]] = []
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "retrieve_outputs_for",
+        lambda job_id, **kwargs: retrieve_calls.append((job_id, kwargs)),
+    )
+    monkeypatch.setattr(window, "_request_dashboard_flush", lambda **kwargs: None)
+
+    window._refresh_jobs_table()
+    row = 0
+    retry_btn = window._jobs_table.cellWidget(row, window._JOB_RETRY_RETRIEVAL_COLUMN)
+    retry_btn.click()
+
+    # The job moved to RETRIEVING and the runner was asked to re-download.
+    assert job.status == JobStatus.RETRIEVING
+    assert len(retrieve_calls) == 1
+    called_job_id, kwargs = retrieve_calls[0]
+    assert called_job_id == job.id
+    assert kwargs["remote_job_id"] == "99123"
+    assert kwargs["remote_directory"] == "/remote/work/conn"
+    window.close()
+
+
+def test_dashboard_dismiss_hides_row_after_flush(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "dismiss.mufinder", "Dismiss")
+    failed_job = service.add_job(
+        doc,
+        label="failed",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    failed_job.status = JobStatus.FAILED
+    running_job = service.add_job(
+        doc,
+        label="running",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    running_job.status = JobStatus.RUNNING
+
+    window._document = doc
+    window._refresh_jobs_table()
+    assert window._jobs_table.rowCount() == 2
+
+    # The running job's Dismiss button must be disabled; the failed job's enabled.
+    def dismiss_btn_for(job_id):
+        for row in range(window._jobs_table.rowCount()):
+            item = window._jobs_table.item(row, window._JOB_LABEL_COLUMN)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == str(job_id):
+                return window._jobs_table.cellWidget(row, window._JOB_DISMISS_COLUMN)
+        return None
+
+    assert dismiss_btn_for(failed_job.id).isEnabled() is True
+    assert dismiss_btn_for(running_job.id).isEnabled() is False
+
+    dismiss_btn_for(failed_job.id).click()
+    # Dismissal schedules a coalesced flush; force it to rebuild the table now.
+    window._flush_dashboard()
+
+    # After dismissal + rebuild, the failed row disappears; running row remains.
+    assert failed_job.dismissed_at is not None
+    assert window._jobs_table.rowCount() == 1
+    remaining = window._jobs_table.item(0, window._JOB_LABEL_COLUMN)
+    assert remaining.data(Qt.ItemDataRole.UserRole) == str(running_job.id)
+    # Provenance milestone recorded.
+    assert doc.provenance[-1].action == "job_dismissed"
+    window.close()
+
+
+def test_dashboard_dismiss_multi_select(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "dismiss_multi.mufinder", "DismissMulti")
+    job0 = service.add_job(doc, label="d0", workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF, calc_type="castep_convergence_cutoff")
+    job1 = service.add_job(doc, label="d1", workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF, calc_type="castep_convergence_cutoff")
+    job0.status = JobStatus.FAILED
+    job1.status = JobStatus.STOPPED
+
+    window._document = doc
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "question",
+        staticmethod(lambda *a, **kw: main_window_module.QMessageBox.StandardButton.Yes),
+    )
+    window._refresh_jobs_table()
+
+    dismiss_btn = window._jobs_table.cellWidget(0, window._JOB_DISMISS_COLUMN)
+    assert isinstance(dismiss_btn, SelectionSnapshotPushButton)
+    dismiss_btn.selection_snapshot_rows = (0, 1)
+    dismiss_btn.clicked.emit()
+    window._flush_dashboard()
+
+    assert job0.dismissed_at is not None
+    assert job1.dismissed_at is not None
+    assert window._jobs_table.rowCount() == 0
+    window.close()

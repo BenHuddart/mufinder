@@ -353,6 +353,48 @@ class JobExecutionController:
             return self.fail_cluster_submission(prepared, str(exc))
         return self.finalize_cluster_submission(prepared, remote_job_id)
 
+    def prepare_retry_retrieval(self, job_id: UUID) -> Job | None:
+        """Move a failed/stopped cluster job back into RETRIEVING for re-download.
+
+        Validates the retry preconditions (failed or stopped, cluster target,
+        remote id and directory present), calls
+        :meth:`ProjectService.retry_job_retrieval`, stamps the user-initiated
+        monitor metadata, and registers a *fresh* ``CalculationRun`` (status
+        RETRIEVING) as the job's active run.
+
+        A fresh run is required: the failure/stop path already popped the active
+        run and marked the previous run terminal, so without a new active run
+        ``run_for_job`` would fall back to that terminal run and the eventual
+        completion would overwrite a FAILED run to COMPLETED. Returning the job
+        lets the GUI dispatch the retrieval; ``None`` means the job was
+        ineligible (the button is normally disabled in that case).
+        """
+
+        document = self._document_getter()
+        if document is None:
+            return None
+        job = document.jobs.get(job_id)
+        if job is None:
+            return None
+        if job.status not in {JobStatus.FAILED, JobStatus.STOPPED}:
+            return None
+        target = (job.execution_target or "").strip()
+        if not target or target.casefold() == "local":
+            return None
+        if not (job.remote_job_id or "").strip() or not (job.remote_directory or "").strip():
+            return None
+
+        try:
+            self._project_service.retry_job_retrieval(job)
+        except ValueError:
+            return None
+
+        job.last_checked_at = utc_now()
+        job.last_status_source = "user"
+        job.last_status_message = "Retry retrieval requested"
+        self._create_active_run(document, job, JobStatus.RETRIEVING)
+        return job
+
     def record_submission(self, jobs: Sequence[Job], execution_target: str) -> bool:
         """Record one provenance event for a batch of submitted jobs."""
 

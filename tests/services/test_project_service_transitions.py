@@ -130,6 +130,12 @@ _PRIMITIVES = {
     "stop_job": (JobStatus.STOPPED, lambda s, j: s.stop_job(j)),
     "fail_job": (JobStatus.FAILED, lambda s, j: s.fail_job(j, "boom")),
     "cancel_job": (JobStatus.CANCELLED, lambda s, j: s.cancel_job(j)),
+    # retry_job_retrieval drives the same RETRIEVING target as mark_job_retrieving
+    # but exists for the dashboard "Retry retrieval" action (FAILED/STOPPED ->
+    # RETRIEVING). It only calls _assert_transition; the failed/stopped-only
+    # precondition is enforced by JobExecutionController, not this primitive, so
+    # the generic guard test exercises the shared RUNNING -> RETRIEVING edge.
+    "retry_job_retrieval": (JobStatus.RETRIEVING, lambda s, j: s.retry_job_retrieval(j)),
 }
 
 
