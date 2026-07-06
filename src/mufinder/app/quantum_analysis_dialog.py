@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.math_label import MathLabel
+from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     body_font_family,
     current_palette,
@@ -101,7 +102,7 @@ class QuantumPhononAnalysisDialog(QDialog):
         super().__init__(parent)
         self.setObjectName("quantumPhononAnalysisDialog")
         self.setWindowTitle(f"Quantum Analysis - {job_label}")
-        self.resize(1320, 760)
+        self.resize(clamped_size(self, 1320, 760))
 
         self._phonon_path = phonon_path
         self._job_label = job_label

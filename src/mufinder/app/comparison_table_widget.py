@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.comparison_export import export_comparison_csv
 from mufinder.app.math_label import MathLabel
-from mufinder.app.theme import style_section_title
+from mufinder.app.theme import adjust_font_size, style_section_title
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import ComparisonTable
 from mufinder.science.structure_metrics import metric_definitions
@@ -310,8 +310,7 @@ class ComparisonTableWidget(QWidget):
         self._title_edit.setMaxLength(80)
         title_font = self._title_edit.font()
         title_font.setBold(True)
-        if title_font.pointSize() > 0:
-            title_font.setPointSize(title_font.pointSize() + 2)
+        adjust_font_size(title_font, 2)
         self._title_edit.setFont(title_font)
         self._warning_banner = QLabel("")
         self._warning_banner.setWordWrap(True)

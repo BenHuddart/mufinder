@@ -43,8 +43,11 @@ def test_convergence_examiner_uses_scrollable_layout_and_minimum_sizes(qapp) -> 
 
     scrolls = dialog.findChildren(QScrollArea)
     assert scrolls
-    assert dialog.minimumWidth() >= 920
-    assert dialog.minimumHeight() >= 760
+    # Minimum size was lowered from 920x760 to 880x640 to fit a 13" MacBook's
+    # usable desktop area; content still sits in a QScrollArea (asserted
+    # above), so the dialog remains fully usable at the smaller minimum.
+    assert dialog.minimumWidth() >= 880
+    assert dialog.minimumHeight() >= 640
     assert dialog._canvas.minimumHeight() >= 520
     assert dialog._adopt_button.parentWidget() is not None
 
