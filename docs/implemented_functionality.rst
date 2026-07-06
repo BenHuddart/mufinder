@@ -871,6 +871,11 @@ Cluster setup and authentication includes:
 - Explicit host-key trust prompts are preserved for both the jump host and the
 	target cluster host; bastion trust records are stored separately from
 	Glamdring trust records.
+- Connection checks (the cluster setup ``Test Connection`` action and the
+	pre-flight check before cluster keyword generation) run on a worker thread
+	behind a cancellable progress dialog, so an unreachable or slow host never
+	freezes the GUI; unknown-host-key prompts appear on the GUI thread and the
+	check retries automatically once the key is trusted.
 
 Remote submission and monitoring includes:
 
