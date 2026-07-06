@@ -7,7 +7,7 @@ from typing import Any
 
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QComboBox, QDialog, QPushButton, QToolButton
+from PySide6.QtWidgets import QComboBox, QDialog, QLabel, QPushButton, QToolButton
 
 from mufinder.app import uep_widget as uep_widget_module
 from mufinder.app.param_dialog import ParameterDialog
@@ -110,6 +110,35 @@ def test_uep_widget_uses_uep_name_prefix_by_default(qapp) -> None:
     widget = UEPWidget()
 
     assert widget._name_prefix.text() == "uep"
+
+
+def _iter_layout_widgets(layout):
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        widget = item.widget()
+        if widget is not None:
+            yield widget
+            nested_layout = widget.layout()
+            if nested_layout is not None:
+                yield from _iter_layout_widgets(nested_layout)
+        nested = item.layout()
+        if nested is not None:
+            yield from _iter_layout_widgets(nested)
+
+
+def test_uep_widget_shows_name_prefix_field(qapp) -> None:
+    widget = UEPWidget()
+
+    # DL-1: the name-prefix field was previously created and wired up but never
+    # added to any layout, so users could not see or edit it.
+    assert widget._name_prefix.parentWidget() is not None
+    assert widget.isAncestorOf(widget._name_prefix)
+
+    layout_widgets = list(_iter_layout_widgets(widget.layout()))
+    assert widget._name_prefix in layout_widgets
+
+    labels = [w.text() for w in layout_widgets if isinstance(w, QLabel)]
+    assert "Job name prefix" in labels
 
 
 def test_uep_widget_uses_source_labels_by_default(qapp) -> None:

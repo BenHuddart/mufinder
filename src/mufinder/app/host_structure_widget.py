@@ -13,11 +13,11 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
     QSizePolicy,
     QSplitter,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -30,6 +30,7 @@ from mufinder.app.structure_render_guard import (
     structure_geometry_fingerprint,
 )
 from mufinder.app.theme import style_section_subtitle, style_section_title
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.services.project_service import PromotableHost
 
@@ -70,13 +71,20 @@ class HostStructureWidget(QWidget):
         self._file_label.setWordWrap(True)
         self._species_label.setWordWrap(True)
 
-        self._atom_table = QTableWidget(0, 5)
-        self._atom_table.setHorizontalHeaderLabels(["Element", "fX", "fY", "fZ", "Spin (hbar/2)"])
+        # This table keeps row numbers (vertical header) as a visual atom index
+        # and allows editing the Spin column in place, so it opts out of the
+        # shared no-edit/hidden-header defaults via show_vertical_header/editable.
+        # It also opts out of stretch-to-fill: _lock_table_width relies on
+        # resizeColumnsToContents(), which Stretch-mode columns ignore.
+        self._atom_table = create_workflow_table(
+            ("Element", "fX", "fY", "fZ", "Spin (hbar/2)"),
+            selection_mode=QAbstractItemView.SelectionMode.ExtendedSelection,
+            editable=True,
+            show_vertical_header=True,
+            default_resize_mode=QHeaderView.ResizeMode.Interactive,
+        )
         self._atom_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._atom_table.horizontalHeader().setStretchLastSection(True)
         self._atom_table.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Expanding)
-        self._atom_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._atom_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._atom_table.itemSelectionChanged.connect(self._on_table_selection_changed)
         self._atom_table.cellChanged.connect(self._on_table_cell_changed)
 

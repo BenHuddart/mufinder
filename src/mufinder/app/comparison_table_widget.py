@@ -9,16 +9,17 @@ from uuid import UUID
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QTableWidget,
     QTableWidgetItem,
     QToolButton,
     QVBoxLayout,
@@ -27,7 +28,8 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.comparison_export import export_comparison_csv
 from mufinder.app.math_label import MathLabel
-from mufinder.app.theme import style_section_title
+from mufinder.app.theme import adjust_font_size, style_section_title
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import ComparisonTable
 from mufinder.science.structure_metrics import metric_definitions
 
@@ -308,18 +310,22 @@ class ComparisonTableWidget(QWidget):
         self._title_edit.setMaxLength(80)
         title_font = self._title_edit.font()
         title_font.setBold(True)
-        if title_font.pointSize() > 0:
-            title_font.setPointSize(title_font.pointSize() + 2)
+        adjust_font_size(title_font, 2)
         self._title_edit.setFont(title_font)
         self._warning_banner = QLabel("")
         self._warning_banner.setWordWrap(True)
         self._warning_banner.hide()
 
-        self._grid = QTableWidget(self)
-        self._grid.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._grid.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._grid.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        self._grid.verticalHeader().setVisible(False)
+        # Column count is set dynamically in _populate_table (headers depend on
+        # the DFT columns present), and column widths are sized to content via
+        # resizeColumnsToContents(), so this opts out of the shared
+        # stretch-to-fill default.
+        self._grid = create_workflow_table(
+            (),
+            selection_mode=QAbstractItemView.SelectionMode.SingleSelection,
+            default_resize_mode=QHeaderView.ResizeMode.Interactive,
+            stretch_last_section=False,
+        )
 
         self._export_button = QPushButton("Export CSV")
         self._delete_button = QPushButton("Delete")

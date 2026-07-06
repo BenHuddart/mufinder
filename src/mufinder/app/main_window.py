@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import stat
+import threading
 import time
 from typing import TypeVar
 from uuid import UUID, uuid4
@@ -1259,10 +1260,10 @@ class ProjectHomeTrailWidget(QWidget):
         return QColor(light_palette().text_primary)
 
     @classmethod
-    def _sign_title_point_size(cls, route: str, title: str, banner_height: float) -> float:
-        """Point size for a signpost label, scaled to the rendered banner.
+    def _sign_title_pixel_size(cls, route: str, title: str, banner_height: float) -> int:
+        """Pixel size for a signpost label, scaled to the rendered banner.
 
-        A fixed point size made labels look generous on small windows but shrink
+        A fixed size made labels look generous on small windows but shrink
         to near-illegible on large or high-DPI displays. Tying the size to the
         banner height keeps the same proportion at every window size. The
         reference height matches the banner at a typical window, so the
@@ -1272,7 +1273,7 @@ class ProjectHomeTrailWidget(QWidget):
 
         base = float(cls._SIGN_TEXT_MAX_SIZES.get(route, 13 if len(title) <= 16 else 11))
         scale = banner_height / cls._SIGN_REF_BANNER_HEIGHT
-        return max(11.0, min(base * scale, base * 2.0))
+        return round(max(11.0, min(base * scale, base * 2.0)))
 
     def _draw_sign_title(self, painter: QPainter, palette, rect: QRectF, title: str, route: str) -> None:
         left, top, right, bottom = self._SIGN_TEXT_INSETS.get(route, (18.0, 5.0, 20.0, 8.0))
@@ -1283,9 +1284,9 @@ class ProjectHomeTrailWidget(QWidget):
 
         font = QFont(heading_font_family())
         font.setBold(True)
-        font.setPointSizeF(self._sign_title_point_size(route, title, rect.height()))
-        while font.pointSizeF() > 8.0 and QFontMetricsF(font).horizontalAdvance(title) > text_rect.width() - 8.0:
-            font.setPointSizeF(font.pointSizeF() - 1.0)
+        font.setPixelSize(self._sign_title_pixel_size(route, title, rect.height()))
+        while font.pixelSize() > 8 and QFontMetricsF(font).horizontalAdvance(title) > text_rect.width() - 8.0:
+            font.setPixelSize(font.pixelSize() - 1)
 
         painter.setFont(font)
         painter.setPen(self._workflow_scroll_label_color())
@@ -1342,7 +1343,7 @@ class ProjectHomeTrailWidget(QWidget):
         painter.drawRoundedRect(rect, 6.0, 6.0)
 
         font = QFont(body_font_family())
-        font.setPointSize(8 if len(title) > 16 else 9)
+        font.setPixelSize(8 if len(title) > 16 else 9)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QColor(palette.text_primary))
@@ -1468,7 +1469,7 @@ class ProjectHomeTrailWidget(QWidget):
 
     def _draw_muon(self, painter: QPainter, palette, rect: QRectF) -> None:
         font = QFont(body_font_family())
-        font.setPointSize(34)
+        font.setPixelSize(34)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QColor(palette.accent))
@@ -1594,7 +1595,8 @@ class ConstructionSignWidget(QWidget):
             for nail_y in (sign_y + 22, sign_y + sign_height - 22):
                 painter.drawEllipse(nail_x - 3, nail_y - 3, 6, 6)
 
-        font = QFont(body_font_family(), 20)
+        font = QFont(body_font_family())
+        font.setPixelSize(20)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QPen(QColor("#FFF8EA"), 1.0))
@@ -2222,6 +2224,22 @@ class MainWindow(QMainWindow):
                 relaxation_analysis_view.shutdown()
         muon_generation_thread = getattr(self, "_muon_generation_thread", None)
         if muon_generation_thread is not None:
+            # Generation mutates the project document mid-run, so it cannot be
+            # interrupted or abandoned — but a bare wait() froze the window
+            # into "Not Responding" for the remainder of a long generation.
+            # Pump the event loop behind a busy dialog instead; the window
+            # modality prevents re-entrant close clicks.
+            if not muon_generation_thread.isFinished():
+                progress = QProgressDialog("Finishing muon site generation…", None, 0, 0, self)
+                progress.setWindowTitle("Closing")
+                progress.setWindowModality(Qt.WindowModality.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.show()
+                loop = QEventLoop()
+                muon_generation_thread.finished.connect(loop.quit)
+                if not muon_generation_thread.isFinished():
+                    loop.exec()
+                progress.close()
             muon_generation_thread.wait()
             self._muon_generation_thread = None
         self._shutdown_embedded_structure_viewers()
@@ -2587,7 +2605,13 @@ class MainWindow(QMainWindow):
         # Persist any coalesced autosave for the outgoing project before swapping.
         self._flush_dashboard()
         try:
-            self._document = self._project_service.load_project(project_root)
+            # Loading parses every entity JSON file; on a mature project over a
+            # network share or cold OneDrive folder that froze the window for
+            # seconds, so it runs off the GUI thread behind a busy dialog.
+            self._document = self._run_blocking_file_op(
+                lambda: self._project_service.load_project(project_root),
+                description=f"Opening project {project_root.name}…",
+            )
         except Exception as exc:  # noqa: BLE001 - surface project-load failures to users.
             if show_errors:
                 QMessageBox.critical(self, "Open failed", str(exc))
@@ -6192,14 +6216,80 @@ class MainWindow(QMainWindow):
         except FileNotFoundError:
             pass
 
-    @classmethod
-    def _delete_path(cls, path: Path) -> None:
+    def _run_blocking_file_op(self, op: Callable[[], object], *, description: str) -> object:
+        """Run a blocking filesystem operation off the GUI thread.
+
+        Preserves the caller's synchronous semantics (returns the result,
+        re-raises the exception) while pumping the event loop, so the retry
+        backoff against OneDrive/antivirus file locks and large recursive
+        deletes cannot freeze the window. The window is disabled while the
+        operation runs to prevent re-entrant user actions, and a busy dialog
+        appears only when the operation takes noticeably long.
+        """
+
+        outcome: dict[str, object] = {}
+        done = threading.Event()
+
+        def _worker() -> None:
+            try:
+                outcome["result"] = op()
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the GUI thread
+                outcome["error"] = exc
+            finally:
+                done.set()
+
+        worker = threading.Thread(target=_worker, name="mufinder-file-op", daemon=True)
+        loop = QEventLoop()
+        progress: QProgressDialog | None = None
+        started = time.monotonic()
+        poll = QTimer(self)
+        poll.setInterval(25)
+
+        def _tick() -> None:
+            nonlocal progress
+            if done.is_set():
+                loop.quit()
+                return
+            if progress is None and time.monotonic() - started > 0.4:
+                progress = QProgressDialog(description, None, 0, 0, self)
+                progress.setWindowTitle("Working on files")
+                progress.setWindowModality(Qt.WindowModality.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.show()
+
+        poll.timeout.connect(_tick)
+        was_enabled = self.isEnabled()
+        self.setEnabled(False)
+        worker.start()
+        poll.start()
+        try:
+            if not done.is_set():
+                loop.exec()
+        finally:
+            poll.stop()
+            poll.deleteLater()
+            if progress is not None:
+                progress.close()
+            self.setEnabled(was_enabled)
+            worker.join()
+        error = outcome.get("error")
+        if isinstance(error, BaseException):
+            raise error
+        return outcome.get("result")
+
+    def _delete_path(self, path: Path) -> None:
         if path.is_dir():
-            cls._retry_filesystem_op(
-                lambda: shutil.rmtree(path, onexc=cls._force_writable_and_retry)
+            self._run_blocking_file_op(
+                lambda: self._retry_filesystem_op(
+                    lambda: shutil.rmtree(path, onexc=self._force_writable_and_retry)
+                ),
+                description=f"Deleting {path.name}…",
             )
             return
-        cls._retry_filesystem_op(path.unlink)
+        self._run_blocking_file_op(
+            lambda: self._retry_filesystem_op(path.unlink),
+            description=f"Deleting {path.name}…",
+        )
 
     @staticmethod
     def _unique_destination(path: Path) -> Path:
@@ -6216,7 +6306,10 @@ class MainWindow(QMainWindow):
         archive_root = (output_root if output_root is not None else source.parent) / "removed_from_workflow"
         archive_root.mkdir(parents=True, exist_ok=True)
         destination = self._unique_destination(archive_root / source.name)
-        self._retry_filesystem_op(lambda: source.rename(destination))
+        self._run_blocking_file_op(
+            lambda: self._retry_filesystem_op(lambda: source.rename(destination)),
+            description=f"Archiving {source.name}…",
+        )
         return destination
 
     def _prompt_cutoff_file_disposition(
@@ -6813,6 +6906,11 @@ class MainWindow(QMainWindow):
         Calls ``start()`` (which kicks off async work on the worker thread), then
         runs a nested event loop until ``signal`` fires, returning its payload. The
         window keeps repainting while the worker performs the blocking SSH work.
+
+        A watchdog aborts the wait after three minutes and returns a
+        ``TimeoutError``: the dialog has no cancel button, so without it a
+        worker that never emits (or a request stuck behind a long queue-poll
+        batch) would trap the user in the modal dialog forever.
         """
 
         captured: dict[str, object] = {}
@@ -6822,6 +6920,11 @@ class MainWindow(QMainWindow):
             captured["payload"] = payload
             loop.quit()
 
+        watchdog = QTimer(self)
+        watchdog.setSingleShot(True)
+        watchdog.setInterval(180_000)
+        watchdog.timeout.connect(loop.quit)
+
         progress = QProgressDialog(label, None, 0, 0, self)
         progress.setWindowTitle(title)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -6830,10 +6933,17 @@ class MainWindow(QMainWindow):
         progress.show()
         try:
             start()
+            watchdog.start()
             loop.exec()
         finally:
+            watchdog.stop()
+            watchdog.deleteLater()
             signal.disconnect(on_signal)
             progress.close()
+        if "payload" not in captured:
+            return TimeoutError(
+                f"{title} did not complete within 3 minutes; the cluster worker may be busy or stuck."
+            )
         return captured.get("payload")
 
     def _await_remote_dir_check(self, targets: list[tuple[UUID, str]]) -> dict[str, object]:
@@ -6843,6 +6953,13 @@ class MainWindow(QMainWindow):
             title="Checking remote directories",
             label="Checking existing remote job directories…",
         )
+        if isinstance(payload, TimeoutError):
+            # Fail every checked job rather than silently submitting over
+            # directories whose state is unknown.
+            return {
+                "existing": [],
+                "errors": {job_id: str(payload) for job_id, _target in targets},
+            }
         return payload if isinstance(payload, dict) else {"existing": [], "errors": {}}
 
     def _await_cluster_connect(
@@ -6875,6 +6992,7 @@ class MainWindow(QMainWindow):
         results_seen: set[UUID] = set()
         total = len(submit_items)
         loop = QEventLoop()
+        timed_out = False
 
         progress = QProgressDialog("Submitting cluster jobs…", "Cancel", 0, total, self)
         progress.setWindowTitle("Submitting to cluster")
@@ -6882,14 +7000,30 @@ class MainWindow(QMainWindow):
         progress.setMinimumDuration(0)
         progress.setValue(0)
 
+        # Inactivity watchdog: any per-job progress restarts it, so long
+        # batches are fine, but a worker that stops responding entirely cannot
+        # trap the user in the nested event loop forever.
+        watchdog = QTimer(self)
+        watchdog.setSingleShot(True)
+        watchdog.setInterval(180_000)
+
+        def on_watchdog_timeout() -> None:
+            nonlocal timed_out
+            timed_out = True
+            loop.quit()
+
+        watchdog.timeout.connect(on_watchdog_timeout)
+
         def on_progress(index: int, count: int, label: str) -> None:
             progress.setLabelText(f"Submitting {label} ({index}/{count})")
             progress.setValue(index - 1)
+            watchdog.start()
 
         def on_one(job_id: object, remote_job_id: object, error: str) -> None:
             if not isinstance(job_id, UUID):
                 return
             results_seen.add(job_id)
+            watchdog.start()
             prepared = prepared_by_job.get(job_id)
             if prepared is None:
                 return
@@ -6904,7 +7038,8 @@ class MainWindow(QMainWindow):
             if outcome.journal_changed:
                 self._refresh_journal_view()
             progress.setValue(progress.value() + 1)
-            self._refresh_jobs_table()
+            # The jobs table is refreshed once by the caller after the batch;
+            # refreshing per job here made an N-job batch do N full rebuilds.
 
         self._cluster_runner.submit_batch_progress.connect(on_progress)
         self._cluster_runner.job_submit_finished.connect(on_one)
@@ -6913,15 +7048,25 @@ class MainWindow(QMainWindow):
         progress.show()
         try:
             self._cluster_runner.submit_batch(submit_items)
+            watchdog.start()
             loop.exec()
         finally:
+            watchdog.stop()
+            watchdog.deleteLater()
             self._cluster_runner.submit_batch_progress.disconnect(on_progress)
             self._cluster_runner.job_submit_finished.disconnect(on_one)
             self._cluster_runner.submit_batch_finished.disconnect(loop.quit)
             progress.close()
 
-        # Jobs prepared but never submitted (cancelled mid-batch) are cancelled so
-        # they do not linger in the ``submitting`` state.
+        if timed_out:
+            pending = total - len(results_seen)
+            failed.append(
+                f"- Cluster submission stopped responding after 3 minutes; "
+                f"{pending} pending job(s) were cancelled."
+            )
+
+        # Jobs prepared but never submitted (cancelled mid-batch or timed out)
+        # are cancelled so they do not linger in the ``submitting`` state.
         for job_id, prepared in prepared_by_job.items():
             if job_id not in results_seen:
                 self._job_execution.cancel_job(prepared.job.id)
@@ -7656,10 +7801,44 @@ class MainWindow(QMainWindow):
             fallback.extend(sorted(path for path in output_dir.glob(pattern) if path.is_file()))
         return list(dict.fromkeys(fallback))
 
-    @staticmethod
-    def _read_error_contexts(path: Path, *, context_lines: int = 2, max_matches: int = 8) -> str:
+    _TAIL_READ_LIMIT_BYTES = 256 * 1024
+
+    @classmethod
+    def _read_bounded_tail(cls, path: Path, *, max_bytes: int | None = None) -> str:
+        """Read at most the trailing ``max_bytes`` of ``path`` as text.
+
+        Files at or under the limit are read in full, byte-for-byte identical
+        to a plain ``read_text()`` call. Larger files are read from a tail
+        offset only, so an inspect on a runaway multi-hundred-MB job output
+        never loads the whole file into memory; a partial leading line (cut
+        mid-line by the seek) is dropped and a truncation marker is prefixed,
+        matching the "... [truncated]" convention used elsewhere in this file.
+        """
+
+        limit = cls._TAIL_READ_LIMIT_BYTES if max_bytes is None else max_bytes
+        with path.open("rb") as handle:
+            size = handle.seek(0, 2)
+            truncated = size > limit
+            if truncated:
+                handle.seek(size - limit)
+            else:
+                handle.seek(0)
+            raw = handle.read()
+
+        # ``read_text()`` applies universal-newline translation; replicate that
+        # here so small-file behavior is byte-for-byte identical to before.
+        text = raw.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+        if not truncated:
+            return text
+
+        # The seek landed mid-line; drop the partial leading fragment.
+        _, _, remainder = text.partition("\n")
+        return "[... truncated] ...\n" + remainder
+
+    @classmethod
+    def _read_error_contexts(cls, path: Path, *, context_lines: int = 2, max_matches: int = 8) -> str:
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = cls._read_bounded_tail(path).splitlines()
         except OSError as exc:
             return f"Could not read file: {exc}"
 
@@ -7690,10 +7869,10 @@ class MainWindow(QMainWindow):
 
         return "\n\n...\n\n".join(excerpts)
 
-    @staticmethod
-    def _read_text_excerpt(path: Path, *, max_chars: int = 12000) -> str:
+    @classmethod
+    def _read_text_excerpt(cls, path: Path, *, max_chars: int = 12000) -> str:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = cls._read_bounded_tail(path)
         except OSError as exc:
             return f"Could not read file: {exc}"
 

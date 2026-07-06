@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.cluster_connection_check import ClusterConnectionCheck
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
     prompt_for_cluster_credentials,
@@ -575,45 +576,37 @@ class ClusterSetupDialog(QDialog):
             QMessageBox.warning(self, "Missing credentials", "Credentials are required for this connection.")
             return
 
-        try:
-            self._test_connection_with_trust(config, credentials=credentials)
-        except Exception as exc:  # noqa: BLE001
+        # The connect runs on a worker thread behind a cancellable progress
+        # dialog: paramiko can block for over a minute against an unreachable
+        # host and must never freeze the GUI. The factory and trust prompt are
+        # passed from this module's namespace so tests can monkeypatch them.
+        check = ClusterConnectionCheck(
+            self,
+            config,
+            credentials,
+            self._settings,
+            title="Testing connection",
+            connection_factory=SSHConnection,
+            trust_prompt=lambda parent, cfg, exc: prompt_to_trust_host_key(parent, cfg, exc),
+        )
+
+        def _on_succeeded() -> None:
+            QMessageBox.information(self, "Connection successful", "SSH connection test succeeded.")
+
+        def _on_failed(exc: object) -> None:
             show_detailed_warning(
                 self,
                 "Connection failed",
                 format_cluster_connection_error(config, exc),
                 informative_text="Open Details for the full SSH connection error and recovery guidance.",
             )
-            return
 
-        QMessageBox.information(self, "Connection successful", "SSH connection test succeeded.")
-
-    def _test_connection_with_trust(self, config: ClusterConfig, *, credentials) -> None:
-        trusted_endpoints: set[str] = set()
-        while True:
-            connection = SSHConnection(config, settings=self._settings)
-            try:
-                if config.jump_host_enabled:
-                    connection.connect(credentials=credentials)
-                else:
-                    connection.connect(password=credentials.target_secret)
-                return
-            except SSHUnknownHostKeyError as exc:
-                if exc.endpoint in trusted_endpoints:
-                    raise
-                if not prompt_to_trust_host_key(self, config, exc):
-                    raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
-                save_trusted_host_key(
-                    self._settings,
-                    config,
-                    algorithm=exc.algorithm,
-                    key_base64=exc.key_base64,
-                    endpoint=exc.endpoint,
-                )
-                trusted_endpoints.add(exc.endpoint)
-            finally:
-                if connection.is_connected:
-                    connection.disconnect()
+        check.succeeded.connect(_on_succeeded)
+        check.failed.connect(_on_failed)
+        check.succeeded.connect(check.deleteLater)
+        check.failed.connect(check.deleteLater)
+        check.cancelled.connect(check.deleteLater)
+        check.start()
 
     def _validate_configs(self) -> list[str]:
         issues: list[str] = []
