@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.app.theme import (
+    arrow_icon,
     current_palette,
     status_brush,
     style_hint_text,
@@ -456,23 +457,27 @@ def _build_image_stepper(
     parent: QWidget,
     on_step,
 ) -> tuple[QToolButton, QLabel, QToolButton]:
-    """Create the shared ``◀ / position / ▶`` image-stepper controls.
+    """Create the shared previous / position / next image-stepper controls.
 
     Used by both the inspector controls and the pop-out window; callers arrange
     the returned widgets in their own layout. ``on_step`` receives -1 or +1.
     """
 
     prev_button = QToolButton(parent)
-    prev_button.setText("◀")
+    prev_button.setIcon(arrow_icon("left"))
+    prev_button.setText("")
     prev_button.setAutoRepeat(True)
     prev_button.setToolTip("Previous image along the reaction coordinate.")
+    prev_button.setAccessibleName("Previous image")
     prev_button.clicked.connect(lambda: on_step(-1))
     position_label = QLabel("", parent)
     position_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     next_button = QToolButton(parent)
-    next_button.setText("▶")
+    next_button.setIcon(arrow_icon("right"))
+    next_button.setText("")
     next_button.setAutoRepeat(True)
     next_button.setToolTip("Next image along the reaction coordinate.")
+    next_button.setAccessibleName("Next image")
     next_button.clicked.connect(lambda: on_step(1))
     return prev_button, position_label, next_button
 

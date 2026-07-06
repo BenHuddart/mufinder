@@ -198,6 +198,24 @@ def test_indicator_glyph_assets_are_generated(qapp) -> None:
         assert colour.lower() in svg.lower()
 
 
+def test_arrow_asset_supports_left_direction(qapp) -> None:
+    from pathlib import Path
+
+    path = Path(theme_module._arrow_asset_path("left", "#E02020"))
+    assert path.exists()
+    svg = path.read_text(encoding="utf-8")
+    assert svg.startswith("<svg")
+    assert "#e02020" in svg.lower()
+
+
+def test_arrow_icon_returns_non_null_icon_for_each_direction(qapp) -> None:
+    theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+
+    for direction in ("up", "down", "left", "right"):
+        icon = theme_module.arrow_icon(direction)
+        assert not icon.isNull()
+
+
 def test_status_brush_uses_palette_tokens(qapp) -> None:
     theme_module.apply_theme(qapp, theme_module.THEME_DARK)
 
