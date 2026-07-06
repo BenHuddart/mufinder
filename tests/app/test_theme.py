@@ -198,6 +198,27 @@ def test_indicator_glyph_assets_are_generated(qapp) -> None:
         assert colour.lower() in svg.lower()
 
 
+def test_stylesheet_asset_urls_never_contain_backslashes(qapp) -> None:
+    # Qt's CSS parser treats a backslash inside url("…") as an escape
+    # character: on Windows a native path both breaks the image reference and
+    # corrupts parsing of every rule after it (dropping e.g. the heading font
+    # rules). Asset paths must therefore always be emitted with forward slashes.
+    from pathlib import Path
+
+    for direction in ("up", "down", "right"):
+        path = theme_module._arrow_asset_path(direction, "#2C2418")
+        assert "\\" not in path
+        assert Path(path).exists()
+
+    for kind in ("check", "dash", "dot"):
+        path = theme_module._indicator_glyph_path(kind, "#FFFFFF")
+        assert "\\" not in path
+        assert Path(path).exists()
+
+    for palette in (theme_module.light_palette(), theme_module.dark_palette()):
+        assert "\\" not in theme_module._build_stylesheet(palette)
+
+
 def test_status_brush_uses_palette_tokens(qapp) -> None:
     theme_module.apply_theme(qapp, theme_module.THEME_DARK)
 

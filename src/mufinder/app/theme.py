@@ -104,7 +104,13 @@ def heading_font_family() -> str:
 
 
 def _arrow_asset_path(direction: str, colour: str) -> str:
-    """Return a temporary SVG asset path for a themed arrow glyph."""
+    """Return a temporary SVG asset path for a themed arrow glyph.
+
+    The path is returned with forward slashes: it is interpolated into
+    stylesheet ``url("…")`` values, where Qt's CSS parser treats a backslash
+    as an escape character. Windows-native separators would not only break
+    the image reference but corrupt parsing of every rule that follows it.
+    """
 
     normalized = colour.lower().replace("#", "")
     asset_dir = Path(tempfile.gettempdir()) / "mufinder-theme-assets"
@@ -123,7 +129,7 @@ def _arrow_asset_path(direction: str, colour: str) -> str:
             "</svg>"
         )
         filename.write_text(svg, encoding="utf-8")
-    return str(filename)
+    return filename.as_posix()
 
 
 def _indicator_glyph_path(kind: str, colour: str) -> str:
@@ -133,6 +139,8 @@ def _indicator_glyph_path(kind: str, colour: str) -> str:
     ``dash`` (indeterminate checkbox). Styling a Qt ``::indicator`` via the
     stylesheet replaces the native glyph, so we supply our own here to keep the
     indicators identical on every platform and tinted to the MuFinder palette.
+    Returned with forward slashes for the same ``url("…")`` escaping reason as
+    :func:`_arrow_asset_path`.
     """
 
     normalized = colour.lower().replace("#", "")
@@ -157,7 +165,7 @@ def _indicator_glyph_path(kind: str, colour: str) -> str:
             f"{body}</svg>"
         )
         filename.write_text(svg, encoding="utf-8")
-    return str(filename)
+    return filename.as_posix()
 
 
 @dataclass(frozen=True, slots=True)
