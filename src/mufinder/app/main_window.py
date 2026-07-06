@@ -1258,10 +1258,10 @@ class ProjectHomeTrailWidget(QWidget):
         return QColor(light_palette().text_primary)
 
     @classmethod
-    def _sign_title_point_size(cls, route: str, title: str, banner_height: float) -> float:
-        """Point size for a signpost label, scaled to the rendered banner.
+    def _sign_title_pixel_size(cls, route: str, title: str, banner_height: float) -> int:
+        """Pixel size for a signpost label, scaled to the rendered banner.
 
-        A fixed point size made labels look generous on small windows but shrink
+        A fixed size made labels look generous on small windows but shrink
         to near-illegible on large or high-DPI displays. Tying the size to the
         banner height keeps the same proportion at every window size. The
         reference height matches the banner at a typical window, so the
@@ -1271,7 +1271,7 @@ class ProjectHomeTrailWidget(QWidget):
 
         base = float(cls._SIGN_TEXT_MAX_SIZES.get(route, 13 if len(title) <= 16 else 11))
         scale = banner_height / cls._SIGN_REF_BANNER_HEIGHT
-        return max(11.0, min(base * scale, base * 2.0))
+        return round(max(11.0, min(base * scale, base * 2.0)))
 
     def _draw_sign_title(self, painter: QPainter, palette, rect: QRectF, title: str, route: str) -> None:
         left, top, right, bottom = self._SIGN_TEXT_INSETS.get(route, (18.0, 5.0, 20.0, 8.0))
@@ -1282,9 +1282,9 @@ class ProjectHomeTrailWidget(QWidget):
 
         font = QFont(heading_font_family())
         font.setBold(True)
-        font.setPointSizeF(self._sign_title_point_size(route, title, rect.height()))
-        while font.pointSizeF() > 8.0 and QFontMetricsF(font).horizontalAdvance(title) > text_rect.width() - 8.0:
-            font.setPointSizeF(font.pointSizeF() - 1.0)
+        font.setPixelSize(self._sign_title_pixel_size(route, title, rect.height()))
+        while font.pixelSize() > 8 and QFontMetricsF(font).horizontalAdvance(title) > text_rect.width() - 8.0:
+            font.setPixelSize(font.pixelSize() - 1)
 
         painter.setFont(font)
         painter.setPen(self._workflow_scroll_label_color())
@@ -1341,7 +1341,7 @@ class ProjectHomeTrailWidget(QWidget):
         painter.drawRoundedRect(rect, 6.0, 6.0)
 
         font = QFont(body_font_family())
-        font.setPointSize(8 if len(title) > 16 else 9)
+        font.setPixelSize(8 if len(title) > 16 else 9)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QColor(palette.text_primary))
@@ -1467,7 +1467,7 @@ class ProjectHomeTrailWidget(QWidget):
 
     def _draw_muon(self, painter: QPainter, palette, rect: QRectF) -> None:
         font = QFont(body_font_family())
-        font.setPointSize(34)
+        font.setPixelSize(34)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QColor(palette.accent))
@@ -1593,7 +1593,8 @@ class ConstructionSignWidget(QWidget):
             for nail_y in (sign_y + 22, sign_y + sign_height - 22):
                 painter.drawEllipse(nail_x - 3, nail_y - 3, 6, 6)
 
-        font = QFont(body_font_family(), 20)
+        font = QFont(body_font_family())
+        font.setPixelSize(20)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QPen(QColor("#FFF8EA"), 1.0))
@@ -7650,10 +7651,44 @@ class MainWindow(QMainWindow):
             fallback.extend(sorted(path for path in output_dir.glob(pattern) if path.is_file()))
         return list(dict.fromkeys(fallback))
 
-    @staticmethod
-    def _read_error_contexts(path: Path, *, context_lines: int = 2, max_matches: int = 8) -> str:
+    _TAIL_READ_LIMIT_BYTES = 256 * 1024
+
+    @classmethod
+    def _read_bounded_tail(cls, path: Path, *, max_bytes: int | None = None) -> str:
+        """Read at most the trailing ``max_bytes`` of ``path`` as text.
+
+        Files at or under the limit are read in full, byte-for-byte identical
+        to a plain ``read_text()`` call. Larger files are read from a tail
+        offset only, so an inspect on a runaway multi-hundred-MB job output
+        never loads the whole file into memory; a partial leading line (cut
+        mid-line by the seek) is dropped and a truncation marker is prefixed,
+        matching the "... [truncated]" convention used elsewhere in this file.
+        """
+
+        limit = cls._TAIL_READ_LIMIT_BYTES if max_bytes is None else max_bytes
+        with path.open("rb") as handle:
+            size = handle.seek(0, 2)
+            truncated = size > limit
+            if truncated:
+                handle.seek(size - limit)
+            else:
+                handle.seek(0)
+            raw = handle.read()
+
+        # ``read_text()`` applies universal-newline translation; replicate that
+        # here so small-file behavior is byte-for-byte identical to before.
+        text = raw.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+        if not truncated:
+            return text
+
+        # The seek landed mid-line; drop the partial leading fragment.
+        _, _, remainder = text.partition("\n")
+        return "[... truncated] ...\n" + remainder
+
+    @classmethod
+    def _read_error_contexts(cls, path: Path, *, context_lines: int = 2, max_matches: int = 8) -> str:
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = cls._read_bounded_tail(path).splitlines()
         except OSError as exc:
             return f"Could not read file: {exc}"
 
@@ -7684,10 +7719,10 @@ class MainWindow(QMainWindow):
 
         return "\n\n...\n\n".join(excerpts)
 
-    @staticmethod
-    def _read_text_excerpt(path: Path, *, max_chars: int = 12000) -> str:
+    @classmethod
+    def _read_text_excerpt(cls, path: Path, *, max_chars: int = 12000) -> str:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = cls._read_bounded_tail(path)
         except OSError as exc:
             return f"Could not read file: {exc}"
 
