@@ -599,13 +599,10 @@ class RelaxationClusteringDialog(QDialog):
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
 
-        button_row = QHBoxLayout()
-        button_row.addStretch(1)
-        button_row.addWidget(self._apply_button)
-        close_button = QPushButton("Close", self)
-        close_button.clicked.connect(self.reject)
-        button_row.addWidget(close_button)
-        layout.addLayout(button_row)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.addButton(self._apply_button, QDialogButtonBox.ButtonRole.ApplyRole)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
     def _restore_controls(self) -> None:
         state = self._clustering_state()
