@@ -73,6 +73,11 @@ def test_apply_theme_sets_active_palette(qapp) -> None:
     assert "QProgressBar#muonGenerationProgress" in stylesheet
     assert 'QProgressBar#muonGenerationProgress[generationState="complete"]::chunk' in stylesheet
     assert qapp.font().family() == theme_module.body_font_family()
+    # The default font must be sized in pixels, not points: stylesheet sizes
+    # are all px, and pt-to-px conversion differs between macOS (72 dpi) and
+    # Windows (96 dpi), which previously inflated Windows body text by ~33%.
+    assert qapp.font().pixelSize() == 11
+    assert qapp.font().pointSize() == -1
 
 
 def test_bundled_font_assets_exist() -> None:

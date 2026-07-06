@@ -1803,6 +1803,10 @@ def apply_theme(app: QApplication, mode: str) -> str:
     _ensure_table_corner_styler(app)
 
     font = QFont(body_font_family())
-    font.setPointSize(11)
+    # Pixel size, not point size: the stylesheet declares every label size in
+    # px, and point-to-pixel conversion differs per platform (macOS logical
+    # 72 dpi vs Windows 96 dpi), which made Windows body text ~33% larger
+    # than every px-sized label. 11 px matches the macOS 11 pt rendering.
+    font.setPixelSize(11)
     app.setFont(font)
     return resolved
