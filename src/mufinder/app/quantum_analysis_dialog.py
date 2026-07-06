@@ -43,8 +43,8 @@ from mufinder.app.theme import (
     current_palette,
     style_hint_text,
     style_section_title,
-    use_square_top_table_corners,
 )
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.science.quantum_adiabatic import DirectionalPotential, SingleParticleResult, solve_single_particle_ground_state
 from mufinder.science.quantum_phonons import (
@@ -227,7 +227,9 @@ class QuantumPhononAnalysisDialog(QDialog):
         layout.addLayout(controls)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, tab)
-        self._phonon_mode_table = _table(("Mode", "Frequency (cm⁻¹)", "Muon participation", "Muon direction"))
+        self._phonon_mode_table = _quantum_analysis_table(
+            ("Mode", "Frequency (cm⁻¹)", "Muon participation", "Muon direction")
+        )
         self._phonon_mode_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._phonon_mode_table.setMinimumWidth(420)
         self._phonon_mode_table.setMaximumWidth(620)
@@ -279,7 +281,9 @@ class QuantumPhononAnalysisDialog(QDialog):
         layout.addLayout(controls)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._single_particle_table = _table(("Mode no.", "Direction", "Frequency (cm⁻¹)", "ZPE (eV)", "Width (Å)"))
+        self._single_particle_table = _quantum_analysis_table(
+            ("Mode no.", "Direction", "Frequency (cm⁻¹)", "ZPE (eV)", "Width (Å)")
+        )
         self._single_particle_table.setMinimumWidth(480)
         self._single_particle_table.setMaximumWidth(520)
         single_particle_header = self._single_particle_table.horizontalHeader()
@@ -747,18 +751,18 @@ class QuantumAnalysisHelpDialog(QDialog):
         layout.addWidget(buttons)
 
 
-def _table(headers: tuple[str, ...]) -> QTableWidget:
-    table = QTableWidget(0, len(headers))
-    table.setHorizontalHeaderLabels(list(headers))
-    table.verticalHeader().setVisible(False)
-    table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-    table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-    table.setAlternatingRowColors(True)
-    table.horizontalHeader().setStretchLastSection(False)
-    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+def _quantum_analysis_table(headers: tuple[str, ...]) -> QTableWidget:
+    """Shared chrome for this dialog's phonon-mode/single-particle/matrix tables.
+
+    All columns size to content (not stretch-to-fill): these tables show
+    compact numeric columns that should not stretch to the dialog width.
+    """
+    table = create_workflow_table(
+        headers,
+        default_resize_mode=QHeaderView.ResizeMode.ResizeToContents,
+        stretch_last_section=False,
+    )
     table.horizontalHeader().setMinimumSectionSize(48)
-    use_square_top_table_corners(table)
     return table
 
 
@@ -919,7 +923,7 @@ def _correlation_help_definition() -> dict[str, object]:
 
 
 def _matrix_table() -> QTableWidget:
-    table = _table(("x", "y", "z"))
+    table = _quantum_analysis_table(("x", "y", "z"))
     table.setRowCount(3)
     table.setVerticalHeaderLabels(("x", "y", "z"))
     table.verticalHeader().setVisible(True)

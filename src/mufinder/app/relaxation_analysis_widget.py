@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QSplitter,
-    QTableWidget,
     QTableWidgetItem,
     QTabWidget,
     QTreeWidget,
@@ -54,6 +53,7 @@ from mufinder.app.theme import (
     use_tabbed_table_corners,
 )
 from mufinder.app.uep_clustering_dialog import _DendrogramNavigationToolbar
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.science.relaxation_analysis import (
     AnchoredRelaxedSite,
@@ -183,11 +183,13 @@ class RelaxationAnalysisJobDialog(QDialog):
         self._excluded_job_ids = set(excluded_job_ids or set())
         self._reference_job_ids = set(reference_job_ids or set())
         self._reference_minimum_ev = self._minimum_reference_energy()
-        self._table = QTableWidget(0, 6, self)
-        self._table.setHorizontalHeaderLabels(["Add", "Relaxation", "dE vs workspace min (eV)", "fX", "fY", "fZ"])
-        self._table.verticalHeader().setVisible(False)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # Columns are sized by resizeColumnsToContents() in _populate, so this
+        # opts out of the shared stretch-to-fill default.
+        self._table = create_workflow_table(
+            ("Add", "Relaxation", "dE vs workspace min (eV)", "fX", "fY", "fZ"),
+            default_resize_mode=QHeaderView.ResizeMode.Interactive,
+            stretch_last_section=False,
+        )
         self._build_layout()
         self._populate()
 
@@ -473,14 +475,14 @@ class RelaxationClusteringDialog(QDialog):
         self._left_figure.subplots_adjust(left=0.12, right=0.98, top=0.96, bottom=0.12)
         self._left_canvas = FigureCanvasQTAgg(self._left_figure)
         self._viewer = AtomicStructureViewer(self)
-        self._summary_table = QTableWidget(0, 6, self)
-        self._summary_table.setHorizontalHeaderLabels(
-            ["Cluster", "Wyckoff", "Size", "Representative", "Min dE (eV)", "Std. dev."]
+        # Columns are sized to content (with the Wyckoff column stretched), so
+        # this opts out of the shared stretch-to-fill default.
+        self._summary_table = create_workflow_table(
+            ("Cluster", "Wyckoff", "Size", "Representative", "Min dE (eV)", "Std. dev."),
+            default_resize_mode=QHeaderView.ResizeMode.ResizeToContents,
+            stretch_last_section=False,
         )
-        self._summary_table.verticalHeader().setVisible(False)
-        self._summary_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         header = self._summary_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         for column in (0, 2, 3, 4, 5):
             item = self._summary_table.horizontalHeaderItem(column)

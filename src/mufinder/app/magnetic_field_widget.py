@@ -67,6 +67,7 @@ from mufinder.app.theme import (
     style_small_checked_tool_button,
     use_square_top_table_corners,
 )
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.persistence.codec import to_jsonable
 from mufinder.science.demagnetization import DemagnetizationError, DemagnetizingSample, demagnetizing_tensor
@@ -2741,11 +2742,11 @@ class MuonSiteSelectionDialog(QDialog):
         self._site_source_combo.addItem("Custom fractional position", "custom")
         self._site_source_combo.currentIndexChanged.connect(self._refresh_muon_site_selection)
 
-        self._site_table = QTableWidget(0, 6)
-        self._site_table.setHorizontalHeaderLabels(["Site", "Source", "Cluster", "fx", "fy", "fz"])
-        self._site_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._site_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._site_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._site_table = create_workflow_table(
+            ("Site", "Source", "Cluster", "fx", "fy", "fz"),
+            selection_mode=QAbstractItemView.SelectionMode.SingleSelection,
+            stretch_last_section=False,
+        )
         self._site_table.itemSelectionChanged.connect(self._on_site_selection_changed)
         self._configure_site_table_columns()
 
@@ -3863,18 +3864,16 @@ class NuclearRelaxationDialog(QDialog):
         self._calculate_button.clicked.connect(self._calculate)
         self._calculate_button.setEnabled(muon_site is not None)
 
-        self._summary_table = QTableWidget(0, 2, self)
-        self._summary_table.setHorizontalHeaderLabels(["Quantity", "Value"])
-        self._summary_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._summary_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._summary_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        use_square_top_table_corners(self._summary_table)
-        self._element_table = QTableWidget(0, 2, self)
-        self._element_table.setHorizontalHeaderLabels(["Element", "σ² contribution (μs⁻²)"])
-        self._element_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._element_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._element_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        use_square_top_table_corners(self._element_table)
+        self._summary_table = create_workflow_table(
+            ("Quantity", "Value"),
+            resize_to_contents_columns=(0,),
+            stretch_last_section=False,
+        )
+        self._element_table = create_workflow_table(
+            ("Element", "σ² contribution (μs⁻²)"),
+            resize_to_contents_columns=(0,),
+            stretch_last_section=False,
+        )
 
         self._build_layout()
         self._apply_styles()
@@ -4671,11 +4670,10 @@ class MagneticFieldWidget(QWidget):
         self._calculation_status = QLabel("Results: -")
         self._calculation_status.setWordWrap(True)
         style_hint_text(self._calculation_status)
-        self._result_table = QTableWidget(0, 6)
-        self._result_table.setHorizontalHeaderLabels(["Site", "Bx (T)", "By (T)", "Bz (T)", "|B| (T)", "Result"])
-        self._result_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._result_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._result_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._result_table = create_workflow_table(
+            ("Site", "Bx (T)", "By (T)", "Bz (T)", "|B| (T)", "Result"),
+            stretch_last_section=False,
+        )
         self._result_table.itemSelectionChanged.connect(self._sync_distribution_plot_button)
         self._configure_result_table_columns()
 

@@ -7,7 +7,6 @@ from typing import Any
 from PySide6.QtCore import QEvent, QItemSelectionModel, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QButtonGroup,
     QComboBox,
     QDialog,
@@ -25,7 +24,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QSpinBox,
     QStackedWidget,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -39,6 +37,7 @@ from mufinder.app.structure_render_guard import (
     structure_geometry_fingerprint,
 )
 from mufinder.app.theme import refresh_widget_style, style_section_subtitle, style_section_title
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.science.site_generation import (
     SiteGenerationError,
@@ -220,15 +219,10 @@ class MuonGenerationWidget(QWidget):
         self._manual_y_label = QLabel("fY")
         self._manual_z_label = QLabel("fZ")
 
-        self._site_table = QTableWidget(0, 6)
-        self._site_table.setHorizontalHeaderLabels(
-            ["Site", "Method", "State", "fX", "fY", "fZ"]
-        )
+        self._site_table = create_workflow_table(("Site", "Method", "State", "fX", "fY", "fZ"))
         self._site_table.horizontalHeaderItem(0).setToolTip("Site label")
         self._site_table.horizontalHeaderItem(1).setToolTip("Generation method")
         self._site_table.horizontalHeaderItem(2).setToolTip("Workflow state")
-        self._site_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._site_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._configure_site_table_columns()
         self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
         self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -240,12 +234,14 @@ class MuonGenerationWidget(QWidget):
         self._clear_selection_shortcut.activated.connect(self._clear_site_selection)
         self._site_table.viewport().installEventFilter(self)
 
-        self._uep_cluster_table = QTableWidget(0, 8)
-        self._uep_cluster_table.setHorizontalHeaderLabels(
-            ["Source", "Cluster", "Size", "Class", "E (eV)", "fX", "fY", "fZ"]
+        # Columns are sized by resizeColumnsToContents() after each repopulation
+        # (see _set_uep_cluster_rows), so this table opts out of the shared
+        # stretch-to-fill default in favor of Qt's interactive resize mode.
+        self._uep_cluster_table = create_workflow_table(
+            ("Source", "Cluster", "Size", "Class", "E (eV)", "fX", "fY", "fZ"),
+            default_resize_mode=QHeaderView.ResizeMode.Interactive,
+            stretch_last_section=False,
         )
-        self._uep_cluster_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._uep_cluster_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._uep_cluster_table.setFixedHeight(128)
         self._uep_cluster_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._uep_cluster_table.viewport().installEventFilter(self)
