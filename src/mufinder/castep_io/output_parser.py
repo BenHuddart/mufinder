@@ -57,6 +57,7 @@ _ASE_STRESS_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _LATTICE_HEADER_RE = re.compile(r"\b(?:real\s+)?lattice\b|\bunit\s+cell\b", re.IGNORECASE)
+_RUN_STARTED_RE = re.compile(r"^\s*Run started:", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,14 +105,23 @@ def parse_castep_output(path: Path) -> CastepResult:
     final_lattice_vectors = _parse_final_lattice_vectors(lines)
     mulliken_atomic_spins = parse_castep_mulliken_atomic_spins(output_path)
 
+    # A continued/resubmitted calculation appends its output to the same
+    # ``.castep`` file, so the file can contain several restarts each
+    # starting with a "Run started:" banner. Completion/failure must reflect
+    # only the most recent restart: an earlier restart's transient failure
+    # (e.g. exhausting geometry-optimization steps before a
+    # walltime-triggered continuation) must not shadow a later success.
+    final_run_lines = _last_run_segment(lines)
+    final_run_text = "\n".join(final_run_lines)
+
     geom_converged = None
-    if _GEOM_SUCCESS_RE.search(text):
+    if _GEOM_SUCCESS_RE.search(final_run_text):
         geom_converged = True
-    elif _GEOM_FAILURE_RE.search(text):
+    elif _GEOM_FAILURE_RE.search(final_run_text):
         geom_converged = False
 
-    error_message = _find_error_message(lines)
-    completed = _is_complete(text, error_message)
+    error_message = _find_error_message(final_run_lines)
+    completed = _is_complete(final_run_text, error_message)
 
     return CastepResult(
         completed=completed,
@@ -386,6 +396,19 @@ def _compute_max_abs_component(rows: tuple[tuple[object, ...], ...]) -> float | 
     if not values:
         return None
     return max(values)
+
+
+def _last_run_segment(lines: list[str]) -> list[str]:
+    """Return the lines belonging to the most recent ``Run started:`` restart.
+
+    Falls back to all lines when no restart banner is present (single-run
+    output).
+    """
+
+    boundaries = [index for index, line in enumerate(lines) if _RUN_STARTED_RE.search(line)]
+    if not boundaries:
+        return lines
+    return lines[boundaries[-1] :]
 
 
 def _find_error_message(lines: list[str]) -> str | None:
