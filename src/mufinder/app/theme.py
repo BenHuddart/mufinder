@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib.resources import files
+import logging
 from pathlib import Path
 import tempfile
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt
-from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QPalette
+from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
 from PySide6.QtWidgets import QApplication, QLabel, QScrollBar, QTableWidget, QToolButton, QTreeWidget, QWidget
 
 THEME_LIGHT = "light"
@@ -54,9 +55,18 @@ def ensure_fonts_loaded() -> None:
         return
 
     font_dir = _bundled_font_dir()
-    if not font_dir.is_dir():
+    font_paths = sorted(font_dir.glob("*.ttf")) if font_dir.is_dir() else []
+    if not font_paths:
+        # A missing fonts directory means a broken packaged build (the
+        # installer dropped mufinder/assets/fonts): the UI silently falls
+        # back to host fonts, so make the regression visible in the log.
+        logging.getLogger(__name__).warning(
+            "Bundled fonts not found at %s; falling back to system fonts. "
+            "Packaged builds must ship mufinder/assets/fonts.",
+            font_dir,
+        )
         return
-    for font_path in sorted(font_dir.glob("*.ttf")):
+    for font_path in font_paths:
         QFontDatabase.addApplicationFont(str(font_path))
     _FONTS_LOADED = True
 
@@ -103,6 +113,25 @@ def heading_font_family() -> str:
     )
 
 
+def adjust_font_size(font: QFont, delta: int, *, minimum: int = 1) -> None:
+    """Adjust ``font``'s size by ``delta`` in whichever unit it is sized.
+
+    The application default font is sized in pixels (see ``apply_theme``), so
+    ``pointSize()`` returns -1 for fonts derived from it and naive
+    ``setPointSize(pointSize() + delta)`` arithmetic silently stops applying
+    (or worse, clamps to an absolute point size). This helper applies the
+    delta to the pixel or point size, whichever the font actually carries.
+    """
+
+    pixel = font.pixelSize()
+    if pixel > 0:
+        font.setPixelSize(max(minimum, pixel + delta))
+        return
+    point = font.pointSize()
+    if point > 0:
+        font.setPointSize(max(minimum, point + delta))
+
+
 def _arrow_asset_path(direction: str, colour: str) -> str:
     """Return a temporary SVG asset path for a themed arrow glyph.
 
@@ -121,6 +150,8 @@ def _arrow_asset_path(direction: str, colour: str) -> str:
             points = "2,3 10,3 6,8"
         elif direction == "right":
             points = "3,2 3,10 8,6"
+        elif direction == "left":
+            points = "9,2 9,10 4,6"
         else:
             points = "2,8 10,8 6,3"
         svg = (
@@ -130,6 +161,21 @@ def _arrow_asset_path(direction: str, colour: str) -> str:
         )
         filename.write_text(svg, encoding="utf-8")
     return filename.as_posix()
+
+
+def arrow_icon(direction: str) -> QIcon:
+    """Return a themed arrow ``QIcon`` for ``direction`` in the current palette.
+
+    ``direction`` is one of ``"up"``, ``"down"``, ``"left"``, or ``"right"``.
+    Use this instead of unicode glyphs such as ``◀``/``▶`` for stepper
+    buttons: those glyphs fall outside the bundled Inter font's coverage and
+    render from a mismatched platform fallback font (Segoe UI Symbol on
+    Windows, Apple Symbols on macOS), producing inconsistent size/alignment
+    across platforms.
+    """
+
+    colour = current_palette().text_primary
+    return QIcon(_arrow_asset_path(direction, colour))
 
 
 def _indicator_glyph_path(kind: str, colour: str) -> str:
@@ -582,6 +628,29 @@ def style_warning_text(label: QLabel) -> None:
     """Tag a label as warning text for theme-based styling."""
 
     label.setObjectName("warningText")
+
+
+def make_empty_state_label(
+    text: str = "",
+    *,
+    object_name: str = "overviewPlaceholder",
+    alignment: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignCenter,
+    parent: QWidget | None = None,
+) -> QLabel:
+    """Return a word-wrapped placeholder ``QLabel`` for an empty job/result view.
+
+    Centralizes the near-identical "nothing here yet" placeholder pattern
+    previously hand-copied in ``convergence_overview_widget.py``,
+    ``muon_sites_summary_widget.py``, and ``journal_widget.py``. Callers keep
+    their own ``object_name`` so existing stylesheet rules and tests that key
+    off it continue to work unchanged.
+    """
+
+    label = QLabel(text, parent)
+    label.setObjectName(object_name)
+    label.setWordWrap(True)
+    label.setAlignment(alignment)
+    return label
 
 
 def style_inline_group(widget: QWidget) -> None:
@@ -1622,7 +1691,7 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     QWidget#mufinderInlineGroup QLabel {{
         background: transparent;
     }}
-    QFrame#uepIsosurfaceSliderPanel,
+    QFrame#analysisSliderPanel,
     QFrame#uepIsosurfaceInfoCard,
     QFrame#connectedToleranceScanPanel {{
         border: 1px solid {p.border};
@@ -1811,6 +1880,10 @@ def apply_theme(app: QApplication, mode: str) -> str:
     _ensure_table_corner_styler(app)
 
     font = QFont(body_font_family())
-    font.setPointSize(11)
+    # Pixel size, not point size: the stylesheet declares every label size in
+    # px, and point-to-pixel conversion differs per platform (macOS logical
+    # 72 dpi vs Windows 96 dpi), which made Windows body text ~33% larger
+    # than every px-sized label. 11 px matches the macOS 11 pt rendering.
+    font.setPixelSize(11)
     app.setFont(font)
     return resolved

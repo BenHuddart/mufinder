@@ -7,16 +7,19 @@ from uuid import UUID
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
 )
+
+from mufinder.app.workflow_table_utils import create_workflow_table
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,9 +63,13 @@ class ComparisonJobDialog(QDialog):
 
         self._jobs = list(jobs)
         self._label_input = QLineEdit(default_label)
-        self._table = QTableWidget(0, 8, self)
-        self._table.setHorizontalHeaderLabels(
-            [
+        # Preserves the original Qt defaults this table relied on: default
+        # (non-row) selection behavior and standard edit triggers (only the
+        # checkbox column is actually interacted with, but other cells were
+        # always incidentally editable). Columns are sized by
+        # resizeColumnsToContents() in _populate_rows.
+        self._table = create_workflow_table(
+            (
                 "Include",
                 "Label",
                 "Supercell",
@@ -71,7 +78,11 @@ class ComparisonJobDialog(QDialog):
                 "a (Ang)",
                 "b (Ang)",
                 "c (Ang)",
-            ]
+            ),
+            selection_behavior=QAbstractItemView.SelectionBehavior.SelectItems,
+            editable=True,
+            default_resize_mode=QHeaderView.ResizeMode.Interactive,
+            stretch_last_section=False,
         )
 
         self._build_layout()

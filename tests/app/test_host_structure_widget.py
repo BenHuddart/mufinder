@@ -57,6 +57,29 @@ def _sample_structure() -> Structure:
     )
 
 
+def test_host_structure_widget_splitter_fits_small_screen_width(qapp) -> None:
+    """Viewer/table minimums fit a 1280px window (SC-7 small-screen fix).
+
+    The table is capped at its content width (never locked to it), so the
+    central splitter can shrink the table pane below its content width with a
+    horizontal scrollbar, leaving room for the reduced-minimum viewer.
+    """
+    widget = HostStructureWidget()
+    widget.set_structure(_sample_structure())
+
+    assert widget._viewer.minimumWidth() == 380
+    assert widget._atom_table.minimumWidth() < widget._atom_table.maximumWidth()
+
+    splitter = widget._viewer.parentWidget()
+    from PySide6.QtWidgets import QSplitter
+
+    assert isinstance(splitter, QSplitter)
+    # Combined minimum width (viewer + table pane) must comfortably fit a
+    # 1280px-wide window; the previous 560 viewer minimum alone left too
+    # little room once the table's content-width lock was added on top.
+    assert widget._viewer.minimumWidth() + widget._atom_table.minimumWidth() < 1280
+
+
 def _hexagonal_structure() -> Structure:
     a = 4.2
     c = 6.8
@@ -157,11 +180,14 @@ def test_host_structure_widget_renders_spin_column_and_viewer(qapp) -> None:
     assert widget._atom_table.verticalHeaderItem(1).text() == "2"
     assert (
         widget._atom_table.horizontalScrollBarPolicy()
-        == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     )
-    assert widget._atom_table.minimumWidth() > 0
-    assert widget._atom_table.minimumWidth() == widget._atom_table.maximumWidth()
-    assert widget._atom_table.minimumWidth() >= widget._propagation_controls_width()
+    # The table is capped at its content width (so it cannot greedily expand)
+    # but the minimum is deliberately left low, so the splitter can shrink it
+    # below content width with a horizontal scrollbar on small screens.
+    assert widget._atom_table.maximumWidth() > 0
+    assert widget._atom_table.minimumWidth() < widget._atom_table.maximumWidth()
+    assert widget._atom_table.maximumWidth() >= widget._propagation_controls_width()
     assert widget._viewer._atoms is not None
     assert "Right drag: rotate" in widget._viewer._interaction_hint.text()
     assert "Middle drag: pan" in widget._viewer._interaction_hint.text()

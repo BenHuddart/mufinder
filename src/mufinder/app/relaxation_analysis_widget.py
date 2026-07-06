@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QSplitter,
-    QTableWidget,
     QTableWidgetItem,
     QTabWidget,
     QTreeWidget,
@@ -45,6 +44,7 @@ from mufinder.app.atomic_structure_viewer import (
     viewer_atom_style_for_species,
 )
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     current_palette,
     status_brush,
@@ -54,6 +54,7 @@ from mufinder.app.theme import (
     use_tabbed_table_corners,
 )
 from mufinder.app.uep_clustering_dialog import _DendrogramNavigationToolbar
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.science.relaxation_analysis import (
     AnchoredRelaxedSite,
@@ -183,11 +184,13 @@ class RelaxationAnalysisJobDialog(QDialog):
         self._excluded_job_ids = set(excluded_job_ids or set())
         self._reference_job_ids = set(reference_job_ids or set())
         self._reference_minimum_ev = self._minimum_reference_energy()
-        self._table = QTableWidget(0, 6, self)
-        self._table.setHorizontalHeaderLabels(["Add", "Relaxation", "dE vs workspace min (eV)", "fX", "fY", "fZ"])
-        self._table.verticalHeader().setVisible(False)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # Columns are sized by resizeColumnsToContents() in _populate, so this
+        # opts out of the shared stretch-to-fill default.
+        self._table = create_workflow_table(
+            ("Add", "Relaxation", "dE vs workspace min (eV)", "fX", "fY", "fZ"),
+            default_resize_mode=QHeaderView.ResizeMode.Interactive,
+            stretch_last_section=False,
+        )
         self._build_layout()
         self._populate()
 
@@ -447,7 +450,7 @@ class RelaxationClusteringDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Clustering - {_workspace_name(workspace)}")
-        self.resize(1240, 820)
+        self.resize(clamped_size(self, 1240, 820))
         self.setMinimumSize(900, 620)
         self._workspace = dict(workspace)
         self._host_structure = host_structure
@@ -473,14 +476,14 @@ class RelaxationClusteringDialog(QDialog):
         self._left_figure.subplots_adjust(left=0.12, right=0.98, top=0.96, bottom=0.12)
         self._left_canvas = FigureCanvasQTAgg(self._left_figure)
         self._viewer = AtomicStructureViewer(self)
-        self._summary_table = QTableWidget(0, 6, self)
-        self._summary_table.setHorizontalHeaderLabels(
-            ["Cluster", "Wyckoff", "Size", "Representative", "Min dE (eV)", "Std. dev."]
+        # Columns are sized to content (with the Wyckoff column stretched), so
+        # this opts out of the shared stretch-to-fill default.
+        self._summary_table = create_workflow_table(
+            ("Cluster", "Wyckoff", "Size", "Representative", "Min dE (eV)", "Std. dev."),
+            default_resize_mode=QHeaderView.ResizeMode.ResizeToContents,
+            stretch_last_section=False,
         )
-        self._summary_table.verticalHeader().setVisible(False)
-        self._summary_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         header = self._summary_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         for column in (0, 2, 3, 4, 5):
             item = self._summary_table.horizontalHeaderItem(column)
@@ -530,7 +533,7 @@ class RelaxationClusteringDialog(QDialog):
         layout.addWidget(subtitle)
 
         controls = QFrame(self)
-        controls.setObjectName("uepIsosurfaceSliderPanel")
+        controls.setObjectName("analysisSliderPanel")
         controls_layout = QGridLayout(controls)
         controls_layout.setContentsMargins(14, 12, 14, 12)
         controls_layout.setHorizontalSpacing(12)
@@ -599,13 +602,10 @@ class RelaxationClusteringDialog(QDialog):
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
 
-        button_row = QHBoxLayout()
-        button_row.addStretch(1)
-        button_row.addWidget(self._apply_button)
-        close_button = QPushButton("Close", self)
-        close_button.clicked.connect(self.reject)
-        button_row.addWidget(close_button)
-        layout.addLayout(button_row)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.addButton(self._apply_button, QDialogButtonBox.ButtonRole.ApplyRole)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
     def _restore_controls(self) -> None:
         state = self._clustering_state()
@@ -1061,7 +1061,7 @@ class DisplacementAnalysisDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Analyse Displacements - {workspace_name}")
-        self.resize(1180, 780)
+        self.resize(clamped_size(self, 1180, 780))
         self.setMinimumSize(920, 620)
         self._sites = normalize_site_energies(sites)
         self._structures = dict(structures_by_id)
@@ -1091,7 +1091,7 @@ class DisplacementAnalysisDialog(QDialog):
         style_section_title(title)
         layout.addWidget(title)
         controls = QFrame(self)
-        controls.setObjectName("uepIsosurfaceSliderPanel")
+        controls.setObjectName("analysisSliderPanel")
         form = QGridLayout(controls)
         form.setContentsMargins(14, 12, 14, 12)
         form.setHorizontalSpacing(12)
@@ -1407,20 +1407,20 @@ class RelaxationAnalysisWidget(QWidget):
         layout.setSpacing(8)
 
         header = QFrame(page)
-        header.setObjectName("uepIsosurfaceSliderPanel")
+        header.setObjectName("analysisSliderPanel")
         header_layout = QGridLayout(header)
         header_layout.setContentsMargins(14, 12, 14, 12)
         header_layout.setHorizontalSpacing(10)
         name_edit = QLineEdit(_workspace_name(workspace), header)
         name_edit.editingFinished.connect(lambda wid=_workspace_id(workspace), edit=name_edit: self._rename_workspace(wid, edit.text()))
         charge = QLabel(_charge_state_label(_workspace_charge_state(workspace)), header)
-        add_button = QPushButton("Add structure to analysis", header)
+        add_button = QPushButton("Add Structure to Analysis", header)
         add_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self.add_sites_requested.emit(wid))
-        cluster_button = QPushButton("Clustering", header)
+        cluster_button = QPushButton("Clustering...", header)
         cluster_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self._open_clustering(wid))
-        displacement_button = QPushButton("Analyse displacements", header)
+        displacement_button = QPushButton("Analyse Displacements", header)
         displacement_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self._open_displacements(wid))
-        pin_button = QPushButton("Pin to summary", header)
+        pin_button = QPushButton("Pin to Summary", header)
         pin_button.setToolTip(
             "Pin this workspace's distinct muon sites to the Muon Sites summary page."
         )

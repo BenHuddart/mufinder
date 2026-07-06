@@ -19,7 +19,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.theme import current_palette, style_hint_text, style_section_subtitle, style_section_title
+from mufinder.app.theme import (
+    current_palette,
+    make_empty_state_label,
+    style_hint_text,
+    style_section_subtitle,
+    style_section_title,
+)
 
 
 class _PinnedPlotWidget(QWidget):
@@ -28,10 +34,7 @@ class _PinnedPlotWidget(QWidget):
     def __init__(self, *, sweep_kind: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._sweep_kind = sweep_kind
-        self._placeholder = QLabel("", self)
-        self._placeholder.setObjectName("overviewPlaceholder")
-        self._placeholder.setWordWrap(True)
-        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._placeholder = make_empty_state_label(object_name="overviewPlaceholder", parent=self)
 
         palette = current_palette()
         self._figure = Figure(

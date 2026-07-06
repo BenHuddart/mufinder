@@ -333,8 +333,8 @@ Generated Table Behavior
 The committed generated-site table is ordered with natural numeric sorting, so
 ``Random Site 2`` appears before ``Random Site 10``.  Selecting rows overlays
 the selected generated positions in the host viewer.  Selected generated rows
-can be clustered around an anchor with ``Cluster Positions``, staged with
-``Create job(s) from selected``, or removed with ``Remove Selected`` or the
+can be clustered around an anchor with ``Cluster Positions...``, staged with
+``Create Jobs from Selected``, or removed with ``Remove Selected`` or the
 keyboard Delete key before relaxation jobs are configured; only rows still
 marked as ``generated`` are deleted.  Older project files that used the legacy
 ``candidate`` status are normalized to ``generated`` when loaded.

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
+from typing import Callable
 
 import pytest
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QApplication, QLabel
 
 import mufinder.app.castep_setup_dialog as dialog_module
 from mufinder.castep_setup import (
@@ -24,6 +26,23 @@ from mufinder.castep_setup import (
 )
 from mufinder.app.castep_setup_dialog import CastepSetupDialog
 from mufinder.services.ssh_client import SSHCredentials
+
+
+def _process_until(predicate: Callable[[], bool], *, timeout: float = 5.0) -> bool:
+    """Pump the GUI event loop until ``predicate`` holds or ``timeout`` elapses.
+
+    The pre-generation cluster connection check runs on a worker thread, so
+    its outcome arrives via queued signals that only deliver while the event
+    loop spins.
+    """
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        QApplication.processEvents()
+        time.sleep(0.005)
+    return predicate()
 
 
 class _FakeSettings:
@@ -314,13 +333,30 @@ def test_castep_setup_dialog_starts_cluster_generation_for_selected_target(
 
     credentials = SSHCredentials(target_secret="glam", jump_secret="phys")
     captured: list[tuple[str, Path, SSHCredentials | None]] = []
+
+    class _AlwaysConnected:
+        def __init__(self, _config, *, settings=None) -> None:
+            _ = settings
+            self.connected = False
+
+        @property
+        def is_connected(self) -> bool:
+            return self.connected
+
+        def connect(self, password: str | None = None, **_kwargs) -> None:
+            _ = password
+            self.connected = True
+
+        def disconnect(self) -> None:
+            self.connected = False
+
     monkeypatch.setattr(dialog_module, "validate_cluster_keyword_config", lambda _config: [])
+    monkeypatch.setattr(dialog_module, "SSHConnection", _AlwaysConnected)
     monkeypatch.setattr(
         dialog_module,
         "prompt_for_cluster_credentials",
         lambda *_args, **_kwargs: credentials,
     )
-    monkeypatch.setattr(dialog, "_ensure_cluster_trusted_connection", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         dialog,
         "_start_cluster_generation",
@@ -329,6 +365,7 @@ def test_castep_setup_dialog_starts_cluster_generation_for_selected_target(
 
     dialog._generate_keywords()
 
+    assert _process_until(lambda: bool(captured))
     assert captured == [("Redwood", output_path, credentials)]
     dialog.close()
 
@@ -390,6 +427,7 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
 
     dialog._generate_keywords()
 
+    assert _process_until(lambda: bool(captured))
     assert prompts == ["yes"]
     assert captured == [("Redwood", output_path, credentials)]
     assert dialog._settings.value(

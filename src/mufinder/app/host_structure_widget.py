@@ -13,11 +13,11 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
     QSizePolicy,
     QSplitter,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -30,6 +30,7 @@ from mufinder.app.structure_render_guard import (
     structure_geometry_fingerprint,
 )
 from mufinder.app.theme import style_section_subtitle, style_section_title
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.services.project_service import PromotableHost
 
@@ -70,13 +71,20 @@ class HostStructureWidget(QWidget):
         self._file_label.setWordWrap(True)
         self._species_label.setWordWrap(True)
 
-        self._atom_table = QTableWidget(0, 5)
-        self._atom_table.setHorizontalHeaderLabels(["Element", "fX", "fY", "fZ", "Spin (hbar/2)"])
-        self._atom_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._atom_table.horizontalHeader().setStretchLastSection(True)
+        # This table keeps row numbers (vertical header) as a visual atom index
+        # and allows editing the Spin column in place, so it opts out of the
+        # shared no-edit/hidden-header defaults via show_vertical_header/editable.
+        # It also opts out of stretch-to-fill: _lock_table_width relies on
+        # resizeColumnsToContents(), which Stretch-mode columns ignore.
+        self._atom_table = create_workflow_table(
+            ("Element", "fX", "fY", "fZ", "Spin (hbar/2)"),
+            selection_mode=QAbstractItemView.SelectionMode.ExtendedSelection,
+            editable=True,
+            show_vertical_header=True,
+            default_resize_mode=QHeaderView.ResizeMode.Interactive,
+        )
+        self._atom_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._atom_table.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Expanding)
-        self._atom_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._atom_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._atom_table.itemSelectionChanged.connect(self._on_table_selection_changed)
         self._atom_table.cellChanged.connect(self._on_table_cell_changed)
 
@@ -155,7 +163,7 @@ class HostStructureWidget(QWidget):
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 8)
         splitter.setSizes([320, 960])
-        self._viewer.setMinimumWidth(560)
+        self._viewer.setMinimumWidth(380)
 
         layout.addWidget(info)
         layout.addWidget(splitter)
@@ -173,7 +181,10 @@ class HostStructureWidget(QWidget):
             total += padded_width
         total += (2 * self._atom_table.frameWidth()) + 12
         target_width = max(total, self._propagation_controls_width() + self._TABLE_WIDTH_EXTRA)
-        self._atom_table.setMinimumWidth(target_width)
+        # Cap the table at its content width so it never greedily expands, but
+        # do not also lock the minimum to the same value: that would make the
+        # splitter pane rigid and prevent the table from shrinking (with its
+        # own horizontal scrollbar) on small screens.
         self._atom_table.setMaximumWidth(target_width)
         header.setStretchLastSection(stretch_last)
 

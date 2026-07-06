@@ -8,7 +8,6 @@ from dataclasses import replace
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -34,6 +33,7 @@ from mufinder.app.theme import status_brush, style_hint_text, style_section_subt
 from mufinder.app.uep_types import SupercellMatrix, UepConfig, UepRunState, UepSourceRow
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.workflow_table_utils import (
+    bind_delete_shortcuts,
     create_workflow_table,
     style_workflow_configure_button,
 )
@@ -207,12 +207,9 @@ class UEPWidget(QWidget):
 
         self._build_layout()
         self._connect_signals()
-        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
-        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._delete_shortcut.activated.connect(self._delete_selected_rows)
-        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
-        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._backspace_shortcut.activated.connect(self._delete_selected_rows)
+        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
+            self, self._delete_selected_rows
+        )
 
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
@@ -273,6 +270,8 @@ class UEPWidget(QWidget):
         control_row.addWidget(self._add_row_button)
         control_row.addWidget(self._batch_configure_button)
         control_row.addStretch(1)
+        control_row.addWidget(QLabel("Job name prefix"))
+        control_row.addWidget(self._name_prefix, 1)
         control_row.addWidget(self._run_local_button)
         control_row.addWidget(self._run_cluster_button)
         table_layout.addLayout(control_row)
