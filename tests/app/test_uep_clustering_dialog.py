@@ -249,7 +249,17 @@ def test_uep_clustering_dialog_restores_persisted_window_and_viewer_state(qapp) 
     assert restored._kmeans_k_spin.value() == 2
     assert restored._pending_main_splitter_sizes == snapshot["splitter_sizes"]
     assert restored._pending_right_splitter_sizes == snapshot["right_splitter_sizes"]
-    assert restored.state_snapshot()["window_geometry"][2:] == snapshot["window_geometry"][2:]
+    # SC-3: restored geometry is now clamped to the current screen (clamp_to_screen),
+    # so it round-trips exactly only when it already fits; on a smaller screen
+    # (e.g. this test's offscreen platform) it is shrunk to fit instead of
+    # reproducing the saved size verbatim. clamp_to_screen never shrinks below
+    # the dialog's own minimum size, so the floor is whichever is larger.
+    restored_geometry = restored.state_snapshot()["window_geometry"]
+    avail = restored.screen().availableGeometry()
+    expected_max_width = max(min(snapshot["window_geometry"][2], avail.width()), restored.minimumWidth())
+    expected_max_height = max(min(snapshot["window_geometry"][3], avail.height()), restored.minimumHeight())
+    assert restored_geometry[2] <= expected_max_width
+    assert restored_geometry[3] <= expected_max_height
     assert restored._structure_viewer._show_cell.isChecked() is False
     assert restored._structure_viewer._show_bonds.isChecked() is True
     assert restored._structure_viewer._camera_state == _CameraState(31.0, 64.0, 12.0)

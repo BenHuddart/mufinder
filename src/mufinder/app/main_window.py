@@ -19,7 +19,7 @@ from typing import TypeVar
 from uuid import UUID, uuid4
 
 import numpy as np
-from PySide6.QtCore import QEventLoop, QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QByteArray, QEventLoop, QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import (
     QActionGroup,
     QBrush,
@@ -158,6 +158,7 @@ from mufinder.app.quantum_corrections_widget import (
     QuantumResultRow,
     QuantumSourceRow,
 )
+from mufinder.app.screen_utils import clamp_to_screen, clamped_size
 from mufinder.app.supercell_dialog import SupercellEditorDialog
 from mufinder.app.submission_dialog import LocalSubmissionDialog
 from mufinder.app.theme import (
@@ -1608,6 +1609,7 @@ class ConstructionSignWidget(QWidget):
 class MainWindow(QMainWindow):
     """Main shell containing project navigation and job dashboard."""
 
+    _MAIN_WINDOW_GEOMETRY_KEY = "ui/main_window_geometry"
     _LAST_DIALOG_DIR_KEY = "ui/last_dialog_dir"
     _LAST_DIALOG_DIR_BY_CONTEXT_PREFIX = "ui/last_dialog_dir_by_context"
     _RECENT_PROJECTS_KEY = "ui/recent_projects"
@@ -1744,7 +1746,10 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("MuFinder")
         self.setWindowIcon(app_icon())
-        self.resize(1280, 840)
+        self.resize(clamped_size(self, 1280, 840))
+        saved_geometry = self._settings.value(self._MAIN_WINDOW_GEOMETRY_KEY, QByteArray())
+        if isinstance(saved_geometry, QByteArray) and not saved_geometry.isEmpty() and self.restoreGeometry(saved_geometry):
+            clamp_to_screen(self)
 
         self._project_tree = QTreeWidget()
         self._project_tree.setObjectName("workflowTree")
@@ -2165,6 +2170,7 @@ class MainWindow(QMainWindow):
         if getattr(self, "_shutting_down", False):
             super().closeEvent(event)
             return
+        self._settings.setValue(self._MAIN_WINDOW_GEOMETRY_KEY, self.saveGeometry())
         job_runtime_timer = getattr(self, "_job_runtime_timer", None)
         if job_runtime_timer is not None:
             job_runtime_timer.stop()
