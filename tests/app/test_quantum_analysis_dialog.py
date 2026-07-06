@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QGroupBox, QLabel, QTabWidget, QToolButton
 import mufinder.app.quantum_analysis_dialog as quantum_analysis_dialog_module
 from mufinder.app.math_label import MathLabel
 from mufinder.app.quantum_analysis_dialog import QuantumAnalysisHelpDialog, QuantumPhononAnalysisDialog
+from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import current_palette
 
 
@@ -86,7 +87,11 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp
     assert dominant_participation_item.foreground().color() != ordinary_participation_item.foreground().color()
     assert dialog._selected_phonon_mode_row() == 1
     assert dialog._phonon_mode_table.selectionMode() == dialog._phonon_mode_table.SelectionMode.SingleSelection
-    assert dialog.width() >= 1320
+    # The default 1320x760 size is routed through clamped_size, which shrinks
+    # it to fit the test environment's (possibly small, e.g. offscreen-
+    # platform) screen; compare against the same clamp rather than a raw
+    # literal so this assertion holds on any screen size.
+    assert dialog.width() >= clamped_size(dialog, 1320, 760).width()
     assert dialog._phonon_amplitude_spin.value() == 1.0
     assert dialog._phonon_cycle_spin.value() == 2.0
     assert not dialog._phonon_show_vectors_checkbox.isChecked()
