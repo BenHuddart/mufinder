@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib.resources import files
+import logging
 from pathlib import Path
 import tempfile
 
@@ -54,9 +55,18 @@ def ensure_fonts_loaded() -> None:
         return
 
     font_dir = _bundled_font_dir()
-    if not font_dir.is_dir():
+    font_paths = sorted(font_dir.glob("*.ttf")) if font_dir.is_dir() else []
+    if not font_paths:
+        # A missing fonts directory means a broken packaged build (the
+        # installer dropped mufinder/assets/fonts): the UI silently falls
+        # back to host fonts, so make the regression visible in the log.
+        logging.getLogger(__name__).warning(
+            "Bundled fonts not found at %s; falling back to system fonts. "
+            "Packaged builds must ship mufinder/assets/fonts.",
+            font_dir,
+        )
         return
-    for font_path in sorted(font_dir.glob("*.ttf")):
+    for font_path in font_paths:
         QFontDatabase.addApplicationFont(str(font_path))
     _FONTS_LOADED = True
 
