@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import stat
+import threading
 import time
 from typing import TypeVar
 from uuid import UUID, uuid4
@@ -6186,14 +6187,80 @@ class MainWindow(QMainWindow):
         except FileNotFoundError:
             pass
 
-    @classmethod
-    def _delete_path(cls, path: Path) -> None:
+    def _run_blocking_file_op(self, op: Callable[[], object], *, description: str) -> object:
+        """Run a blocking filesystem operation off the GUI thread.
+
+        Preserves the caller's synchronous semantics (returns the result,
+        re-raises the exception) while pumping the event loop, so the retry
+        backoff against OneDrive/antivirus file locks and large recursive
+        deletes cannot freeze the window. The window is disabled while the
+        operation runs to prevent re-entrant user actions, and a busy dialog
+        appears only when the operation takes noticeably long.
+        """
+
+        outcome: dict[str, object] = {}
+        done = threading.Event()
+
+        def _worker() -> None:
+            try:
+                outcome["result"] = op()
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the GUI thread
+                outcome["error"] = exc
+            finally:
+                done.set()
+
+        worker = threading.Thread(target=_worker, name="mufinder-file-op", daemon=True)
+        loop = QEventLoop()
+        progress: QProgressDialog | None = None
+        started = time.monotonic()
+        poll = QTimer(self)
+        poll.setInterval(25)
+
+        def _tick() -> None:
+            nonlocal progress
+            if done.is_set():
+                loop.quit()
+                return
+            if progress is None and time.monotonic() - started > 0.4:
+                progress = QProgressDialog(description, None, 0, 0, self)
+                progress.setWindowTitle("Working on files")
+                progress.setWindowModality(Qt.WindowModality.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.show()
+
+        poll.timeout.connect(_tick)
+        was_enabled = self.isEnabled()
+        self.setEnabled(False)
+        worker.start()
+        poll.start()
+        try:
+            if not done.is_set():
+                loop.exec()
+        finally:
+            poll.stop()
+            poll.deleteLater()
+            if progress is not None:
+                progress.close()
+            self.setEnabled(was_enabled)
+            worker.join()
+        error = outcome.get("error")
+        if isinstance(error, BaseException):
+            raise error
+        return outcome.get("result")
+
+    def _delete_path(self, path: Path) -> None:
         if path.is_dir():
-            cls._retry_filesystem_op(
-                lambda: shutil.rmtree(path, onexc=cls._force_writable_and_retry)
+            self._run_blocking_file_op(
+                lambda: self._retry_filesystem_op(
+                    lambda: shutil.rmtree(path, onexc=self._force_writable_and_retry)
+                ),
+                description=f"Deleting {path.name}…",
             )
             return
-        cls._retry_filesystem_op(path.unlink)
+        self._run_blocking_file_op(
+            lambda: self._retry_filesystem_op(path.unlink),
+            description=f"Deleting {path.name}…",
+        )
 
     @staticmethod
     def _unique_destination(path: Path) -> Path:
@@ -6210,7 +6277,10 @@ class MainWindow(QMainWindow):
         archive_root = (output_root if output_root is not None else source.parent) / "removed_from_workflow"
         archive_root.mkdir(parents=True, exist_ok=True)
         destination = self._unique_destination(archive_root / source.name)
-        self._retry_filesystem_op(lambda: source.rename(destination))
+        self._run_blocking_file_op(
+            lambda: self._retry_filesystem_op(lambda: source.rename(destination)),
+            description=f"Archiving {source.name}…",
+        )
         return destination
 
     def _prompt_cutoff_file_disposition(
@@ -6807,6 +6877,11 @@ class MainWindow(QMainWindow):
         Calls ``start()`` (which kicks off async work on the worker thread), then
         runs a nested event loop until ``signal`` fires, returning its payload. The
         window keeps repainting while the worker performs the blocking SSH work.
+
+        A watchdog aborts the wait after three minutes and returns a
+        ``TimeoutError``: the dialog has no cancel button, so without it a
+        worker that never emits (or a request stuck behind a long queue-poll
+        batch) would trap the user in the modal dialog forever.
         """
 
         captured: dict[str, object] = {}
@@ -6816,6 +6891,11 @@ class MainWindow(QMainWindow):
             captured["payload"] = payload
             loop.quit()
 
+        watchdog = QTimer(self)
+        watchdog.setSingleShot(True)
+        watchdog.setInterval(180_000)
+        watchdog.timeout.connect(loop.quit)
+
         progress = QProgressDialog(label, None, 0, 0, self)
         progress.setWindowTitle(title)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -6824,10 +6904,17 @@ class MainWindow(QMainWindow):
         progress.show()
         try:
             start()
+            watchdog.start()
             loop.exec()
         finally:
+            watchdog.stop()
+            watchdog.deleteLater()
             signal.disconnect(on_signal)
             progress.close()
+        if "payload" not in captured:
+            return TimeoutError(
+                f"{title} did not complete within 3 minutes; the cluster worker may be busy or stuck."
+            )
         return captured.get("payload")
 
     def _await_remote_dir_check(self, targets: list[tuple[UUID, str]]) -> dict[str, object]:
@@ -6837,6 +6924,13 @@ class MainWindow(QMainWindow):
             title="Checking remote directories",
             label="Checking existing remote job directories…",
         )
+        if isinstance(payload, TimeoutError):
+            # Fail every checked job rather than silently submitting over
+            # directories whose state is unknown.
+            return {
+                "existing": [],
+                "errors": {job_id: str(payload) for job_id, _target in targets},
+            }
         return payload if isinstance(payload, dict) else {"existing": [], "errors": {}}
 
     def _await_cluster_connect(
@@ -6869,6 +6963,7 @@ class MainWindow(QMainWindow):
         results_seen: set[UUID] = set()
         total = len(submit_items)
         loop = QEventLoop()
+        timed_out = False
 
         progress = QProgressDialog("Submitting cluster jobs…", "Cancel", 0, total, self)
         progress.setWindowTitle("Submitting to cluster")
@@ -6876,14 +6971,30 @@ class MainWindow(QMainWindow):
         progress.setMinimumDuration(0)
         progress.setValue(0)
 
+        # Inactivity watchdog: any per-job progress restarts it, so long
+        # batches are fine, but a worker that stops responding entirely cannot
+        # trap the user in the nested event loop forever.
+        watchdog = QTimer(self)
+        watchdog.setSingleShot(True)
+        watchdog.setInterval(180_000)
+
+        def on_watchdog_timeout() -> None:
+            nonlocal timed_out
+            timed_out = True
+            loop.quit()
+
+        watchdog.timeout.connect(on_watchdog_timeout)
+
         def on_progress(index: int, count: int, label: str) -> None:
             progress.setLabelText(f"Submitting {label} ({index}/{count})")
             progress.setValue(index - 1)
+            watchdog.start()
 
         def on_one(job_id: object, remote_job_id: object, error: str) -> None:
             if not isinstance(job_id, UUID):
                 return
             results_seen.add(job_id)
+            watchdog.start()
             prepared = prepared_by_job.get(job_id)
             if prepared is None:
                 return
@@ -6898,7 +7009,8 @@ class MainWindow(QMainWindow):
             if outcome.journal_changed:
                 self._refresh_journal_view()
             progress.setValue(progress.value() + 1)
-            self._refresh_jobs_table()
+            # The jobs table is refreshed once by the caller after the batch;
+            # refreshing per job here made an N-job batch do N full rebuilds.
 
         self._cluster_runner.submit_batch_progress.connect(on_progress)
         self._cluster_runner.job_submit_finished.connect(on_one)
@@ -6907,15 +7019,25 @@ class MainWindow(QMainWindow):
         progress.show()
         try:
             self._cluster_runner.submit_batch(submit_items)
+            watchdog.start()
             loop.exec()
         finally:
+            watchdog.stop()
+            watchdog.deleteLater()
             self._cluster_runner.submit_batch_progress.disconnect(on_progress)
             self._cluster_runner.job_submit_finished.disconnect(on_one)
             self._cluster_runner.submit_batch_finished.disconnect(loop.quit)
             progress.close()
 
-        # Jobs prepared but never submitted (cancelled mid-batch) are cancelled so
-        # they do not linger in the ``submitting`` state.
+        if timed_out:
+            pending = total - len(results_seen)
+            failed.append(
+                f"- Cluster submission stopped responding after 3 minutes; "
+                f"{pending} pending job(s) were cancelled."
+            )
+
+        # Jobs prepared but never submitted (cancelled mid-batch or timed out)
+        # are cancelled so they do not linger in the ``submitting`` state.
         for job_id, prepared in prepared_by_job.items():
             if job_id not in results_seen:
                 self._job_execution.cancel_job(prepared.job.id)
