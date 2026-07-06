@@ -7651,10 +7651,44 @@ class MainWindow(QMainWindow):
             fallback.extend(sorted(path for path in output_dir.glob(pattern) if path.is_file()))
         return list(dict.fromkeys(fallback))
 
-    @staticmethod
-    def _read_error_contexts(path: Path, *, context_lines: int = 2, max_matches: int = 8) -> str:
+    _TAIL_READ_LIMIT_BYTES = 256 * 1024
+
+    @classmethod
+    def _read_bounded_tail(cls, path: Path, *, max_bytes: int | None = None) -> str:
+        """Read at most the trailing ``max_bytes`` of ``path`` as text.
+
+        Files at or under the limit are read in full, byte-for-byte identical
+        to a plain ``read_text()`` call. Larger files are read from a tail
+        offset only, so an inspect on a runaway multi-hundred-MB job output
+        never loads the whole file into memory; a partial leading line (cut
+        mid-line by the seek) is dropped and a truncation marker is prefixed,
+        matching the "... [truncated]" convention used elsewhere in this file.
+        """
+
+        limit = cls._TAIL_READ_LIMIT_BYTES if max_bytes is None else max_bytes
+        with path.open("rb") as handle:
+            size = handle.seek(0, 2)
+            truncated = size > limit
+            if truncated:
+                handle.seek(size - limit)
+            else:
+                handle.seek(0)
+            raw = handle.read()
+
+        # ``read_text()`` applies universal-newline translation; replicate that
+        # here so small-file behavior is byte-for-byte identical to before.
+        text = raw.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+        if not truncated:
+            return text
+
+        # The seek landed mid-line; drop the partial leading fragment.
+        _, _, remainder = text.partition("\n")
+        return "[... truncated] ...\n" + remainder
+
+    @classmethod
+    def _read_error_contexts(cls, path: Path, *, context_lines: int = 2, max_matches: int = 8) -> str:
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = cls._read_bounded_tail(path).splitlines()
         except OSError as exc:
             return f"Could not read file: {exc}"
 
@@ -7685,10 +7719,10 @@ class MainWindow(QMainWindow):
 
         return "\n\n...\n\n".join(excerpts)
 
-    @staticmethod
-    def _read_text_excerpt(path: Path, *, max_chars: int = 12000) -> str:
+    @classmethod
+    def _read_text_excerpt(cls, path: Path, *, max_chars: int = 12000) -> str:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = cls._read_bounded_tail(path)
         except OSError as exc:
             return f"Could not read file: {exc}"
 
