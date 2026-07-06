@@ -230,8 +230,7 @@ class QuantumPhononAnalysisDialog(QDialog):
         splitter = QSplitter(Qt.Orientation.Horizontal, tab)
         self._phonon_mode_table = _table(("Mode", "Frequency (cm⁻¹)", "Muon participation", "Muon direction"))
         self._phonon_mode_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._phonon_mode_table.setMinimumWidth(420)
-        self._phonon_mode_table.setMaximumWidth(620)
+        self._phonon_mode_table.setMinimumWidth(320)
         phonon_header = self._phonon_mode_table.horizontalHeader()
         phonon_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         phonon_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -281,8 +280,7 @@ class QuantumPhononAnalysisDialog(QDialog):
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self._single_particle_table = _table(("Mode no.", "Direction", "Frequency (cm⁻¹)", "ZPE (eV)", "Width (Å)"))
-        self._single_particle_table.setMinimumWidth(480)
-        self._single_particle_table.setMaximumWidth(520)
+        self._single_particle_table.setMinimumWidth(320)
         single_particle_header = self._single_particle_table.horizontalHeader()
         single_particle_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         single_particle_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -295,6 +293,7 @@ class QuantumPhononAnalysisDialog(QDialog):
         self._canvas = FigureCanvas(self._figure)
         splitter.addWidget(self._canvas)
         splitter.setStretchFactor(1, 1)
+        splitter.setSizes([480, 760])
         layout.addWidget(splitter, 1)
         return tab
 
@@ -924,9 +923,9 @@ def _matrix_table() -> QTableWidget:
     table.setRowCount(3)
     table.setVerticalHeaderLabels(("x", "y", "z"))
     table.verticalHeader().setVisible(True)
-    table.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    table.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     return table
 
 
@@ -985,7 +984,10 @@ def _resize_table_width_to_contents(table: QTableWidget, *, minimum: int, maximu
         width += table.columnWidth(column)
     if table.verticalScrollBar().isVisible():
         width += table.verticalScrollBar().sizeHint().width()
-    table.setFixedWidth(max(int(minimum), min(int(width), int(maximum))))
+    # A splitter (not a fixed width) governs how much horizontal space this
+    # table actually gets, so only cap the content-driven width from above;
+    # never lock it, or the splitter cannot shrink the table on small screens.
+    table.setMaximumWidth(max(int(minimum), min(int(width), int(maximum))))
 
 
 def _fill_matrix_table(table: QTableWidget, matrix: np.ndarray) -> None:
@@ -1011,4 +1013,6 @@ def _resize_matrix_table_to_contents(table: QTableWidget) -> None:
     if table.horizontalScrollBar().isVisible():
         height += table.horizontalScrollBar().sizeHint().height()
 
-    table.setFixedSize(width, height)
+    # Cap rather than lock the size: narrowing the dialog should let the
+    # table scroll instead of refusing to shrink and starving its neighbours.
+    table.setMaximumSize(width, height)
