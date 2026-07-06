@@ -957,7 +957,7 @@ class _CrystallographicTriadCanvas(QWidget):
             font = painter.font()
             font.setFamily(style.triad_label_font_family)
             font.setBold(True)
-            font.setPointSizeF(11.5)
+            font.setPixelSize(12)
             painter.setFont(font)
             painter.drawText(label_rect, int(Qt.AlignmentFlag.AlignCenter), label)
 
