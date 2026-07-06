@@ -3,8 +3,9 @@
 These tests exercise parser branches not covered by
 ``tests/test_castep_output_parser.py``: ASE-style force/stress blocks,
 constrained-force tokens, HH:MM:SS wall-time fallback, geometry-failure
-detection, lattice-vector parsing edge cases, and Mulliken population
-short-circuits. They are deterministic and use only temporary files.
+detection, lattice-vector parsing edge cases, Mulliken population
+short-circuits, and restart-segment isolation for resubmitted/continued
+calculations. They are deterministic and use only temporary files.
 """
 
 from __future__ import annotations
@@ -366,6 +367,31 @@ def test_completion_via_calculation_complete_marker(tmp_path: Path) -> None:
     assert parsed.wall_time is None
     assert parsed.forces == ()
     assert parsed.stress == ()
+
+
+def test_earlier_restart_failure_does_not_shadow_later_completion(tmp_path: Path) -> None:
+    # A resubmitted/continued calculation appends to the same .castep file,
+    # so an early restart's transient failure (e.g. running out of geometry
+    # optimization steps before a walltime-triggered continuation) must not
+    # cause the job to be reported as failed once a later restart in the same
+    # file completes successfully.
+    output = _write(
+        tmp_path,
+        "resubmitted.castep",
+        "Run started: Mon, 01 Jun 2026 09:00:00 +0100\n"
+        "LBFGS: WARNING - Geometry optimization failed to converge after 300 steps\n"
+        "Total time = 10.0 s\n"
+        "Run started: Tue, 02 Jun 2026 09:00:00 +0100\n"
+        "LBFGS: Geometry optimization completed successfully.\n"
+        "Final energy = -42.0 eV\n"
+        "Total time = 5.0 s\n",
+    )
+
+    parsed = parse_castep_output(output)
+
+    assert parsed.completed is True
+    assert parsed.error_message is None
+    assert parsed.geom_converged is True
 
 
 def test_plain_stress_block_negative_component_sets_max_stress(tmp_path: Path) -> None:
