@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import current_palette
 from mufinder.science.convergence_analysis import (
     ConvergenceResult,
@@ -137,8 +138,8 @@ class ConvergenceExaminerDialog(QDialog):
             if self._sweep_kind == "cutoff"
             else "Examine K-Point Convergence"
         )
-        self.resize(1080, 900)
-        self.setMinimumSize(920, 760)
+        self.resize(clamped_size(self, 1080, 900))
+        self.setMinimumSize(880, 640)
 
         self._num_atoms = int(num_atoms)
         self._completed = self._collect_completed(sweep_data)

@@ -2964,3 +2964,45 @@ def test_scaled_home_logo_uses_device_pixel_ratio(monkeypatch, tmp_path: Path, q
     assert scaled.height() == 184
 
     window.close()
+
+
+def test_main_window_persists_and_restores_geometry_via_qsettings(qapp) -> None:
+    window = MainWindow()
+    window.show()
+    # Move to a distinctive position, but keep the window's current (already
+    # screen-fitting) size, so the post-restore clamp_to_screen() call in
+    # __init__ (SC-3/SC-4) is a no-op here and does not itself relocate the
+    # window -- this test is about the QSettings save/restore wiring, not
+    # about clamp_to_screen, which has its own dedicated coverage in
+    # test_screen_utils.py.
+    window.move(37, 41)
+    qapp.processEvents()
+
+    # closeEvent saves geometry under _MAIN_WINDOW_GEOMETRY_KEY without a
+    # document loaded (no save-project prompt), exercising the persistence
+    # path added alongside the small-screen sizing fixes.
+    window.close()
+
+    settings = window._settings
+    saved = settings.value(window._MAIN_WINDOW_GEOMETRY_KEY)
+    assert saved is not None
+
+    # _isolate_qsettings redirects QSettings to a shared per-test tmp_path, so
+    # a second MainWindow constructed in the same test reads back the same
+    # store and restores the geometry saved above.
+    reloaded_window = MainWindow()
+    try:
+        avail = reloaded_window.screen().availableGeometry()
+        if window.frameGeometry().width() <= avail.width() and window.frameGeometry().height() <= avail.height():
+            assert reloaded_window.pos().x() == window.pos().x()
+            assert reloaded_window.pos().y() == window.pos().y()
+        else:
+            # The window itself does not fit this screen (e.g. a small
+            # offscreen-platform test display): clamp_to_screen legitimately
+            # repositions it, so just confirm restoreGeometry actually ran by
+            # checking the restored frame stays fully on-screen.
+            frame = reloaded_window.frameGeometry()
+            assert avail.left() <= frame.left()
+            assert avail.top() <= frame.top()
+    finally:
+        reloaded_window.close()

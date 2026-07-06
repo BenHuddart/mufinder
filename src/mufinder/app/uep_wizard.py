@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIEWER_RADIUS_ANG
 from mufinder.app.uep_clustering_dialog import UepClusteringDialog, cluster_color_map
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     adjust_font_size,
     body_font_family,
@@ -1605,7 +1606,7 @@ class UepAnalysisDialog(QDialog):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setWindowTitle(f"UEP Analysis - {source_job_label}")
-        self.resize(1180, 920)
+        self.resize(clamped_size(self, 1180, 920))
         self.setMinimumSize(980, 760)
 
         self._source_job_label = source_job_label
