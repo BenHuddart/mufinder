@@ -83,7 +83,7 @@ class HostStructureWidget(QWidget):
             show_vertical_header=True,
             default_resize_mode=QHeaderView.ResizeMode.Interactive,
         )
-        self._atom_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._atom_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._atom_table.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Expanding)
         self._atom_table.itemSelectionChanged.connect(self._on_table_selection_changed)
         self._atom_table.cellChanged.connect(self._on_table_cell_changed)
@@ -163,7 +163,7 @@ class HostStructureWidget(QWidget):
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 8)
         splitter.setSizes([320, 960])
-        self._viewer.setMinimumWidth(560)
+        self._viewer.setMinimumWidth(380)
 
         layout.addWidget(info)
         layout.addWidget(splitter)
@@ -181,7 +181,10 @@ class HostStructureWidget(QWidget):
             total += padded_width
         total += (2 * self._atom_table.frameWidth()) + 12
         target_width = max(total, self._propagation_controls_width() + self._TABLE_WIDTH_EXTRA)
-        self._atom_table.setMinimumWidth(target_width)
+        # Cap the table at its content width so it never greedily expands, but
+        # do not also lock the minimum to the same value: that would make the
+        # splitter pane rigid and prevent the table from shrinking (with its
+        # own horizontal scrollbar) on small screens.
         self._atom_table.setMaximumWidth(target_width)
         header.setStretchLastSection(stretch_last)
 

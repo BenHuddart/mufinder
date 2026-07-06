@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSlider,
     QSplitter,
     QSpinBox,
@@ -1598,7 +1599,7 @@ class UepAnalysisDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setWindowTitle(f"UEP Analysis - {source_job_label}")
         self.resize(clamped_size(self, 1180, 920))
-        self.setMinimumSize(980, 760)
+        self.setMinimumSize(980, 640)
 
         self._source_job_label = source_job_label
         self._source_structure_id = source_structure_id
@@ -2034,7 +2035,7 @@ class UepAnalysisDialog(QDialog):
         self._isosurface_slider.setObjectName("uepIsosurfaceSlider")
         self._isosurface_slider.setRange(0, 10000)
         self._isosurface_slider.setValue(500)
-        self._isosurface_slider.setMinimumWidth(620)
+        self._isosurface_slider.setMinimumWidth(400)
         self._isosurface_slider.setMinimumHeight(36)
         self._isosurface_slider.setSingleStep(10)
         self._isosurface_slider.setPageStep(250)
@@ -2107,7 +2108,7 @@ class UepAnalysisDialog(QDialog):
         viewer_layout.setContentsMargins(0, 0, 0, 0)
         viewer_layout.setSpacing(10)
         self._isosurface_viewer = AtomicStructureViewer(viewer_panel)
-        self._isosurface_viewer.setMinimumHeight(400)
+        self._isosurface_viewer.setMinimumHeight(320)
         self._isosurface_viewer.set_structure(self._viewer_host_structure)
         viewer_layout.addWidget(self._isosurface_viewer, 1)
 
@@ -2135,7 +2136,12 @@ class UepAnalysisDialog(QDialog):
 
         viewer_layout.addWidget(self._isosurface_legend_card, 0, Qt.AlignmentFlag.AlignTop)
 
-        layout.addWidget(controls)
+        self._isosurface_controls_scroll = QScrollArea(tab)
+        self._isosurface_controls_scroll.setWidgetResizable(True)
+        self._isosurface_controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._isosurface_controls_scroll.setWidget(controls)
+
+        layout.addWidget(self._isosurface_controls_scroll)
         layout.addWidget(viewer_panel, 1)
         self._set_isosurface_status(
             "Calculate the full-cell electrostatic-potential grid to enable isosurface viewing.",
@@ -2288,7 +2294,7 @@ class UepAnalysisDialog(QDialog):
         viewer_layout.setContentsMargins(0, 0, 0, 0)
         viewer_layout.setSpacing(10)
         self._slice_viewer = AtomicStructureViewer(viewer_panel)
-        self._slice_viewer.setMinimumHeight(400)
+        self._slice_viewer.setMinimumHeight(320)
         self._slice_viewer.set_structure(self._viewer_host_structure)
         viewer_layout.addWidget(self._slice_viewer, 1)
 
@@ -2325,7 +2331,12 @@ class UepAnalysisDialog(QDialog):
         side_layout.addWidget(self._slice_manage_muons_button, 0, Qt.AlignmentFlag.AlignRight)
         viewer_layout.addWidget(side_card, 0, Qt.AlignmentFlag.AlignTop)
 
-        layout.addWidget(controls)
+        self._slice_controls_scroll = QScrollArea(tab)
+        self._slice_controls_scroll.setWidgetResizable(True)
+        self._slice_controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._slice_controls_scroll.setWidget(controls)
+
+        layout.addWidget(self._slice_controls_scroll)
         layout.addWidget(viewer_panel, 1)
         self._set_slice_status("Calculate the full-cell electrostatic-potential grid to enable slice viewing.", kind="info")
         self._refresh_slice_plane_buttons()
@@ -2366,7 +2377,7 @@ class UepAnalysisDialog(QDialog):
         self._batch_sampling_card = sampling_card
         sampling_card.setObjectName("analysisSliderPanel")
         sampling_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        sampling_card.setMinimumHeight(288)
+        sampling_card.setMinimumHeight(240)
         sampling_layout = QVBoxLayout(sampling_card)
         sampling_layout.setContentsMargins(16, 14, 16, 14)
         sampling_layout.setSpacing(8)
@@ -2411,7 +2422,7 @@ class UepAnalysisDialog(QDialog):
         optimizer_card = QFrame(controls)
         optimizer_card.setObjectName("analysisSliderPanel")
         optimizer_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        optimizer_card.setMinimumHeight(288)
+        optimizer_card.setMinimumHeight(240)
         optimizer_layout = QVBoxLayout(optimizer_card)
         optimizer_layout.setContentsMargins(16, 14, 16, 14)
         optimizer_layout.setSpacing(8)
@@ -2465,7 +2476,7 @@ class UepAnalysisDialog(QDialog):
         log_card.setObjectName("uepIsosurfaceInfoCard")
         log_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         log_card.setMinimumWidth(250)
-        log_card.setMinimumHeight(288)
+        log_card.setMinimumHeight(240)
         log_layout = QVBoxLayout(log_card)
         log_layout.setContentsMargins(14, 12, 14, 12)
         log_layout.setSpacing(8)

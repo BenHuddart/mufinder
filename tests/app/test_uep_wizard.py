@@ -80,6 +80,47 @@ def _run_isosurface_threads_inline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("mufinder.app.uep_wizard._IsosurfaceMeshThread.start", _start_inline)
 
 
+def test_uep_analysis_dialog_shrinks_for_small_screens(qapp) -> None:
+    """Isosurface/slices controls scroll instead of forcing a tall minimum.
+
+    Guards the SC-1 small-screen fix: the dialog's minimum height must fit a
+    13" MacBook's ~850px usable height, the controls column above each viewer
+    must live in a scrollable area (not push the viewer off-screen), and the
+    slider/viewer minimums must be small enough to avoid re-inflating the
+    dialog's minimum size.
+    """
+    from PySide6.QtWidgets import QScrollArea
+
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+
+    assert dialog.minimumWidth() == 980
+    assert dialog.minimumHeight() == 640
+
+    assert isinstance(dialog._isosurface_controls_scroll, QScrollArea)
+    assert dialog._isosurface_controls_scroll.widgetResizable()
+    assert isinstance(dialog._slice_controls_scroll, QScrollArea)
+    assert dialog._slice_controls_scroll.widgetResizable()
+
+    assert dialog._isosurface_slider.minimumWidth() == 400
+    assert dialog._isosurface_viewer.minimumHeight() == 320
+    assert dialog._slice_viewer.minimumHeight() == 320
+
+    assert dialog._batch_sampling_card.minimumHeight() == 240
+    optimizer_card = dialog._batch_run.parentWidget()
+    log_card = dialog._batch_summary.parentWidget()
+    assert optimizer_card.minimumHeight() == 240
+    assert log_card.minimumHeight() == 240
+
+    dialog.close()
+
+
 def test_add_slice_plane_dialog_allows_point_normal_without_selection(qapp) -> None:
     dialog = _AddSlicePlaneDialog(
         selected_positions_ang=[],
@@ -969,13 +1010,13 @@ def test_uep_wizard_batch_search_default_split_and_headers_are_compact(qapp) -> 
     assert dialog._batch_tab.layout().contentsMargins().top() == 2
     assert dialog._isosurface_tab.layout().contentsMargins().top() == 2
     assert dialog._slices_tab.layout().contentsMargins().top() == 2
-    assert dialog._batch_sampling_card.minimumHeight() == 288
+    assert dialog._batch_sampling_card.minimumHeight() == 240
     optimizer_card = dialog._batch_run.parentWidget()
     log_card = dialog._batch_summary.parentWidget()
     assert optimizer_card is not None
     assert log_card is not None
-    assert optimizer_card.minimumHeight() == 288
-    assert log_card.minimumHeight() == 288
+    assert optimizer_card.minimumHeight() == 240
+    assert log_card.minimumHeight() == 240
     dialog.close()
 
 

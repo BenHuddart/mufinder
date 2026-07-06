@@ -54,6 +54,40 @@ Mode Ion                X                                   Y                   
 """
 
 
+def test_quantum_analysis_dialog_tables_use_splitters_not_width_locks(qapp, tmp_path: Path) -> None:
+    """Tables are capped, not width-locked, so a QSplitter governs sizing.
+
+    Guards the SC-5 small-screen fix: narrowing the dialog should let a
+    QSplitter hand space to the plot/viewer instead of a rigid table width
+    starving them.
+    """
+    from PySide6.QtWidgets import QSplitter
+
+    phonon_path = tmp_path / "site.phonon"
+    phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
+    dialog = QuantumPhononAnalysisDialog(phonon_path=str(phonon_path), job_label="quantum_phonon_splitters")
+
+    phonon_splitter = dialog._phonon_mode_table.parentWidget()
+    assert isinstance(phonon_splitter, QSplitter)
+    assert dialog._phonon_mode_table.minimumWidth() == 320
+    assert dialog._phonon_mode_table.minimumWidth() < dialog._phonon_mode_table.maximumWidth()
+
+    single_particle_splitter = dialog._single_particle_table.parentWidget()
+    assert isinstance(single_particle_splitter, QSplitter)
+    assert dialog._single_particle_table.minimumWidth() == 320
+
+    # Correlation-tab matrices are capped (setMaximumSize), never locked
+    # (setFixedSize), so they can shrink and scroll on a narrow dialog.
+    assert (
+        dialog._covariance_table.horizontalScrollBarPolicy()
+        == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    )
+    assert dialog._covariance_table.maximumWidth() < 16_777_215
+    assert dialog._covariance_table.maximumHeight() < 16_777_215
+
+    dialog.close()
+
+
 def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp, tmp_path: Path) -> None:
     phonon_path = tmp_path / "site.phonon"
     phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
@@ -105,7 +139,8 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp
     assert dialog._phonon_viewer.selected_atom_indices() == (1,)
     assert dialog._phonon_viewer._line_overlay_specs == []
     assert dialog._phonon_mode_table.width() <= 620
-    assert dialog._phonon_mode_table.width() >= 420
+    assert dialog._phonon_mode_table.minimumWidth() == 320
+    assert dialog._phonon_mode_table.maximumWidth() <= 620
     assert dialog._phonon_mode_table.horizontalHeader().sectionResizeMode(3) == dialog._phonon_mode_table.horizontalHeader().ResizeMode.Stretch
 
     tabs = dialog.findChild(QTabWidget, "quantumAnalysisTabs")
@@ -114,7 +149,7 @@ def test_quantum_phonon_analysis_dialog_solves_and_calculates_pair_matrices(qapp
     assert tabs.widget(0).objectName() == "quantumAnalysisTabPage"
     assert tabs.widget(1).objectName() == "quantumAnalysisTabPage"
     assert tabs.widget(2).objectName() == "quantumAnalysisTabPage"
-    assert dialog._single_particle_table.maximumWidth() == 520
+    assert dialog._single_particle_table.minimumWidth() == 320
     assert dialog._single_particle_table.item(0, 0).text() == "2"
     direction_item = dialog._single_particle_table.item(0, 1)
     assert direction_item.text().startswith("[")
