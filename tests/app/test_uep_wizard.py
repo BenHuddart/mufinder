@@ -871,16 +871,16 @@ def test_uep_wizard_batch_search_uses_compact_control_card_layout(qapp) -> None:
 
     control_cards = dialog._batch_tab.findChildren(type(summary_parent), options=Qt.FindChildOption.FindChildrenRecursively)
     object_names = [widget.objectName() for widget in control_cards]
-    assert object_names.count("uepIsosurfaceSliderPanel") >= 2
+    assert object_names.count("analysisSliderPanel") >= 2
     assert object_names.count("uepIsosurfaceInfoCard") >= 1
     assert dialog._batch_progress.parentWidget() is not None
-    assert dialog._batch_progress.parentWidget().objectName() == "uepIsosurfaceSliderPanel"
+    assert dialog._batch_progress.parentWidget().objectName() == "analysisSliderPanel"
     assert dialog._batch_zpe_progress.parentWidget() is not None
     assert dialog._batch_zpe_progress.parentWidget().objectName() == "uepIsosurfaceInfoCard"
     assert dialog._batch_progress.format() == "Ready"
     assert dialog._batch_zpe_progress.format() == "Ready"
     assert dialog._batch_max_attempts.parentWidget() is not None
-    assert dialog._batch_max_attempts.parentWidget().objectName() == "uepIsosurfaceSliderPanel"
+    assert dialog._batch_max_attempts.parentWidget().objectName() == "analysisSliderPanel"
     assert dialog._batch_optimization_tolerance.value() == pytest.approx(1e-5)
     assert dialog._batch_max_steps.value() == 100
     assert "pymuon-suite UEP workflow" in dialog._batch_optimization_tolerance.toolTip()
@@ -888,7 +888,7 @@ def test_uep_wizard_batch_search_uses_compact_control_card_layout(qapp) -> None:
     assert current_palette().accent in dialog._batch_progress.styleSheet()
     assert current_palette().success in dialog._batch_zpe_progress.styleSheet()
     assert dialog._batch_gw_factor_input.parentWidget() is not None
-    assert dialog._batch_gw_factor_input.parentWidget().objectName() == "uepIsosurfaceSliderPanel"
+    assert dialog._batch_gw_factor_input.parentWidget().objectName() == "analysisSliderPanel"
     assert dialog._batch_calculate_zpe.parentWidget() is summary_parent
     assert not hasattr(dialog, "_batch_promote")
     assert not hasattr(dialog, "_batch_cluster_threshold")

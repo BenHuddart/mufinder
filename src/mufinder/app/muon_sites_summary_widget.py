@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.theme import (
+    make_empty_state_label,
     style_hint_text,
     style_section_subtitle,
     style_section_title,
@@ -154,10 +155,7 @@ class _ChargeStatePanel(QFrame):
         self._summary_layout.setSpacing(6)
         self._summary_labels: dict[str, QLabel] = {}
 
-        self._placeholder = QLabel("", self)
-        self._placeholder.setObjectName("overviewPlaceholder")
-        self._placeholder.setWordWrap(True)
-        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._placeholder = make_empty_state_label(object_name="overviewPlaceholder", parent=self)
 
         # Columns other than _POSITION_COLUMN are sized to content via
         # resizeColumnsToContents() in _populate_table, so this table opts out

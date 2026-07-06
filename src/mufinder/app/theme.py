@@ -9,7 +9,7 @@ from pathlib import Path
 import tempfile
 
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt
-from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QPalette
+from PySide6.QtGui import QColor, QBrush, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
 from PySide6.QtWidgets import QApplication, QLabel, QScrollBar, QTableWidget, QToolButton, QTreeWidget, QWidget
 
 THEME_LIGHT = "light"
@@ -144,6 +144,8 @@ def _arrow_asset_path(direction: str, colour: str) -> str:
             points = "2,3 10,3 6,8"
         elif direction == "right":
             points = "3,2 3,10 8,6"
+        elif direction == "left":
+            points = "9,2 9,10 4,6"
         else:
             points = "2,8 10,8 6,3"
         svg = (
@@ -153,6 +155,21 @@ def _arrow_asset_path(direction: str, colour: str) -> str:
         )
         filename.write_text(svg, encoding="utf-8")
     return str(filename)
+
+
+def arrow_icon(direction: str) -> QIcon:
+    """Return a themed arrow ``QIcon`` for ``direction`` in the current palette.
+
+    ``direction`` is one of ``"up"``, ``"down"``, ``"left"``, or ``"right"``.
+    Use this instead of unicode glyphs such as ``◀``/``▶`` for stepper
+    buttons: those glyphs fall outside the bundled Inter font's coverage and
+    render from a mismatched platform fallback font (Segoe UI Symbol on
+    Windows, Apple Symbols on macOS), producing inconsistent size/alignment
+    across platforms.
+    """
+
+    colour = current_palette().text_primary
+    return QIcon(_arrow_asset_path(direction, colour))
 
 
 def _indicator_glyph_path(kind: str, colour: str) -> str:
@@ -603,6 +620,29 @@ def style_warning_text(label: QLabel) -> None:
     """Tag a label as warning text for theme-based styling."""
 
     label.setObjectName("warningText")
+
+
+def make_empty_state_label(
+    text: str = "",
+    *,
+    object_name: str = "overviewPlaceholder",
+    alignment: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignCenter,
+    parent: QWidget | None = None,
+) -> QLabel:
+    """Return a word-wrapped placeholder ``QLabel`` for an empty job/result view.
+
+    Centralizes the near-identical "nothing here yet" placeholder pattern
+    previously hand-copied in ``convergence_overview_widget.py``,
+    ``muon_sites_summary_widget.py``, and ``journal_widget.py``. Callers keep
+    their own ``object_name`` so existing stylesheet rules and tests that key
+    off it continue to work unchanged.
+    """
+
+    label = QLabel(text, parent)
+    label.setObjectName(object_name)
+    label.setWordWrap(True)
+    label.setAlignment(alignment)
+    return label
 
 
 def style_inline_group(widget: QWidget) -> None:
@@ -1643,7 +1683,7 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     QWidget#mufinderInlineGroup QLabel {{
         background: transparent;
     }}
-    QFrame#uepIsosurfaceSliderPanel,
+    QFrame#analysisSliderPanel,
     QFrame#uepIsosurfaceInfoCard,
     QFrame#connectedToleranceScanPanel {{
         border: 1px solid {p.border};

@@ -386,7 +386,7 @@ def test_pin_button_emits_pin_summary_requested(qapp) -> None:
         pin_button = next(
             button
             for button in widget.findChildren(QPushButton)
-            if button.text() == "Pin to summary"
+            if button.text() == "Pin to Summary"
         )
         pin_button.click()
         assert captured == [str(workspace["id"])]
