@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.cluster_connection_check import ClusterConnectionCheck
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
     make_message_box_resizable,
@@ -291,17 +292,38 @@ class CastepSetupDialog(QDialog):
         if credentials is None:
             QMessageBox.warning(self, "Missing credentials", "Credentials are required for this cluster.")
             return
-        try:
-            self._ensure_cluster_trusted_connection(config, credentials=credentials)
-        except Exception as exc:  # noqa: BLE001
+        # Verify connectivity and host-key trust on a worker thread before
+        # starting generation: the inline paramiko connect used to freeze the
+        # GUI for over a minute against an unreachable cluster. The factory
+        # and trust prompt are passed from this module's namespace so tests
+        # can monkeypatch them.
+        check = ClusterConnectionCheck(
+            self,
+            config,
+            credentials,
+            self._settings,
+            title="Checking cluster connection",
+            connection_factory=SSHConnection,
+            trust_prompt=lambda parent, cfg, exc: prompt_to_trust_host_key(parent, cfg, exc),
+        )
+
+        def _on_succeeded() -> None:
+            self._start_cluster_generation(config, output_path, credentials=credentials)
+
+        def _on_failed(exc: object) -> None:
             show_detailed_warning(
                 self,
                 "Cluster connection failed",
                 format_cluster_connection_error(config, exc),
                 informative_text="Open Details for the full SSH connection error and recovery guidance.",
             )
-            return
-        self._start_cluster_generation(config, output_path, credentials=credentials)
+
+        check.succeeded.connect(_on_succeeded)
+        check.failed.connect(_on_failed)
+        check.succeeded.connect(check.deleteLater)
+        check.failed.connect(check.deleteLater)
+        check.cancelled.connect(check.deleteLater)
+        check.start()
 
     def _accept_and_save(self) -> None:
         if self._generation_in_progress:
@@ -578,29 +600,3 @@ class CastepSetupDialog(QDialog):
         box.setDetailedText(text)
         box.exec()
 
-    def _ensure_cluster_trusted_connection(self, config: ClusterConfig, *, credentials: SSHCredentials) -> None:
-        trusted_endpoints: set[str] = set()
-        while True:
-            connection = SSHConnection(config, settings=self._settings)
-            try:
-                if config.jump_host_enabled:
-                    connection.connect(credentials=credentials)
-                else:
-                    connection.connect(password=credentials.target_secret)
-                return
-            except SSHUnknownHostKeyError as exc:
-                if exc.endpoint in trusted_endpoints:
-                    raise
-                if not prompt_to_trust_host_key(self, config, exc):
-                    raise ConnectionError("Connection cancelled because the SSH host key was not trusted.") from exc
-                save_trusted_host_key(
-                    self._settings,
-                    config,
-                    algorithm=exc.algorithm,
-                    key_base64=exc.key_base64,
-                    endpoint=exc.endpoint,
-                )
-                trusted_endpoints.add(exc.endpoint)
-            finally:
-                if connection.is_connected:
-                    connection.disconnect()
