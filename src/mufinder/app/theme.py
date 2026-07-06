@@ -1614,7 +1614,7 @@ def _card_and_menu_styles(p: MuFinderPalette) -> str:
     QWidget#mufinderInlineGroup QLabel {{
         background: transparent;
     }}
-    QFrame#uepIsosurfaceSliderPanel,
+    QFrame#analysisSliderPanel,
     QFrame#uepIsosurfaceInfoCard,
     QFrame#connectedToleranceScanPanel {{
         border: 1px solid {p.border};

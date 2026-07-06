@@ -1971,7 +1971,7 @@ class UepAnalysisDialog(QDialog):
         controls_layout.addLayout(button_row)
 
         slider_panel = QFrame(controls)
-        slider_panel.setObjectName("uepIsosurfaceSliderPanel")
+        slider_panel.setObjectName("analysisSliderPanel")
         slider_layout = QVBoxLayout(slider_panel)
         slider_layout.setContentsMargins(16, 10, 16, 10)
         slider_layout.setSpacing(8)
@@ -2362,7 +2362,7 @@ class UepAnalysisDialog(QDialog):
 
         sampling_card = QFrame(controls)
         self._batch_sampling_card = sampling_card
-        sampling_card.setObjectName("uepIsosurfaceSliderPanel")
+        sampling_card.setObjectName("analysisSliderPanel")
         sampling_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         sampling_card.setMinimumHeight(288)
         sampling_layout = QVBoxLayout(sampling_card)
@@ -2407,7 +2407,7 @@ class UepAnalysisDialog(QDialog):
         sampling_layout.addWidget(self._batch_clustering_button, 0, Qt.AlignmentFlag.AlignLeft)
 
         optimizer_card = QFrame(controls)
-        optimizer_card.setObjectName("uepIsosurfaceSliderPanel")
+        optimizer_card.setObjectName("analysisSliderPanel")
         optimizer_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         optimizer_card.setMinimumHeight(288)
         optimizer_layout = QVBoxLayout(optimizer_card)

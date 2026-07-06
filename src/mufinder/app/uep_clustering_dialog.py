@@ -314,7 +314,7 @@ class UepClusteringDialog(QDialog):
         layout.addWidget(subtitle)
 
         controls_card = QFrame(self)
-        controls_card.setObjectName("uepIsosurfaceSliderPanel")
+        controls_card.setObjectName("analysisSliderPanel")
         controls_layout = QGridLayout(controls_card)
         self._controls_layout = controls_layout
         controls_layout.setContentsMargins(16, 14, 16, 14)

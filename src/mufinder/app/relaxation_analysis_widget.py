@@ -530,7 +530,7 @@ class RelaxationClusteringDialog(QDialog):
         layout.addWidget(subtitle)
 
         controls = QFrame(self)
-        controls.setObjectName("uepIsosurfaceSliderPanel")
+        controls.setObjectName("analysisSliderPanel")
         controls_layout = QGridLayout(controls)
         controls_layout.setContentsMargins(14, 12, 14, 12)
         controls_layout.setHorizontalSpacing(12)
@@ -1088,7 +1088,7 @@ class DisplacementAnalysisDialog(QDialog):
         style_section_title(title)
         layout.addWidget(title)
         controls = QFrame(self)
-        controls.setObjectName("uepIsosurfaceSliderPanel")
+        controls.setObjectName("analysisSliderPanel")
         form = QGridLayout(controls)
         form.setContentsMargins(14, 12, 14, 12)
         form.setHorizontalSpacing(12)
@@ -1404,7 +1404,7 @@ class RelaxationAnalysisWidget(QWidget):
         layout.setSpacing(8)
 
         header = QFrame(page)
-        header.setObjectName("uepIsosurfaceSliderPanel")
+        header.setObjectName("analysisSliderPanel")
         header_layout = QGridLayout(header)
         header_layout.setContentsMargins(14, 12, 14, 12)
         header_layout.setHorizontalSpacing(10)
