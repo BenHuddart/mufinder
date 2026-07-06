@@ -2217,6 +2217,22 @@ class MainWindow(QMainWindow):
                 relaxation_analysis_view.shutdown()
         muon_generation_thread = getattr(self, "_muon_generation_thread", None)
         if muon_generation_thread is not None:
+            # Generation mutates the project document mid-run, so it cannot be
+            # interrupted or abandoned — but a bare wait() froze the window
+            # into "Not Responding" for the remainder of a long generation.
+            # Pump the event loop behind a busy dialog instead; the window
+            # modality prevents re-entrant close clicks.
+            if not muon_generation_thread.isFinished():
+                progress = QProgressDialog("Finishing muon site generation…", None, 0, 0, self)
+                progress.setWindowTitle("Closing")
+                progress.setWindowModality(Qt.WindowModality.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.show()
+                loop = QEventLoop()
+                muon_generation_thread.finished.connect(loop.quit)
+                if not muon_generation_thread.isFinished():
+                    loop.exec()
+                progress.close()
             muon_generation_thread.wait()
             self._muon_generation_thread = None
         self._shutdown_embedded_structure_viewers()
@@ -2582,7 +2598,13 @@ class MainWindow(QMainWindow):
         # Persist any coalesced autosave for the outgoing project before swapping.
         self._flush_dashboard()
         try:
-            self._document = self._project_service.load_project(project_root)
+            # Loading parses every entity JSON file; on a mature project over a
+            # network share or cold OneDrive folder that froze the window for
+            # seconds, so it runs off the GUI thread behind a busy dialog.
+            self._document = self._run_blocking_file_op(
+                lambda: self._project_service.load_project(project_root),
+                description=f"Opening project {project_root.name}…",
+            )
         except Exception as exc:  # noqa: BLE001 - surface project-load failures to users.
             if show_errors:
                 QMessageBox.critical(self, "Open failed", str(exc))
