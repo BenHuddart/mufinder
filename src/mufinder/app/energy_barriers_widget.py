@@ -12,12 +12,10 @@ from PySide6.QtGui import (
     QDesktopServices,
     QFontMetricsF,
     QKeyEvent,
-    QKeySequence,
     QMouseEvent,
     QPainter,
     QPainterPath,
     QPen,
-    QShortcut,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -42,6 +40,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.app.theme import (
+    arrow_icon,
     current_palette,
     status_brush,
     style_hint_text,
@@ -49,6 +48,7 @@ from mufinder.app.theme import (
     style_section_title,
 )
 from mufinder.app.workflow_table_utils import (
+    bind_delete_shortcuts,
     create_workflow_table,
     set_workflow_table_item,
     style_workflow_configure_button,
@@ -457,23 +457,27 @@ def _build_image_stepper(
     parent: QWidget,
     on_step,
 ) -> tuple[QToolButton, QLabel, QToolButton]:
-    """Create the shared ``◀ / position / ▶`` image-stepper controls.
+    """Create the shared previous / position / next image-stepper controls.
 
     Used by both the inspector controls and the pop-out window; callers arrange
     the returned widgets in their own layout. ``on_step`` receives -1 or +1.
     """
 
     prev_button = QToolButton(parent)
-    prev_button.setText("◀")
+    prev_button.setIcon(arrow_icon("left"))
+    prev_button.setText("")
     prev_button.setAutoRepeat(True)
     prev_button.setToolTip("Previous image along the reaction coordinate.")
+    prev_button.setAccessibleName("Previous image")
     prev_button.clicked.connect(lambda: on_step(-1))
     position_label = QLabel("", parent)
     position_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     next_button = QToolButton(parent)
-    next_button.setText("▶")
+    next_button.setIcon(arrow_icon("right"))
+    next_button.setText("")
     next_button.setAutoRepeat(True)
     next_button.setToolTip("Next image along the reaction coordinate.")
+    next_button.setAccessibleName("Next image")
     next_button.clicked.connect(lambda: on_step(1))
     return prev_button, position_label, next_button
 
@@ -760,12 +764,9 @@ class EnergyBarriersWidget(QWidget):
 
         self.clear_neb_preview()
         self._apply_responsive_layout()
-        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
-        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._delete_shortcut.activated.connect(self._delete_selected_sources)
-        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
-        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._backspace_shortcut.activated.connect(self._delete_selected_sources)
+        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
+            self, self._delete_selected_sources
+        )
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().resizeEvent(event)

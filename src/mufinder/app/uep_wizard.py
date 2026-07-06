@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -700,15 +701,11 @@ class _AddSlicePlaneDialog(QDialog):
         )
         layout.addWidget(geometry_group)
 
-        button_row = QHBoxLayout()
-        self._create_button = QPushButton("Create Plane", self)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
+        self._create_button = buttons.addButton("Create Plane", QDialogButtonBox.ButtonRole.AcceptRole)
         self._create_button.clicked.connect(self._accept_plane)
-        cancel = QPushButton("Cancel", self)
-        cancel.clicked.connect(self.reject)
-        button_row.addWidget(self._create_button)
-        button_row.addWidget(cancel)
-        button_row.addStretch(1)
-        layout.addLayout(button_row)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
         self._point_normal.toggled.connect(self._refresh_point_normal_editor_state)
         self._refresh_enabled_methods()
@@ -1014,18 +1011,15 @@ class _EditSlicePlaneDialog(QDialog):
         geometry_layout.addWidget(normal_block)
         layout.addWidget(geometry_group)
 
-        button_row = QHBoxLayout()
-        delete_button = QPushButton("Delete Plane", self)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        delete_button = buttons.addButton("Delete Plane", QDialogButtonBox.ButtonRole.DestructiveRole)
         delete_button.clicked.connect(self._delete_plane)
-        save_button = QPushButton("Save", self)
-        save_button.clicked.connect(self.accept)
-        cancel_button = QPushButton("Cancel", self)
-        cancel_button.clicked.connect(self.reject)
-        button_row.addWidget(delete_button)
-        button_row.addStretch(1)
-        button_row.addWidget(save_button)
-        button_row.addWidget(cancel_button)
-        layout.addLayout(button_row)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
     def _delete_plane(self) -> None:
         self.plane_deleted.emit()
@@ -1162,12 +1156,9 @@ class _ManageViewerMuonsDialog(QDialog):
 
         layout.addLayout(tables_row, 1)
 
-        button_row = QHBoxLayout()
-        button_row.addStretch(1)
-        close_button = QPushButton("Close", self)
-        close_button.clicked.connect(self.close)
-        button_row.addWidget(close_button)
-        layout.addLayout(button_row)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.close)
+        layout.addWidget(buttons)
 
         for table in (self._candidate_table, self._current_table):
             header = table.header()
@@ -1983,7 +1974,7 @@ class UepAnalysisDialog(QDialog):
         controls_layout.addLayout(button_row)
 
         slider_panel = QFrame(controls)
-        slider_panel.setObjectName("uepIsosurfaceSliderPanel")
+        slider_panel.setObjectName("analysisSliderPanel")
         slider_layout = QVBoxLayout(slider_panel)
         slider_layout.setContentsMargins(16, 10, 16, 10)
         slider_layout.setSpacing(8)
@@ -2384,7 +2375,7 @@ class UepAnalysisDialog(QDialog):
 
         sampling_card = QFrame(controls)
         self._batch_sampling_card = sampling_card
-        sampling_card.setObjectName("uepIsosurfaceSliderPanel")
+        sampling_card.setObjectName("analysisSliderPanel")
         sampling_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         sampling_card.setMinimumHeight(240)
         sampling_layout = QVBoxLayout(sampling_card)
@@ -2429,7 +2420,7 @@ class UepAnalysisDialog(QDialog):
         sampling_layout.addWidget(self._batch_clustering_button, 0, Qt.AlignmentFlag.AlignLeft)
 
         optimizer_card = QFrame(controls)
-        optimizer_card.setObjectName("uepIsosurfaceSliderPanel")
+        optimizer_card.setObjectName("analysisSliderPanel")
         optimizer_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         optimizer_card.setMinimumHeight(240)
         optimizer_layout = QVBoxLayout(optimizer_card)

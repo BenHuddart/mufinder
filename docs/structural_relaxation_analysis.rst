@@ -3,8 +3,8 @@ Structural Relaxation Analysis
 
 The structural relaxation analysis workspace collects completed muon geometry
 optimisation results and treats their final muon positions as an analysis set.
-Create a workspace from the Relaxations tab with **Create analysis workspace
-from selection**. MuFinder asks for a workspace name, records whether the
+Create a workspace from the Relaxations tab with **Create Analysis Workspace
+from Selection**. MuFinder asks for a workspace name, records whether the
 workspace is for positive muon or muonium calculations, and only allows later
 additions from the same charge-state family.
 
@@ -86,7 +86,7 @@ and the maximum and mean fitted distances used to justify the assignment.
 Displacement Analysis
 ---------------------
 
-**Analyse displacements** opens a site-level displacement view after clustering
+**Analyse Displacements** opens a site-level displacement view after clustering
 has been applied. Choose one clustered muon site and a comparison host
 structure. The comparison structure may be the imported host or a completed
 pristine relaxation, provided the pristine relaxation was not run as a free-cell

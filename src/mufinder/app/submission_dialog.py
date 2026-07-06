@@ -70,7 +70,7 @@ class LocalSubmissionDialog(QDialog):
         self._core_hint.setWordWrap(True)
         form.addRow("", self._core_hint)
 
-        self._parallel_group = QGroupBox("How jobs should run", self)
+        self._parallel_group = QGroupBox("How Jobs Should Run", self)
         parallel_layout = QFormLayout(self._parallel_group)
         self._sequential_radio = QRadioButton("Run jobs one after another", self._parallel_group)
         self._parallel_radio = QRadioButton("Run jobs at the same time", self._parallel_group)

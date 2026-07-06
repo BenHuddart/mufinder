@@ -327,8 +327,8 @@ class ComparisonTableWidget(QWidget):
             stretch_last_section=False,
         )
 
-        self._export_button = QPushButton("Export CSV")
-        self._delete_button = QPushButton("Delete")
+        self._export_button = QPushButton("Export CSV...")
+        self._delete_button = QPushButton("Remove")
 
         self._build_layout()
         self._connect_signals()

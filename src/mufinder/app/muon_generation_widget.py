@@ -36,6 +36,7 @@ from mufinder.app.structure_render_guard import (
     NO_STRUCTURE,
     structure_geometry_fingerprint,
 )
+from mufinder.app.workflow_table_utils import bind_delete_shortcuts
 from mufinder.app.theme import refresh_widget_style, style_section_subtitle, style_section_title
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
@@ -224,12 +225,9 @@ class MuonGenerationWidget(QWidget):
         self._site_table.horizontalHeaderItem(1).setToolTip("Generation method")
         self._site_table.horizontalHeaderItem(2).setToolTip("Workflow state")
         self._configure_site_table_columns()
-        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
-        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._delete_shortcut.activated.connect(self._emit_delete_selected)
-        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
-        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._backspace_shortcut.activated.connect(self._emit_delete_selected)
+        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
+            self, self._emit_delete_selected
+        )
         self._clear_selection_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self._site_table)
         self._clear_selection_shortcut.activated.connect(self._clear_site_selection)
         self._site_table.viewport().installEventFilter(self)
@@ -256,7 +254,7 @@ class MuonGenerationWidget(QWidget):
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
 
-        header = QLabel("Initial muon position generation")
+        header = QLabel("Initial Muon Position Generation")
         self._header_label = header
         style_section_title(header)
         layout.addWidget(header)
@@ -356,7 +354,7 @@ class MuonGenerationWidget(QWidget):
         self._generate_btn = QPushButton("Generate Sites")
         self._generate_btn.clicked.connect(self._emit_generate)
         action_row.addWidget(self._generate_btn)
-        self._cluster_btn = QPushButton("Cluster Positions")
+        self._cluster_btn = QPushButton("Cluster Positions...")
         self._cluster_btn.setEnabled(False)
         self._cluster_btn.clicked.connect(self._open_cluster_positions_dialog)
         action_row.addWidget(self._cluster_btn)
@@ -364,7 +362,7 @@ class MuonGenerationWidget(QWidget):
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._emit_delete_selected)
         action_row.addWidget(self._delete_btn)
-        self._create_jobs_btn = QPushButton("Create job(s) from selected")
+        self._create_jobs_btn = QPushButton("Create Jobs from Selected")
         self._create_jobs_btn.setEnabled(False)
         action_row.addWidget(self._create_jobs_btn)
         action_row.addStretch(1)
