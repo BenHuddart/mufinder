@@ -2,10 +2,48 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QPushButton, QTableWidget, QTableWidgetItem
+from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QFrame,
+    QHeaderView,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QWidget,
+)
 
 from mufinder.app.theme import use_square_top_table_corners
+
+
+def bind_delete_shortcuts(
+    widget: QWidget,
+    slot: Callable[[], None],
+    *,
+    context: Qt.ShortcutContext = Qt.ShortcutContext.WidgetWithChildrenShortcut,
+) -> tuple[QShortcut, QShortcut]:
+    """Bind a delete/remove ``slot`` to both Delete and Backspace on ``widget``.
+
+    macOS delivers the physical Delete key as ``Qt.Key.Key_Backspace``, so
+    CLAUDE.md requires every delete/remove/cancel/reset shortcut to bind both
+    ``QKeySequence.StandardKey.Delete`` and ``Qt.Key.Key_Backspace`` — binding
+    only the standard "Delete" key sequence leaves macOS users unable to
+    trigger the action from the keyboard. Returns the two ``QShortcut``
+    instances so callers can keep references alive (Qt shortcuts are owned by
+    their parent widget, but callers historically stash them on ``self`` as
+    well).
+    """
+
+    delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, widget)
+    delete_shortcut.setContext(context)
+    delete_shortcut.activated.connect(slot)
+    backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), widget)
+    backspace_shortcut.setContext(context)
+    backspace_shortcut.activated.connect(slot)
+    return delete_shortcut, backspace_shortcut
 
 
 def create_workflow_table(

@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -41,6 +40,7 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.app.workflow_table_utils import (
+    bind_delete_shortcuts,
     create_workflow_table,
     style_workflow_configure_button,
 )
@@ -282,12 +282,9 @@ class CutoffConvergenceWidget(QWidget):
 
         self._build_layout()
         self._connect_signals()
-        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
-        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._delete_shortcut.activated.connect(self._remove_selected_or_current_cutoffs)
-        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
-        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._backspace_shortcut.activated.connect(self._remove_selected_or_current_cutoffs)
+        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
+            self, self._remove_selected_or_current_cutoffs
+        )
 
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)

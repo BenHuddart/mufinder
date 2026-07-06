@@ -38,6 +38,7 @@ from mufinder.app.structure_render_guard import (
     NO_STRUCTURE,
     structure_geometry_fingerprint,
 )
+from mufinder.app.workflow_table_utils import bind_delete_shortcuts
 from mufinder.app.theme import refresh_widget_style, style_section_subtitle, style_section_title
 from mufinder.domain.models import Structure
 from mufinder.science.site_generation import (
@@ -230,12 +231,9 @@ class MuonGenerationWidget(QWidget):
         self._site_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._site_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._configure_site_table_columns()
-        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
-        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._delete_shortcut.activated.connect(self._emit_delete_selected)
-        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
-        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._backspace_shortcut.activated.connect(self._emit_delete_selected)
+        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
+            self, self._emit_delete_selected
+        )
         self._clear_selection_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self._site_table)
         self._clear_selection_shortcut.activated.connect(self._clear_site_selection)
         self._site_table.viewport().installEventFilter(self)

@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QShortcut
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -41,6 +41,7 @@ from mufinder.app.relaxation_adapter import (
 )
 from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.workflow_table_utils import (
+    bind_delete_shortcuts,
     create_workflow_table,
     style_workflow_configure_button,
 )
@@ -272,12 +273,9 @@ class MuonRelaxationWidget(QWidget):
 
         self._build_layout()
         self._connect_signals()
-        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
-        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._delete_shortcut.activated.connect(self._delete_selected_rows)
-        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
-        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._backspace_shortcut.activated.connect(self._delete_selected_rows)
+        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
+            self, self._delete_selected_rows
+        )
 
     def _create_table(self) -> QTableWidget:
         column_labels = (

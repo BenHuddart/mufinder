@@ -12,12 +12,10 @@ from PySide6.QtGui import (
     QDesktopServices,
     QFontMetricsF,
     QKeyEvent,
-    QKeySequence,
     QMouseEvent,
     QPainter,
     QPainterPath,
     QPen,
-    QShortcut,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -49,6 +47,7 @@ from mufinder.app.theme import (
     style_section_title,
 )
 from mufinder.app.workflow_table_utils import (
+    bind_delete_shortcuts,
     create_workflow_table,
     set_workflow_table_item,
     style_workflow_configure_button,
@@ -760,12 +759,9 @@ class EnergyBarriersWidget(QWidget):
 
         self.clear_neb_preview()
         self._apply_responsive_layout()
-        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
-        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._delete_shortcut.activated.connect(self._delete_selected_sources)
-        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
-        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._backspace_shortcut.activated.connect(self._delete_selected_sources)
+        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
+            self, self._delete_selected_sources
+        )
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().resizeEvent(event)
