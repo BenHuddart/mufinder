@@ -80,6 +80,25 @@ def test_apply_theme_sets_active_palette(qapp) -> None:
     assert qapp.font().pointSize() == -1
 
 
+def test_adjust_font_size_handles_pixel_point_and_unsized_fonts(qapp) -> None:
+    from PySide6.QtGui import QFont
+
+    pixel_font = QFont()
+    pixel_font.setPixelSize(11)
+    theme_module.adjust_font_size(pixel_font, 2)
+    assert pixel_font.pixelSize() == 13
+
+    point_font = QFont()
+    point_font.setPointSize(10)
+    theme_module.adjust_font_size(point_font, -1)
+    assert point_font.pointSize() == 9
+
+    clamped = QFont()
+    clamped.setPixelSize(10)
+    theme_module.adjust_font_size(clamped, -5, minimum=9)
+    assert clamped.pixelSize() == 9
+
+
 def test_bundled_font_assets_exist() -> None:
     font_dir = theme_module._bundled_font_dir()
 

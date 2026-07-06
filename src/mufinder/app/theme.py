@@ -103,6 +103,25 @@ def heading_font_family() -> str:
     )
 
 
+def adjust_font_size(font: QFont, delta: int, *, minimum: int = 1) -> None:
+    """Adjust ``font``'s size by ``delta`` in whichever unit it is sized.
+
+    The application default font is sized in pixels (see ``apply_theme``), so
+    ``pointSize()`` returns -1 for fonts derived from it and naive
+    ``setPointSize(pointSize() + delta)`` arithmetic silently stops applying
+    (or worse, clamps to an absolute point size). This helper applies the
+    delta to the pixel or point size, whichever the font actually carries.
+    """
+
+    pixel = font.pixelSize()
+    if pixel > 0:
+        font.setPixelSize(max(minimum, pixel + delta))
+        return
+    point = font.pointSize()
+    if point > 0:
+        font.setPointSize(max(minimum, point + delta))
+
+
 def _arrow_asset_path(direction: str, colour: str) -> str:
     """Return a temporary SVG asset path for a themed arrow glyph."""
 
