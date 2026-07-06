@@ -2,6 +2,63 @@
 
 <!-- version list -->
 
+## v0.4.0 (2026-07-06)
+
+### Bug Fixes
+
+- Keep per-row Configure/remove buttons clickable after first use
+  ([`9547d61`](https://github.com/BenHuddart/mufinder/commit/9547d61dd0a2b530ae50b7a61d8a71a285316f8a))
+
+- **cluster**: Close review findings — guarantee check emit, bound shutdown
+  ([`22325b3`](https://github.com/BenHuddart/mufinder/commit/22325b38058078787b4479e9dfcf98fcc4e40fa8))
+
+- **cluster**: Stop the poll timer on the worker thread during shutdown
+  ([`ddb8365`](https://github.com/BenHuddart/mufinder/commit/ddb8365a2290b4cc6d1188c1356653d2f3247e1d))
+
+- **jobs**: Persist coalesced flush at context boundaries; drop redundant refreshes
+  ([`d83044a`](https://github.com/BenHuddart/mufinder/commit/d83044a43ac6dfc50b0e39a61b29e4d6a5111782))
+
+- **ui**: Brand item-view checkboxes and fix disabled-checked contrast
+  ([`a4d6a22`](https://github.com/BenHuddart/mufinder/commit/a4d6a22081a123a1176bb70660589ca2a3742110))
+
+### Documentation
+
+- Require scientific-backends extra and bound local test parallelism
+  ([#34](https://github.com/BenHuddart/mufinder/pull/34),
+  [`f840807`](https://github.com/BenHuddart/mufinder/commit/f84080718ba980013889e243666950e0b641fcb9))
+
+### Features
+
+- **ui**: Brand checkbox and radio indicators with the accent
+  ([`f10cc8c`](https://github.com/BenHuddart/mufinder/commit/f10cc8c6676311fbf96342e78f44c0509d487ff7))
+
+- **ui**: Bundle Inter/Fraunces fonts and force Fusion for cross-platform parity
+  ([`07a91ef`](https://github.com/BenHuddart/mufinder/commit/07a91ef8419f8930e44325975e70a9dea1a175ca))
+
+- **ui**: Prefer branded vector icons over platform standard icons
+  ([`5348b05`](https://github.com/BenHuddart/mufinder/commit/5348b05b2899f68a9e372f34fcbdd6f7179401fc))
+
+- **ui**: Scale project-home signpost labels with the map
+  ([`292c9b5`](https://github.com/BenHuddart/mufinder/commit/292c9b50fdcd9fa2af1c4d626a2eb2b19cde979c))
+
+### Performance Improvements
+
+- **cluster**: Make batch submission async with progress and cancel
+  ([`3aa457e`](https://github.com/BenHuddart/mufinder/commit/3aa457ef5c742362b29431e259fe64e58d12db16))
+
+- **cluster**: Make the connect handshake non-blocking
+  ([`afda3b5`](https://github.com/BenHuddart/mufinder/commit/afda3b58a71e1f7d9945691da50f5917a25279da))
+
+- **cluster**: Run SSH work on a worker thread to keep the GUI responsive
+  ([`a2b9d27`](https://github.com/BenHuddart/mufinder/commit/a2b9d27064e937bc2c449980169fbdf0a567e6e9))
+
+- **jobs**: Coalesce per-job autosave so completion bursts don't freeze the GUI
+  ([`6436e15`](https://github.com/BenHuddart/mufinder/commit/6436e15461712762a841623f3d1cfda86420d93b))
+
+- **jobs**: Coalesce the whole dashboard update on completion bursts
+  ([`d659452`](https://github.com/BenHuddart/mufinder/commit/d65945244ee5c012f2eff245233d1f12401bf326))
+
+
 ## v0.3.0 (2026-06-17)
 
 ### Bug Fixes
@@ -19,7 +76,7 @@
 
 ### Features
 
-- Add Suggest… supercell button with Pareto-front candidate table
+- Add Suggestâ€¦ supercell button with Pareto-front candidate table
   ([`f53c07e`](https://github.com/BenHuddart/mufinder/commit/f53c07eaa3c745a13c21bf682301ff9ca32dea29))
 
 
@@ -86,7 +143,7 @@
 - Add CLAUDE.md as Claude Code guide for this repo
   ([`1410a1e`](https://github.com/BenHuddart/mufinder/commit/1410a1e8ef847684b9b8d2c098fa5bb264de6046))
 
-- Update README — Inno Setup, remove stale 'now' language and historical notes
+- Update README â€” Inno Setup, remove stale 'now' language and historical notes
   ([`e4b9af3`](https://github.com/BenHuddart/mufinder/commit/e4b9af32918756cf0f2ff02a92c277651c7acca2))
 
 ### Features
