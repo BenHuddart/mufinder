@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QSplitter,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -30,6 +29,7 @@ from PySide6.QtWidgets import (
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.supercell_suggestion_dialog import SupercellSuggestionDialog
 from mufinder.app.theme import style_section_subtitle, style_section_title
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import Structure
 from mufinder.science.supercell import build_supercell_structure
@@ -298,12 +298,12 @@ class SupercellEditorDialog(QDialog):
         style_section_subtitle(self._subtitle)
         self._subtitle.setWordWrap(True)
 
-        self._asset_table = QTableWidget(0, 5)
-        self._asset_table.setHorizontalHeaderLabels(["Id", "Name", "Matrix", "Atoms", "Usage"])
+        self._asset_table = create_workflow_table(
+            ("Id", "Name", "Matrix", "Atoms", "Usage"),
+            selection_mode=QAbstractItemView.SelectionMode.SingleSelection,
+            stretch_last_section=False,
+        )
         self._asset_table.setColumnHidden(self._ID_COLUMN, True)
-        self._asset_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._asset_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._asset_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._asset_table.itemSelectionChanged.connect(self._on_asset_selection_changed)
         self._configure_asset_table_columns()
 
