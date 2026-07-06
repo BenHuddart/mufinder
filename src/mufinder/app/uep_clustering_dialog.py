@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIEWER_RADIUS_ANG
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.screen_utils import clamp_to_screen, clamped_size
 from mufinder.app.theme import current_palette, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.domain.models import Structure
 from mufinder.science.uep import (
@@ -257,7 +258,7 @@ class UepClusteringDialog(QDialog):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setWindowTitle(f"UEP Clustering - {source_job_label}")
-        self.resize(1280, 860)
+        self.resize(clamped_size(self, 1280, 860))
         self.setMinimumSize(860, 620)
 
         self._source_job_label = source_job_label
@@ -1096,6 +1097,7 @@ class UepClusteringDialog(QDialog):
                         max(int(raw_geometry[2]), self.minimumWidth()),
                         max(int(raw_geometry[3]), self.minimumHeight()),
                     )
+                    clamp_to_screen(self)
                     self._geometry_restored = True
                 except (TypeError, ValueError):
                     self._geometry_restored = False
