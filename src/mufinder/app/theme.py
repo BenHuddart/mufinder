@@ -593,6 +593,29 @@ def style_warning_text(label: QLabel) -> None:
     label.setObjectName("warningText")
 
 
+def make_empty_state_label(
+    text: str = "",
+    *,
+    object_name: str = "overviewPlaceholder",
+    alignment: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignCenter,
+    parent: QWidget | None = None,
+) -> QLabel:
+    """Return a word-wrapped placeholder ``QLabel`` for an empty job/result view.
+
+    Centralizes the near-identical "nothing here yet" placeholder pattern
+    previously hand-copied in ``convergence_overview_widget.py``,
+    ``muon_sites_summary_widget.py``, and ``journal_widget.py``. Callers keep
+    their own ``object_name`` so existing stylesheet rules and tests that key
+    off it continue to work unchanged.
+    """
+
+    label = QLabel(text, parent)
+    label.setObjectName(object_name)
+    label.setWordWrap(True)
+    label.setAlignment(alignment)
+    return label
+
+
 def style_inline_group(widget: QWidget) -> None:
     """Tag a compact row/group widget as transparent inline UI chrome."""
 

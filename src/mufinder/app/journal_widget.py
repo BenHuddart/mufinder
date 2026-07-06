@@ -19,7 +19,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.theme import body_font_family, heading_font_family, style_hint_text, style_section_title
+from mufinder.app.theme import (
+    body_font_family,
+    heading_font_family,
+    make_empty_state_label,
+    style_hint_text,
+    style_section_title,
+)
 from mufinder.services.journal import JournalDocument, JournalEntry, build_journal, export_journal
 from mufinder.domain.models import ProvenanceRecord
 
@@ -81,11 +87,12 @@ class JournalWidget(QWidget):
         self._content_layout.setSpacing(12)
         self._scroll.setWidget(self._content)
 
-        self._empty_label = QLabel(self)
-        self._empty_label.setObjectName("journalEmptyState")
-        self._empty_label.setWordWrap(True)
-        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        self._empty_label.setText("No journal entries have been recorded for this project yet.")
+        self._empty_label = make_empty_state_label(
+            "No journal entries have been recorded for this project yet.",
+            object_name="journalEmptyState",
+            alignment=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+            parent=self,
+        )
 
     def set_records(self, project_name: str, records: list[ProvenanceRecord]) -> None:
         """Rebuild the visible journal from the supplied provenance stream."""
