@@ -491,7 +491,7 @@ symmetry-inequivalent candidate stopping sites. The page includes:
   label for each distinct clustered site.
 - A 3D preview per card rendering the host structure with the pinned muon sites
   overlaid as ``H:mu`` atoms.
-- A ``Pin to summary`` action added to each structural-relaxation analysis
+- A ``Pin to Summary`` action added to each structural-relaxation analysis
   workspace that snapshots the workspace's distinct clustered sites into the
   matching charge-state card. Pinning requires that clustering has been run.
 - Navigation from the summary back into the live analysis: an
@@ -682,7 +682,7 @@ The ``Pristine Relaxation`` stage now includes a ``Generate Comparison Table`` f
 - support for selecting one or more DFT jobs against the active experimental host structure,
 - generation of a persisted comparison-table subtab under ``Pristine Relaxation`` in the project tree,
 - inline editing of comparison-table titles after creation, with the project-tree subtab label kept in sync,
-- deletion from either a top-right ``Delete`` button in the comparison view or a project-tree context menu,
+- deletion from either a top-right ``Remove`` button in the comparison view or a project-tree context menu,
 - metric rows with per-metric ``Info`` dialogs,
 - a collapsible ``DFT Parameter Differences`` section that shows only parameter values that differ across selected DFT jobs,
 - CSV export of rendered comparison data.

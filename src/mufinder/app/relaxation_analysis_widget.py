@@ -1414,13 +1414,13 @@ class RelaxationAnalysisWidget(QWidget):
         name_edit = QLineEdit(_workspace_name(workspace), header)
         name_edit.editingFinished.connect(lambda wid=_workspace_id(workspace), edit=name_edit: self._rename_workspace(wid, edit.text()))
         charge = QLabel(_charge_state_label(_workspace_charge_state(workspace)), header)
-        add_button = QPushButton("Add structure to analysis", header)
+        add_button = QPushButton("Add Structure to Analysis", header)
         add_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self.add_sites_requested.emit(wid))
-        cluster_button = QPushButton("Clustering", header)
+        cluster_button = QPushButton("Clustering...", header)
         cluster_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self._open_clustering(wid))
-        displacement_button = QPushButton("Analyse displacements", header)
+        displacement_button = QPushButton("Analyse Displacements", header)
         displacement_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self._open_displacements(wid))
-        pin_button = QPushButton("Pin to summary", header)
+        pin_button = QPushButton("Pin to Summary", header)
         pin_button.setToolTip(
             "Pin this workspace's distinct muon sites to the Muon Sites summary page."
         )

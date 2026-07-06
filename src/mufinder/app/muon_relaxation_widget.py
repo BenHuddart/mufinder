@@ -263,7 +263,7 @@ class MuonRelaxationWidget(QWidget):
 
         self._batch_configure_button = QPushButton("Configure Selected Parameters...")
         self._batch_configure_button.setEnabled(False)
-        self._create_analysis_button = QPushButton("Create analysis workspace from selection")
+        self._create_analysis_button = QPushButton("Create Analysis Workspace from Selection")
         self._run_local_button = QPushButton("Run Local Calculations")
         self._run_cluster_button = QPushButton("Run on Cluster")
 

@@ -258,7 +258,7 @@ class MuonGenerationWidget(QWidget):
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
 
-        header = QLabel("Initial muon position generation")
+        header = QLabel("Initial Muon Position Generation")
         self._header_label = header
         style_section_title(header)
         layout.addWidget(header)
@@ -358,7 +358,7 @@ class MuonGenerationWidget(QWidget):
         self._generate_btn = QPushButton("Generate Sites")
         self._generate_btn.clicked.connect(self._emit_generate)
         action_row.addWidget(self._generate_btn)
-        self._cluster_btn = QPushButton("Cluster Positions")
+        self._cluster_btn = QPushButton("Cluster Positions...")
         self._cluster_btn.setEnabled(False)
         self._cluster_btn.clicked.connect(self._open_cluster_positions_dialog)
         action_row.addWidget(self._cluster_btn)
@@ -366,7 +366,7 @@ class MuonGenerationWidget(QWidget):
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._emit_delete_selected)
         action_row.addWidget(self._delete_btn)
-        self._create_jobs_btn = QPushButton("Create job(s) from selected")
+        self._create_jobs_btn = QPushButton("Create Jobs from Selected")
         self._create_jobs_btn.setEnabled(False)
         action_row.addWidget(self._create_jobs_btn)
         action_row.addStretch(1)

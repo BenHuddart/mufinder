@@ -14,7 +14,7 @@ from mufinder.domain.models import Structure
 
 def test_widget_state_roundtrip_and_table_render(qapp) -> None:
     widget = MuonGenerationWidget()
-    assert widget._header_label.text() == "Initial muon position generation"
+    assert widget._header_label.text() == "Initial Muon Position Generation"
     assert widget._generate_btn.text() == "Generate Sites"
 
     state = {
@@ -82,7 +82,7 @@ def test_widget_state_roundtrip_and_table_render(qapp) -> None:
 
 def test_widget_delete_selected_candidates_emits_site_ids(qapp) -> None:
     widget = MuonGenerationWidget()
-    assert widget._create_jobs_btn.text() == "Create job(s) from selected"
+    assert widget._create_jobs_btn.text() == "Create Jobs from Selected"
     assert not widget._create_jobs_btn.isEnabled()
     widget.set_sites(
         [

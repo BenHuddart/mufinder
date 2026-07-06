@@ -321,8 +321,8 @@ class ComparisonTableWidget(QWidget):
         self._grid.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._grid.verticalHeader().setVisible(False)
 
-        self._export_button = QPushButton("Export CSV")
-        self._delete_button = QPushButton("Delete")
+        self._export_button = QPushButton("Export CSV...")
+        self._delete_button = QPushButton("Remove")
 
         self._build_layout()
         self._connect_signals()

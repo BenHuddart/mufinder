@@ -454,7 +454,7 @@ metric-definition registry used to populate the comparison table.
 Export
 ------
 
-Use ``Export CSV`` in the comparison view to export the displayed values for
+Use ``Export CSV...`` in the comparison view to export the displayed values for
 external analysis or record-keeping.
 
 Known Limitations
