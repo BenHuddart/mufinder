@@ -41,7 +41,7 @@ inheriting each platform's native look:
   checkboxes.
 - The project-home trail map scales with the window: the artwork keeps its
   aspect ratio and the signpost labels are sized relative to the rendered
-  banner (``ProjectHomeTrailWidget._sign_title_point_size``), so the labels
+  banner (``ProjectHomeTrailWidget._sign_title_pixel_size``), so the labels
   stay proportionate and legible from small laptops to large/high-DPI displays
   instead of shrinking as the map grows.
 
