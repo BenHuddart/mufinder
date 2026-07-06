@@ -51,6 +51,7 @@ from mufinder.app.uep_clustering_dialog import UepClusteringDialog, cluster_colo
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
+    adjust_font_size,
     body_font_family,
     current_palette,
     style_hint_text,
@@ -536,7 +537,7 @@ class _IsosurfaceLayerTabBar(QTabBar):
             painter.setPen(text_color)
             font = painter.font()
             font.setBold(True)
-            font.setPointSize(max(font.pointSize() - 1, 9))
+            adjust_font_size(font, -1, minimum=9)
             painter.setFont(font)
             painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), self.tabText(index))
 
