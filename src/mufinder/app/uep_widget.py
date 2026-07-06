@@ -270,6 +270,8 @@ class UEPWidget(QWidget):
         control_row.addWidget(self._add_row_button)
         control_row.addWidget(self._batch_configure_button)
         control_row.addStretch(1)
+        control_row.addWidget(QLabel("Job name prefix"))
+        control_row.addWidget(self._name_prefix, 1)
         control_row.addWidget(self._run_local_button)
         control_row.addWidget(self._run_cluster_button)
         table_layout.addLayout(control_row)

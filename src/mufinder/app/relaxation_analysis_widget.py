@@ -45,6 +45,7 @@ from mufinder.app.atomic_structure_viewer import (
     viewer_atom_style_for_species,
 )
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     current_palette,
     status_brush,
@@ -447,7 +448,7 @@ class RelaxationClusteringDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Clustering - {_workspace_name(workspace)}")
-        self.resize(1240, 820)
+        self.resize(clamped_size(self, 1240, 820))
         self.setMinimumSize(900, 620)
         self._workspace = dict(workspace)
         self._host_structure = host_structure
@@ -1058,7 +1059,7 @@ class DisplacementAnalysisDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Analyse Displacements - {workspace_name}")
-        self.resize(1180, 780)
+        self.resize(clamped_size(self, 1180, 780))
         self.setMinimumSize(920, 620)
         self._sites = normalize_site_energies(sites)
         self._structures = dict(structures_by_id)

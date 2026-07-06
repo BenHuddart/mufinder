@@ -54,6 +54,7 @@ from mufinder.app.atomic_structure_viewer import (
     _shutdown_pyvista_widget,
 )
 from mufinder.app.icons import icon
+from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     current_palette,
     feature_dialog_stylesheet,
@@ -2211,7 +2212,7 @@ class MagneticStructureBuilderDialog(QDialog):
         self._preview_atom_indices = np.empty((0,), dtype=int)
 
         self.setWindowTitle("Magnetic Structure Builder")
-        self.resize(1180, 760)
+        self.resize(clamped_size(self, 1180, 760))
         self.setMinimumSize(920, 620)
 
         self._title = QLabel("Magnetic Structure Builder")

@@ -6641,6 +6641,47 @@ def test_main_window_error_file_candidates_fallback_and_excerpt_helpers(
     window.close()
 
 
+def test_read_bounded_tail_small_file_matches_read_text(tmp_path: Path) -> None:
+    path = tmp_path / "small.out"
+    content = "first line\nsecond line\nthird line\n"
+    path.write_text(content, encoding="utf-8")
+
+    assert MainWindow._read_bounded_tail(path) == content
+    assert MainWindow._read_error_contexts(path) != "[File is empty]"
+    assert MainWindow._read_text_excerpt(path) == content.strip()
+
+
+def test_read_bounded_tail_large_file_returns_only_tail(tmp_path: Path) -> None:
+    path = tmp_path / "huge.out"
+    limit = MainWindow._TAIL_READ_LIMIT_BYTES
+
+    first_line = "FIRST-LINE-SENTINEL " + ("x" * 200) + "\n"
+    filler_line = "y" * 500 + "\n"
+    filler_count = (limit // len(filler_line)) + 10
+    last_line = "LAST-LINE-SENTINEL\n"
+
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(first_line)
+        for _ in range(filler_count):
+            handle.write(filler_line)
+        handle.write(last_line)
+
+    assert path.stat().st_size > limit
+
+    tail_text = MainWindow._read_bounded_tail(path)
+    assert len(tail_text.encode("utf-8")) <= limit + len("[... truncated] ...\n")
+    assert "FIRST-LINE-SENTINEL" not in tail_text
+    assert "LAST-LINE-SENTINEL" in tail_text
+    assert tail_text.startswith("[... truncated] ...\n")
+
+    excerpt = MainWindow._read_text_excerpt(path, max_chars=10**9)
+    assert "FIRST-LINE-SENTINEL" not in excerpt
+    assert "LAST-LINE-SENTINEL" in excerpt
+
+    error_contexts = MainWindow._read_error_contexts(path)
+    assert "FIRST-LINE-SENTINEL" not in error_contexts
+
+
 def test_main_window_prompt_failed_job_cleanup_choices(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:

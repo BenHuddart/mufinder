@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -19,13 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.theme import (
-    body_font_family,
-    heading_font_family,
-    make_empty_state_label,
-    style_hint_text,
-    style_section_title,
-)
+from mufinder.app.theme import make_empty_state_label, style_hint_text, style_section_title
 from mufinder.services.journal import JournalDocument, JournalEntry, build_journal, export_journal
 from mufinder.domain.models import ProvenanceRecord
 
@@ -43,7 +36,6 @@ class JournalWidget(QWidget):
 
         title = QLabel("Journal", self)
         style_section_title(title)
-        title.setFont(QFont(heading_font_family(), 18))
         layout.addWidget(title)
 
         self._subtitle = QLabel(
@@ -115,7 +107,6 @@ class JournalWidget(QWidget):
         for day in self._journal.days:
             day_label = QLabel(day.date_label, self._content)
             day_label.setObjectName("journalDayHeader")
-            day_label.setFont(QFont(heading_font_family(), 16))
             self._content_layout.addWidget(day_label)
 
             for entry in day.entries:
@@ -146,7 +137,6 @@ class JournalWidget(QWidget):
         title = QLabel(entry.title, card)
         title.setObjectName("journalEntryTitle")
         title.setWordWrap(True)
-        title.setFont(QFont(heading_font_family(), 14))
         layout.addWidget(title)
 
         if entry.workflow_label:
@@ -158,7 +148,6 @@ class JournalWidget(QWidget):
         body = QLabel(entry.body, card)
         body.setObjectName("journalEntryBody")
         body.setWordWrap(True)
-        body.setFont(QFont(body_font_family(), 11))
         layout.addWidget(body)
 
         return card

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib.resources import files
+import logging
 from pathlib import Path
 import tempfile
 
@@ -54,9 +55,18 @@ def ensure_fonts_loaded() -> None:
         return
 
     font_dir = _bundled_font_dir()
-    if not font_dir.is_dir():
+    font_paths = sorted(font_dir.glob("*.ttf")) if font_dir.is_dir() else []
+    if not font_paths:
+        # A missing fonts directory means a broken packaged build (the
+        # installer dropped mufinder/assets/fonts): the UI silently falls
+        # back to host fonts, so make the regression visible in the log.
+        logging.getLogger(__name__).warning(
+            "Bundled fonts not found at %s; falling back to system fonts. "
+            "Packaged builds must ship mufinder/assets/fonts.",
+            font_dir,
+        )
         return
-    for font_path in sorted(font_dir.glob("*.ttf")):
+    for font_path in font_paths:
         QFontDatabase.addApplicationFont(str(font_path))
     _FONTS_LOADED = True
 
@@ -101,6 +111,25 @@ def heading_font_family() -> str:
         (_BUNDLED_HEADING_FAMILY, "Playfair Display", "Libre Baskerville", "Georgia", "Serif"),
         fallback=body_font_family(),
     )
+
+
+def adjust_font_size(font: QFont, delta: int, *, minimum: int = 1) -> None:
+    """Adjust ``font``'s size by ``delta`` in whichever unit it is sized.
+
+    The application default font is sized in pixels (see ``apply_theme``), so
+    ``pointSize()`` returns -1 for fonts derived from it and naive
+    ``setPointSize(pointSize() + delta)`` arithmetic silently stops applying
+    (or worse, clamps to an absolute point size). This helper applies the
+    delta to the pixel or point size, whichever the font actually carries.
+    """
+
+    pixel = font.pixelSize()
+    if pixel > 0:
+        font.setPixelSize(max(minimum, pixel + delta))
+        return
+    point = font.pointSize()
+    if point > 0:
+        font.setPointSize(max(minimum, point + delta))
 
 
 def _arrow_asset_path(direction: str, colour: str) -> str:
@@ -1843,6 +1872,10 @@ def apply_theme(app: QApplication, mode: str) -> str:
     _ensure_table_corner_styler(app)
 
     font = QFont(body_font_family())
-    font.setPointSize(11)
+    # Pixel size, not point size: the stylesheet declares every label size in
+    # px, and point-to-pixel conversion differs per platform (macOS logical
+    # 72 dpi vs Windows 96 dpi), which made Windows body text ~33% larger
+    # than every px-sized label. 11 px matches the macOS 11 pt rendering.
+    font.setPixelSize(11)
     app.setFont(font)
     return resolved
