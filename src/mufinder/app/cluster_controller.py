@@ -11,23 +11,37 @@ public surface as :class:`ClusterJobRunner` (identical signal names, the same
 methods and connection-state properties) so it is a drop-in replacement for
 the ``main_window`` call sites.
 
-Two interaction styles are used to marshal work onto the worker:
+All GUI-initiated work is marshalled onto the worker **asynchronously**: the GUI
+thread never blocks waiting on the worker. This matters because the worker also
+runs the queue poll, which serially downloads and parses the output of every
+completed job in a batch (minutes, in the worst case). A GUI-thread call that
+blocked on the worker would freeze the window until that batch drained. Nothing
+here uses ``BlockingQueuedConnection`` except :meth:`ClusterController.shutdown`,
+which runs at teardown (the app is already closing) to stop the worker's poll
+timer on its own thread.
 
-* **Asynchronous** (``refresh_queue``, ``cancel``, ``track_existing_job``):
-  fire-and-forget. The GUI returns immediately; results arrive later via the
-  forwarded signals. This is what keeps the UI responsive.
-* **Blocking bridge** (``connect_to_cluster``, ``submit``,
-  ``remote_directory_exists``, ``remove_remote_directory``): the operation runs
-  on the worker thread but the calling GUI thread waits for its result (or
-  exception). These callers still expect synchronous semantics today; the work
-  is at least confined to the worker thread so the single paramiko connection is
-  only ever touched from one thread. Converting these to a fully asynchronous
-  progress/cancel flow is the follow-up phase.
+Two asynchronous styles are used:
+
+* **Fire-and-forget with forwarded signals** (``refresh_queue``, ``cancel``,
+  ``track_existing_job``, ``connect_async``/``connect_finished``,
+  ``check_remote_dirs``/``remote_dirs_checked``, ``submit_batch`` and its
+  progress signals): the GUI returns immediately and results arrive later via a
+  purpose-built signal.
+* **Request/completion bridge** (``clear_tracked_jobs``, and the low-level
+  ``connect_to_cluster`` / ``submit`` / ``remote_directory_exists`` /
+  ``remove_remote_directory`` helpers): the operation is queued on the worker and
+  its outcome is delivered back to the GUI thread via
+  :attr:`ClusterController.operation_finished`, keyed by a per-call ``request_id``
+  and a ``kind`` discriminator so multiple in-flight operations route to their own
+  continuation. The completion signal fires on **every** exit path — success,
+  error, or an exception escaping the queued task — so a UI element disabled while
+  an operation is pending is always re-enabled.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from itertools import count
 from typing import Any
 from uuid import UUID
 
@@ -60,6 +74,11 @@ class _SshTaskRunner(QObject):
     worker thread too.
     """
 
+    #: Emitted on the worker thread when a request/completion op finishes, with
+    #: ``(request_id, kind, result, error)`` where exactly one of ``result`` /
+    #: ``error`` is meaningful. The controller forwards it to the GUI thread.
+    op_finished = Signal(object, str, object, object)
+
     def __init__(self) -> None:
         super().__init__()
         self._pending_task: Callable[[], Any] | None = None
@@ -72,12 +91,32 @@ class _SshTaskRunner(QObject):
 
         task()
 
+    @Slot(object, str, object)
+    def run_async_op(self, request_id: Any, kind: str, task: Callable[[], Any]) -> None:
+        """Run a queued request/completion op, reporting the outcome via a signal.
+
+        Runs on the worker thread. ``op_finished`` is emitted on **every** exit
+        path — success, a caught exception, and even a ``BaseException`` — so the
+        GUI continuation always fires and a UI element disabled for the duration
+        of the op is never stuck disabled. The emit is queued (cross-thread) back
+        to the GUI, so the GUI thread never waits here.
+        """
+
+        result: Any = None
+        error: BaseException | None = None
+        try:
+            result = task()
+        except BaseException as exc:  # noqa: BLE001 - delivered to the GUI as data
+            error = exc
+        self.op_finished.emit(request_id, kind, result, error)
+
     @Slot()
     def run_pending(self) -> None:
         """Run the stashed callable, capturing its result or exception.
 
         Paired with a blocking cross-thread invocation so the calling thread can
-        recover the return value or re-raise the failure.
+        recover the return value or re-raise the failure. Used only by
+        :meth:`ClusterController.shutdown` at teardown.
         """
 
         task = self._pending_task
@@ -107,6 +146,12 @@ class ClusterController(QObject):
     # Result of an asynchronous connect: None on success, else the exception.
     connect_finished = Signal(object)
 
+    # Outcome of a request/completion bridge op, delivered on the GUI thread as
+    # ``(request_id, kind, result, error)``. ``kind`` is one of the OP_* constants
+    # below; ``result`` is the return value on success and ``error`` is the
+    # exception on failure (exactly one is meaningful). Fires on every exit path.
+    operation_finished = Signal(object, str, object, object)
+
     # Asynchronous batch-submission progress (all emitted on the GUI thread).
     remote_dirs_checked = Signal(object)  # {"existing": [str], "errors": {job_id: str}}
     submit_batch_progress = Signal(int, int, str)  # index, total, job label
@@ -115,6 +160,16 @@ class ClusterController(QObject):
 
     # Internal: marshals a fire-and-forget callable onto the worker thread.
     _async_task = Signal(object)
+    # Internal: marshals a request/completion op onto the worker thread as
+    # ``(request_id, kind, task)``.
+    _async_op = Signal(object, str, object)
+
+    # ``kind`` discriminators for :attr:`operation_finished`.
+    OP_CONNECT = "connect"
+    OP_SUBMIT = "submit"
+    OP_REMOTE_DIR_EXISTS = "remote_directory_exists"
+    OP_REMOVE_REMOTE_DIR = "remove_remote_directory"
+    OP_CLEAR_TRACKED = "clear_tracked_jobs"
 
     def __init__(self, parent: QObject | None = None, *, settings: Any = None) -> None:
         super().__init__(parent)
@@ -136,6 +191,10 @@ class ClusterController(QObject):
         self._connected_username: str | None = None
         self._pending_connect: tuple[str, str | None] | None = None
         self._batch_cancelled = False
+
+        # Monotonic request-id source for the request/completion bridge. Only ever
+        # incremented on the GUI thread (single-threaded), so no lock is needed.
+        self._request_ids = count(1)
 
         # GUI-thread mirror of the runner's active tracked-job ids, maintained
         # from the signals/calls this controller already sees. The runner's own
@@ -164,6 +223,9 @@ class ClusterController(QObject):
         self._runner.connection_status_changed.connect(self._on_connection_status_changed)
 
         self._async_task.connect(self._tasks.run_task, Qt.ConnectionType.QueuedConnection)
+        self._async_op.connect(self._tasks.run_async_op, Qt.ConnectionType.QueuedConnection)
+        # Worker-thread completion forwarded to the GUI thread (queued automatically).
+        self._tasks.op_finished.connect(self.operation_finished)
 
         self._thread.start()
 
@@ -238,7 +300,7 @@ class ClusterController(QObject):
         return ClusterJobRunner.invalid_remote_job_labels(labels)
 
     # ------------------------------------------------------------------
-    # Blocking bridge (runs on the worker thread; caller waits for the result)
+    # Request/completion bridge (queued on the worker; outcome via a signal)
     # ------------------------------------------------------------------
     def connect_to_cluster(
         self,
@@ -246,42 +308,74 @@ class ClusterController(QObject):
         password: str | None = None,
         *,
         credentials: SSHCredentials | None = None,
-    ) -> None:
+    ) -> object:
+        """Connect on the worker thread; outcome via :attr:`operation_finished`.
+
+        Returns immediately with the request id. On success the mirrored
+        connection identity is adopted by the queued ``connection_status_changed``
+        forwarded from the runner (and by the eager ``_pending_connect`` set here);
+        the completion carries ``None`` as its error. See :meth:`connect_async`
+        for the higher-level flow ``main_window`` uses.
+        """
+
         self._pending_connect = (config.name, config.username.strip() or None)
-        self._call_blocking(
+        return self._run_async_op(
+            self.OP_CONNECT,
             lambda: self._runner.connect_to_cluster(
                 config,
                 password=password,
                 credentials=credentials,
-            )
-        )
-        # The connect succeeded if no exception propagated. Adopt the target
-        # identity eagerly so the GUI can read it immediately, even before the
-        # queued connection_status_changed signal is delivered.
-        self._connected = True
-        self._connected_cluster_name = config.name
-        self._connected_username = config.username.strip() or None
-
-    def submit(self, **kwargs: Any) -> str:
-        return self._call_blocking(lambda: self._runner.submit(**kwargs))
-
-    def remote_directory_exists(self, remote_directory: str) -> bool:
-        return self._call_blocking(
-            lambda: self._runner.remote_directory_exists(remote_directory)
+            ),
         )
 
-    def remove_remote_directory(self, remote_directory: str) -> None:
-        self._call_blocking(
-            lambda: self._runner.remove_remote_directory(remote_directory)
+    def submit(self, **kwargs: Any) -> object:
+        """Submit one job on the worker thread; outcome via :attr:`operation_finished`.
+
+        Returns the request id immediately. On success the completion carries the
+        remote scheduler id as its ``result``; on failure the raised exception is
+        carried as ``error``.
+        """
+
+        return self._run_async_op(self.OP_SUBMIT, lambda: self._runner.submit(**kwargs))
+
+    def remote_directory_exists(self, remote_directory: str) -> object:
+        """Stat a remote directory on the worker thread; outcome via a signal.
+
+        Returns the request id immediately; the completion carries the boolean
+        result (or the exception on failure).
+        """
+
+        return self._run_async_op(
+            self.OP_REMOTE_DIR_EXISTS,
+            lambda: self._runner.remote_directory_exists(remote_directory),
         )
 
-    def clear_tracked_jobs(self) -> None:
-        # Fast, but must run on the worker thread because it mutates state the
-        # poll loop also touches. Bridged (not async) so switching projects has
-        # synchronous semantics for the caller. Clear the GUI mirror to match:
-        # this is the only place the runner drops all tracked jobs.
+    def remove_remote_directory(self, remote_directory: str) -> object:
+        """Remove a remote directory on the worker thread; outcome via a signal."""
+
+        return self._run_async_op(
+            self.OP_REMOVE_REMOTE_DIR,
+            lambda: self._runner.remove_remote_directory(remote_directory),
+        )
+
+    def clear_tracked_jobs(self) -> object:
+        """Drop all tracked jobs on the worker thread; returns immediately.
+
+        Fast, but must run on the worker thread because it mutates state the poll
+        loop also touches. Queued (never blocking) so switching projects can never
+        freeze the GUI while the worker is mid-retrieval. The GUI mirror is cleared
+        synchronously here so the watchdog sees the drop at once; any subsequent
+        ``track_existing_job`` calls queue *after* this op on the same worker, so
+        re-registration is never wiped by a late clear.
+
+        Returns the request id; the outcome is delivered via
+        :attr:`operation_finished` with ``kind == OP_CLEAR_TRACKED``.
+        """
+
+        # Clear the GUI mirror to match: this is the only place the runner drops
+        # all tracked jobs.
         self._tracked_active_job_ids.clear()
-        self._call_blocking(self._runner.clear_tracked_jobs)
+        return self._run_async_op(self.OP_CLEAR_TRACKED, self._runner.clear_tracked_jobs)
 
     # ------------------------------------------------------------------
     # Asynchronous (fire-and-forget) operations
@@ -426,15 +520,47 @@ class ClusterController(QObject):
         self._thread.wait(5000)
 
     # ------------------------------------------------------------------
-    # Internal blocking-invocation machinery
+    # Internal invocation machinery
     # ------------------------------------------------------------------
+    def _run_async_op(self, kind: str, fn: Callable[[], Any]) -> object:
+        """Queue ``fn`` on the worker and route its outcome via a signal.
+
+        Mints a fresh request id (GUI-thread only, so no lock needed), queues the
+        op onto the worker, and returns immediately. The worker runs ``fn`` and
+        emits :attr:`operation_finished` ``(request_id, kind, result, error)`` on
+        every exit path — success, caught exception, or an escaping
+        ``BaseException`` — so a continuation registered for this request id always
+        fires and any pending-state UI is always restored.
+
+        During the startup/teardown window (worker not running) the call is run
+        directly and the completion is emitted synchronously, preserving the
+        contract for callers that only key off :attr:`operation_finished`.
+        """
+
+        request_id = next(self._request_ids)
+        if not self._thread.isRunning():
+            result: Any = None
+            error: BaseException | None = None
+            try:
+                result = fn()
+            except BaseException as exc:  # noqa: BLE001 - delivered to the GUI as data
+                error = exc
+            self.operation_finished.emit(request_id, kind, result, error)
+            return request_id
+        self._async_op.emit(request_id, kind, fn)
+        return request_id
+
     def _call_blocking(self, fn: Callable[[], Any]) -> Any:
         """Run ``fn`` on the worker thread and return its result (or re-raise).
 
-        Only ever called from the GUI thread, which is single-threaded, so the
-        stash on ``_tasks`` cannot be clobbered by a concurrent caller. The
-        BlockingQueuedConnection provides the memory barrier that makes the
-        stashed callable and its result visible across threads.
+        **Teardown only.** The one remaining caller is :meth:`shutdown`, which must
+        stop the worker's poll ``QTimer`` on the worker thread before quitting its
+        event loop; blocking there is acceptable because the app is already
+        closing. No responsiveness-sensitive GUI path uses this — those go through
+        :meth:`_run_async_op`. Only ever called from the GUI thread, which is
+        single-threaded, so the stash on ``_tasks`` cannot be clobbered by a
+        concurrent caller. The BlockingQueuedConnection provides the memory barrier
+        that makes the stashed callable and its result visible across threads.
         """
 
         if not self._thread.isRunning():

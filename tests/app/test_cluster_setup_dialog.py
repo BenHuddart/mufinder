@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import time
+from typing import Callable
+
 import pytest
-from PySide6.QtWidgets import QHBoxLayout
+from PySide6.QtWidgets import QApplication, QHBoxLayout
 
 import mufinder.app.cluster_setup_dialog as dialog_module
 import mufinder.services.keychain as keychain_module
@@ -24,6 +27,22 @@ class _FakeSettings:
 
     def setValue(self, key: str, value) -> None:  # noqa: N802, ANN001
         self._values[key] = value
+
+
+def _process_until(predicate: Callable[[], bool], *, timeout: float = 5.0) -> bool:
+    """Pump the GUI event loop until ``predicate`` holds or ``timeout`` elapses.
+
+    Connection tests now run on a worker thread, so their outcome arrives via
+    queued signals that only deliver while the event loop spins.
+    """
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        QApplication.processEvents()
+        time.sleep(0.005)
+    return predicate()
 
 
 class _FakeConnection:
@@ -251,6 +270,7 @@ def test_cluster_setup_dialog_test_connection_uses_ssh_client(
     dialog._template_path_edit.setText("/templates/slurm.sh")
     dialog._test_connection()
 
+    assert _process_until(lambda: bool(infos))
     assert infos == ["Connection successful"]
     dialog.close()
 
@@ -286,6 +306,7 @@ def test_cluster_setup_dialog_test_connection_passes_key_passphrase(
     dialog._auth_combo.setCurrentText("key")
     dialog._test_connection()
 
+    assert _process_until(lambda: bool(captured_passwords))
     assert captured_passwords == ["my-passphrase"]
     dialog.close()
 
@@ -328,6 +349,7 @@ def test_cluster_setup_dialog_test_connection_trusts_unknown_host_key(
     dialog._template_path_edit.setText("/templates/slurm.sh")
     dialog._test_connection()
 
+    assert _process_until(lambda: bool(infos))
     assert prompted == ["yes"]
     assert infos == ["Connection successful"]
     assert dialog._settings.value("trusted_host_keys/SCARF/alpha.example/algorithm", "", str) == "ssh-ed25519"
@@ -389,6 +411,7 @@ def test_cluster_setup_dialog_test_connection_trusts_jump_and_target_host_keys(
     dialog._cluster_combo.setCurrentText("Redwood")
     dialog._test_connection()
 
+    assert _process_until(lambda: bool(infos))
     assert prompted == ["jump", "target"]
     assert infos == ["Connection successful"]
     assert (

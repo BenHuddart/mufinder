@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDialog, QLabel, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QTextEdit, QVBoxLayout, QWidget
 
 from mufinder.app.theme import style_section_title
 from mufinder.castep_io.schema import KeywordSpec
@@ -62,3 +62,7 @@ class ParameterHelpDialog(QDialog):
             body_sections.append(f"Notes:\n{spec.notes}")
         body.setPlainText("\n\n".join(body_sections).strip())
         layout.addWidget(body)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)

@@ -7,7 +7,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
 from mufinder.app.selection_snapshot import (
     SelectionSnapshotComboBox,
     SelectionSnapshotPushButton,
@@ -41,6 +40,7 @@ from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_work
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.workflow_table_utils import (
+    bind_delete_shortcuts,
     create_workflow_table,
     style_workflow_configure_button,
 )
@@ -183,12 +183,9 @@ class PristineRelaxationWidget(QWidget):
             | QAbstractItemView.EditTrigger.SelectedClicked
         )
         self._table.verticalHeader().setDefaultSectionSize(32)
-        self._table_delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
-        self._table_delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._table_delete_shortcut.activated.connect(self._delete_selected_rows)
-        self._table_backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
-        self._table_backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._table_backspace_shortcut.activated.connect(self._delete_selected_rows)
+        self._table_delete_shortcut, self._table_backspace_shortcut = bind_delete_shortcuts(
+            self, self._delete_selected_rows
+        )
 
         header = self._table.horizontalHeader()
         header.setStretchLastSection(False)

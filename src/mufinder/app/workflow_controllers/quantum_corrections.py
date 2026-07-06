@@ -61,9 +61,9 @@ from uuid import UUID
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job
+from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.science.quantum_phonons import (
     muon_zpe,
-    parse_phonon_path,
     w1_entanglement_witness,
 )
 from mufinder.workflow import StructureBridgeError, structure_to_spec
@@ -384,7 +384,11 @@ class QuantumCorrectionsController(WorkflowJobController):
     # --- result contract ---
 
     def build_result(
-        self, job: Job, parsed: CastepResult, run: CalculationRun
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
     ) -> ControllerResult:
         """Contribute the phonon/ZPE payload for a completed quantum-phonon job.
 
@@ -397,30 +401,31 @@ class QuantumCorrectionsController(WorkflowJobController):
         For a quantum-*phonon* job, the inline ``_on_local_job_finished`` guard has
         already verified the ``.phonon`` file exists and that the full ZPE / Gamma /
         witness computation succeeds (aborting the job on any
-        :class:`~mufinder.science.quantum_phonons.PhononParseError`), so this
-        re-parse and recompute on the validated success path cannot hit those
-        failure branches. The ``.phonon`` file itself is **not** contributed to
-        ``output_files``: the call site already passes ``_output_files_for_job(job)``.
+        :class:`~mufinder.science.quantum_phonons.PhononParseError`). The file is
+        parsed **once** on the runner worker thread and carried on
+        ``artifacts.phonon``; this controller derives the ZPE / eigenvalue /
+        witness payload from the carried calculation with no second disk read. The
+        ``.phonon`` file itself is **not** contributed to ``output_files``: the
+        call site already passes ``_output_files_for_job(job)``.
         """
 
         if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
             return ControllerResult()
 
-        output_dir = self._context.job_output_directory(job)
-        seed_name = self._context.job_seed_name(job)
-        if output_dir is None:
+        phonon = artifacts.phonon
+        if phonon is None:
             return ControllerResult()
-        phonon_path = output_dir / f"{seed_name}.phonon"
+        phonon_path = artifacts.phonon_path
+        if phonon_path is None:
+            output_dir = self._context.job_output_directory(job)
+            seed_name = self._context.job_seed_name(job)
+            phonon_path = (
+                None if output_dir is None else output_dir / f"{seed_name}.phonon"
+            )
 
-        # Intentional double parse: the inline ``_on_local_job_finished`` guard
-        # already parsed this ``.phonon`` file to validate it (and the ZPE /
-        # Gamma recompute) and discarded the result; here ``build_result``
-        # re-parses and recomputes on the validated success path. Accepted cost
-        # — do NOT "fix" it by caching parse state on the controller.
-        phonon = parse_phonon_path(phonon_path)
         zpe = muon_zpe(phonon)
         payload: dict[str, object] = {
-            "phonon_file": str(phonon_path),
+            "phonon_file": str(phonon_path) if phonon_path is not None else "",
             "gamma_only": len(phonon.qpoints) == 1 and phonon.qpoints[0].is_gamma,
             "phonon_mode_eigenvalues_cm": [
                 float(value) for value in phonon.gamma_point().frequencies_cm

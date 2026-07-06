@@ -55,6 +55,31 @@ The hook records pytest's final exit status, flushes stdout/stderr, and exits
 the process deterministically so CI and local runs report stable outcomes
 without post-run crashes.
 
+GUI-responsiveness trace logging
+---------------------------------
+
+``mufinder.services.perf_trace.PerfTrace`` times named stages (via a
+``with trace.stage("name"):`` block) and logs one summary line per traced
+operation through the standard ``logging`` module. It currently wraps
+``MainWindow._flush_dashboard`` (one stage per dashboard view, plus the
+autosave) and ``ProjectService.save_project`` (total duration plus
+``entity_files_written`` and ``entity_files_skipped`` counters), both of which
+run on the GUI thread and have been observed to stall the app when many cluster
+jobs finish in one burst. ``save_project`` skips rewriting entity files whose
+content is unchanged since the last save/load (content-hash dirty tracking), so
+a healthy mature project reports a large ``skipped`` count and a small
+``written`` count per autosave.
+
+Each summary logs at ``WARNING`` when any stage exceeds 50 ms or the total
+exceeds 200 ms, and at ``DEBUG`` otherwise. To see the per-stage breakdown
+during local debugging, enable DEBUG logging for the relevant modules, e.g.:
+
+.. code-block:: python
+
+   import logging
+   logging.getLogger("mufinder.app.main_window").setLevel(logging.DEBUG)
+   logging.getLogger("mufinder.services.project_service").setLevel(logging.DEBUG)
+
 Targeted local execution checks
 -------------------------------
 

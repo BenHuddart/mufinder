@@ -65,7 +65,7 @@ class MuFinderSplashScreen(QSplashScreen):
 
         title_font = QFont(self._title_font_family)
         title_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-        title_font.setPointSize(26)
+        title_font.setPixelSize(26)
         title_font.setBold(True)
         painter.setFont(title_font)
         painter.setPen(QPen(QColor("#2C2418")))
@@ -73,7 +73,7 @@ class MuFinderSplashScreen(QSplashScreen):
 
         subtitle_font = QFont(self._body_font_family)
         subtitle_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-        subtitle_font.setPointSize(12)
+        subtitle_font.setPixelSize(12)
         painter.setFont(subtitle_font)
         painter.setPen(QPen(QColor("#7A6B59")))
         painter.drawText(0, 246, self._WIDTH, 24, int(Qt.AlignmentFlag.AlignHCenter), "Preparing your expedition")
@@ -92,7 +92,7 @@ class MuFinderSplashScreen(QSplashScreen):
 
         message_font = QFont(self._body_font_family)
         message_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-        message_font.setPointSize(11)
+        message_font.setPixelSize(11)
         painter.setFont(message_font)
         painter.setPen(QPen(QColor("#7A6B59")))
         painter.drawText(0, 318, self._WIDTH, 26, int(Qt.AlignmentFlag.AlignHCenter), self._message)

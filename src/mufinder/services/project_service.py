@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+import hashlib
+import logging
 from pathlib import Path
 import re
 import shutil
@@ -27,6 +29,7 @@ from mufinder.domain.models import (
 )
 from mufinder.persistence.codec import parse_datetime, parse_uuid, to_jsonable
 from mufinder.persistence.json_store import ProjectStore
+from mufinder.services.perf_trace import PerfTrace
 from mufinder.science.site_generation import (
     SiteGenerationError,
     closest_symmetry_equivalent_position,
@@ -40,6 +43,8 @@ from mufinder.science.site_generation import (
 )
 from mufinder.science.structure_io import load_structure_file
 from mufinder.science.supercell import build_supercell_structure
+
+_LOG = logging.getLogger(__name__)
 
 _WORKFLOW_SUPERCELLS_STATE_KEY = "workflow_supercells"
 _WORKFLOW_SUPERCELL_UNIT_CELL = "unit_cell"
@@ -137,10 +142,100 @@ class StructureHostMismatch:
 
 
 class ProjectService:
-    """Creates, loads, and saves projects using ProjectStore."""
+    """Creates, loads, and saves projects using ProjectStore.
+
+    Dirty tracking
+    --------------
+    ``save_project`` rewrites every entity JSON file on every call, which is
+    expensive on mature projects (hundreds of ``json.dumps`` + file writes per
+    dashboard flush, all on the GUI thread). To avoid that, the service keeps a
+    private content-hash cache mapping ``(entity_type, entity_id)`` to the hash
+    of the canonical serialized payload that was last written to (or loaded
+    from) disk. On the next save an entity whose payload hashes identically and
+    whose file still exists is skipped.
+
+    The cache is keyed by the resolved project root (:meth:`_resolved_root`) so
+    that a single long-lived ``ProjectService`` instance (see
+    ``MainWindow._project_service``) reused across projects never applies one
+    project's hashes to another. It is reset/reseeded on :meth:`load_project`
+    and :meth:`create_project`. This cache is purely a save-time optimization;
+    it holds no persisted state and never changes the on-disk format.
+
+    Concurrency: ``save_project`` runs on the GUI thread only, so the cache is
+    accessed single-threaded and needs no locking. It is kept private to the
+    service and is not exposed to callers.
+    """
+
+    #: Cache sentinel identifying the singleton ui-state document. It is not a
+    #: real entity directory; ``ui_state`` is written via ``write_json`` to
+    #: ``state.json`` rather than ``write_entity``.
+    _UI_STATE_ENTITY_TYPE = "ui_state"
+    _UI_STATE_ENTITY_ID = "ui_state"
+
+    def __init__(self) -> None:
+        # (project_root, entity_type, entity_id) -> hash of the canonical
+        # serialized payload last persisted for that entity. "entity_id" is the
+        # entity UUID string for real entities, and a sentinel ("ui_state") for
+        # the singleton ui-state document.
+        self._content_hashes: dict[tuple[str, str, str], str] = {}
+
+    @staticmethod
+    def _entity_groups(
+        document: ProjectDocument,
+    ) -> list[tuple[str, list[tuple[str, Any]]]]:
+        """Return the per-type ``(entity_type, [(entity_id, entity), ...])`` groups.
+
+        This single ordered description drives both cache seeding on load and
+        the prune/write loop on save, so the two can never disagree about which
+        entities exist or which directory they live in.
+        """
+        return [
+            ("structures", [(str(s.id), s) for s in document.structures.values()]),
+            ("sites", [(str(s.id), s) for s in document.sites.values()]),
+            ("calculations", [(str(c.id), c) for c in document.calculations.values()]),
+            ("runs", [(str(r.id), r) for r in document.runs.values()]),
+            ("results", [(str(r.id), r) for r in document.results.values()]),
+            ("comparison_tables", [(str(t.id), t) for t in document.comparison_tables.values()]),
+            ("jobs", [(str(j.id), j) for j in document.jobs.values()]),
+        ]
+
+    @staticmethod
+    def _resolved_root(project_root: Path) -> str:
+        """Return a stable cache key for a project root.
+
+        Resolving guards against the same project being addressed via different
+        but equivalent paths (e.g. relative vs absolute) within one session.
+        """
+        try:
+            return str(Path(project_root).resolve())
+        except OSError:
+            return str(project_root)
+
+    @staticmethod
+    def _payload_hash(payload: dict[str, Any]) -> str:
+        """Hash the exact canonical string ``ProjectStore`` would write.
+
+        Using :meth:`ProjectStore.canonical_json` (the same helper
+        ``write_json`` uses) guarantees the hash tracks precisely the bytes on
+        disk, so the two can never drift.
+        """
+        canonical = ProjectStore.canonical_json(payload)
+        return hashlib.blake2b(canonical.encode("utf-8"), digest_size=16).hexdigest()
+
+    def _reset_content_hashes(self, project_root: Path) -> None:
+        """Drop all cached hashes for one project root.
+
+        Called when a project is (re)loaded or created so that stale hashes
+        from a previous in-memory document for the same root cannot cause a
+        genuinely-changed entity to be skipped.
+        """
+        root_key = self._resolved_root(project_root)
+        for key in [key for key in self._content_hashes if key[0] == root_key]:
+            del self._content_hashes[key]
 
     def create_project(self, project_root: Path, name: str) -> ProjectDocument:
         """Create a new project document and persist baseline files."""
+        self._reset_content_hashes(project_root)
         project = Project(name=name, modified_at=utc_now())
         document = ProjectDocument(project_root=project_root, project=project)
         self.save_project(document)
@@ -186,6 +281,25 @@ class ProjectService:
             ui_state=ui_state,
         )
 
+        # Reset then seed the dirty-tracking cache from the payloads just loaded
+        # off disk so the first save after opening a project does not rewrite
+        # every entity. Seeding uses ``to_jsonable(entity)`` (what a save would
+        # write); a regression test asserts this round-trips to the exact
+        # loaded payload for representative entities. The ui_state seeded here
+        # is the raw on-disk value; ``_integrity_warnings`` injected below is a
+        # transient in-memory annotation and is intentionally not part of the
+        # seeded hash, so it will be written on the first save if present.
+        self._reset_content_hashes(project_root)
+        root_key = self._resolved_root(project_root)
+        for entity_type, entities in self._entity_groups(document):
+            for entity_id, entity in entities:
+                self._content_hashes[(root_key, entity_type, entity_id)] = self._payload_hash(
+                    to_jsonable(entity)
+                )
+        self._content_hashes[(root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)] = (
+            self._payload_hash(to_jsonable(ui_state))
+        )
+
         issues = self.validate_document(document)
         if issues:
             document.ui_state["_integrity_warnings"] = issues
@@ -198,44 +312,67 @@ class ProjectService:
             issue_text = "\n".join(f"- {issue}" for issue in issues)
             raise ValueError(f"Project integrity check failed:\n{issue_text}")
 
+        trace = PerfTrace(label="save_project", logger=_LOG)
         document.project.modified_at = utc_now()
         store = ProjectStore(document.project_root)
         store.initialize_layout()
+        root_key = self._resolved_root(document.project_root)
 
+        # The manifest carries ``modified_at`` (bumped every save above), so it
+        # is always rewritten and deliberately not hash-tracked.
         store.write_json(store.project_manifest_path, to_jsonable(document.project))
 
-        store.prune_entities("structures", {str(structure.id) for structure in document.structures.values()})
-        for structure in document.structures.values():
-            store.write_entity("structures", str(structure.id), to_jsonable(structure))
+        written = 0
+        skipped = 0
 
-        store.prune_entities("sites", {str(site.id) for site in document.sites.values()})
-        for site in document.sites.values():
-            store.write_entity("sites", str(site.id), to_jsonable(site))
+        for entity_type, entities in self._entity_groups(document):
+            # Prune first so externally-orphaned files (and files for entities
+            # deleted in memory) are removed even when nothing else changed.
+            store.prune_entities(entity_type, {entity_id for entity_id, _ in entities})
+            for entity_id, entity in entities:
+                payload = to_jsonable(entity)
+                digest = self._payload_hash(payload)
+                cache_key = (root_key, entity_type, entity_id)
+                target = store.entities_root / entity_type / f"{entity_id}.json"
+                # Skip only when the content is unchanged AND the file still
+                # exists on disk; the ``exists()`` guard forces a rewrite if the
+                # file was deleted externally since the cached hash was taken.
+                if self._content_hashes.get(cache_key) == digest and target.exists():
+                    skipped += 1
+                    continue
+                store.write_entity(entity_type, entity_id, payload)
+                self._content_hashes[cache_key] = digest
+                written += 1
 
-        store.prune_entities("calculations", {str(calculation.id) for calculation in document.calculations.values()})
-        for calculation in document.calculations.values():
-            store.write_entity("calculations", str(calculation.id), to_jsonable(calculation))
+        # Drop cached hashes for entities that no longer exist in memory so the
+        # cache cannot grow unbounded across a long session. Their files were
+        # already removed by ``prune_entities`` above.
+        live_keys = {
+            (root_key, entity_type, entity_id)
+            for entity_type, entities in self._entity_groups(document)
+            for entity_id, _ in entities
+        }
+        for key in [
+            key
+            for key in self._content_hashes
+            if key[0] == root_key
+            and key[1] != self._UI_STATE_ENTITY_TYPE
+            and key not in live_keys
+        ]:
+            del self._content_hashes[key]
 
-        store.prune_entities("runs", {str(run.id) for run in document.runs.values()})
-        for run in document.runs.values():
-            store.write_entity("runs", str(run.id), to_jsonable(run))
+        # ui_state gets the same hash-skip treatment as entities.
+        ui_payload = to_jsonable(document.ui_state)
+        ui_digest = self._payload_hash(ui_payload)
+        ui_key = (root_key, self._UI_STATE_ENTITY_TYPE, self._UI_STATE_ENTITY_ID)
+        if self._content_hashes.get(ui_key) == ui_digest and store.state_path.exists():
+            skipped += 1
+        else:
+            store.write_json(store.state_path, ui_payload)
+            self._content_hashes[ui_key] = ui_digest
+            written += 1
 
-        store.prune_entities("results", {str(result.id) for result in document.results.values()})
-        for result in document.results.values():
-            store.write_entity("results", str(result.id), to_jsonable(result))
-
-        store.prune_entities(
-            "comparison_tables",
-            {str(table.id) for table in document.comparison_tables.values()},
-        )
-        for table in document.comparison_tables.values():
-            store.write_entity("comparison_tables", str(table.id), to_jsonable(table))
-
-        store.prune_entities("jobs", {str(job.id) for job in document.jobs.values()})
-        for job in document.jobs.values():
-            store.write_entity("jobs", str(job.id), to_jsonable(job))
-
-        store.write_json(store.state_path, to_jsonable(document.ui_state))
+        trace.log_summary(extra=f"entity_files_written={written} entity_files_skipped={skipped}")
 
     def append_provenance(self, document: ProjectDocument, record: ProvenanceRecord) -> None:
         """Append a provenance record in-memory and to disk."""

@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -41,6 +40,7 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.app.workflow_table_utils import (
+    bind_delete_shortcuts,
     create_workflow_table,
     style_workflow_configure_button,
 )
@@ -282,12 +282,9 @@ class CutoffConvergenceWidget(QWidget):
 
         self._build_layout()
         self._connect_signals()
-        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
-        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._delete_shortcut.activated.connect(self._remove_selected_or_current_cutoffs)
-        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
-        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._backspace_shortcut.activated.connect(self._remove_selected_or_current_cutoffs)
+        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
+            self, self._remove_selected_or_current_cutoffs
+        )
 
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
@@ -301,17 +298,17 @@ class CutoffConvergenceWidget(QWidget):
 
         defaults_top_row = QHBoxLayout()
         defaults_top_row.setSpacing(8)
-        defaults_top_row.addWidget(QLabel("Default cutoff:"))
+        defaults_top_row.addWidget(QLabel("Cutoff"))
         defaults_top_row.addWidget(self._project_default_cutoff)
         defaults_top_row.addSpacing(8)
-        defaults_top_row.addWidget(QLabel("Method:"))
+        defaults_top_row.addWidget(QLabel("Method"))
         defaults_top_row.addWidget(self._project_default_method)
         defaults_top_row.addStretch(1)
         defaults_layout.addLayout(defaults_top_row)
 
         defaults_bottom_row = QHBoxLayout()
         defaults_bottom_row.setSpacing(8)
-        defaults_bottom_row.addWidget(QLabel("Criteria:"))
+        defaults_bottom_row.addWidget(QLabel("Criteria"))
         defaults_bottom_row.addWidget(self._project_default_criteria)
         defaults_bottom_row.addStretch(1)
         defaults_layout.addLayout(defaults_bottom_row)
@@ -1186,7 +1183,7 @@ class CutoffConvergenceWidget(QWidget):
         enabled = completed_with_results >= 2
         self._examine_button.setEnabled(enabled)
         if enabled:
-            self._examine_button.setToolTip("Analyze completed cutoff energy and force trends.")
+            self._examine_button.setToolTip("Analyse completed cutoff energy and force trends.")
         else:
             self._examine_button.setToolTip(
                 "Need at least two completed cutoffs with both total energy and max-force results."

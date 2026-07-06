@@ -239,7 +239,13 @@ Local runner behavior
   CASTEP executable path and file permissions."* Other ``QProcess`` errors
   keep the store-and-wait behaviour and are reported by the finish handler.
 - Successful parsing of a completed CASTEP output emits ``job_finished`` and
-  ``completed``.
+  ``completed``. On the same completion callback the runner also parses the
+  job's *secondary* outputs (relaxed ``-out.cell``, ``.phonon``, ``.ts``) once
+  via :func:`~mufinder.services.job_artifacts.collect_job_artifacts` and delivers
+  the resulting :class:`~mufinder.services.job_artifacts.ParsedJobArtifacts` as
+  the third ``job_finished`` payload, so the GUI handler and the owning workflow
+  controller never re-read those files (see :doc:`architecture`, Workflow
+  controllers → Parse-once off the GUI thread).
 
 Local runner state is not persisted. If the application is closed while local
 jobs are active, the runner performs a best-effort cancellation during shutdown,
@@ -261,6 +267,35 @@ completed batch can download many files — therefore execute off the GUI thread
 The controller mirrors connection state (``is_connected``,
 ``connected_cluster_name``, ``connected_username``) on the GUI thread so callers
 never touch the live transport across threads.
+
+**No GUI-thread call blocks on the worker.** Every GUI-initiated cluster
+operation is queued onto the worker and returns immediately; its outcome is
+delivered back to the GUI thread via a signal. This is essential precisely
+because the worker also runs the serial queue poll — a single poll can spend
+minutes downloading and parsing a whole batch of finished jobs — so a GUI call
+that waited on the worker would freeze the window until that batch drained. The
+controller uses two asynchronous styles:
+
+- *Fire-and-forget with a purpose-built signal* for the high-level flows:
+  ``connect_async`` / ``connect_finished``, ``check_remote_dirs`` /
+  ``remote_dirs_checked``, and ``submit_batch`` with its progress signals, plus
+  ``refresh_queue`` / ``cancel`` / ``track_existing_job`` (results arrive via the
+  forwarded runner signals).
+- *A request/completion bridge* for the low-level helpers and
+  ``clear_tracked_jobs``: the op is queued on the worker and its outcome is
+  delivered via ``ClusterController.operation_finished`` ``(request_id, kind,
+  result, error)``, keyed by a per-call ``request_id`` and a ``kind``
+  discriminator so multiple in-flight ops route to their own continuation. The
+  completion fires on **every** exit path — success, a caught exception, or an
+  exception escaping the queued task — so a UI element disabled while an op is
+  pending is always re-enabled and never stuck. ``clear_tracked_jobs`` (run on
+  project switch) additionally clears the GUI-thread tracked-id mirror eagerly and
+  relies on worker FIFO ordering so the subsequent ``track_existing_job``
+  re-registrations are never wiped by a late clear.
+
+The single deliberate exception is ``ClusterController.shutdown``, which stops
+the worker's poll ``QTimer`` on the worker thread with a blocking call at teardown
+(the app is already closing); no responsiveness-sensitive path blocks.
 
 Connecting is also asynchronous (``connect_async`` / ``connect_finished``): the
 multi-second SSH handshake runs on the worker behind a modal "Connecting…"
@@ -304,7 +339,11 @@ During polling:
   ``-out.cell``, ``.phonon``, or ``.ts`` outputs. Retrieval or parsing failure
   becomes ``failed``. Parsed incomplete CASTEP output becomes ``stopped`` when
   it looks like walltime; otherwise it becomes ``failed``. Parsed completed
-  output emits ``job_finished`` and ``completed``.
+  output emits ``job_finished`` and ``completed``. The secondary outputs
+  (``-out.cell`` / ``.phonon`` / ``.ts``) are parsed once here on the worker
+  thread via :func:`~mufinder.services.job_artifacts.collect_job_artifacts` and
+  carried to the GUI as the third ``job_finished`` payload, so the completion
+  handler and controllers never re-parse them.
 - A missing scheduler entry usually means completion, so retrieval is
   attempted immediately — but with a grace window: if the output cannot be
   downloaded (SFTP error, missing remote ``.castep``, connection hiccup), the
@@ -345,11 +384,32 @@ The per-job document mutation happens synchronously, but the **heavy dashboard
 work is coalesced**: rebuilding the journal (whole provenance), the jobs table
 (which recreates per-row action buttons), and the workflow views, plus the
 full-document autosave. Lifecycle handlers call ``_request_dashboard_flush``
-instead of refreshing and saving inline; the pending flush runs once after each
-queue poll (``_on_cluster_queue_checked``), on a short debounce timer, and before
-save/close/project-switch (``_flush_dashboard``). A burst of cluster jobs
-finishing in one poll therefore rebuilds the views and writes the document once
-rather than once per job, which previously froze the GUI for large batches.
+instead of refreshing and saving inline; the pending flush runs on
+``_flush_dashboard``, scheduled via ``_dashboard_flush_timer``, and also
+before save/close/project-switch.
+
+``_request_dashboard_flush`` combines two rules so both an isolated
+completion and a multi-minute completion stream behave well:
+
+- **Quiet-period debounce** (``_DASHBOARD_FLUSH_DEBOUNCE_MS`` = 300 ms): an
+  isolated event flushes shortly after it arrives, giving the same prompt
+  feel as before.
+- **Minimum-interval floor** (``_DASHBOARD_MIN_FLUSH_INTERVAL_MS`` = 2000 ms):
+  during a burst — e.g. a serial cluster retrieval where jobs complete a few
+  seconds apart, each just outside the debounce window — flushes are bounded
+  to roughly one every 2 seconds instead of one per completion. The armed
+  deadline is only ever tightened (moved earlier), never pushed further into
+  the future, so a steady stream of requests cannot re-arm the timer forever
+  and starve the flush until the stream ends.
+
+``_on_cluster_queue_checked`` stamps per-job monitor metadata
+(``last_checked_at``/source/message) and then also goes through
+``_request_dashboard_flush`` rather than flushing synchronously — it no
+longer bypasses the debounce/rate-limit, since a queue poll can itself fire
+every few seconds during a retrieval. A burst of cluster jobs finishing
+across one or several polls therefore rebuilds the views and writes the
+document at a bounded cadence rather than once per job, which previously
+froze the GUI for large batches.
 
 The dashboard displays active states plus ``failed``, ``stopped``, and
 ``cancelled``; rows whose job carries a ``dismissed_at`` stamp are filtered

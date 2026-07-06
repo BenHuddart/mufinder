@@ -66,10 +66,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
-from mufinder.castep_io import parse_transition_state_file
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import CalculationRun, Job, Structure
+from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.science.energy_barriers import (
     EnergyBarrierError,
     idpp_intermediate_structure,
@@ -448,39 +448,39 @@ class EnergyBarriersController(WorkflowJobController):
     # --- result contract ---
 
     def build_result(
-        self, job: Job, parsed: CastepResult, run: CalculationRun
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
     ) -> ControllerResult:
         """Contribute the ``.ts`` transition-state payload for a completed NEB job.
 
         The inline ``_on_local_job_finished`` guard has already verified the ``.ts``
         file exists and parses (aborting the job on a missing file or
-        ``TransitionStateParseError``), so this re-parse on the validated success
-        path cannot hit those failure branches. When the job's output directory
-        cannot be resolved, an empty
+        ``TransitionStateParseError``), so the carried ``artifacts.transition_state``
+        is present on this success path. The file is parsed **once** on the runner
+        worker thread; this controller consumes the carried path with no second
+        disk read. When the parsed path is absent (defensive), an empty
         :class:`~mufinder.app.workflow_controllers.base.ControllerResult` is
-        returned (mirroring the inline guard's abort). The ``.ts`` file itself is
-        **not** contributed to ``output_files``: the call site already passes
-        ``_output_files_for_job(job)``.
+        returned. The ``.ts`` file itself is **not** contributed to
+        ``output_files``: the call site already passes ``_output_files_for_job(job)``.
 
         Both the NEB and transition-state-search calc types are owned so
         :meth:`handles_job` is coherent across the ``.ts``-producing pair; the
         payload is identical for either.
         """
 
-        output_dir = self._context.job_output_directory(job)
-        seed_name = self._context.job_seed_name(job)
-        if output_dir is None:
+        transition_state = artifacts.transition_state
+        if transition_state is None:
             return ControllerResult()
-        ts_path = output_dir / f"{seed_name}.ts"
-
-        # Intentional double parse: the inline ``_on_local_job_finished`` guard
-        # already parsed this ``.ts`` file to validate it and discarded the
-        # result; here ``build_result`` re-parses on the validated success path.
-        # Accepted cost — do NOT "fix" it by caching parse state on the
-        # controller.
-        transition_state = parse_transition_state_file(ts_path)
+        ts_path = artifacts.ts_path
+        if ts_path is None:
+            output_dir = self._context.job_output_directory(job)
+            seed_name = self._context.job_seed_name(job)
+            ts_path = None if output_dir is None else output_dir / f"{seed_name}.ts"
         payload: dict[str, object] = {
-            "transition_state_file": str(ts_path),
+            "transition_state_file": str(ts_path) if ts_path is not None else "",
             "barrier_height_eV": transition_state.barrier_height_eV,
             "num_images": len(transition_state.images),
             "image_labels": [image.label for image in transition_state.images],

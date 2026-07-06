@@ -13,11 +13,11 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
     QSizePolicy,
     QSplitter,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -25,7 +25,12 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.structure_render_guard import (
+    NO_STRUCTURE,
+    structure_geometry_fingerprint,
+)
 from mufinder.app.theme import style_section_subtitle, style_section_title
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.services.project_service import PromotableHost
 
@@ -54,6 +59,11 @@ class HostStructureWidget(QWidget):
         self._propagation_vector: list[float] = [0.0, 0.0, 0.0]
         self._supercell_matrix: list[list[int]] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
         self._updating = False
+        # Flush-path guard: skip the full atom-table + 3D viewer rebuild when the
+        # rendered structure (geometry + spin/propagation properties) is
+        # unchanged. Content-based — see structure_render_guard for the contract.
+        self._structure_fingerprint: tuple[object, ...] = NO_STRUCTURE
+        self._structure_fingerprint_valid = False
 
         self._file_label = QLabel("Source: -")
         self._atom_count_label = QLabel("Atoms: -")
@@ -61,13 +71,20 @@ class HostStructureWidget(QWidget):
         self._file_label.setWordWrap(True)
         self._species_label.setWordWrap(True)
 
-        self._atom_table = QTableWidget(0, 5)
-        self._atom_table.setHorizontalHeaderLabels(["Element", "fX", "fY", "fZ", "Spin (hbar/2)"])
-        self._atom_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._atom_table.horizontalHeader().setStretchLastSection(True)
+        # This table keeps row numbers (vertical header) as a visual atom index
+        # and allows editing the Spin column in place, so it opts out of the
+        # shared no-edit/hidden-header defaults via show_vertical_header/editable.
+        # It also opts out of stretch-to-fill: _lock_table_width relies on
+        # resizeColumnsToContents(), which Stretch-mode columns ignore.
+        self._atom_table = create_workflow_table(
+            ("Element", "fX", "fY", "fZ", "Spin (hbar/2)"),
+            selection_mode=QAbstractItemView.SelectionMode.ExtendedSelection,
+            editable=True,
+            show_vertical_header=True,
+            default_resize_mode=QHeaderView.ResizeMode.Interactive,
+        )
+        self._atom_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._atom_table.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Expanding)
-        self._atom_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._atom_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._atom_table.itemSelectionChanged.connect(self._on_table_selection_changed)
         self._atom_table.cellChanged.connect(self._on_table_cell_changed)
 
@@ -146,7 +163,7 @@ class HostStructureWidget(QWidget):
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 8)
         splitter.setSizes([320, 960])
-        self._viewer.setMinimumWidth(560)
+        self._viewer.setMinimumWidth(380)
 
         layout.addWidget(info)
         layout.addWidget(splitter)
@@ -164,7 +181,10 @@ class HostStructureWidget(QWidget):
             total += padded_width
         total += (2 * self._atom_table.frameWidth()) + 12
         target_width = max(total, self._propagation_controls_width() + self._TABLE_WIDTH_EXTRA)
-        self._atom_table.setMinimumWidth(target_width)
+        # Cap the table at its content width so it never greedily expands, but
+        # do not also lock the minimum to the same value: that would make the
+        # splitter pane rigid and prevent the table from shrinking (with its
+        # own horizontal scrollbar) on small screens.
         self._atom_table.setMaximumWidth(target_width)
         header.setStretchLastSection(stretch_last)
 
@@ -186,8 +206,51 @@ class HostStructureWidget(QWidget):
             + (spacing * (control_count - 1))
         )
 
+    @staticmethod
+    def _render_fingerprint(structure: Structure | None) -> tuple[object, ...]:
+        """Fingerprint the fields ``set_structure`` renders. Content-based.
+
+        Combines the content-based geometry fingerprint from
+        ``structure_render_guard`` with a ``repr`` serialization of the
+        spin/propagation ``properties`` this widget reads. The ``repr`` string is
+        built from the property *values* at fingerprint time, so later in-place
+        mutation of those lists/dicts (the normal edit pattern for
+        ``properties``) still produces a differing fingerprint — no object
+        identities are involved anywhere. ``source_file`` and ``label`` feed the
+        info labels and are included so a rename still refreshes.
+        """
+        geometry = structure_geometry_fingerprint(structure)
+        if structure is None:
+            return geometry
+        properties = structure.properties
+        property_signature = repr(
+            (
+                properties.get("atomic_spins"),
+                properties.get("initial_magnetic_moments"),
+                properties.get("propagation_vector"),
+                properties.get("magnetic_structure"),
+            )
+        )
+        return (
+            *geometry,
+            structure.label,
+            structure.source_file,
+            property_signature,
+        )
+
     def set_structure(self, structure: Structure | None) -> None:
-        """Render structure metadata and first rows of atom coordinates."""
+        """Render structure metadata and first rows of atom coordinates.
+
+        No-op (beyond storing the reference) when the rendered structure is
+        unchanged since the last call, avoiding the atom-table repopulation and
+        full 3D viewer mesh rebuild on every dashboard flush.
+        """
+        fingerprint = self._render_fingerprint(structure)
+        if self._structure_fingerprint_valid and fingerprint == self._structure_fingerprint:
+            self._current_structure = structure
+            return
+        self._structure_fingerprint = fingerprint
+        self._structure_fingerprint_valid = True
         self._current_structure = structure
         self._atom_table.setRowCount(0)
         self._viewer.set_structure(structure)

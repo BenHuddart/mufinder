@@ -182,8 +182,15 @@ class JobExecutionController:
         mpirun_path: str,
         eligible_statuses: set[JobStatus] | None = None,
         task_farming_for_job: Callable[[Job], tuple[bool, int | None]] | None = None,
+        retrieve_flags_for_job: Callable[[Job], dict[str, bool]] | None = None,
     ) -> SubmissionOutcome:
-        """Submit eligible jobs to the local runner and create tracked runs."""
+        """Submit eligible jobs to the local runner and create tracked runs.
+
+        ``retrieve_flags_for_job`` maps a job to its per-calc-type secondary-output
+        flags (``retrieve_out_cell`` / ``retrieve_phonon`` / ``retrieve_ts``),
+        mirroring the cluster path. The local runner uses them to parse those
+        outputs off the GUI thread on completion, exactly once.
+        """
 
         document = self._document_getter()
         if document is None:
@@ -207,6 +214,9 @@ class JobExecutionController:
             task_farming_enabled, num_farms = (
                 task_farming_for_job(job) if task_farming_for_job is not None else (False, None)
             )
+            retrieve_flags = (
+                retrieve_flags_for_job(job) if retrieve_flags_for_job is not None else {}
+            )
 
             try:
                 job.execution_target = "local"
@@ -228,6 +238,9 @@ class JobExecutionController:
                     num_cores=num_cores,
                     task_farming_enabled=task_farming_enabled,
                     num_farms=num_farms,
+                    retrieve_out_cell=bool(retrieve_flags.get("retrieve_out_cell", False)),
+                    retrieve_phonon=bool(retrieve_flags.get("retrieve_phonon", False)),
+                    retrieve_ts=bool(retrieve_flags.get("retrieve_ts", False)),
                 )
             except Exception as exc:  # noqa: BLE001
                 failed_messages.append(f"- {job.label}: {exc}")

@@ -14,6 +14,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QTreeWidgetItem
 
 import mufinder.app.main_window as main_window_module
+import mufinder.services.job_artifacts as job_artifacts_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.app.comparison_job_dialog import CompletedPristineJob
 from mufinder.app.convergence_types import ConvergenceConfig
@@ -3476,7 +3477,11 @@ def test_close_persists_pending_dashboard_flush(qapp, tmp_path: Path) -> None:
     assert save_calls == ["save"]
 
 
-def test_cluster_queue_checked_flushes_pending_dashboard(qapp, tmp_path: Path) -> None:
+def test_cluster_queue_checked_schedules_deferred_flush(qapp, tmp_path: Path) -> None:
+    # _on_cluster_queue_checked used to call _flush_dashboard() directly,
+    # bypassing the debounce/rate-limit entirely. It must now route through
+    # _request_dashboard_flush like every other lifecycle handler: the queue
+    # check drains any already-pending flush, but does not write synchronously.
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "queue_flush.mufinder", "QueueFlush")
@@ -3495,7 +3500,120 @@ def test_cluster_queue_checked_flushes_pending_dashboard(qapp, tmp_path: Path) -
     assert save_calls == []
 
     window._on_cluster_queue_checked(SimpleNamespace(checked_at=None, elapsed_by_job_id={}))
+    # Not synchronous: the write is still only scheduled.
+    assert save_calls == []
+    assert window._dashboard_flush_pending is True
+
+    # The metadata stamp landed in the in-memory document regardless of when
+    # the flush itself runs.
+    window._flush_dashboard()
     assert save_calls == ["save"]
+    window.close()
+
+
+def test_cluster_queue_checked_with_no_activity_does_not_schedule_flush(
+    qapp, tmp_path: Path
+) -> None:
+    # A routine queue poll that stamps nothing and has no pending completion
+    # must not start scheduling flushes on its own — only actual job activity
+    # (via mark_queue_checked stamping a job, or a completion handler already
+    # having marked pending) should arm the timer.
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "queue_no_activity.mufinder", "QueueNoActivity")
+    window._document = doc
+
+    window._on_cluster_queue_checked(SimpleNamespace(checked_at=None, elapsed_by_job_id={}))
+    assert window._dashboard_flush_pending is False
+    assert window._dashboard_flush_timer.isActive() is False
+    window.close()
+
+
+def test_dashboard_flush_isolated_event_uses_short_debounce(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An isolated lifecycle event (nothing nearby) should still arm the short
+    # debounce, not the longer min-flush-interval floor, preserving the
+    # existing prompt-flush feel.
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "isolated_event.mufinder", "IsolatedEvent")
+    window._document = doc
+
+    clock = [1_000.0]
+    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock[0])
+
+    window._request_dashboard_flush(failure_message="x")
+    assert window._dashboard_flush_timer.isActive() is True
+    assert window._dashboard_flush_timer.interval() == window._DASHBOARD_FLUSH_DEBOUNCE_MS
+    window.close()
+
+
+def test_dashboard_flush_stream_is_rate_limited_to_min_interval(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A steady stream of requests spaced closer than the min flush interval
+    # (but further apart than the debounce) must flush on a bounded ~2s
+    # cadence during the stream, not only once the stream stops, and must not
+    # have each new request push the deadline further into the future.
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "flush_stream.mufinder", "FlushStream")
+    window._document = doc
+
+    save_calls: list[str] = []
+    original_save = window._project_service.save_project
+
+    def _save_project(document) -> None:
+        save_calls.append("save")
+        original_save(document)
+
+    window._project_service.save_project = _save_project
+
+    clock = [0.0]
+    monkeypatch.setattr(main_window_module.time, "monotonic", lambda: clock[0])
+
+    # First request: isolated so far -> short debounce deadline at t=0.3s.
+    window._request_dashboard_flush(failure_message="x")
+    first_deadline = window._dashboard_flush_deadline
+    assert first_deadline == pytest.approx(0.3)
+
+    # Fire the debounce timer as Qt would once its interval elapses.
+    clock[0] = 0.3
+    window._dashboard_flush_timer.timeout.emit()
+    assert save_calls == ["save"]
+    assert window._dashboard_last_flush_at == pytest.approx(0.3)
+
+    # A request 0.5s after the last flush: within the 2s floor, so the
+    # deadline should land 2s after the last flush (t=2.3s), not 0.3s later.
+    clock[0] = 0.8
+    window._request_dashboard_flush(failure_message="x")
+    assert window._dashboard_flush_deadline == pytest.approx(2.3)
+
+    # Further requests inside the same armed window must not push the
+    # deadline further out.
+    clock[0] = 1.3
+    window._request_dashboard_flush(failure_message="x")
+    assert window._dashboard_flush_deadline == pytest.approx(2.3)
+
+    clock[0] = 1.8
+    window._request_dashboard_flush(failure_message="x")
+    assert window._dashboard_flush_deadline == pytest.approx(2.3)
+
+    # The armed deadline fires on schedule, bounding the burst to one flush
+    # per ~2s rather than starving until the stream ends.
+    clock[0] = 2.3
+    window._dashboard_flush_timer.timeout.emit()
+    assert save_calls == ["save", "save"]
+    assert window._dashboard_last_flush_at == pytest.approx(2.3)
+
+    # Trailing request after the stream ends still schedules a guaranteed
+    # final flush.
+    clock[0] = 2.5
+    window._request_dashboard_flush(failure_message="x")
+    assert window._dashboard_flush_pending is True
+    window._flush_dashboard()
+    assert save_calls == ["save", "save", "save"]
     window.close()
 
 
@@ -4697,8 +4815,11 @@ def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_p
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / f"{job.label}-out.cell").write_text("dummy", encoding="utf-8")
 
+    # The relaxed -out.cell is parsed once by the off-thread collector
+    # (mufinder.services.job_artifacts), so patch the collector's parse helpers
+    # rather than main_window's (which no longer parses secondary outputs).
     monkeypatch.setattr(
-        main_window_module,
+        job_artifacts_module,
         "parse_cell_file",
         lambda _path: SimpleNamespace(
             lattice_vectors=((5.1, 0.0, 0.0), (0.0, 5.2, 0.0), (0.0, 0.0, 5.3)),
@@ -4707,7 +4828,7 @@ def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_p
         ),
     )
     monkeypatch.setattr(
-        main_window_module,
+        job_artifacts_module,
         "lattice_parameters",
         lambda _vectors: (5.1, 5.2, 5.3, 90.0, 90.0, 90.0),
     )
@@ -5480,8 +5601,10 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
     output_dir = doc.project_root / "files" / "muon_relaxation" / "muonium" / "muonium_Shared_Site"
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "muonium_Shared_Site-out.cell").write_text("dummy", encoding="utf-8")
+    # The relaxed -out.cell is parsed once by the off-thread collector
+    # (mufinder.services.job_artifacts); patch its helpers, not main_window's.
     monkeypatch.setattr(
-        main_window_module,
+        job_artifacts_module,
         "parse_cell_file",
         lambda _path: SimpleNamespace(
             lattice_vectors=((8.0, 0.0, 0.0), (0.0, 8.0, 0.0), (0.0, 0.0, 4.0)),
@@ -5490,7 +5613,7 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
         ),
     )
     monkeypatch.setattr(
-        main_window_module,
+        job_artifacts_module,
         "lattice_parameters",
         lambda _vectors: (8.0, 8.0, 4.0, 90.0, 90.0, 90.0),
     )
@@ -6516,6 +6639,47 @@ def test_main_window_error_file_candidates_fallback_and_excerpt_helpers(
     assert MainWindow._read_error_contexts(output_dir / "missing.err").startswith("Could not read file")
     assert "2: error here" in MainWindow._read_error_contexts(output_dir / "job_x.err")
     window.close()
+
+
+def test_read_bounded_tail_small_file_matches_read_text(tmp_path: Path) -> None:
+    path = tmp_path / "small.out"
+    content = "first line\nsecond line\nthird line\n"
+    path.write_text(content, encoding="utf-8")
+
+    assert MainWindow._read_bounded_tail(path) == content
+    assert MainWindow._read_error_contexts(path) != "[File is empty]"
+    assert MainWindow._read_text_excerpt(path) == content.strip()
+
+
+def test_read_bounded_tail_large_file_returns_only_tail(tmp_path: Path) -> None:
+    path = tmp_path / "huge.out"
+    limit = MainWindow._TAIL_READ_LIMIT_BYTES
+
+    first_line = "FIRST-LINE-SENTINEL " + ("x" * 200) + "\n"
+    filler_line = "y" * 500 + "\n"
+    filler_count = (limit // len(filler_line)) + 10
+    last_line = "LAST-LINE-SENTINEL\n"
+
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(first_line)
+        for _ in range(filler_count):
+            handle.write(filler_line)
+        handle.write(last_line)
+
+    assert path.stat().st_size > limit
+
+    tail_text = MainWindow._read_bounded_tail(path)
+    assert len(tail_text.encode("utf-8")) <= limit + len("[... truncated] ...\n")
+    assert "FIRST-LINE-SENTINEL" not in tail_text
+    assert "LAST-LINE-SENTINEL" in tail_text
+    assert tail_text.startswith("[... truncated] ...\n")
+
+    excerpt = MainWindow._read_text_excerpt(path, max_chars=10**9)
+    assert "FIRST-LINE-SENTINEL" not in excerpt
+    assert "LAST-LINE-SENTINEL" in excerpt
+
+    error_contexts = MainWindow._read_error_contexts(path)
+    assert "FIRST-LINE-SENTINEL" not in error_contexts
 
 
 def test_main_window_prompt_failed_job_cleanup_choices(
@@ -9739,3 +9903,185 @@ def test_dashboard_dismiss_multi_select(
     assert job1.dismissed_at is not None
     assert window._jobs_table.rowCount() == 0
     window.close()
+
+
+def _add_dashboard_job(service, doc, label, status):
+    job = service.add_job(
+        doc,
+        label=label,
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job.status = status
+    return job
+
+
+def _dashboard_row_widgets(window, row):
+    """Snapshot the cell widgets + items for a dashboard row (identity checks)."""
+    return {
+        "label": window._jobs_table.item(row, window._JOB_LABEL_COLUMN),
+        "status": window._jobs_table.item(row, window._JOB_STATUS_COLUMN),
+        "resubmit": window._jobs_table.cellWidget(row, window._JOB_SUBMIT_COLUMN),
+        "retry": window._jobs_table.cellWidget(row, window._JOB_RETRY_RETRIEVAL_COLUMN),
+        "cancel": window._jobs_table.cellWidget(row, window._JOB_CANCEL_COLUMN),
+        "inspect": window._jobs_table.cellWidget(row, window._JOB_INSPECT_COLUMN),
+        "reset": window._jobs_table.cellWidget(row, window._JOB_RESET_COLUMN),
+        "dismiss": window._jobs_table.cellWidget(row, window._JOB_DISMISS_COLUMN),
+    }
+
+
+def test_dashboard_reconcile_reuses_widgets_when_jobs_unchanged(
+    qapp, tmp_path: Path
+) -> None:
+    """Two consecutive refreshes with the same jobs must reuse every cell widget."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reconcile_reuse.mufinder", "ReconcileReuse")
+    _add_dashboard_job(service, doc, "r0", JobStatus.RUNNING)
+    _add_dashboard_job(service, doc, "r1", JobStatus.FAILED)
+    window._document = doc
+
+    window._refresh_jobs_table()
+    before = [_dashboard_row_widgets(window, row) for row in range(window._jobs_table.rowCount())]
+    assert len(before) == 2
+
+    window._refresh_jobs_table()
+    after = [_dashboard_row_widgets(window, row) for row in range(window._jobs_table.rowCount())]
+    assert len(after) == 2
+
+    # Every item and every button is the identical object after re-refresh.
+    for row_before, row_after in zip(before, after, strict=True):
+        for key in row_before:
+            assert row_before[key] is row_after[key], f"row widget {key} was recreated"
+    window.close()
+
+
+def test_dashboard_reconcile_status_change_updates_in_place(
+    qapp, tmp_path: Path
+) -> None:
+    """A status change updates the status cell + button enablement without widget churn."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reconcile_status.mufinder", "ReconcileStatus")
+    job = _add_dashboard_job(service, doc, "s0", JobStatus.RUNNING)
+    window._document = doc
+
+    window._refresh_jobs_table()
+    before = _dashboard_row_widgets(window, 0)
+    assert before["status"].text() == JobStatus.RUNNING.value
+    # Running: cancel enabled, resubmit/inspect/reset disabled.
+    assert before["cancel"].isEnabled() is True
+    assert before["resubmit"].isEnabled() is False
+    assert before["inspect"].isEnabled() is False
+    assert before["reset"].isEnabled() is False
+
+    job.status = JobStatus.FAILED
+    window._refresh_jobs_table()
+    after = _dashboard_row_widgets(window, 0)
+
+    # Same widget objects, updated text + enablement.
+    for key in before:
+        assert before[key] is after[key], f"row widget {key} was recreated on status change"
+    assert after["status"].text() == JobStatus.FAILED.value
+    assert after["cancel"].isEnabled() is False
+    assert after["resubmit"].isEnabled() is True
+    assert after["inspect"].isEnabled() is True
+    assert after["reset"].isEnabled() is True
+    window.close()
+
+
+def test_dashboard_reconcile_remove_job_removes_only_its_row(
+    qapp, tmp_path: Path
+) -> None:
+    """Dismissing a job removes exactly its row; the surviving row keeps its widgets."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reconcile_remove.mufinder", "ReconcileRemove")
+    job0 = _add_dashboard_job(service, doc, "x0", JobStatus.FAILED)
+    _add_dashboard_job(service, doc, "x1", JobStatus.RUNNING)
+    window._document = doc
+
+    window._refresh_jobs_table()
+    assert window._jobs_table.rowCount() == 2
+    # Capture the surviving (running) row's widgets before removal.
+    survivor_before = _dashboard_row_widgets(window, 1)
+
+    job0.dismissed_at = utc_now_for_test()
+    window._refresh_jobs_table()
+
+    assert window._jobs_table.rowCount() == 1
+    remaining_id = window._jobs_table.item(0, window._JOB_LABEL_COLUMN).data(Qt.ItemDataRole.UserRole)
+    assert remaining_id != str(job0.id)
+    # The survivor's widgets are preserved (moved up to row 0 identity intact).
+    survivor_after = _dashboard_row_widgets(window, 0)
+    for key in survivor_before:
+        assert survivor_before[key] is survivor_after[key], f"survivor widget {key} was recreated"
+    window.close()
+
+
+def test_dashboard_reconcile_add_job_inserts_row_preserving_others(
+    qapp, tmp_path: Path
+) -> None:
+    """Adding a job appends a row; existing rows keep their widgets."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reconcile_add.mufinder", "ReconcileAdd")
+    _add_dashboard_job(service, doc, "a0", JobStatus.RUNNING)
+    window._document = doc
+
+    window._refresh_jobs_table()
+    assert window._jobs_table.rowCount() == 1
+    first_before = _dashboard_row_widgets(window, 0)
+
+    new_job = _add_dashboard_job(service, doc, "a1", JobStatus.FAILED)
+    window._refresh_jobs_table()
+
+    assert window._jobs_table.rowCount() == 2
+    first_after = _dashboard_row_widgets(window, 0)
+    for key in first_before:
+        assert first_before[key] is first_after[key], f"existing widget {key} was recreated on insert"
+    # New job landed in the appended row (document iteration order).
+    assert window._jobs_table.item(1, window._JOB_LABEL_COLUMN).data(Qt.ItemDataRole.UserRole) == str(new_job.id)
+    window.close()
+
+
+def test_dashboard_reconcile_button_dispatches_correct_job_id_after_churn(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After several reconciliations, a button still dispatches its own job id."""
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reconcile_closure.mufinder", "ReconcileClosure")
+    job0 = _add_dashboard_job(service, doc, "c0", JobStatus.FAILED)
+    job1 = _add_dashboard_job(service, doc, "c1", JobStatus.FAILED)
+    window._document = doc
+
+    resubmitted: list[list[object]] = []
+    monkeypatch.setattr(window, "_on_resubmit_from_dashboard", lambda ids: resubmitted.append(list(ids)))
+
+    window._refresh_jobs_table()
+    # Churn: remove job0 (dismiss), refresh, re-add nothing but refresh again.
+    job0.dismissed_at = utc_now_for_test()
+    window._refresh_jobs_table()
+    job0.dismissed_at = None
+    window._refresh_jobs_table()  # job0 comes back (fresh row/closure)
+
+    # Locate job1's resubmit button by id and click it — must dispatch job1.
+    def resubmit_btn_for(job_id):
+        for row in range(window._jobs_table.rowCount()):
+            item = window._jobs_table.item(row, window._JOB_LABEL_COLUMN)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == str(job_id):
+                return window._jobs_table.cellWidget(row, window._JOB_SUBMIT_COLUMN)
+        return None
+
+    resubmit_btn_for(job1.id).click()
+    resubmit_btn_for(job0.id).click()
+
+    assert resubmitted == [[job1.id], [job0.id]]
+    window.close()
+
+
+def utc_now_for_test():
+    from datetime import datetime
+
+    return datetime.now(UTC)

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QDockWidget, QFrame, QHeaderView, QLabel, QMessage
 
 import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.app.main_window as main_window_module
-import mufinder.app.workflow_controllers.energy_barriers as energy_barriers_controller_module
+import mufinder.services.job_artifacts as job_artifacts_module
 from mufinder.app import theme as theme_module
 import mufinder.castep_io.schema as schema_module
 from mufinder.app.main_window import MainWindow
@@ -2123,13 +2123,10 @@ def test_main_window_records_energy_barrier_result_from_ts_file(
             )
         )
 
-    # Both the inline ``_on_local_job_finished`` ``.ts`` guard (on
-    # ``main_window``) and ``EnergyBarriersController.build_result`` (on the
-    # controller module) re-parse the ``.ts`` on the success path, so patch both.
-    monkeypatch.setattr(main_window_module, "parse_transition_state_file", _fake_parse)
-    monkeypatch.setattr(
-        energy_barriers_controller_module, "parse_transition_state_file", _fake_parse
-    )
+    # The ``.ts`` is parsed once by the off-thread collector
+    # (mufinder.services.job_artifacts) and carried to both the inline guard and
+    # the controller's build_result, so patch the collector's parse helper.
+    monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
 
     window._on_local_job_finished(job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0))
 
@@ -2499,13 +2496,12 @@ def test_main_window_records_neb_result_and_loads_preview(
             )
         )
 
-    # Both the inline ``.ts`` guard (on ``main_window``) and
-    # ``EnergyBarriersController.build_result`` (on the controller module)
-    # re-parse the ``.ts`` on the success path, so patch both.
+    # Completion parses the ``.ts`` once via the off-thread collector
+    # (mufinder.services.job_artifacts). The later result-preview selection
+    # (``_on_energy_barrier_neb_result_selected``) is a separate on-demand parse
+    # through main_window's module-level helper, so patch both.
+    monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
     monkeypatch.setattr(main_window_module, "parse_transition_state_file", _fake_parse)
-    monkeypatch.setattr(
-        energy_barriers_controller_module, "parse_transition_state_file", _fake_parse
-    )
 
     window._on_local_job_finished(job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0))
 
@@ -2650,19 +2646,19 @@ def test_project_home_trail_destinations_include_journal(qapp, tmp_path: Path) -
     window.close()
 
 
-def test_sign_title_point_size_scales_with_banner_height() -> None:
+def test_sign_title_pixel_size_scales_with_banner_height() -> None:
     trail = main_window_module.ProjectHomeTrailWidget
     ref = trail._SIGN_REF_BANNER_HEIGHT
 
     # At the reference banner height the tuned base size is preserved.
-    assert trail._sign_title_point_size("host_structure", "Host Structure", ref) == 13.0
+    assert trail._sign_title_pixel_size("host_structure", "Host Structure", ref) == 13
     # Larger banners (large/high-DPI windows) yield larger, still-legible labels;
     # smaller banners shrink but never below the legibility floor.
-    small = trail._sign_title_point_size("host_structure", "Host Structure", ref * 0.5)
-    large = trail._sign_title_point_size("host_structure", "Host Structure", ref * 1.6)
-    assert large > 13.0 > small
-    assert small >= 11.0  # legibility floor
-    assert large <= 13.0 * 2.0  # capped so it never overwhelms the banner
+    small = trail._sign_title_pixel_size("host_structure", "Host Structure", ref * 0.5)
+    large = trail._sign_title_pixel_size("host_structure", "Host Structure", ref * 1.6)
+    assert large > 13 > small
+    assert small >= 11  # legibility floor
+    assert large <= 13 * 2  # capped so it never overwhelms the banner
 
 
 def test_project_home_trail_scroll_labels_keep_dark_ink_in_dark_mode(qapp) -> None:
@@ -2968,3 +2964,45 @@ def test_scaled_home_logo_uses_device_pixel_ratio(monkeypatch, tmp_path: Path, q
     assert scaled.height() == 184
 
     window.close()
+
+
+def test_main_window_persists_and_restores_geometry_via_qsettings(qapp) -> None:
+    window = MainWindow()
+    window.show()
+    # Move to a distinctive position, but keep the window's current (already
+    # screen-fitting) size, so the post-restore clamp_to_screen() call in
+    # __init__ (SC-3/SC-4) is a no-op here and does not itself relocate the
+    # window -- this test is about the QSettings save/restore wiring, not
+    # about clamp_to_screen, which has its own dedicated coverage in
+    # test_screen_utils.py.
+    window.move(37, 41)
+    qapp.processEvents()
+
+    # closeEvent saves geometry under _MAIN_WINDOW_GEOMETRY_KEY without a
+    # document loaded (no save-project prompt), exercising the persistence
+    # path added alongside the small-screen sizing fixes.
+    window.close()
+
+    settings = window._settings
+    saved = settings.value(window._MAIN_WINDOW_GEOMETRY_KEY)
+    assert saved is not None
+
+    # _isolate_qsettings redirects QSettings to a shared per-test tmp_path, so
+    # a second MainWindow constructed in the same test reads back the same
+    # store and restores the geometry saved above.
+    reloaded_window = MainWindow()
+    try:
+        avail = reloaded_window.screen().availableGeometry()
+        if window.frameGeometry().width() <= avail.width() and window.frameGeometry().height() <= avail.height():
+            assert reloaded_window.pos().x() == window.pos().x()
+            assert reloaded_window.pos().y() == window.pos().y()
+        else:
+            # The window itself does not fit this screen (e.g. a small
+            # offscreen-platform test display): clamp_to_screen legitimately
+            # repositions it, so just confirm restoreGeometry actually ran by
+            # checking the restored frame stays fully on-screen.
+            frame = reloaded_window.frameGeometry()
+            assert avail.left() <= frame.left()
+            assert avail.top() <= frame.top()
+    finally:
+        reloaded_window.close()

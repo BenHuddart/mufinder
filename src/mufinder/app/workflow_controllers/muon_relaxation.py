@@ -46,10 +46,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
+from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
@@ -119,10 +119,13 @@ class MuonRelaxationDeps:
     them there: the definition/config/mapping helpers are shared with row
     removal, staging, and dashboard sync; ``muon_fractional_position_from_cell``
     is still called by the inline ``H:mu`` failure guard in
-    ``_on_local_job_finished``; ``coerce_fractional_triplet`` and
-    ``muon_relaxation_row_key`` have other view-refresh callers; and
-    ``parse_relaxed_out_cell`` is shared with the pristine-relaxation controller.
-    The controller reaches them only through these required callables.
+    ``_on_local_job_finished`` (against the carried, already-parsed cell); and
+    ``coerce_fractional_triplet`` and ``muon_relaxation_row_key`` have other
+    view-refresh callers. The relaxed ``-out.cell`` is parsed once on the runner
+    worker thread and delivered to ``build_result`` via
+    :class:`~mufinder.services.job_artifacts.ParsedJobArtifacts`, so no parse dep
+    is needed here. The controller reaches these helpers only through required
+    callables.
     Workflow-specific dependencies like these never go in the shared
     :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`;
     cross-workflow job/definition readers (``job_output_directory``,
@@ -151,7 +154,6 @@ class MuonRelaxationDeps:
         [object], tuple[float, float, float] | None
     ]
     coerce_fractional_triplet: Callable[[object], tuple[float, float, float] | None]
-    parse_relaxed_out_cell: Callable[[Path], tuple[object, float, float, float]]
 
 
 class MuonRelaxationController(WorkflowJobController):
@@ -459,16 +461,21 @@ class MuonRelaxationController(WorkflowJobController):
     # --- result contract ---
 
     def build_result(
-        self, job: Job, parsed: CastepResult, run: CalculationRun
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
     ) -> ControllerResult:
         """Contribute lattice/muon-position payload, derived structure, and the
         source-site mutation for a completed muon-relaxation job.
 
         The inline ``_on_local_job_finished`` prologue has already validated
         that the ``-out.cell`` exists, parses, and contains an ``H:mu``
-        position (it aborts the job otherwise), so neither the re-parse nor the
-        position re-extraction here — the second invocations of the same shared
-        helpers on the success path — will hit their failure branches.
+        position (it aborts the job otherwise), so the carried
+        ``artifacts.relaxed_cell`` is present and muonated on this success path.
+        The file is parsed **once** on the runner worker thread; this controller
+        consumes the carried cell rather than re-reading disk.
 
         Mutating the source :class:`~mufinder.domain.models.MuonSite`
         (``status``/``relaxation_run_id``/``relative_energy_eV``) is a
@@ -481,20 +488,10 @@ class MuonRelaxationController(WorkflowJobController):
         if document is None:
             return ControllerResult()
 
-        output_dir = self._context.job_output_directory(job)
-        seed_name = self._context.job_seed_name(job)
-        if output_dir is None:
+        relaxed = artifacts.relaxed_cell
+        if relaxed is None or artifacts.lattice_abc is None:
             return ControllerResult()
-        out_cell_path = output_dir / f"{seed_name}-out.cell"
-
-        # Intentional double parse: the inline ``_on_local_job_finished`` guard
-        # already parsed this ``-out.cell`` to validate it (and the ``H:mu``
-        # position) and discarded the result; here ``build_result`` re-derives
-        # the payload on the validated success path. Accepted cost — do NOT
-        # "fix" it by caching parse state on the controller.
-        relaxed, lattice_a, lattice_b, lattice_c = self._deps.parse_relaxed_out_cell(
-            out_cell_path
-        )
+        lattice_a, lattice_b, lattice_c = artifacts.lattice_abc
 
         payload: dict[str, object] = {
             "lattice_a": lattice_a,

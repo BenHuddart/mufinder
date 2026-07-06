@@ -14,7 +14,7 @@ from mufinder.domain.models import Structure
 
 def test_widget_state_roundtrip_and_table_render(qapp) -> None:
     widget = MuonGenerationWidget()
-    assert widget._header_label.text() == "Initial muon position generation"
+    assert widget._header_label.text() == "Initial Muon Position Generation"
     assert widget._generate_btn.text() == "Generate Sites"
 
     state = {
@@ -82,7 +82,7 @@ def test_widget_state_roundtrip_and_table_render(qapp) -> None:
 
 def test_widget_delete_selected_candidates_emits_site_ids(qapp) -> None:
     widget = MuonGenerationWidget()
-    assert widget._create_jobs_btn.text() == "Create job(s) from selected"
+    assert widget._create_jobs_btn.text() == "Create Jobs from Selected"
     assert not widget._create_jobs_btn.isEnabled()
     widget.set_sites(
         [
@@ -700,3 +700,191 @@ def test_widget_uep_cluster_rows_emit_all_selected_payloads(qapp) -> None:
         "job:cluster:2:cluster:1",
     ]
     assert len(widget._viewer._point_overlay_specs[0].positions) == 2
+
+
+def _host_a() -> Structure:
+    return Structure(
+        label="Host A",
+        lattice_vectors=[[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        species=["Si", "O"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+
+
+def _host_b() -> Structure:
+    return Structure(
+        label="Host B",
+        lattice_vectors=[[6.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 6.0]],
+        species=["Fe"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+
+
+def test_set_host_structure_skips_viewer_rebuild_when_unchanged(qapp, monkeypatch) -> None:
+    widget = MuonGenerationWidget()
+    calls: list[object] = []
+    monkeypatch.setattr(widget._viewer, "set_structure", lambda structure: calls.append(structure))
+
+    host = _host_a()
+    widget.set_host_structure(host)
+    assert len(calls) == 1
+
+    # Same structure object on the next flush must not re-render the viewer.
+    widget.set_host_structure(host)
+    assert len(calls) == 1
+
+    # A different structure id must re-render.
+    widget.set_host_structure(_host_b())
+    assert len(calls) == 2
+
+
+def test_set_host_structure_none_transitions_render(qapp, monkeypatch) -> None:
+    widget = MuonGenerationWidget()
+    calls: list[object] = []
+    monkeypatch.setattr(widget._viewer, "set_structure", lambda structure: calls.append(structure))
+
+    host = _host_a()
+    widget.set_host_structure(host)  # None -> structure
+    widget.set_host_structure(None)  # structure -> None
+    widget.set_host_structure(None)  # None -> None (skipped)
+    widget.set_host_structure(host)  # None -> structure
+
+    assert calls == [host, None, host]
+
+
+def test_set_host_structure_rerenders_after_in_place_geometry_swap(qapp, monkeypatch) -> None:
+    # Supercell asset structures keep their id but reassign the geometry lists
+    # (see ProjectService). Reassigning species/positions must invalidate the guard.
+    widget = MuonGenerationWidget()
+    calls: list[object] = []
+    monkeypatch.setattr(widget._viewer, "set_structure", lambda structure: calls.append(structure))
+
+    host = _host_a()
+    widget.set_host_structure(host)
+    assert len(calls) == 1
+
+    host.species = ["Si", "O", "H"]
+    host.fractional_positions = [[0.0, 0.0, 0.0], [0.25, 0.25, 0.25], [0.5, 0.5, 0.5]]
+    widget.set_host_structure(host)
+    assert len(calls) == 2
+
+
+def test_set_host_structure_rerenders_after_in_place_element_mutation(qapp, monkeypatch) -> None:
+    # Regression for the id()-recycling hazard: the fingerprint is content-based,
+    # so mutating geometry *elements* while keeping the very same list objects
+    # (identical identities) must still invalidate the guard and re-render.
+    widget = MuonGenerationWidget()
+    calls: list[object] = []
+    monkeypatch.setattr(widget._viewer, "set_structure", lambda structure: calls.append(structure))
+
+    host = _host_a()
+    widget.set_host_structure(host)
+    assert len(calls) == 1
+
+    species_id = id(host.species)
+    positions_id = id(host.fractional_positions)
+    host.species[0] = "Fe"
+    host.fractional_positions[1][0] = 0.9
+    assert id(host.species) == species_id
+    assert id(host.fractional_positions) == positions_id
+
+    widget.set_host_structure(host)
+    assert len(calls) == 2
+
+
+def test_set_sites_skips_rebuild_when_rows_unchanged(qapp) -> None:
+    widget = MuonGenerationWidget()
+    rows = [
+        {
+            "id": "site-a",
+            "label": "Site A",
+            "method": "random",
+            "status": "generated",
+            "fractional": [0.1, 0.2, 0.3],
+            "source_structure_id": "",
+        }
+    ]
+    widget.set_sites(rows)
+    assert widget._site_table.rowCount() == 1
+
+    inserts: list[int] = []
+    original_insert = widget._site_table.insertRow
+    widget._site_table.insertRow = lambda row: (inserts.append(row), original_insert(row))[1]
+
+    # Identical rows (fresh list, equal-by-value) must not rebuild the table.
+    widget.set_sites([dict(rows[0])])
+    assert inserts == []
+    assert widget._site_table.rowCount() == 1
+
+    # A changed row must rebuild.
+    changed = [dict(rows[0])]
+    changed[0]["status"] = "staged"
+    widget.set_sites(changed)
+    assert inserts != []
+
+
+def test_set_sites_preserves_selection_across_unchanged_reflush(qapp) -> None:
+    widget = MuonGenerationWidget()
+    rows = [
+        {"id": "site-a", "label": "A", "method": "random", "status": "generated", "fractional": [0.1, 0.2, 0.3]},
+        {"id": "site-b", "label": "B", "method": "random", "status": "generated", "fractional": [0.4, 0.5, 0.6]},
+    ]
+    widget.set_sites(rows)
+    widget.select_site_ids(["site-b"])
+    assert widget._selected_site_ids() == ["site-b"]
+
+    widget.set_sites([dict(row) for row in rows])
+    # Unchanged reflush preserves the selection (rebuild would have cleared it).
+    assert widget._selected_site_ids() == ["site-b"]
+
+
+def test_set_uep_cluster_sources_skips_rebuild_when_unchanged(qapp) -> None:
+    widget = MuonGenerationWidget()
+    rows = [
+        {
+            "source_job_label": "job-1",
+            "cluster_index": 0,
+            "cluster_size": 3,
+            "classification": "core",
+            "classical_energy_ev": -1.0,
+            "fractional_position": [0.1, 0.2, 0.3],
+        }
+    ]
+    widget.set_uep_cluster_sources(rows)
+    assert widget._uep_cluster_table.rowCount() == 1
+
+    inserts: list[int] = []
+    original_insert = widget._uep_cluster_table.insertRow
+    widget._uep_cluster_table.insertRow = lambda row: (inserts.append(row), original_insert(row))[1]
+
+    widget.set_uep_cluster_sources([dict(rows[0])])
+    assert inserts == []
+
+    changed = [dict(rows[0])]
+    changed[0]["cluster_size"] = 5
+    widget.set_uep_cluster_sources(changed)
+    assert inserts != []
+
+
+def test_theme_change_reapplies_stale_row_styling(qapp) -> None:
+    widget = MuonGenerationWidget()
+    widget.set_active_host(_host_a())
+    widget.set_sites(
+        [
+            {
+                "id": "site-a",
+                "label": "Stale site",
+                "method": "random",
+                "status": "generated",
+                "fractional": [0.1, 0.2, 0.3],
+                "source_structure_id": "different-host-id",
+            }
+        ]
+    )
+    # The row is stale (source != active host), so label carries the marker.
+    assert widget._site_table.item(0, 0).text().endswith(" (stale)")
+
+    # A palette change must not crash and must keep stale styling applied even
+    # though set_sites is now skipped for unchanged rows.
+    widget.changeEvent(QEvent(QEvent.Type.PaletteChange))
+    assert widget._site_table.item(0, 0).text().endswith(" (stale)")

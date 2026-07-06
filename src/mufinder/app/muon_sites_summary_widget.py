@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -37,11 +36,12 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.theme import (
+    make_empty_state_label,
     style_hint_text,
     style_section_subtitle,
     style_section_title,
-    use_tabbed_table_corners,
 )
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.models import Structure
 
@@ -155,22 +155,23 @@ class _ChargeStatePanel(QFrame):
         self._summary_layout.setSpacing(6)
         self._summary_labels: dict[str, QLabel] = {}
 
-        self._placeholder = QLabel("", self)
-        self._placeholder.setObjectName("overviewPlaceholder")
-        self._placeholder.setWordWrap(True)
-        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._placeholder = make_empty_state_label(object_name="overviewPlaceholder", parent=self)
 
-        self._table = QTableWidget(0, 4, self)
-        self._table.setHorizontalHeaderLabels(["Site", "dE (eV)", "Fractional position", "Wyckoff"])
-        self._table.verticalHeader().setVisible(False)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # Columns other than _POSITION_COLUMN are sized to content via
+        # resizeColumnsToContents() in _populate_table, so this table opts out
+        # of the shared stretch-to-fill default (default_resize_mode=Interactive)
+        # and instead stretches only the fractional-position column explicitly.
+        self._table = create_workflow_table(
+            ("Site", "dE (eV)", "Fractional position", "Wyckoff"),
+            selection_mode=QAbstractItemView.SelectionMode.SingleSelection,
+            corner_style="tabbed",
+            default_resize_mode=QHeaderView.ResizeMode.Interactive,
+            stretch_last_section=False,
+        )
         self._table.horizontalHeader().setSectionResizeMode(
             self._POSITION_COLUMN, QHeaderView.ResizeMode.Stretch
         )
         self._table.itemClicked.connect(self._on_table_item_clicked)
-        use_tabbed_table_corners(self._table)
 
         self._viewer = AtomicStructureViewer(self)
         self._viewer.setMinimumHeight(240)

@@ -180,44 +180,66 @@ previously accreted on ``MainWindow``.
   and additively merges the owning controller's
   :class:`~mufinder.app.workflow_controllers.base.ControllerResult`. Unmigrated
   workflows fall through to the existing inline handling unchanged.
-  ``PristineRelaxationController`` is the first genuine
+- **Parse-once off the GUI thread.** A completed job's *secondary* CASTEP
+  outputs (the relaxed ``-out.cell``, the ``.phonon`` file plus its derived
+  quantum quantities, and the ``.ts`` transition-state file) are parsed **once**
+  on the runner worker thread, not on the GUI thread. Each runner
+  (``LocalJobRunner`` on its ``QProcess.finished`` callback, ``ClusterJobRunner``
+  on its worker ``QThread`` in ``_retrieve_results``) calls
+  :func:`~mufinder.services.job_artifacts.collect_job_artifacts` after the
+  primary ``.castep`` parse succeeds and delivers the resulting
+  :class:`~mufinder.services.job_artifacts.ParsedJobArtifacts` as the third
+  payload of the ``job_finished`` signal, alongside the ``CastepResult``.
+  Collection is driven by the same per-calc-type retrieval flags the runners
+  already track (``retrieve_out_cell`` / ``retrieve_phonon`` / ``retrieve_ts``);
+  every failure is captured on the carrier **as data** (missing-file flags and
+  error strings) rather than raised across the Qt signal boundary.
+  ``_on_local_job_finished`` decides its failure guards purely from the carrier
+  and threads it into ``merge_controller_result`` so the owning controller's
+  ``build_result`` consumes the pre-parsed data. Non-runner callers
+  (reconciliation/retry paths, direct test invocations) pass no carrier; the
+  handler falls back to a single synchronous ``collect_job_artifacts`` call, so
+  parse-once still holds on those paths.
+- ``PristineRelaxationController`` is the first genuine
   :meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.build_result`
-  implementation: it parses the relaxed ``-out.cell``, contributes the relaxed
-  ``lattice_a/b/c`` payload, and creates the derived relaxed structure on the
-  document. ``MuonRelaxationController.build_result`` carries the richest
-  result logic so far: in addition to the lattice payload and the derived
-  structure, it contributes the muon's final fractional position in supercell
-  and folded host coordinates, and mutates the source muon site
-  (``status``/``relaxation_run_id``/``relative_energy_eV``) — a sanctioned
-  document side effect per the ``ControllerResult`` contract. Because
+  implementation: it consumes the carrier's parsed ``relaxed_cell`` /
+  ``lattice_abc``, contributes the relaxed ``lattice_a/b/c`` payload, and creates
+  the derived relaxed structure on the document. ``MuonRelaxationController``
+  ``.build_result`` carries the richest result logic so far: in addition to the
+  lattice payload and the derived structure, it contributes the muon's final
+  fractional position in supercell and folded host coordinates, and mutates the
+  source muon site (``status``/``relaxation_run_id``/``relative_energy_eV``) — a
+  sanctioned document side effect per the ``ControllerResult`` contract. Because
   ``ControllerResult`` has no failure channel, failure-detection prologues that
-  must abort a job before any result is built (the ``geom_converged`` guard,
-  the shared ``-out.cell`` existence/parse guard, and the muon ``H:mu``
-  position guard) stay inline in ``_on_local_job_finished``; the controllers
-  re-parse the already-validated file on the success path via a shared
-  ``parse_relaxed_out_cell`` dep. ``UepController`` is a simpler migration whose
+  must abort a job before any result is built (the ``geom_converged`` guard, the
+  shared ``-out.cell`` missing/unparseable guard, and the muon ``H:mu`` position
+  guard) stay inline in ``_on_local_job_finished``; they read the carrier
+  (``cell_missing`` / ``cell_error`` and the already-parsed ``relaxed_cell``)
+  rather than re-reading disk, and the controllers consume the same carried cell
+  on the success path. ``UepController`` is a simpler migration whose
   ``build_result`` contributes only the ``density_available`` boolean flag (no
   derived structures, no document mutation): the *guard* that fails a UEP job
   whose ``{seed}.den_fmt`` output is missing is a missing-output guard and stays
-  inline for the same no-failure-channel reason, while only the flag assignment
-  moves into ``build_result`` (which re-checks the here-guaranteed ``den_fmt`` on
-  the success path). ``QuantumCorrectionsController`` is the two-stage
+  inline for the same no-failure-channel reason (den_fmt is a plain
+  existence check outside the artifact carrier), while only the flag assignment
+  moves into ``build_result``. ``QuantumCorrectionsController`` is the two-stage
   (singlepoint → phonon) migration and the richest of the six: its
   ``materialize`` dispatches each selected relaxed source to its current stage,
   building singlepoint *and* phonon configs in one pass and writing the two
   per-stage job-id mappings (``singlepoint_job_ids_by_label`` /
   ``phonon_job_ids_by_label``) plus the shared ``job_seed_names_by_label``; its
   ``pre_submit_check`` runs the host guard shared with the energy-barriers
-  workflow; and its ``build_result`` parses the completed ``.phonon`` file into
-  the muon ZPE, gamma-point eigenvalues, mode participations, and the ``w1``
-  entanglement witness for a quantum-*phonon* job while a quantum-*singlepoint*
-  job contributes an empty result (both calc types are ``handles_job``-owned so
-  the two-stage pair is coherent). Following the no-failure-channel convention,
-  the ``.phonon`` guards (missing/unparseable file, and any downstream
-  ``PhononParseError`` from the ZPE / gamma / witness computation) stay inline in
-  ``_on_local_job_finished``; only the payload moves into ``build_result``, which
-  re-parses on the validated success path. Task farming for the phonon stage is
-  applied by the shared ``_submit_jobs_locally`` backend (not the controller), so
+  workflow; and its ``build_result`` derives the muon ZPE, gamma-point
+  eigenvalues, mode participations, and the ``w1`` entanglement witness from the
+  carrier's parsed ``phonon`` calculation for a quantum-*phonon* job while a
+  quantum-*singlepoint* job contributes an empty result (both calc types are
+  ``handles_job``-owned so the two-stage pair is coherent). Following the
+  no-failure-channel convention, the ``.phonon`` guards (missing/unparseable
+  file, and any downstream ``PhononParseError`` from the ZPE / gamma / witness
+  computation, which the collector exercises on the worker thread) stay inline in
+  ``_on_local_job_finished`` and read the carrier (``phonon_missing`` /
+  ``phonon_error``). Task farming for the phonon stage is applied by the shared
+  ``_submit_jobs_locally`` backend (not the controller), so
   ``QuantumCorrectionsController`` keeps the base single-group ``submission_groups``.
   ``EnergyBarriersController`` is the seventh and **last** of the per-workflow
   migrations. Its ``materialize`` keys jobs by their diffusion-path *source key*
@@ -228,13 +250,14 @@ previously accreted on ``MainWindow``.
   expanding through ``expand_nudged_elastic_band_jobs``; its ``pre_submit_check``
   runs the former ``_check_energy_barrier_neb_host`` guard (validating the selected
   paths' endpoint structures/sites against the active host); and its
-  ``build_result`` parses the completed ``.ts`` transition-state file into the
-  ``transition_state_file`` / ``barrier_height_eV`` / ``num_images`` /
-  ``image_labels`` / ``reaction_coordinates`` / ``image_energies_eV`` payload. Both
-  the NEB and transition-state-search calc types are ``handles_job``-owned so the
-  ``.ts``-producing pair is coherent. Following the no-failure-channel convention,
-  the ``.ts`` guard (missing/unparseable file) stays inline in
-  ``_on_local_job_finished``; only the payload moves into ``build_result``.
+  ``build_result`` reads the carrier's parsed ``transition_state`` path and
+  contributes the ``transition_state_file`` / ``barrier_height_eV`` /
+  ``num_images`` / ``image_labels`` / ``reaction_coordinates`` /
+  ``image_energies_eV`` payload. Both the NEB and transition-state-search calc
+  types are ``handles_job``-owned so the ``.ts``-producing pair is coherent.
+  Following the no-failure-channel convention, the ``.ts`` guard
+  (missing/unparseable file) stays inline in ``_on_local_job_finished`` and reads
+  the carrier (``ts_missing`` / ``ts_error``).
 
 The set of ``_on_submit_*`` / ``_materialize_*`` handlers still on
 ``MainWindow`` is pinned by ``tests/test_agent_harness.py`` as a ratchet: it may

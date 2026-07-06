@@ -7,7 +7,6 @@ from typing import Any
 from PySide6.QtCore import QEvent, QItemSelectionModel, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QButtonGroup,
     QComboBox,
     QDialog,
@@ -25,7 +24,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QSpinBox,
     QStackedWidget,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -34,7 +32,13 @@ from PySide6.QtWidgets import (
 from mufinder.app.active_host_badge import ActiveHostBadge
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIEWER_RADIUS_ANG
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.structure_render_guard import (
+    NO_STRUCTURE,
+    structure_geometry_fingerprint,
+)
+from mufinder.app.workflow_table_utils import bind_delete_shortcuts
 from mufinder.app.theme import refresh_widget_style, style_section_subtitle, style_section_title
+from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
 from mufinder.science.site_generation import (
     SiteGenerationError,
@@ -148,6 +152,10 @@ class MuonGenerationWidget(QWidget):
         self._active_host: Structure | None = None
         self._site_rows: list[dict[str, Any]] = []
         self._uep_cluster_rows: list[dict[str, Any]] = []
+        # Flush-path guards: skip the expensive viewer/table rebuild when the
+        # inputs are byte-for-byte unchanged (see structure_render_guard).
+        self._host_fingerprint: tuple[object, ...] = NO_STRUCTURE
+        self._host_fingerprint_valid = False
         self._restoring_form_state = False
         self._active_host_badge = ActiveHostBadge()
 
@@ -212,32 +220,26 @@ class MuonGenerationWidget(QWidget):
         self._manual_y_label = QLabel("fY")
         self._manual_z_label = QLabel("fZ")
 
-        self._site_table = QTableWidget(0, 6)
-        self._site_table.setHorizontalHeaderLabels(
-            ["Site", "Method", "State", "fX", "fY", "fZ"]
-        )
+        self._site_table = create_workflow_table(("Site", "Method", "State", "fX", "fY", "fZ"))
         self._site_table.horizontalHeaderItem(0).setToolTip("Site label")
         self._site_table.horizontalHeaderItem(1).setToolTip("Generation method")
         self._site_table.horizontalHeaderItem(2).setToolTip("Workflow state")
-        self._site_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._site_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._configure_site_table_columns()
-        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self)
-        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._delete_shortcut.activated.connect(self._emit_delete_selected)
-        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
-        self._backspace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        self._backspace_shortcut.activated.connect(self._emit_delete_selected)
+        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
+            self, self._emit_delete_selected
+        )
         self._clear_selection_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self._site_table)
         self._clear_selection_shortcut.activated.connect(self._clear_site_selection)
         self._site_table.viewport().installEventFilter(self)
 
-        self._uep_cluster_table = QTableWidget(0, 8)
-        self._uep_cluster_table.setHorizontalHeaderLabels(
-            ["Source", "Cluster", "Size", "Class", "E (eV)", "fX", "fY", "fZ"]
+        # Columns are sized by resizeColumnsToContents() after each repopulation
+        # (see _set_uep_cluster_rows), so this table opts out of the shared
+        # stretch-to-fill default in favor of Qt's interactive resize mode.
+        self._uep_cluster_table = create_workflow_table(
+            ("Source", "Cluster", "Size", "Class", "E (eV)", "fX", "fY", "fZ"),
+            default_resize_mode=QHeaderView.ResizeMode.Interactive,
+            stretch_last_section=False,
         )
-        self._uep_cluster_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._uep_cluster_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._uep_cluster_table.setFixedHeight(128)
         self._uep_cluster_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._uep_cluster_table.viewport().installEventFilter(self)
@@ -252,7 +254,7 @@ class MuonGenerationWidget(QWidget):
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
 
-        header = QLabel("Initial muon position generation")
+        header = QLabel("Initial Muon Position Generation")
         self._header_label = header
         style_section_title(header)
         layout.addWidget(header)
@@ -352,7 +354,7 @@ class MuonGenerationWidget(QWidget):
         self._generate_btn = QPushButton("Generate Sites")
         self._generate_btn.clicked.connect(self._emit_generate)
         action_row.addWidget(self._generate_btn)
-        self._cluster_btn = QPushButton("Cluster Positions")
+        self._cluster_btn = QPushButton("Cluster Positions...")
         self._cluster_btn.setEnabled(False)
         self._cluster_btn.clicked.connect(self._open_cluster_positions_dialog)
         action_row.addWidget(self._cluster_btn)
@@ -360,7 +362,7 @@ class MuonGenerationWidget(QWidget):
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._emit_delete_selected)
         action_row.addWidget(self._delete_btn)
-        self._create_jobs_btn = QPushButton("Create job(s) from selected")
+        self._create_jobs_btn = QPushButton("Create Jobs from Selected")
         self._create_jobs_btn.setEnabled(False)
         action_row.addWidget(self._create_jobs_btn)
         action_row.addStretch(1)
@@ -554,6 +556,11 @@ class MuonGenerationWidget(QWidget):
                 and self._generation_progress.maximum() > 0
                 and self._generation_progress.format() != "Ready"
             )
+            # Stale-row foreground colours are palette-derived. set_sites now
+            # skips rebuilds when rows are unchanged, so re-apply the styling on
+            # a theme flip rather than relying on a table rebuild to refresh it.
+            if hasattr(self, "_site_table"):
+                self._apply_stale_row_styling()
 
     def set_generation_busy(self, busy: bool, message: str = "Generating sites...") -> None:
         """Show or clear the generation progress indicator."""
@@ -771,7 +778,19 @@ class MuonGenerationWidget(QWidget):
         self._on_method_changed()
 
     def set_sites(self, rows: list[dict[str, Any]]) -> None:
-        """Render generated sites in the table."""
+        """Render generated sites in the table.
+
+        Skips the full table rebuild (and the overlay resync it triggers) when
+        the row payloads are unchanged. The rows are plain dicts, so an ``==``
+        compare against the stored copy is exact and cheap. Skipping the rebuild
+        also preserves the user's current row selection across dashboard
+        flushes, which the rebuild would otherwise clear. Stale-row styling
+        depends on the active host, not on the rows, and is re-applied by
+        :meth:`set_active_host` whenever the host changes, so it is safe to skip
+        here when the rows themselves have not changed.
+        """
+        if rows == self._site_rows:
+            return
         self._site_rows = [dict(row) for row in rows]
         self._site_table.setRowCount(0)
         for row_data in self._site_rows:
@@ -860,8 +879,21 @@ class MuonGenerationWidget(QWidget):
         self._apply_stale_row_styling()
 
     def set_host_structure(self, structure: Structure | None) -> None:
-        """Render the active host structure in the preview viewer."""
+        """Render the active host structure in the preview viewer.
+
+        No-op (beyond storing the reference) when the structure is unchanged
+        since the last render: the combo-element list, viewer mesh and overlay
+        sync all derive purely from the host geometry, so an unchanged
+        fingerprint means an unchanged result. This avoids the multi-second
+        full 3D re-render that otherwise fires on every dashboard flush.
+        """
+        fingerprint = structure_geometry_fingerprint(structure)
+        if self._host_fingerprint_valid and fingerprint == self._host_fingerprint:
+            self._host_structure = structure
+            return
         self._host_structure = structure
+        self._host_fingerprint = fingerprint
+        self._host_fingerprint_valid = True
         current = self._near_element.currentText()
         elements = sorted({str(symbol).strip() for symbol in (structure.species if structure else []) if str(symbol).strip()})
         previous = self._near_element.blockSignals(True)
@@ -877,7 +909,14 @@ class MuonGenerationWidget(QWidget):
         self._sync_viewer_overlays()
 
     def set_uep_cluster_sources(self, rows: list[dict[str, Any]]) -> None:
-        """Render available clustered UEP results that can become generated sites."""
+        """Render available clustered UEP results that can become generated sites.
+
+        Skips the table rebuild and overlay resync when the row payloads are
+        unchanged (see :meth:`set_sites` for the rationale); the rows are plain
+        dicts compared by value.
+        """
+        if rows == self._uep_cluster_rows:
+            return
         self._uep_cluster_rows = [dict(row) for row in rows]
         self._uep_cluster_table.setRowCount(0)
         for row_data in self._uep_cluster_rows:

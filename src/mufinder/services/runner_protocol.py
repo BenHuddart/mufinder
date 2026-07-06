@@ -78,12 +78,14 @@ class JobRunner(Protocol):
     lifecycle depends on; see the module docstring for the state-authority and
     submit error contracts. ``runtime_checkable`` only verifies attribute
     *presence*, so the conformance tests additionally assert the signal
-    parameter counts (1, 2, 2, 1, 2 respectively).
+    parameter counts (1, 3, 2, 1, 2 respectively).
     """
 
     #: Emitted with ``(job_id)`` when a job's process/scheduler run begins.
     job_started: Signal
-    #: Emitted with ``(job_id, CastepResult)`` on successful completion.
+    #: Emitted with ``(job_id, CastepResult, ParsedJobArtifacts)`` on successful
+    #: completion. The third payload carries the secondary outputs (relaxed cell,
+    #: phonon, transition state) parsed once on the runner worker thread.
     job_finished: Signal
     #: Emitted with ``(job_id, message)`` on failure.
     job_failed: Signal

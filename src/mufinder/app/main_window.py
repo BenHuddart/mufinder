@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+import logging
 from math import isnan
 import os
 from pathlib import Path
@@ -13,12 +14,13 @@ import re
 import shlex
 import shutil
 import stat
+import threading
 import time
 from typing import TypeVar
 from uuid import UUID, uuid4
 
 import numpy as np
-from PySide6.QtCore import QEventLoop, QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QByteArray, QEventLoop, QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import (
     QActionGroup,
     QBrush,
@@ -157,6 +159,7 @@ from mufinder.app.quantum_corrections_widget import (
     QuantumResultRow,
     QuantumSourceRow,
 )
+from mufinder.app.screen_utils import clamp_to_screen, clamped_size
 from mufinder.app.supercell_dialog import SupercellEditorDialog
 from mufinder.app.submission_dialog import LocalSubmissionDialog
 from mufinder.app.theme import (
@@ -219,10 +222,12 @@ from mufinder.services.job_execution_controller import (
     JobExecutionController,
     PreparedClusterSubmission,
 )
+from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
 from mufinder.services.job_monitoring import job_staleness
 from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
+from mufinder.services.perf_trace import PerfTrace
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
@@ -235,8 +240,8 @@ from mufinder.science.energy_barriers import (
     MuonPath,
     enumerate_distinct_muon_paths,
 )
-from mufinder.science.kpoint_grids import equivalent_grid_for_supercell, lattice_parameters
-from mufinder.science.quantum_phonons import PhononParseError, muon_zpe, parse_phonon_path, w1_entanglement_witness
+from mufinder.science.kpoint_grids import equivalent_grid_for_supercell
+from mufinder.science.quantum_phonons import PhononParseError
 from mufinder.science.relaxation_analysis import folded_muon_position_from_structure
 from mufinder.science.site_generation import SiteGenerationError, lattice_cart_to_frac
 from mufinder.science.supercell import build_supercell_structure
@@ -264,6 +269,8 @@ from mufinder.workflow.quantum import (
 from mufinder.workflow.renderer import render_job
 from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamTemplate
 
+
+_LOG = logging.getLogger(__name__)
 
 _RESUBMITTABLE_JOB_STATES = {JobStatus.FAILED, JobStatus.CANCELLED}
 _VISIBLE_DASHBOARD_STATES = ACTIVE_JOB_STATUSES | {JobStatus.STOPPED} | _RESUBMITTABLE_JOB_STATES
@@ -1253,10 +1260,10 @@ class ProjectHomeTrailWidget(QWidget):
         return QColor(light_palette().text_primary)
 
     @classmethod
-    def _sign_title_point_size(cls, route: str, title: str, banner_height: float) -> float:
-        """Point size for a signpost label, scaled to the rendered banner.
+    def _sign_title_pixel_size(cls, route: str, title: str, banner_height: float) -> int:
+        """Pixel size for a signpost label, scaled to the rendered banner.
 
-        A fixed point size made labels look generous on small windows but shrink
+        A fixed size made labels look generous on small windows but shrink
         to near-illegible on large or high-DPI displays. Tying the size to the
         banner height keeps the same proportion at every window size. The
         reference height matches the banner at a typical window, so the
@@ -1266,7 +1273,7 @@ class ProjectHomeTrailWidget(QWidget):
 
         base = float(cls._SIGN_TEXT_MAX_SIZES.get(route, 13 if len(title) <= 16 else 11))
         scale = banner_height / cls._SIGN_REF_BANNER_HEIGHT
-        return max(11.0, min(base * scale, base * 2.0))
+        return round(max(11.0, min(base * scale, base * 2.0)))
 
     def _draw_sign_title(self, painter: QPainter, palette, rect: QRectF, title: str, route: str) -> None:
         left, top, right, bottom = self._SIGN_TEXT_INSETS.get(route, (18.0, 5.0, 20.0, 8.0))
@@ -1277,9 +1284,9 @@ class ProjectHomeTrailWidget(QWidget):
 
         font = QFont(heading_font_family())
         font.setBold(True)
-        font.setPointSizeF(self._sign_title_point_size(route, title, rect.height()))
-        while font.pointSizeF() > 8.0 and QFontMetricsF(font).horizontalAdvance(title) > text_rect.width() - 8.0:
-            font.setPointSizeF(font.pointSizeF() - 1.0)
+        font.setPixelSize(self._sign_title_pixel_size(route, title, rect.height()))
+        while font.pixelSize() > 8 and QFontMetricsF(font).horizontalAdvance(title) > text_rect.width() - 8.0:
+            font.setPixelSize(font.pixelSize() - 1)
 
         painter.setFont(font)
         painter.setPen(self._workflow_scroll_label_color())
@@ -1336,7 +1343,7 @@ class ProjectHomeTrailWidget(QWidget):
         painter.drawRoundedRect(rect, 6.0, 6.0)
 
         font = QFont(body_font_family())
-        font.setPointSize(8 if len(title) > 16 else 9)
+        font.setPixelSize(8 if len(title) > 16 else 9)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QColor(palette.text_primary))
@@ -1462,7 +1469,7 @@ class ProjectHomeTrailWidget(QWidget):
 
     def _draw_muon(self, painter: QPainter, palette, rect: QRectF) -> None:
         font = QFont(body_font_family())
-        font.setPointSize(34)
+        font.setPixelSize(34)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QColor(palette.accent))
@@ -1588,7 +1595,8 @@ class ConstructionSignWidget(QWidget):
             for nail_y in (sign_y + 22, sign_y + sign_height - 22):
                 painter.drawEllipse(nail_x - 3, nail_y - 3, 6, 6)
 
-        font = QFont(body_font_family(), 20)
+        font = QFont(body_font_family())
+        font.setPixelSize(20)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QPen(QColor("#FFF8EA"), 1.0))
@@ -1603,9 +1611,21 @@ class ConstructionSignWidget(QWidget):
 class MainWindow(QMainWindow):
     """Main shell containing project navigation and job dashboard."""
 
+    _MAIN_WINDOW_GEOMETRY_KEY = "ui/main_window_geometry"
     _LAST_DIALOG_DIR_KEY = "ui/last_dialog_dir"
     _LAST_DIALOG_DIR_BY_CONTEXT_PREFIX = "ui/last_dialog_dir_by_context"
     _RECENT_PROJECTS_KEY = "ui/recent_projects"
+    # Quiet-period debounce for dashboard flushes: an isolated lifecycle event
+    # (a single job completing with nothing else nearby) flushes this long
+    # after the last request, so it still feels prompt.
+    _DASHBOARD_FLUSH_DEBOUNCE_MS = 300
+    # Floor on the gap between two flushes during a burst of lifecycle events
+    # (e.g. many cluster jobs completing across a serial retrieval). Without
+    # this floor, a steady stream of events spaced further apart than the
+    # debounce (but closer than this) would re-arm the debounce forever and
+    # never flush until the stream stopped; field traces showed 15 flushes in
+    # 80s. With the floor, the burst still flushes on a bounded ~2s cadence.
+    _DASHBOARD_MIN_FLUSH_INTERVAL_MS = 2000
     _MAX_RECENT_PROJECTS = 10
     _JOB_LABEL_COLUMN = 0
     _JOB_WORKFLOW_COLUMN = 1
@@ -1679,12 +1699,19 @@ class MainWindow(QMainWindow):
         # whole document to disk once per job, which freezes the GUI.
         self._dashboard_flush_pending = False
         self._dashboard_autosave_failure_message = ""
+        # Monotonic timestamp (time.monotonic(), never wall-clock) of the last
+        # completed flush, and of the deadline currently armed on
+        # _dashboard_flush_timer. Both None until the first request. Used by
+        # _request_dashboard_flush to enforce _DASHBOARD_MIN_FLUSH_INTERVAL_MS
+        # without re-arming (and thereby postponing) an already-pending deadline.
+        self._dashboard_last_flush_at: float | None = None
+        self._dashboard_flush_deadline: float | None = None
         # Jobs stopped by the most recent orphaned-local-job reconciliation on
         # project open; surfaced as a status-bar message by _open_project_from_path.
         self._reconciled_orphaned_local_jobs: list[Job] = []
         self._dashboard_flush_timer = QTimer(self)
         self._dashboard_flush_timer.setSingleShot(True)
-        self._dashboard_flush_timer.setInterval(300)
+        self._dashboard_flush_timer.setInterval(self._DASHBOARD_FLUSH_DEBOUNCE_MS)
         self._dashboard_flush_timer.timeout.connect(self._flush_dashboard)
         # Active-job watchdog: every minute, look for jobs left active with no
         # runner tracking them (a dead local QProcess, an untracked cluster job)
@@ -1721,7 +1748,10 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("MuFinder")
         self.setWindowIcon(app_icon())
-        self.resize(1280, 840)
+        self.resize(clamped_size(self, 1280, 840))
+        saved_geometry = self._settings.value(self._MAIN_WINDOW_GEOMETRY_KEY, QByteArray())
+        if isinstance(saved_geometry, QByteArray) and not saved_geometry.isEmpty() and self.restoreGeometry(saved_geometry):
+            clamp_to_screen(self)
 
         self._project_tree = QTreeWidget()
         self._project_tree.setObjectName("workflowTree")
@@ -2142,6 +2172,7 @@ class MainWindow(QMainWindow):
         if getattr(self, "_shutting_down", False):
             super().closeEvent(event)
             return
+        self._settings.setValue(self._MAIN_WINDOW_GEOMETRY_KEY, self.saveGeometry())
         job_runtime_timer = getattr(self, "_job_runtime_timer", None)
         if job_runtime_timer is not None:
             job_runtime_timer.stop()
@@ -2193,6 +2224,22 @@ class MainWindow(QMainWindow):
                 relaxation_analysis_view.shutdown()
         muon_generation_thread = getattr(self, "_muon_generation_thread", None)
         if muon_generation_thread is not None:
+            # Generation mutates the project document mid-run, so it cannot be
+            # interrupted or abandoned — but a bare wait() froze the window
+            # into "Not Responding" for the remainder of a long generation.
+            # Pump the event loop behind a busy dialog instead; the window
+            # modality prevents re-entrant close clicks.
+            if not muon_generation_thread.isFinished():
+                progress = QProgressDialog("Finishing muon site generation…", None, 0, 0, self)
+                progress.setWindowTitle("Closing")
+                progress.setWindowModality(Qt.WindowModality.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.show()
+                loop = QEventLoop()
+                muon_generation_thread.finished.connect(loop.quit)
+                if not muon_generation_thread.isFinished():
+                    loop.exec()
+                progress.close()
             muon_generation_thread.wait()
             self._muon_generation_thread = None
         self._shutdown_embedded_structure_viewers()
@@ -2558,7 +2605,13 @@ class MainWindow(QMainWindow):
         # Persist any coalesced autosave for the outgoing project before swapping.
         self._flush_dashboard()
         try:
-            self._document = self._project_service.load_project(project_root)
+            # Loading parses every entity JSON file; on a mature project over a
+            # network share or cold OneDrive folder that froze the window for
+            # seconds, so it runs off the GUI thread behind a busy dialog.
+            self._document = self._run_blocking_file_op(
+                lambda: self._project_service.load_project(project_root),
+                description=f"Opening project {project_root.name}…",
+            )
         except Exception as exc:  # noqa: BLE001 - surface project-load failures to users.
             if show_errors:
                 QMessageBox.critical(self, "Open failed", str(exc))
@@ -2673,6 +2726,8 @@ class MainWindow(QMainWindow):
         # This writes the whole document, so any coalesced flush is subsumed.
         self._dashboard_flush_pending = False
         self._dashboard_flush_timer.stop()
+        self._dashboard_flush_deadline = None
+        self._dashboard_last_flush_at = time.monotonic()
         try:
             self._project_service.save_project(self._document)
         except ValueError as exc:
@@ -2771,6 +2826,11 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
 
+        # Clear then re-register tracked cluster jobs. Both are queued onto the
+        # cluster worker thread and return immediately (never blocking the GUI,
+        # even mid-retrieval); FIFO ordering guarantees the clear runs before the
+        # re-registrations, and the GUI-side tracked-id mirror is cleared eagerly
+        # inside clear_tracked_jobs so the watchdog observes the drop at once.
         self._cluster_runner.clear_tracked_jobs()
         self._sync_cluster_tracking_from_document()
 
@@ -3512,8 +3572,8 @@ class MainWindow(QMainWindow):
         self._sync_project_home_trail()
 
     def _refresh_jobs_table(self) -> None:
-        self._jobs_table.setRowCount(0)
         if self._document is None:
+            self._jobs_table.setRowCount(0)
             self._job_runtime_timer.stop()
             self._cluster_elapsed_seconds_by_job = {}
             self._cluster_elapsed_checked_at = None
@@ -3532,87 +3592,12 @@ class MainWindow(QMainWindow):
             return
 
         now = utc_now()
-        for job in self._document.jobs.values():
-            if job.status not in _VISIBLE_DASHBOARD_STATES:
-                continue
-            if job.dismissed_at is not None:
-                continue
-            row = self._jobs_table.rowCount()
-            self._jobs_table.insertRow(row)
-            label_item = QTableWidgetItem(job.label)
-            label_item.setData(Qt.ItemDataRole.UserRole, str(job.id))
-            self._jobs_table.setItem(row, self._JOB_LABEL_COLUMN, label_item)
-            self._jobs_table.setItem(row, self._JOB_WORKFLOW_COLUMN, QTableWidgetItem(job.workflow_stage.value))
-            self._jobs_table.setItem(row, self._JOB_CALC_TYPE_COLUMN, QTableWidgetItem(job.calc_type))
-
-            status_item = QTableWidgetItem(job.status.value)
-            status_item.setForeground(self._status_brush(job.status.value))
-            self._jobs_table.setItem(row, self._JOB_STATUS_COLUMN, status_item)
-
-            last_checked_item = QTableWidgetItem()
-            self._apply_last_checked_cell(last_checked_item, job, now=now)
-            self._jobs_table.setItem(row, self._JOB_LAST_CHECKED_COLUMN, last_checked_item)
-
-            cluster_name = "local" if job.execution_target == "local" else job.execution_target
-            self._jobs_table.setItem(row, self._JOB_CLUSTER_COLUMN, QTableWidgetItem(cluster_name))
-            self._jobs_table.setItem(
-                row,
-                self._JOB_REMOTE_ID_COLUMN,
-                QTableWidgetItem(job.remote_job_id or ""),
-            )
-            self._jobs_table.setItem(row, self._JOB_RUNTIME_COLUMN, QTableWidgetItem(self._job_runtime_text(job)))
-            self._jobs_table.setItem(
-                row,
-                self._JOB_PROCESSES_COLUMN,
-                QTableWidgetItem("" if job.num_processes is None else str(job.num_processes)),
-            )
-
-            can_resubmit = job.status in _RESUBMITTABLE_JOB_STATES
-            can_retry_retrieval = self._can_retry_retrieval(job)
-            can_cancel = job.status in ACTIVE_JOB_STATUSES
-            can_inspect = job.status in {JobStatus.FAILED, JobStatus.STOPPED}
-            can_reset = job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-            can_dismiss = job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-
-            resubmit_btn = self._make_job_action_button("Resubmit", job_id=job.id, enabled=can_resubmit)
-            resubmit_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=resubmit_btn: self._dispatch_dashboard_action(btn, jid, "resubmit")
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_SUBMIT_COLUMN, resubmit_btn)
-
-            retry_btn = self._make_job_action_button(
-                "Retry retrieval", job_id=job.id, enabled=can_retry_retrieval
-            )
-            retry_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=retry_btn: self._dispatch_dashboard_action(
-                    btn, jid, "retry_retrieval"
-                )
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_RETRY_RETRIEVAL_COLUMN, retry_btn)
-
-            cancel_btn = self._make_job_action_button("Cancel", job_id=job.id, enabled=can_cancel)
-            cancel_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=cancel_btn: self._dispatch_dashboard_action(btn, jid, "cancel")
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_CANCEL_COLUMN, cancel_btn)
-
-            inspect_btn = self._make_job_action_button("Inspect", job_id=job.id, enabled=can_inspect)
-            inspect_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=inspect_btn: self._dispatch_dashboard_action(btn, jid, "inspect")
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_INSPECT_COLUMN, inspect_btn)
-
-            reset_btn = self._make_job_action_button("Reset", job_id=job.id, enabled=can_reset)
-            reset_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=reset_btn: self._dispatch_dashboard_action(btn, jid, "reset")
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_RESET_COLUMN, reset_btn)
-
-            dismiss_btn = self._make_job_action_button("Dismiss", job_id=job.id, enabled=can_dismiss)
-            dismiss_btn.clicked.connect(
-                lambda _checked=False, jid=job.id, btn=dismiss_btn: self._dispatch_dashboard_action(btn, jid, "dismiss")
-            )
-            self._jobs_table.setCellWidget(row, self._JOB_DISMISS_COLUMN, dismiss_btn)
+        desired_jobs = [
+            job
+            for job in self._document.jobs.values()
+            if job.status in _VISIBLE_DASHBOARD_STATES and job.dismissed_at is None
+        ]
+        self._sync_jobs_table_rows(desired_jobs, now=now)
 
         self._configure_jobs_table_columns()
         self._sync_job_runtime_timer()
@@ -3624,6 +3609,211 @@ class MainWindow(QMainWindow):
         self._refresh_uep_rows()
         self._refresh_workflow_stage_icons()
         self._sync_project_home_trail()
+
+    def _job_button_specs(self, job: Job) -> tuple[tuple[int, str, str, bool], ...]:
+        """Return ``(column, text, action_kind, enabled)`` for each action button.
+
+        Single source of truth shared by row insertion and in-place updates so
+        the button set, labels, dispatch kinds, and enable rules stay identical.
+        """
+
+        return (
+            (self._JOB_SUBMIT_COLUMN, "Resubmit", "resubmit", job.status in _RESUBMITTABLE_JOB_STATES),
+            (
+                self._JOB_RETRY_RETRIEVAL_COLUMN,
+                "Retry retrieval",
+                "retry_retrieval",
+                self._can_retry_retrieval(job),
+            ),
+            (self._JOB_CANCEL_COLUMN, "Cancel", "cancel", job.status in ACTIVE_JOB_STATUSES),
+            (
+                self._JOB_INSPECT_COLUMN,
+                "Inspect",
+                "inspect",
+                job.status in {JobStatus.FAILED, JobStatus.STOPPED},
+            ),
+            (
+                self._JOB_RESET_COLUMN,
+                "Reset",
+                "reset",
+                job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
+            ),
+            (
+                self._JOB_DISMISS_COLUMN,
+                "Dismiss",
+                "dismiss",
+                job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
+            ),
+        )
+
+    @staticmethod
+    def _jobs_table_row_job_id(label_item) -> UUID | None:
+        """Return the job id stashed on a label item's UserRole, or ``None``."""
+
+        if label_item is None:
+            return None
+        try:
+            return UUID(str(label_item.data(Qt.ItemDataRole.UserRole)))
+        except (TypeError, ValueError, AttributeError):
+            return None
+
+    def _sync_jobs_table_rows(self, desired_jobs: list[Job], *, now) -> None:
+        """Reconcile visible dashboard rows against ``desired_jobs`` by job id.
+
+        Rows whose job disappeared are removed; brand-new jobs get a freshly
+        built row inserted at the correct position; rows whose job id is
+        unchanged are updated in place so their ``QTableWidgetItem`` and
+        ``QPushButton`` cell widgets are never recreated (no widget churn, no
+        stale button closures). A row is never repurposed for a different job
+        id — mismatches are removed and re-inserted so each button's captured
+        job id stays correct.
+        """
+
+        desired_ids = [job.id for job in desired_jobs]
+
+        # Remove rows whose job is no longer desired. Iterate top-down so row
+        # indexes stay valid as we delete.
+        desired_id_set = set(desired_ids)
+        self._jobs_table.setUpdatesEnabled(False)
+        try:
+            for row in range(self._jobs_table.rowCount() - 1, -1, -1):
+                existing_id = self._jobs_table_row_job_id(
+                    self._jobs_table.item(row, self._JOB_LABEL_COLUMN)
+                )
+                if existing_id is None or existing_id not in desired_id_set:
+                    self._jobs_table.removeRow(row)
+        finally:
+            self._jobs_table.setUpdatesEnabled(True)
+
+        # Walk the desired order; align each row to the expected job id,
+        # inserting new rows and evicting mismatched rows as needed.
+        for target_row, job in enumerate(desired_jobs):
+            current_id = self._jobs_table_row_job_id(
+                self._jobs_table.item(target_row, self._JOB_LABEL_COLUMN)
+            )
+            if current_id == job.id:
+                self._update_jobs_table_row(target_row, job, now=now)
+                continue
+
+            # Either the slot is empty/beyond the current rows, or it holds a
+            # different job id (order changed / new job). A row must never be
+            # reused for a different job id, so insert a fresh row here. Any row
+            # that previously held this job (further down) is left to be handled
+            # when its own turn comes; but because a mismatched row can only be
+            # a not-yet-visited desired job or removed above, inserting keeps
+            # closures correct.
+            self._jobs_table.setUpdatesEnabled(False)
+            try:
+                self._insert_jobs_table_row(target_row, job, now=now)
+            finally:
+                self._jobs_table.setUpdatesEnabled(True)
+
+        # Trim any trailing rows left over (e.g. when the desired list shrank
+        # but the removal pass above could not have caught reordered leftovers).
+        if self._jobs_table.rowCount() > len(desired_jobs):
+            self._jobs_table.setUpdatesEnabled(False)
+            try:
+                while self._jobs_table.rowCount() > len(desired_jobs):
+                    self._jobs_table.removeRow(self._jobs_table.rowCount() - 1)
+            finally:
+                self._jobs_table.setUpdatesEnabled(True)
+
+    def _insert_jobs_table_row(self, row: int, job: Job, *, now) -> None:
+        """Insert a fully built dashboard row for ``job`` at ``row``.
+
+        Creates every ``QTableWidgetItem`` and action ``QPushButton`` once. Each
+        button captures ``job.id`` in its click closure, so this row must only
+        ever be used for this job (callers guarantee that via id-keyed
+        reconciliation).
+        """
+
+        self._jobs_table.insertRow(row)
+
+        label_item = QTableWidgetItem(job.label)
+        label_item.setData(Qt.ItemDataRole.UserRole, str(job.id))
+        self._jobs_table.setItem(row, self._JOB_LABEL_COLUMN, label_item)
+        self._jobs_table.setItem(row, self._JOB_WORKFLOW_COLUMN, QTableWidgetItem(job.workflow_stage.value))
+        self._jobs_table.setItem(row, self._JOB_CALC_TYPE_COLUMN, QTableWidgetItem(job.calc_type))
+
+        status_item = QTableWidgetItem(job.status.value)
+        status_item.setForeground(self._status_brush(job.status.value))
+        self._jobs_table.setItem(row, self._JOB_STATUS_COLUMN, status_item)
+
+        last_checked_item = QTableWidgetItem()
+        self._apply_last_checked_cell(last_checked_item, job, now=now)
+        self._jobs_table.setItem(row, self._JOB_LAST_CHECKED_COLUMN, last_checked_item)
+
+        cluster_name = "local" if job.execution_target == "local" else job.execution_target
+        self._jobs_table.setItem(row, self._JOB_CLUSTER_COLUMN, QTableWidgetItem(cluster_name))
+        self._jobs_table.setItem(
+            row,
+            self._JOB_REMOTE_ID_COLUMN,
+            QTableWidgetItem(job.remote_job_id or ""),
+        )
+        self._jobs_table.setItem(row, self._JOB_RUNTIME_COLUMN, QTableWidgetItem(self._job_runtime_text(job)))
+        self._jobs_table.setItem(
+            row,
+            self._JOB_PROCESSES_COLUMN,
+            QTableWidgetItem("" if job.num_processes is None else str(job.num_processes)),
+        )
+
+        for column, text, kind, enabled in self._job_button_specs(job):
+            button = self._make_job_action_button(text, job_id=job.id, enabled=enabled)
+            button.clicked.connect(
+                lambda _checked=False, jid=job.id, btn=button, action=kind: self._dispatch_dashboard_action(
+                    btn, jid, action
+                )
+            )
+            self._jobs_table.setCellWidget(row, column, button)
+
+    def _update_jobs_table_row(self, row: int, job: Job, *, now) -> None:
+        """Refresh an existing row in place without recreating items or widgets.
+
+        Updates cell texts, the status foreground brush, the last-checked cell,
+        the runtime text, and each button's enabled state. The label item's
+        job-id UserRole and every button widget (with its captured closure) are
+        left untouched, so button clicks keep dispatching the correct job id.
+        """
+
+        label_item = self._jobs_table.item(row, self._JOB_LABEL_COLUMN)
+        if label_item is not None:
+            label_item.setText(job.label)
+
+        self._set_row_item_text(row, self._JOB_WORKFLOW_COLUMN, job.workflow_stage.value)
+        self._set_row_item_text(row, self._JOB_CALC_TYPE_COLUMN, job.calc_type)
+
+        status_item = self._jobs_table.item(row, self._JOB_STATUS_COLUMN)
+        if status_item is not None:
+            status_item.setText(job.status.value)
+            status_item.setForeground(self._status_brush(job.status.value))
+
+        last_checked_item = self._jobs_table.item(row, self._JOB_LAST_CHECKED_COLUMN)
+        if last_checked_item is not None:
+            self._apply_last_checked_cell(last_checked_item, job, now=now)
+
+        cluster_name = "local" if job.execution_target == "local" else job.execution_target
+        self._set_row_item_text(row, self._JOB_CLUSTER_COLUMN, cluster_name)
+        self._set_row_item_text(row, self._JOB_REMOTE_ID_COLUMN, job.remote_job_id or "")
+        self._set_row_item_text(row, self._JOB_RUNTIME_COLUMN, self._job_runtime_text(job))
+        self._set_row_item_text(
+            row,
+            self._JOB_PROCESSES_COLUMN,
+            "" if job.num_processes is None else str(job.num_processes),
+        )
+
+        for column, _text, _kind, enabled in self._job_button_specs(job):
+            button = self._jobs_table.cellWidget(row, column)
+            if button is not None:
+                button.setEnabled(enabled)
+
+    def _set_row_item_text(self, row: int, column: int, text: str) -> None:
+        """Set a cell's text in place, or create the item if it is missing."""
+
+        item = self._jobs_table.item(row, column)
+        if item is None:
+            self._jobs_table.setItem(row, column, QTableWidgetItem(text))
+        else:
+            item.setText(text)
 
     def _refresh_active_job_runtime_cells(self) -> None:
         if self._document is None:
@@ -3880,36 +4070,80 @@ class MainWindow(QMainWindow):
     def _request_dashboard_flush(self, *, failure_message: str) -> None:
         """Schedule a coalesced dashboard refresh + autosave for lifecycle handlers.
 
-        Many cluster jobs can finish in a single queue poll; rebuilding every view
-        and saving the whole document per job freezes the GUI. Instead, mark a
-        flush pending and let it run once after the burst (via ``_flush_dashboard``,
-        called from the queue-check handler and a short debounce timer).
+        Many cluster jobs can finish in a single queue poll — or a few seconds
+        apart across a serial cluster retrieval — and rebuilding every view plus
+        saving the whole document per job freezes the GUI. Instead, mark a flush
+        pending and arm ``_dashboard_flush_timer`` to run it once via
+        ``_flush_dashboard``.
+
+        Two goals in tension: an isolated event should still flush promptly
+        (the ``_DASHBOARD_FLUSH_DEBOUNCE_MS`` quiet period), but a steady stream
+        of events spaced further apart than that debounce must not re-arm it
+        forever and starve the flush until the stream ends. So the delay used
+        is ``max(debounce, min_interval - elapsed_since_last_flush)``: during a
+        burst this floors the gap between flushes at
+        ``_DASHBOARD_MIN_FLUSH_INTERVAL_MS``. Critically, an already-armed
+        deadline is only ever tightened (moved earlier), never pushed further
+        into the future — otherwise a steady stream of requests, each re-arming
+        the timer, would never let it fire.
         """
 
         if self._document is None:
             return
         self._dashboard_flush_pending = True
         self._dashboard_autosave_failure_message = failure_message
-        self._dashboard_flush_timer.start()
+
+        now = time.monotonic()
+        if self._dashboard_last_flush_at is None:
+            elapsed_since_flush_ms = None
+        else:
+            elapsed_since_flush_ms = (now - self._dashboard_last_flush_at) * 1000.0
+        if elapsed_since_flush_ms is None:
+            min_interval_delay_ms = 0.0
+        else:
+            min_interval_delay_ms = self._DASHBOARD_MIN_FLUSH_INTERVAL_MS - elapsed_since_flush_ms
+        delay_ms = max(self._DASHBOARD_FLUSH_DEBOUNCE_MS, min_interval_delay_ms)
+        candidate_deadline = now + delay_ms / 1000.0
+
+        pending_deadline = self._dashboard_flush_deadline
+        if pending_deadline is not None and self._dashboard_flush_timer.isActive():
+            if candidate_deadline >= pending_deadline:
+                # The armed deadline already covers this request (or is
+                # earlier) — leave it alone so the stream cannot push it out
+                # indefinitely.
+                return
+        self._dashboard_flush_deadline = candidate_deadline
+        self._dashboard_flush_timer.start(max(0, int(round(delay_ms))))
 
     def _flush_dashboard(self) -> None:
         """Rebuild the dashboard views and persist the document, if a flush is due."""
 
         self._dashboard_flush_timer.stop()
+        self._dashboard_flush_deadline = None
         if not self._dashboard_flush_pending:
             return
         self._dashboard_flush_pending = False
         if self._document is None:
             return
+        self._dashboard_last_flush_at = time.monotonic()
+        trace = PerfTrace(label="dashboard flush", logger=_LOG)
         # _refresh_jobs_table already refreshes the convergence/kpoint/pristine/
         # muon-relaxation/uep rows, so only the views it does not cover are added.
-        self._refresh_jobs_table()
-        self._refresh_journal_view()
-        self._refresh_host_structure_view()
-        self._refresh_muon_generation_table()
-        self._refresh_quantum_corrections_view()
-        self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(failure_message=self._dashboard_autosave_failure_message)
+        with trace.stage("_refresh_jobs_table"):
+            self._refresh_jobs_table()
+        with trace.stage("_refresh_journal_view"):
+            self._refresh_journal_view()
+        with trace.stage("_refresh_host_structure_view"):
+            self._refresh_host_structure_view()
+        with trace.stage("_refresh_muon_generation_table"):
+            self._refresh_muon_generation_table()
+        with trace.stage("_refresh_quantum_corrections_view"):
+            self._refresh_quantum_corrections_view()
+        with trace.stage("_refresh_energy_barriers_view"):
+            self._refresh_energy_barriers_view()
+        with trace.stage("_persist_document_ui_state"):
+            self._persist_document_ui_state(failure_message=self._dashboard_autosave_failure_message)
+        trace.log_summary()
 
     def _store_convergence_overview_snapshot(self, kind: str, snapshot: Mapping[str, object] | None) -> None:
         if self._document is None:
@@ -5982,14 +6216,80 @@ class MainWindow(QMainWindow):
         except FileNotFoundError:
             pass
 
-    @classmethod
-    def _delete_path(cls, path: Path) -> None:
+    def _run_blocking_file_op(self, op: Callable[[], object], *, description: str) -> object:
+        """Run a blocking filesystem operation off the GUI thread.
+
+        Preserves the caller's synchronous semantics (returns the result,
+        re-raises the exception) while pumping the event loop, so the retry
+        backoff against OneDrive/antivirus file locks and large recursive
+        deletes cannot freeze the window. The window is disabled while the
+        operation runs to prevent re-entrant user actions, and a busy dialog
+        appears only when the operation takes noticeably long.
+        """
+
+        outcome: dict[str, object] = {}
+        done = threading.Event()
+
+        def _worker() -> None:
+            try:
+                outcome["result"] = op()
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the GUI thread
+                outcome["error"] = exc
+            finally:
+                done.set()
+
+        worker = threading.Thread(target=_worker, name="mufinder-file-op", daemon=True)
+        loop = QEventLoop()
+        progress: QProgressDialog | None = None
+        started = time.monotonic()
+        poll = QTimer(self)
+        poll.setInterval(25)
+
+        def _tick() -> None:
+            nonlocal progress
+            if done.is_set():
+                loop.quit()
+                return
+            if progress is None and time.monotonic() - started > 0.4:
+                progress = QProgressDialog(description, None, 0, 0, self)
+                progress.setWindowTitle("Working on files")
+                progress.setWindowModality(Qt.WindowModality.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.show()
+
+        poll.timeout.connect(_tick)
+        was_enabled = self.isEnabled()
+        self.setEnabled(False)
+        worker.start()
+        poll.start()
+        try:
+            if not done.is_set():
+                loop.exec()
+        finally:
+            poll.stop()
+            poll.deleteLater()
+            if progress is not None:
+                progress.close()
+            self.setEnabled(was_enabled)
+            worker.join()
+        error = outcome.get("error")
+        if isinstance(error, BaseException):
+            raise error
+        return outcome.get("result")
+
+    def _delete_path(self, path: Path) -> None:
         if path.is_dir():
-            cls._retry_filesystem_op(
-                lambda: shutil.rmtree(path, onexc=cls._force_writable_and_retry)
+            self._run_blocking_file_op(
+                lambda: self._retry_filesystem_op(
+                    lambda: shutil.rmtree(path, onexc=self._force_writable_and_retry)
+                ),
+                description=f"Deleting {path.name}…",
             )
             return
-        cls._retry_filesystem_op(path.unlink)
+        self._run_blocking_file_op(
+            lambda: self._retry_filesystem_op(path.unlink),
+            description=f"Deleting {path.name}…",
+        )
 
     @staticmethod
     def _unique_destination(path: Path) -> Path:
@@ -6006,7 +6306,10 @@ class MainWindow(QMainWindow):
         archive_root = (output_root if output_root is not None else source.parent) / "removed_from_workflow"
         archive_root.mkdir(parents=True, exist_ok=True)
         destination = self._unique_destination(archive_root / source.name)
-        self._retry_filesystem_op(lambda: source.rename(destination))
+        self._run_blocking_file_op(
+            lambda: self._retry_filesystem_op(lambda: source.rename(destination)),
+            description=f"Archiving {source.name}…",
+        )
         return destination
 
     def _prompt_cutoff_file_disposition(
@@ -6192,6 +6495,7 @@ class MainWindow(QMainWindow):
             mpirun_path=setup.mpirun_path,
             eligible_statuses=allowed_statuses,
             task_farming_for_job=self._quantum_task_farming_for_job,
+            retrieve_flags_for_job=self._cluster_retrieve_flags,
         )
 
         self._refresh_jobs_table()
@@ -6602,6 +6906,11 @@ class MainWindow(QMainWindow):
         Calls ``start()`` (which kicks off async work on the worker thread), then
         runs a nested event loop until ``signal`` fires, returning its payload. The
         window keeps repainting while the worker performs the blocking SSH work.
+
+        A watchdog aborts the wait after three minutes and returns a
+        ``TimeoutError``: the dialog has no cancel button, so without it a
+        worker that never emits (or a request stuck behind a long queue-poll
+        batch) would trap the user in the modal dialog forever.
         """
 
         captured: dict[str, object] = {}
@@ -6611,6 +6920,11 @@ class MainWindow(QMainWindow):
             captured["payload"] = payload
             loop.quit()
 
+        watchdog = QTimer(self)
+        watchdog.setSingleShot(True)
+        watchdog.setInterval(180_000)
+        watchdog.timeout.connect(loop.quit)
+
         progress = QProgressDialog(label, None, 0, 0, self)
         progress.setWindowTitle(title)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -6619,10 +6933,17 @@ class MainWindow(QMainWindow):
         progress.show()
         try:
             start()
+            watchdog.start()
             loop.exec()
         finally:
+            watchdog.stop()
+            watchdog.deleteLater()
             signal.disconnect(on_signal)
             progress.close()
+        if "payload" not in captured:
+            return TimeoutError(
+                f"{title} did not complete within 3 minutes; the cluster worker may be busy or stuck."
+            )
         return captured.get("payload")
 
     def _await_remote_dir_check(self, targets: list[tuple[UUID, str]]) -> dict[str, object]:
@@ -6632,6 +6953,13 @@ class MainWindow(QMainWindow):
             title="Checking remote directories",
             label="Checking existing remote job directories…",
         )
+        if isinstance(payload, TimeoutError):
+            # Fail every checked job rather than silently submitting over
+            # directories whose state is unknown.
+            return {
+                "existing": [],
+                "errors": {job_id: str(payload) for job_id, _target in targets},
+            }
         return payload if isinstance(payload, dict) else {"existing": [], "errors": {}}
 
     def _await_cluster_connect(
@@ -6664,6 +6992,7 @@ class MainWindow(QMainWindow):
         results_seen: set[UUID] = set()
         total = len(submit_items)
         loop = QEventLoop()
+        timed_out = False
 
         progress = QProgressDialog("Submitting cluster jobs…", "Cancel", 0, total, self)
         progress.setWindowTitle("Submitting to cluster")
@@ -6671,14 +7000,30 @@ class MainWindow(QMainWindow):
         progress.setMinimumDuration(0)
         progress.setValue(0)
 
+        # Inactivity watchdog: any per-job progress restarts it, so long
+        # batches are fine, but a worker that stops responding entirely cannot
+        # trap the user in the nested event loop forever.
+        watchdog = QTimer(self)
+        watchdog.setSingleShot(True)
+        watchdog.setInterval(180_000)
+
+        def on_watchdog_timeout() -> None:
+            nonlocal timed_out
+            timed_out = True
+            loop.quit()
+
+        watchdog.timeout.connect(on_watchdog_timeout)
+
         def on_progress(index: int, count: int, label: str) -> None:
             progress.setLabelText(f"Submitting {label} ({index}/{count})")
             progress.setValue(index - 1)
+            watchdog.start()
 
         def on_one(job_id: object, remote_job_id: object, error: str) -> None:
             if not isinstance(job_id, UUID):
                 return
             results_seen.add(job_id)
+            watchdog.start()
             prepared = prepared_by_job.get(job_id)
             if prepared is None:
                 return
@@ -6693,7 +7038,8 @@ class MainWindow(QMainWindow):
             if outcome.journal_changed:
                 self._refresh_journal_view()
             progress.setValue(progress.value() + 1)
-            self._refresh_jobs_table()
+            # The jobs table is refreshed once by the caller after the batch;
+            # refreshing per job here made an N-job batch do N full rebuilds.
 
         self._cluster_runner.submit_batch_progress.connect(on_progress)
         self._cluster_runner.job_submit_finished.connect(on_one)
@@ -6702,15 +7048,25 @@ class MainWindow(QMainWindow):
         progress.show()
         try:
             self._cluster_runner.submit_batch(submit_items)
+            watchdog.start()
             loop.exec()
         finally:
+            watchdog.stop()
+            watchdog.deleteLater()
             self._cluster_runner.submit_batch_progress.disconnect(on_progress)
             self._cluster_runner.job_submit_finished.disconnect(on_one)
             self._cluster_runner.submit_batch_finished.disconnect(loop.quit)
             progress.close()
 
-        # Jobs prepared but never submitted (cancelled mid-batch) are cancelled so
-        # they do not linger in the ``submitting`` state.
+        if timed_out:
+            pending = total - len(results_seen)
+            failed.append(
+                f"- Cluster submission stopped responding after 3 minutes; "
+                f"{pending} pending job(s) were cancelled."
+            )
+
+        # Jobs prepared but never submitted (cancelled mid-batch or timed out)
+        # are cancelled so they do not linger in the ``submitting`` state.
         for job_id, prepared in prepared_by_job.items():
             if job_id not in results_seen:
                 self._job_execution.cancel_job(prepared.job.id)
@@ -7012,8 +7368,9 @@ class MainWindow(QMainWindow):
         """Build the pristine-relaxation controller's deps.
 
         These helpers stay on ``MainWindow`` because non-migrating code still
-        calls them; ``parse_relaxed_out_cell`` is shared with the still-inline
-        muon-relaxation result branch. Cross-workflow job/definition readers
+        calls them. The relaxed ``-out.cell`` is parsed once on the runner worker
+        thread and delivered via ``ParsedJobArtifacts``, so no parse dep is
+        threaded here. Cross-workflow job/definition readers
         (``job_output_directory``, ``job_seed_name``, ``run_for_job``,
         ``definition_output_directory``, the energy/force readers) now live on
         the shared context. The controller reaches them only through late-bound
@@ -7042,7 +7399,6 @@ class MainWindow(QMainWindow):
                     definition, config
                 )
             ),
-            parse_relaxed_out_cell=lambda path: self._parse_relaxed_out_cell(path),
         )
 
     def _expand_pristine_relaxation_jobs_for_controller(
@@ -7118,7 +7474,6 @@ class MainWindow(QMainWindow):
             coerce_fractional_triplet=(
                 lambda value: self._coerce_fractional_triplet(value)
             ),
-            parse_relaxed_out_cell=lambda path: self._parse_relaxed_out_cell(path),
         )
 
     def _build_uep_deps(self) -> UepDeps:
@@ -7357,22 +7712,6 @@ class MainWindow(QMainWindow):
             muon_charge_state_label=lambda value: muon_charge_state_label(value),
         )
 
-    def _parse_relaxed_out_cell(self, path: Path) -> tuple[object, float, float, float]:
-        """Parse a relaxation ``-out.cell`` into ``(relaxed, a, b, c)``.
-
-        Shared by the pristine- and muon-relaxation controllers' ``build_result``
-        and the inline ``-out.cell`` failure prologue, so all go through exactly
-        one parse implementation. Uses the module-global ``parse_cell_file`` /
-        ``lattice_parameters`` (which tests monkeypatch). Raises
-        :class:`~mufinder.castep_io.cell_parser.CellParseError` on an unparseable
-        file — the inline ``_on_local_job_finished`` prologue converts that to a
-        failed job before any controller result is built.
-        """
-
-        relaxed = parse_cell_file(path)
-        lattice_a, lattice_b, lattice_c = lattice_parameters(relaxed.lattice_vectors)[:3]
-        return relaxed, lattice_a, lattice_b, lattice_c
-
     def _submit_workflow_selection(
         self,
         values: list[_WorkflowKey],
@@ -7462,10 +7801,44 @@ class MainWindow(QMainWindow):
             fallback.extend(sorted(path for path in output_dir.glob(pattern) if path.is_file()))
         return list(dict.fromkeys(fallback))
 
-    @staticmethod
-    def _read_error_contexts(path: Path, *, context_lines: int = 2, max_matches: int = 8) -> str:
+    _TAIL_READ_LIMIT_BYTES = 256 * 1024
+
+    @classmethod
+    def _read_bounded_tail(cls, path: Path, *, max_bytes: int | None = None) -> str:
+        """Read at most the trailing ``max_bytes`` of ``path`` as text.
+
+        Files at or under the limit are read in full, byte-for-byte identical
+        to a plain ``read_text()`` call. Larger files are read from a tail
+        offset only, so an inspect on a runaway multi-hundred-MB job output
+        never loads the whole file into memory; a partial leading line (cut
+        mid-line by the seek) is dropped and a truncation marker is prefixed,
+        matching the "... [truncated]" convention used elsewhere in this file.
+        """
+
+        limit = cls._TAIL_READ_LIMIT_BYTES if max_bytes is None else max_bytes
+        with path.open("rb") as handle:
+            size = handle.seek(0, 2)
+            truncated = size > limit
+            if truncated:
+                handle.seek(size - limit)
+            else:
+                handle.seek(0)
+            raw = handle.read()
+
+        # ``read_text()`` applies universal-newline translation; replicate that
+        # here so small-file behavior is byte-for-byte identical to before.
+        text = raw.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+        if not truncated:
+            return text
+
+        # The seek landed mid-line; drop the partial leading fragment.
+        _, _, remainder = text.partition("\n")
+        return "[... truncated] ...\n" + remainder
+
+    @classmethod
+    def _read_error_contexts(cls, path: Path, *, context_lines: int = 2, max_matches: int = 8) -> str:
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = cls._read_bounded_tail(path).splitlines()
         except OSError as exc:
             return f"Could not read file: {exc}"
 
@@ -7496,10 +7869,10 @@ class MainWindow(QMainWindow):
 
         return "\n\n...\n\n".join(excerpts)
 
-    @staticmethod
-    def _read_text_excerpt(path: Path, *, max_chars: int = 12000) -> str:
+    @classmethod
+    def _read_text_excerpt(cls, path: Path, *, max_chars: int = 12000) -> str:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = cls._read_bounded_tail(path)
         except OSError as exc:
             return f"Could not read file: {exc}"
 
@@ -8055,12 +8428,33 @@ class MainWindow(QMainWindow):
                 failure_message="Local job start was recorded, but autosave failed.",
             )
 
-    def _on_local_job_finished(self, job_id: UUID, parsed: CastepResult) -> None:
+    def _on_local_job_finished(
+        self,
+        job_id: UUID,
+        parsed: CastepResult,
+        artifacts: ParsedJobArtifacts | None = None,
+    ) -> None:
         if self._document is None:
             return
         job = self._document.jobs.get(job_id)
         if job is None:
             return
+
+        # The runner worker thread parses the secondary outputs (relaxed cell /
+        # phonon / transition state) exactly once and delivers them here as
+        # ``artifacts``. Non-runner callers (reconciliation/retry paths, tests
+        # that invoke this directly) pass no carrier: fall back to synchronous
+        # collection through the *same* collector so parse-once still holds — the
+        # file is read once, just on the GUI thread for those paths.
+        if artifacts is None:
+            flags = self._cluster_retrieve_flags(job)
+            artifacts = collect_job_artifacts(
+                self._job_output_directory(job),
+                self._job_seed_name(job),
+                want_out_cell=bool(flags.get("retrieve_out_cell", False)),
+                want_phonon=bool(flags.get("retrieve_phonon", False)),
+                want_ts=bool(flags.get("retrieve_ts", False)),
+            )
 
         if (
             job.calc_type == "castep_pristine_relaxation"
@@ -8111,53 +8505,49 @@ class MainWindow(QMainWindow):
         if job.calc_type == QUANTUM_PHONON_CALC_TYPE:
             # Failure-detection guard for the phonon stage, kept inline (like the
             # -out.cell / den_fmt prologues) because ControllerResult has no
-            # failure channel. The full ZPE / Gamma / witness computation is
-            # exercised here so that a phonon file that parses but fails downstream
-            # (missing Gamma point, wrong H:mu atom count) still fails the job
-            # gracefully; the results are discarded. ``QuantumCorrectionsController``
-            # .build_result re-parses and recomputes the payload on the (now
-            # validated) success path via the merge_controller_result call below.
-            output_dir = self._job_output_directory(job)
+            # failure channel. The ``.phonon`` parse plus the full ZPE / Gamma /
+            # witness computation now run once on the runner worker thread; a
+            # file that parses but fails downstream (missing Gamma point, wrong
+            # H:mu atom count) surfaces as ``artifacts.phonon_error``. The parsed
+            # calculation is carried on ``artifacts.phonon`` and re-used by
+            # ``QuantumCorrectionsController.build_result`` (via
+            # merge_controller_result below) with no second disk read.
             seed_name = self._job_seed_name(job)
-            phonon_path = None if output_dir is None else output_dir / f"{seed_name}.phonon"
-            if phonon_path is None or not phonon_path.exists():
+            if artifacts.phonon_missing:
                 self._on_local_job_failed(
                     job_id,
                     f"Expected CASTEP phonon output was not found: {seed_name}.phonon",
                 )
                 return
-            try:
-                phonon = parse_phonon_path(phonon_path)
-                muon_zpe(phonon)
-                phonon.gamma_point()
-                w1_entanglement_witness(phonon)
-            except PhononParseError as exc:
-                self._on_local_job_failed(job_id, f"Failed to parse CASTEP phonon output: {exc}")
+            if artifacts.phonon_error is not None:
+                self._on_local_job_failed(
+                    job_id,
+                    f"Failed to parse CASTEP phonon output: {artifacts.phonon_error}",
+                )
                 return
 
         if job.calc_type in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE}:
             # Failure-detection guard for the transition-state / NEB ``.ts`` output,
             # kept inline (like the -out.cell / .phonon prologues) because
             # ControllerResult has no failure channel: the ``.ts`` must exist and
-            # parse before any result is built. The parse result is discarded here;
-            # ``EnergyBarriersController.build_result`` re-parses the (now validated)
-            # file on the success path and contributes the transition-state payload
-            # (transition_state_file / barrier_height_eV / num_images / image_labels
-            # / reaction_coordinates / image_energies_eV) via the
-            # merge_controller_result call below.
-            output_dir = self._job_output_directory(job)
+            # parse before any result is built. The parse now runs once on the
+            # runner worker thread; a missing/unparseable file surfaces as
+            # ``artifacts.ts_missing`` / ``artifacts.ts_error``. The parsed path is
+            # carried on ``artifacts.transition_state`` and re-used by
+            # ``EnergyBarriersController.build_result`` (via merge_controller_result
+            # below) with no second disk read.
             seed_name = self._job_seed_name(job)
-            ts_path = None if output_dir is None else output_dir / f"{seed_name}.ts"
-            if ts_path is None or not ts_path.exists():
+            if artifacts.ts_missing:
                 self._on_local_job_failed(
                     job_id,
                     f"Expected CASTEP path output was not found: {seed_name}.ts",
                 )
                 return
-            try:
-                parse_transition_state_file(ts_path)
-            except TransitionStateParseError as exc:
-                self._on_local_job_failed(job_id, f"Failed to parse CASTEP path output: {exc}")
+            if artifacts.ts_error is not None:
+                self._on_local_job_failed(
+                    job_id,
+                    f"Failed to parse CASTEP path output: {artifacts.ts_error}",
+                )
                 return
 
         derived_structure_ids: list[UUID] = []
@@ -8165,25 +8555,24 @@ class MainWindow(QMainWindow):
             # Shared failure-detection prologue for both relaxation workflows: the
             # -out.cell must exist and parse before any result is built. This
             # guard is deliberately kept inline (like the geom_converged prologue)
-            # because ControllerResult has no failure channel; the pristine and
-            # muon controllers' build_result re-parse the (now validated) file on
-            # the success path.
-            output_dir = self._job_output_directory(job)
+            # because ControllerResult has no failure channel. The parse now runs
+            # once on the runner worker thread; a missing/unparseable file
+            # surfaces as ``artifacts.cell_missing`` / ``artifacts.cell_error``.
+            # The parsed cell is carried on ``artifacts.relaxed_cell`` and re-used
+            # by the pristine/muon controllers' build_result (via
+            # merge_controller_result below) with no second disk read.
             seed_name = self._job_seed_name(job)
-            out_cell_path = None if output_dir is None else output_dir / f"{seed_name}-out.cell"
-            if out_cell_path is None or not out_cell_path.exists():
+            if artifacts.cell_missing:
                 self._on_local_job_failed(
                     job_id,
                     f"Expected relaxed structure output was not found: {seed_name}-out.cell",
                 )
                 return
-
-            try:
-                relaxed, _lattice_a, _lattice_b, _lattice_c = self._parse_relaxed_out_cell(
-                    out_cell_path
+            if artifacts.cell_error is not None:
+                self._on_local_job_failed(
+                    job_id,
+                    f"Failed to parse relaxed CELL output: {artifacts.cell_error}",
                 )
-            except CellParseError as exc:
-                self._on_local_job_failed(job_id, f"Failed to parse relaxed CELL output: {exc}")
                 return
 
             # Both relaxation workflows' lattice payloads and derived structures
@@ -8193,10 +8582,15 @@ class MainWindow(QMainWindow):
             # site. Only the H:mu failure guard stays inline (like the parse
             # prologue above): ControllerResult has no failure channel, so a
             # relaxed cell without a muon must abort the job before any result is
-            # built. The muon controller re-extracts the (now validated) position
-            # on the success path.
+            # built. The check runs against the carried, already-parsed cell so no
+            # second disk read is incurred; the muon controller re-extracts the
+            # (now validated) position from the same carried cell.
             if is_muon_relaxation_calc_type(job.calc_type):
-                if self._muon_fractional_position_from_cell(relaxed) is None:
+                relaxed = artifacts.relaxed_cell
+                if (
+                    relaxed is None
+                    or self._muon_fractional_position_from_cell(relaxed) is None
+                ):
                     self._on_local_job_failed(
                         job_id,
                         f"Expected H:mu muon position was not found in {seed_name}-out.cell.",
@@ -8207,13 +8601,15 @@ class MainWindow(QMainWindow):
         # payload/file/structure additions before the Result is built. This is a
         # strict no-op for unmigrated workflows and for controllers that return
         # an empty ControllerResult (e.g. cutoff convergence), so behavior is
-        # unchanged until a workflow overrides build_result.
+        # unchanged until a workflow overrides build_result. The controller
+        # consumes the pre-parsed ``artifacts`` instead of re-reading disk.
         result_payload, output_files, derived_structure_ids, merged_warnings = (
             merge_controller_result(
                 self._workflow_controllers,
                 job,
                 parsed,
                 run,
+                artifacts,
                 payload=result_payload,
                 output_files=self._output_files_for_job(job),
                 derived_structure_ids=derived_structure_ids,
@@ -8282,8 +8678,13 @@ class MainWindow(QMainWindow):
                 failure_message="Cluster job start was recorded, but autosave failed.",
             )
 
-    def _on_cluster_job_finished(self, job_id: UUID, parsed: CastepResult) -> None:
-        self._on_local_job_finished(job_id, parsed)
+    def _on_cluster_job_finished(
+        self,
+        job_id: UUID,
+        parsed: CastepResult,
+        artifacts: ParsedJobArtifacts | None = None,
+    ) -> None:
+        self._on_local_job_finished(job_id, parsed, artifacts)
         if self._document is None:
             return
         job = self._document.jobs.get(job_id)
@@ -8329,12 +8730,21 @@ class MainWindow(QMainWindow):
 
     def _on_cluster_queue_checked(self, checked_at) -> None:
         # Stamp per-job monitor metadata (last_checked_at/source/message) from
-        # the snapshot's observations before the flush below persists them.
-        self._job_execution.mark_queue_checked(checked_at)
+        # the snapshot's observations; these land in the in-memory document
+        # either way, so a deferred flush (below) is fine — nothing is lost by
+        # not persisting them immediately.
+        stamped = self._job_execution.mark_queue_checked(checked_at)
         # A queue poll fires this once after any jobs it retrieved have been
-        # applied, so flush the autosave those completions coalesced into a single
-        # write here.
-        self._flush_dashboard()
+        # applied, so this also drains whatever those completions' own handlers
+        # already marked pending. Routed through the debounced/rate-limited
+        # scheduler rather than flushing synchronously: on a serial cluster
+        # retrieval, queue polls land every few seconds, and flushing every
+        # poll defeats the burst coalescing (this was the bypass that caused
+        # 15 flushes in 80s in the field trace).
+        if stamped or self._dashboard_flush_pending:
+            self._request_dashboard_flush(
+                failure_message="Queue check was recorded, but autosave failed.",
+            )
         elapsed_by_job_id = getattr(checked_at, "elapsed_by_job_id", None)
         if isinstance(elapsed_by_job_id, Mapping):
             parsed: dict[UUID, int] = {}
