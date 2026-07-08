@@ -2,6 +2,16 @@
 
 <!-- version list -->
 
+## v0.5.0 (2026-07-08)
+
+### Features
+
+- Add CIF export for muon-site analyses, from both the Muon Sites summary
+  cards (pinned, distinct clustered sites) and each structural-relaxation
+  Analysis workspace (every relaxed muon position)
+  ([#68](https://github.com/BenHuddart/mufinder/pull/68))
+
+
 ## v0.4.1 (2026-07-07)
 
 ### Bug Fixes
