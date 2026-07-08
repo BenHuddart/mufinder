@@ -19,13 +19,17 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from html import escape
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -44,6 +48,7 @@ from mufinder.app.theme import (
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.models import Structure
+from mufinder.science.structure_io import CifMuonSite, export_structure_with_muon_sites
 
 _MUON_SPECIES_LABEL = "H:mu"
 _CLUSTER_ROLE = Qt.ItemDataRole.UserRole
@@ -120,6 +125,11 @@ class _ChargeStatePanel(QFrame):
         # Ordered map from a muon's atom index in the preview structure to its
         # cluster index, so a pick in the 3D view deep-links to the right site.
         self._muon_atom_cluster: dict[int, int] = {}
+        # Host structure and pinned sites for the currently rendered snapshot,
+        # kept so "Export CIF" can rebuild the combined structure on demand
+        # without re-deriving it from the preview viewer.
+        self._host_structure: Structure | None = None
+        self._sites: list[Mapping[str, object]] = []
         # Signature of the currently rendered snapshot; lets repeated set_snapshot
         # calls (e.g. re-navigating to the page) skip an expensive viewer rebuild
         # when nothing changed. None whenever the placeholder is showing.
@@ -199,12 +209,17 @@ class _ChargeStatePanel(QFrame):
         content_layout.addWidget(self._table, stretch=1)
         content_layout.addWidget(self._viewer_frame, stretch=2)
 
+        self._export_cif_button = QPushButton("Export CIF…", self)
+        self._export_cif_button.setObjectName("overviewSecondaryButton")
+        self._export_cif_button.clicked.connect(self._on_export_cif_clicked)
+
         self._unpin_button = QPushButton("Unpin", self)
         self._unpin_button.setObjectName("overviewSecondaryButton")
         self._unpin_button.clicked.connect(lambda: self.unpin_requested.emit(self._charge_state))
         footer_row = QHBoxLayout()
         footer_row.setContentsMargins(0, 0, 0, 0)
         footer_row.addStretch(1)
+        footer_row.addWidget(self._export_cif_button)
         footer_row.addWidget(self._unpin_button)
 
         layout = QVBoxLayout(self)
@@ -241,6 +256,8 @@ class _ChargeStatePanel(QFrame):
         self._workspace_id = ""
         self._muon_atom_cluster = {}
         self._render_signature = None
+        self._host_structure = None
+        self._sites = []
         self._table.setRowCount(0)
         self._viewer.set_structure(None)
         self._set_summary_rows([])
@@ -251,6 +268,7 @@ class _ChargeStatePanel(QFrame):
         self._open_button.setText(self._OPEN_EMPTY_TEXT)
         self._open_button.setEnabled(True)
         self._unpin_button.setEnabled(False)
+        self._export_cif_button.setEnabled(False)
 
     def set_snapshot(
         self,
@@ -289,12 +307,15 @@ class _ChargeStatePanel(QFrame):
 
         self._workspace_id = str(snapshot.get("workspace_id", "")).strip()
         workspace_name = str(snapshot.get("workspace_name", "")).strip() or "Analysis workspace"
+        self._host_structure = host_structure
+        self._sites = list(sites)
 
         self._placeholder.hide()
         self._content.show()
         self._open_button.setText(self._OPEN_PINNED_TEXT)
         self._open_button.setEnabled(True)
         self._unpin_button.setEnabled(True)
+        self._export_cif_button.setEnabled(host_structure is not None and bool(host_structure.species))
 
         self._set_summary_rows(
             [
@@ -370,6 +391,59 @@ class _ChargeStatePanel(QFrame):
             fractional_positions=positions,
         )
         self._viewer.set_structure(preview)
+
+    def _on_export_cif_clicked(self) -> None:
+        host_structure = self._host_structure
+        if host_structure is None or not self._sites:
+            return
+
+        muon_sites: list[CifMuonSite] = []
+        for index, site in enumerate(self._sites):
+            fractional = site.get("fractional_position")
+            if not isinstance(fractional, (list, tuple)) or len(fractional) != 3:
+                continue
+            try:
+                position = (float(fractional[0]), float(fractional[1]), float(fractional[2]))
+            except (TypeError, ValueError):
+                continue
+            energy = site.get("relative_energy_ev")
+            try:
+                relative_energy_ev = float(energy) if energy is not None else None
+            except (TypeError, ValueError):
+                relative_energy_ev = None
+            wyckoff_label = str(site.get("wyckoff_label", "")).strip() or None
+            muon_sites.append(
+                CifMuonSite(
+                    label=f"Mu{index + 1}",
+                    fractional_position=position,
+                    relative_energy_ev=relative_energy_ev,
+                    wyckoff_label=wyckoff_label,
+                )
+            )
+        if not muon_sites:
+            return
+
+        default_name = f"{_charge_state_title(self._charge_state).lower().replace(' ', '_')}_muon_sites.cif"
+        file_path, _selected_filter = QFileDialog.getSaveFileName(
+            self, "Export Muon Sites CIF", default_name, "CIF Files (*.cif)"
+        )
+        if not file_path:
+            return
+
+        try:
+            proximity_warnings = export_structure_with_muon_sites(host_structure, muon_sites, Path(file_path))
+        except OSError as exc:
+            QMessageBox.warning(self, "Export failed", str(exc))
+            return
+
+        if proximity_warnings:
+            QMessageBox.warning(
+                self,
+                "Muon sites coincide with host atoms",
+                f"Saved CIF to:\n{file_path}\n\n" + "\n".join(proximity_warnings),
+            )
+        else:
+            QMessageBox.information(self, "Export complete", f"Saved CIF to:\n{file_path}")
 
     def _on_open_clicked(self) -> None:
         if self._workspace_id:
