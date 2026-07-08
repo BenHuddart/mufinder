@@ -506,6 +506,150 @@ def test_relaxation_analysis_workspace_show_shifted_checkbox_uses_transparent_ba
     widget.close()
 
 
+def test_relaxation_analysis_export_cif_writes_all_relaxed_sites(qapp, tmp_path, monkeypatch) -> None:
+    host = _host_structure()
+    source_a = CompletedRelaxationAnalysisSource(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=uuid4(),
+        site_id=None,
+        folded_fractional_position=(0.1, 0.1, 0.1),
+        total_energy_ev=-10.0,
+    )
+    source_b = CompletedRelaxationAnalysisSource(
+        job_id=uuid4(),
+        job_label="Site B",
+        charge_state="positive_muon",
+        structure_id=uuid4(),
+        site_id=None,
+        folded_fractional_position=(0.2, 0.2, 0.2),
+        total_energy_ev=-9.5,
+    )
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[source_a.job_id, source_b.job_id],
+    )
+    # No clustering applied: this exercises the un-clustered path, since the
+    # export must include every relaxed site, not only cluster representatives.
+    widget = RelaxationAnalysisWidget()
+    try:
+        widget.set_context(
+            workspaces=[workspace],
+            sources=[source_a, source_b],
+            structures={host.id: host},
+            host_structure=host,
+            comparison_options=[],
+        )
+        output_path = tmp_path / "sites.cif"
+        monkeypatch.setattr(
+            "mufinder.app.relaxation_analysis_widget.QFileDialog.getSaveFileName",
+            lambda *args, **kwargs: (str(output_path), "CIF Files (*.cif)"),
+        )
+        monkeypatch.setattr(
+            "mufinder.app.relaxation_analysis_widget.QMessageBox.information",
+            lambda *args, **kwargs: None,
+        )
+
+        widget._export_workspace_cif(str(workspace["id"]))
+
+        assert output_path.exists()
+        text = output_path.read_text(encoding="utf-8")
+        assert "Si  Si1" in text
+        assert "Si  Si2" in text
+        assert "H   Mu1" in text
+        assert "H   Mu2" in text
+    finally:
+        widget.close()
+
+
+def test_relaxation_analysis_export_cif_warns_when_site_coincides_with_host_atom(
+    qapp, tmp_path, monkeypatch
+) -> None:
+    host = _host_structure()
+    # Coincides exactly with the host's first Si atom at (0, 0, 0).
+    source = CompletedRelaxationAnalysisSource(
+        job_id=uuid4(),
+        job_label="Site A",
+        charge_state="positive_muon",
+        structure_id=uuid4(),
+        site_id=None,
+        folded_fractional_position=(0.0, 0.0, 0.0),
+        total_energy_ev=-10.0,
+    )
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[source.job_id],
+    )
+    widget = RelaxationAnalysisWidget()
+    try:
+        widget.set_context(
+            workspaces=[workspace],
+            sources=[source],
+            structures={host.id: host},
+            host_structure=host,
+            comparison_options=[],
+        )
+        output_path = tmp_path / "sites.cif"
+        monkeypatch.setattr(
+            "mufinder.app.relaxation_analysis_widget.QFileDialog.getSaveFileName",
+            lambda *args, **kwargs: (str(output_path), "CIF Files (*.cif)"),
+        )
+        warned: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.relaxation_analysis_widget.QMessageBox.warning",
+            lambda _parent, title, message: warned.append(message),
+        )
+
+        widget._export_workspace_cif(str(workspace["id"]))
+
+        assert output_path.exists()
+        assert len(warned) == 1
+        assert "Mu1" in warned[0]
+    finally:
+        widget.close()
+
+
+def test_relaxation_analysis_export_cif_reports_when_workspace_empty(qapp, monkeypatch) -> None:
+    host = _host_structure()
+    workspace = default_workspace_state(
+        name="Relaxation analysis",
+        charge_state="positive_muon",
+        host_structure_id=host.id,
+        job_ids=[],
+    )
+    widget = RelaxationAnalysisWidget()
+    try:
+        widget.set_context(
+            workspaces=[workspace],
+            sources=[],
+            structures={host.id: host},
+            host_structure=host,
+            comparison_options=[],
+        )
+        informed: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.relaxation_analysis_widget.QMessageBox.information",
+            lambda _parent, title, message: informed.append(message),
+        )
+        called = []
+        monkeypatch.setattr(
+            "mufinder.app.relaxation_analysis_widget.QFileDialog.getSaveFileName",
+            lambda *args, **kwargs: called.append(True) or ("", ""),
+        )
+
+        widget._export_workspace_cif(str(workspace["id"]))
+
+        assert informed
+        assert called == []
+    finally:
+        widget.close()
+
+
 def test_relaxation_clustering_dialog_show_does_not_warn_about_collapsed_layout(qapp) -> None:
     host = _host_structure()
     workspace = default_workspace_state(

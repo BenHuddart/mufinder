@@ -281,6 +281,112 @@ def test_summary_open_and_unpin_buttons_emit(qapp) -> None:
         widget.deleteLater()
 
 
+def test_summary_export_cif_button_disabled_until_populated(qapp) -> None:
+    host = _host_structure()
+    widget = MuonSitesSummaryWidget()
+    try:
+        panel = widget._panels[POSITIVE_MUON_CHARGE_STATE]
+        assert not panel._export_cif_button.isEnabled()
+        widget.set_panel(
+            POSITIVE_MUON_CHARGE_STATE,
+            snapshot=_snapshot("ws-1", host),
+            host_structure=host,
+            placeholder_message="empty",
+        )
+        assert panel._export_cif_button.isEnabled()
+        widget.set_panel(
+            POSITIVE_MUON_CHARGE_STATE, snapshot=None, host_structure=host, placeholder_message="cleared"
+        )
+        assert not panel._export_cif_button.isEnabled()
+    finally:
+        widget.deleteLater()
+
+
+def test_summary_export_cif_writes_host_and_muon_sites(qapp, tmp_path: Path, monkeypatch) -> None:
+    host = _host_structure()
+    widget = MuonSitesSummaryWidget()
+    try:
+        widget.set_panel(
+            POSITIVE_MUON_CHARGE_STATE,
+            snapshot=_snapshot("ws-1", host),
+            host_structure=host,
+            placeholder_message="empty",
+        )
+        panel = widget._panels[POSITIVE_MUON_CHARGE_STATE]
+
+        output_path = tmp_path / "sites.cif"
+        monkeypatch.setattr(
+            "mufinder.app.muon_sites_summary_widget.QFileDialog.getSaveFileName",
+            lambda *args, **kwargs: (str(output_path), "CIF Files (*.cif)"),
+        )
+        monkeypatch.setattr(
+            "mufinder.app.muon_sites_summary_widget.QMessageBox.information",
+            lambda *args, **kwargs: None,
+        )
+
+        panel._export_cif_button.click()
+
+        assert output_path.exists()
+        text = output_path.read_text(encoding="utf-8")
+        assert "Si  Si1" in text
+        assert "H   Mu1" in text
+        assert "H   Mu2" in text
+    finally:
+        widget.deleteLater()
+
+
+def test_summary_export_cif_warns_when_site_coincides_with_host_atom(qapp, tmp_path: Path, monkeypatch) -> None:
+    host = _host_structure()
+    snapshot = _snapshot("ws-1", host)
+    # Overlay the first pinned site directly onto the host's Si atom at (0,0,0).
+    snapshot["sites"][0]["fractional_position"] = [0.0, 0.0, 0.0]
+    widget = MuonSitesSummaryWidget()
+    try:
+        widget.set_panel(
+            POSITIVE_MUON_CHARGE_STATE, snapshot=snapshot, host_structure=host, placeholder_message="empty"
+        )
+        panel = widget._panels[POSITIVE_MUON_CHARGE_STATE]
+
+        output_path = tmp_path / "sites.cif"
+        monkeypatch.setattr(
+            "mufinder.app.muon_sites_summary_widget.QFileDialog.getSaveFileName",
+            lambda *args, **kwargs: (str(output_path), "CIF Files (*.cif)"),
+        )
+        warned: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.muon_sites_summary_widget.QMessageBox.warning",
+            lambda _parent, title, message: warned.append(message),
+        )
+
+        panel._export_cif_button.click()
+
+        assert output_path.exists()
+        assert len(warned) == 1
+        assert "Mu1" in warned[0]
+    finally:
+        widget.deleteLater()
+
+
+def test_summary_export_cif_cancelled_dialog_writes_nothing(qapp, tmp_path: Path, monkeypatch) -> None:
+    host = _host_structure()
+    widget = MuonSitesSummaryWidget()
+    try:
+        widget.set_panel(
+            POSITIVE_MUON_CHARGE_STATE,
+            snapshot=_snapshot("ws-1", host),
+            host_structure=host,
+            placeholder_message="empty",
+        )
+        panel = widget._panels[POSITIVE_MUON_CHARGE_STATE]
+        monkeypatch.setattr(
+            "mufinder.app.muon_sites_summary_widget.QFileDialog.getSaveFileName",
+            lambda *args, **kwargs: ("", ""),
+        )
+        panel._export_cif_button.click()
+    finally:
+        widget.deleteLater()
+
+
 def test_summary_panel_clears_back_to_placeholder(qapp) -> None:
     host = _host_structure()
     widget = MuonSitesSummaryWidget()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from ase.data import atomic_numbers
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -73,6 +75,7 @@ from mufinder.science.relaxation_analysis import (
     scan_connected_component_tolerances,
     uep_summary_to_relaxation_clusters,
 )
+from mufinder.science.structure_io import CifMuonSite, export_structure_with_muon_sites
 from mufinder.science.wyckoff_analysis import (
     ClusterWyckoffAssignment,
     assign_cluster_wyckoff_sites,
@@ -1412,6 +1415,51 @@ class RelaxationAnalysisWidget(QWidget):
                 sites.append(source.to_relaxed_site(host))
         return normalize_site_energies(sites)
 
+    def _export_workspace_cif(self, workspace_id: str) -> None:
+        workspace = self._workspace_by_id(workspace_id)
+        host = self._host_structure
+        if workspace is None or host is None:
+            return
+        sites = self._workspace_sites(workspace)
+        if not sites:
+            QMessageBox.information(
+                self,
+                "Nothing to export",
+                "Add completed relaxations to this workspace before exporting.",
+            )
+            return
+
+        muon_sites = [
+            CifMuonSite(
+                label=f"Mu{index + 1}",
+                fractional_position=tuple(float(value) for value in site.folded_fractional_position),
+                relative_energy_ev=site.relative_energy_ev,
+            )
+            for index, site in enumerate(sites)
+        ]
+
+        default_stem = _workspace_name(workspace).strip().lower().replace(" ", "_") or "analysis"
+        file_path, _selected_filter = QFileDialog.getSaveFileName(
+            self, "Export Muon Sites CIF", f"{default_stem}_muon_sites.cif", "CIF Files (*.cif)"
+        )
+        if not file_path:
+            return
+
+        try:
+            proximity_warnings = export_structure_with_muon_sites(host, muon_sites, Path(file_path))
+        except OSError as exc:
+            QMessageBox.warning(self, "Export failed", str(exc))
+            return
+
+        if proximity_warnings:
+            QMessageBox.warning(
+                self,
+                "Muon sites coincide with host atoms",
+                f"Saved CIF to:\n{file_path}\n\n" + "\n".join(proximity_warnings),
+            )
+        else:
+            QMessageBox.information(self, "Export complete", f"Saved CIF to:\n{file_path}")
+
     def _build_workspace_tab(self, workspace: Mapping[str, object]) -> QWidget:
         page = QWidget(self._workspace_tabs)
         layout = QVBoxLayout(page)
@@ -1437,6 +1485,14 @@ class RelaxationAnalysisWidget(QWidget):
             "Pin this workspace's distinct muon sites to the Muon Sites summary page."
         )
         pin_button.clicked.connect(lambda _checked=False, wid=_workspace_id(workspace): self.pin_summary_requested.emit(wid))
+        export_cif_button = QPushButton("Export CIF...", header)
+        export_cif_button.setToolTip(
+            "Export the host structure and every relaxed muon position in this "
+            "workspace (not just cluster representatives) as a CIF file."
+        )
+        export_cif_button.clicked.connect(
+            lambda _checked=False, wid=_workspace_id(workspace): self._export_workspace_cif(wid)
+        )
         show_shifted = QCheckBox("Show shifted positions", header)
         show_shifted.setStyleSheet("background: transparent;")
         show_shifted.setChecked(bool(workspace.get("show_shifted_positions", False)))
@@ -1450,6 +1506,7 @@ class RelaxationAnalysisWidget(QWidget):
         header_layout.addWidget(cluster_button, 1, 2)
         header_layout.addWidget(displacement_button, 1, 3)
         header_layout.addWidget(pin_button, 1, 4)
+        header_layout.addWidget(export_cif_button, 1, 5)
         header_layout.setColumnStretch(1, 1)
         layout.addWidget(header)
 

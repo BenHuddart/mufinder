@@ -509,6 +509,22 @@ symmetry-inequivalent candidate stopping sites. The page includes:
   ``ui_state["muon_sites_summary_snapshots"]``, keyed by charge state and
   decoupled from the live analysis workspaces (mirroring the convergence
   overview snapshot design).
+- An ``Export CIF…`` action per card that writes the host structure plus its
+  pinned, distinct clustered muon sites (one representative per cluster) to a
+  CIF file (:func:`mufinder.science.structure_io.export_structure_with_muon_sites`).
+  Muons are written as hydrogen atoms with distinct ``Mu1``, ``Mu2``, ...
+  ``_atom_site_label`` values. The standard ``_atom_site`` loop carries no
+  MuFinder-specific columns (mixing one in was found to desynchronize column
+  counting in some CIF readers, silently shifting every atom's fields);
+  per-site relative energy and Wyckoff label instead live in a separate,
+  standalone ``_mufinder_muon_site_label`` / ``_mufinder_relative_energy_eV`` /
+  ``_mufinder_wyckoff_label`` loop that a reader can freely skip. The file is
+  written in P1 with every atom listed explicitly, since muon sites generally
+  break the host's symmetry. The action stays disabled until a card
+  is populated. Each structural-relaxation analysis workspace also has its own
+  ``Export CIF…`` action (see :doc:`structural_relaxation_analysis`), which
+  exports every relaxed muon position in the workspace rather than only cluster
+  representatives.
 
 The previous placeholder ``Confirmed Sites`` child page, which had no behaviour,
 has been removed in favour of this summary page.
