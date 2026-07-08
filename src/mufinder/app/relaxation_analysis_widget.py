@@ -478,7 +478,16 @@ class RelaxationClusteringDialog(QDialog):
         self._left_figure = Figure(figsize=(6.2, 5.2), facecolor=current_palette().bg_surface)
         self._left_figure.subplots_adjust(left=0.12, right=0.98, top=0.96, bottom=0.12)
         self._left_canvas = FigureCanvasQTAgg(self._left_figure)
-        self._viewer = AtomicStructureViewer(self)
+        # Create the viewer WITHOUT a parent so its native VTK/OpenGL render
+        # windows are realized lazily, on first show, at their final laid-out
+        # position. Passing ``self`` here realizes the HWNDs under the dialog at
+        # the origin before ``_build_ui`` reparents the widget into the right
+        # splitter pane; on Windows the native windows do not follow that
+        # reparent, so the scene renders in the wrong place (top-left) and leaves
+        # black placeholders where Qt actually positioned the widget. macOS
+        # composites correctly regardless. See host_structure_widget /
+        # magnetic_field_widget for the same parentless pattern.
+        self._viewer = AtomicStructureViewer()
         # Columns are sized to content (with the Wyckoff column stretched), so
         # this opts out of the shared stretch-to-fill default.
         self._summary_table = create_workflow_table(
@@ -1076,7 +1085,10 @@ class DisplacementAnalysisDialog(QDialog):
         self._message = QLabel("", self)
         self._message.setWordWrap(True)
         style_hint_text(self._message)
-        self._viewer = AtomicStructureViewer(self)
+        # Parentless so the native VTK render windows realize at their final
+        # laid-out position on first show, not under the dialog at the origin.
+        # See RelaxationClusteringDialog for the Windows reparent-desync rationale.
+        self._viewer = AtomicStructureViewer()
         self._figure = Figure(figsize=(5.6, 4.0), facecolor="none")
         self._figure.patch.set_alpha(0.0)
         self._figure.subplots_adjust(left=0.14, right=0.82, top=0.94, bottom=0.16)

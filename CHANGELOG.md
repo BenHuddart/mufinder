@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.4.1 (2026-07-07)
+
+### Bug Fixes
+
+- Render clustering/displacement 3D viewer in place on Windows
+  ([#66](https://github.com/BenHuddart/mufinder/pull/66),
+  [`f3f5033`](https://github.com/BenHuddart/mufinder/commit/f3f5033b53e29fb64da4d7b566625bc2aee06cd8))
+
+
 ## v0.4.0 (2026-07-06)
 
 ### Bug Fixes
