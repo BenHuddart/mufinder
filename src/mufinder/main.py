@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 
 from PySide6.QtCore import QEventLoop, QElapsedTimer, QSettings, QThread
@@ -49,6 +50,31 @@ def _set_windows_app_id() -> None:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("io.github.benhuddart.mufinder")
     except (AttributeError, OSError):
         return
+
+
+def _force_x11_platform_on_wayland() -> None:
+    """Prefer the X11 (xcb) Qt platform under Wayland sessions.
+
+    MuFinder embeds VTK render windows for its 3D viewers, and VTK renders
+    through X11/GLX. Under a native Qt Wayland window the widget's ``winId`` is
+    not an X11 window, so VTK issues ``XConfigureWindow`` on an invalid id and
+    the process aborts with a fatal ``BadWindow`` X error. Routing Qt through
+    XWayland (``xcb``) gives VTK real X11 windows.
+
+    Only applied on Linux, when the user has not pinned ``QT_QPA_PLATFORM``
+    themselves and an XWayland ``DISPLAY`` is available to connect to.
+    """
+
+    if not sys.platform.startswith("linux"):
+        return
+    if os.environ.get("QT_QPA_PLATFORM"):
+        return
+    is_wayland = os.environ.get("XDG_SESSION_TYPE") == "wayland" or bool(os.environ.get("WAYLAND_DISPLAY"))
+    if not is_wayland:
+        return
+    if not os.environ.get("DISPLAY"):
+        return
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 
 def _apply_saved_castep_environment(settings: QSettings) -> None:
@@ -103,6 +129,7 @@ def run() -> int:
     minimum_splash_ms = 1600
 
     _set_windows_app_id()
+    _force_x11_platform_on_wayland()
     app = QApplication(sys.argv)
     app.setApplicationName("MuFinder")
     app.setOrganizationName("MuFinder")

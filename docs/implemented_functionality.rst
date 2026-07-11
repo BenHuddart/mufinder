@@ -44,6 +44,15 @@ inheriting each platform's native look:
   banner (``ProjectHomeTrailWidget._sign_title_pixel_size``), so the labels
   stay proportionate and legible from small laptops to large/high-DPI displays
   instead of shrinking as the map grows.
+- On Linux Wayland sessions the entrypoint forces the Qt ``xcb`` platform
+  before the ``QApplication`` is created
+  (``mufinder.main._force_x11_platform_on_wayland``). The 3D viewers embed VTK
+  render windows that draw through X11/GLX; under a native Qt Wayland window
+  the widget has no X11 window id, so VTK aborts the process with a fatal
+  ``BadWindow`` X error. Routing Qt through XWayland gives VTK real X11
+  windows. The override only applies on Linux, is skipped when the user has
+  already set ``QT_QPA_PLATFORM``, and requires an XWayland ``DISPLAY`` to be
+  available.
 
 Domain and persistence
 ----------------------
