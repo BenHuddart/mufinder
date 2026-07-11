@@ -19,6 +19,7 @@ from mufinder.castep_setup import (
     CastepSetup,
     apply_castep_environment,
     apply_saved_castep_environment,
+    build_castep_keyword_command,
     discover_mpirun,
     generate_castep_keywords_json,
     load_castep_setup,
@@ -179,6 +180,39 @@ def test_generate_castep_keywords_json_uses_ase_helper(
     assert output == (tmp_path / "castep_keywords.json").resolve()
 
 
+def test_build_castep_keyword_command_passes_serial_executable_through() -> None:
+    assert build_castep_keyword_command("/opt/castep/bin/castep") == "/opt/castep/bin/castep"
+
+
+def test_build_castep_keyword_command_wraps_executable_in_mpi_launcher() -> None:
+    # MPI-built binaries hang when run directly, so they must be launched via mpirun.
+    assert (
+        build_castep_keyword_command("/home/ben/.local/bin/castep.mpi", "/usr/bin/mpirun")
+        == "/usr/bin/mpirun -np 1 /home/ben/.local/bin/castep.mpi"
+    )
+
+
+def test_generate_castep_keywords_json_wraps_command_with_mpi_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    commands: list[str] = []
+
+    def fake_create(command: str, filename: str, force_write: bool, path: str, fetch_only=None) -> None:
+        commands.append(command)
+        (Path(path) / filename).write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr("ase.calculators.castep.create_castep_keywords", fake_create)
+
+    generate_castep_keywords_json(
+        executable_path="/opt/castep/bin/castep.mpi",
+        output_path=tmp_path / "castep_keywords.json",
+        mpirun_path="/usr/bin/mpirun",
+    )
+
+    assert commands == ["/usr/bin/mpirun -np 1 /opt/castep/bin/castep.mpi"]
+
+
 def test_generate_castep_keywords_json_raises_when_generation_produces_no_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -272,6 +306,45 @@ def test_castep_setup_dialog_updates_progress_from_generator_output(qapp) -> Non
     assert dialog._progress_bar.value() == 50
     assert "50%" in dialog._progress_label.text()
     dialog.close()
+
+
+def test_castep_setup_dialog_local_generation_wraps_executable_in_mpi_launcher(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[tuple[str, list[str]]] = []
+
+    class _FakeProcess:
+        def __init__(self, _parent=None) -> None:
+            self.readyReadStandardOutput = _FakeSignal()
+            self.readyReadStandardError = _FakeSignal()
+            self.finished = _FakeSignal()
+            self.errorOccurred = _FakeSignal()
+
+        def start(self, program: str, arguments: list[str]) -> None:
+            captured.append((program, arguments))
+
+    monkeypatch.setattr(dialog_module, "QProcess", _FakeProcess)
+
+    dialog = CastepSetupDialog(settings=_FakeSettings())
+    dialog._executable_edit.setText("/home/ben/.local/bin/castep.mpi")
+    dialog._mpirun_edit.setText("/usr/bin/mpirun")
+
+    dialog._start_generation_process(
+        "/home/ben/.local/bin/castep.mpi", tmp_path / "castep_keywords.json"
+    )
+
+    assert len(captured) == 1
+    _program, arguments = captured[0]
+    # argv: ["-u", "-c", <script>, <castep_command>, <filename>, <directory>]
+    assert arguments[3] == "/usr/bin/mpirun -np 1 /home/ben/.local/bin/castep.mpi"
+    dialog.close()
+
+
+class _FakeSignal:
+    def connect(self, _slot) -> None:  # pragma: no cover - trivial stub
+        pass
 
 
 def test_castep_setup_dialog_shows_fallback_notice_when_json_not_configured(
