@@ -170,6 +170,65 @@ def test_set_windows_app_id_ignores_missing_windows_api(monkeypatch):
     assert main_module._set_windows_app_id() is None
 
 
+def _clear_platform_env(monkeypatch):
+    monkeypatch.setattr(main_module.sys, "platform", "linux")
+    monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+    monkeypatch.delenv("XDG_SESSION_TYPE", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("DISPLAY", raising=False)
+
+
+def test_force_x11_platform_sets_xcb_under_wayland(monkeypatch):
+    _clear_platform_env(monkeypatch)
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    monkeypatch.setenv("DISPLAY", ":0")
+
+    main_module._force_x11_platform_on_wayland()
+
+    assert main_module.os.environ["QT_QPA_PLATFORM"] == "xcb"
+
+
+def test_force_x11_platform_respects_existing_override(monkeypatch):
+    _clear_platform_env(monkeypatch)
+    monkeypatch.setenv("QT_QPA_PLATFORM", "wayland")
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.setenv("DISPLAY", ":0")
+
+    main_module._force_x11_platform_on_wayland()
+
+    assert main_module.os.environ["QT_QPA_PLATFORM"] == "wayland"
+
+
+def test_force_x11_platform_skips_without_xwayland_display(monkeypatch):
+    _clear_platform_env(monkeypatch)
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+
+    main_module._force_x11_platform_on_wayland()
+
+    assert "QT_QPA_PLATFORM" not in main_module.os.environ
+
+
+def test_force_x11_platform_skips_on_non_wayland(monkeypatch):
+    _clear_platform_env(monkeypatch)
+    monkeypatch.setenv("DISPLAY", ":0")
+
+    main_module._force_x11_platform_on_wayland()
+
+    assert "QT_QPA_PLATFORM" not in main_module.os.environ
+
+
+def test_force_x11_platform_skips_off_linux(monkeypatch):
+    _clear_platform_env(monkeypatch)
+    monkeypatch.setattr(main_module.sys, "platform", "win32")
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.setenv("DISPLAY", ":0")
+
+    main_module._force_x11_platform_on_wayland()
+
+    assert "QT_QPA_PLATFORM" not in main_module.os.environ
+
+
 def test_helper_import_wrappers(monkeypatch):
     fake_main_window_module = ModuleType("mufinder.app.main_window")
     fake_main_window_module.MainWindow = object()
