@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
@@ -12,6 +13,10 @@ from typing import Any
 from ase import Atoms
 from ase.geometry import cellpar_to_cell
 from ase.io import read as ase_read
+from ase.io import write as ase_write
+import numpy as np
+
+from mufinder.domain.models import Structure
 
 
 class StructureLoadError(ValueError):
@@ -101,6 +106,126 @@ def load_structure_file(path: str | Path) -> LoadedStructure:
         fractional_positions=fractional_positions,
         properties=properties,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class CifMuonSite:
+    """One muon site to render into an exported CIF alongside its host."""
+
+    label: str
+    fractional_position: tuple[float, float, float]
+    relative_energy_ev: float | None = None
+    wyckoff_label: str | None = None
+
+
+#: Below this separation, a muon site is coincident with a host atom rather
+#: than merely nearby. Real muon stopping sites sit roughly 1 Angstrom from
+#: the ion they associate with (e.g. Mu-F, Mu-O); a sub-0.5 Angstrom contact
+#: indicates a folding/provenance problem upstream rather than a real site,
+#: and most CIF viewers will render such an overlap as a single merged,
+#: fractionally-occupied site (e.g. "Sr1/Mu1") rather than two atoms.
+_MIN_PLAUSIBLE_MUON_HOST_DISTANCE_ANG = 0.5
+
+
+def _minimum_periodic_distance_ang(
+    fractional_a: Sequence[float], fractional_b: Sequence[float], lattice_vectors: Sequence[Sequence[float]]
+) -> float:
+    lattice = np.asarray(lattice_vectors, dtype=float)
+    delta = np.asarray(fractional_a, dtype=float) - np.asarray(fractional_b, dtype=float)
+    delta -= np.round(delta)
+    offsets = np.array([-1.0, 0.0, 1.0])
+    best = float("inf")
+    for ox in offsets:
+        for oy in offsets:
+            for oz in offsets:
+                cartesian = (delta + np.array([ox, oy, oz])) @ lattice
+                distance = float(np.linalg.norm(cartesian))
+                if distance < best:
+                    best = distance
+    return best
+
+
+def export_structure_with_muon_sites(
+    host_structure: Structure,
+    muon_sites: list[CifMuonSite],
+    output_path: str | Path,
+) -> list[str]:
+    """Write a host structure plus muon sites to a CIF file.
+
+    Muons are written as hydrogen (``H``) atoms - the closest standard CIF
+    element - with distinct ``_atom_site_label`` values (``site.label``, e.g.
+    ``Mu1``) so they remain identifiable from the host's own hydrogen atoms.
+    Muon sites generally break the host's symmetry, so the file is written in
+    P1 with every atom listed explicitly rather than compressing to a smaller
+    asymmetric unit.
+
+    Returns a list of human-readable warnings for any muon site written
+    implausibly close to (or coincident with) a host atom. The file is still
+    written in that case: many downstream CIF viewers will display such a
+    pair as a single merged, fractionally-occupied site (e.g. "Sr1/Mu1")
+    even though this file assigns each atom full occupancy.
+    """
+    host_species = list(host_structure.species)
+    host_positions = [[float(value) for value in row] for row in host_structure.fractional_positions]
+    lattice_vectors = host_structure.lattice_vectors
+
+    species = host_species + ["H"] * len(muon_sites)
+    positions = host_positions + [
+        [float(value) for value in site.fractional_position] for site in muon_sites
+    ]
+
+    atoms = Atoms(
+        symbols=species,
+        scaled_positions=positions,
+        cell=[[float(value) for value in row] for row in lattice_vectors],
+        pbc=True,
+    )
+
+    species_counts: dict[str, int] = {}
+    host_labels: list[str] = []
+    for symbol in host_species:
+        species_counts[symbol] = species_counts.get(symbol, 0) + 1
+        host_labels.append(f"{symbol}{species_counts[symbol]}")
+    labels = host_labels + [site.label for site in muon_sites]
+
+    warnings: list[str] = []
+    for site in muon_sites:
+        for host_index, (host_symbol, host_label, host_fractional) in enumerate(
+            zip(host_species, host_labels, host_positions, strict=True)
+        ):
+            distance = _minimum_periodic_distance_ang(
+                site.fractional_position, host_fractional, lattice_vectors
+            )
+            if distance < _MIN_PLAUSIBLE_MUON_HOST_DISTANCE_ANG:
+                warnings.append(
+                    f"{site.label} is only {distance:.3f} Å from host atom {host_label} "
+                    f"({host_symbol}); many CIF viewers will render this as a single merged, "
+                    f"fractionally-occupied site rather than two distinct atoms."
+                )
+
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # The _atom_site loop is left as plain, standard CIF (no extra columns):
+    # mixing a MuFinder-specific column into it makes some readers (observed
+    # with VESTA) miscount that loop's column width, silently shifting every
+    # atom's fields by one and corrupting the whole file. Per-muon metadata
+    # instead goes in its own standalone loop below, keyed by
+    # _mufinder_muon_site_label, which a reader that does not recognise it can
+    # simply skip without touching atom parsing.
+    ase_write(destination, atoms, format="cif", labels=[labels])
+    if muon_sites:
+        with destination.open("a", encoding="utf-8") as handle:
+            handle.write("\nloop_\n")
+            handle.write("  _mufinder_muon_site_label\n")
+            handle.write("  _mufinder_relative_energy_eV\n")
+            handle.write("  _mufinder_wyckoff_label\n")
+            for site in muon_sites:
+                energy = (
+                    f"{site.relative_energy_ev:.5f}" if site.relative_energy_ev is not None else "?"
+                )
+                wyckoff = site.wyckoff_label or "?"
+                handle.write(f"  {site.label}  {energy}  {wyckoff}\n")
+    return warnings
 
 
 def _resolve_ase_format(suffix: str) -> str | None:

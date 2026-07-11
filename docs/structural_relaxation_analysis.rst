@@ -131,6 +131,45 @@ host structure and hides it if the host changes. If the source workspace or
 cluster no longer exists when you follow a link, MuFinder opens the Analysis tab
 and notes that the pinned analysis has changed.
 
+Exporting to CIF
+-----------------
+
+Both the live analysis and the pinned summary can export the host structure
+together with muon positions as a CIF file
+(:func:`mufinder.science.structure_io.export_structure_with_muon_sites`).
+Muons are written as hydrogen atoms with distinct ``Mu1``, ``Mu2``, ...
+``_atom_site_label`` values. The file is written in P1 with every atom listed
+explicitly, since muon sites generally break the host's symmetry.
+
+The standard ``_atom_site`` loop carries no MuFinder-specific columns -
+mixing one in was found to desynchronize the column count in some CIF
+readers (observed with VESTA), silently shifting every atom's fields by one
+and corrupting the whole structure. Per-site relative energy and Wyckoff
+label instead live in their own standalone loop below the atom list, keyed by
+``_mufinder_muon_site_label``, which a reader that does not recognise it can
+skip entirely without touching atom parsing.
+
+* In the **Analysis** tab, each workspace's **Export CIF...** button exports
+  every relaxed muon position currently in that workspace - one CIF site per
+  completed relaxation added to the workspace - regardless of whether
+  clustering has been applied. Use this when you want the full set of raw
+  relaxation endpoints rather than a clustered summary.
+* In the **Muon Sites Summary** page, each card's **Export CIF...** button
+  exports only the pinned, distinct clustered sites (one representative per
+  cluster), matching what the card's table and 3D preview show.
+
+If a muon site is written implausibly close to (or exactly coincident with) a
+host atom - closer than 0.5 Å, well under any real muon-implantation bond
+length - MuFinder still writes the file but reports which sites and host atoms
+are affected. This file is not itself malformed (each atom keeps full,
+independent occupancy), but many external CIF viewers detect the overlap and
+render the pair as a single merged, fractionally-occupied site (for example
+"Sr1/Mu1") rather than two distinct atoms. Seeing this warning, or a merged
+site of this kind in another program, usually indicates that the underlying
+analysis needs another look (e.g. the wrong host or workspace charge state, or
+data pinned/added from a mismatched structure) rather than a genuine muon
+site landing on a host ion.
+
 Sources
 -------
 
