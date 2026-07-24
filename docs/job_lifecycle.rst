@@ -326,6 +326,43 @@ submitted when cancelled are moved to ``cancelled``.
   directory, local output directory, cluster name, and current active status.
 - ``refresh_queue`` performs one poll immediately.
 
+SLURM memory requests
+~~~~~~~~~~~~~~~~~~~~~
+
+SLURM enforces a per-job cgroup memory limit, and a CASTEP task that exceeds it
+is killed by the out-of-memory handler rather than failing gracefully. The
+generated ``run.sh`` therefore supports an optional per-CPU memory request,
+surfaced as **Memory per CPU (GB)** in the cluster submission dialog and
+pre-seeded from a SLURM cluster profile's ``default_mem_per_cpu_gb``.
+
+- The value is plumbed as ``mem_per_cpu_gb`` from
+  ``ClusterSubmissionConfig`` through ``ClusterJobSubmission`` and
+  ``ClusterJobRunner.submit`` into
+  :func:`~mufinder.services.script_template.render_job_script`.
+- ``render_job_script`` emits it as a ``#SBATCH --mem-per-cpu`` directive on
+  the slurm path only, inserted after the last existing ``#SBATCH`` line so it
+  stays inside the leading block ``sbatch`` parses. A template that already
+  carries its own ``--mem``/``--mem-per-cpu``/``--mem-per-gpu`` directive is
+  left untouched, so a hand-written request always wins.
+- ``None`` (the default for every cluster profile) emits nothing, leaving the
+  rendered script byte-for-byte as it was before the option existed and the
+  partition's own memory default in force.
+- SLURM rejects a fractional gigabyte value, so
+  :func:`~mufinder.services.script_template.format_mem_per_cpu_directive`
+  renders whole gigabytes as ``6G`` and anything else as whole megabytes
+  (``7.5`` becomes ``7680M``).
+- ``--mem-per-cpu`` is per *allocated CPU*. MuFinder submits pure-MPI CASTEP
+  runs and never sets ``--cpus-per-task``, which SLURM defaults to 1, so one
+  CPU is one MPI rank and the value is the per-rank memory ceiling. This is
+  deliberately preferred over ``--mem`` (per node), which would have to be
+  rescaled whenever node packing changed.
+
+This is distinct from the addqueue ``memory_gb`` control ("Memory per core"),
+which is passed as the ``addqueue -m`` argument rather than written into a
+batch script. The two are mutually exclusive in the dialog: the per-CPU row is
+hidden for addqueue clusters, and ``mem_per_cpu_gb`` is forced to ``None``
+there.
+
 During polling:
 
 - Only non-terminal tracked jobs for the currently connected cluster are polled.

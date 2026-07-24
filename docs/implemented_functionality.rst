@@ -879,6 +879,9 @@ Cluster setup and authentication includes:
 - Configurable hostname, username, queue system, default working directory,
 	cores-per-node, default walltime, submission-script template path, CASTEP
 	executable path, default queue/partition, and default memory-per-process.
+- An optional default per-CPU memory request for SLURM profiles, used to
+	pre-seed the submission dialog. It is off by default, so an existing profile
+	keeps generating batch scripts with no memory directive.
 - Optional SSH jump-host settings for clusters behind gateways, including
 	separate jump hostname, port, username, authentication method, and key path.
 - The built-in Redwood preset targets ``glamdring.physics.ox.ac.uk`` through
@@ -909,6 +912,13 @@ Remote submission and monitoring includes:
 - Upload of generated ``.cell`` / ``.param`` inputs and scheduler-aware submission.
 - SLURM submission through ``sbatch`` with populated templates and capture of
 	scheduler job ids.
+- An optional per-CPU memory request for SLURM submissions, emitted into the
+	generated ``run.sh`` as ``#SBATCH --mem-per-cpu``. This lets jobs whose peak
+	RSS exceeds the partition's default memory per task (for example muon
+	relaxations on SCARF, which peak above the ~3.9 GB/task default) request
+	enough headroom to avoid the cgroup out-of-memory killer. Leaving it unset
+	emits no directive at all, so existing scripts are unchanged. See
+	:doc:`job_lifecycle` for the unit handling and template-precedence rules.
 - Redwood submission through ``addqueue`` with exposed runtime controls for
 	queue/partition, memory per process, and comment.
 - Jump-host submissions show separate credential fields for the gateway and the

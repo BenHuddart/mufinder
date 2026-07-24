@@ -1568,3 +1568,62 @@ def test_cluster_runner_poll_failure_leaves_tracked_jobs_untouched(
     assert entry.terminal is False
     assert entry.status == JobStatus.QUEUED
     assert entry.missing_retrieval_attempts == 0
+
+
+def _submit_scarf_job(
+    tmp_path: Path,
+    *,
+    seed: str,
+    **submit_overrides: object,
+) -> str:
+    """Submit one SLURM job through the runner and return the uploaded run.sh."""
+
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+    runner._config = cluster_runner_module.ClusterConfig(
+        name="SCARF",
+        hostname="ui1.scarf.rl.ac.uk",
+        username="user",
+        auth_method="key",
+        key_path="",
+        default_working_directory="/work4/isis/user",
+        queue_system="SLURM",
+        cores_per_node=24,
+        default_walltime="12:00:00",
+        template_script_path="builtin:scarf-slurm",
+    )
+
+    submit_kwargs: dict[str, object] = {
+        "job_id": uuid4(),
+        "local_job_dir": _prepare_local_job(tmp_path, seed),
+        "seed_name": seed,
+        "num_processes": 144,
+        "walltime": "12:00:00",
+        "working_directory": "/work4/isis/user/project/muon_relaxation",
+        "template_script_path": "",
+        "cores_per_node": 24,
+    }
+    submit_kwargs.update(submit_overrides)
+    runner.submit(**submit_kwargs)
+
+    remote_script = f"/work4/isis/user/project/muon_relaxation/{seed}/run.sh"
+    return runner._ssh.remote_files[remote_script].decode("utf-8")
+
+
+def test_cluster_runner_submit_emits_mem_per_cpu_directive(qapp, tmp_path: Path) -> None:
+    content = _submit_scarf_job(tmp_path, seed="mu_relax_1", mem_per_cpu_gb=6.0)
+
+    assert "#SBATCH --mem-per-cpu=6G" in content
+    assert "srun -n 144 castep.mpi mu_relax_1" in content
+
+
+def test_cluster_runner_submit_omits_mem_per_cpu_directive_when_unset(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    with_default = _submit_scarf_job(tmp_path, seed="mu_relax_2")
+    explicit_none = _submit_scarf_job(tmp_path, seed="mu_relax_3", mem_per_cpu_gb=None)
+
+    assert "--mem" not in with_default
+    assert with_default == explicit_none.replace("mu_relax_3", "mu_relax_2")

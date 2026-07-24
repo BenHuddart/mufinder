@@ -104,6 +104,7 @@ class ClusterConfig:
     castep_executable: str = _DEFAULT_CASTEP_EXECUTABLE
     default_queue_name: str = ""
     default_memory_gb: float | None = None
+    default_mem_per_cpu_gb: float | None = None
     submit_command_path: str = ""
     queue_check_command_path: str = ""
     cancel_command_path: str = ""
@@ -133,6 +134,26 @@ def _ensure_redwood_preset(configs: list[ClusterConfig]) -> list[ClusterConfig]:
 
 def _cluster_prefix(name: str) -> str:
     return f"clusters/{name}"
+
+
+def _normalise_mem_per_cpu_gb(value, *, queue_system: str) -> float | None:  # noqa: ANN001
+    """Coerce a stored per-CPU memory request to a positive float or ``None``.
+
+    Unlike ``default_memory_gb`` (which addqueue always needs a value for), a
+    per-CPU request is optional: ``None`` means "emit no ``#SBATCH`` memory
+    directive" and is the default for every cluster. It is a SLURM batch-script
+    directive, so it is dropped for any other queue system.
+    """
+
+    if queue_system.strip().lower() != "slurm":
+        return None
+    if value in {None, ""}:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _settings_value(settings: QSettings, key: str, default=None):  # noqa: ANN001
@@ -284,6 +305,11 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         if queue_system.strip().lower() == "addqueue" and default_memory_gb is None:
             default_memory_gb = 7.5
 
+    default_mem_per_cpu_gb = _normalise_mem_per_cpu_gb(
+        settings.value(f"{prefix}/default_mem_per_cpu_gb", None),
+        queue_system=queue_system,
+    )
+
     default_queue_name = str(settings.value(f"{prefix}/default_queue_name", "", str) or "").strip()
     if queue_system.strip().lower() == "addqueue" and not default_queue_name:
         default_queue_name = _REDWOOD_PARTITION
@@ -348,6 +374,7 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         or _DEFAULT_CASTEP_EXECUTABLE,
         default_queue_name=default_queue_name,
         default_memory_gb=default_memory_gb,
+        default_mem_per_cpu_gb=default_mem_per_cpu_gb,
         submit_command_path=str(settings.value(f"{prefix}/submit_command_path", "", str) or "").strip(),
         queue_check_command_path=str(
             settings.value(f"{prefix}/queue_check_command_path", "", str) or ""
@@ -422,6 +449,10 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
             default_memory_gb = parsed_memory if parsed_memory > 0 else None
             if queue_system.lower() == "addqueue" and default_memory_gb is None:
                 default_memory_gb = 7.5
+        default_mem_per_cpu_gb = _normalise_mem_per_cpu_gb(
+            config.default_mem_per_cpu_gb,
+            queue_system=queue_system,
+        )
         cleaned.append(
             ClusterConfig(
                 name=name,
@@ -445,6 +476,7 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
                 castep_executable=config.castep_executable.strip() or _DEFAULT_CASTEP_EXECUTABLE,
                 default_queue_name=config.default_queue_name.strip(),
                 default_memory_gb=default_memory_gb,
+                default_mem_per_cpu_gb=default_mem_per_cpu_gb,
                 submit_command_path=config.submit_command_path.strip(),
                 queue_check_command_path=config.queue_check_command_path.strip(),
                 cancel_command_path=config.cancel_command_path.strip(),
@@ -482,6 +514,10 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
         settings.setValue(
             f"{prefix}/default_memory_gb",
             "" if config.default_memory_gb is None else float(config.default_memory_gb),
+        )
+        settings.setValue(
+            f"{prefix}/default_mem_per_cpu_gb",
+            "" if config.default_mem_per_cpu_gb is None else float(config.default_mem_per_cpu_gb),
         )
         settings.setValue(f"{prefix}/submit_command_path", config.submit_command_path)
         settings.setValue(f"{prefix}/queue_check_command_path", config.queue_check_command_path)

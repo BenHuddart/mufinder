@@ -631,3 +631,64 @@ def test_mark_local_status_changed_stamps_queued_locally(tmp_path: Path) -> None
     update = controller.mark_local_status_changed(other.id, JobStatus.QUEUED.value)
     assert update.changed is False
     assert other.last_checked_at is None
+
+
+def test_prepare_cluster_submission_forwards_mem_per_cpu_to_the_runner(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job_id = _job(service, document, "mem-job")
+    runner = FakeClusterRunner()
+    controller = _controller(
+        document=document,
+        service=service,
+        cluster_runner=runner,
+        output_dir=tmp_path / "mem-job",
+    )
+
+    prepared = controller.prepare_cluster_submission(
+        ClusterJobSubmission(
+            job=document.jobs[job_id],
+            output_dir=tmp_path / "mem-job",
+            seed_name="mem-job",
+            remote_target="/remote/mem-job",
+            execution_target="test-cluster",
+            num_processes=144,
+            walltime="12:00:00",
+            working_directory="/remote",
+            template_script_path="",
+            cores_per_node=24,
+            mem_per_cpu_gb=6.0,
+        )
+    )
+
+    assert prepared is not None
+    assert prepared.submit_kwargs["mem_per_cpu_gb"] == 6.0
+
+
+def test_prepare_cluster_submission_defaults_mem_per_cpu_to_unset(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job_id = _job(service, document, "no-mem-job")
+    runner = FakeClusterRunner()
+    controller = _controller(
+        document=document,
+        service=service,
+        cluster_runner=runner,
+        output_dir=tmp_path / "no-mem-job",
+    )
+
+    prepared = controller.prepare_cluster_submission(
+        ClusterJobSubmission(
+            job=document.jobs[job_id],
+            output_dir=tmp_path / "no-mem-job",
+            seed_name="no-mem-job",
+            remote_target="/remote/no-mem-job",
+            execution_target="test-cluster",
+            num_processes=8,
+            walltime="01:00:00",
+            working_directory="/remote",
+            template_script_path="",
+            cores_per_node=4,
+        )
+    )
+
+    assert prepared is not None
+    assert prepared.submit_kwargs["mem_per_cpu_gb"] is None

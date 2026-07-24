@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import re
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -29,6 +30,12 @@ from mufinder.services.keychain import is_glamdring_keychain_supported
 from mufinder.services.ssh_client import SSHCredentials
 
 
+#: Pre-filled per-CPU memory request, used when a SLURM cluster profile does not
+#: define its own default. Chosen to clear the ~5.1 GB peak RSS observed for
+#: muon-relaxation CASTEP tasks, which exceeds the ~3.9 GB/task SCARF default.
+_DEFAULT_MEM_PER_CPU_GB = 6.0
+
+
 @dataclass(frozen=True, slots=True)
 class ClusterSubmissionConfig:
     """Runtime configuration chosen by the user for cluster submission."""
@@ -41,6 +48,7 @@ class ClusterSubmissionConfig:
     walltime: str
     queue_name: str = ""
     memory_gb: float | None = None
+    mem_per_cpu_gb: float | None = None
     comment: str = ""
 
 
@@ -119,6 +127,21 @@ class ClusterSubmissionDialog(QDialog):
         self._memory_spin.setValue(7.5)
         form.addRow(self._memory_label, self._memory_spin)
 
+        # SLURM path: the checkbox doubles as the row label so "off" (no
+        # #SBATCH memory directive, scheduler default applies) stays distinct
+        # from "0 GB", which the value field cannot express.
+        self._mem_per_cpu_check = QCheckBox("Memory per CPU (GB)", form_group)
+        self._mem_per_cpu_edit = DecimalLineEdit(form_group)
+        self._mem_per_cpu_edit.setRange(0.1, 2048.0)
+        self._mem_per_cpu_edit.setDecimals(2)
+        self._mem_per_cpu_edit.setSingleStep(0.5)
+        self._mem_per_cpu_edit.setValue(_DEFAULT_MEM_PER_CPU_GB)
+        self._mem_per_cpu_edit.setToolTip(
+            "Requested memory per allocated CPU, emitted as #SBATCH --mem-per-cpu. "
+            "Raise this when jobs are killed by the cluster's out-of-memory handler."
+        )
+        form.addRow(self._mem_per_cpu_check, self._mem_per_cpu_edit)
+
         self._comment_label = QLabel("Submission note", form_group)
         self._comment_edit = QLineEdit(form_group)
         self._comment_edit.setPlaceholderText("Optional note for this submission")
@@ -158,6 +181,8 @@ class ClusterSubmissionDialog(QDialog):
         self._button_box.rejected.connect(self.reject)
         self._cluster_combo.currentTextChanged.connect(lambda *_: self._apply_cluster_defaults())
         self._username_edit.textChanged.connect(lambda *_: self._refresh_connection_state())
+        self._mem_per_cpu_check.toggled.connect(self._mem_per_cpu_edit.setEnabled)
+        self._mem_per_cpu_edit.setEnabled(self._mem_per_cpu_check.isChecked())
 
         if default_cluster_name:
             index = self._cluster_combo.findText(default_cluster_name)
@@ -183,6 +208,14 @@ class ClusterSubmissionDialog(QDialog):
     def credentials(self) -> SSHCredentials:
         return self._resolved_credentials or self._manual_credentials()
 
+    def _selected_mem_per_cpu_gb(self) -> float | None:
+        """Return the per-CPU memory request, or ``None`` to emit no directive."""
+
+        if self._is_addqueue_cluster() or not self._mem_per_cpu_check.isChecked():
+            return None
+        value = float(self._mem_per_cpu_edit.value())
+        return value if value > 0 else None
+
     def config(self) -> ClusterSubmissionConfig:
         addqueue = self._is_addqueue_cluster()
         return ClusterSubmissionConfig(
@@ -194,6 +227,7 @@ class ClusterSubmissionDialog(QDialog):
             walltime=self._walltime_edit.text().strip(),
             queue_name=self._queue_name_edit.text().strip() if addqueue else "",
             memory_gb=float(self._memory_spin.value()) if addqueue else None,
+            mem_per_cpu_gb=self._selected_mem_per_cpu_gb(),
             comment=self._comment_edit.text().strip() if addqueue else "",
         )
 
@@ -204,6 +238,7 @@ class ClusterSubmissionDialog(QDialog):
             self._username_edit.setText("")
             self._num_processes_spin.setValue(1)
             self._walltime_edit.setText("01:00:00")
+            self._apply_mem_per_cpu_default(None)
             self._set_auth_hint_text("No cluster selected.")
             self._set_password_row_visible(True)
             self._refresh_scheduler_controls()
@@ -215,6 +250,7 @@ class ClusterSubmissionDialog(QDialog):
         self._walltime_edit.setText(config.default_walltime)
         self._queue_name_edit.setText(config.default_queue_name)
         self._memory_spin.setValue(7.5 if config.default_memory_gb is None else float(config.default_memory_gb))
+        self._apply_mem_per_cpu_default(config.default_mem_per_cpu_gb)
         self._comment_edit.setText("")
         self._target_secret_edit.setText("")
         self._jump_secret_edit.setText("")
@@ -274,8 +310,20 @@ class ClusterSubmissionDialog(QDialog):
             if config.memory_gb is not None:
                 self._memory_spin.setValue(float(config.memory_gb))
             self._comment_edit.setText(config.comment.strip())
+        else:
+            self._apply_mem_per_cpu_default(config.mem_per_cpu_gb)
 
         self._refresh_connection_state()
+
+    def _apply_mem_per_cpu_default(self, mem_per_cpu_gb: float | None) -> None:
+        """Seed the per-CPU memory row, treating ``None`` as "do not request"."""
+
+        enabled = mem_per_cpu_gb is not None and float(mem_per_cpu_gb) > 0
+        self._mem_per_cpu_check.setChecked(enabled)
+        self._mem_per_cpu_edit.setValue(
+            float(mem_per_cpu_gb) if enabled else _DEFAULT_MEM_PER_CPU_GB
+        )
+        self._mem_per_cpu_edit.setEnabled(enabled)
 
     def _set_auth_hint_text(self, text: str) -> None:
         self._auth_hint.setText(text)
@@ -389,6 +437,10 @@ class ClusterSubmissionDialog(QDialog):
         self._memory_spin.setVisible(addqueue)
         self._comment_label.setVisible(addqueue)
         self._comment_edit.setVisible(addqueue)
+        # --mem-per-cpu is a SLURM batch-script directive; addqueue takes its
+        # memory request through the "Memory per core" argument above instead.
+        self._mem_per_cpu_check.setVisible(not addqueue)
+        self._mem_per_cpu_edit.setVisible(not addqueue)
         if addqueue:
             self._walltime_edit.setPlaceholderText("Optional for addqueue (HH:MM:SS)")
         else:

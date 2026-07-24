@@ -23,6 +23,11 @@ _ALLOWED_TEMPLATE_VARIABLES = {
 
 _TEMPLATE_VAR_RE = re.compile(r"\$\{?([a-zA-Z_][a-zA-Z0-9_]*)\}?")
 
+# Any leading-block ``#SBATCH`` line, and any ``#SBATCH`` line that already
+# carries a memory request (``--mem``, ``--mem-per-cpu``, ``--mem-per-gpu``).
+_SBATCH_LINE_RE = re.compile(r"^\s*#SBATCH\b")
+_SBATCH_MEMORY_LINE_RE = re.compile(r"^\s*#SBATCH\b.*--mem", re.IGNORECASE)
+
 _BUILTIN_TEMPLATE_TOKEN_SLURM = "builtin:slurm-basic"
 _BUILTIN_TEMPLATE_TOKEN_SCARF = "builtin:scarf-slurm"
 
@@ -52,6 +57,72 @@ cd $working_directory
 srun -n $num_processes castep.mpi $seed_name
 """,
 }
+
+
+def format_mem_per_cpu_directive(mem_per_cpu_gb: float | None) -> str:
+    """Return the ``#SBATCH`` memory directive for a per-CPU request in GB.
+
+    Returns ``""`` when no positive request is set, so callers can treat "no
+    memory requested" as "emit nothing" and leave scheduler defaults in place.
+
+    SLURM's ``--mem-per-cpu`` takes an integer with an optional unit suffix, so
+    ``7.5`` GB cannot be written as ``7.5G``. Whole numbers of gigabytes render
+    as ``G``; anything else is converted to whole megabytes (``7.5`` -> ``7680M``).
+
+    ``--mem-per-cpu`` is per *allocated CPU*, not per task. MuFinder submits
+    pure-MPI CASTEP runs and never sets ``--cpus-per-task``, which SLURM
+    defaults to 1, so one CPU is one MPI rank and this value is the per-rank
+    memory ceiling enforced by the cgroup.
+    """
+
+    if mem_per_cpu_gb is None:
+        return ""
+    try:
+        value = float(mem_per_cpu_gb)
+    except (TypeError, ValueError):
+        return ""
+    if value <= 0:
+        return ""
+    megabytes = int(round(value * 1024))
+    if megabytes <= 0:
+        return ""
+    if megabytes % 1024 == 0:
+        return f"#SBATCH --mem-per-cpu={megabytes // 1024}G"
+    return f"#SBATCH --mem-per-cpu={megabytes}M"
+
+
+def insert_sbatch_directive(script: str, directive: str) -> str:
+    """Insert one ``#SBATCH`` directive into a rendered batch script.
+
+    The directive is placed after the last existing ``#SBATCH`` line so it stays
+    inside the leading comment block, where ``sbatch`` stops parsing directives.
+    Templates that already request memory themselves are left untouched, so a
+    hand-written ``--mem``/``--mem-per-cpu`` line always wins over the dialog.
+
+    Templates with no ``#SBATCH`` line at all still receive the directive, just
+    after the shebang (or at the top when there is none). ``#SBATCH`` is only a
+    comment to the shell, so this cannot break a script that the scheduler
+    ignores it in.
+    """
+
+    if not directive:
+        return script
+
+    lines = script.splitlines(keepends=True)
+    if any(_SBATCH_MEMORY_LINE_RE.match(line) for line in lines):
+        return script
+
+    insert_at = 0
+    for index, line in enumerate(lines):
+        if _SBATCH_LINE_RE.match(line):
+            insert_at = index + 1
+    if insert_at == 0 and lines and lines[0].startswith("#!"):
+        insert_at = 1
+
+    if insert_at > 0 and not lines[insert_at - 1].endswith("\n"):
+        lines[insert_at - 1] = f"{lines[insert_at - 1]}\n"
+    lines.insert(insert_at, f"{directive}\n")
+    return "".join(lines)
 
 
 def load_template(path: Path | str) -> Template:
@@ -103,6 +174,7 @@ def render_job_script(
     walltime: str,
     remote_dir: str,
     castep_executable: str,
+    mem_per_cpu_gb: float | None = None,
 ) -> str:
     """Render a cluster scheduler submission script from its runtime inputs.
 
@@ -142,6 +214,10 @@ def render_job_script(
     :param castep_executable: Already-resolved CASTEP executable (the submit
         caller applies its config fallback before calling this). Shell-quoted
         into the launcher command.
+    :param mem_per_cpu_gb: Optional per-CPU memory request in GB, emitted as an
+        ``#SBATCH --mem-per-cpu`` directive on the slurm path only. ``None``
+        (the default) emits nothing and leaves the rendered script byte-for-byte
+        as it was before this option existed.
     """
 
     template = load_template_for_cluster(
@@ -150,7 +226,8 @@ def render_job_script(
         queue_system=queue_system,
     )
     nodes = max(1, int(ceil(max(1, int(num_processes)) / max(1, int(cores_per_node)))))
-    if queue_system.strip().lower() == "slurm":
+    is_slurm = queue_system.strip().lower() == "slurm"
+    if is_slurm:
         command = (
             f"srun -n {max(1, int(num_processes))} "
             f"{shlex.quote(castep_executable)} {seed_name}"
@@ -160,7 +237,7 @@ def render_job_script(
             f"mpirun -np {max(1, int(num_processes))} "
             f"{shlex.quote(castep_executable)} {seed_name}"
         )
-    return populate_template(
+    script = populate_template(
         template,
         {
             "job_name": seed_name,
@@ -173,6 +250,9 @@ def render_job_script(
             "castep_command": command,
         },
     )
+    if not is_slurm:
+        return script
+    return insert_sbatch_directive(script, format_mem_per_cpu_directive(mem_per_cpu_gb))
 
 
 def validate_template(template: Template) -> list[str]:
