@@ -740,6 +740,10 @@ Setup integration includes:
 - In-dialog workflow guidance for keyword generation:
   set the ``Keywords JSON`` destination path, generate metadata, then save
   setup with ``OK`` so the selected metadata source is applied.
+- Local keyword generation wraps the CASTEP executable in the configured MPI
+  launcher (``mpirun -np 1``) when one is set. MPI-built binaries (e.g.
+  ``castep.mpi``) hang when the ``-help`` queries are run directly, so without
+  the launcher the progress bar stalls at 0%.
 
 Submission entry points include:
 

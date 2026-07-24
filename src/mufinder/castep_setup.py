@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import shlex
 import shutil
 
 from PySide6.QtCore import QSettings
@@ -85,7 +86,27 @@ def apply_saved_castep_environment(settings: QSettings | None = None) -> CastepS
     return setup
 
 
-def generate_castep_keywords_json(*, executable_path: str, output_path: str | Path) -> Path:
+def build_castep_keyword_command(executable_path: str, mpirun_path: str = "") -> str:
+    """Build the shell command ASE runs to query CASTEP help.
+
+    ASE's ``create_castep_keywords`` invokes ``<command> -help ...`` through a
+    shell. MPI-built CASTEP binaries (e.g. ``castep.mpi``) hang indefinitely when
+    executed directly, because they block waiting for an MPI runtime. When an MPI
+    launcher is configured we therefore wrap the executable in ``mpirun -np 1`` —
+    which also runs serial binaries correctly — mirroring the cluster keyword
+    generation path.
+    """
+
+    executable = executable_path.strip()
+    mpirun = mpirun_path.strip()
+    if mpirun:
+        return " ".join(shlex.quote(part) for part in (mpirun, "-np", "1", executable))
+    return executable
+
+
+def generate_castep_keywords_json(
+    *, executable_path: str, output_path: str | Path, mpirun_path: str = ""
+) -> Path:
     """Generate a CASTEP keyword JSON file using ASE's supported extraction helper."""
 
     executable = executable_path.strip()
@@ -101,7 +122,7 @@ def generate_castep_keywords_json(*, executable_path: str, output_path: str | Pa
     from ase.calculators.castep import create_castep_keywords
 
     create_castep_keywords(
-        executable,
+        build_castep_keyword_command(executable, mpirun_path),
         filename=output.name,
         path=str(output.parent),
         force_write=True,

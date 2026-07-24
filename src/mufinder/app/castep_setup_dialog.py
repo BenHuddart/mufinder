@@ -36,6 +36,7 @@ from mufinder.cluster_setup import ClusterConfig, load_cluster_configs
 from mufinder.castep_setup import (
     CastepSetup,
     apply_castep_environment,
+    build_castep_keyword_command,
     discover_mpirun,
     load_castep_setup,
     save_castep_setup,
@@ -412,6 +413,11 @@ class CastepSetupDialog(QDialog):
         self._progress_label.setText("Starting CASTEP keyword extraction...")
         self._progress_bar.setValue(0)
 
+        # MPI-built CASTEP binaries hang when executed directly, so wrap the
+        # executable in the configured MPI launcher (`mpirun -np 1`) for the
+        # `-help` queries ASE runs. Without this the process stalls at 0%.
+        castep_command = build_castep_keyword_command(executable, self._mpirun_edit.text().strip())
+
         process = QProcess(self)
         process.readyReadStandardOutput.connect(self._on_generation_output)
         process.readyReadStandardError.connect(self._on_generation_output)
@@ -421,9 +427,10 @@ class CastepSetupDialog(QDialog):
         process.start(
             sys.executable,
             [
+                "-u",
                 "-c",
                 _GENERATOR_SCRIPT,
-                executable,
+                castep_command,
                 self._generation_output_path.name,
                 str(self._generation_output_path.parent),
             ],
