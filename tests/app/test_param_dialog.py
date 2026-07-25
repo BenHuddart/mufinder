@@ -711,3 +711,35 @@ def test_nudged_elastic_band_dialog_read_only_disables_farm_spin(qapp) -> None:
 
     assert dialog._num_farms_spin.isEnabled() is False
     dialog.close()
+
+
+def test_nudged_elastic_band_dialog_blocks_num_farms_keyword_row(qapp) -> None:
+    """NUM_FARMS is not offered as a parameter row: it has a dedicated control.
+
+    The same value is read back from the row's extras to pick the expected
+    output filenames and to validate MPI ranks at submission, so a second
+    keyword-row copy could win in the rendered .param while those checks used
+    the spin box -- CASTEP farming one way, MuFinder assuming another."""
+
+    from mufinder.app.workflow_dialogs import NudgedElasticBandConfigDialog
+
+    specs = [
+        *_neb_dialog_specs(),
+        KeywordSpec(
+            name="num_farms",
+            file="param",
+            kind="scalar",
+            value_type="positive_int",
+            widget_hint="int",
+            category="parallelism",
+            advanced_workflows=("energy_barriers",),
+            default_value=1,
+        ),
+    ]
+    dialog = NudgedElasticBandConfigDialog(specs=specs, num_farms=2)
+
+    assert "num_farms" not in dialog.collect_values()
+    assert "num_farms" not in {spec.name for spec in dialog._available_advanced_specs()}
+    # The dedicated control still carries the value.
+    assert dialog.num_farms() == 2
+    dialog.close()

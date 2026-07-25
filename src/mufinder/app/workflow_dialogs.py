@@ -160,6 +160,18 @@ class NudgedElasticBandConfigDialog(ParameterDialog):
 
         return max(1, int(self._num_farms_spin.value()))
 
+    def _compute_blocked_names(self) -> set[str]:
+        # NUM_FARMS has a dedicated control, and its value is *also* read back
+        # from the row's extras to decide which output filenames a finished job
+        # wrote and whether the requested MPI ranks can serve it. A second,
+        # keyword-row copy reachable through "Add Parameter" would win in the
+        # rendered .param while those checks kept using the spin box value --
+        # CASTEP running one farm count while MuFinder assumed another. Block it
+        # so the control is the only source.
+        blocked = super()._compute_blocked_names()
+        blocked.add("num_farms")
+        return blocked
+
     def _on_editor_changed(self) -> None:
         # The base class rebuilds rows during __init__, before this subclass has
         # built its widgets, so the hint may not exist on the first call.

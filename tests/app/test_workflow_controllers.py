@@ -3373,3 +3373,52 @@ def test_energy_barriers_controller_materialize_omits_num_farms_when_off(
         encoding="utf-8"
     )
     assert "NUM_FARMS" not in param_text
+
+
+def test_energy_barriers_controller_materialize_ignores_num_farms_parameter_row(
+    tmp_path: Path,
+) -> None:
+    """A persisted ``num_farms`` keyword row must not override the row's extras.
+
+    The extras value is what ``_task_farming_for_job`` reports to the runners
+    (deciding whether to read ``<seed>_farm001.*``) and what submission
+    validates the rank count against. If a keyword row could win in the rendered
+    .param, CASTEP would farm one way while MuFinder assumed another -- so the
+    dedicated control stays authoritative and the keyword row is dropped."""
+
+    import dataclasses
+
+    service = ProjectService()
+    document, definition, source, output_root = _seed_energy_barriers_document(
+        service, tmp_path
+    )
+    candidate = _FakeNebCandidate(key="source-key", source=source)
+    deps = _neb_materialize_deps(
+        definition,
+        candidate,
+        output_root,
+        energy_barrier_neb_row_configuration_with_source_defaults=(
+            lambda _definition, _key, **_kwargs: (
+                {"num_farms": 7},
+                (),
+                {"num_farms": 3},
+            )
+        ),
+    )
+    context = dataclasses.replace(
+        _make_context(
+            document=document,
+            project_service=service,
+            definition_output_directory=lambda _definition: output_root,
+        ),
+        persist_ui_state=lambda **_: None,
+    )
+    controller = EnergyBarriersController(context, deps, lambda: None)
+
+    jobs = controller.materialize(["source-key"])
+
+    param_text = (output_root / jobs[0].label / f"{jobs[0].label}.param").read_text(
+        encoding="utf-8"
+    )
+    assert "NUM_FARMS : 3" in param_text
+    assert "NUM_FARMS : 7" not in param_text

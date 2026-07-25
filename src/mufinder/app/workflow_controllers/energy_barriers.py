@@ -368,7 +368,17 @@ class EnergyBarriersController(WorkflowJobController):
                     source_defaults_cache=source_defaults_cache,
                 )
             )
-            values = {name: value for name, value in values.items() if name != "task"}
+            # ``num_farms`` is dropped alongside the workflow-locked ``task``: the
+            # farm count comes from the row's extras (below), which is also what
+            # decides the expected output filenames and the submission rank check.
+            # A keyword-row copy would override the base template and silently
+            # disagree with both. The configure dialog blocks the row, so this
+            # only bites on configurations persisted by other paths.
+            values = {
+                name: value
+                for name, value in values.items()
+                if name not in {"task", "num_farms"}
+            }
             try:
                 overrides = self._deps.input_template_from_keyword_values(values)
             except ValueError:
