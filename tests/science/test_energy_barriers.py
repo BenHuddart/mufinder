@@ -12,6 +12,7 @@ from mufinder.science.energy_barriers import (
     _structure_to_atoms,
     enumerate_distinct_muon_paths,
     idpp_intermediate_structure,
+    neb_farm_distribution,
     prepare_transition_state_structures,
 )
 
@@ -180,3 +181,32 @@ def test_idpp_intermediate_warns_and_falls_back_when_optimiser_fails(
     )
     result_clearance = _muon_host_clearance(_structure_to_atoms(intermediate, require_muon=True))
     assert result_clearance == pytest.approx(_muon_host_clearance(linear))
+
+
+def test_neb_farm_distribution_matches_castep_block_split() -> None:
+    # CASTEP's tssearch_neb_farm_indices gives the first (n mod F) farms one
+    # extra image; the rest get the floor. 11 images over 3 farms is 4/4/3.
+    distribution = neb_farm_distribution(images=11, farms=3)
+
+    assert distribution.steady_counts == (4, 4, 3)
+    # The first sweep also computes the two endpoints: 13 images over 3 farms.
+    assert distribution.first_sweep_counts == (5, 4, 4)
+    assert distribution.efficiency == pytest.approx(11 / 12)
+    assert distribution.idle_farms == 0
+
+
+def test_neb_farm_distribution_flags_poor_pairings() -> None:
+    # 11 images over 5 farms leaves the busiest farm with 3 while others hold 2:
+    # over a quarter of the allocation is wasted every sweep.
+    assert neb_farm_distribution(images=11, farms=5).efficiency == pytest.approx(11 / 15)
+    # Even splits are perfect regardless of size.
+    assert neb_farm_distribution(images=12, farms=4).efficiency == pytest.approx(1.0)
+    assert neb_farm_distribution(images=11, farms=1).steady_counts == (11,)
+
+
+def test_neb_farm_distribution_reports_idle_farms() -> None:
+    # CASTEP warns (but does not abort) when farms outnumber images.
+    distribution = neb_farm_distribution(images=3, farms=5)
+
+    assert distribution.steady_counts == (1, 1, 1, 0, 0)
+    assert distribution.idle_farms == 2

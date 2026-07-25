@@ -208,6 +208,47 @@ def test_collect_ts_missing_sets_flag(tmp_path: Path) -> None:
     assert artifacts.transition_state is None
 
 
+def test_collect_ts_reads_farmed_file_when_task_farming(tmp_path: Path) -> None:
+    # A task-farmed CASTEP run renames every output to <seed>_farmNNN.<ext>, so
+    # the band lands in seed_farm001.ts and no seed.ts is written at all.
+    (tmp_path / "seed_farm001.ts").write_text(
+        _TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    artifacts = collect_job_artifacts(tmp_path, "seed", want_ts=True, num_farms=4)
+
+    assert artifacts.ts_missing is False
+    assert artifacts.transition_state is not None
+    assert artifacts.ts_path == tmp_path / "seed_farm001.ts"
+
+
+def test_collect_ts_ignores_stale_unfarmed_file_when_task_farming(tmp_path: Path) -> None:
+    # Only a leftover unfarmed .ts from an earlier run is present. CASTEP appends
+    # to an existing .ts, so reading it could splice two runs' bands together and
+    # report a barrier that was never computed -- report missing instead.
+    (tmp_path / "seed.ts").write_text(
+        _TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    artifacts = collect_job_artifacts(tmp_path, "seed", want_ts=True, num_farms=2)
+
+    assert artifacts.ts_missing is True
+    assert artifacts.transition_state is None
+    assert artifacts.ts_path == tmp_path / "seed_farm001.ts"
+
+
+def test_collect_ts_uses_unfarmed_file_for_single_farm(tmp_path: Path) -> None:
+    # num_farms=1 is "farming off": CASTEP does not rename anything.
+    (tmp_path / "seed.ts").write_text(
+        _TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    artifacts = collect_job_artifacts(tmp_path, "seed", want_ts=True, num_farms=1)
+
+    assert artifacts.transition_state is not None
+    assert artifacts.ts_path == tmp_path / "seed.ts"
+
+
 def test_collect_ts_unparseable_captures_error(tmp_path: Path) -> None:
     (tmp_path / "seed.ts").write_text("not a valid ts file", encoding="utf-8")
 

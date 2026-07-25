@@ -295,6 +295,11 @@ Current behavior includes:
   lattice;
 - NEB job expansion seeded directly from the two aligned relaxed endpoints,
   with an IDPP-interpolated intermediate image;
+- per-path CASTEP task farming through ``NUM_FARMS``, with a live image-split
+  and balance hint in the configuration dialog, a ``Farms`` column in the
+  ``Diffusion Paths`` table, submission blocked when the requested cores cannot
+  serve the farm count, and farm-aware retrieval of ``*_farm001.ts`` and
+  ``*_farm001.castep`` outputs;
 - a completed-results table summarising each NEB run by endpoint pair, charge
   state, path length, forward/reverse barrier, endpoint ``ΔE``, and image
   count, with the trajectory file reachable via tooltip and a right-click

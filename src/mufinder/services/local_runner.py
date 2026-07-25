@@ -12,7 +12,7 @@ from PySide6.QtCore import QObject, QProcess, Signal
 
 from mufinder.castep_io.output_parser import parse_castep_output
 from mufinder.domain.enums import JobStatus
-from mufinder.services.job_artifacts import collect_job_artifacts
+from mufinder.services.job_artifacts import collect_job_artifacts, effective_num_farms
 
 
 @dataclass(slots=True)
@@ -304,6 +304,7 @@ class LocalJobRunner(QObject):
             want_out_cell=request.retrieve_out_cell,
             want_phonon=request.retrieve_phonon,
             want_ts=request.retrieve_ts,
+            num_farms=effective_num_farms(request.task_farming_enabled, request.num_farms),
         )
         self.job_finished.emit(job_id, result, artifacts)
         self.status_changed.emit(job_id, JobStatus.COMPLETED.value)
@@ -311,7 +312,7 @@ class LocalJobRunner(QObject):
 
     @staticmethod
     def _primary_output_path(request: _PendingJob) -> Path:
-        if request.task_farming_enabled and (request.num_farms or 1) > 1:
+        if effective_num_farms(request.task_farming_enabled, request.num_farms) > 1:
             farmed = request.job_dir / f"{request.seed_name}_farm001.castep"
             if farmed.exists():
                 return farmed

@@ -17,7 +17,7 @@ from mufinder.castep_io.output_parser import CastepResult, parse_castep_output
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import utc_now
 from mufinder.services.cluster_security import invalid_remote_job_labels
-from mufinder.services.job_artifacts import collect_job_artifacts
+from mufinder.services.job_artifacts import collect_job_artifacts, effective_num_farms
 from mufinder.services.scheduler import Scheduler, SchedulerSubmitRequest, create_scheduler
 from mufinder.services.script_template import render_job_script
 from mufinder.services.ssh_client import SSHConnection, SSHCredentials
@@ -626,17 +626,23 @@ class ClusterJobRunner(QObject):
         remote_den_fmt = posixpath.join(entry.remote_dir, f"{entry.seed_name}.den_fmt")
         remote_out_cell = posixpath.join(entry.remote_dir, f"{entry.seed_name}-out.cell")
         remote_phonon = posixpath.join(entry.remote_dir, f"{entry.seed_name}.phonon")
-        remote_ts = posixpath.join(entry.remote_dir, f"{entry.seed_name}.ts")
+        # Task farming renames every output to <seed>_farmNNN.<ext>, so a farmed
+        # NEB run writes no <seed>.ts at all. Every farm writes an identical,
+        # complete band; farm 001 is the canonical copy. Download it under the
+        # same name locally so collect_job_artifacts finds it where it looks.
+        farm_count = effective_num_farms(entry.task_farming_enabled, entry.num_farms)
+        ts_basename = f"{entry.seed_name}_farm001.ts" if farm_count > 1 else f"{entry.seed_name}.ts"
+        remote_ts = posixpath.join(entry.remote_dir, ts_basename)
         local_castep = entry.local_output_dir / f"{entry.seed_name}.castep"
         local_farm_castep = entry.local_output_dir / f"{entry.seed_name}_farm001.castep"
         local_den_fmt = entry.local_output_dir / f"{entry.seed_name}.den_fmt"
         local_out_cell = entry.local_output_dir / f"{entry.seed_name}-out.cell"
         local_phonon = entry.local_output_dir / f"{entry.seed_name}.phonon"
-        local_ts = entry.local_output_dir / f"{entry.seed_name}.ts"
+        local_ts = entry.local_output_dir / ts_basename
 
         try:
             self._retrieve_error_files(entry)
-            if entry.task_farming_enabled and (entry.num_farms or 1) > 1 and ssh.exists(remote_farm_castep):
+            if farm_count > 1 and ssh.exists(remote_farm_castep):
                 if ssh.exists(remote_castep):
                     ssh.get(remote_castep, local_castep)
                 ssh.get(remote_farm_castep, local_farm_castep)
@@ -711,6 +717,7 @@ class ClusterJobRunner(QObject):
             want_out_cell=entry.retrieve_out_cell,
             want_phonon=entry.retrieve_phonon,
             want_ts=entry.retrieve_ts,
+            num_farms=farm_count,
         )
         self.job_finished.emit(entry.job_id, parsed, artifacts)
         self.status_changed.emit(entry.job_id, JobStatus.COMPLETED.value)
@@ -745,10 +752,15 @@ class ClusterJobRunner(QObject):
         except Exception:  # noqa: BLE001
             return names
 
+        # CASTEP embeds the MPI rank in every error filename (io_parallel_filename),
+        # and task farming additionally rewrites the seedname to <seed>_farmNNN
+        # before stderr is opened — so a farmed run writes <seed>_farm002.0003.err
+        # and never <seed>.0003.err. Accept the optional farm infix so failure
+        # diagnostics come back for farmed NEB and phonon jobs too.
         numbered = sorted(
             str(name)
             for name in entries
-            if re.fullmatch(rf"{re.escape(entry.seed_name)}\.\d+\.err", str(name))
+            if re.fullmatch(rf"{re.escape(entry.seed_name)}(_farm\d+)?\.\d+\.err", str(name))
         )
         for name in numbered:
             if name not in names:

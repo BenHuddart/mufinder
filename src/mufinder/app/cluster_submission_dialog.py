@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import re
 
@@ -25,6 +26,7 @@ from PySide6.QtCore import Qt
 
 from mufinder.app.cluster_ui_utils import resolve_cluster_credentials
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.farm_validation import check_farm_counts
 from mufinder.cluster_setup import ClusterConfig
 from mufinder.services.keychain import is_glamdring_keychain_supported
 from mufinder.services.ssh_client import SSHCredentials
@@ -66,11 +68,15 @@ class ClusterSubmissionDialog(QDialog):
         workflow_type: str = "",
         connected_cluster_name: str | None = None,
         connected_username: str | None = None,
+        farm_counts: Mapping[str, int] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
 
         self._job_labels = list(job_labels)
+        # Per-job CASTEP task-farm counts, keyed by job label; validated against
+        # the requested rank count (see mufinder.app.farm_validation).
+        self._farm_counts = {str(label): int(count) for label, count in (farm_counts or {}).items()}
         self._cluster_configs = {config.name: config for config in cluster_configs}
         self._project_name = self._sanitize_path_component(project_name)
         self._workflow_type = self._sanitize_path_fragment(workflow_type)
@@ -159,6 +165,10 @@ class ClusterSubmissionDialog(QDialog):
         self._jump_secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
         form.addRow(self._jump_secret_label, self._jump_secret_edit)
 
+        self._farm_warning = QLabel(form_group)
+        self._farm_warning.setWordWrap(True)
+        form.addRow(self._farm_warning)
+
         self._auth_hint = QLabel(form_group)
         self._auth_hint.setWordWrap(True)
         # Keep the hint top-aligned with explicit headroom to avoid glyph clipping.
@@ -183,6 +193,7 @@ class ClusterSubmissionDialog(QDialog):
         self._username_edit.textChanged.connect(lambda *_: self._refresh_connection_state())
         self._mem_per_cpu_check.toggled.connect(self._mem_per_cpu_edit.setEnabled)
         self._mem_per_cpu_edit.setEnabled(self._mem_per_cpu_check.isChecked())
+        self._num_processes_spin.valueChanged.connect(lambda *_: self._refresh_farm_validation())
 
         if default_cluster_name:
             index = self._cluster_combo.findText(default_cluster_name)
@@ -195,6 +206,20 @@ class ClusterSubmissionDialog(QDialog):
 
         self._apply_cluster_defaults()
         self._apply_initial_config(default_cluster_name=default_cluster_name)
+        self._refresh_farm_validation()
+
+    def _refresh_farm_validation(self) -> None:
+        """Block or warn when the requested ranks cannot serve the farm counts."""
+
+        verdict = check_farm_counts(
+            self._farm_counts,
+            ranks=self._num_processes_spin.value(),
+            rank_label="processor cores",
+        )
+        ok_button = self._button_box.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_button is not None:
+            ok_button.setEnabled(not verdict.blocked)
+        self._farm_warning.setText(verdict.blocking_message or verdict.warning_message)
 
     def selected_cluster_name(self) -> str:
         return self._cluster_combo.currentText().strip()

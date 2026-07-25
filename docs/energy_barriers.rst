@@ -73,6 +73,10 @@ structures to enumerate distinct muon paths. The current implementation:
 If no valid symmetry-distinct path can be constructed, the workflow does not
 generate a row.
 
+The ``Diffusion Paths`` table shows each generated path's endpoints, charge
+state, and length, its configured task-farm count in the ``Farms`` column
+(``Off`` when farming is disabled), and its NEB job status.
+
 Generated path rows remain in the table after the endpoint selectors change,
 so previously generated hops stay available for inspection and submission
 while the user prepares another pair.
@@ -110,7 +114,8 @@ emphasizes:
 - electronic energy tolerance;
 - Monkhorst-Pack grid;
 - NEB spring, tangent, method, climbing-image, and normalization controls;
-- transition-state force, displacement, and energy tolerances.
+- transition-state force, displacement, and energy tolerances;
+- the CASTEP task-farm count (see `Task farming`_).
 
 The dialog also exposes the workflow-supported advanced parameter surface via
 the searchable ``Add Parameter`` flow so expert users can opt into additional
@@ -124,6 +129,56 @@ project. When the selected path uses a supercell-sized relaxed endpoint,
 MuFinder remaps the inherited k-point grid to preserve equivalent
 reciprocal-space sampling density relative to the project's recommended
 reference lattice.
+
+Task farming
+------------
+
+A NEB band is embarrassingly parallel across its images: each image's SCF is
+independent within a sweep. CASTEP exposes this as *task farming*, enabled with
+the ``NUM_FARMS`` parameter, which splits the MPI ranks into that many
+independent farms and gives each a contiguous block of images. A sweep then
+costs ``ceil(images / farms)`` SCFs instead of ``images``.
+
+Task farming is configured **per path**, in the ``Task farms`` control of the
+NEB configuration dialog, and defaults to 1 (disabled). It is a per-path
+setting rather than a submission-time one because ``NUM_FARMS`` is written into
+the job's ``.param`` when the job directory is generated, before any runtime is
+chosen. Only NEB supports it: CASTEP resets ``NUM_FARMS`` to 1 for any other
+``TSSEARCH_METHOD``.
+
+Two rules govern the choice, and they differ in severity:
+
+- **Farms must not exceed MPI ranks.** CASTEP stops immediately when they do.
+  MuFinder therefore refuses to submit such a job, in both the local and cluster
+  submission dialogs.
+- **Ranks should divide evenly by farms.** Each farm receives
+  ``floor(ranks / farms)`` ranks, and the remainder is assigned to no farm and
+  idles for the whole run. MuFinder warns but allows this.
+
+The relationship to the image count is an efficiency question only. Because
+climbing-image NEB requires an odd ``TSSEARCH_MAX_PATH_POINTS``, a perfectly
+balanced split needs an odd farm count that divides it. At MuFinder's default of
+11 images, 2, 3, 4 or 6 farms all keep the busiest farm at 4 images or fewer
+(92% balance), while 5 farms wastes over a quarter of the allocation. The
+configuration dialog shows the resulting split and balance live, so a poor
+pairing is visible before submission. The image count itself is left entirely to
+the user — it is a physical resolution choice, not a scheduling one.
+
+The farm count can only be changed while a path has no NEB job yet, or while
+its job is still in the ``defined`` state — the same rule that governs every
+other NEB parameter. This matters more for farming than for the rest: the
+configured count also tells MuFinder which output filenames to read, so it must
+not drift away from the ``NUM_FARMS`` already written into a submitted job's
+``.param``. To change it after a job has run, delete the job and rebuild it.
+
+Task farming changes the output filenames. CASTEP appends ``_farmNNN`` to the
+seedname before the calculation starts, so a farmed run writes
+``<seed>_farm001.castep`` … ``<seed>_farmNNN.castep`` and, for NEB,
+``<seed>_farm001.ts`` — **no** unfarmed ``<seed>.ts`` is produced at all. Every
+farm writes a complete, identical copy of the band, so MuFinder reads farm 001.
+The ``<seed>.castep`` file that a farmed run still writes contains only the
+header and timings, not the band or its convergence, which is why MuFinder
+parses the farmed file for the job's real outcome.
 
 Outputs and interpretation
 --------------------------

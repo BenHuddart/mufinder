@@ -1235,7 +1235,7 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
 
     window._ensure_energy_barriers_view()
     window._refresh_energy_barriers_view()
-    configure_button = window._energy_barriers_view._sources_table.cellWidget(0, 5)
+    configure_button = window._energy_barriers_view._sources_table.cellWidget(0, 6)
     assert configure_button.text() == "Configured..."
 
     jobs = window._energy_barriers_controller.materialize([candidate.key])
@@ -3006,3 +3006,351 @@ def test_main_window_persists_and_restores_geometry_via_qsettings(qapp) -> None:
             assert avail.top() <= frame.top()
     finally:
         reloaded_window.close()
+
+
+def test_main_window_task_farming_dispatch_covers_neb_jobs(qapp, tmp_path: Path) -> None:
+    """``_task_farming_for_job`` must resolve NEB jobs, not just quantum phonon ones.
+
+    Both runners use this to decide whether to read ``<seed>_farm001.*`` instead
+    of ``<seed>.*``. If a NEB job reports "unfarmed" here, the runner parses the
+    master ``.castep`` stub -- which carries neither the band nor the failure --
+    and the job's real outcome is lost.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "farm_dispatch.mufinder", "FarmDispatch")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="import",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    doc.structures[host.id] = host
+
+    job = service.add_job(
+        doc,
+        label="barrier_siteA_to_siteB_neb",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+    )
+    definition = service.register_nudged_elastic_band_definition(
+        doc,
+        input_structure_ids=[host.id],
+        input_site_ids=[],
+        parameters={
+            "method": "NEB",
+            "row_settings": {
+                "source-key": {
+                    "parameter_values": {},
+                    "added_advanced": [],
+                    "num_farms": 3,
+                }
+            },
+        },
+        output_directory=doc.project_root / "files" / "energy_barriers_neb",
+        job_ids_by_label={"source-key": str(job.id)},
+    )
+    assert definition is not None
+
+    assert window._task_farming_for_job(job) == (True, 3)
+    assert window._farm_counts_for_jobs([job]) == {"barrier_siteA_to_siteB_neb": 3}
+    window.close()
+
+
+def test_main_window_task_farming_reports_off_for_unfarmed_neb_jobs(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "farm_off.mufinder", "FarmOff")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="import",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    doc.structures[host.id] = host
+
+    job = service.add_job(
+        doc,
+        label="barrier_siteA_to_siteB_neb",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+    )
+    service.register_nudged_elastic_band_definition(
+        doc,
+        input_structure_ids=[host.id],
+        input_site_ids=[],
+        parameters={"method": "NEB"},
+        output_directory=doc.project_root / "files" / "energy_barriers_neb",
+        job_ids_by_label={"source-key": str(job.id)},
+    )
+
+    assert window._task_farming_for_job(job) == (False, None)
+    assert window._farm_counts_for_jobs([job]) == {}
+    window.close()
+
+
+def test_main_window_neb_submit_passes_farm_settings_to_local_runner(
+    qapp, tmp_path: Path, monkeypatch
+) -> None:
+    """The NEB row's farm count reaches the runner, which needs it to know that
+    the finished job's outputs carry CASTEP's ``_farmNNN`` seedname suffix.
+
+    ``_task_farming_for_job`` is consulted at five separate call sites; this
+    pins the local submit path end to end so a missed site cannot regress
+    silently into "job completed but no .ts found"."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "farm_submit.mufinder", "FarmSubmit")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="import",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    doc.structures[host.id] = host
+
+    job = service.add_job(
+        doc,
+        label="barrier_siteA_to_siteB_neb",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+    )
+    service.register_nudged_elastic_band_definition(
+        doc,
+        input_structure_ids=[host.id],
+        input_site_ids=[],
+        parameters={
+            "method": "NEB",
+            "row_settings": {
+                "source-key": {
+                    "parameter_values": {},
+                    "added_advanced": [],
+                    "num_farms": 4,
+                }
+            },
+        },
+        output_directory=doc.project_root / "files" / "energy_barriers_neb",
+        job_ids_by_label={"source-key": str(job.id)},
+    )
+    output_dir = doc.project_root / "files" / "energy_barriers_neb" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    submit_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        window._local_runner,
+        "submit",
+        lambda **kwargs: submit_calls.append(kwargs),
+    )
+
+    window._job_execution.submit_local_jobs(
+        [job],
+        num_cores=8,
+        max_concurrent=1,
+        castep_executable="/bin/castep",
+        mpirun_path="/bin/mpirun",
+        eligible_statuses={JobStatus.DEFINED},
+        task_farming_for_job=window._task_farming_for_job,
+        retrieve_flags_for_job=window._cluster_retrieve_flags,
+    )
+
+    assert len(submit_calls) == 1
+    assert submit_calls[0]["task_farming_enabled"] is True
+    assert submit_calls[0]["num_farms"] == 4
+    assert submit_calls[0]["retrieve_ts"] is True
+    window.close()
+
+
+def test_main_window_neb_configure_is_read_only_once_a_job_exists(
+    qapp, tmp_path: Path
+) -> None:
+    """A row whose NEB job is FAILED is not "ready", so its configuration --
+    including the farm count -- cannot be edited.
+
+    This is what keeps the farm count in the row extras (which decides the
+    filenames the runner looks for) in step with the NUM_FARMS already written
+    into the job's .param (which decides what CASTEP does). ``materialize``
+    rewrites the job directory only while the job is DEFINED, so if a FAILED row
+    could be reconfigured the two would diverge and a successful run would be
+    reported as a missing .ts."""
+
+    from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
+
+    assert JobStatus.FAILED.value not in READY_WORKFLOW_ROW_STATUSES
+    assert JobStatus.CANCELLED.value not in READY_WORKFLOW_ROW_STATUSES
+    assert JobStatus.COMPLETED.value not in READY_WORKFLOW_ROW_STATUSES
+    assert JobStatus.DEFINED.value in READY_WORKFLOW_ROW_STATUSES
+
+
+def test_main_window_fallback_collection_reads_farmed_ts(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The no-carrier fallback path must resolve the farm count too.
+
+    ``_on_local_job_finished`` collects synchronously when no artifacts carrier
+    is supplied (reconciliation and retry paths). Collecting at the default of
+    one farm there would look for <seed>.ts, which a task-farmed run never
+    writes -- failing a job that actually succeeded."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "farmed_fallback.mufinder", "FarmedFallback")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="barrier_siteA_to_siteB_farmed_neb",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+    )
+    service.register_nudged_elastic_band_definition(
+        doc,
+        input_structure_ids=[host.id],
+        input_site_ids=[],
+        parameters={
+            "method": "NEB",
+            "row_settings": {
+                "source-key": {
+                    "parameter_values": {},
+                    "added_advanced": [],
+                    "num_farms": 3,
+                }
+            },
+        },
+        output_directory=doc.project_root / "files" / "energy_barriers_neb",
+        job_ids_by_label={"source-key": str(job.id)},
+    )
+
+    output_dir = window._job_output_directory(job)
+    assert output_dir is not None
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # Exactly what a farmed CASTEP run leaves behind: the band under the farm
+    # seedname, and no unfarmed .ts at all.
+    (output_dir / f"{output_dir.name}_farm001.ts").write_text("placeholder", encoding="utf-8")
+    assert not (output_dir / f"{output_dir.name}.ts").exists()
+
+    def _fake_parse(_path):
+        return TransitionStatePath(
+            images=(
+                TransitionStateImage(
+                    label="REA",
+                    iteration=1,
+                    reaction_coordinate=0.0,
+                    energy=-1.0,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.5, 2.5, 2.5)),
+                    forces=((0.0, 0.0, 0.0),) * 2,
+                ),
+                TransitionStateImage(
+                    label="TST",
+                    iteration=1,
+                    reaction_coordinate=0.5,
+                    energy=-0.8,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.5, 2.5, 2.5)),
+                    forces=((0.0, 0.0, 0.0),) * 2,
+                ),
+            )
+        )
+
+    monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
+
+    window._on_local_job_finished(
+        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    )
+
+    assert job.status is not JobStatus.FAILED
+    stored = next(iter(doc.results.values()))
+    assert stored.result_type == NUDGED_ELASTIC_BAND_CALC_TYPE
+    assert stored.data["num_images"] == 2
+    # The recorded trajectory path is the farmed file the collector actually read.
+    assert stored.data["transition_state_file"].endswith("_farm001.ts")
+    window.close()
+
+
+def test_main_window_missing_farmed_ts_names_the_farmed_file(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing-output failure names the file the collector looked for.
+
+    Reporting <seed>.ts for a farmed job would send the user hunting for a file
+    CASTEP never writes."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "farmed_missing.mufinder", "FarmedMissing")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="barrier_siteA_to_siteB_farmed_neb",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+    )
+    service.register_nudged_elastic_band_definition(
+        doc,
+        input_structure_ids=[host.id],
+        input_site_ids=[],
+        parameters={
+            "method": "NEB",
+            "row_settings": {
+                "source-key": {
+                    "parameter_values": {},
+                    "added_advanced": [],
+                    "num_farms": 2,
+                }
+            },
+        },
+        output_directory=doc.project_root / "files" / "energy_barriers_neb",
+        job_ids_by_label={"source-key": str(job.id)},
+    )
+    output_dir = window._job_output_directory(job)
+    assert output_dir is not None
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    failures: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_on_local_job_failed",
+        lambda _job_id, message: failures.append(message),
+    )
+
+    window._on_local_job_finished(
+        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    )
+
+    assert len(failures) == 1
+    assert "_farm001.ts" in failures[0]
+    window.close()

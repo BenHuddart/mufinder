@@ -51,6 +51,9 @@ class NudgedElasticBandJobConfig:
 
     source: NudgedElasticBandSource
     method: str = "NEB"
+    # CASTEP task farms for the band. Each farm runs the SCF for a contiguous block of
+    # images, so the sweep cost falls as ceil(images / farms). 1 disables farming.
+    num_farms: int = 1
     cell_overrides: CellTemplate | None = None
     param_overrides: ParamTemplate | None = None
 
@@ -100,6 +103,7 @@ def expand_nudged_elastic_band_jobs(
                     "calc_type": NUDGED_ELASTIC_BAND_CALC_TYPE,
                     "label": label,
                     "tssearch_method": config.method,
+                    "num_farms": max(1, int(config.num_farms)),
                     "source_site_ids": [str(value) for value in config.source.source_site_ids],
                     "source_relaxation_run_ids": [str(value) for value in config.source.source_relaxation_run_ids],
                     "source_relaxation_job_ids": [
@@ -144,25 +148,34 @@ def _neb_param_base_template(config: NudgedElasticBandJobConfig) -> ParamTemplat
     return _nudged_elastic_band_param_template(
         method=config.method,
         atomic_spins=config.source.reactant_structure.atomic_spins,
+        num_farms=config.num_farms,
     )
 
 
-def _nudged_elastic_band_param_template(*, method: str, atomic_spins: tuple[float, ...] | None) -> ParamTemplate:
+def _nudged_elastic_band_param_template(
+    *,
+    method: str,
+    atomic_spins: tuple[float, ...] | None,
+    num_farms: int = 1,
+) -> ParamTemplate:
     # Reuse the shared transition-state template (task + method + spin handling) and
     # add the climbing-image flag so the central bead lands on the saddle (the barrier).
     # The image count (`tssearch_max_path_points`) and tolerances come from the
     # workflow/UI configuration; CASTEP requires an odd image count when climbing.
     base = _transition_state_param_template(method=method, atomic_spins=atomic_spins)
-    return ParamTemplate(
-        keywords=(
-            *base.keywords,
-            KeywordAssignment("tssearch_neb_climbing", True),
-            # Odd default so the climbing image sits on the saddle without CASTEP silently
-            # bumping the count; 11 gives a smoother, better-resolved band than the minimum.
-            # User/UI config may override this.
-            KeywordAssignment("tssearch_max_path_points", 11),
-        )
-    )
+    keywords = [
+        *base.keywords,
+        KeywordAssignment("tssearch_neb_climbing", True),
+        # Odd default so the climbing image sits on the saddle without CASTEP silently
+        # bumping the count; 11 gives a smoother, better-resolved band than the minimum.
+        # User/UI config may override this.
+        KeywordAssignment("tssearch_max_path_points", 11),
+    ]
+    # Only NEB is farm-aware: CASTEP's parameters_validate resets NUM_FARMS to 1 (with a
+    # warning) for any other TSSEARCH_METHOD, so emitting it there would be noise.
+    if int(num_farms) > 1:
+        keywords.append(KeywordAssignment("num_farms", max(1, int(num_farms))))
+    return ParamTemplate(keywords=tuple(keywords))
 
 
 def _transition_state_param_template(*, method: str, atomic_spins: tuple[float, ...] | None) -> ParamTemplate:

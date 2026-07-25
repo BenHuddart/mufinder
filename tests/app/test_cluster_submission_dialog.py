@@ -526,3 +526,36 @@ def test_cluster_submission_dialog_clears_mem_per_cpu_when_switching_clusters(qa
     assert dialog._mem_per_cpu_check.isChecked() is False
     assert dialog.config().mem_per_cpu_gb is None
     dialog.close()
+
+
+def test_cluster_dialog_blocks_when_farms_exceed_processes(qapp) -> None:
+    # farms > MPI ranks is a hard CASTEP abort, not a slow run.
+    dialog = ClusterSubmissionDialog(
+        job_labels=["barrier_siteA_to_siteB_neb"],
+        cluster_configs=_configs(),
+        farm_counts={"barrier_siteA_to_siteB_neb": 6},
+    )
+    dialog._num_processes_spin.setValue(4)
+
+    ok_button = dialog._button_box.button(dialog_module.QDialogButtonBox.StandardButton.Ok)
+    assert ok_button.isEnabled() is False
+    assert "at least 6" in dialog._farm_warning.text()
+
+    dialog._num_processes_spin.setValue(12)
+    assert ok_button.isEnabled() is True
+    assert dialog._farm_warning.text() == ""
+    dialog.close()
+
+
+def test_cluster_dialog_warns_on_uneven_farm_division(qapp) -> None:
+    dialog = ClusterSubmissionDialog(
+        job_labels=["barrier_siteA_to_siteB_neb"],
+        cluster_configs=_configs(),
+        farm_counts={"barrier_siteA_to_siteB_neb": 5},
+    )
+    dialog._num_processes_spin.setValue(12)
+
+    ok_button = dialog._button_box.button(dialog_module.QDialogButtonBox.StandardButton.Ok)
+    assert ok_button.isEnabled() is True
+    assert "idle" in dialog._farm_warning.text().lower()
+    dialog.close()

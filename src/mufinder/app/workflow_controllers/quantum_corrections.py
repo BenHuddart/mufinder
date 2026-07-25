@@ -35,7 +35,7 @@ continuation. This is the richest migration onto
 
 - **Task farming is NOT this controller's concern.** The stage-2 phonon jobs are
   task-farmed, but that is applied by ``MainWindow._submit_jobs_locally`` in the
-  shared submit backend (``task_farming_for_job=self._quantum_task_farming_for_job``,
+  shared submit backend (``task_farming_for_job=self._task_farming_for_job``,
   which filters by job) for *all* workflows. This controller uses the base
   single-group :meth:`submission_groups` default and does not touch task farming.
 

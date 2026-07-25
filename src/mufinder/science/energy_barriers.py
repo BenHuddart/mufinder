@@ -53,6 +53,65 @@ class PreparedTransitionState:
     product: Structure
 
 
+@dataclass(frozen=True, slots=True)
+class NebFarmDistribution:
+    """How CASTEP spreads a NEB band's images over task farms.
+
+    ``images`` is ``TSSEARCH_MAX_PATH_POINTS`` -- the intermediate images only.
+    CASTEP's first sweep also computes the two endpoints, so it distributes
+    ``images + 2``; every later sweep distributes ``images``. Wall-clock per
+    sweep tracks the *busiest* farm, hence ``efficiency`` below.
+    """
+
+    images: int
+    farms: int
+    #: Images per farm on the first sweep (endpoints included).
+    first_sweep_counts: tuple[int, ...]
+    #: Images per farm on every subsequent sweep -- the steady-state cost.
+    steady_counts: tuple[int, ...]
+    #: Steady-state parallel efficiency, ``images / (farms * max(steady_counts))``.
+    #: 1.0 when every farm carries the same load.
+    efficiency: float
+    #: Farms with no steady-state work at all (``farms > images``).
+    idle_farms: int
+
+
+def neb_farm_image_counts(total_images: int, farms: int) -> tuple[int, ...]:
+    """Return the per-farm image counts for a CASTEP NEB sweep.
+
+    Mirrors ``tssearch_neb_farm_indices`` in CASTEP's ``tssearch_neb.f90``: a
+    contiguous block split where the first ``total_images % farms`` farms each
+    take one extra image.
+    """
+
+    total = max(0, int(total_images))
+    count = max(1, int(farms))
+    quotient, remainder = divmod(total, count)
+    return tuple(quotient + 1 if index < remainder else quotient for index in range(count))
+
+
+def neb_farm_distribution(*, images: int, farms: int) -> NebFarmDistribution:
+    """Describe the image-to-farm split for a NEB band.
+
+    Used both for the configuration hint shown to the user and for
+    submission-time validation, so the arithmetic lives in exactly one place.
+    """
+
+    image_count = max(0, int(images))
+    farm_count = max(1, int(farms))
+    steady = neb_farm_image_counts(image_count, farm_count)
+    busiest = max(steady) if steady else 0
+    efficiency = (image_count / (farm_count * busiest)) if busiest else 0.0
+    return NebFarmDistribution(
+        images=image_count,
+        farms=farm_count,
+        first_sweep_counts=neb_farm_image_counts(image_count + 2, farm_count),
+        steady_counts=steady,
+        efficiency=efficiency,
+        idle_farms=sum(1 for count in steady if count == 0),
+    )
+
+
 def enumerate_distinct_muon_paths(
     *,
     pristine_structure: Structure,

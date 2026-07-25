@@ -86,6 +86,8 @@ class EnergyBarrierSourceRow:
     charge_state: str
     path_length: str
     status: str
+    #: Configured CASTEP task-farm count, rendered as "Off" when farming is disabled.
+    farms: str = "Off"
     configured: bool = False
 
 
@@ -646,8 +648,8 @@ class EnergyBarriersWidget(QWidget):
         style_hint_text(source_hint)
         sources_layout.addWidget(source_hint)
         self._sources_table = create_workflow_table(
-            ("Reactant", "Product", "Charge", "Path Length", "Status", "Parameters", "View"),
-            resize_to_contents_columns=(5, 6),
+            ("Reactant", "Product", "Charge", "Path Length", "Farms", "Status", "Parameters", "View"),
+            resize_to_contents_columns=(6, 7),
         )
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.itemSelectionChanged.connect(self._update_actions)
@@ -1118,7 +1120,7 @@ class EnergyBarriersWidget(QWidget):
 
 # Column index of the "Status" header in the Diffusion Paths table (see create_workflow_table
 # call); the row tuple writes reactant, product, charge, path length, then status.
-_NEB_STATUS_COLUMN = 4
+_NEB_STATUS_COLUMN = 5
 
 # Column index of the "Status" header in the Completed NEB Calculations table (see
 # create_workflow_table call); the row tuple writes path, charge, length, barriers, ΔE,
@@ -1140,7 +1142,9 @@ def _fill_source_table(
     table.setRowCount(len(rows))
     key_by_row: dict[int, str] = {i: row.key for i, row in enumerate(rows)}
     for row_index, row in enumerate(rows):
-        for column, value in enumerate((row.reactant, row.product, row.charge_state, row.path_length, row.status)):
+        for column, value in enumerate(
+            (row.reactant, row.product, row.charge_state, row.path_length, row.farms, row.status)
+        ):
             set_workflow_table_item(table, row_index, column, value)
         # Colour the Status cell with the project-standard per-status palette (matching the
         # relaxation/convergence tables), so a path's state reads at a glance.
@@ -1168,12 +1172,12 @@ def _fill_source_table(
                 ))
             )
         )
-        table.setCellWidget(row_index, 5, configure_button)
+        table.setCellWidget(row_index, 6, configure_button)
 
         view_button = QPushButton("View...", table)
         view_button.setToolTip("Open the path viewer for this diffusion path.")
         view_button.clicked.connect(lambda _checked=False, key=row.key: view_requested(key))
-        table.setCellWidget(row_index, 6, view_button)
+        table.setCellWidget(row_index, 7, view_button)
     table.resizeRowsToContents()
 
 

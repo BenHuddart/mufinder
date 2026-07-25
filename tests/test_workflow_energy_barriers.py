@@ -113,3 +113,52 @@ def test_expand_nudged_elastic_band_jobs_without_intermediate_omits_block() -> N
     assert any(
         keyword.name == "tssearch_neb_climbing" and keyword.value is True for keyword in job.param_file.keywords
     )
+
+def _neb_source() -> NudgedElasticBandSource:
+    return NudgedElasticBandSource(
+        label="siteA_to_siteB_path1_neb",
+        reactant_structure=_structure_spec(),
+        product_positions_frac=PositionBlock(
+            positions=(
+                AtomicPosition("Si", (0.0, 0.0, 0.0)),
+                AtomicPosition("Si", (2.0, 2.0, 2.0)),
+                AtomicPosition("H:mu", (3.0, 1.0, 1.0)),
+            ),
+            unit="ang",
+        ),
+        intermediate_positions_frac=None,
+        product_atomic_spins=(1.0, -1.0, 0.0),
+        source_site_ids=(uuid4(), uuid4()),
+        source_relaxation_run_ids=(uuid4(), uuid4()),
+        source_relaxation_job_ids=(uuid4(), uuid4()),
+        path_length_ang=2.0,
+    )
+
+
+def _param_value(job, name: str):
+    for keyword in job.param_file.keywords:
+        if keyword.name == name:
+            return keyword.value
+    return None
+
+
+def test_expand_nudged_elastic_band_jobs_emits_num_farms_when_farming() -> None:
+    jobs = expand_nudged_elastic_band_jobs(
+        jobs=[NudgedElasticBandJobConfig(source=_neb_source(), num_farms=3)],
+        name_prefix="barrier",
+    )
+
+    assert _param_value(jobs[0], "num_farms") == 3
+    assert jobs[0].provenance["num_farms"] == 3
+
+
+def test_expand_nudged_elastic_band_jobs_omits_num_farms_when_disabled() -> None:
+    # CASTEP defaults NUM_FARMS to 1; writing it explicitly would be noise, and a
+    # value of 1 is exactly "farming off".
+    jobs = expand_nudged_elastic_band_jobs(
+        jobs=[NudgedElasticBandJobConfig(source=_neb_source())],
+        name_prefix="barrier",
+    )
+
+    assert _param_value(jobs[0], "num_farms") is None
+    assert jobs[0].provenance["num_farms"] == 1

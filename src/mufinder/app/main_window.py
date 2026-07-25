@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import logging
@@ -178,7 +178,11 @@ from mufinder.app.theme import (
     status_brush,
     use_square_top_table_corners,
 )
-from mufinder.app.workflow_dialogs import EnergyBarrierPathViewerDialog, QuantumCorrectionsConfigDialog
+from mufinder.app.workflow_dialogs import (
+    EnergyBarrierPathViewerDialog,
+    NudgedElasticBandConfigDialog,
+    QuantumCorrectionsConfigDialog,
+)
 from mufinder.app.workflow_parameters import build_workflow_parameter_surface, kpoint_exclusive_hint, workflow_basic_parameter_names
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
@@ -4712,8 +4716,8 @@ class MainWindow(QMainWindow):
                 seed_name=self._job_seed_name(job),
                 local_output_dir=output_dir,
                 cluster_name=job.execution_target,
-                task_farming_enabled=self._quantum_task_farming_for_job(job)[0],
-                num_farms=self._quantum_task_farming_for_job(job)[1],
+                task_farming_enabled=self._task_farming_for_job(job)[0],
+                num_farms=self._task_farming_for_job(job)[1],
                 **self._cluster_retrieve_flags(job),
             )
             retried += 1
@@ -5291,7 +5295,7 @@ class MainWindow(QMainWindow):
         return values, advanced, extras
 
     @staticmethod
-    def _quantum_num_farms_from_extras(extras: Mapping[str, object]) -> int:
+    def _num_farms_from_extras(extras: Mapping[str, object]) -> int:
         raw = extras.get("num_farms", 1)
         try:
             return max(1, int(raw))
@@ -6424,15 +6428,55 @@ class MainWindow(QMainWindow):
                         return definition, str(key)
         return None, None
 
-    def _quantum_task_farming_for_job(self, job: Job) -> tuple[bool, int | None]:
-        if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
+    def _task_farming_for_job(self, job: Job) -> tuple[bool, int | None]:
+        """Return ``(farming_enabled, num_farms)`` for any farm-aware calc type.
+
+        Both runners use this to decide which output files a finished job wrote:
+        task farming renames every output to ``<seed>_farmNNN.<ext>``, so a job
+        whose farm count is misreported here is read from the wrong files. The
+        quantum-phonon and NEB workflows each store their farm count in the
+        owning definition's per-row configuration extras; every other calc type
+        is unfarmed.
+        """
+
+        if job.calc_type == QUANTUM_PHONON_CALC_TYPE:
+            definition, key = self._quantum_definition_and_key_for_job(job)
+        elif job.calc_type == NUDGED_ELASTIC_BAND_CALC_TYPE:
+            definition, key = self._energy_barrier_neb_definition_and_key_for_job(job)
+        else:
             return False, None
-        definition, key = self._quantum_definition_and_key_for_job(job)
         if definition is None or key is None:
             return False, None
         _params, _advanced, extras = self._workflow_row_configuration(definition, key)
-        num_farms = self._quantum_num_farms_from_extras(extras)
+        num_farms = self._num_farms_from_extras(extras)
         return num_farms > 1, (num_farms if num_farms > 1 else None)
+
+    def _farm_counts_for_jobs(self, jobs: Sequence[Job]) -> dict[str, int]:
+        """Map job label to configured farm count, for submission-time validation.
+
+        Only farmed jobs are included: an empty mapping means nothing to check.
+        Labels (not ids) are the key because the submission dialogs name the
+        offending job back to the user.
+        """
+
+        counts: dict[str, int] = {}
+        for job in jobs:
+            enabled, num_farms = self._task_farming_for_job(job)
+            if enabled and num_farms:
+                counts[job.label] = int(num_farms)
+        return counts
+
+    def _energy_barrier_neb_definition_and_key_for_job(self, job: Job) -> tuple[object | None, str | None]:
+        """Locate the NEB definition and source key that materialized ``job``."""
+
+        for definition in self._energy_barrier_neb_definitions():
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict):
+                continue
+            for key, value in mapping.items():
+                if str(value) == str(job.id):
+                    return definition, str(key)
+        return None, None
 
     def _quantum_continuation_remote_target(self, job: Job, *, cluster_name: str) -> str:
         if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
@@ -6480,6 +6524,7 @@ class MainWindow(QMainWindow):
         dialog = LocalSubmissionDialog(
             job_labels=[job.label for job in eligible_jobs],
             mpirun_configured=bool(setup.mpirun_path),
+            farm_counts=self._farm_counts_for_jobs(eligible_jobs),
             parent=self,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
@@ -6494,7 +6539,7 @@ class MainWindow(QMainWindow):
             castep_executable=setup.executable_path,
             mpirun_path=setup.mpirun_path,
             eligible_statuses=allowed_statuses,
-            task_farming_for_job=self._quantum_task_farming_for_job,
+            task_farming_for_job=self._task_farming_for_job,
             retrieve_flags_for_job=self._cluster_retrieve_flags,
         )
 
@@ -6580,6 +6625,7 @@ class MainWindow(QMainWindow):
             workflow_type=workflow_type,
             connected_cluster_name=self._cluster_runner.connected_cluster_name,
             connected_username=self._cluster_runner.connected_username,
+            farm_counts=self._farm_counts_for_jobs(eligible_jobs),
             parent=self,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
@@ -6727,7 +6773,7 @@ class MainWindow(QMainWindow):
                 continue
             seed_name = seed_name_by_job.get(job.id, self._job_seed_name(job))
             remote_target = remote_target_by_job.get(job.id)
-            task_farming_enabled, num_farms = self._quantum_task_farming_for_job(job)
+            task_farming_enabled, num_farms = self._task_farming_for_job(job)
             prepared = self._job_execution.prepare_cluster_submission(
                 ClusterJobSubmission(
                     job=job,
@@ -7586,7 +7632,7 @@ class MainWindow(QMainWindow):
                 )
             ),
             quantum_num_farms_from_extras=(
-                lambda extras: self._quantum_num_farms_from_extras(extras)
+                lambda extras: self._num_farms_from_extras(extras)
             ),
             quantum_source_label=(
                 lambda candidate: self._quantum_source_label(candidate)
@@ -7664,6 +7710,12 @@ class MainWindow(QMainWindow):
                         definition, key, **kwargs
                     )
                 )
+            ),
+            num_farms_from_extras=(
+                lambda extras: self._num_farms_from_extras(extras)
+            ),
+            energy_barrier_neb_row_extras=(
+                lambda definition, key: self._workflow_row_configuration(definition, key)[2]
             ),
             handle_structure_host_mismatch=(
                 lambda mismatch: self._handle_structure_host_mismatch(mismatch)
@@ -8387,6 +8439,9 @@ class MainWindow(QMainWindow):
             output_dir / f"{seed_name}-out.cell",
             output_dir / f"{seed_name}.phonon",
             output_dir / f"{seed_name}.ts",
+            # Task farming writes the band to <seed>_farm001.ts; there is no
+            # unfarmed .ts at all for a farmed NEB run.
+            output_dir / f"{seed_name}_farm001.ts",
         ]
         files: list[str] = []
         for path in paths:
@@ -8460,12 +8515,17 @@ class MainWindow(QMainWindow):
         # file is read once, just on the GUI thread for those paths.
         if artifacts is None:
             flags = self._cluster_retrieve_flags(job)
+            # The farm count must be resolved here too: a task-farmed job writes
+            # <seed>_farm001.ts and no <seed>.ts, so collecting at the default of
+            # one farm would report a successful farmed job's output as missing.
+            _farming_enabled, farm_count = self._task_farming_for_job(job)
             artifacts = collect_job_artifacts(
                 self._job_output_directory(job),
                 self._job_seed_name(job),
                 want_out_cell=bool(flags.get("retrieve_out_cell", False)),
                 want_phonon=bool(flags.get("retrieve_phonon", False)),
                 want_ts=bool(flags.get("retrieve_ts", False)),
+                num_farms=farm_count or 1,
             )
 
         if (
@@ -8548,11 +8608,18 @@ class MainWindow(QMainWindow):
             # carried on ``artifacts.transition_state`` and re-used by
             # ``EnergyBarriersController.build_result`` (via merge_controller_result
             # below) with no second disk read.
-            seed_name = self._job_seed_name(job)
             if artifacts.ts_missing:
+                # Name the file the collector actually looked for: under task
+                # farming that is <seed>_farm001.ts, so reporting <seed>.ts would
+                # send the user hunting for a file CASTEP never writes.
+                expected_ts = (
+                    artifacts.ts_path.name
+                    if artifacts.ts_path is not None
+                    else f"{self._job_seed_name(job)}.ts"
+                )
                 self._on_local_job_failed(
                     job_id,
-                    f"Expected CASTEP path output was not found: {seed_name}.ts",
+                    f"Expected CASTEP path output was not found: {expected_ts}",
                 )
                 return
             if artifacts.ts_error is not None:
@@ -8997,7 +9064,7 @@ class MainWindow(QMainWindow):
             if output_dir is None:
                 continue
 
-            task_farming_enabled, num_farms = self._quantum_task_farming_for_job(job)
+            task_farming_enabled, num_farms = self._task_farming_for_job(job)
             self._cluster_runner.track_existing_job(
                 job_id=job.id,
                 remote_job_id=remote_job_id,
@@ -13209,7 +13276,7 @@ class MainWindow(QMainWindow):
             else ""
         )
         num_farms_values = [
-            self._quantum_num_farms_from_extras(self._workflow_row_configuration(definition, candidate.key)[2])
+            self._num_farms_from_extras(self._workflow_row_configuration(definition, candidate.key)[2])
             for candidate in candidates
         ]
         common_num_farms = (
@@ -13318,14 +13385,22 @@ class MainWindow(QMainWindow):
             for candidate in candidates
         )
 
-        dialog = ParameterDialog(
+        # Show a farm count only when every selected path already agrees;
+        # a mixed selection opens at 1. Accepting the dialog then writes the
+        # shown value to every selected row, as batch configure does for the
+        # parameter rows too.
+        num_farms_values = [
+            self._num_farms_from_extras(self._workflow_row_configuration(definition, candidate.key)[2])
+            for candidate in candidates
+        ]
+        common_num_farms = (
+            num_farms_values[0]
+            if num_farms_values and all(value == num_farms_values[0] for value in num_farms_values)
+            else 1
+        )
+        dialog = NudgedElasticBandConfigDialog(
             specs=self._energy_barrier_neb_parameter_specs(),
-            workflow_stage="energy_barriers",
-            locked_values={
-                "task": "TRANSITIONSTATESEARCH",
-                "tssearch_method": "NEB",
-                "tssearch_neb_climbing": "TRUE",
-            },
+            num_farms=common_num_farms,
             intro_text=(
                 f"Path: {str(candidates[0].source.get('label', '')).strip() or candidates[0].key}"
                 if len(candidates) == 1
@@ -13345,7 +13420,10 @@ class MainWindow(QMainWindow):
         if read_only:
             return
 
-        row_payload = self._workflow_dialog_payload(dialog)
+        row_payload = self._workflow_dialog_payload(
+            dialog,
+            extra_payload={"num_farms": dialog.num_farms()},
+        )
         definition = self._ensure_energy_barrier_neb_definition([candidate.key for candidate in candidates])
         if definition is None:
             return
