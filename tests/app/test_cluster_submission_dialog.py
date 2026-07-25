@@ -431,3 +431,98 @@ def test_cluster_submission_dialog_addqueue_defaults_and_optional_walltime(
     assert config.comment == "overnight"
     assert dialog._queue_name_edit.isHidden() is False
     dialog.close()
+
+
+def test_cluster_submission_dialog_requests_no_memory_by_default(qapp) -> None:
+    # Unchecked by default so an upgrade never silently changes a generated
+    # batch script that used to carry no memory directive.
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=_configs())
+
+    assert dialog._mem_per_cpu_check.isChecked() is False
+    assert dialog._mem_per_cpu_edit.isEnabled() is False
+    assert dialog.config().mem_per_cpu_gb is None
+    dialog.close()
+
+
+def test_cluster_submission_dialog_reports_enabled_mem_per_cpu(qapp) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=_configs())
+
+    dialog._mem_per_cpu_check.setChecked(True)
+    dialog._mem_per_cpu_edit.setValue(6.0)
+
+    assert dialog._mem_per_cpu_edit.isEnabled() is True
+    assert dialog.config().mem_per_cpu_gb == 6.0
+    dialog.close()
+
+
+def test_cluster_submission_dialog_mem_per_cpu_is_hidden_for_addqueue(qapp) -> None:
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=_configs())
+
+    assert dialog._mem_per_cpu_check.isHidden() is False
+
+    dialog._cluster_combo.setCurrentText("redwood")
+
+    assert dialog._mem_per_cpu_check.isHidden() is True
+    assert dialog._mem_per_cpu_edit.isHidden() is True
+    dialog.close()
+
+
+def test_cluster_submission_dialog_drops_mem_per_cpu_for_addqueue(qapp) -> None:
+    # addqueue takes memory through its own -m argument, so even a stale checked
+    # state must not leak a per-CPU request into an addqueue submission.
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=_configs())
+    dialog._mem_per_cpu_check.setChecked(True)
+    dialog._mem_per_cpu_edit.setValue(6.0)
+
+    dialog._cluster_combo.setCurrentText("redwood")
+    dialog._mem_per_cpu_check.setChecked(True)
+
+    assert dialog.config().mem_per_cpu_gb is None
+    assert dialog.config().memory_gb == 7.5
+    dialog.close()
+
+
+def test_cluster_submission_dialog_seeds_mem_per_cpu_from_cluster_default(qapp) -> None:
+    configs = list(_configs())
+    configs[0] = replace(configs[0], default_mem_per_cpu_gb=8.0)
+
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=configs)
+
+    assert dialog._mem_per_cpu_check.isChecked() is True
+    assert dialog._mem_per_cpu_edit.isEnabled() is True
+    assert dialog.config().mem_per_cpu_gb == 8.0
+    dialog.close()
+
+
+def test_cluster_submission_dialog_restores_mem_per_cpu_from_initial_config(qapp) -> None:
+    initial = ClusterSubmissionConfig(
+        cluster_name="alpha",
+        working_directory="/work/alice/project_a",
+        username="alice",
+        job_name_prefix="positivemuon",
+        num_processes=144,
+        walltime="12:00:00",
+        mem_per_cpu_gb=6.0,
+    )
+
+    dialog = ClusterSubmissionDialog(
+        job_labels=["job_a"],
+        cluster_configs=_configs(),
+        initial_config=initial,
+    )
+
+    assert dialog._mem_per_cpu_check.isChecked() is True
+    assert dialog.config().mem_per_cpu_gb == 6.0
+    dialog.close()
+
+
+def test_cluster_submission_dialog_clears_mem_per_cpu_when_switching_clusters(qapp) -> None:
+    configs = list(_configs())
+    configs[0] = replace(configs[0], default_mem_per_cpu_gb=8.0)
+    dialog = ClusterSubmissionDialog(job_labels=["job_a"], cluster_configs=configs)
+
+    dialog._cluster_combo.setCurrentText("beta")
+
+    assert dialog._mem_per_cpu_check.isChecked() is False
+    assert dialog.config().mem_per_cpu_gb is None
+    dialog.close()

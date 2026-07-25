@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_cluster_configs, save_cluster_configs
 
 
@@ -281,3 +283,70 @@ def test_cluster_setup_saved_redwood_hostname_override_disables_builtin_jump_def
     assert redwood is not None
     assert redwood.jump_host_enabled is False
     assert redwood.jump_hostname == ""
+
+
+def test_cluster_setup_roundtrips_default_mem_per_cpu_for_slurm() -> None:
+    settings = _FakeSettings()
+
+    save_cluster_configs(
+        settings,
+        [
+            ClusterConfig(
+                name="scarf",
+                hostname="ui1.scarf.rl.ac.uk",
+                queue_system="SLURM",
+                default_mem_per_cpu_gb=6.0,
+            )
+        ],
+    )
+
+    loaded = load_cluster_configs(settings)
+    assert loaded[0].default_mem_per_cpu_gb == 6.0
+
+
+def test_cluster_setup_default_mem_per_cpu_defaults_to_unset() -> None:
+    settings = _FakeSettings()
+
+    save_cluster_configs(
+        settings,
+        [ClusterConfig(name="scarf", hostname="ui1.scarf.rl.ac.uk", queue_system="SLURM")],
+    )
+
+    loaded = load_cluster_configs(settings)
+    assert loaded[0].default_mem_per_cpu_gb is None
+
+
+@pytest.mark.parametrize("stored", ["", "bad-memory", 0, -3.0])
+def test_cluster_setup_rejects_non_positive_default_mem_per_cpu(stored: object) -> None:
+    settings = _FakeSettings()
+    save_cluster_configs(
+        settings,
+        [ClusterConfig(name="scarf", hostname="ui1.scarf.rl.ac.uk", queue_system="SLURM")],
+    )
+    settings.setValue("clusters/scarf/default_mem_per_cpu_gb", stored)
+
+    loaded = load_cluster_configs(settings)
+    assert loaded[0].default_mem_per_cpu_gb is None
+
+
+def test_cluster_setup_drops_default_mem_per_cpu_for_addqueue() -> None:
+    # --mem-per-cpu is a SLURM batch-script directive; addqueue has no use for
+    # it, so a stale value must never survive a save/load cycle there.
+    settings = _FakeSettings()
+
+    save_cluster_configs(
+        settings,
+        [
+            ClusterConfig(
+                name="redwood",
+                hostname="glamdring.physics.ox.ac.uk",
+                queue_system="ADDQUEUE",
+                default_walltime="",
+                default_mem_per_cpu_gb=6.0,
+            )
+        ],
+    )
+
+    loaded = load_cluster_configs(settings)
+    redwood = next(config for config in loaded if config.name == "redwood")
+    assert redwood.default_mem_per_cpu_gb is None

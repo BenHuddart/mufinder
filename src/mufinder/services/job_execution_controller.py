@@ -46,6 +46,7 @@ class ClusterJobSubmission:
     template_script_path: str
     cores_per_node: int
     memory_gb: float | None = None
+    mem_per_cpu_gb: float | None = None
     queue_name: str = ""
     comment: str = ""
     castep_executable: str = ""
@@ -300,6 +301,7 @@ class JobExecutionController:
             "template_script_path": request.template_script_path,
             "cores_per_node": request.cores_per_node,
             "memory_gb": request.memory_gb,
+            "mem_per_cpu_gb": request.mem_per_cpu_gb,
             "queue_name": request.queue_name,
             "comment": request.comment,
             "castep_executable": request.castep_executable,

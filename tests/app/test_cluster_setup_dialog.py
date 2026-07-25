@@ -490,3 +490,83 @@ def test_cluster_setup_dialog_username_change_can_sync_working_dir(
 
     assert dialog._working_dir_edit.text() == "/work4/isis/alice"
     dialog.close()
+
+
+def test_cluster_setup_dialog_saves_default_mem_per_cpu_for_slurm(qapp) -> None:
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings)
+
+    dialog._name_edit.setText("alpha")
+    dialog._hostname_edit.setText("alpha.example")
+    dialog._username_edit.setText("alice")
+    dialog._template_path_edit.setText("/templates/slurm.sh")
+    dialog._default_mem_per_cpu_check.setChecked(True)
+    dialog._default_mem_per_cpu_edit.setValue(6.0)
+
+    dialog._accept_and_save()
+
+    alpha = next(config for config in load_cluster_configs(settings) if config.name == "alpha")
+    assert alpha.default_mem_per_cpu_gb == 6.0
+    dialog.close()
+
+
+def test_cluster_setup_dialog_default_mem_per_cpu_is_unset_by_default(qapp) -> None:
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings)
+
+    dialog._name_edit.setText("alpha")
+    dialog._hostname_edit.setText("alpha.example")
+    dialog._username_edit.setText("alice")
+    dialog._template_path_edit.setText("/templates/slurm.sh")
+
+    assert dialog._default_mem_per_cpu_check.isChecked() is False
+    assert dialog._default_mem_per_cpu_edit.isEnabled() is False
+
+    dialog._accept_and_save()
+
+    alpha = next(config for config in load_cluster_configs(settings) if config.name == "alpha")
+    assert alpha.default_mem_per_cpu_gb is None
+    dialog.close()
+
+
+def test_cluster_setup_dialog_hides_default_mem_per_cpu_for_addqueue(qapp) -> None:
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings)
+
+    dialog._name_edit.setText("redwood")
+    dialog._hostname_edit.setText("glamdring.physics.ox.ac.uk")
+    dialog._username_edit.setText("alice")
+    dialog._default_mem_per_cpu_check.setChecked(True)
+    dialog._default_mem_per_cpu_edit.setValue(6.0)
+    dialog._queue_combo.setCurrentText("ADDQUEUE")
+    dialog._walltime_edit.setText("")
+    dialog._submit_command_edit.setText("/bin/addqueue")
+
+    assert dialog._default_mem_per_cpu_check.isHidden() is True
+    assert dialog._default_mem_per_cpu_edit.isHidden() is True
+
+    dialog._accept_and_save()
+
+    saved = next(config for config in load_cluster_configs(settings) if config.name == "redwood")
+    assert saved.default_mem_per_cpu_gb is None
+    dialog.close()
+
+
+def test_cluster_setup_dialog_round_trips_default_mem_per_cpu(qapp) -> None:
+    settings = _FakeSettings()
+    dialog = ClusterSetupDialog(settings=settings)
+    dialog._name_edit.setText("alpha")
+    dialog._hostname_edit.setText("alpha.example")
+    dialog._username_edit.setText("alice")
+    dialog._template_path_edit.setText("/templates/slurm.sh")
+    dialog._default_mem_per_cpu_check.setChecked(True)
+    dialog._default_mem_per_cpu_edit.setValue(7.5)
+    dialog._accept_and_save()
+    dialog.close()
+
+    reopened = ClusterSetupDialog(settings=settings)
+    reopened._cluster_combo.setCurrentText("alpha")
+
+    assert reopened._default_mem_per_cpu_check.isChecked() is True
+    assert reopened._default_mem_per_cpu_edit.value() == 7.5
+    reopened.close()

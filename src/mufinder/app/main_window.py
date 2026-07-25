@@ -6741,6 +6741,7 @@ class MainWindow(QMainWindow):
                     template_script_path=selected_cluster.template_script_path,
                     cores_per_node=selected_cluster.cores_per_node,
                     memory_gb=getattr(submission, "memory_gb", None),
+                    mem_per_cpu_gb=getattr(submission, "mem_per_cpu_gb", None),
                     queue_name=getattr(submission, "queue_name", ""),
                     comment=getattr(submission, "comment", ""),
                     castep_executable=selected_cluster.castep_executable,
@@ -6847,6 +6848,15 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             memory_gb = None
 
+        mem_per_cpu_raw = payload.get("mem_per_cpu_gb")
+        mem_per_cpu_gb: float | None
+        try:
+            mem_per_cpu_gb = None if mem_per_cpu_raw in (None, "") else float(mem_per_cpu_raw)
+        except (TypeError, ValueError):
+            mem_per_cpu_gb = None
+        if mem_per_cpu_gb is not None and mem_per_cpu_gb <= 0:
+            mem_per_cpu_gb = None
+
         persisted_workflow_type = str(payload.get("workflow_type", "")).strip()
         same_workflow = (
             not workflow_type
@@ -6869,6 +6879,7 @@ class MainWindow(QMainWindow):
             walltime=str(payload.get("walltime", "")).strip(),
             queue_name=str(payload.get("queue_name", "")).strip(),
             memory_gb=memory_gb,
+            mem_per_cpu_gb=mem_per_cpu_gb,
             comment=str(payload.get("comment", "")).strip(),
         )
 
@@ -6889,6 +6900,7 @@ class MainWindow(QMainWindow):
             "walltime": config.walltime,
             "queue_name": str(getattr(config, "queue_name", "")),
             "memory_gb": getattr(config, "memory_gb", None),
+            "mem_per_cpu_gb": getattr(config, "mem_per_cpu_gb", None),
             "comment": str(getattr(config, "comment", "")),
             "workflow_type": workflow_type,
         }

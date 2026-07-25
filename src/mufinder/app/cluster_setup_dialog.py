@@ -38,6 +38,10 @@ from mufinder.cluster_setup import ClusterConfig, load_cluster_configs, save_clu
 from mufinder.services.keychain import is_glamdring_keychain_supported, keychain_setup_help
 from mufinder.services.ssh_client import SSHConnection, SSHUnknownHostKeyError, save_trusted_host_key
 
+#: Pre-filled default per-CPU memory request for SLURM cluster profiles. Mirrors
+#: ``cluster_submission_dialog._DEFAULT_MEM_PER_CPU_GB``.
+_DEFAULT_MEM_PER_CPU_GB = 6.0
+
 
 class ClusterSetupDialog(QDialog):
     """Manage persisted cluster configurations."""
@@ -165,6 +169,19 @@ class ClusterSetupDialog(QDialog):
         self._default_memory_spin.setDecimals(2)
         self._default_memory_spin.setSingleStep(0.5)
         self._default_memory_spin.setValue(7.5)
+        self._default_mem_per_cpu_check = QCheckBox(
+            "Request default memory per CPU (GB)",
+            form_group,
+        )
+        self._default_mem_per_cpu_edit = DecimalLineEdit(form_group)
+        self._default_mem_per_cpu_edit.setRange(0.1, 2048.0)
+        self._default_mem_per_cpu_edit.setDecimals(2)
+        self._default_mem_per_cpu_edit.setSingleStep(0.5)
+        self._default_mem_per_cpu_edit.setValue(_DEFAULT_MEM_PER_CPU_GB)
+        self._default_mem_per_cpu_edit.setToolTip(
+            "Pre-fills the submission dialog's #SBATCH --mem-per-cpu request. "
+            "Leave unchecked to let the cluster's own memory default apply."
+        )
         self._submit_command_edit = QLineEdit(form_group)
         self._queue_check_command_edit = QLineEdit(form_group)
         self._cancel_command_edit = QLineEdit(form_group)
@@ -203,6 +220,7 @@ class ClusterSetupDialog(QDialog):
         self._cluster_form.addRow(self._default_queue_label, self._default_queue_edit)
         self._default_memory_label = QLabel("Default memory per core (GB)", form_group)
         self._cluster_form.addRow(self._default_memory_label, self._default_memory_spin)
+        self._cluster_form.addRow(self._default_mem_per_cpu_check, self._default_mem_per_cpu_edit)
         self._cluster_form.addRow("Submit command path", self._submit_command_edit)
         self._cluster_form.addRow("Queue check command path", self._queue_check_command_edit)
         self._cluster_form.addRow("Cancel command path", self._cancel_command_edit)
@@ -240,6 +258,8 @@ class ClusterSetupDialog(QDialog):
         self._jump_auth_combo.currentTextChanged.connect(lambda *_: self._refresh_jump_host_controls())
         self._queue_combo.currentTextChanged.connect(lambda *_: self._refresh_scheduler_controls())
         self._keyword_mode_combo.currentTextChanged.connect(lambda *_: self._refresh_keyword_controls())
+        self._default_mem_per_cpu_check.toggled.connect(self._default_mem_per_cpu_edit.setEnabled)
+        self._default_mem_per_cpu_edit.setEnabled(self._default_mem_per_cpu_check.isChecked())
         self._username_edit.editingFinished.connect(self._maybe_sync_working_dir_for_username)
         self._key_browse_button.clicked.connect(self._browse_key_path)
         self._jump_key_browse_button.clicked.connect(self._browse_jump_key_path)
@@ -344,6 +364,7 @@ class ClusterSetupDialog(QDialog):
             self._castep_exec_edit.setText("castep.mpi")
             self._default_queue_edit.setText("")
             self._default_memory_spin.setValue(7.5)
+            self._apply_default_mem_per_cpu(None)
             self._submit_command_edit.setText("")
             self._queue_check_command_edit.setText("")
             self._cancel_command_edit.setText("")
@@ -379,6 +400,7 @@ class ClusterSetupDialog(QDialog):
         self._castep_exec_edit.setText(config.castep_executable)
         self._default_queue_edit.setText(config.default_queue_name)
         self._default_memory_spin.setValue(7.5 if config.default_memory_gb is None else float(config.default_memory_gb))
+        self._apply_default_mem_per_cpu(config.default_mem_per_cpu_gb)
         self._submit_command_edit.setText(config.submit_command_path)
         self._queue_check_command_edit.setText(config.queue_check_command_path)
         self._cancel_command_edit.setText(config.cancel_command_path)
@@ -391,6 +413,16 @@ class ClusterSetupDialog(QDialog):
         self._refresh_keychain_controls()
         self._refresh_scheduler_controls()
         self._refresh_keyword_controls()
+
+    def _apply_default_mem_per_cpu(self, mem_per_cpu_gb: float | None) -> None:
+        """Seed the default per-CPU memory row, treating ``None`` as "no request"."""
+
+        enabled = mem_per_cpu_gb is not None and float(mem_per_cpu_gb) > 0
+        self._default_mem_per_cpu_check.setChecked(enabled)
+        self._default_mem_per_cpu_edit.setValue(
+            float(mem_per_cpu_gb) if enabled else _DEFAULT_MEM_PER_CPU_GB
+        )
+        self._default_mem_per_cpu_edit.setEnabled(enabled)
 
     def _maybe_sync_working_dir_for_username(self) -> None:
         old_username = self._last_username.strip()
@@ -476,6 +508,8 @@ class ClusterSetupDialog(QDialog):
         self._default_queue_edit.setVisible(is_addqueue)
         self._default_memory_label.setVisible(is_addqueue)
         self._default_memory_spin.setVisible(is_addqueue)
+        self._default_mem_per_cpu_check.setVisible(is_slurm)
+        self._default_mem_per_cpu_edit.setVisible(is_slurm)
 
     def _refresh_keyword_controls(self) -> None:
         is_scheduler = self._keyword_mode_combo.currentText().strip().lower() == "scheduler"
@@ -519,6 +553,10 @@ class ClusterSetupDialog(QDialog):
         else:
             default_queue_name = ""
             default_memory_gb = None
+        if queue_system.strip().lower() == "slurm" and self._default_mem_per_cpu_check.isChecked():
+            default_mem_per_cpu_gb: float | None = float(self._default_mem_per_cpu_edit.value())
+        else:
+            default_mem_per_cpu_gb = None
 
         return replace(
             existing,
@@ -543,6 +581,7 @@ class ClusterSetupDialog(QDialog):
             castep_executable=self._castep_exec_edit.text().strip() or "castep.mpi",
             default_queue_name=default_queue_name,
             default_memory_gb=default_memory_gb,
+            default_mem_per_cpu_gb=default_mem_per_cpu_gb,
             submit_command_path=self._submit_command_edit.text().strip(),
             queue_check_command_path=self._queue_check_command_edit.text().strip(),
             cancel_command_path=self._cancel_command_edit.text().strip(),

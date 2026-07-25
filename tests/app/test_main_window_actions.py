@@ -17,6 +17,7 @@ import mufinder.app.main_window as main_window_module
 import mufinder.services.job_artifacts as job_artifacts_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.app.comparison_job_dialog import CompletedPristineJob
+from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig
 from mufinder.app.convergence_types import ConvergenceConfig
 from mufinder.app.main_window import MainWindow
 from mufinder.castep_setup import CastepSetup
@@ -10085,3 +10086,56 @@ def utc_now_for_test():
     from datetime import datetime
 
     return datetime.now(UTC)
+
+
+def test_main_window_round_trips_mem_per_cpu_in_last_submission_config(
+    qapp, tmp_path: Path
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_mem_per_cpu.mufinder", "ClusterMem")
+    window._document = doc
+
+    window._persist_last_cluster_submission_config(
+        ClusterSubmissionConfig(
+            cluster_name="SCARF",
+            working_directory="/work4/isis/alice/project_z",
+            username="alice",
+            job_name_prefix="positivemuon",
+            num_processes=144,
+            walltime="12:00:00",
+            mem_per_cpu_gb=6.0,
+        ),
+        workflow_type="muon_relaxation/positivemuon",
+    )
+
+    persisted = doc.ui_state[main_window_module.MainWindow._LAST_CLUSTER_SUBMISSION_CONFIG_KEY]
+    assert persisted["mem_per_cpu_gb"] == 6.0
+
+    restored = window._load_last_cluster_submission_config(
+        workflow_type="muon_relaxation/positivemuon"
+    )
+    assert restored is not None
+    assert restored.mem_per_cpu_gb == 6.0
+    window.close()
+
+
+@pytest.mark.parametrize("stored", [None, "", "bad-memory", 0, -2.0])
+def test_main_window_loads_absent_or_invalid_mem_per_cpu_as_unset(
+    qapp, tmp_path: Path, stored: object
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_mem_per_cpu_bad.mufinder", "ClusterMem")
+    window._document = doc
+    doc.ui_state[main_window_module.MainWindow._LAST_CLUSTER_SUBMISSION_CONFIG_KEY] = {
+        "cluster_name": "SCARF",
+        "num_processes": 144,
+        "mem_per_cpu_gb": stored,
+    }
+
+    restored = window._load_last_cluster_submission_config()
+
+    assert restored is not None
+    assert restored.mem_per_cpu_gb is None
+    window.close()

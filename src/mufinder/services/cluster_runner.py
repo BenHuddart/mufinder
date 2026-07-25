@@ -190,6 +190,7 @@ class ClusterJobRunner(QObject):
         template_script_path: str,
         cores_per_node: int,
         memory_gb: float | None = None,
+        mem_per_cpu_gb: float | None = None,
         queue_name: str = "",
         comment: str = "",
         castep_executable: str = "",
@@ -251,6 +252,7 @@ class ClusterJobRunner(QObject):
                     walltime=walltime,
                     remote_dir=remote_dir,
                     castep_executable=resolved_castep_executable,
+                    mem_per_cpu_gb=mem_per_cpu_gb,
                 )
 
                 with tempfile.NamedTemporaryFile(
