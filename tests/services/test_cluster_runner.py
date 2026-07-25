@@ -658,6 +658,76 @@ def test_cluster_runner_retrieve_downloads_optional_ts_file(
     assert (tmp_path / "seed.ts").read_bytes() == b"ts output"
 
 
+def test_cluster_runner_retrieve_downloads_farmed_ts_file(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A farmed NEB run writes the band to seed_farm001.ts and no seed.ts at all,
+    # so retrieval must ask for the farmed name or the job fails with a missing
+    # .ts despite having completed successfully.
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="125",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+        retrieve_ts=True,
+        task_farming_enabled=True,
+        num_farms=3,
+    )
+    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
+    runner._ssh.remote_files["/remote/job/seed_farm001.castep"] = b"farmed output"
+    runner._ssh.remote_files["/remote/job/seed_farm001.ts"] = b"farmed ts output"
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+
+    runner._retrieve_results(entry)
+
+    assert (tmp_path / "seed_farm001.ts").read_bytes() == b"farmed ts output"
+    assert not (tmp_path / "seed.ts").exists()
+
+
+def test_cluster_runner_retrieve_downloads_farmed_error_files(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Task farming rewrites the seedname before stderr is opened, so error files
+    # gain a _farmNNN infix on top of the usual MPI-rank suffix.
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="125",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+        task_farming_enabled=True,
+        num_farms=2,
+    )
+    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
+    runner._ssh.remote_files["/remote/job/seed_farm001.0000.err"] = b"farm 1 stderr"
+    runner._ssh.remote_files["/remote/job/seed_farm002.0001.err"] = b"farm 2 stderr"
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+
+    runner._retrieve_results(entry)
+
+    assert (tmp_path / "seed_farm001.0000.err").read_bytes() == b"farm 1 stderr"
+    assert (tmp_path / "seed_farm002.0001.err").read_bytes() == b"farm 2 stderr"
+
+
 def test_cluster_runner_retrieve_skips_optional_files_when_not_requested(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

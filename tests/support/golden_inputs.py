@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
@@ -323,10 +324,13 @@ def build_neb() -> list[tuple[str, JobSpec]]:
         source_relaxation_job_ids=(_JOB_A, _JOB_B),
         path_length_ang=2.0,
     )
+    # Task-farmed case: same band, split across CASTEP farms via NUM_FARMS.
+    farmed = replace(plain, label="siteA_to_siteB_farmed_neb")
     jobs = expand_nudged_elastic_band_jobs(
         jobs=[
             NudgedElasticBandJobConfig(source=plain),
             NudgedElasticBandJobConfig(source=spin),
+            NudgedElasticBandJobConfig(source=farmed, num_farms=3),
         ],
         name_prefix="barrier",
     )

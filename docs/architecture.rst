@@ -241,6 +241,10 @@ previously accreted on ``MainWindow``.
   ``phonon_error``). Task farming for the phonon stage is applied by the shared
   ``_submit_jobs_locally`` backend (not the controller), so
   ``QuantumCorrectionsController`` keeps the base single-group ``submission_groups``.
+  That backend resolves each job's farm count through the calc-type-dispatching
+  ``MainWindow._task_farming_for_job``, which serves both the quantum-phonon and
+  NEB workflows; the runners use it to decide whether a finished job's outputs
+  carry CASTEP's ``_farmNNN`` seedname suffix.
   ``EnergyBarriersController`` is the seventh and **last** of the per-workflow
   migrations. Its ``materialize`` keys jobs by their diffusion-path *source key*
   (writing ``job_ids_by_label`` keyed by source key and stamping each expanded

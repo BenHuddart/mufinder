@@ -138,6 +138,13 @@ class EnergyBarriersDeps:
     energy_barrier_neb_row_configuration_with_source_defaults: Callable[
         ..., tuple[dict[str, object], tuple[str, ...], dict[str, object]]
     ]
+    # Reads the per-row CASTEP task-farm count out of the row's configuration
+    # extras (stored by the NEB configure dialog, not a CASTEP keyword row).
+    num_farms_from_extras: Callable[[Mapping[str, object]], int]
+    # Cheap extras-only read for the sources table. The full
+    # ``*_with_source_defaults`` variant re-reads the reactant's output files to
+    # inherit its cut-off/k-points, which is far too heavy for a per-row refresh.
+    energy_barrier_neb_row_extras: Callable[[object, str], Mapping[str, object]]
     # Pre-submit host guard (host mismatch is shared with every host-guarded workflow)
     handle_structure_host_mismatch: Callable[[object], bool]
     handle_site_host_mismatch: Callable[[object], bool]
@@ -352,7 +359,7 @@ class EnergyBarriersController(WorkflowJobController):
                 )
             except (EnergyBarrierError, StructureBridgeError, ValueError):
                 continue
-            values, _advanced_names, _extras = (
+            values, _advanced_names, extras = (
                 self._deps.energy_barrier_neb_row_configuration_with_source_defaults(
                     definition,
                     key,
@@ -391,6 +398,7 @@ class EnergyBarriersController(WorkflowJobController):
                         ),
                         provenance={"source_key": key},
                     ),
+                    num_farms=self._deps.num_farms_from_extras(extras),
                     cell_overrides=overrides.cell,
                     param_overrides=overrides.param,
                 )
@@ -547,6 +555,13 @@ class EnergyBarriersController(WorkflowJobController):
                     path_length=f"{candidate.path.length_ang:.4g} Å",
                     status=getattr(neb_states.get(candidate.key), "status", "ready")
                     or "ready",
+                    farms=_farm_count_label(
+                        self._deps.num_farms_from_extras(
+                            self._deps.energy_barrier_neb_row_extras(
+                                neb_definition, candidate.key
+                            )
+                        )
+                    ),
                     configured=self._deps.workflow_row_configuration_exists(
                         neb_definition, candidate.key
                     ),
@@ -590,6 +605,13 @@ class EnergyBarriersController(WorkflowJobController):
                 )
             )
         view.set_neb_results(neb_result_rows)
+
+
+def _farm_count_label(num_farms: int) -> str:
+    """Render a configured farm count for the sources table."""
+
+    count = max(1, int(num_farms))
+    return "Off" if count == 1 else str(count)
 
 
 __all__ = ["EnergyBarriersController", "EnergyBarriersDeps"]

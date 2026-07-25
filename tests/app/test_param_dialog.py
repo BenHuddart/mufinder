@@ -638,3 +638,76 @@ def test_quantum_corrections_dialog_inherits_accept_blocking(qapp, monkeypatch) 
     # validate_gui_values and remain untouched by the blocked accept.
     assert dialog.pseudopotential_family() == "norm_conserving"
     assert dialog.num_farms() == 4
+
+
+def _neb_dialog_specs() -> list[KeywordSpec]:
+    return [
+        KeywordSpec(
+            name="task",
+            file="param",
+            kind="scalar",
+            value_type="enum",
+            allowed_values=("TRANSITIONSTATESEARCH",),
+            widget_hint="dropdown",
+            category="workflow",
+            basic_workflows=("energy_barriers",),
+            default_value="TRANSITIONSTATESEARCH",
+        ),
+        KeywordSpec(
+            name="tssearch_max_path_points",
+            file="param",
+            kind="scalar",
+            value_type="positive_int",
+            widget_hint="int",
+            category="workflow",
+            basic_workflows=("energy_barriers",),
+            default_value=11,
+        ),
+    ]
+
+
+def test_nudged_elastic_band_dialog_reports_farm_split(qapp) -> None:
+    from mufinder.app.workflow_dialogs import NudgedElasticBandConfigDialog
+
+    dialog = NudgedElasticBandConfigDialog(specs=_neb_dialog_specs(), num_farms=3)
+
+    assert dialog.num_farms() == 3
+    # 11 images over 3 farms is CASTEP's 4/4/3 block split.
+    assert "4/4/3" in dialog._farm_hint.text()
+    assert "multiple of 3" in dialog._farm_hint.text()
+    dialog.close()
+
+
+def test_nudged_elastic_band_dialog_hint_tracks_image_count(qapp) -> None:
+    from mufinder.app.workflow_dialogs import NudgedElasticBandConfigDialog
+
+    dialog = NudgedElasticBandConfigDialog(specs=_neb_dialog_specs(), num_farms=4)
+    dialog.set_values({"tssearch_max_path_points": 8})
+
+    # The hint is derived from the dialog's current image count, not the default.
+    assert "2/2/2/2" in dialog._farm_hint.text()
+    assert "100% balance" in dialog._farm_hint.text()
+    dialog.close()
+
+
+def test_nudged_elastic_band_dialog_farming_off_by_default(qapp) -> None:
+    from mufinder.app.workflow_dialogs import NudgedElasticBandConfigDialog
+
+    dialog = NudgedElasticBandConfigDialog(specs=_neb_dialog_specs())
+
+    assert dialog.num_farms() == 1
+    assert "disabled" in dialog._farm_hint.text().lower()
+    dialog.close()
+
+
+def test_nudged_elastic_band_dialog_read_only_disables_farm_spin(qapp) -> None:
+    from mufinder.app.workflow_dialogs import NudgedElasticBandConfigDialog
+
+    dialog = NudgedElasticBandConfigDialog(
+        specs=_neb_dialog_specs(),
+        num_farms=2,
+        read_only=True,
+    )
+
+    assert dialog._num_farms_spin.isEnabled() is False
+    dialog.close()

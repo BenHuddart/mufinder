@@ -1070,7 +1070,7 @@ keywords:
     mutually_exclusive_with: []
     requires: []
     example: NUM_FARMS : 1
-    notes: Number of parallel CASTEP farms used to distribute independent calculations.
+    notes: Number of parallel CASTEP farms used to distribute independent calculations. Farm-aware tasks only (PHONON, and TRANSITIONSTATESEARCH with TSSEARCH_METHOD NEB, where the farms split the band's images); CASTEP resets it to 1 for every other task. Must not exceed the MPI rank count (CASTEP aborts if it does), and ranks that do not divide evenly among the farms are left idle. Farmed runs suffix every output seedname with _farmNNN.
 
   - name: IPRINT
     canonical_name: iprint

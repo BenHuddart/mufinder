@@ -91,6 +91,43 @@ class ParsedJobArtifacts:
     ts_path: Path | None = None
 
 
+def effective_num_farms(task_farming_enabled: bool, num_farms: int | None) -> int:
+    """Collapse a runner's two farming fields into a single farm count.
+
+    Both runners carry ``task_farming_enabled`` alongside an optional
+    ``num_farms``; farming is only actually in effect when the flag is set *and*
+    the count exceeds one. Returns 1 whenever farming is off, so callers can
+    treat the result as "the number of farms CASTEP was told to use".
+    """
+
+    if not task_farming_enabled:
+        return 1
+    return max(1, int(num_farms or 1))
+
+
+def _resolve_ts_path(output_dir: Path, seed_name: str, num_farms: int) -> Path:
+    """Return the ``.ts`` file a job with ``num_farms`` farms should have written.
+
+    CASTEP appends ``_farmNNN`` to the seedname before the task runs, so a farmed
+    run writes ``<seed>_farm001.ts`` … ``<seed>_farmNNN.ts`` and **no**
+    ``<seed>.ts``. Every farm writes a complete, identical band (the images are
+    synchronised across farms before each write), so farm 001 is the canonical
+    copy — the same choice the runners already make for ``.castep``.
+
+    Note there is deliberately **no** fallback to ``<seed>.ts`` when farming is
+    on. Unlike ``.castep`` (where farmed runs still write a master file), a
+    farmed run never writes an unfarmed ``.ts``, so any ``<seed>.ts`` present is
+    a leftover from an earlier unfarmed run of the same seed. CASTEP *appends*
+    to an existing ``.ts``, so reading it could splice two runs' bands together
+    and report a barrier that was never computed. Reporting the farmed file as
+    missing is the honest outcome.
+    """
+
+    if max(1, int(num_farms)) > 1:
+        return output_dir / f"{seed_name}_farm001.ts"
+    return output_dir / f"{seed_name}.ts"
+
+
 def collect_job_artifacts(
     output_dir: Path | None,
     seed_name: str,
@@ -98,6 +135,7 @@ def collect_job_artifacts(
     want_out_cell: bool = False,
     want_phonon: bool = False,
     want_ts: bool = False,
+    num_farms: int = 1,
 ) -> ParsedJobArtifacts:
     """Parse a completed job's requested secondary outputs, capturing errors.
 
@@ -109,6 +147,10 @@ def collect_job_artifacts(
 
     ``output_dir`` may be ``None`` (the runner could not resolve the directory);
     in that case every requested artifact is reported missing.
+
+    ``num_farms`` is the CASTEP task-farm count the job ran with. Task farming
+    renames every *output* to ``<seed>_farmNNN.<ext>``, so a farmed NEB run
+    writes no ``<seed>.ts`` at all — see :func:`_resolve_ts_path`.
     """
 
     out_cell_path: Path | None = None
@@ -120,7 +162,7 @@ def collect_job_artifacts(
         if want_phonon:
             phonon_path = output_dir / f"{seed_name}.phonon"
         if want_ts:
-            ts_path = output_dir / f"{seed_name}.ts"
+            ts_path = _resolve_ts_path(output_dir, seed_name, num_farms)
 
     relaxed_cell: ParsedCell | None = None
     lattice_abc: tuple[float, float, float] | None = None

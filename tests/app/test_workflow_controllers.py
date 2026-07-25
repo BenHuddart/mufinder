@@ -2802,6 +2802,8 @@ def _stub_energy_barriers_deps(**overrides) -> EnergyBarriersDeps:
         project_convergence_input_defaults=lambda: None,
         input_template_from_keyword_values=lambda _values: InputTemplate(),
         workflow_row_configuration_exists=lambda _definition, _key: False,
+        num_farms_from_extras=lambda extras: max(1, int(extras.get("num_farms", 1))),
+        energy_barrier_neb_row_extras=lambda _definition, _key: {},
         charge_state_label_for_job=lambda _job: "",
         energy_barrier_endpoint_rows=lambda: [],
         selected_energy_barrier_endpoint_keys=lambda: ("", ""),
@@ -3298,3 +3300,76 @@ def test_energy_barriers_controller_submit_cluster_reaches_cluster_backend(tmp_p
     assert local.calls == []
     assert len(cluster.calls) == 1
     assert cluster.calls[0][0][0].calc_type == NUDGED_ELASTIC_BAND_CALC_TYPE
+
+
+def test_energy_barriers_controller_materialize_writes_num_farms(tmp_path: Path) -> None:
+    """The per-row task-farm count reaches the generated ``.param`` as NUM_FARMS.
+
+    The farm count is stored in the row's configuration extras by the NEB
+    configure dialog (it is not a CASTEP keyword row), so it has to be read from
+    extras at materialize time -- the point at which the job directory is
+    written."""
+
+    import dataclasses
+
+    service = ProjectService()
+    document, definition, source, output_root = _seed_energy_barriers_document(
+        service, tmp_path
+    )
+    candidate = _FakeNebCandidate(key="source-key", source=source)
+    deps = _neb_materialize_deps(
+        definition,
+        candidate,
+        output_root,
+        # materialize reads the row's extras from the same call that resolves the
+        # inherited cut-off/k-points, which is what MainWindow wires in production.
+        energy_barrier_neb_row_configuration_with_source_defaults=(
+            lambda _definition, _key, **_kwargs: ({}, (), {"num_farms": 3})
+        ),
+    )
+    context = dataclasses.replace(
+        _make_context(
+            document=document,
+            project_service=service,
+            definition_output_directory=lambda _definition: output_root,
+        ),
+        persist_ui_state=lambda **_: None,
+    )
+    controller = EnergyBarriersController(context, deps, lambda: None)
+
+    jobs = controller.materialize(["source-key"])
+
+    assert len(jobs) == 1
+    param_text = (output_root / jobs[0].label / f"{jobs[0].label}.param").read_text(
+        encoding="utf-8"
+    )
+    assert "NUM_FARMS : 3" in param_text
+
+
+def test_energy_barriers_controller_materialize_omits_num_farms_when_off(
+    tmp_path: Path,
+) -> None:
+    import dataclasses
+
+    service = ProjectService()
+    document, definition, source, output_root = _seed_energy_barriers_document(
+        service, tmp_path
+    )
+    candidate = _FakeNebCandidate(key="source-key", source=source)
+    deps = _neb_materialize_deps(definition, candidate, output_root)
+    context = dataclasses.replace(
+        _make_context(
+            document=document,
+            project_service=service,
+            definition_output_directory=lambda _definition: output_root,
+        ),
+        persist_ui_state=lambda **_: None,
+    )
+    controller = EnergyBarriersController(context, deps, lambda: None)
+
+    jobs = controller.materialize(["source-key"])
+
+    param_text = (output_root / jobs[0].label / f"{jobs[0].label}.param").read_text(
+        encoding="utf-8"
+    )
+    assert "NUM_FARMS" not in param_text

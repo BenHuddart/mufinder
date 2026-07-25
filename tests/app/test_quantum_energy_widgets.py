@@ -207,8 +207,8 @@ def test_energy_barriers_widget_emits_configure_and_view_for_source_row(qapp) ->
     widget.configure_result_requested.connect(configured.append)
     widget.view_source_requested.connect(viewed.append)
 
-    configure_button = widget._sources_table.cellWidget(0, 5)
-    view_button = widget._sources_table.cellWidget(0, 6)
+    configure_button = widget._sources_table.cellWidget(0, 6)
+    view_button = widget._sources_table.cellWidget(0, 7)
     assert isinstance(configure_button, QPushButton)
     assert isinstance(view_button, QPushButton)
     assert configure_button.text() == "Configure..."
@@ -236,8 +236,8 @@ def test_energy_barriers_widget_uses_shared_status_text_colors(qapp) -> None:
         ]
     )
 
-    # Status is column 4 in the Diffusion Paths table; it uses the shared per-status palette.
-    status_item = widget._sources_table.item(0, 4)
+    # Status is column 5 in the Diffusion Paths table; it uses the shared per-status palette.
+    status_item = widget._sources_table.item(0, 5)
     assert status_item is not None
     assert status_item.foreground().color().name() == status_brush("failed").color().name()
 
@@ -325,7 +325,7 @@ def test_energy_barriers_widget_delete_key_removes_selected_source_from_child_fo
     )
     removed: list[list[str]] = []
     widget.remove_sources_requested.connect(lambda keys: removed.append(list(keys)))
-    configure_button = widget._sources_table.cellWidget(0, 5)
+    configure_button = widget._sources_table.cellWidget(0, 6)
     assert isinstance(configure_button, QPushButton)
 
     widget.show()
@@ -358,7 +358,7 @@ def test_energy_barriers_widget_marks_configured_path_row(qapp) -> None:
     configured: list[str] = []
     widget.configure_result_requested.connect(configured.append)
 
-    configure_button = widget._sources_table.cellWidget(0, 5)
+    configure_button = widget._sources_table.cellWidget(0, 6)
     assert isinstance(configure_button, QPushButton)
     assert configure_button.text() == "Configured..."
 
@@ -636,7 +636,7 @@ def test_energy_barriers_source_configure_applies_to_snapshot_rows(
     widget.configure_result_requested.connect(configured.append)
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Yes))
 
-    btn = widget._sources_table.cellWidget(0, 5)
+    btn = widget._sources_table.cellWidget(0, 6)
     assert isinstance(btn, SelectionSnapshotPushButton)
     btn.selection_snapshot_rows = (0, 1)
     btn.clicked.emit()
@@ -659,7 +659,7 @@ def test_energy_barriers_source_configure_single_row_no_prompt(
     prompted: list[bool] = []
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: prompted.append(True) or QMessageBox.StandardButton.Yes))
 
-    btn = widget._sources_table.cellWidget(0, 5)
+    btn = widget._sources_table.cellWidget(0, 6)
     assert isinstance(btn, SelectionSnapshotPushButton)
     btn.selection_snapshot_rows = (0,)
     btn.clicked.emit()
@@ -688,7 +688,7 @@ def test_energy_barriers_view_button_opens_clicked_row_without_prompt(
     )
     widget._sources_table.selectAll()
 
-    btn = widget._sources_table.cellWidget(0, 6)
+    btn = widget._sources_table.cellWidget(0, 7)
     assert isinstance(btn, QPushButton)
     btn.click()
 
@@ -719,3 +719,37 @@ def test_quantum_source_configure_applies_to_snapshot_rows(
 
     assert len(configured) == 1
     assert set(configured[0]) == {"site-a", "site-b"}
+
+
+def test_energy_barriers_widget_shows_task_farm_column(qapp) -> None:
+    """The Diffusion Paths table surfaces each path's configured farm count.
+
+    Farming is a per-path setting that changes both the runtime cost and the
+    output filenames, so it needs to be visible without opening Configure."""
+
+    widget = EnergyBarriersWidget()
+    widget.set_sources(
+        [
+            EnergyBarrierSourceRow(
+                key="path-a",
+                reactant="A",
+                product="B",
+                charge_state="Muonium",
+                path_length="1.2 ang",
+                status="ready",
+                farms="3",
+            ),
+            EnergyBarrierSourceRow(
+                key="path-b",
+                reactant="A",
+                product="C",
+                charge_state="Muonium",
+                path_length="1.4 ang",
+                status="ready",
+            ),
+        ]
+    )
+
+    assert widget._sources_table.item(0, 4).text() == "3"
+    # Farming defaults to off, and reads as such rather than as a bare "1".
+    assert widget._sources_table.item(1, 4).text() == "Off"

@@ -11,6 +11,7 @@ from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.domain.models import Structure
 from mufinder.castep_io.schema import KeywordSpec
+from mufinder.science.energy_barriers import neb_farm_distribution
 from mufinder.science.site_generation import lattice_frac_to_cart
 
 
@@ -92,6 +93,115 @@ class QuantumCorrectionsConfigDialog(ParameterDialog):
 
     def num_farms(self) -> int:
         return max(1, int(self._num_farms_spin.value()))
+
+
+class NudgedElasticBandConfigDialog(ParameterDialog):
+    """NEB parameter dialog with a CASTEP task-farm control.
+
+    Task farming splits the band's images across independent CASTEP farms, so a
+    sweep costs ``ceil(images / farms)`` SCFs instead of ``images``. The farm
+    count is a per-path setting rather than a submission-time one because it is
+    written into the job's ``.param`` as ``NUM_FARMS`` when the job directory is
+    materialized, before any runtime is chosen.
+
+    The hint below the spin box is derived live from the dialog's *current*
+    image count, so an unbalanced pairing (11 images over 5 farms wastes a
+    quarter of the allocation) is visible before the job is ever submitted.
+    """
+
+    def __init__(
+        self,
+        *,
+        specs: list[KeywordSpec],
+        num_farms: int = 1,
+        intro_text: str | None = None,
+        read_only: bool = False,
+        num_farms_editable: bool = True,
+        species_options: Sequence[str] = (),
+        parent=None,
+    ) -> None:
+        super().__init__(
+            specs=specs,
+            workflow_stage="energy_barriers",
+            locked_values={
+                "task": "TRANSITIONSTATESEARCH",
+                "tssearch_method": "NEB",
+                "tssearch_neb_climbing": "TRUE",
+            },
+            intro_text=intro_text,
+            read_only=read_only,
+            species_options=species_options,
+            parent=parent,
+        )
+        self._num_farms_spin = QSpinBox(self)
+        # CASTEP rejects NUM_FARMS outside 1..999 (parameters_validate).
+        self._num_farms_spin.setRange(1, 999)
+        self._num_farms_spin.setValue(max(1, int(num_farms)))
+        self._num_farms_spin.setEnabled(bool(num_farms_editable and not read_only))
+        self._num_farms_spin.valueChanged.connect(lambda *_: self._refresh_farm_hint())
+
+        self._farm_hint = QLabel("", self)
+        self._farm_hint.setWordWrap(True)
+
+        farms_row = QHBoxLayout()
+        farms_row.addWidget(QLabel("Task farms", self))
+        farms_row.addWidget(self._num_farms_spin)
+        farms_row.addWidget(self._farm_hint, 1)
+
+        root = self.layout()
+        assert root is not None
+        # Sit directly above the button box. An absolute index would drift with
+        # the optional catalog-notice and intro labels the base dialog inserts.
+        root.insertLayout(root.count() - 1, farms_row)
+        self._refresh_farm_hint()
+
+    def num_farms(self) -> int:
+        """Return the selected farm count (1 when farming is disabled)."""
+
+        return max(1, int(self._num_farms_spin.value()))
+
+    def _on_editor_changed(self) -> None:
+        # The base class rebuilds rows during __init__, before this subclass has
+        # built its widgets, so the hint may not exist on the first call.
+        super()._on_editor_changed()
+        self._refresh_farm_hint()
+
+    def set_values(self, values, *, preferred_exclusive=None) -> None:
+        # Callers apply the row's stored configuration right after construction.
+        # That path rebuilds rows rather than firing editor signals, so the hint
+        # would otherwise keep describing the default image count.
+        super().set_values(values, preferred_exclusive=preferred_exclusive)
+        self._refresh_farm_hint()
+
+    def _current_image_count(self) -> int | None:
+        raw = self.collect_values().get("tssearch_max_path_points")
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return None
+
+    def _refresh_farm_hint(self) -> None:
+        hint = getattr(self, "_farm_hint", None)
+        if hint is None:
+            return
+        farms = self.num_farms()
+        if farms <= 1:
+            hint.setText("Task farming disabled: every image runs on the full set of MPI ranks.")
+            return
+        images = self._current_image_count()
+        if images is None:
+            hint.setText(f"Needs at least {farms} MPI ranks, ideally a multiple of {farms}.")
+            return
+        distribution = neb_farm_distribution(images=images, farms=farms)
+        split = "/".join(str(count) for count in distribution.steady_counts)
+        text = (
+            f"{images} images over {farms} farms -> {split} per farm "
+            f"({distribution.efficiency:.0%} balance). "
+            f"Needs at least {farms} MPI ranks, ideally a multiple of {farms}."
+        )
+        if distribution.idle_farms:
+            text += f" {distribution.idle_farms} farm(s) would sit idle."
+        hint.setText(text)
 
 
 class EnergyBarrierPathViewerDialog(QDialog):
