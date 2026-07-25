@@ -8515,12 +8515,17 @@ class MainWindow(QMainWindow):
         # file is read once, just on the GUI thread for those paths.
         if artifacts is None:
             flags = self._cluster_retrieve_flags(job)
+            # The farm count must be resolved here too: a task-farmed job writes
+            # <seed>_farm001.ts and no <seed>.ts, so collecting at the default of
+            # one farm would report a successful farmed job's output as missing.
+            _farming_enabled, farm_count = self._task_farming_for_job(job)
             artifacts = collect_job_artifacts(
                 self._job_output_directory(job),
                 self._job_seed_name(job),
                 want_out_cell=bool(flags.get("retrieve_out_cell", False)),
                 want_phonon=bool(flags.get("retrieve_phonon", False)),
                 want_ts=bool(flags.get("retrieve_ts", False)),
+                num_farms=farm_count or 1,
             )
 
         if (
@@ -8603,11 +8608,18 @@ class MainWindow(QMainWindow):
             # carried on ``artifacts.transition_state`` and re-used by
             # ``EnergyBarriersController.build_result`` (via merge_controller_result
             # below) with no second disk read.
-            seed_name = self._job_seed_name(job)
             if artifacts.ts_missing:
+                # Name the file the collector actually looked for: under task
+                # farming that is <seed>_farm001.ts, so reporting <seed>.ts would
+                # send the user hunting for a file CASTEP never writes.
+                expected_ts = (
+                    artifacts.ts_path.name
+                    if artifacts.ts_path is not None
+                    else f"{self._job_seed_name(job)}.ts"
+                )
                 self._on_local_job_failed(
                     job_id,
-                    f"Expected CASTEP path output was not found: {seed_name}.ts",
+                    f"Expected CASTEP path output was not found: {expected_ts}",
                 )
                 return
             if artifacts.ts_error is not None:

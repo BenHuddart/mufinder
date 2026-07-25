@@ -3190,3 +3190,167 @@ def test_main_window_neb_configure_is_read_only_once_a_job_exists(
     assert JobStatus.CANCELLED.value not in READY_WORKFLOW_ROW_STATUSES
     assert JobStatus.COMPLETED.value not in READY_WORKFLOW_ROW_STATUSES
     assert JobStatus.DEFINED.value in READY_WORKFLOW_ROW_STATUSES
+
+
+def test_main_window_fallback_collection_reads_farmed_ts(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The no-carrier fallback path must resolve the farm count too.
+
+    ``_on_local_job_finished`` collects synchronously when no artifacts carrier
+    is supplied (reconciliation and retry paths). Collecting at the default of
+    one farm there would look for <seed>.ts, which a task-farmed run never
+    writes -- failing a job that actually succeeded."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "farmed_fallback.mufinder", "FarmedFallback")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="barrier_siteA_to_siteB_farmed_neb",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+    )
+    service.register_nudged_elastic_band_definition(
+        doc,
+        input_structure_ids=[host.id],
+        input_site_ids=[],
+        parameters={
+            "method": "NEB",
+            "row_settings": {
+                "source-key": {
+                    "parameter_values": {},
+                    "added_advanced": [],
+                    "num_farms": 3,
+                }
+            },
+        },
+        output_directory=doc.project_root / "files" / "energy_barriers_neb",
+        job_ids_by_label={"source-key": str(job.id)},
+    )
+
+    output_dir = window._job_output_directory(job)
+    assert output_dir is not None
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # Exactly what a farmed CASTEP run leaves behind: the band under the farm
+    # seedname, and no unfarmed .ts at all.
+    (output_dir / f"{output_dir.name}_farm001.ts").write_text("placeholder", encoding="utf-8")
+    assert not (output_dir / f"{output_dir.name}.ts").exists()
+
+    def _fake_parse(_path):
+        return TransitionStatePath(
+            images=(
+                TransitionStateImage(
+                    label="REA",
+                    iteration=1,
+                    reaction_coordinate=0.0,
+                    energy=-1.0,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.5, 2.5, 2.5)),
+                    forces=((0.0, 0.0, 0.0),) * 2,
+                ),
+                TransitionStateImage(
+                    label="TST",
+                    iteration=1,
+                    reaction_coordinate=0.5,
+                    energy=-0.8,
+                    lattice_vectors=((5.0, 0.0, 0.0), (0.0, 5.0, 0.0), (0.0, 0.0, 5.0)),
+                    species=("Si", "Si"),
+                    cartesian_positions=((0.0, 0.0, 0.0), (2.5, 2.5, 2.5)),
+                    forces=((0.0, 0.0, 0.0),) * 2,
+                ),
+            )
+        )
+
+    monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
+
+    window._on_local_job_finished(
+        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    )
+
+    assert job.status is not JobStatus.FAILED
+    stored = next(iter(doc.results.values()))
+    assert stored.result_type == NUDGED_ELASTIC_BAND_CALC_TYPE
+    assert stored.data["num_images"] == 2
+    # The recorded trajectory path is the farmed file the collector actually read.
+    assert stored.data["transition_state_file"].endswith("_farm001.ts")
+    window.close()
+
+
+def test_main_window_missing_farmed_ts_names_the_farmed_file(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing-output failure names the file the collector looked for.
+
+    Reporting <seed>.ts for a farmed job would send the user hunting for a file
+    CASTEP never writes."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "farmed_missing.mufinder", "FarmedMissing")
+    window._document = doc
+
+    host = Structure(
+        label="host",
+        origin="imported",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+    )
+    doc.structures[host.id] = host
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="barrier_siteA_to_siteB_farmed_neb",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+    )
+    service.register_nudged_elastic_band_definition(
+        doc,
+        input_structure_ids=[host.id],
+        input_site_ids=[],
+        parameters={
+            "method": "NEB",
+            "row_settings": {
+                "source-key": {
+                    "parameter_values": {},
+                    "added_advanced": [],
+                    "num_farms": 2,
+                }
+            },
+        },
+        output_directory=doc.project_root / "files" / "energy_barriers_neb",
+        job_ids_by_label={"source-key": str(job.id)},
+    )
+    output_dir = window._job_output_directory(job)
+    assert output_dir is not None
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    failures: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_on_local_job_failed",
+        lambda _job_id, message: failures.append(message),
+    )
+
+    window._on_local_job_finished(
+        job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0)
+    )
+
+    assert len(failures) == 1
+    assert "_farm001.ts" in failures[0]
+    window.close()
