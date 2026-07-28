@@ -513,6 +513,13 @@ The shared implementation lives in ``mufinder.app.workflow_table_utils``:
   the cursor. Each widget supplies only a ``key_for_row`` (its own submission
   key: a cutoff, a k-point grid, a label, a charge-state-qualified key, or a
   path key) and a ``status_for_row``.
+- ``RESET_FAILED_TABLE_TOOLTIP`` — the discoverability stamp. A single-entry
+  menu that is greyed out except on failed rows is invisible on its own: a user
+  with a stuck row has no reason to right-click. ``bind_reset_failed_context_menu``
+  therefore sets this tooltip on every table it binds, unless the widget already
+  set a tooltip of its own. Per-item tooltips are unaffected and still take
+  precedence where a widget sets them. The energy-barriers diffusion-path table
+  additionally carries the hint in its visible hint label.
 
 ``MainWindow`` connects each widget's ``reset_failed_requested`` signal to a
 thin ``_on_reset_failed_from_*`` handler that resolves the keys through the

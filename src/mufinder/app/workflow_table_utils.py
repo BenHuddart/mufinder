@@ -34,6 +34,15 @@ RESETTABLE_ROW_STATUSES = frozenset({"failed", "stopped", "cancelled"})
 #: the same recovery affordance identically.
 RESET_FAILED_ACTION_TEXT = "Reset Failed Jobs..."
 
+#: Table tooltip announcing the reset menu. A one-entry context menu that is
+#: greyed out except on failed rows is otherwise invisible — a user with a stuck
+#: row has no reason to right-click — so every table that binds the menu also
+#: advertises it. Per-item tooltips still take precedence where a widget sets
+#: them; this is only the fallback shown over cells that have none.
+RESET_FAILED_TABLE_TOOLTIP = (
+    "Right-click a failed, stopped, or cancelled row to reset it back to ready for rerun."
+)
+
 
 def bind_delete_shortcuts(
     widget: QWidget,
@@ -219,8 +228,14 @@ def bind_reset_failed_context_menu(
     status_for_row: Callable[[int], str],
     emit_reset: Callable[[list[object]], None],
 ) -> None:
-    """Install :func:`open_reset_failed_context_menu` as ``table``'s row menu."""
+    """Install :func:`open_reset_failed_context_menu` as ``table``'s row menu.
 
+    Also stamps :data:`RESET_FAILED_TABLE_TOOLTIP` on the table so the menu is
+    discoverable, unless the caller already set a tooltip of its own.
+    """
+
+    if not table.toolTip():
+        table.setToolTip(RESET_FAILED_TABLE_TOOLTIP)
     table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
     table.customContextMenuRequested.connect(
         lambda position: open_reset_failed_context_menu(

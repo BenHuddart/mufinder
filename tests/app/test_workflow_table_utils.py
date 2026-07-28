@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QPushButton, QTableWidgetItem
 
 from mufinder.app.workflow_table_utils import (
+    RESET_FAILED_TABLE_TOOLTIP,
     RESETTABLE_ROW_STATUSES,
     bind_reset_failed_context_menu,
     create_workflow_table,
@@ -274,3 +275,22 @@ def test_bind_reset_failed_context_menu_ignores_clicks_below_the_last_row(qapp, 
 def test_bind_reset_failed_context_menu_sets_custom_policy(qapp) -> None:
     table, _ = _reset_menu_table(qapp, ("failed",))
     assert table.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+
+
+def test_bind_reset_failed_context_menu_advertises_itself_via_tooltip(qapp) -> None:
+    # A one-entry menu, greyed out except on failed rows, is invisible without
+    # this: nothing on screen tells a user with a stuck row to right-click.
+    table, _ = _reset_menu_table(qapp, ("failed",))
+    assert table.toolTip() == RESET_FAILED_TABLE_TOOLTIP
+
+
+def test_bind_reset_failed_context_menu_preserves_a_callers_own_tooltip(qapp) -> None:
+    table = create_workflow_table(("Label", "Status"))
+    table.setToolTip("widget-specific guidance")
+    bind_reset_failed_context_menu(
+        table,
+        key_for_row=lambda _row: "a",
+        status_for_row=lambda _row: "failed",
+        emit_reset=lambda _keys: None,
+    )
+    assert table.toolTip() == "widget-specific guidance"

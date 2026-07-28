@@ -16,6 +16,8 @@ from PySide6.QtWidgets import QTreeWidgetItem
 import mufinder.app.convergence_widget as convergence_widget_module
 import mufinder.app.main_window as main_window_module
 import mufinder.services.job_artifacts as job_artifacts_module
+import mufinder.app.workflow_table_utils as workflow_table_utils
+from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.app.comparison_job_dialog import CompletedPristineJob
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig
@@ -10745,4 +10747,74 @@ def test_reset_quantum_corrections_to_stage_one_recovers_a_failed_singlepoint(
     stage_state = window._quantum_stage_state(definition, refreshed_candidate)
     assert stage_state.stage == "singlepoint"
     assert stage_state.status == "ready"
+    window.close()
+
+
+def test_main_window_row_reset_clears_the_displayed_status_for_a_bound_job(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A per-row reset must repaint the row, not just mutate the Job object.
+
+    Cutoff convergence clears its row by detaching the job from
+    ``job_ids_by_cutoff``; the other six workflows keep their label->job-id
+    mapping pointing at the reset job, so the row only clears because the job is
+    now ``defined`` and ``effective_row_status`` projects a submittable status.
+    This drives the real refresh path (no stubbed refresh) and asserts the Status
+    *cell*, which is what the user actually sees.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "row_reset_repaint.mufinder", "RowResetRepaint")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
+    definition = service.register_pristine_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_pristine_relaxation_config(
+            main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
+        ),
+        output_directory=doc.project_root / "files" / "pristine_relaxation",
+    )
+    failed_job = service.add_job(
+        doc,
+        label="pristine_relax_row_1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    failed_job.status = JobStatus.FAILED
+    definition.parameters["job_ids_by_label"] = {"row_1": str(failed_job.id)}
+    doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    doc.ui_state["pristine_relaxation_form"] = {
+        "name_prefix": "pristine_relax",
+        "rows": [{"label": "row_1", "fix_all_cell": False, "params": {}, "added_advanced": []}],
+    }
+
+    window._refresh_ui_after_project_change()
+
+    view = window._pristine_relaxation_view
+    assert view._row_status(0) == "failed"
+    # The context menu offers the reset precisely because the row reads "failed".
+    assert view._row_status(0) in workflow_table_utils.RESETTABLE_ROW_STATUSES
+
+    # Decline the output cleanup so this asserts the state change alone.
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+
+    window._on_reset_failed_from_pristine_relaxation(["row_1"])
+
+    assert failed_job.status == JobStatus.DEFINED
+    # The row stays bound to the same job - no duplicate is minted - and now
+    # reads as submittable again.
+    assert definition.parameters["job_ids_by_label"] == {"row_1": str(failed_job.id)}
+    assert view._row_status(0) not in workflow_table_utils.RESETTABLE_ROW_STATUSES
+    assert view._row_status(0) in READY_WORKFLOW_ROW_STATUSES
     window.close()

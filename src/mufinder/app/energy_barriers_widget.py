@@ -645,7 +645,8 @@ class EnergyBarriersWidget(QWidget):
         source_hint = QLabel(
             "Each row is a candidate hop between two relaxed endpoints. Configure the climbing-image "
             "NEB controls (image count, spring constant, tolerances) per path, then build the NEB job "
-            "locally or on the cluster. Use View to preview a path in the undistorted supercell."
+            "locally or on the cluster. Use View to preview a path in the undistorted supercell. "
+            "Right-click a failed, stopped, or cancelled row to reset it for rerun."
         )
         source_hint.setWordWrap(True)
         style_hint_text(source_hint)
