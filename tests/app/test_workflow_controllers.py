@@ -618,7 +618,7 @@ def _cutoff_context_and_deps(
     def job_for_definition_cutoff(definition, cutoff):
         mapping = definition.parameters.get("job_ids_by_cutoff", {}) if definition else {}
         job_id = mapping.get(f"{float(cutoff):.12g}")
-        return document.jobs.get(job_id) if job_id else None
+        return document.jobs.get(UUID(job_id)) if job_id else None
 
     context = WorkflowControllerContext(
         document=lambda: document,
@@ -709,6 +709,74 @@ def test_convergence_controller_materialize_writes_job_ids_by_cutoff(tmp_path: P
     root = document.project_root / "files" / "convergence_cutoff" / "conv_ecut_300"
     assert (root / "conv_ecut_300.cell").exists()
     assert (root / "conv_ecut_300.param").exists()
+
+
+def test_convergence_controller_materialize_rewrites_inputs_for_defined_job(
+    tmp_path: Path,
+) -> None:
+    """A defined job's inputs are regenerated on re-materialize.
+
+    This is what makes the post-reset ``materialize`` pass in
+    ``WorkflowJobController.submit`` effective for convergence rows: a job reset
+    back to ``defined`` after dashboard dismissal must not resubmit against the
+    stale ``.cell``/``.param`` files its failed run left behind.
+    """
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "conv.mufinder", "Conv")
+    _seed_convergence_document(service, document)
+
+    view = _FakeConvergenceView(form_state={"name_prefix": "conv", "cutoff_energies": [300.0]})
+    context, deps = _cutoff_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceCutoffController(context, deps, view)
+
+    (job,) = controller.materialize([300.0])
+    param_path = (
+        document.project_root
+        / "files"
+        / "convergence_cutoff"
+        / "conv_ecut_300"
+        / "conv_ecut_300.param"
+    )
+    param_path.write_text("STALE")
+
+    again = controller.materialize([300.0])
+
+    assert [j.id for j in again] == [job.id]
+    assert len(document.jobs) == 1
+    assert param_path.read_text() != "STALE"
+
+
+def test_convergence_controller_materialize_keeps_non_defined_job_inputs(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "conv.mufinder", "Conv")
+    _seed_convergence_document(service, document)
+
+    view = _FakeConvergenceView(form_state={"name_prefix": "conv", "cutoff_energies": [300.0]})
+    context, deps = _cutoff_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceCutoffController(context, deps, view)
+
+    (job,) = controller.materialize([300.0])
+    job.status = JobStatus.RUNNING
+    param_path = (
+        document.project_root
+        / "files"
+        / "convergence_cutoff"
+        / "conv_ecut_300"
+        / "conv_ecut_300.param"
+    )
+    param_path.write_text("STALE")
+
+    again = controller.materialize([300.0])
+
+    assert [j.id for j in again] == [job.id]
+    assert param_path.read_text() == "STALE"
 
 
 def test_convergence_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:
@@ -930,6 +998,58 @@ def test_kpoint_controller_materialize_writes_job_ids_by_grid(tmp_path: Path) ->
     root = document.project_root / "files" / "convergence_kpoint" / job.label
     assert (root / f"{job.label}.cell").exists()
     assert (root / f"{job.label}.param").exists()
+
+
+def test_kpoint_controller_materialize_rewrites_inputs_for_defined_job(
+    tmp_path: Path,
+) -> None:
+    """Same invariant as the cutoff variant: defined jobs get fresh inputs."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kconv.mufinder", "KConv")
+    _seed_kpoint_document(service, document)
+
+    context, deps = _kpoint_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceKpointController(context, deps, _FakeKpointView())
+
+    (job,) = controller.materialize([(2, 2, 2)])
+    param_path = (
+        document.project_root / "files" / "convergence_kpoint" / job.label / f"{job.label}.param"
+    )
+    param_path.write_text("STALE")
+
+    again = controller.materialize([(2, 2, 2)])
+
+    assert [j.id for j in again] == [job.id]
+    assert len(document.jobs) == 1
+    assert param_path.read_text() != "STALE"
+
+
+def test_kpoint_controller_materialize_keeps_non_defined_job_inputs(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kconv.mufinder", "KConv")
+    _seed_kpoint_document(service, document)
+
+    context, deps = _kpoint_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceKpointController(context, deps, _FakeKpointView())
+
+    (job,) = controller.materialize([(2, 2, 2)])
+    job.status = JobStatus.RUNNING
+    param_path = (
+        document.project_root / "files" / "convergence_kpoint" / job.label / f"{job.label}.param"
+    )
+    param_path.write_text("STALE")
+
+    again = controller.materialize([(2, 2, 2)])
+
+    assert [j.id for j in again] == [job.id]
+    assert param_path.read_text() == "STALE"
 
 
 def test_kpoint_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:

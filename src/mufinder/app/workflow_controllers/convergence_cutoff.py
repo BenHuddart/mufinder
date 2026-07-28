@@ -177,7 +177,10 @@ class ConvergenceCutoffController(WorkflowJobController):
             existing = self._deps.job_for_definition_cutoff(definition, cutoff)
             if existing is not None:
                 created.append(existing)
-                continue
+                if existing.status != JobStatus.DEFINED:
+                    continue
+                # Fall through for defined jobs so their inputs are rewritten
+                # from the current configuration, matching the other workflows.
             record = grouped.get(definition.id)
             if record is None:
                 grouped[definition.id] = (definition, config, {float(cutoff)})
@@ -218,6 +221,11 @@ class ConvergenceCutoffController(WorkflowJobController):
             for job_spec in all_jobs:
                 cutoff = desired_labels.get(job_spec.name)
                 if cutoff is None:
+                    continue
+                existing = self._deps.job_for_definition_cutoff(definition, cutoff)
+                if existing is not None:
+                    if existing.status == JobStatus.DEFINED:
+                        write_job_directory(job_spec, output_root)
                     continue
                 write_job_directory(job_spec, output_root)
                 job = self._context.project_service.add_job(
