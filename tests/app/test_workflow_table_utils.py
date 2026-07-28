@@ -11,9 +11,19 @@ silently change the shared defaults out from under existing callers.
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QPushButton
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QPushButton, QTableWidgetItem
 
-from mufinder.app.workflow_table_utils import create_workflow_table, style_workflow_configure_button
+from mufinder.app.workflow_table_utils import (
+    RESET_FAILED_TABLE_TOOLTIP,
+    RESETTABLE_ROW_STATUSES,
+    bind_reset_failed_context_menu,
+    create_workflow_table,
+    selection_supports_reset,
+    style_workflow_configure_button,
+    workflow_row_status_text,
+)
+from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
 
 @pytest.fixture()
@@ -151,3 +161,171 @@ def test_configure_button_locked_takes_priority_over_configured(button: QPushBut
     assert button.text() == "Configured..."
     # Locked wins: inspect phrasing, not the edit phrasing.
     assert button.toolTip() == "Inspect the CASTEP parameters used for this row."
+
+
+# ---------------------------------------------------------------------------
+# Shared per-row "Reset Failed Jobs..." context menu
+# ---------------------------------------------------------------------------
+
+
+def _reset_menu_table(qapp, statuses: tuple[str, ...]):
+    """Build a two-column Label/Status table wired to the shared reset menu."""
+
+    table = create_workflow_table(("Label", "Status"))
+    for row, status in enumerate(statuses):
+        table.insertRow(row)
+        table.setItem(row, 0, QTableWidgetItem(f"row_{row}"))
+        table.setItem(row, 1, QTableWidgetItem(status))
+    emitted: list[list[object]] = []
+    bind_reset_failed_context_menu(
+        table,
+        key_for_row=lambda row: (item.text() if (item := table.item(row, 0)) else None),
+        status_for_row=lambda row: workflow_row_status_text(table, row, 1),
+        emit_reset=emitted.append,
+    )
+    table.resize(200, 200)
+    return table, emitted
+
+
+def test_resettable_row_statuses_match_reset_failed_job_contract() -> None:
+    # ProjectService.reset_failed_job accepts exactly failed/stopped/cancelled;
+    # the menu gate must not drift away from it.
+    assert RESETTABLE_ROW_STATUSES == {"failed", "stopped", "cancelled"}
+
+
+def test_workflow_row_status_text_normalizes_and_tolerates_missing_items(qapp) -> None:
+    table = create_workflow_table(("Status",))
+    table.insertRow(0)
+    table.setItem(0, 0, QTableWidgetItem("  Failed  "))
+    table.insertRow(1)
+    assert workflow_row_status_text(table, 0, 0) == "failed"
+    assert workflow_row_status_text(table, 1, 0) == ""
+
+
+@pytest.mark.parametrize("status", sorted(RESETTABLE_ROW_STATUSES))
+def test_selection_supports_reset_accepts_every_resettable_status(status: str) -> None:
+    assert selection_supports_reset(["a"], [status]) is True
+
+
+def test_selection_supports_reset_rejects_empty_and_mixed_selections() -> None:
+    assert selection_supports_reset([], []) is False
+    # A row with no key (unlabeled) leaves nothing to reset.
+    assert selection_supports_reset([], ["failed"]) is False
+    # Mixed selections stay disabled: the cleanup prompt covers the whole batch.
+    assert selection_supports_reset(["a", "b"], ["failed", "running"]) is False
+    assert selection_supports_reset(["a"], ["completed"]) is False
+
+
+def test_selection_supports_reset_rejects_a_partially_keyed_selection() -> None:
+    # Two selected failed rows but only one key: the second row is keyless, and
+    # enabling here would reset only the first while the batch cleanup prompt
+    # claimed to cover both.
+    assert selection_supports_reset(["a"], ["failed", "failed"]) is False
+    assert selection_supports_reset(["a", "b"], ["failed", "failed"]) is True
+
+
+def test_bind_reset_failed_context_menu_disables_reset_when_a_selected_row_has_no_key(
+    qapp, monkeypatch
+) -> None:
+    install_fake_menu(monkeypatch)
+    table = create_workflow_table(("Label", "Status"))
+    for row, (label, status) in enumerate(((" row_0 ", "failed"), ("", "failed"))):
+        table.insertRow(row)
+        table.setItem(row, 0, QTableWidgetItem(label))
+        table.setItem(row, 1, QTableWidgetItem(status))
+    emitted: list[list[object]] = []
+    bind_reset_failed_context_menu(
+        table,
+        # Mirrors the real widgets: an empty label yields no submission key.
+        key_for_row=lambda row: ((table.item(row, 0).text().strip() or None) if table.item(row, 0) else None),
+        status_for_row=lambda row: workflow_row_status_text(table, row, 1),
+        emit_reset=emitted.append,
+    )
+    table.resize(200, 200)
+    table.selectAll()
+
+    menu = open_reset_menu(table, row=0)
+
+    assert menu is not None
+    assert menu.reset_action().enabled is False
+    assert emitted == []
+
+
+def test_bind_reset_failed_context_menu_emits_keys_for_failed_row(qapp, monkeypatch) -> None:
+    install_fake_menu(monkeypatch)
+    table, emitted = _reset_menu_table(qapp, ("failed",))
+
+    menu = open_reset_menu(table, row=0)
+
+    assert menu is not None
+    assert emitted == [["row_0"]]
+
+
+def test_bind_reset_failed_context_menu_disables_action_for_running_row(qapp, monkeypatch) -> None:
+    install_fake_menu(monkeypatch)
+    table, emitted = _reset_menu_table(qapp, ("running",))
+
+    menu = open_reset_menu(table, row=0)
+
+    assert menu is not None
+    assert menu.reset_action() is not None
+    assert menu.reset_action().enabled is False
+    assert emitted == []
+
+
+def test_bind_reset_failed_context_menu_selects_the_clicked_row(qapp, monkeypatch) -> None:
+    install_fake_menu(monkeypatch)
+    table, emitted = _reset_menu_table(qapp, ("failed", "failed"))
+    table.selectRow(0)
+
+    open_reset_menu(table, row=1)
+
+    # Right-clicking outside the selection retargets it, so the action describes
+    # the row under the cursor rather than the stale selection.
+    assert emitted == [["row_1"]]
+
+
+def test_bind_reset_failed_context_menu_keeps_multi_row_selection(qapp, monkeypatch) -> None:
+    install_fake_menu(monkeypatch)
+    table, emitted = _reset_menu_table(qapp, ("failed", "cancelled"))
+    table.selectAll()
+
+    open_reset_menu(table, row=0)
+
+    assert emitted == [["row_0", "row_1"]]
+
+
+def test_bind_reset_failed_context_menu_ignores_clicks_below_the_last_row(qapp, monkeypatch) -> None:
+    fake_menu = install_fake_menu(monkeypatch)
+    table, emitted = _reset_menu_table(qapp, ("failed",))
+
+    from PySide6.QtCore import QPoint
+
+    table.customContextMenuRequested.emit(QPoint(10, 5000))
+
+    assert fake_menu.instances == []
+    assert emitted == []
+
+
+def test_bind_reset_failed_context_menu_sets_custom_policy(qapp) -> None:
+    table, _ = _reset_menu_table(qapp, ("failed",))
+    assert table.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+
+
+def test_bind_reset_failed_context_menu_advertises_itself_via_tooltip(qapp) -> None:
+    # A one-entry menu, greyed out except on failed rows, is invisible without
+    # this: nothing on screen tells a user with a stuck row to right-click.
+    table, _ = _reset_menu_table(qapp, ("failed",))
+    assert table.toolTip() == RESET_FAILED_TABLE_TOOLTIP
+
+
+def test_bind_reset_failed_context_menu_preserves_a_callers_own_tooltip(qapp) -> None:
+    table = create_workflow_table(("Label", "Status"))
+    table.setToolTip("widget-specific guidance")
+    bind_reset_failed_context_menu(
+        table,
+        key_for_row=lambda _row: "a",
+        status_for_row=lambda _row: "failed",
+        emit_reset=lambda _keys: None,
+    )
+    assert table.toolTip() == "widget-specific guidance"

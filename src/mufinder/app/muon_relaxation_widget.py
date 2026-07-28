@@ -42,8 +42,10 @@ from mufinder.app.relaxation_adapter import (
 from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
+    bind_reset_failed_context_menu,
     create_workflow_table,
     style_workflow_configure_button,
+    workflow_row_status_text,
 )
 from mufinder.app.theme import (
     current_palette,
@@ -223,6 +225,7 @@ class MuonRelaxationWidget(QWidget):
     submit_cluster_requested = Signal(object)
     row_supercell_edit_requested = Signal(object)
     remove_requested = Signal(object)
+    reset_failed_requested = Signal(object)
     analysis_workspace_requested = Signal(object)
     form_state_changed = Signal(dict)
 
@@ -401,6 +404,15 @@ class MuonRelaxationWidget(QWidget):
         self._charge_tabs.currentChanged.connect(lambda *_: self._refresh_batch_button_state())
         for table in self._tables_by_charge_state.values():
             table.itemChanged.connect(self._on_table_item_changed)
+            # Each charge state has its own table, so the reset menu is bound
+            # per table with that table captured — a right-click must act on the
+            # rows it was raised over, not on the currently-active tab.
+            bind_reset_failed_context_menu(
+                table,
+                key_for_row=lambda row, bound=table: self._reset_key_at_row(row, table=bound),
+                status_for_row=lambda row, bound=table: self._row_status(row, table=bound),
+                emit_reset=self.reset_failed_requested.emit,
+            )
             selection_model = table.selectionModel()
             if selection_model is not None:
                 selection_model.selectionChanged.connect(lambda *_: self._refresh_batch_button_state())
@@ -752,6 +764,17 @@ class MuonRelaxationWidget(QWidget):
         target = table or self._table
         item = target.item(row, self._LABEL_COLUMN)
         return item.text().strip() if item is not None else ""
+
+    def _reset_key_at_row(self, row: int, *, table: QTableWidget | None = None) -> str | None:
+        """Return the row's submission key, or ``None`` for an unlabeled row."""
+
+        target = table or self._table
+        if not self._label_at_row(row, table=target):
+            return None
+        return self._submission_key_at_row(row, table=target)
+
+    def _row_status(self, row: int, *, table: QTableWidget | None = None) -> str:
+        return workflow_row_status_text(table or self._table, row, self._STATUS_COLUMN)
 
     def _charge_state_at_row(self, row: int, *, table: QTableWidget | None = None) -> str:
         row_id = self._row_id_at(row, table=table)

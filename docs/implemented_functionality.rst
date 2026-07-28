@@ -755,6 +755,12 @@ Submission entry points include:
 - Dedicated ``Run Local Calculations`` action in the cutoff convergence panel,
   operating on the current selection (or current row when a single cutoff is in focus).
 - Right-click context menu in cutoff convergence rows.
+- Right-click ``Reset Failed Jobs...`` on every workflow table row (cutoff and
+  k-point convergence, pristine and muon relaxation, UEP, and the energy
+  barriers/NEB diffusion-path table), enabled only when the whole selection is
+  ``failed``/``stopped``/``cancelled``. Quantum Corrections uses its stage-1
+  reset instead, which now also accepts a failed, stopped, or cancelled
+  stage-1 singlepoint with no phonon job.
 - Delete/Backspace keyboard removal for the current cutoff row or a selected set of rows.
 - Per-row action buttons in the shared job dashboard table after a job has entered the queue/submission lifecycle.
 - Failed/cancelled-job resubmit, failed/stopped cluster-job retry-retrieval,
@@ -822,7 +828,8 @@ Runtime behavior includes:
   and its submit resets the same job back to ``defined`` (after the usual
   stale-output cleanup prompt) before dispatching it — no duplicate job is
   created. Failed jobs that were *not* dismissed keep showing ``failed`` on
-  their row and are recovered from the dashboard as before.
+  their row and are recovered either from the dashboard or from that row's own
+  ``Reset Failed Jobs...`` context-menu action.
 
 The shared job dashboard is intended to show jobs that still need attention.
 Ready jobs are submitted from their workflow tables. Active jobs appear in the

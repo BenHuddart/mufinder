@@ -34,8 +34,10 @@ from mufinder.app.uep_types import SupercellMatrix, UepConfig, UepRunState, UepS
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
+    bind_reset_failed_context_menu,
     create_workflow_table,
     style_workflow_configure_button,
+    workflow_row_status_text,
 )
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
@@ -283,6 +285,12 @@ class UEPWidget(QWidget):
         self._run_local_button.clicked.connect(self._emit_submit_local)
         self._run_cluster_button.clicked.connect(self._emit_submit_cluster)
         self._table.itemSelectionChanged.connect(self._refresh_batch_button_state)
+        bind_reset_failed_context_menu(
+            self._table,
+            key_for_row=self._label_at_row,
+            status_for_row=self._row_status,
+            emit_reset=self.reset_failed_requested.emit,
+        )
         self._name_prefix.textChanged.connect(lambda *_: self._emit_state())
         self._source_structure_combo.currentIndexChanged.connect(self._on_source_structure_changed)
 
@@ -913,6 +921,15 @@ class UEPWidget(QWidget):
             return
         self.configure_requested.emit(config)
         self.submit_cluster_requested.emit(labels)
+
+    def _label_at_row(self, row: int) -> str | None:
+        item = self._table.item(row, self._LABEL_COLUMN)
+        if item is None:
+            return None
+        return item.text().strip() or None
+
+    def _row_status(self, row: int) -> str:
+        return workflow_row_status_text(self._table, row, self._STATUS_COLUMN)
 
     def _selected_or_all_labels(self) -> list[str]:
         selection_model = self._table.selectionModel()

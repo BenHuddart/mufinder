@@ -14,6 +14,7 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.uep_types import UepRunState
 from mufinder.app.uep_widget import UEPWidget
 from mufinder.castep_io.types import ValueWithUnit
+from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
 
 def test_uep_widget_source_structure_selector_emits_selection_signal(qapp) -> None:
@@ -571,3 +572,34 @@ def test_uep_batch_configure_does_not_swallow_delete_shortcut(qapp) -> None:
     widget._table.selectRow(0)
     widget._backspace_shortcut.activated.emit()
     assert widget._table.rowCount() == 0
+
+
+def test_uep_widget_context_menu_emits_reset_for_failed_row(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    label_item = widget._table.item(0, widget._LABEL_COLUMN)
+    assert label_item is not None
+    label = label_item.text()
+    widget.set_runtime_states({label: UepRunState(status="failed")})
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    open_reset_menu(widget._table, row=0)
+
+    assert payloads == [[label]]
+
+
+def test_uep_widget_context_menu_disables_reset_for_ready_row(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(widget._table, row=0)
+
+    assert menu is not None and menu.reset_action().enabled is False
+    assert payloads == []

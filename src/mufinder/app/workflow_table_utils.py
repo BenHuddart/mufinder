@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Callable
 
 from PySide6.QtCore import Qt
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
     QHeaderView,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -17,6 +19,29 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.theme import use_square_top_table_corners, use_tabbed_table_corners
+
+#: Displayed row statuses whose job can be reset back to ``defined`` from the
+#: workflow table itself. It mirrors ``ProjectService.reset_failed_job``'s
+#: accepted statuses, but as the lowercased strings the Status cell holds.
+#:
+#: A *dismissed* terminal job is deliberately absent: after
+#: :func:`mufinder.app.workflow_submission.effective_row_status` its row already
+#: reads ``"ready"``, and its recovery path is the row's own Submit (which
+#: performs the same reset lazily). See ``docs/job_lifecycle.rst``.
+RESETTABLE_ROW_STATUSES = frozenset({"failed", "stopped", "cancelled"})
+
+#: Menu text for the per-row reset action, shared so every workflow table names
+#: the same recovery affordance identically.
+RESET_FAILED_ACTION_TEXT = "Reset Failed Jobs..."
+
+#: Table tooltip announcing the reset menu. A one-entry context menu that is
+#: greyed out except on failed rows is otherwise invisible — a user with a stuck
+#: row has no reason to right-click — so every table that binds the menu also
+#: advertises it. Per-item tooltips still take precedence where a widget sets
+#: them; this is only the fallback shown over cells that have none.
+RESET_FAILED_TABLE_TOOLTIP = (
+    "Right-click a failed, stopped, or cancelled row to reset it back to ready for rerun."
+)
 
 
 def bind_delete_shortcuts(
@@ -110,6 +135,138 @@ def set_workflow_table_item(table: QTableWidget, row: int, column: int, text: st
         table.setItem(row, column, item)
         return
     item.setText(text)
+
+
+def workflow_row_status_text(table: QTableWidget, row: int, column: int) -> str:
+    """Return the normalized status string a workflow table row is displaying.
+
+    Menu gates compare against :data:`RESETTABLE_ROW_STATUSES`, which holds
+    lowercased status values, so the cell text is stripped and lowercased here
+    rather than at each call site.
+    """
+
+    item = table.item(row, column)
+    if item is None:
+        return ""
+    return item.text().strip().lower()
+
+
+def selection_supports_reset(keys: Sequence[object], statuses: Sequence[str]) -> bool:
+    """Return whether the whole selection can be reset as one batch.
+
+    ``statuses`` carries one entry per selected row; ``keys`` carries one entry
+    per selected row that yielded a submission key. Both conditions below exist
+    because ``_reset_failed_jobs`` prompts once for the entire batch, including
+    the destructive output cleanup — so any row the action would silently drop
+    makes that prompt misreport what is about to happen:
+
+    - every status must be resettable, which rules out a mixed selection; and
+    - ``len(keys)`` must equal ``len(statuses)``, which rules out a selection
+      containing a keyless row (an unlabeled or half-built row whose
+      ``key_for_row`` returned ``None``). Without this a two-row selection of
+      one keyed and one keyless failed row would enable the action and reset
+      only the first, leaving the second untouched with no indication why.
+    """
+
+    return (
+        bool(keys)
+        and bool(statuses)
+        and len(keys) == len(statuses)
+        and all(status in RESETTABLE_ROW_STATUSES for status in statuses)
+    )
+
+
+def add_reset_failed_action(
+    menu: QMenu,
+    *,
+    keys: Sequence[object],
+    statuses: Sequence[str],
+    emit_reset: Callable[[list[object]], None],
+):
+    """Append the shared "Reset Failed Jobs..." action to ``menu``."""
+
+    action = menu.addAction(RESET_FAILED_ACTION_TEXT)
+    action.setEnabled(selection_supports_reset(keys, statuses))
+    action.triggered.connect(
+        lambda _checked=False, selected=list(keys): emit_reset(list(selected))
+    )
+    return action
+
+
+def open_reset_failed_context_menu(
+    table: QTableWidget,
+    position,
+    *,
+    key_for_row: Callable[[int], object | None],
+    status_for_row: Callable[[int], str],
+    emit_reset: Callable[[list[object]], None],
+) -> QMenu | None:
+    """Open a single-action reset menu on the workflow row under ``position``.
+
+    This is the in-table recovery affordance for a failed/stopped/cancelled job
+    whose row would otherwise be stuck: the dashboard Reset button is the only
+    other way back to ``defined``, and it disappears once the job is dismissed.
+
+    Right-clicking a row outside the current selection selects that row first,
+    matching the convergence table this was extracted from, so the action always
+    describes what the user is pointing at. A row whose ``key_for_row`` returns
+    ``None`` (a half-built or unlabeled row) contributes no key, which disables
+    the action for the whole selection rather than resetting only its keyed
+    siblings — see :func:`selection_supports_reset`.
+
+    Returns the menu (for tests) or ``None`` when the click missed every row.
+    """
+
+    row = table.rowAt(position.y())
+    if row < 0:
+        return None
+
+    selected_rows = _selected_table_rows(table)
+    if row not in selected_rows:
+        table.selectRow(row)
+        selected_rows = (row,)
+
+    keys = [key for row_index in selected_rows if (key := key_for_row(row_index)) is not None]
+    statuses = [status_for_row(row_index) for row_index in selected_rows]
+
+    menu = QMenu(table)
+    add_reset_failed_action(menu, keys=keys, statuses=statuses, emit_reset=emit_reset)
+    menu.exec(table.viewport().mapToGlobal(position))
+    return menu
+
+
+def bind_reset_failed_context_menu(
+    table: QTableWidget,
+    *,
+    key_for_row: Callable[[int], object | None],
+    status_for_row: Callable[[int], str],
+    emit_reset: Callable[[list[object]], None],
+) -> None:
+    """Install :func:`open_reset_failed_context_menu` as ``table``'s row menu.
+
+    Also stamps :data:`RESET_FAILED_TABLE_TOOLTIP` on the table so the menu is
+    discoverable, unless the caller already set a tooltip of its own.
+    """
+
+    if not table.toolTip():
+        table.setToolTip(RESET_FAILED_TABLE_TOOLTIP)
+    table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    table.customContextMenuRequested.connect(
+        lambda position: open_reset_failed_context_menu(
+            table,
+            position,
+            key_for_row=key_for_row,
+            status_for_row=status_for_row,
+            emit_reset=emit_reset,
+        )
+    )
+
+
+def _selected_table_rows(table: QTableWidget) -> tuple[int, ...]:
+    selection_model = table.selectionModel()
+    if selection_model is None:
+        return ()
+    return tuple(sorted(index.row() for index in selection_model.selectedRows()))
 
 
 def workflow_row_is_locked(status: str) -> bool:

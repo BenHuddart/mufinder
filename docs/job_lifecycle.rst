@@ -474,13 +474,80 @@ staleness reason. Actions are enabled as follows:
   fresh ``CalculationRun``.
 - ``Cancel``: ``submitting``, ``queued``, ``running``, and ``retrieving``.
 - ``Inspect``: ``failed`` and ``stopped``.
-- ``Reset``: ``failed``, ``stopped``, and ``cancelled``.
+- ``Reset``: ``failed``, ``stopped``, and ``cancelled``. The same action is
+  also available per row from every workflow table (see
+  :ref:`per-row-reset-affordance`), which is what keeps a non-dismissed
+  failure recoverable without going through the dashboard.
 - ``Dismiss``: ``failed``, ``stopped``, and ``cancelled``. Dismissal hides
   the row from the active dashboard by stamping ``dismissed_at``; it is not a
   status transition, so the job record, runs, results, and provenance all
   remain in the document. There is no un-dismiss *action* — the stamp is
   cleared only by ``reset_failed_job``, which the job's own workflow row now
   triggers on its next submit (see below).
+
+.. _per-row-reset-affordance:
+
+Every workflow table has a per-row reset
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A failed job's recovery must not depend on the jobs dashboard: the dashboard row
+is easy to lose track of in a long project, and it disappears entirely once the
+job is dismissed. Every workflow table therefore offers the same recovery action
+on the row itself, via a right-click context menu carrying a single
+``Reset Failed Jobs...`` entry.
+
+The shared implementation lives in ``mufinder.app.workflow_table_utils``:
+
+- ``RESETTABLE_ROW_STATUSES`` — the gate, ``{failed, stopped, cancelled}``,
+  matching what ``ProjectService.reset_failed_job`` accepts. A *dismissed*
+  terminal job is deliberately excluded: after ``effective_row_status`` its row
+  already reads ``"ready"`` and its recovery path is the row's own ``Submit``
+  (see :ref:`dismissed-rows-stay-resubmittable`).
+- ``selection_supports_reset`` — enables the action only when the whole
+  selection is resettable. ``_reset_failed_jobs`` prompts once for the entire
+  batch, including the destructive output cleanup, so a selection is refused
+  rather than silently narrowed in either of two ways: a *mixed* selection
+  (some row not in ``RESETTABLE_ROW_STATUSES``), and a *partially keyed* one
+  (some selected row whose ``key_for_row`` returned ``None``, which would
+  otherwise reset its keyed siblings and leave that row untouched).
+- ``bind_reset_failed_context_menu`` / ``open_reset_failed_context_menu`` —
+  install and open the menu. Right-clicking a row outside the current selection
+  retargets the selection first, so the action always describes the row under
+  the cursor. Each widget supplies only a ``key_for_row`` (its own submission
+  key: a cutoff, a k-point grid, a label, a charge-state-qualified key, or a
+  path key) and a ``status_for_row``.
+- ``RESET_FAILED_TABLE_TOOLTIP`` — the discoverability stamp. A single-entry
+  menu that is greyed out except on failed rows is invisible on its own: a user
+  with a stuck row has no reason to right-click. ``bind_reset_failed_context_menu``
+  therefore sets this tooltip on every table it binds, unless the widget already
+  set a tooltip of its own. Per-item tooltips are unaffected and still take
+  precedence where a widget sets them. The energy-barriers diffusion-path table
+  additionally carries the hint in its visible hint label.
+
+``MainWindow`` connects each widget's ``reset_failed_requested`` signal to a
+thin ``_on_reset_failed_from_*`` handler that resolves the keys through the
+workflow's ``WorkflowJobController.jobs_for_keys`` and hands the jobs to the
+shared ``_reset_failed_jobs``. Muon relaxation binds the menu once per
+charge-state table, each capturing its own table, so a right-click acts on the
+rows it was raised over rather than on whichever tab happens to be current.
+
+After a reset, ``_refresh_views_after_job_reset`` repaints every workflow table.
+``_refresh_jobs_table`` already covers the dashboard plus the convergence,
+pristine, muon, and UEP tables; energy barriers and quantum corrections are
+refreshed through their own wrappers, which no-op until their lazily-created
+view exists.
+
+Quantum corrections is the exception to the shape above. Its row stages a
+singlepoint job and then a phonon job into one shared output directory, so its
+recovery is a *stage* reset (``_on_reset_quantum_corrections_to_stage_one``,
+which deletes both job records and clears the directory) rather than a job
+reset. ``_quantum_can_reset_to_stage_one`` gates it: the row qualifies once it
+has staged a job and has no job still running — either the phonon job exists and
+is not active, or the row is still on stage 1 with a singlepoint job that has
+finished, which includes a failed, stopped, or cancelled one. That last case is
+the escape hatch; without it a stage-1 failure with no phonon job showed
+``"failed"`` (so ``Submit`` was disabled) *and* was refused by the reset, leaving
+the row permanently stuck.
 
 .. _dismissed-rows-stay-resubmittable:
 
@@ -491,10 +558,9 @@ Dismissing a terminal job removes the only generic ``Resubmit``/``Reset``
 controls it had, but its workflow table row still points at it through the
 definition's persistent label→job-id mapping. Left alone, that row would project
 ``"failed"`` — not a member of ``READY_WORKFLOW_ROW_STATUSES`` — and its
-``Submit`` would stay disabled forever, with no way back to ``defined``. Four of
-the seven workflows (pristine relaxation, muon relaxation, energy barriers/NEB,
-quantum corrections) have no in-table reset affordance at all, so the row was
-permanently stuck.
+``Submit`` would stay disabled forever, with no way back to ``defined``. The
+row's own ``Reset Failed Jobs...`` action cannot rescue it either: that action
+gates on the displayed status, and a dismissed row no longer reads as failed.
 
 Dismissal is therefore read as *"failure acknowledged, this row is actionable
 again"*, via two pieces in ``mufinder.app.workflow_submission``:
@@ -505,8 +571,8 @@ again"*, via two pieces in ``mufinder.app.workflow_submission``:
   ``"ready"``; every other job projects its own status value. Every workflow's
   job→row-status projection goes through it. A *non*-dismissed failed job is
   unaffected: it still shows ``"failed"``, its row still refuses to submit, and
-  its recovery path is still the dashboard ``Resubmit``/``Reset`` buttons that
-  are still on screen.
+  its recovery path is the row's own ``Reset Failed Jobs...`` action plus the
+  dashboard ``Resubmit``/``Reset`` buttons that are still on screen.
 - ``prepare_jobs_for_resubmission`` on ``WorkflowControllerContext`` — the lazy
   reset. ``WorkflowJobController.submit`` partitions the planned jobs and, for
   the dismissed ones only, calls this hook immediately before dispatch. The

@@ -42,8 +42,10 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
+    bind_reset_failed_context_menu,
     create_workflow_table,
     style_workflow_configure_button,
+    workflow_row_status_text,
 )
 from mufinder.app.theme import (
     status_brush,
@@ -426,6 +428,12 @@ class KPointConvergenceWidget(QWidget):
         self._batch_configure_button.clicked.connect(self._configure_selected_grids)
 
         self._table.itemChanged.connect(self._on_table_changed)
+        bind_reset_failed_context_menu(
+            self._table,
+            key_for_row=lambda row: self._grid_value_at_row(row, strict=False),
+            status_for_row=self._row_status,
+            emit_reset=self.reset_failed_requested.emit,
+        )
         selection_model = self._table.selectionModel()
         if selection_model is not None:
             selection_model.selectionChanged.connect(lambda *_: self._refresh_batch_button_state())
@@ -737,6 +745,9 @@ class KPointConvergenceWidget(QWidget):
             return ()
         rows = sorted(index.row() for index in selection_model.selectedRows())
         return tuple(rows)
+
+    def _row_status(self, row: int) -> str:
+        return workflow_row_status_text(self._table, row, self._STATUS_COLUMN)
 
     def _selected_grids(self) -> tuple[tuple[int, int, int], ...]:
         selected: list[tuple[int, int, int]] = []

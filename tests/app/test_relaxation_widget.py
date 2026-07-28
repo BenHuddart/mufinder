@@ -14,6 +14,7 @@ from mufinder.app.workflow_parameters import kpoint_exclusive_hint
 from mufinder.app.relaxation_types import RelaxationRunState
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, SelectionSnapshotToolButton
 from mufinder.castep_io.types import ValueWithUnit
+from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
 
 def test_relaxation_widget_supercell_dropdown_lists_project_cells(qapp) -> None:
@@ -1009,3 +1010,34 @@ def test_relaxation_batch_configure_uses_selection_snapshot_not_collapsed(
 
     assert captured, "per-row Configure did not open the dialog"
     assert set(captured[0]) == {first_id, second_id}
+
+
+def test_relaxation_widget_context_menu_emits_reset_for_failed_row(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+    widget.set_runtime_states({label: RelaxationRunState(status="failed")})
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    open_reset_menu(widget._table, row=0)
+
+    assert payloads == [[label]]
+
+
+def test_relaxation_widget_context_menu_disables_reset_for_running_row(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+    widget.set_runtime_states({label: RelaxationRunState(status="running")})
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(widget._table, row=0)
+
+    assert menu is not None and menu.reset_action().enabled is False
+    assert payloads == []
