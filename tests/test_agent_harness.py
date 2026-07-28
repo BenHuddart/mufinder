@@ -26,6 +26,16 @@ INDEXED_DOCS = (
     "compatibility_policy",
 )
 
+PR_TEMPLATE_PATH = ".github/PULL_REQUEST_TEMPLATE.md"
+
+PR_TEMPLATE_SECTIONS = (
+    "## Why",
+    "## What changed",
+    "## Reviewer notes",
+    "## Verification",
+    "## Gates",
+)
+
 FORBIDDEN_LAYER_IMPORTS = {
     "domain": {
         "app",
@@ -189,6 +199,30 @@ def test_main_window_submit_handlers_do_not_grow() -> None:
         f"{removed_handlers}. Update PINNED_MAIN_WINDOW_SUBMIT_HANDLERS (shrink it) "
         "when a workflow migrates onto a controller."
     )
+
+
+def test_pull_request_template_is_discoverable_by_agents() -> None:
+    """Guard the PR template and the pointers agents rely on to find it.
+
+    ``gh pr create --body`` bypasses GitHub's web-form template injection, so
+    agents only follow the template if the files they load at session start
+    (``CLAUDE.md``, ``AGENTS.md``) point at it. This pins the template's
+    section headings and both pointers so neither can silently rot.
+    """
+
+    template = (PROJECT_ROOT / PR_TEMPLATE_PATH).read_text(encoding="utf-8")
+    missing_sections = [
+        section for section in PR_TEMPLATE_SECTIONS if section not in template
+    ]
+    assert not missing_sections, (
+        f"{PR_TEMPLATE_PATH} is missing section heading(s): {missing_sections}"
+    )
+    for pointer_file in ("CLAUDE.md", "AGENTS.md"):
+        pointer = (PROJECT_ROOT / pointer_file).read_text(encoding="utf-8")
+        assert PR_TEMPLATE_PATH in pointer, (
+            f"{pointer_file} no longer references {PR_TEMPLATE_PATH}; agents "
+            "discover the PR template through that pointer."
+        )
 
 
 def test_repository_does_not_track_python_bytecode_artifacts() -> None:

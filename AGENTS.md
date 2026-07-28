@@ -18,6 +18,10 @@ architecture, and quality expectations without relying on thread context.
   targeted validation loops.
 - Do not develop directly on `main`. Create a short-lived `feature/*` or
   `fix/*` branch before making repository changes, then open a PR into `main`.
+- PR bodies follow `.github/PULL_REQUEST_TEMPLATE.md` (Why / What changed /
+  Reviewer notes / Verification / Gates). `gh pr create --body` does not
+  inject the template — read that file before writing the body, and give the
+  PR a Conventional Commits title prefix (`feat:`, `fix:`, …).
 - Use `docs/compatibility_policy.rst` before changing persisted names,
   compatibility aliases, or project-file migration behavior.
 - Update feature docs in `docs/` whenever behavior changes; new functionality

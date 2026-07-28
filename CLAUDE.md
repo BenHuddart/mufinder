@@ -129,7 +129,11 @@ The project follows GitHub Flow: `main` is the single long-lived branch.
    small features within about a week; longer-lived branches are allowed when a
    feature genuinely needs it.
 2. Open a pull request **directly into `main`**. CI runs the full quality gates on
-   every PR; merges are blocked until they pass.
+   every PR; merges are blocked until they pass. PR bodies must follow
+   `.github/PULL_REQUEST_TEMPLATE.md` — `gh pr create --body` does not apply it
+   automatically, so read it before writing the body. PR titles use Conventional
+   Commits prefixes (`feat:`, `fix:`, …), which semantic-release parses for
+   version bumps and the changelog.
 3. Use the `Preview Build` workflow to produce downloadable artifacts from any
    branch for ad hoc validation, without publishing a release.
 4. Release by pushing a `vX.Y.Z` tag. Branch protection prevents pushing the

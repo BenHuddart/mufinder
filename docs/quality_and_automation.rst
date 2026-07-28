@@ -169,7 +169,11 @@ The expected branch lifecycle is:
    features should merge within about a week; longer-lived branches are allowed
    when a feature genuinely needs it.
 2. Open a pull request directly into ``main`` and let CI run the full quality
-   gates; merges are blocked until they pass.
+   gates; merges are blocked until they pass. PR bodies follow
+   ``.github/PULL_REQUEST_TEMPLATE.md``; GitHub only injects the template into
+   the web form, so agents opening PRs with ``gh pr create --body`` must read
+   the file first. PR titles carry a Conventional Commits prefix, which
+   ``semantic-release`` parses to derive version bumps and the changelog.
 3. Use ``Preview Build`` to produce distributable artifacts from any branch when
    validation is needed.
 4. Release by pushing a ``vX.Y.Z`` tag from ``main``; the ``Release Publish``
