@@ -11,6 +11,7 @@ import mufinder.app.kpoint_convergence_widget as kpoint_widget_module
 from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget, KPointGridDialog, KPointSpacingDialog
 from mufinder.castep_io.types import ValueWithUnit
+from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
 
 def _table_grids(widget: KPointConvergenceWidget) -> list[tuple[int, int, int]]:
@@ -711,3 +712,32 @@ def test_kpoint_widget_set_form_state_restores_structured_values(qapp) -> None:
     assert params["kpoint_mp_grid"] == (2, 2, 2)
     assert "lattice_cart" not in params
     assert widget._added_advanced[(2, 2, 2)] == {"max_scf_cycles"}
+
+
+def test_kpoint_widget_context_menu_emits_reset_for_failed_row(qapp, monkeypatch) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget.set_runtime_states({(2, 2, 2): SweepPointRunState(status="failed")})
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    open_reset_menu(widget._table, row=0)
+
+    assert payloads == [[(2, 2, 2)]]
+
+
+def test_kpoint_widget_context_menu_disables_reset_for_completed_row(qapp, monkeypatch) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget.set_runtime_states({(2, 2, 2): SweepPointRunState(status="completed", total_energy=-1.0)})
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(widget._table, row=0)
+
+    assert menu is not None and menu.reset_action().enabled is False
+    assert payloads == []

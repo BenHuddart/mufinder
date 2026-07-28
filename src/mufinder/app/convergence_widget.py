@@ -40,9 +40,12 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.app.workflow_table_utils import (
+    RESETTABLE_ROW_STATUSES,
+    add_reset_failed_action,
     bind_delete_shortcuts,
     create_workflow_table,
     style_workflow_configure_button,
+    workflow_row_status_text,
 )
 from mufinder.app.theme import (
     status_brush,
@@ -78,7 +81,9 @@ _PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "fail
 # context-menu Submit action agrees with the always-enabled Run buttons, which
 # already submit "not generated" rows through the same materialize path.
 _SUBMITTABLE_JOB_STATUSES = set(READY_WORKFLOW_ROW_STATUSES)
-_RESETTABLE_JOB_STATUSES = {"failed", "stopped", "cancelled"}
+# Shared with every other workflow table's row reset action; see
+# ``workflow_table_utils.RESETTABLE_ROW_STATUSES``.
+_RESETTABLE_JOB_STATUSES = set(RESETTABLE_ROW_STATUSES)
 _LOCKED_CUTOFF_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"cancelled"}
 
 
@@ -1034,10 +1039,7 @@ class CutoffConvergenceWidget(QWidget):
         return ()
 
     def _row_status(self, row: int) -> str:
-        item = self._cutoff_table.item(row, self._STATUS_COLUMN)
-        if item is None:
-            return ""
-        return item.text().strip().lower()
+        return workflow_row_status_text(self._cutoff_table, row, self._STATUS_COLUMN)
 
     def _open_cutoff_context_menu(self, position) -> None:
         row = self._cutoff_table.rowAt(position.y())
@@ -1054,7 +1056,6 @@ class CutoffConvergenceWidget(QWidget):
         can_submit = bool(cutoffs) and all(status in _SUBMITTABLE_JOB_STATUSES for status in statuses)
         can_cancel = bool(cutoffs) and all(status in _ACTIVE_JOB_STATUSES for status in statuses)
         can_failed_actions = bool(cutoffs) and all(status == "failed" for status in statuses)
-        can_reset_actions = bool(cutoffs) and all(status in _RESETTABLE_JOB_STATUSES for status in statuses)
 
         menu = QMenu(self)
         submit_action = menu.addAction("Submit Local Calculation")
@@ -1084,10 +1085,11 @@ class CutoffConvergenceWidget(QWidget):
             lambda _checked=False, selected=cutoffs: self.inspect_failed_requested.emit(list(selected))
         )
 
-        reset_failed_action = menu.addAction("Reset Failed Jobs...")
-        reset_failed_action.setEnabled(can_reset_actions)
-        reset_failed_action.triggered.connect(
-            lambda _checked=False, selected=cutoffs: self.reset_failed_requested.emit(list(selected))
+        add_reset_failed_action(
+            menu,
+            keys=cutoffs,
+            statuses=statuses,
+            emit_reset=self.reset_failed_requested.emit,
         )
 
         menu.exec(self._cutoff_table.viewport().mapToGlobal(position))

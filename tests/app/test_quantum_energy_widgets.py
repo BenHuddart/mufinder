@@ -15,6 +15,7 @@ from mufinder.app.energy_barriers_widget import (
 )
 from mufinder.app.quantum_corrections_widget import QuantumCorrectionsWidget, QuantumResultRow, QuantumSourceRow
 from mufinder.domain.models import Structure
+from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
 
 def _sample_structure() -> Structure:
@@ -753,3 +754,57 @@ def test_energy_barriers_widget_shows_task_farm_column(qapp) -> None:
     assert widget._sources_table.item(0, 4).text() == "3"
     # Farming defaults to off, and reads as such rather than as a bare "1".
     assert widget._sources_table.item(1, 4).text() == "Off"
+
+
+def _neb_source(key: str, status: str) -> EnergyBarrierSourceRow:
+    return EnergyBarrierSourceRow(
+        key=key,
+        reactant="A",
+        product="B",
+        charge_state="Muonium",
+        path_length="1.2 ang",
+        status=status,
+    )
+
+
+def test_energy_barriers_widget_context_menu_emits_reset_for_failed_source(qapp, monkeypatch) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_sources([_neb_source("path-a", "failed")])
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    open_reset_menu(widget._sources_table, row=0)
+
+    assert payloads == [["path-a"]]
+
+
+def test_energy_barriers_widget_context_menu_disables_reset_for_running_source(
+    qapp, monkeypatch
+) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_sources([_neb_source("path-a", "running")])
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(widget._sources_table, row=0)
+
+    assert menu is not None and menu.reset_action().enabled is False
+    assert payloads == []
+
+
+def test_energy_barriers_widget_context_menu_resets_a_multi_row_selection(qapp, monkeypatch) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_sources([_neb_source("path-a", "failed"), _neb_source("path-b", "cancelled")])
+    widget._sources_table.selectAll()
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    open_reset_menu(widget._sources_table, row=0)
+
+    assert payloads == [["path-a", "path-b"]]

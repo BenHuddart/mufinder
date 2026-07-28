@@ -279,6 +279,14 @@ from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamT
 _LOG = logging.getLogger(__name__)
 
 _RESUBMITTABLE_JOB_STATES = {JobStatus.FAILED, JobStatus.CANCELLED}
+# Stage-1 singlepoint statuses from which a Quantum Corrections row may be rewound
+# to stage 1 while no phonon job exists. ``COMPLETED`` is the "redo stage 1 with
+# different parameters" case; the three terminal-recoverable statuses are the
+# failure escape hatch (the same set ``reset_failed_job`` accepts, spelled out
+# here because this path deletes job records rather than resetting them).
+_QUANTUM_STAGE_ONE_RESETTABLE_STATUSES = frozenset(
+    {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+)
 _VISIBLE_DASHBOARD_STATES = ACTIVE_JOB_STATUSES | {JobStatus.STOPPED} | _RESUBMITTABLE_JOB_STATES
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _WorkflowKey = TypeVar("_WorkflowKey")
@@ -1900,6 +1908,9 @@ class MainWindow(QMainWindow):
         self._pristine_relaxation_view.remove_requested.connect(
             self._on_remove_pristine_relaxation_rows
         )
+        self._pristine_relaxation_view.reset_failed_requested.connect(
+            self._on_reset_failed_from_pristine_relaxation
+        )
         self._uep_view = UEPWidget()
         self._uep_view.configure_requested.connect(self._on_uep_configured)
         self._uep_view.form_state_changed.connect(self._on_uep_form_state_changed)
@@ -1963,6 +1974,9 @@ class MainWindow(QMainWindow):
             lambda values: self._muon_relaxation_controller.submit(values, target="cluster")
         )
         self._muon_relaxation_view.remove_requested.connect(self._on_remove_muon_relaxation_rows)
+        self._muon_relaxation_view.reset_failed_requested.connect(
+            self._on_reset_failed_from_muon_relaxation
+        )
         self._muon_relaxation_view.analysis_workspace_requested.connect(
             self._on_create_relaxation_analysis_workspace_requested
         )
@@ -5437,6 +5451,9 @@ class MainWindow(QMainWindow):
         energy_barriers_view.remove_sources_requested.connect(
             self._on_remove_energy_barrier_sources
         )
+        energy_barriers_view.reset_failed_requested.connect(
+            self._on_reset_failed_from_energy_barriers
+        )
         energy_barriers_view.view_source_requested.connect(self._on_view_energy_barrier_source)
         energy_barriers_view.configure_result_requested.connect(self._on_configure_energy_barrier_result)
         # The controller already exists (built + registered in ``__init__`` even
@@ -7301,9 +7318,7 @@ class MainWindow(QMainWindow):
             detach_convergence=True,
         )
 
-        self._refresh_jobs_table()
-        self._convergence_controller.refresh_view()
-        self._kpoint_convergence_controller.refresh_view()
+        self._refresh_views_after_job_reset()
 
         if cleanup_errors:
             QMessageBox.warning(
@@ -7320,6 +7335,25 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"Reset {reset_count} failed job(s) and cleaned directories")
             else:
                 self.statusBar().showMessage(f"Reset {reset_count} failed job(s)")
+
+    def _refresh_views_after_job_reset(self) -> None:
+        """Repaint every workflow table that can show a just-reset job.
+
+        Shared by the explicit per-row/dashboard Reset action and by the lazy
+        reset a dismissed row performs on resubmit. ``_refresh_jobs_table``
+        already re-renders the dashboard plus the convergence, pristine, muon,
+        and UEP tables; the convergence controllers are refreshed explicitly
+        because a reset also detaches a cutoff sweep point, and the two
+        lazily-created views (energy barriers, quantum corrections) refresh
+        through their own no-op-until-created wrappers. Every workflow now has an
+        in-table reset action, so every workflow's table has to repaint.
+        """
+
+        self._refresh_jobs_table()
+        self._convergence_controller.refresh_view()
+        self._kpoint_convergence_controller.refresh_view()
+        self._refresh_energy_barriers_view()
+        self._refresh_quantum_corrections_view()
 
     def _apply_failed_job_reset(
         self,
@@ -7406,9 +7440,7 @@ class MainWindow(QMainWindow):
             detach_convergence=False,
         )
 
-        self._refresh_jobs_table()
-        self._convergence_controller.refresh_view()
-        self._kpoint_convergence_controller.refresh_view()
+        self._refresh_views_after_job_reset()
 
         if cleanup_errors:
             QMessageBox.warning(
@@ -11289,6 +11321,12 @@ class MainWindow(QMainWindow):
             values = [payload]
         return {str(value).strip() for value in values if str(value).strip()}
 
+    def _on_reset_failed_from_pristine_relaxation(self, labels: list[str]) -> None:
+        self._reset_failed_jobs(self._pristine_relaxation_controller.jobs_for_keys(list(labels)))
+
+    def _on_reset_failed_from_muon_relaxation(self, keys: list[str]) -> None:
+        self._reset_failed_jobs(self._muon_relaxation_controller.jobs_for_keys(list(keys)))
+
     def _on_remove_pristine_relaxation_rows(self, payload: object) -> None:
         labels = self._removed_row_labels(payload)
         if self._document is None or not labels:
@@ -12794,13 +12832,31 @@ class MainWindow(QMainWindow):
         )
 
     def _quantum_can_reset_to_stage_one(self, definition, candidate: _QuantumSourceCandidate) -> bool:
+        """Return whether a Quantum Corrections row can be rewound to stage 1.
+
+        Quantum Corrections is the one workflow whose recovery is a *stage*
+        reset rather than a job reset: the row stages a singlepoint job and then
+        a phonon job into a shared output directory, so
+        :meth:`_on_reset_quantum_corrections_to_stage_one` deletes both job
+        records instead of calling ``reset_failed_job``. That makes this
+        predicate the workflow's whole in-table escape hatch.
+
+        A row qualifies once it has progressed past "nothing staged" and has no
+        job still running: either the phonon job exists and is not active, or the
+        row is still on stage 1 with a singlepoint job that has finished — which
+        includes a *failed* (or stopped/cancelled) one. Without that last case a
+        stage-1 failure with no phonon job left the row permanently stuck: it
+        showed ``"failed"``, so its Submit stayed disabled, and Reset was
+        refused too.
+        """
+
         singlepoint_job = self._singlepoint_job_for_quantum_source_key(definition, candidate.key)
         if singlepoint_job is None:
             return False
         phonon_job = self._phonon_job_for_quantum_source_key(definition, candidate.key)
         if phonon_job is not None:
             return phonon_job.status not in ACTIVE_JOB_STATUSES
-        return singlepoint_job.status == JobStatus.COMPLETED
+        return singlepoint_job.status in _QUANTUM_STAGE_ONE_RESETTABLE_STATUSES
 
     def _ensure_quantum_corrections_definition(self, source_keys: list[str]):
         if self._document is None:
@@ -13571,7 +13627,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "No resettable rows",
-                "Only progressed Quantum Corrections rows without an active job can be reset to stage 1.",
+                "Only Quantum Corrections rows that have staged a job, and whose job is no longer "
+                "running, can be reset to stage 1. That includes rows whose stage-1 singlepoint "
+                "failed, was stopped, or was cancelled.",
             )
             return
 
@@ -13760,6 +13818,9 @@ class MainWindow(QMainWindow):
         self._persist_document_ui_state(
             failure_message="Energy Barriers paths were generated, but autosave failed."
         )
+
+    def _on_reset_failed_from_energy_barriers(self, keys: list[str]) -> None:
+        self._reset_failed_jobs(self._energy_barriers_controller.jobs_for_keys(list(keys)))
 
     def _on_remove_energy_barrier_sources(self, payload: object) -> None:
         keys = self._removed_row_labels(payload)

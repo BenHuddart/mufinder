@@ -14,6 +14,8 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_types import RelaxationRunState
 from mufinder.castep_io.gui_metadata import keyword_visible_in_workflow
 from mufinder.castep_io.types import ValueWithUnit
+from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE
+from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
 
 def test_muon_relaxation_widget_stages_sites_with_positive_muon_default(qapp) -> None:
@@ -802,3 +804,80 @@ def test_muon_relaxation_batch_configure_does_not_swallow_delete_shortcut(qapp) 
     _select_muon_rows(widget, (0,))
     widget._backspace_shortcut.activated.emit()
     assert widget._table.rowCount() == 0
+
+
+def test_muon_relaxation_widget_context_menu_emits_reset_for_failed_row(qapp, monkeypatch) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(uuid4()),
+                "label": "Failed Site",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ]
+    )
+    widget.set_runtime_states({"positivemuon:Failed Site": RelaxationRunState(status="failed")})
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    open_reset_menu(widget._table, row=0)
+
+    # The payload is the runtime submission key, not the bare label, so
+    # MuonRelaxationController.jobs_for_keys can resolve the right job.
+    assert payloads == [["positivemuon:Failed Site"]]
+
+
+def test_muon_relaxation_widget_context_menu_targets_the_clicked_charge_state_table(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(uuid4()),
+                "label": "Mu Site",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ],
+        charge_states=(MUONIUM_CHARGE_STATE,),
+    )
+    widget.set_runtime_states({"muonium:Mu Site": RelaxationRunState(status="failed")})
+    muonium_table = widget._tables_by_charge_state[MUONIUM_CHARGE_STATE]
+    assert muonium_table.rowCount() == 1
+    # The positive-muon tab stays current, so a menu that read _active_table()
+    # instead of its own table would resolve the wrong (empty) table.
+    assert widget._active_table() is not muonium_table
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    open_reset_menu(muonium_table, row=0)
+
+    assert payloads == [["muonium:Mu Site"]]
+
+
+def test_muon_relaxation_widget_context_menu_disables_reset_for_queued_row(qapp, monkeypatch) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [
+            {
+                "id": str(uuid4()),
+                "label": "Queued Site",
+                "fractional_position": [0.1, 0.2, 0.3],
+            }
+        ]
+    )
+    widget.set_runtime_states({"positivemuon:Queued Site": RelaxationRunState(status="queued")})
+
+    payloads: list[object] = []
+    widget.reset_failed_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(widget._table, row=0)
+
+    assert menu is not None and menu.reset_action().enabled is False
+    assert payloads == []

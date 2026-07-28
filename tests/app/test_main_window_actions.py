@@ -10478,3 +10478,271 @@ def test_dismissed_row_submit_regenerates_job_inputs(
     assert "KPOINT_MP_GRID 4 4 4" in cell_path.read_text(encoding="utf-8")
     assert len(doc.jobs) == 1
     window.close()
+
+
+# ---------------------------------------------------------------------------
+# Per-row "Reset Failed Jobs..." coverage for the workflows that lacked it
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("handler_name", "controller_attr", "keys"),
+    [
+        ("_on_reset_failed_from_pristine_relaxation", "_pristine_relaxation_controller", ["relax_1"]),
+        ("_on_reset_failed_from_muon_relaxation", "_muon_relaxation_controller", ["positivemuon:siteA"]),
+        ("_on_reset_failed_from_energy_barriers", "_energy_barriers_controller", ["path-a"]),
+        ("_on_reset_failed_from_uep", "_uep_controller", ["uep_1"]),
+        ("_on_reset_failed_from_kpoint_convergence", "_kpoint_convergence_controller", [(2, 2, 2)]),
+    ],
+)
+def test_main_window_row_reset_handlers_delegate_to_reset_failed_jobs(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+    handler_name: str,
+    controller_attr: str,
+    keys: list[object],
+) -> None:
+    window = MainWindow()
+    job = Job(
+        label="row-job",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_relaxation",
+        status=JobStatus.FAILED,
+    )
+
+    requested_keys: list[list[object]] = []
+    reset: list[list[Job]] = []
+    monkeypatch.setattr(
+        getattr(window, controller_attr),
+        "jobs_for_keys",
+        lambda values: (requested_keys.append(list(values)), [job])[1],
+    )
+    monkeypatch.setattr(window, "_reset_failed_jobs", lambda jobs: reset.append(jobs))
+
+    getattr(window, handler_name)(keys)
+
+    assert requested_keys == [keys]
+    assert reset == [[job]]
+    window.close()
+
+
+@pytest.mark.parametrize(
+    ("view_attr", "handler_name", "payload"),
+    [
+        ("_pristine_relaxation_view", "_on_reset_failed_from_pristine_relaxation", ["relax_1"]),
+        ("_muon_relaxation_view", "_on_reset_failed_from_muon_relaxation", ["positivemuon:siteA"]),
+        ("_uep_view", "_on_reset_failed_from_uep", ["uep_1"]),
+        ("_kpoint_convergence_view", "_on_reset_failed_from_kpoint_convergence", [(2, 2, 2)]),
+        ("_convergence_view", "_on_reset_failed_from_convergence", [300.0]),
+    ],
+)
+def test_main_window_connects_workflow_reset_signals(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+    view_attr: str,
+    handler_name: str,
+    payload: list[object],
+) -> None:
+    # The reset signal must actually reach MainWindow: k-point and UEP shipped a
+    # declared-and-connected signal that no widget ever emitted, which is exactly
+    # the failure this asserts against.
+    window = MainWindow()
+    received: list[object] = []
+    monkeypatch.setattr(window, handler_name, received.append)
+
+    getattr(window, view_attr).reset_failed_requested.emit(payload)
+
+    assert received == [payload]
+    window.close()
+
+
+def test_main_window_connects_energy_barriers_reset_signal(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The energy-barriers view is created lazily, so its wiring lives in
+    # _ensure_energy_barriers_view rather than __init__.
+    window = MainWindow()
+    view = window._ensure_energy_barriers_view()
+    received: list[object] = []
+    monkeypatch.setattr(window, "_on_reset_failed_from_energy_barriers", received.append)
+
+    view.reset_failed_requested.emit(["path-a"])
+
+    assert received == [["path-a"]]
+    window.close()
+
+
+def test_main_window_reset_refreshes_the_lazily_created_workflow_views(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Energy barriers and quantum corrections are not repainted by
+    # _refresh_jobs_table, so a row reset from either table would leave a stale
+    # "failed" status behind without these two refreshes.
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reset_refresh.mufinder", "ResetRefresh")
+    job = service.add_job(
+        doc,
+        label="neb-job",
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type="castep_neb",
+    )
+    job.status = JobStatus.FAILED
+    window._document = doc
+
+    refreshed: list[str] = []
+    monkeypatch.setattr(
+        window, "_refresh_energy_barriers_view", lambda: refreshed.append("energy_barriers")
+    )
+    monkeypatch.setattr(
+        window, "_refresh_quantum_corrections_view", lambda: refreshed.append("quantum")
+    )
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+
+    window._reset_failed_jobs([job])
+
+    assert refreshed == ["energy_barriers", "quantum"]
+    assert job.status == JobStatus.DEFINED
+    window.close()
+
+
+def _stage_quantum_row_with_singlepoint(
+    window: MainWindow,
+    service: ProjectService,
+    doc,
+    *,
+    singlepoint_status: JobStatus,
+):
+    """Stage one Quantum Corrections row whose stage-1 singlepoint has finished.
+
+    Mirrors the scaffold
+    ``test_main_window_reset_quantum_corrections_to_stage_one_clears_shared_job_state``
+    builds, but leaves the singlepoint status configurable so the reset gate can
+    be exercised for a completed *and* a failed stage 1.
+    """
+
+    relaxed_structure = Structure(
+        label="site relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_structure.id] = relaxed_structure
+
+    source_job = Job(
+        label="mu-site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[source_job.id] = source_job
+    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=source_job.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_structure.id],
+    )
+    run.result_id = result.id
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    doc.sites[site.id] = site
+
+    definition = window._ensure_quantum_corrections_definition([str(site.id)])
+    assert definition is not None
+
+    singlepoint_job = service.add_job(
+        doc,
+        label="quantum_singlepoint_siteA",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
+    )
+    singlepoint_job.status = singlepoint_status
+    definition.parameters["singlepoint_job_ids_by_label"] = {str(site.id): str(singlepoint_job.id)}
+
+    candidate = window._quantum_source_candidate_by_key(str(site.id))
+    assert candidate is not None
+    return definition, candidate, singlepoint_job
+
+
+@pytest.mark.parametrize(
+    "singlepoint_status",
+    [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED],
+)
+def test_quantum_can_reset_to_stage_one_for_finished_bare_singlepoint(
+    qapp, tmp_path: Path, singlepoint_status: JobStatus
+) -> None:
+    # A stage-1 failure with no phonon job used to be refused here, which left
+    # the row permanently stuck: its status read "failed" so Submit was disabled
+    # and Reset said "no resettable rows".
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(
+        tmp_path / f"quantum_gate_{singlepoint_status.value}.mufinder", "QuantumGate"
+    )
+    window._document = doc
+    definition, candidate, _ = _stage_quantum_row_with_singlepoint(
+        window, service, doc, singlepoint_status=singlepoint_status
+    )
+
+    assert window._quantum_can_reset_to_stage_one(definition, candidate) is True
+    window.close()
+
+
+@pytest.mark.parametrize("singlepoint_status", [JobStatus.DEFINED, JobStatus.RUNNING, JobStatus.QUEUED])
+def test_quantum_cannot_reset_to_stage_one_for_unfinished_bare_singlepoint(
+    qapp, tmp_path: Path, singlepoint_status: JobStatus
+) -> None:
+    # A merely-staged or still-running stage 1 has nothing to rewind, and
+    # deleting a live job's records would strand the run.
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(
+        tmp_path / f"quantum_gate_{singlepoint_status.value}.mufinder", "QuantumGate"
+    )
+    window._document = doc
+    definition, candidate, _ = _stage_quantum_row_with_singlepoint(
+        window, service, doc, singlepoint_status=singlepoint_status
+    )
+
+    assert window._quantum_can_reset_to_stage_one(definition, candidate) is False
+    window.close()
+
+
+def test_reset_quantum_corrections_to_stage_one_recovers_a_failed_singlepoint(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_failed_stage1.mufinder", "QuantumFailedStage1")
+    window._document = doc
+    definition, candidate, singlepoint_job = _stage_quantum_row_with_singlepoint(
+        window, service, doc, singlepoint_status=JobStatus.FAILED
+    )
+    definition.parameters["job_seed_names_by_label"] = {candidate.key: "quantum_siteA"}
+
+    output_dir = doc.project_root / "files" / "quantum_corrections" / "quantum_siteA"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "quantum_siteA.castep").write_text("failed run", encoding="utf-8")
+
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "exec",
+        lambda self: main_window_module.QMessageBox.StandardButton.Yes,
+    )
+
+    window._on_reset_quantum_corrections_to_stage_one([candidate.key])
+
+    assert singlepoint_job.id not in doc.jobs
+    assert definition.parameters["singlepoint_job_ids_by_label"] == {}
+    assert output_dir.exists() is False
+
+    refreshed_candidate = window._quantum_source_candidate_by_key(candidate.key)
+    assert refreshed_candidate is not None
+    stage_state = window._quantum_stage_state(definition, refreshed_candidate)
+    assert stage_state.stage == "singlepoint"
+    assert stage_state.status == "ready"
+    window.close()

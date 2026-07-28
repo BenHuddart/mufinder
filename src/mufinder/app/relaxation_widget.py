@@ -41,8 +41,10 @@ from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRela
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
+    bind_reset_failed_context_menu,
     create_workflow_table,
     style_workflow_configure_button,
+    workflow_row_status_text,
 )
 from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.castep_io.gui_metadata import (
@@ -283,6 +285,12 @@ class PristineRelaxationWidget(QWidget):
         self._add_row_button.clicked.connect(self._add_row)
         self._batch_configure_button.clicked.connect(self._configure_selected_rows)
         self._table.itemChanged.connect(self._on_table_item_changed)
+        bind_reset_failed_context_menu(
+            self._table,
+            key_for_row=self._reset_key_at_row,
+            status_for_row=self._row_status,
+            emit_reset=self.reset_failed_requested.emit,
+        )
 
         selection_model = self._table.selectionModel()
         if selection_model is not None:
@@ -580,6 +588,14 @@ class PristineRelaxationWidget(QWidget):
     def _label_at_row(self, row: int) -> str:
         item = self._table.item(row, self._LABEL_COLUMN)
         return item.text().strip() if item is not None else ""
+
+    def _reset_key_at_row(self, row: int) -> str | None:
+        """Return the row's submission key, or ``None`` for an unlabeled row."""
+
+        return self._label_at_row(row) or None
+
+    def _row_status(self, row: int) -> str:
+        return workflow_row_status_text(self._table, row, self._STATUS_COLUMN)
 
     def _fix_all_cell_at_row(self, row: int) -> bool:
         combo = self._table.cellWidget(row, self._FIX_CELL_COLUMN)

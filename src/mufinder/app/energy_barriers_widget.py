@@ -49,10 +49,12 @@ from mufinder.app.theme import (
 )
 from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
+    bind_reset_failed_context_menu,
     create_workflow_table,
     set_workflow_table_item,
     style_workflow_configure_button,
     workflow_row_is_locked,
+    workflow_row_status_text,
 )
 from mufinder.domain.models import Structure
 
@@ -535,6 +537,7 @@ class EnergyBarriersWidget(QWidget):
     endpoint_selection_changed = Signal(str, str)
     generate_paths_requested = Signal(str, str, str)
     remove_sources_requested = Signal(list)
+    reset_failed_requested = Signal(object)
     view_source_requested = Signal(str)
     configure_result_requested = Signal(object)
     submit_neb_local_requested = Signal(list)
@@ -653,6 +656,12 @@ class EnergyBarriersWidget(QWidget):
         )
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.itemSelectionChanged.connect(self._update_actions)
+        bind_reset_failed_context_menu(
+            self._sources_table,
+            key_for_row=self._source_key_at_row,
+            status_for_row=self._source_row_status,
+            emit_reset=self.reset_failed_requested.emit,
+        )
         sources_layout.addWidget(self._sources_table, 1)
 
         actions = QHBoxLayout()
@@ -945,6 +954,14 @@ class EnergyBarriersWidget(QWidget):
             if 0 <= row < len(self._source_rows):
                 keys.append(self._source_rows[row].key)
         return keys
+
+    def _source_key_at_row(self, row: int) -> str | None:
+        if not (0 <= row < len(self._source_rows)):
+            return None
+        return self._source_rows[row].key or None
+
+    def _source_row_status(self, row: int) -> str:
+        return workflow_row_status_text(self._sources_table, row, _NEB_STATUS_COLUMN)
 
     def _emit_endpoint_selection_changed(self) -> None:
         reactant_key, product_key = self.selected_endpoint_keys()
