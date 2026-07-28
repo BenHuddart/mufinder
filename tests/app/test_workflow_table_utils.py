@@ -216,6 +216,41 @@ def test_selection_supports_reset_rejects_empty_and_mixed_selections() -> None:
     assert selection_supports_reset(["a"], ["completed"]) is False
 
 
+def test_selection_supports_reset_rejects_a_partially_keyed_selection() -> None:
+    # Two selected failed rows but only one key: the second row is keyless, and
+    # enabling here would reset only the first while the batch cleanup prompt
+    # claimed to cover both.
+    assert selection_supports_reset(["a"], ["failed", "failed"]) is False
+    assert selection_supports_reset(["a", "b"], ["failed", "failed"]) is True
+
+
+def test_bind_reset_failed_context_menu_disables_reset_when_a_selected_row_has_no_key(
+    qapp, monkeypatch
+) -> None:
+    install_fake_menu(monkeypatch)
+    table = create_workflow_table(("Label", "Status"))
+    for row, (label, status) in enumerate(((" row_0 ", "failed"), ("", "failed"))):
+        table.insertRow(row)
+        table.setItem(row, 0, QTableWidgetItem(label))
+        table.setItem(row, 1, QTableWidgetItem(status))
+    emitted: list[list[object]] = []
+    bind_reset_failed_context_menu(
+        table,
+        # Mirrors the real widgets: an empty label yields no submission key.
+        key_for_row=lambda row: ((table.item(row, 0).text().strip() or None) if table.item(row, 0) else None),
+        status_for_row=lambda row: workflow_row_status_text(table, row, 1),
+        emit_reset=emitted.append,
+    )
+    table.resize(200, 200)
+    table.selectAll()
+
+    menu = open_reset_menu(table, row=0)
+
+    assert menu is not None
+    assert menu.reset_action().enabled is False
+    assert emitted == []
+
+
 def test_bind_reset_failed_context_menu_emits_keys_for_failed_row(qapp, monkeypatch) -> None:
     install_fake_menu(monkeypatch)
     table, emitted = _reset_menu_table(qapp, ("failed",))

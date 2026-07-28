@@ -152,15 +152,28 @@ def workflow_row_status_text(table: QTableWidget, row: int, column: int) -> str:
 
 
 def selection_supports_reset(keys: Sequence[object], statuses: Sequence[str]) -> bool:
-    """Return whether every selected row holds a resettable job.
+    """Return whether the whole selection can be reset as one batch.
 
-    The action stays disabled for a mixed selection: ``_reset_failed_jobs``
-    prompts once for the whole batch (including the destructive output cleanup),
-    so silently skipping the non-resettable rows would misreport what the prompt
-    is about to do.
+    ``statuses`` carries one entry per selected row; ``keys`` carries one entry
+    per selected row that yielded a submission key. Both conditions below exist
+    because ``_reset_failed_jobs`` prompts once for the entire batch, including
+    the destructive output cleanup — so any row the action would silently drop
+    makes that prompt misreport what is about to happen:
+
+    - every status must be resettable, which rules out a mixed selection; and
+    - ``len(keys)`` must equal ``len(statuses)``, which rules out a selection
+      containing a keyless row (an unlabeled or half-built row whose
+      ``key_for_row`` returned ``None``). Without this a two-row selection of
+      one keyed and one keyless failed row would enable the action and reset
+      only the first, leaving the second untouched with no indication why.
     """
 
-    return bool(keys) and bool(statuses) and all(status in RESETTABLE_ROW_STATUSES for status in statuses)
+    return (
+        bool(keys)
+        and bool(statuses)
+        and len(keys) == len(statuses)
+        and all(status in RESETTABLE_ROW_STATUSES for status in statuses)
+    )
 
 
 def add_reset_failed_action(
@@ -196,9 +209,10 @@ def open_reset_failed_context_menu(
 
     Right-clicking a row outside the current selection selects that row first,
     matching the convergence table this was extracted from, so the action always
-    describes what the user is pointing at. Rows whose ``key_for_row`` returns
-    ``None`` (a half-built or unlabeled row) contribute no key and therefore
-    leave the action disabled.
+    describes what the user is pointing at. A row whose ``key_for_row`` returns
+    ``None`` (a half-built or unlabeled row) contributes no key, which disables
+    the action for the whole selection rather than resetting only its keyed
+    siblings — see :func:`selection_supports_reset`.
 
     Returns the menu (for tests) or ``None`` when the click missed every row.
     """
