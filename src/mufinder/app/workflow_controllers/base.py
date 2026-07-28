@@ -42,6 +42,7 @@ from mufinder.services.project_service import ProjectDocument, ProjectService
 
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
+    job_is_resubmittable_after_dismissal,
     workflow_row_state_is_ready,
 )
 
@@ -62,6 +63,13 @@ class WorkflowControllerContext:
     submission_coordinator: WorkflowSubmissionCoordinator
     submit_jobs_locally: Callable[..., None]
     submit_jobs_on_cluster: Callable[..., None]
+    #: Reset dismissed terminal jobs back to ``defined`` so they clear the
+    #: ``{DEFINED}`` gate in the submit backends. Called by
+    #: :meth:`WorkflowJobController.submit` immediately before dispatch, with
+    #: the plan's dismissed jobs only. Returns ``False`` when the user cancels
+    #: the stale-output cleanup prompt, which aborts the whole submission
+    #: silently.
+    prepare_jobs_for_resubmission: Callable[[Sequence[Job]], bool]
     show_info: Callable[[str, str], None]
     request_dashboard_flush: Callable[..., None]
     persist_ui_state: Callable[..., None]
@@ -169,6 +177,18 @@ class WorkflowJobController:
         ``pre_submit_check`` → coordinator plan → if no jobs,
         ``show_info(no_ready_message)`` → else submit each
         :meth:`submission_groups` group via the local/cluster backend.
+
+        One step is *not* a behavior-preserving move: a row whose bound job was
+        dismissed from the jobs dashboard projects a ready status (see
+        :func:`~mufinder.app.workflow_submission.effective_row_status`) but its
+        job is still terminal, so it would be dropped by the ``{DEFINED}`` gate
+        in the submit backends. Those jobs — and *only* those; a non-dismissed
+        failed job keeps its current, unsubmittable behavior — are reset back to
+        ``defined`` here via ``prepare_jobs_for_resubmission`` before dispatch,
+        after which :meth:`materialize` is re-run so the now-``defined`` jobs get
+        their input directories regenerated. Because both steps act on the very
+        job objects the plan already holds, no duplicate job is created for the
+        row.
         """
 
         keys = list(values)
@@ -186,6 +206,21 @@ class WorkflowJobController:
         if not plan.has_jobs:
             self._context.show_info("No ready jobs", self.no_ready_message)
             return
+
+        dismissed_jobs = [
+            job for job in plan.jobs if job_is_resubmittable_after_dismissal(job)
+        ]
+        if dismissed_jobs:
+            if not self._context.prepare_jobs_for_resubmission(dismissed_jobs):
+                return
+            # Materialize ran while building the plan, when the reset jobs were
+            # still terminal — and a controller only rewrites a job directory
+            # for a DEFINED job. Re-running it now that they are DEFINED again
+            # regenerates their inputs from the current configuration, matching
+            # what an explicit reset-then-submit produces. Every controller
+            # reuses the row's existing job, so this mints no duplicates; the
+            # returned jobs are already in the plan.
+            self.materialize(list(plan.ready_values))
 
         backend = (
             self._context.submit_jobs_locally

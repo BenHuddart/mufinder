@@ -49,6 +49,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
 )
+from mufinder.app.workflow_submission import effective_row_status
 
 
 @dataclass(frozen=True)
@@ -150,7 +151,9 @@ class PristineRelaxationController(WorkflowJobController):
                 states[row.label] = RelaxationRunState(status="ready")
                 continue
 
-            status_value = "ready" if job.status == JobStatus.DEFINED else job.status.value
+            status_value = (
+                "ready" if job.status == JobStatus.DEFINED else effective_row_status(job)
+            )
             run = self._context.run_for_job(job.id)
             if (
                 status_value == JobStatus.COMPLETED.value

@@ -174,6 +174,21 @@ previously accreted on ``MainWindow``.
   ``submission_groups`` splits a mixed job list into per-charge-state groups
   (positive muon first, then muonium), each dispatched by the base template
   loop as a separate backend call with no extra kwargs.
+- **Pre-dispatch reset of dismissed jobs.** Between building the plan and
+  dispatching the submission groups, ``submit`` partitions the planned jobs with
+  :func:`~mufinder.app.workflow_submission.job_is_resubmittable_after_dismissal`
+  and, when any row's bound job was dismissed from the jobs dashboard, calls the
+  shared context's ``prepare_jobs_for_resubmission`` with exactly those jobs. The
+  hook resets them back to ``defined`` (after the stale-output cleanup prompt) so
+  they clear the ``{DEFINED}`` gate in the submit backends; returning ``False``
+  (the user cancelled the prompt) aborts the submission silently. ``materialize``
+  is then re-run for the plan's ready keys, because controllers only regenerate a
+  job's input directory when the job is ``defined`` and the first pass ran before
+  the reset. This is the only step in the cycle that mutates job state before
+  dispatch, and it acts on the plan's own job objects, so a row never gains a
+  duplicate job. Non-dismissed failed jobs are never passed to the hook and keep
+  their existing behavior. See ``docs/job_lifecycle.rst`` (Dismissed rows stay
+  resubmittable).
 - Result dispatch is registry-based:
   :func:`~mufinder.app.workflow_controllers.base.merge_controller_result`
   consults the registered controllers in ``MainWindow._on_local_job_finished``

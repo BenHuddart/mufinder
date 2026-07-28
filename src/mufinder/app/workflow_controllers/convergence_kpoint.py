@@ -34,6 +34,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
 )
+from mufinder.app.workflow_submission import effective_row_status
 
 _Grid = tuple[int, int, int]
 
@@ -136,7 +137,9 @@ class ConvergenceKpointController(WorkflowJobController):
                 )
                 continue
 
-            status_value = "ready" if job.status == JobStatus.DEFINED else job.status.value
+            status_value = (
+                "ready" if job.status == JobStatus.DEFINED else effective_row_status(job)
+            )
             states[grid] = SweepPointRunState(
                 status=status_value,
                 total_energy=self._context.total_energy_for_job(job.id),

@@ -186,6 +186,8 @@ from mufinder.app.workflow_dialogs import (
 from mufinder.app.workflow_parameters import build_workflow_parameter_surface, kpoint_exclusive_hint, workflow_basic_parameter_names
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
+    effective_row_status,
+    job_is_resubmittable_after_dismissal,
     workflow_row_state_is_ready,
 )
 from mufinder.app.workflow_controllers import (
@@ -7293,30 +7295,11 @@ class MainWindow(QMainWindow):
         if cleanup_choice is None:
             return
 
-        cleanup_errors: list[str] = []
-        reset_count = 0
-        for job in resettable_jobs:
-            cleaned_output_directory = False
-            if cleanup_choice:
-                output_dir = self._job_output_directory(job)
-                if output_dir is not None and output_dir.exists() and output_dir.is_dir():
-                    try:
-                        self._clear_directory_contents(output_dir)
-                        cleaned_output_directory = True
-                    except OSError as exc:
-                        cleanup_errors.append(f"- {job.label}: {exc}")
-
-            try:
-                self._project_service.reset_failed_job(job)
-            except ValueError:
-                continue
-
-            if job.workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF:
-                self._detach_convergence_job(job.id)
-
-            self._active_run_by_job.pop(job.id, None)
-            self._record_job_reset(job=job, cleaned_output_directory=cleaned_output_directory)
-            reset_count += 1
+        reset_count, cleanup_errors = self._apply_failed_job_reset(
+            resettable_jobs,
+            cleanup_choice=cleanup_choice,
+            detach_convergence=True,
+        )
 
         self._refresh_jobs_table()
         self._convergence_controller.refresh_view()
@@ -7337,6 +7320,108 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"Reset {reset_count} failed job(s) and cleaned directories")
             else:
                 self.statusBar().showMessage(f"Reset {reset_count} failed job(s)")
+
+    def _apply_failed_job_reset(
+        self,
+        jobs: Sequence[Job],
+        *,
+        cleanup_choice: bool,
+        detach_convergence: bool,
+    ) -> tuple[int, list[str]]:
+        """Clean, reset, and record provenance for already-vetted terminal jobs.
+
+        Shared core of the dashboard/table "Reset failed jobs" action and of the
+        lazy reset the workflow-row submit cycle performs for dismissed jobs
+        (:meth:`_prepare_jobs_for_resubmission`). Callers own the "nothing to
+        reset" dialog, the cleanup prompt, the view refreshes, the autosave and
+        the status-bar message; this helper only mutates job state and returns
+        ``(reset_count, cleanup_errors)``.
+
+        ``detach_convergence`` unbinds a reset cutoff-convergence job from its
+        definition's ``job_ids_by_cutoff`` mapping. That is right for an explicit
+        reset — the sweep point starts over from an empty row — but wrong for a
+        resubmission, which must keep the row bound to the very job it is about
+        to submit, or the row would project "ready" with no job and a second
+        submit would mint a duplicate.
+        """
+
+        cleanup_errors: list[str] = []
+        reset_count = 0
+        for job in jobs:
+            cleaned_output_directory = False
+            if cleanup_choice:
+                output_dir = self._job_output_directory(job)
+                if output_dir is not None and output_dir.exists() and output_dir.is_dir():
+                    try:
+                        self._clear_directory_contents(output_dir)
+                        cleaned_output_directory = True
+                    except OSError as exc:
+                        cleanup_errors.append(f"- {job.label}: {exc}")
+
+            try:
+                self._project_service.reset_failed_job(job)
+            except ValueError:
+                continue
+
+            if detach_convergence and job.workflow_stage == WorkflowStage.CONVERGENCE_CUTOFF:
+                self._detach_convergence_job(job.id)
+
+            self._active_run_by_job.pop(job.id, None)
+            self._record_job_reset(job=job, cleaned_output_directory=cleaned_output_directory)
+            reset_count += 1
+
+        return reset_count, cleanup_errors
+
+    def _prepare_jobs_for_resubmission(self, jobs: Sequence[Job]) -> bool:
+        """Reset dismissed terminal jobs so a workflow row can resubmit them.
+
+        Bound into every controller's
+        :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
+        and called from the shared submit cycle just before dispatch. Dismissing
+        a failed job from the jobs dashboard removes its Reset/Resubmit controls
+        while its workflow row keeps pointing at it, so the row's own submit is
+        the recovery path: it runs the same stale-output cleanup prompt the Reset
+        action uses, then resets the jobs back to ``defined`` so they clear the
+        ``{DEFINED}`` gate in the submit backends.
+
+        Returns ``False`` only when the user cancels the cleanup prompt, which
+        aborts the submission without an error dialog. Jobs that are *not*
+        dismissed terminal jobs are never touched here.
+        """
+
+        if self._document is None:
+            return False
+
+        resettable_jobs = [job for job in jobs if job_is_resubmittable_after_dismissal(job)]
+        if not resettable_jobs:
+            return True
+
+        cleanup_choice = self._prompt_failed_job_cleanup(len(resettable_jobs))
+        if cleanup_choice is None:
+            return False
+
+        reset_count, cleanup_errors = self._apply_failed_job_reset(
+            resettable_jobs,
+            cleanup_choice=cleanup_choice,
+            detach_convergence=False,
+        )
+
+        self._refresh_jobs_table()
+        self._convergence_controller.refresh_view()
+        self._kpoint_convergence_controller.refresh_view()
+
+        if cleanup_errors:
+            QMessageBox.warning(
+                self,
+                "Directory cleanup issues",
+                "Some job directories could not be fully cleaned:\n" + "\n".join(cleanup_errors),
+            )
+
+        if reset_count:
+            self._persist_document_ui_state(
+                failure_message="Reset job state was recorded, but autosave failed.",
+            )
+        return True
 
     @staticmethod
     def _dedupe_jobs(jobs: list[Job]) -> list[Job]:
@@ -7366,6 +7451,7 @@ class MainWindow(QMainWindow):
             submission_coordinator=self._workflow_submission,
             submit_jobs_locally=lambda *args, **kwargs: self._submit_jobs_locally(*args, **kwargs),
             submit_jobs_on_cluster=lambda *args, **kwargs: self._submit_jobs_on_cluster(*args, **kwargs),
+            prepare_jobs_for_resubmission=lambda jobs: self._prepare_jobs_for_resubmission(jobs),
             show_info=lambda title, text: QMessageBox.information(self, title, text),
             request_dashboard_flush=lambda **kwargs: self._request_dashboard_flush(**kwargs),
             persist_ui_state=lambda **kwargs: self._persist_document_ui_state(**kwargs),
@@ -12684,7 +12770,7 @@ class MainWindow(QMainWindow):
         if phonon_job is not None:
             return _QuantumStageState(
                 stage=_QUANTUM_STAGE_PHONON,
-                status=phonon_job.status.value,
+                status=effective_row_status(phonon_job),
                 current_job=phonon_job,
             )
 
@@ -12695,7 +12781,7 @@ class MainWindow(QMainWindow):
             return _QuantumStageState(stage=_QUANTUM_STAGE_PHONON, status="ready")
         return _QuantumStageState(
             stage=_QUANTUM_STAGE_SINGLEPOINT,
-            status=singlepoint_job.status.value,
+            status=effective_row_status(singlepoint_job),
             current_job=singlepoint_job,
         )
 
@@ -13160,7 +13246,7 @@ class MainWindow(QMainWindow):
                 states[candidate.key] = RelaxationRunState(status="ready")
                 continue
             states[candidate.key] = RelaxationRunState(
-                status=job.status.value,
+                status=effective_row_status(job),
                 job_id=job.id,
                 job_label=job.label,
                 error_message=job.error_message,

@@ -30,6 +30,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
 )
+from mufinder.app.workflow_submission import effective_row_status
 
 
 @dataclass(frozen=True)
@@ -128,7 +129,9 @@ class ConvergenceCutoffController(WorkflowJobController):
                 )
                 continue
 
-            status_value = "ready" if job.status == JobStatus.DEFINED else job.status.value
+            status_value = (
+                "ready" if job.status == JobStatus.DEFINED else effective_row_status(job)
+            )
 
             states[cutoff] = SweepPointRunState(
                 status=status_value,
