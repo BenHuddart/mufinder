@@ -13,6 +13,7 @@ from ase.io import write as ase_write
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QTreeWidgetItem
 
+import mufinder.app.convergence_widget as convergence_widget_module
 import mufinder.app.main_window as main_window_module
 import mufinder.services.job_artifacts as job_artifacts_module
 from mufinder.castep_io.output_parser import CastepResult
@@ -10138,4 +10139,342 @@ def test_main_window_loads_absent_or_invalid_mem_per_cpu_as_unset(
 
     assert restored is not None
     assert restored.mem_per_cpu_gb is None
+    window.close()
+
+
+# --------------------------------------------------------------------------- #
+# Dismissed failed jobs stay resubmittable from their workflow row
+# --------------------------------------------------------------------------- #
+#
+# Regression for the stranded-row bug: dismissing a failed job from the jobs
+# dashboard removes its Resubmit/Reset controls, but its workflow row kept
+# projecting "failed" and stayed unsubmittable forever. The row now projects
+# "ready" and its submit resets the *same* job back to defined before dispatch.
+
+
+def _fail_and_dismiss(window: MainWindow, service: ProjectService, job: Job) -> None:
+    service.submit_job(job)
+    service.fail_job(job, "castep exploded")
+    window._on_dismiss_from_dashboard([job.id])
+    assert job.dismissed_at is not None
+    assert job.status is JobStatus.FAILED
+
+
+def test_dismissed_pristine_relaxation_job_row_is_resubmittable(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "dismissed_pristine.mufinder", "DismissedPristine")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={})
+    definition = service.register_pristine_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_pristine_relaxation_config(
+            main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
+        ),
+        output_directory=doc.project_root / "files" / "pristine_relaxation",
+    )
+    job = service.add_job(
+        doc,
+        label="pristine_relax_row_1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    definition.parameters["job_ids_by_label"] = {"row_1": str(job.id)}
+    doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    doc.ui_state["pristine_relaxation_form"] = {
+        "name_prefix": "pristine_relax",
+        "rows": [{"label": "row_1", "fix_all_cell": False, "params": {}, "added_advanced": []}],
+    }
+    window._refresh_ui_after_project_change()
+
+    service.submit_job(job)
+    service.fail_job(job, "castep exploded")
+    window._refresh_ui_after_project_change()
+    status_column = window._pristine_relaxation_view._STATUS_COLUMN
+    assert window._pristine_relaxation_view._table.item(0, status_column).text() == "failed"
+
+    # Dismissing from the dashboard removes the job's only generic controls...
+    window._on_dismiss_from_dashboard([job.id])
+    window._refresh_ui_after_project_change()
+
+    # ...so the workflow row becomes the recovery path.
+    assert window._pristine_relaxation_view._table.item(0, status_column).text() == "ready"
+
+    submitted: list[list[Job]] = []
+    monkeypatch.setattr(
+        window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
+    )
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+
+    window._pristine_relaxation_controller.submit(["row_1"], target="local")
+
+    assert [[j.id for j in jobs] for jobs in submitted] == [[job.id]]
+    assert job.status is JobStatus.DEFINED
+    assert job.dismissed_at is None
+    assert job.error_message is None
+    # The row reused its bound job — no duplicate was minted for it.
+    assert len(doc.jobs) == 1
+    assert definition.parameters["job_ids_by_label"] == {"row_1": str(job.id)}
+    window.close()
+
+
+def test_dismissed_convergence_cutoff_job_row_is_resubmittable(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "dismissed_cutoff.mufinder", "DismissedCutoff")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    definition = service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_cutoff",
+        job_ids_by_cutoff={main_window_module.MainWindow._cutoff_key(300.0): str(job.id)},
+    )
+    window._document = doc
+    window._refresh_ui_after_project_change()
+
+    service.submit_job(job)
+    service.fail_job(job, "castep exploded")
+    window._refresh_ui_after_project_change()
+    status_column = window._convergence_view._STATUS_COLUMN
+    assert window._convergence_view._cutoff_table.item(0, status_column).text() == "failed"
+
+    window._on_dismiss_from_dashboard([job.id])
+    window._refresh_ui_after_project_change()
+
+    assert window._convergence_view._cutoff_table.item(0, status_column).text() == "ready"
+    # The cutoff panel's Submit actions are gated on the projected row status,
+    # so they become available again for the dismissed row.
+    assert (
+        window._convergence_view._row_status(0)
+        in convergence_widget_module._SUBMITTABLE_JOB_STATUSES
+    )
+
+    submitted: list[list[Job]] = []
+    monkeypatch.setattr(
+        window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
+    )
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+
+    window._convergence_controller.submit([300.0], target="local")
+
+    assert [[j.id for j in jobs] for jobs in submitted] == [[job.id]]
+    assert job.status is JobStatus.DEFINED
+    assert job.dismissed_at is None
+    assert len(doc.jobs) == 1
+    # The lazy reset must NOT detach the sweep point from its job the way the
+    # explicit "Reset failed jobs" action does, or the row would go back to
+    # "ready" with no job and a second submit would mint a duplicate.
+    assert definition.parameters["job_ids_by_cutoff"] == {
+        main_window_module.MainWindow._cutoff_key(300.0): str(job.id)
+    }
+    window.close()
+
+
+def test_dismissed_row_submit_aborts_when_cleanup_prompt_cancelled(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "dismissed_cancel.mufinder", "DismissedCancel")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_cutoff",
+        job_ids_by_cutoff={main_window_module.MainWindow._cutoff_key(300.0): str(job.id)},
+    )
+    window._document = doc
+    window._refresh_ui_after_project_change()
+    _fail_and_dismiss(window, service, job)
+
+    submitted: list[list[Job]] = []
+    monkeypatch.setattr(
+        window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
+    )
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: None)
+
+    window._convergence_controller.submit([300.0], target="local")
+
+    assert submitted == []
+    assert job.status is JobStatus.FAILED
+    assert job.dismissed_at is not None
+    window.close()
+
+
+def test_non_dismissed_failed_row_keeps_failed_status_and_is_not_reset(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed job that was never dismissed keeps its current behavior.
+
+    Its recovery path is still the dashboard Resubmit/Reset controls, which are
+    still on screen because the row was never filtered out.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "undismissed_cutoff.mufinder", "UndismissedCutoff")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=doc.project_root / "files" / "convergence_cutoff",
+        job_ids_by_cutoff={main_window_module.MainWindow._cutoff_key(300.0): str(job.id)},
+    )
+    window._document = doc
+    service.submit_job(job)
+    service.fail_job(job, "castep exploded")
+    window._refresh_ui_after_project_change()
+
+    assert (
+        window._convergence_view._cutoff_table.item(
+            0, window._convergence_view._STATUS_COLUMN
+        ).text()
+        == "failed"
+    )
+
+    prompted: list[int] = []
+    monkeypatch.setattr(
+        window, "_prompt_failed_job_cleanup", lambda count: prompted.append(count) or False
+    )
+    infos: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda *args, **_kwargs: infos.append((args[1], args[2])),
+    )
+
+    window._convergence_controller.submit([300.0], target="local")
+
+    assert prompted == []
+    assert job.status is JobStatus.FAILED
+    assert job.dismissed_at is None
+    window.close()
+
+
+def test_dismissed_row_submit_regenerates_job_inputs(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The resubmitted job's inputs are rebuilt from the current configuration.
+
+    ``materialize`` only rewrites a job directory for a DEFINED job, and it runs
+    while the plan is being built — before the lazy reset. Without a second
+    materialize pass the row would resubmit against the stale ``.cell`` the
+    failed run left behind (``_clear_directory_contents`` deliberately preserves
+    ``.cell``/``.param``), diverging from the explicit reset-then-submit path.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "dismissed_rewrite.mufinder", "DismissedRewrite")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    window._on_pristine_relaxation_configured(
+        main_window_module.PristineRelaxationConfig(
+            name_prefix="pristine_relax",
+            rows=(main_window_module.PristineRelaxationRow(label="row_1", parameter_values={}),),
+        )
+    )
+    job = window._pristine_relaxation_controller.materialize(["row_1"])[0]
+    cell_path = doc.project_root / "files" / "pristine_relaxation" / job.label / f"{job.label}.cell"
+    assert "KPOINT_MP_GRID" not in cell_path.read_text(encoding="utf-8")
+
+    _fail_and_dismiss(window, service, job)
+
+    # The configuration changes while the row is stranded.
+    doc.project.recommended_kpoint_grid = (4, 4, 4)
+    doc.project.recommended_kpoint_lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+
+    submitted: list[list[Job]] = []
+    monkeypatch.setattr(
+        window, "_submit_jobs_locally", lambda jobs, **_kwargs: submitted.append(list(jobs))
+    )
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
+
+    window._pristine_relaxation_controller.submit(["row_1"], target="local")
+
+    assert [[j.id for j in jobs] for jobs in submitted] == [[job.id]]
+    assert "KPOINT_MP_GRID 4 4 4" in cell_path.read_text(encoding="utf-8")
+    assert len(doc.jobs) == 1
     window.close()

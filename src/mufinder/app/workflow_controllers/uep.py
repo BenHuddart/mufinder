@@ -55,6 +55,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
 )
+from mufinder.app.workflow_submission import effective_row_status
 
 
 @dataclass(frozen=True)
@@ -140,7 +141,9 @@ class UepController(WorkflowJobController):
                 self._deps.uep_potential_grid_result_for_job(job.id) is not None
             )
             states[row.label] = UepRunState(
-                status=("ready" if job.status == JobStatus.DEFINED else job.status.value),
+                status=(
+                    "ready" if job.status == JobStatus.DEFINED else effective_row_status(job)
+                ),
                 total_energy=float(data["total_energy"])
                 if isinstance(data.get("total_energy"), (int, float))
                 else None,

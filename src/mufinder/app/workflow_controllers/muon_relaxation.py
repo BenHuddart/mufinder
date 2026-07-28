@@ -78,6 +78,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
 )
+from mufinder.app.workflow_submission import effective_row_status
 
 
 def _muon_relaxation_selection_matches(row: MuonRelaxationRow, selection: str) -> bool:
@@ -304,7 +305,7 @@ class MuonRelaxationController(WorkflowJobController):
             if job is None:
                 states[state_key] = RelaxationRunState(status="ready")
                 continue
-            status_value = job.status.value
+            status_value = effective_row_status(job)
             run = self._context.run_for_job(job.id)
             if (
                 status_value == JobStatus.COMPLETED.value

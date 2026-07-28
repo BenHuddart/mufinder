@@ -34,6 +34,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
 )
+from mufinder.app.workflow_submission import effective_row_status
 
 _Grid = tuple[int, int, int]
 
@@ -136,7 +137,9 @@ class ConvergenceKpointController(WorkflowJobController):
                 )
                 continue
 
-            status_value = "ready" if job.status == JobStatus.DEFINED else job.status.value
+            status_value = (
+                "ready" if job.status == JobStatus.DEFINED else effective_row_status(job)
+            )
             states[grid] = SweepPointRunState(
                 status=status_value,
                 total_energy=self._context.total_energy_for_job(job.id),
@@ -180,7 +183,10 @@ class ConvergenceKpointController(WorkflowJobController):
             existing = self._job_for_definition_grid(definition, grid)  # type: ignore[arg-type]
             if existing is not None:
                 created.append(existing)
-                continue
+                if existing.status != JobStatus.DEFINED:
+                    continue
+                # Fall through for defined jobs so their inputs are rewritten
+                # from the current configuration, matching the other workflows.
             record = grouped.get(definition.id)
             if record is None:
                 grouped[definition.id] = (definition, config, {tuple(grid)})  # type: ignore[arg-type]
@@ -221,6 +227,11 @@ class ConvergenceKpointController(WorkflowJobController):
             for job_spec in all_jobs:
                 grid = desired_labels.get(job_spec.name)
                 if grid is None:
+                    continue
+                existing = self._job_for_definition_grid(definition, grid)  # type: ignore[arg-type]
+                if existing is not None:
+                    if existing.status == JobStatus.DEFINED:
+                        write_job_directory(job_spec, output_root)
                     continue
                 write_job_directory(job_spec, output_root)
                 job = self._context.project_service.add_job(

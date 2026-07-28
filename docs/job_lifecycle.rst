@@ -119,7 +119,15 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
 - ``dismiss_job`` stamps ``dismissed_at`` for a ``failed``/``stopped``/
   ``cancelled`` job. It is not a status transition and rejects
   already-dismissed jobs; ``record_job_dismissed`` appends a ``job_dismissed``
-  provenance milestone.
+  provenance milestone. The app layer nonetheless *derives* a submittable
+  workflow-row status from the stamp — see
+  :ref:`dismissed-rows-stay-resubmittable` — so the contract here is unchanged
+  while a dismissed job stops being a dead end.
+
+``reset_failed_job`` and ``dismiss_job`` accept exactly the same statuses, held
+in the module constant ``TERMINAL_RECOVERABLE_JOB_STATUSES``. Keeping the two
+identical is what makes the derived projection sound: anything the user can
+dismiss, the app can also reset back to ``defined``.
 
 State authority and runner contract
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -470,8 +478,60 @@ staleness reason. Actions are enabled as follows:
 - ``Dismiss``: ``failed``, ``stopped``, and ``cancelled``. Dismissal hides
   the row from the active dashboard by stamping ``dismissed_at``; it is not a
   status transition, so the job record, runs, results, and provenance all
-  remain in the document. There is no un-dismiss UI — a dismissed job is
-  recoverable only by clearing ``dismissed_at`` at the data level.
+  remain in the document. There is no un-dismiss *action* — the stamp is
+  cleared only by ``reset_failed_job``, which the job's own workflow row now
+  triggers on its next submit (see below).
+
+.. _dismissed-rows-stay-resubmittable:
+
+Dismissed rows stay resubmittable
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Dismissing a terminal job removes the only generic ``Resubmit``/``Reset``
+controls it had, but its workflow table row still points at it through the
+definition's persistent label→job-id mapping. Left alone, that row would project
+``"failed"`` — not a member of ``READY_WORKFLOW_ROW_STATUSES`` — and its
+``Submit`` would stay disabled forever, with no way back to ``defined``. Four of
+the seven workflows (pristine relaxation, muon relaxation, energy barriers/NEB,
+quantum corrections) have no in-table reset affordance at all, so the row was
+permanently stuck.
+
+Dismissal is therefore read as *"failure acknowledged, this row is actionable
+again"*, via two pieces in ``mufinder.app.workflow_submission``:
+
+- ``effective_row_status(job)`` — the single place the rule lives. A job whose
+  status is in ``RESUBMITTABLE_AFTER_DISMISSAL_STATUSES`` (failed, stopped,
+  cancelled) **and** which carries a ``dismissed_at`` stamp projects
+  ``"ready"``; every other job projects its own status value. Every workflow's
+  job→row-status projection goes through it. A *non*-dismissed failed job is
+  unaffected: it still shows ``"failed"``, its row still refuses to submit, and
+  its recovery path is still the dashboard ``Resubmit``/``Reset`` buttons that
+  are still on screen.
+- ``prepare_jobs_for_resubmission`` on ``WorkflowControllerContext`` — the lazy
+  reset. ``WorkflowJobController.submit`` partitions the planned jobs and, for
+  the dismissed ones only, calls this hook immediately before dispatch. The
+  ``MainWindow`` implementation runs the same stale-output cleanup prompt the
+  ``Reset`` action uses and then calls ``reset_failed_job`` per job, so the jobs
+  reach the submit backends as ``defined`` and clear their ``{DEFINED}`` gate
+  unchanged. Cancelling the prompt aborts the whole submission silently.
+
+``submit`` then re-runs ``materialize`` for the plan's ready keys. Controllers
+only rewrite a job's input directory when the job is ``defined``, and the first
+materialize pass ran while building the plan — when the dismissed jobs were
+still terminal — so without the second pass the row would resubmit against the
+stale ``.cell``/``.param`` the failed run left behind (the cleanup prompt
+deliberately preserves exactly those two extensions). The second pass makes a
+dismissed-row resubmit produce the same inputs an explicit reset-then-submit
+would.
+
+Because both steps act on the very job objects the submission plan already
+holds, the row keeps its existing job — no duplicate is created — and, unlike
+the explicit ``Reset`` action, a reset cutoff-convergence job is deliberately
+*not* detached from its ``job_ids_by_cutoff`` mapping (detaching would leave the
+row bound to nothing and let a second submit mint a duplicate).
+
+The projection is derived at read time, so no persisted state changes and
+projects already stranded by an earlier dismissal heal on load.
 
 When a project is opened or refreshed, ``_sync_cluster_tracking_from_document``
 re-registers persisted active cluster jobs that have enough metadata to poll:
@@ -624,8 +684,9 @@ each entry below records what shipped and where the behavior lives.
    A ``Dismiss`` action stamps ``dismissed_at`` on a failed/stopped/cancelled
    job so the dashboard filters the row out, while keeping the job record,
    runs, results, and provenance intact (a ``job_dismissed`` milestone is
-   recorded). There is no un-dismiss UI; a dismissed job is recoverable only
-   at the data level.
+   recorded). There is no un-dismiss UI; the stamp is cleared by
+   ``reset_failed_job``, which the job's workflow row triggers on its next
+   submit (see :ref:`dismissed-rows-stay-resubmittable`).
 
 9. Strengthen tests around stuck-row prevention (implemented alongside 1–8).
    Project-open reconciliation, poll-failure inertness, the missing-entry

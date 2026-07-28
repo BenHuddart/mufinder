@@ -87,6 +87,7 @@ def _make_context(
     local_backend: _RecordingBackend | None = None,
     cluster_backend: _RecordingBackend | None = None,
     infos: list[tuple[str, str]] | None = None,
+    prepare_jobs_for_resubmission: Callable[[object], bool] | None = None,
     definition_output_directory: Callable[[object], object] = lambda _d: None,
     job_output_directory: Callable[[object], object] = lambda _j: None,
     job_seed_name: Callable[[object], str] = lambda j: j.label,
@@ -102,6 +103,7 @@ def _make_context(
         submission_coordinator=WorkflowSubmissionCoordinator(),
         submit_jobs_locally=local_backend or _RecordingBackend(),
         submit_jobs_on_cluster=cluster_backend or _RecordingBackend(),
+        prepare_jobs_for_resubmission=prepare_jobs_for_resubmission or (lambda _jobs: True),
         show_info=(lambda title, text: infos.append((title, text))) if infos is not None else (lambda *_: None),
         request_dashboard_flush=lambda **_: None,
         persist_ui_state=lambda **_: None,
@@ -148,6 +150,7 @@ class _FakeController(WorkflowJobController):
         self._pre_submit_ok = pre_submit_ok
         self._build_result_payload = build_result_payload
         self.refreshed = 0
+        self.materialize_calls: list[list[object]] = []
 
     def normalize(self, value: object) -> str:
         return str(value)
@@ -159,6 +162,7 @@ class _FakeController(WorkflowJobController):
         return [self._existing[k] for k in keys if k in self._existing]
 
     def materialize(self, keys: list[object]) -> list[Job]:
+        self.materialize_calls.append(list(keys))
         return [self._materialized[k] for k in keys if k in self._materialized]
 
     def pre_submit_check(self, keys: list[object]) -> bool:
@@ -305,6 +309,122 @@ def test_submit_grouped_override_forwards_extra_kwargs(tmp_path: Path) -> None:
 
     assert [[j.id for j in jobs] for jobs, _ in local.calls] == [[job_a.id], [job_b.id]]
     assert [extras for _, extras in local.calls] == [{"index": 0}, {"index": 1}]
+
+
+def test_submit_resets_dismissed_job_before_dispatch(tmp_path: Path) -> None:
+    """A dismissed terminal job is handed to the reset hook, then submitted.
+
+    Its row projects "ready" (see ``effective_row_status``) even though the job
+    itself is still FAILED, so without the pre-dispatch reset it would be
+    dropped by the ``{DEFINED}`` gate in the submit backends.
+    """
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    dismissed = _job(service, document, "dismissed")
+    service.submit_job(dismissed)
+    service.fail_job(dismissed, "boom")
+    service.dismiss_job(dismissed)
+
+    prepared: list[list[Job]] = []
+
+    def _prepare(jobs) -> bool:
+        prepared.append(list(jobs))
+        for job in jobs:
+            service.reset_failed_job(job)
+        return True
+
+    local = _RecordingBackend()
+    context = _make_context(
+        local_backend=local,
+        prepare_jobs_for_resubmission=_prepare,
+    )
+    controller = _FakeController(
+        context,
+        states={"a": _State("ready")},
+        existing={"a": dismissed},
+        # The row keeps its bound job: materialize reuses it, it does not mint
+        # a second job for the same row.
+        materialized={"a": dismissed},
+    )
+
+    controller.submit(["a"], target="local")
+
+    assert [[job.id for job in jobs] for jobs in prepared] == [[dismissed.id]]
+    assert [[job.id for job in jobs] for jobs, _ in local.calls] == [[dismissed.id]]
+    assert dismissed.status is JobStatus.DEFINED
+    assert dismissed.dismissed_at is None
+    assert len(document.jobs) == 1
+    # Materialize is re-run after the reset so the now-DEFINED job's input
+    # directory is regenerated from the current configuration.
+    assert controller.materialize_calls == [["a"], ["a"]]
+
+
+def test_submit_aborts_when_resubmission_preparation_is_cancelled(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    dismissed = _job(service, document, "dismissed")
+    service.submit_job(dismissed)
+    service.fail_job(dismissed, "boom")
+    service.dismiss_job(dismissed)
+
+    local = _RecordingBackend()
+    infos: list[tuple[str, str]] = []
+    context = _make_context(
+        local_backend=local,
+        infos=infos,
+        prepare_jobs_for_resubmission=lambda _jobs: False,
+    )
+    controller = _FakeController(
+        context,
+        states={"a": _State("ready")},
+        existing={"a": dismissed},
+    )
+
+    controller.submit(["a"], target="local")
+
+    assert local.calls == []
+    assert infos == []  # a cancelled cleanup prompt is a silent abort
+    assert dismissed.status is JobStatus.FAILED
+    assert dismissed.dismissed_at is not None
+    assert controller.materialize_calls == [["a"]]  # no second pass after an abort
+
+
+def test_submit_never_prepares_a_non_dismissed_failed_job(tmp_path: Path) -> None:
+    """A mixed selection must not sweep a non-dismissed failure into the reset.
+
+    ``submission_plan`` calls ``jobs_for_values`` over *every* selected key, so
+    the plan holds the non-dismissed failed job too; only the dismissed one may
+    be reset, and the other keeps being dropped by the backend status gate.
+    """
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    dismissed = _job(service, document, "dismissed")
+    service.submit_job(dismissed)
+    service.fail_job(dismissed, "boom")
+    service.dismiss_job(dismissed)
+    still_failed = _job(service, document, "still-failed")
+    service.submit_job(still_failed)
+    service.fail_job(still_failed, "boom")
+
+    prepared: list[list[Job]] = []
+    local = _RecordingBackend()
+    context = _make_context(
+        local_backend=local,
+        prepare_jobs_for_resubmission=lambda jobs: (prepared.append(list(jobs)), True)[1],
+    )
+    controller = _FakeController(
+        context,
+        states={"a": _State("ready"), "b": _State("failed")},
+        existing={"a": dismissed, "b": still_failed},
+    )
+
+    controller.submit(["a", "b"], target="local")
+
+    assert [[job.id for job in jobs] for jobs in prepared] == [[dismissed.id]]
+    assert still_failed.status is JobStatus.FAILED
+    assert still_failed.dismissed_at is None
 
 
 def test_default_submission_groups_is_single_group() -> None:
@@ -498,7 +618,7 @@ def _cutoff_context_and_deps(
     def job_for_definition_cutoff(definition, cutoff):
         mapping = definition.parameters.get("job_ids_by_cutoff", {}) if definition else {}
         job_id = mapping.get(f"{float(cutoff):.12g}")
-        return document.jobs.get(job_id) if job_id else None
+        return document.jobs.get(UUID(job_id)) if job_id else None
 
     context = WorkflowControllerContext(
         document=lambda: document,
@@ -507,6 +627,7 @@ def _cutoff_context_and_deps(
         submission_coordinator=WorkflowSubmissionCoordinator(),
         submit_jobs_locally=local_backend,
         submit_jobs_on_cluster=cluster_backend,
+        prepare_jobs_for_resubmission=lambda _jobs: True,
         show_info=lambda *_: None,
         request_dashboard_flush=lambda **_: None,
         persist_ui_state=lambda **_: None,
@@ -588,6 +709,74 @@ def test_convergence_controller_materialize_writes_job_ids_by_cutoff(tmp_path: P
     root = document.project_root / "files" / "convergence_cutoff" / "conv_ecut_300"
     assert (root / "conv_ecut_300.cell").exists()
     assert (root / "conv_ecut_300.param").exists()
+
+
+def test_convergence_controller_materialize_rewrites_inputs_for_defined_job(
+    tmp_path: Path,
+) -> None:
+    """A defined job's inputs are regenerated on re-materialize.
+
+    This is what makes the post-reset ``materialize`` pass in
+    ``WorkflowJobController.submit`` effective for convergence rows: a job reset
+    back to ``defined`` after dashboard dismissal must not resubmit against the
+    stale ``.cell``/``.param`` files its failed run left behind.
+    """
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "conv.mufinder", "Conv")
+    _seed_convergence_document(service, document)
+
+    view = _FakeConvergenceView(form_state={"name_prefix": "conv", "cutoff_energies": [300.0]})
+    context, deps = _cutoff_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceCutoffController(context, deps, view)
+
+    (job,) = controller.materialize([300.0])
+    param_path = (
+        document.project_root
+        / "files"
+        / "convergence_cutoff"
+        / "conv_ecut_300"
+        / "conv_ecut_300.param"
+    )
+    param_path.write_text("STALE")
+
+    again = controller.materialize([300.0])
+
+    assert [j.id for j in again] == [job.id]
+    assert len(document.jobs) == 1
+    assert param_path.read_text() != "STALE"
+
+
+def test_convergence_controller_materialize_keeps_non_defined_job_inputs(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "conv.mufinder", "Conv")
+    _seed_convergence_document(service, document)
+
+    view = _FakeConvergenceView(form_state={"name_prefix": "conv", "cutoff_energies": [300.0]})
+    context, deps = _cutoff_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceCutoffController(context, deps, view)
+
+    (job,) = controller.materialize([300.0])
+    job.status = JobStatus.RUNNING
+    param_path = (
+        document.project_root
+        / "files"
+        / "convergence_cutoff"
+        / "conv_ecut_300"
+        / "conv_ecut_300.param"
+    )
+    param_path.write_text("STALE")
+
+    again = controller.materialize([300.0])
+
+    assert [j.id for j in again] == [job.id]
+    assert param_path.read_text() == "STALE"
 
 
 def test_convergence_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:
@@ -723,6 +912,7 @@ def _kpoint_context_and_deps(
         submission_coordinator=WorkflowSubmissionCoordinator(),
         submit_jobs_locally=local_backend,
         submit_jobs_on_cluster=cluster_backend,
+        prepare_jobs_for_resubmission=lambda _jobs: True,
         show_info=lambda *_: None,
         request_dashboard_flush=lambda **_: None,
         persist_ui_state=lambda **_: None,
@@ -808,6 +998,58 @@ def test_kpoint_controller_materialize_writes_job_ids_by_grid(tmp_path: Path) ->
     root = document.project_root / "files" / "convergence_kpoint" / job.label
     assert (root / f"{job.label}.cell").exists()
     assert (root / f"{job.label}.param").exists()
+
+
+def test_kpoint_controller_materialize_rewrites_inputs_for_defined_job(
+    tmp_path: Path,
+) -> None:
+    """Same invariant as the cutoff variant: defined jobs get fresh inputs."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kconv.mufinder", "KConv")
+    _seed_kpoint_document(service, document)
+
+    context, deps = _kpoint_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceKpointController(context, deps, _FakeKpointView())
+
+    (job,) = controller.materialize([(2, 2, 2)])
+    param_path = (
+        document.project_root / "files" / "convergence_kpoint" / job.label / f"{job.label}.param"
+    )
+    param_path.write_text("STALE")
+
+    again = controller.materialize([(2, 2, 2)])
+
+    assert [j.id for j in again] == [job.id]
+    assert len(document.jobs) == 1
+    assert param_path.read_text() != "STALE"
+
+
+def test_kpoint_controller_materialize_keeps_non_defined_job_inputs(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kconv.mufinder", "KConv")
+    _seed_kpoint_document(service, document)
+
+    context, deps = _kpoint_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceKpointController(context, deps, _FakeKpointView())
+
+    (job,) = controller.materialize([(2, 2, 2)])
+    job.status = JobStatus.RUNNING
+    param_path = (
+        document.project_root / "files" / "convergence_kpoint" / job.label / f"{job.label}.param"
+    )
+    param_path.write_text("STALE")
+
+    again = controller.materialize([(2, 2, 2)])
+
+    assert [j.id for j in again] == [job.id]
+    assert param_path.read_text() == "STALE"
 
 
 def test_kpoint_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:

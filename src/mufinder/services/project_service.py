@@ -54,6 +54,17 @@ _GENERATED_SITE_STATUS = "generated"
 _LEGACY_GENERATED_SITE_STATUSES = {_GENERATED_SITE_STATUS, "candidate"}
 _STAGEABLE_SITE_STATUSES = {*_LEGACY_GENERATED_SITE_STATUSES, "staged"}
 
+#: Terminal job statuses a job can be recovered from without losing its record:
+#: :meth:`ProjectService.reset_failed_job` accepts exactly these, and
+#: :meth:`ProjectService.dismiss_job` hides exactly these from the dashboard.
+#: The two must stay identical — a dismissible job has to stay resettable, which
+#: is what makes a dismissed row resubmittable from its workflow table. See
+#: ``mufinder.app.workflow_submission.RESUBMITTABLE_AFTER_DISMISSAL_STATUSES``
+#: (kept in lockstep by a test) and docs/job_lifecycle.rst.
+TERMINAL_RECOVERABLE_JOB_STATUSES = frozenset(
+    {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+)
+
 #: Message stamped on a local job that was still in progress when MuFinder was
 #: closed and is reconciled to STOPPED on the next project open. See
 #: ``ProjectService.reconcile_orphaned_local_jobs`` and docs/job_lifecycle.rst.
@@ -2100,7 +2111,7 @@ class ProjectService:
     def reset_failed_job(self, job: Job) -> None:
         """Reset a failed, stopped, or cancelled job to defined for resubmission."""
 
-        if job.status not in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}:
+        if job.status not in TERMINAL_RECOVERABLE_JOB_STATUSES:
             raise ValueError("Only failed, stopped, or cancelled jobs can be reset.")
 
         job.status = JobStatus.DEFINED
@@ -2148,9 +2159,15 @@ class ProjectService:
         all remain in the document. Only ``dismissed_at`` is stamped so
         ``_refresh_jobs_table`` can filter the row out of the active dashboard.
         Already-dismissed jobs are rejected so the milestone is recorded once.
+
+        Dismissal is nonetheless *acknowledgement* of the failure: the app layer
+        derives a submittable workflow-row status from the stamp (see
+        ``mufinder.app.workflow_submission.effective_row_status``) so the row the
+        job belongs to can be resubmitted once its dashboard controls are gone.
+        That projection is derived at read time and changes nothing here.
         """
 
-        if job.status not in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}:
+        if job.status not in TERMINAL_RECOVERABLE_JOB_STATUSES:
             raise ValueError("Only failed, stopped, or cancelled jobs can be dismissed.")
         if job.dismissed_at is not None:
             raise ValueError("Only failed, stopped, or cancelled jobs can be dismissed.")

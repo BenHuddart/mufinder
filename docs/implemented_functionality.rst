@@ -816,7 +816,13 @@ Runtime behavior includes:
   duplicate scheduler job.
 - Dismissing failed/stopped/cancelled jobs from the active dashboard
   (stamping ``dismissed_at``) while preserving their record, runs, results,
-  and provenance; dismissed jobs are recoverable only at the data level.
+  and provenance.
+- Resubmitting a dismissed job from its own workflow table row: dismissal is
+  read as acknowledgement of the failure, so the row projects ``ready`` again
+  and its submit resets the same job back to ``defined`` (after the usual
+  stale-output cleanup prompt) before dispatching it — no duplicate job is
+  created. Failed jobs that were *not* dismissed keep showing ``failed`` on
+  their row and are recovered from the dashboard as before.
 
 The shared job dashboard is intended to show jobs that still need attention.
 Ready jobs are submitted from their workflow tables. Active jobs appear in the
@@ -825,7 +831,9 @@ Completed jobs leave the dashboard after successful result handling. Failed,
 stopped, and cancelled jobs remain visible so they can be inspected,
 resubmitted, or reset. Failed or stopped cluster jobs that kept their remote
 metadata can also retry retrieval, and any terminal job can be dismissed to
-remove its row from the active dashboard without deleting its data. On project
+remove its row from the active dashboard without deleting its data — its
+workflow table row then becomes the recovery path and resubmits the same job.
+On project
 open, local jobs left mid-flight when MuFinder was previously closed are
 reconciled to ``stopped`` (rather than showing as running forever) and a
 status-bar message reports how many were stopped; the stopped rows remain

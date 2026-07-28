@@ -81,11 +81,14 @@ Compatibility ledger
        cancelled) hidden from the dashboard via the Dismiss action. The job
        record, its runs, results, and provenance remain in the project;
        only dashboard visibility changes. Optional with a ``None`` default, so
-       older projects load unchanged and are fully visible.
+       older projects load unchanged and are fully visible. The app layer also
+       derives a submittable workflow-row status from the stamp (see
+       ``docs/job_lifecycle.rst``, Dismissed rows stay resubmittable) — a
+       read-time projection, not extra persisted state.
      - Current job data, not deprecated. Removing the field un-dismisses jobs
        in existing projects, so it requires a schema-version bump with a
-       migration entry and an update to the persistence codec and the
-       dashboard visibility filter.
+       migration entry and an update to the persistence codec, the dashboard
+       visibility filter, and the workflow-row projection.
    * - ``ConvergenceWorkflow``
      - ``mufinder.workflow.convergence`` (re-exported from
        ``mufinder.workflow``)
