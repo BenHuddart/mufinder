@@ -608,9 +608,14 @@ def _compute_zf_single(
 ) -> tuple[float, float, dict[str, float]]:
     cos2 = (vectors_m @ polarisation_direction) ** 2 / (distances_m**2)
     pref = _prefactor_sigma_squared()
+    # Kubo-Toyabe per-component convention: the transverse width entering the
+    # ZF Gaussian envelope is sigma_perp^2 = gamma_mu^2 <B_x^2 + B_y^2> / 2,
+    # i.e. half of the full transverse variance. With this normalization the
+    # orientational (powder) average of sigma_perp^2 equals the zf_polycrystal
+    # width of Hayano et al., PRB 20, 850 (1979).
     sigma_perp, per_element = _sum_elements(
         symbols,
-        pref * (5.0 - 3.0 * cos2) / (distances_m**6),
+        0.5 * pref * (5.0 - 3.0 * cos2) / (distances_m**6),
         include_quadrupolar=include_quadrupolar,
     )
     sigma_parallel, _parallel = _sum_elements(
