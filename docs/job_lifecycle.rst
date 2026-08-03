@@ -52,7 +52,10 @@ without losing their records. ``Resubmit`` is available for failed and
 cancelled jobs. Cluster resubmission reuses existing remote files when the job
 still records a remote directory, so continuation runs can start from the
 previous working directory, and failed or stopped cluster jobs that kept their
-remote metadata can ``Retry retrieval`` instead of resubmitting.
+remote metadata can ``Retry retrieval`` instead of resubmitting. Reuse covers
+the remote inputs and outputs only: the scheduler submit script is regenerated
+on every submission, so an updated walltime, core count, or memory request
+takes effect on resubmission.
 
 Technical API behavior
 ----------------------
@@ -324,9 +327,11 @@ submitted when cancelled are moved to ``cancelled``.
 
 - ``connect_to_cluster`` creates the SSH connection and scheduler backend.
 - ``submit`` validates the local output directory and remote seed name, creates
-  the remote directory, uploads ``.cell``/``.param`` and ``run.sh`` unless
-  ``reuse_existing_files`` is true, submits to the scheduler, stores a tracked
-  job entry, emits ``queued``, and starts a one-minute poll timer.
+  the remote directory, uploads ``.cell``/``.param`` unless
+  ``reuse_existing_files`` is true, regenerates and uploads ``run.sh`` on every
+  submission on script-based queues so the scheduler resources match the current
+  submission, submits to the scheduler, stores a tracked job entry, emits
+  ``queued``, and starts a one-minute poll timer.
 - ``cancel`` sends the scheduler cancel command for a tracked non-terminal job,
   marks it terminal, and emits ``cancelled``.
 - ``track_existing_job`` re-registers persisted remote jobs after project load
@@ -352,6 +357,8 @@ pre-seeded from a SLURM cluster profile's ``default_mem_per_cpu_gb``.
   stays inside the leading block ``sbatch`` parses. A template that already
   carries its own ``--mem``/``--mem-per-cpu``/``--mem-per-gpu`` directive is
   left untouched, so a hand-written request always wins.
+- The directive is applied on resubmission too, because ``run.sh`` is
+  regenerated on every submission even when remote inputs are reused.
 - ``None`` (the default for every cluster profile) emits nothing, leaving the
   rendered script byte-for-byte as it was before the option existed and the
   partition's own memory default in force.

@@ -204,7 +204,18 @@ class ClusterJobRunner(QObject):
         task_farming_enabled: bool = False,
         num_farms: int | None = None,
     ) -> str:
-        """Upload files, submit scheduler script, and start tracking the remote job."""
+        """Upload files, submit scheduler script, and start tracking the remote job.
+
+        ``reuse_existing_files`` skips only the ``.cell``/``.param`` upload, so a
+        resubmission into an existing remote directory preserves the remote
+        inputs, the outputs already produced there, and any ``.check``
+        continuation state. It does **not** skip the submit script: ``run.sh`` is
+        regenerated from the current template and uploaded on every submission,
+        because ``sbatch`` is invoked with no command-line resource flags and the
+        script is therefore the sole carrier of walltime, task count, and memory.
+        Reusing a stale script would silently ignore the resources the current
+        submission asked for.
+        """
 
         ssh = self._require_ssh()
         scheduler = self._require_scheduler()
@@ -241,35 +252,34 @@ class ClusterJobRunner(QObject):
         queue = queue_system.strip().lower()
         if queue != "addqueue":
             remote_script = posixpath.join(remote_dir, "run.sh")
-            if not reuse_existing_files:
-                script_content = render_job_script(
-                    template_script_path=template_script_path,
-                    cluster_name=cluster_name,
-                    queue_system=queue_system,
-                    seed_name=seed_name,
-                    num_processes=num_processes,
-                    cores_per_node=cores_per_node,
-                    walltime=walltime,
-                    remote_dir=remote_dir,
-                    castep_executable=resolved_castep_executable,
-                    mem_per_cpu_gb=mem_per_cpu_gb,
-                )
+            script_content = render_job_script(
+                template_script_path=template_script_path,
+                cluster_name=cluster_name,
+                queue_system=queue_system,
+                seed_name=seed_name,
+                num_processes=num_processes,
+                cores_per_node=cores_per_node,
+                walltime=walltime,
+                remote_dir=remote_dir,
+                castep_executable=resolved_castep_executable,
+                mem_per_cpu_gb=mem_per_cpu_gb,
+            )
 
-                with tempfile.NamedTemporaryFile(
-                    mode="w",
-                    encoding="utf-8",
-                    newline="\n",
-                    suffix=".sh",
-                    delete=False,
-                ) as handle:
-                    handle.write(script_content)
-                    temp_path = Path(handle.name)
-                try:
-                    ssh.put(temp_path, remote_script)
-                finally:
-                    temp_path.unlink(missing_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="\n",
+                suffix=".sh",
+                delete=False,
+            ) as handle:
+                handle.write(script_content)
+                temp_path = Path(handle.name)
+            try:
+                ssh.put(temp_path, remote_script)
+            finally:
+                temp_path.unlink(missing_ok=True)
 
-                ssh.chmod(remote_script, 0o755)
+            ssh.chmod(remote_script, 0o755)
         request = SchedulerSubmitRequest(
             working_dir=remote_dir,
             seed_name=seed_name,
