@@ -2514,6 +2514,144 @@ def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files
     window.close()
 
 
+def test_main_window_resubmit_passes_updated_resources_to_runner(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_resubmit_resources.mufinder", "ClusterResubmit")
+
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="conv_ecut_300",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+        execution_target="alpha",
+    )
+    job.status = JobStatus.FAILED
+    job.remote_job_id = "old99123"
+    job.remote_directory = "/remote/work/conv_ecut_300"
+    job.error_message = "previous scheduler failure"
+    output_dir = doc.project_root / "files" / "convergence_cutoff"
+    (output_dir / job.label).mkdir(parents=True, exist_ok=True)
+
+    service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={
+            "name_prefix": "conv",
+            "cutoff_energies": [300.0],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": [],
+        },
+        output_directory=output_dir,
+        job_ids_by_cutoff={main_window_module.MainWindow._cutoff_key(300.0): str(job.id)},
+    )
+
+    window._document = doc
+
+    cluster = ClusterConfig(
+        name="alpha",
+        hostname="alpha.example",
+        username="alice",
+        auth_method="key",
+        key_path="/tmp/key",
+        default_working_directory="/remote/work",
+        queue_system="slurm",
+        cores_per_node=64,
+        default_walltime="01:00:00",
+        template_script_path="/templates/slurm.sh",
+    )
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 1
+
+        def config(self):
+            return SimpleNamespace(
+                cluster_name="alpha",
+                working_directory="/remote/work",
+                username="alice",
+                job_name_prefix="conv",
+                num_processes=32,
+                walltime="168:00:00",
+                mem_per_cpu_gb=8.0,
+            )
+
+        def password(self) -> str:
+            return ""
+
+    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "connect_to_cluster",
+        lambda _config, password=None: None,
+    )
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "remote_job_directory",
+        lambda **_kwargs: pytest.fail("resubmission should reuse the stored remote directory"),
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "remote_directory_exists",
+        lambda _path: pytest.fail("resubmission should not check for overwrite"),
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "remove_remote_directory",
+        lambda _path: pytest.fail("resubmission should not delete remote files"),
+    )
+    submit_calls: list[dict[str, object]] = []
+    infos: list[str] = []
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "submit",
+        lambda **kwargs: submit_calls.append(kwargs) or "new99123",
+    )
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "information",
+        lambda _parent, title, _message: infos.append(title),
+    )
+
+    window._on_resubmit_from_dashboard([job.id])
+
+    assert infos == ["Cluster connection successful"]
+    assert len(submit_calls) == 1
+    assert submit_calls[0]["walltime"] == "168:00:00"
+    assert submit_calls[0]["mem_per_cpu_gb"] == 8.0
+    assert submit_calls[0]["num_processes"] == 32
+    assert submit_calls[0]["reuse_existing_files"] is True
+    assert submit_calls[0]["remote_directory"] == "/remote/work/conv_ecut_300"
+    assert job.num_processes == 32
+    assert job.status == JobStatus.QUEUED
+    assert job.remote_job_id == "new99123"
+    assert job.remote_directory == "/remote/work/conv_ecut_300"
+    assert job.error_message is None
+    runs = [run for run in doc.runs.values() if run.job_id == job.id]
+    assert len(runs) == 1
+    assert runs[0].status == JobStatus.QUEUED
+    window.close()
+
+
 def test_main_window_submit_jobs_on_cluster_prefills_from_last_submission_defaults(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

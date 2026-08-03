@@ -174,10 +174,19 @@ def test_cluster_runner_submit_can_reuse_existing_remote_files(qapp, tmp_path: P
     )
 
     assert remote_job_id == "12345"
-    assert runner._ssh.commands == [("mkdir", ("/remote/work/existing_continuation", True))]
+    remote_script = "/remote/work/existing_continuation/run.sh"
+    # Remote inputs are preserved, but the submit script is always regenerated so
+    # the scheduler resources reflect this submission rather than the stale one.
+    assert not any(
+        action == "put" and str(payload).endswith((".cell", ".param"))
+        for action, payload in runner._ssh.commands
+    )
+    assert ("put", remote_script) in runner._ssh.commands
+    assert ("chmod", (remote_script, 0o755)) in runner._ssh.commands
+    assert ("mkdir", ("/remote/work/existing_continuation", True)) in runner._ssh.commands
     request = scheduler.submit_requests[0]
     assert request.working_dir == "/remote/work/existing_continuation"
-    assert request.script_path == "/remote/work/existing_continuation/run.sh"
+    assert request.script_path == remote_script
 
 
 def test_cluster_runner_poll_moves_running_and_completed(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1697,3 +1706,96 @@ def test_cluster_runner_submit_omits_mem_per_cpu_directive_when_unset(
 
     assert "--mem" not in with_default
     assert with_default == explicit_none.replace("mu_relax_3", "mu_relax_2")
+
+
+def _slurm_runner() -> ClusterJobRunner:
+    """Return a runner wired to a SLURM cluster profile and one persistent fake SSH."""
+
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+    runner._config = cluster_runner_module.ClusterConfig(
+        name="Test SLURM",
+        hostname="cluster.example.invalid",
+        username="user",
+        auth_method="key",
+        key_path="",
+        default_working_directory="/remote/work",
+        queue_system="SLURM",
+        cores_per_node=24,
+        default_walltime="12:00:00",
+        template_script_path="",
+    )
+    return runner
+
+
+def test_cluster_runner_resubmit_regenerates_script_with_new_walltime(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    runner = _slurm_runner()
+    seed = "mu_relax_walltime"
+    job_dir = _prepare_local_job(tmp_path, seed)
+    remote_dir = f"/remote/work/{seed}"
+    remote_script = f"{remote_dir}/run.sh"
+
+    submit_kwargs: dict[str, object] = {
+        "local_job_dir": job_dir,
+        "seed_name": seed,
+        "num_processes": 48,
+        "working_directory": "/remote/work",
+        "template_script_path": "",
+        "cores_per_node": 24,
+        "remote_directory": remote_dir,
+    }
+
+    runner.submit(job_id=uuid4(), walltime="120:00:00", **submit_kwargs)
+    assert "#SBATCH -t 120:00:00" in runner._ssh.remote_files[remote_script].decode("utf-8")
+
+    runner.submit(
+        job_id=uuid4(),
+        walltime="168:00:00",
+        reuse_existing_files=True,
+        **submit_kwargs,
+    )
+
+    content = runner._ssh.remote_files[remote_script].decode("utf-8")
+    assert "#SBATCH -t 168:00:00" in content
+    assert "120:00:00" not in content
+
+
+def test_cluster_runner_resubmit_applies_mem_per_cpu_directive(qapp, tmp_path: Path) -> None:
+    runner = _slurm_runner()
+    seed = "mu_relax_memory"
+    job_dir = _prepare_local_job(tmp_path, seed)
+    remote_dir = f"/remote/work/{seed}"
+    remote_script = f"{remote_dir}/run.sh"
+
+    submit_kwargs: dict[str, object] = {
+        "local_job_dir": job_dir,
+        "seed_name": seed,
+        "num_processes": 48,
+        "walltime": "12:00:00",
+        "working_directory": "/remote/work",
+        "template_script_path": "",
+        "cores_per_node": 24,
+        "remote_directory": remote_dir,
+    }
+
+    runner.submit(job_id=uuid4(), **submit_kwargs)
+    assert "--mem" not in runner._ssh.remote_files[remote_script].decode("utf-8")
+
+    runner.submit(
+        job_id=uuid4(),
+        reuse_existing_files=True,
+        mem_per_cpu_gb=8.0,
+        **submit_kwargs,
+    )
+
+    assert "#SBATCH --mem-per-cpu=8G" in runner._ssh.remote_files[remote_script].decode("utf-8")
+    input_uploads = [
+        payload
+        for action, payload in runner._ssh.commands
+        if action == "put" and str(payload).endswith((".cell", ".param"))
+    ]
+    assert sorted(input_uploads) == [f"{remote_dir}/{seed}.cell", f"{remote_dir}/{seed}.param"]
