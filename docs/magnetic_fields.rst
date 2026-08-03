@@ -314,8 +314,20 @@ The result dialog reports :math:`\sigma` in :math:`\mu\mathrm{s}^{-1}`,
 :math:`\sigma^2` and :math:`M_2` in :math:`\mu\mathrm{s}^{-2}`, equivalent
 field width :math:`\Delta B` in Tesla, convergence radius in Å, number of
 nuclei summed, and element-resolved :math:`\sigma^2` contributions. For ZF
-single-crystal calculations it also reports perpendicular and parallel
-component variances.
+single-crystal calculations it also reports the perpendicular and parallel
+widths :math:`\sigma_\perp^2` and :math:`\sigma_\parallel^2`.
+
+All ZF widths use the Kubo-Toyabe per-component convention: :math:`\sigma^2`
+is the variance :math:`\Delta^2 = \gamma_\mu^2 \langle B_i^2 \rangle` of a
+single Cartesian field component, the quantity that enters the Kubo-Toyabe
+polarisation function. In this convention the transverse single-crystal width
+is :math:`\sigma_\perp^2 = \gamma_\mu^2 \langle B_x^2 + B_y^2 \rangle / 2` and
+the longitudinal width is
+:math:`\sigma_\parallel^2 = \gamma_\mu^2 \langle B_z^2 \rangle`, with
+:math:`z` along the initial muon polarisation. The orientational (powder)
+average of both single-crystal widths therefore equals the ZF polycrystal
+width of Hayano et al., Phys. Rev. B **20**, 850 (1979), so single-crystal and
+polycrystal results share one normalization.
 
 If the selected muon site comes from a structural-relaxation cluster and the
 representative relaxed structure is still available, the dialog can apply a
