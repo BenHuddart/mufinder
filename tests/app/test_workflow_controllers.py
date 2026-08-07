@@ -2386,6 +2386,10 @@ def test_pristine_controller_continue_job_returns_none_when_materialize_fails(
     assert job.status == JobStatus.DEFINED
     assert job.remote_directory == "/scratch/user/row1"
     assert param_path.read_text(encoding="utf-8") == original_rendered
+    # No provenance milestone either: the journal must not claim a continuation
+    # that was never rendered and (because continue_job returned None) is never
+    # submitted. record_job_continuation therefore runs only after materialize.
+    assert not any(record.action == "job_continuation" for record in document.provenance)
 
 
 def test_pristine_controller_continue_job_leaves_row_untouched_when_document_disappears(
@@ -3383,6 +3387,7 @@ def test_muon_controller_continue_job_returns_none_when_materialize_fails(
     assert job.status == JobStatus.DEFINED
     assert job.remote_directory == "/scratch/user/site1"
     assert param_path.read_text(encoding="utf-8") == original_rendered
+    assert not any(record.action == "job_continuation" for record in document.provenance)
 
 
 def test_muon_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:

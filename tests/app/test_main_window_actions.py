@@ -12221,9 +12221,11 @@ def test_continue_relaxation_warns_and_does_not_submit_when_materialize_fails(
 
     assert len(warnings) == 1
     # The job was still transitioned (prepare_job_continuation ran before the
-    # failed materialize) -- it stays recoverable -- but nothing was submitted.
+    # failed materialize) -- it stays recoverable -- but nothing was submitted,
+    # and no provenance milestone claims a continuation that never happened.
     assert job.status == JobStatus.DEFINED
     assert "GEOM_MAX_ITER : 500" not in param_path.read_text(encoding="utf-8")
+    assert not any(record.action == "job_continuation" for record in doc.provenance)
     window.close()
 
 

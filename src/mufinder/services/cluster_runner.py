@@ -42,6 +42,17 @@ MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE = (
 )
 """Diagnostic emitted when a scheduler-missing job exhausts retrieval attempts."""
 
+REMOTE_STALE_OUTPUT_SLACK_SECONDS = 5.0
+"""Slack allowed when ordering two remote mtimes against each other.
+
+Both sides of the comparison live on the cluster's own filesystem, so no
+allowance for the offset between this machine and the cluster is needed — only
+for remote mtime granularity (1 s on ext3/ext4, 2 s on some network stores) and
+the sub-second NTP drift between a login node writing the uploaded input and a
+compute node writing the output. The staleness being detected is a whole run
+old, so a few seconds of slack costs nothing.
+"""
+
 
 @dataclass(slots=True)
 class _TrackedClusterJob:
@@ -692,12 +703,25 @@ class ClusterJobRunner(QObject):
         ``MISSING_ENTRY_RETRIEVAL_ATTEMPTS`` polls before the job is failed;
         parse failures of successfully downloaded output fail immediately in
         both cases.
+
+        A continuation run reuses its remote directory, so the *previous* run's
+        ``.castep`` and ``-out.cell`` are still sitting there and neither one's
+        existence proves this run wrote it. Retrieval therefore orders both
+        against the ``{seed}.param`` uploaded at submission — see
+        :meth:`_submission_marker_mtime` and
+        :meth:`_remote_output_predates_submission`. A stale primary ``.castep``
+        aborts retrieval (the alternative is completing the job on the previous
+        run's success banner); a stale ``-out.cell`` is simply not downloaded,
+        which leaves the local copy carrying its previous-retrieval mtime so
+        ``MainWindow``'s local stale-output guard rejects it. Both comparisons
+        fail open when the marker is unavailable.
         """
 
         ssh = self._require_ssh()
         prefix = "missing from scheduler queue; " if missing_from_queue else ""
 
         self.status_changed.emit(entry.job_id, JobStatus.RETRIEVING.value)
+        remote_param = posixpath.join(entry.remote_dir, f"{entry.seed_name}.param")
         remote_castep = posixpath.join(entry.remote_dir, f"{entry.seed_name}.castep")
         remote_farm_castep = posixpath.join(entry.remote_dir, f"{entry.seed_name}_farm001.castep")
         remote_den_fmt = posixpath.join(entry.remote_dir, f"{entry.seed_name}.den_fmt")
@@ -718,8 +742,23 @@ class ClusterJobRunner(QObject):
         local_ts = entry.local_output_dir / ts_basename
 
         try:
+            submitted_at = self._submission_marker_mtime(ssh, remote_param)
             self._retrieve_error_files(entry)
-            if farm_count > 1 and ssh.exists(remote_farm_castep):
+            use_farm = farm_count > 1 and ssh.exists(remote_farm_castep)
+            primary_remote = remote_farm_castep if use_farm else remote_castep
+            if self._remote_output_predates_submission(ssh, primary_remote, submitted_at):
+                # The run wrote nothing at all into the reused directory (it
+                # failed to start, or died before CASTEP opened its log). The
+                # surviving .castep is the PREVIOUS run's — including its
+                # success banner — so parsing it would complete this job on the
+                # old geometry under parameters that were never applied. Treat
+                # it exactly like an unavailable output: the caller's grace
+                # window applies when the trigger was a missing queue entry.
+                raise ConnectionError(
+                    f"{posixpath.basename(primary_remote)} predates this submission: "
+                    "the run produced no new output in the reused remote directory."
+                )
+            if use_farm:
                 if ssh.exists(remote_castep):
                     ssh.get(remote_castep, local_castep)
                 ssh.get(remote_farm_castep, local_farm_castep)
@@ -729,7 +768,11 @@ class ClusterJobRunner(QObject):
                 primary_output = local_castep
             if entry.retrieve_den_fmt and ssh.exists(remote_den_fmt):
                 ssh.get(remote_den_fmt, local_den_fmt)
-            if entry.retrieve_out_cell and ssh.exists(remote_out_cell):
+            if (
+                entry.retrieve_out_cell
+                and ssh.exists(remote_out_cell)
+                and not self._remote_output_predates_submission(ssh, remote_out_cell, submitted_at)
+            ):
                 ssh.get(remote_out_cell, local_out_cell)
             if entry.retrieve_phonon and ssh.exists(remote_phonon):
                 ssh.get(remote_phonon, local_phonon)
@@ -799,6 +842,57 @@ class ClusterJobRunner(QObject):
         self.job_finished.emit(entry.job_id, parsed, artifacts)
         self.status_changed.emit(entry.job_id, JobStatus.COMPLETED.value)
         return f"{prefix}output retrieved and parsed"
+
+    @staticmethod
+    def _submission_marker_mtime(ssh: SSHConnection, remote_param: str) -> float | None:
+        """Return the remote mtime that marks when this submission happened.
+
+        ``{seed}.param`` is uploaded fresh on every submission that does not
+        set ``reuse_existing_files`` — including every continuation, and
+        regardless of queue system (unlike ``run.sh``, which ``addqueue`` never
+        receives). Its remote mtime is therefore a same-clock marker for "this
+        run's inputs landed", which any output the run wrote must postdate.
+
+        ``None`` means no ordering is available and every comparison against it
+        fails open: the file is missing (a ``reuse_existing_files``
+        resubmission never re-uploaded it), the SFTP server reported no mtime,
+        or the connection object predates the ``mtime`` primitive.
+        """
+
+        probe = getattr(ssh, "mtime", None)
+        if probe is None:
+            return None
+        try:
+            return probe(remote_param)
+        except Exception:  # noqa: BLE001 - a stat failure must not fail retrieval
+            return None
+
+    @staticmethod
+    def _remote_output_predates_submission(
+        ssh: SSHConnection,
+        remote_path: str,
+        submitted_at: float | None,
+    ) -> bool:
+        """Return whether ``remote_path`` was last written before this submission.
+
+        Both mtimes come from the cluster's own filesystem, so they are
+        directly comparable up to ``REMOTE_STALE_OUTPUT_SLACK_SECONDS``. An
+        unknown marker or an unreadable output mtime returns ``False`` — an
+        output is only ever rejected on positive evidence that it is stale.
+        """
+
+        if submitted_at is None:
+            return False
+        probe = getattr(ssh, "mtime", None)
+        if probe is None:
+            return False
+        try:
+            modified = probe(remote_path)
+        except Exception:  # noqa: BLE001 - see _submission_marker_mtime
+            return False
+        if modified is None:
+            return False
+        return (submitted_at - modified) > REMOTE_STALE_OUTPUT_SLACK_SECONDS
 
     def _retrieve_error_files(self, entry: _TrackedClusterJob) -> None:
         ssh = self._require_ssh()
