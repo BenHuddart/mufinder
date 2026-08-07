@@ -1128,6 +1128,48 @@ def test_cluster_runner_connected_properties_and_remote_directory_helpers(qapp) 
     assert runner.remote_directory_exists("/remote/work/job_a") is True
 
 
+def test_cluster_runner_remote_file_exists_delegates_to_ssh_is_file(qapp) -> None:
+    runner = ClusterJobRunner()
+
+    class _SSHWithIsFile(_FakeSSH):
+        def __init__(self) -> None:
+            super().__init__()
+            self._files: set[str] = set()
+
+        def touch(self, path: str) -> None:
+            self._files.add(path)
+
+        def is_file(self, path: str) -> bool:
+            return path in self._files
+
+    ssh = _SSHWithIsFile()
+    ssh.touch("/remote/work/job_a/job_a.check")
+    runner._ssh = ssh
+
+    assert runner.remote_file_exists("/remote/work/job_a/job_a.check") is True
+    assert runner.remote_file_exists("/remote/work/job_a/missing.check") is False
+
+
+def test_cluster_runner_remote_file_exists_requires_active_connection(qapp) -> None:
+    runner = ClusterJobRunner()
+
+    with pytest.raises(ConnectionError):
+        runner.remote_file_exists("/remote/work/job_a/job_a.check")
+
+
+def test_cluster_runner_remote_file_exists_propagates_ssh_errors(qapp) -> None:
+    runner = ClusterJobRunner()
+
+    class _SSHRaisingOnIsFile(_FakeSSH):
+        def is_file(self, path: str) -> bool:
+            raise ConnectionError("stat failed")
+
+    runner._ssh = _SSHRaisingOnIsFile()
+
+    with pytest.raises(ConnectionError, match="stat failed"):
+        runner.remote_file_exists("/remote/work/job_a/job_a.check")
+
+
 def test_cluster_runner_remove_remote_directory_delegates_to_ssh(qapp) -> None:
     runner = ClusterJobRunner()
 
@@ -1799,3 +1841,23 @@ def test_cluster_runner_resubmit_applies_mem_per_cpu_directive(qapp, tmp_path: P
         if action == "put" and str(payload).endswith((".cell", ".param"))
     ]
     assert sorted(input_uploads) == [f"{remote_dir}/{seed}.cell", f"{remote_dir}/{seed}.param"]
+
+
+def test_checkpoint_probe_result_found_absent_unavailable() -> None:
+    found = cluster_runner_module.CheckpointProbeResult.found()
+    assert found.status is cluster_runner_module.CheckpointProbeStatus.FOUND
+    assert found.reason == ""
+
+    absent = cluster_runner_module.CheckpointProbeResult.absent()
+    assert absent.status is cluster_runner_module.CheckpointProbeStatus.ABSENT
+    assert absent.reason == ""
+
+    unavailable = cluster_runner_module.CheckpointProbeResult.unavailable("not connected")
+    assert unavailable.status is cluster_runner_module.CheckpointProbeStatus.UNAVAILABLE
+    assert unavailable.reason == "not connected"
+
+
+def test_checkpoint_probe_result_is_frozen() -> None:
+    result = cluster_runner_module.CheckpointProbeResult.found()
+    with pytest.raises(AttributeError):
+        result.status = cluster_runner_module.CheckpointProbeStatus.ABSENT  # type: ignore[misc]

@@ -24,7 +24,8 @@ Two asynchronous styles are used:
 
 * **Fire-and-forget with forwarded signals** (``refresh_queue``, ``cancel``,
   ``track_existing_job``, ``connect_async``/``connect_finished``,
-  ``check_remote_dirs``/``remote_dirs_checked``, ``submit_batch`` and its
+  ``check_remote_dirs``/``remote_dirs_checked``,
+  ``check_remote_files``/``remote_files_checked``, ``submit_batch`` and its
   progress signals): the GUI returns immediately and results arrive later via a
   purpose-built signal.
 * **Request/completion bridge** (``clear_tracked_jobs``, and the low-level
@@ -154,6 +155,7 @@ class ClusterController(QObject):
 
     # Asynchronous batch-submission progress (all emitted on the GUI thread).
     remote_dirs_checked = Signal(object)  # {"existing": [str], "errors": {job_id: str}}
+    remote_files_checked = Signal(object)  # {"existing": [str], "errors": {job_id: str}}
     submit_batch_progress = Signal(int, int, str)  # index, total, job label
     job_submit_finished = Signal(object, object, str)  # job_id, remote_job_id|None, error
     submit_batch_finished = Signal()
@@ -457,6 +459,35 @@ class ClusterController(QObject):
                     errors[job_id] = str(exc)
         finally:
             self.remote_dirs_checked.emit({"existing": existing, "errors": errors})
+
+    def check_remote_files(self, targets: list[tuple[Any, str]]) -> None:
+        """Stat each ``(job_id, remote_path)`` on the worker thread.
+
+        Emits :attr:`remote_files_checked` with the paths that exist and any
+        per-job errors. Feeds the Continue-relaxation dialog's checkpoint probe
+        (``{seed}.check`` existence) without blocking the GUI thread; the
+        dialog must await the signal rather than call
+        :meth:`ClusterJobRunner.remote_file_exists` directly, mirroring
+        :meth:`check_remote_dirs`.
+        """
+
+        self._async_task.emit(lambda: self._run_check_remote_files(targets))
+
+    def _run_check_remote_files(self, targets: list[tuple[Any, str]]) -> None:
+        existing: list[str] = []
+        errors: dict[Any, str] = {}
+        # The result is always emitted (finally), even if an unexpected error
+        # escapes the loop body: a caller awaiting this signal in a nested event
+        # loop (see ``check_remote_dirs``) must never be left hanging.
+        try:
+            for job_id, remote_path in targets:
+                try:
+                    if self._runner.remote_file_exists(remote_path):
+                        existing.append(remote_path)
+                except Exception as exc:  # noqa: BLE001 - reported back to the GUI
+                    errors[job_id] = str(exc)
+        finally:
+            self.remote_files_checked.emit({"existing": existing, "errors": errors})
 
     def submit_batch(self, items: list[dict[str, Any]]) -> None:
         """Submit a batch of prepared jobs on the worker thread.

@@ -482,6 +482,9 @@ def test_ssh_connection_file_operations(monkeypatch: pytest.MonkeyPatch, tmp_pat
     connection.mkdir("/remote/work/dir")
     connection.put(local_file, "/remote/work/dir/local.txt")
     assert connection.exists("/remote/work/dir/local.txt")
+    assert connection.is_file("/remote/work/dir/local.txt") is True
+    assert connection.is_file("/remote/work/dir") is False
+    assert connection.is_dir("/remote/work/dir") is True
 
     text = connection.read_text("/remote/work/dir/local.txt")
     assert text == "hello"
