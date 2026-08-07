@@ -1965,6 +1965,247 @@ def test_pristine_controller_build_states_keeps_job_after_parameter_edit(
     assert after["row1"].status == JobStatus.RUNNING.value
 
 
+def test_pristine_controller_row_is_continuable_reflects_raw_job_status(
+    tmp_path: Path,
+) -> None:
+    """Finding 8: gating reads the job's real status, never displayed text —
+    a dismissed FAILED job (which *displays* "ready") is still continuable."""
+
+    from mufinder.domain.models import utc_now
+
+    service = ProjectService()
+    document, _definition, job, deps, view, output_root = (
+        _pristine_parameter_edit_fixture(service, tmp_path)
+    )
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    job.status = JobStatus.RUNNING
+    assert controller.row_is_continuable("row1") is False
+
+    for status in (
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+        JobStatus.STOPPED,
+        JobStatus.CANCELLED,
+    ):
+        job.status = status
+        assert controller.row_is_continuable("row1") is True
+
+    job.status = JobStatus.FAILED
+    job.dismissed_at = utc_now()
+    assert controller.row_is_continuable("row1") is True
+
+    # row2 has no bound job; an unknown key resolves to no job either.
+    assert controller.row_is_continuable("row2") is False
+    assert controller.row_is_continuable("unknown") is False
+
+
+def test_pristine_controller_render_row_param_text_previews_without_persisting(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, _job, deps, view, output_root = (
+        _pristine_parameter_edit_fixture(service, tmp_path)
+    )
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+    before = copy.deepcopy(definition.parameters["configuration"])
+
+    text = controller.render_row_param_text("row1", {"geom_max_iter": 777}, ())
+
+    assert "GEOM_MAX_ITER : 777" in text
+    # Nothing was persisted: this is a pure preview.
+    assert definition.parameters["configuration"] == before
+
+    assert controller.render_row_param_text("unknown", {}, ()) == ""
+
+
+def test_pristine_controller_continue_job_returns_to_defined_and_rewrites_directory(
+    tmp_path: Path,
+) -> None:
+    from mufinder.domain.models import utc_now
+
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = (
+        _pristine_parameter_edit_fixture(service, tmp_path)
+    )
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+    controller.materialize(["row1"])
+    param_path = output_root / job.label / f"{job.label}.param"
+    assert "GEOM_MAX_ITER : 120" in param_path.read_text(encoding="utf-8")
+
+    job.status = JobStatus.FAILED
+    job.execution_target = "myhpc"
+    job.remote_directory = "/scratch/user/row1"
+    job.remote_job_id = "12345"
+    job.error_message = "boom"
+    job.dismissed_at = utc_now()
+
+    continued = controller.continue_job("row1", {"geom_max_iter": 500})
+
+    assert continued is job
+    assert job.status == JobStatus.DEFINED
+    # remote_directory is deliberately preserved; everything else the previous
+    # run stamped is cleared.
+    assert job.remote_directory == "/scratch/user/row1"
+    assert job.remote_job_id is None
+    assert job.error_message is None
+    assert job.dismissed_at is None
+
+    # Same directory rewritten, no duplicate job minted.
+    assert list(document.jobs) == [job.id]
+    assert definition.parameters["job_ids_by_label"] == {"row1": str(job.id)}
+    rendered = param_path.read_text(encoding="utf-8")
+    assert "GEOM_MAX_ITER : 500" in rendered
+    assert "GEOM_MAX_ITER : 120" not in rendered
+
+    continuation = next(
+        record for record in document.provenance if record.action == "job_continuation"
+    )
+    assert continuation.job_id == job.id
+    assert continuation.parameters["remote_directory"] == "/scratch/user/row1"
+    assert continuation.parameters["preserved_remote_directory"] is True
+
+
+def test_pristine_controller_continue_job_rejects_non_continuable_job_without_mutating(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = (
+        _pristine_parameter_edit_fixture(service, tmp_path)
+    )
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+    before = copy.deepcopy(definition.parameters["configuration"])
+
+    job.status = JobStatus.RUNNING
+    assert controller.continue_job("row1", {"geom_max_iter": 500}) is None
+
+    # Untouched: the row's parameters were never mutated, since the job wasn't
+    # continuable in the first place.
+    assert job.status == JobStatus.RUNNING
+    assert definition.parameters["configuration"] == before
+    assert not any(record.action == "job_continuation" for record in document.provenance)
+
+
+def test_pristine_controller_continue_job_unknown_row_returns_none(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, _definition, _job, deps, view, output_root = (
+        _pristine_parameter_edit_fixture(service, tmp_path)
+    )
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    assert controller.continue_job("unknown", {"geom_max_iter": 500}) is None
+
+
+def test_pristine_controller_continue_job_returns_none_when_materialize_fails(
+    tmp_path: Path,
+) -> None:
+    """Audit finding 1: materialize() can swallow an expansion error and return
+    ``[]`` without raising. If continue_job ignored that, the job would be left
+    DEFINED with a preserved remote_directory while the on-disk .param still
+    held the PREVIOUS run's parameters -- and the caller (which only checks
+    "is the return value truthy") would submit that stale directory as if the
+    new parameters had been written."""
+
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+    controller.materialize(["row1"])  # write the real initial directory contents
+    param_path = output_root / job.label / f"{job.label}.param"
+    original_rendered = param_path.read_text(encoding="utf-8")
+
+    job.status = JobStatus.FAILED
+    job.remote_directory = "/scratch/user/row1"
+
+    # Force the continuation's own materialize call to fail exactly the way
+    # the real one does on a caught ValueError/StructureBridgeError: return []
+    # without raising.
+    controller.materialize = lambda keys: []
+
+    result = controller.continue_job("row1", {"geom_max_iter": 500})
+
+    assert result is None
+    # The row's stored parameters were still mutated (update_row_parameters ran
+    # before the failed materialize) and the job was still moved to DEFINED
+    # (prepare_job_continuation ran) -- it stays recoverable -- but the ON-DISK
+    # .param is untouched: this is exactly why the caller must not submit.
+    config = _deserialize_pristine_config(definition.parameters["configuration"])
+    assert {row.label: row.parameter_values for row in config.rows}["row1"] == {
+        "geom_max_iter": 500
+    }
+    assert job.status == JobStatus.DEFINED
+    assert job.remote_directory == "/scratch/user/row1"
+    assert param_path.read_text(encoding="utf-8") == original_rendered
+
+
+def test_pristine_controller_continue_job_leaves_row_untouched_when_document_disappears(
+    tmp_path: Path,
+) -> None:
+    """Audit finding 5: the document lookup must run BEFORE
+    update_row_parameters. ``jobs_for_keys`` reads the document once to resolve
+    the job (call #1, succeeds); this context then returns ``None`` on the
+    NEXT call (call #2), simulating the document disappearing between menu-open
+    and dialog-accept (e.g. the project was closed/switched). If
+    update_row_parameters ran first, the row's stored parameters would be
+    mutated before continue_job discovered there was no document to record
+    provenance against."""
+
+    import dataclasses
+
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+        service, tmp_path
+    )
+    job.status = JobStatus.FAILED
+    before_config = copy.deepcopy(definition.parameters["configuration"])
+
+    calls = {"n": 0}
+
+    def flaky_document():
+        calls["n"] += 1
+        return document if calls["n"] == 1 else None
+
+    persists: list[dict] = []
+    context = dataclasses.replace(
+        _make_context(
+            document=document,
+            project_service=service,
+            definition_output_directory=lambda _defn: output_root,
+        ),
+        document=flaky_document,
+        persist_ui_state=lambda **kwargs: persists.append(dict(kwargs)),
+    )
+    controller = PristineRelaxationController(context, deps, view)
+
+    result = controller.continue_job("row1", {"geom_max_iter": 500})
+
+    assert result is None
+    assert calls["n"] >= 2
+    assert definition.parameters["configuration"] == before_config
+    assert job.status == JobStatus.FAILED
+
+
 # --------------------------------------------------------------------------- #
 # MuonRelaxationController
 # --------------------------------------------------------------------------- #
@@ -2721,6 +2962,198 @@ def test_muon_controller_build_states_keeps_job_after_parameter_edit(
     after = controller.build_states()
     assert after["positivemuon:Site 1"].job_id == job.id
     assert after["positivemuon:Site 1"].status == JobStatus.COMPLETED.value
+
+
+def test_muon_controller_row_is_continuable_uses_charge_qualified_key(
+    tmp_path: Path,
+) -> None:
+    """Finding 8: gating reads the job's real status, never displayed text —
+    a dismissed FAILED job (which *displays* "ready") is still continuable.
+    The charge-qualified key (finding 7) is what actually resolves to the
+    right row's job here; see ``test_muon_controller_continue_job_rejects_bare_label``
+    for the strict charge-qualification check ``continue_job`` performs (a
+    bare label happens to still resolve to *a* job through the pre-existing
+    ``jobs_for_keys`` label-matching fallback, so ``row_is_continuable`` alone
+    is not that safety net)."""
+
+    from mufinder.domain.models import utc_now
+
+    service = ProjectService()
+    document, _definition, job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    job.status = JobStatus.RUNNING
+    assert controller.row_is_continuable("positivemuon:Site 1") is False
+
+    for status in (
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+        JobStatus.STOPPED,
+        JobStatus.CANCELLED,
+    ):
+        job.status = status
+        assert controller.row_is_continuable("positivemuon:Site 1") is True
+
+    job.status = JobStatus.FAILED
+    job.dismissed_at = utc_now()
+    assert controller.row_is_continuable("positivemuon:Site 1") is True
+
+    # The muonium row shares the label but has no bound job of its own.
+    assert controller.row_is_continuable("muonium:Site 1") is False
+
+
+def test_muon_controller_render_row_param_text_previews_without_persisting(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, _job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+    before = copy.deepcopy(definition.parameters["configuration"])
+
+    text = controller.render_row_param_text(
+        "positivemuon:Site 1", {"geom_max_iter": 777}, ()
+    )
+
+    assert "GEOM_MAX_ITER : 777" in text
+    assert definition.parameters["configuration"] == before
+    assert controller.render_row_param_text("unknown:Site 1", {}, ()) == ""
+
+
+def test_muon_controller_continue_job_returns_to_defined_and_rewrites_directory(
+    tmp_path: Path,
+) -> None:
+    from mufinder.domain.models import utc_now
+
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+    controller.materialize(["positivemuon:Site 1"])
+    seed_mapping_before = dict(definition.parameters["job_seed_names_by_label"])
+    seed = seed_mapping_before["positivemuon:Site 1"]
+    param_path = output_root / "positivemuon" / seed / f"{seed}.param"
+    assert "GEOM_MAX_ITER : 120" in param_path.read_text(encoding="utf-8")
+
+    job.status = JobStatus.FAILED
+    job.execution_target = "myhpc"
+    job.remote_directory = "/scratch/user/site1"
+    job.remote_job_id = "999"
+    job.error_message = "boom"
+    job.dismissed_at = utc_now()
+
+    continued = controller.continue_job("positivemuon:Site 1", {"geom_max_iter": 500})
+
+    assert continued is job
+    assert job.status == JobStatus.DEFINED
+    assert job.remote_directory == "/scratch/user/site1"
+    assert job.remote_job_id is None
+    assert job.error_message is None
+    assert job.dismissed_at is None
+
+    assert list(document.jobs) == [job.id]
+    assert definition.parameters["job_ids_by_label"] == {
+        "positivemuon:Site 1": str(job.id)
+    }
+    # A changed seed name would relocate the directory and orphan the
+    # preserved remote directory.
+    assert definition.parameters["job_seed_names_by_label"] == seed_mapping_before
+    rendered = param_path.read_text(encoding="utf-8")
+    assert "GEOM_MAX_ITER : 500" in rendered
+    assert "GEOM_MAX_ITER : 120" not in rendered
+
+    continuation = next(
+        record for record in document.provenance if record.action == "job_continuation"
+    )
+    assert continuation.job_id == job.id
+    assert continuation.parameters["remote_directory"] == "/scratch/user/site1"
+
+
+def test_muon_controller_continue_job_rejects_non_continuable_job_without_mutating(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+    before = copy.deepcopy(definition.parameters["configuration"])
+
+    job.status = JobStatus.RUNNING
+    assert controller.continue_job("positivemuon:Site 1", {"geom_max_iter": 500}) is None
+
+    assert job.status == JobStatus.RUNNING
+    assert definition.parameters["configuration"] == before
+    assert not any(record.action == "job_continuation" for record in document.provenance)
+
+
+def test_muon_controller_continue_job_rejects_bare_label(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+    before = copy.deepcopy(definition.parameters["configuration"])
+
+    job.status = JobStatus.FAILED
+    assert controller.continue_job("Site 1", {"geom_max_iter": 500}) is None
+
+    assert job.status == JobStatus.FAILED
+    assert definition.parameters["configuration"] == before
+
+
+def test_muon_controller_continue_job_returns_none_when_materialize_fails(
+    tmp_path: Path,
+) -> None:
+    """Muon counterpart of the pristine "materialize can fail silently" check
+    above (audit finding 1)."""
+
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+    controller.materialize(["positivemuon:Site 1"])
+    seed_mapping_before = dict(definition.parameters["job_seed_names_by_label"])
+    seed = seed_mapping_before["positivemuon:Site 1"]
+    param_path = output_root / "positivemuon" / seed / f"{seed}.param"
+    original_rendered = param_path.read_text(encoding="utf-8")
+
+    job.status = JobStatus.FAILED
+    job.remote_directory = "/scratch/user/site1"
+    controller.materialize = lambda keys: []
+
+    result = controller.continue_job("positivemuon:Site 1", {"geom_max_iter": 500})
+
+    assert result is None
+    config = _deserialize_muon_config(definition.parameters["configuration"])
+    by_charge = {row.charge_state: row for row in config.rows}
+    assert by_charge["positive_muon"].parameter_values == {"geom_max_iter": 500}
+    assert job.status == JobStatus.DEFINED
+    assert job.remote_directory == "/scratch/user/site1"
+    assert param_path.read_text(encoding="utf-8") == original_rendered
 
 
 def test_muon_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:

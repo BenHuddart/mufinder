@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -193,6 +194,40 @@ def add_reset_failed_action(
     return action
 
 
+@dataclass(frozen=True)
+class RowMenuAction:
+    """One extra per-row context-menu action beyond the shared reset action.
+
+    Added so a table can offer a second, workflow-specific row action (for
+    example "Continue relaxation…" on the two relaxation tables) without every
+    other :func:`open_reset_failed_context_menu`/:func:`bind_reset_failed_context_menu`
+    caller having to change shape — the default ``additional_actions=()`` on
+    both functions keeps the other five tables byte-identical.
+
+    ``is_enabled``/``trigger`` both receive the same resolved key list
+    :func:`add_reset_failed_action` uses: one entry per selected row that
+    yielded a non-``None`` key from ``key_for_row``, in row order. An action
+    that (like Continue relaxation) only ever makes sense for one row at a
+    time should start its ``is_enabled`` with a ``len(keys) == 1`` check
+    rather than assume the caller enforces single selection.
+    """
+
+    text: str
+    is_enabled: Callable[[Sequence[object]], bool]
+    trigger: Callable[[Sequence[object]], None]
+
+
+def add_row_menu_action(menu: QMenu, *, keys: Sequence[object], action: RowMenuAction) -> QAction:
+    """Append one :class:`RowMenuAction` to ``menu``, gated on ``keys``."""
+
+    qt_action = menu.addAction(action.text)
+    qt_action.setEnabled(action.is_enabled(keys))
+    qt_action.triggered.connect(
+        lambda _checked=False, selected=list(keys), trigger=action.trigger: trigger(selected)
+    )
+    return qt_action
+
+
 def open_reset_failed_context_menu(
     table: QTableWidget,
     position,
@@ -200,12 +235,16 @@ def open_reset_failed_context_menu(
     key_for_row: Callable[[int], object | None],
     status_for_row: Callable[[int], str],
     emit_reset: Callable[[list[object]], None],
+    additional_actions: Sequence[RowMenuAction] = (),
 ) -> QMenu | None:
-    """Open a single-action reset menu on the workflow row under ``position``.
+    """Open a row menu on the workflow row under ``position``.
 
-    This is the in-table recovery affordance for a failed/stopped/cancelled job
-    whose row would otherwise be stuck: the dashboard Reset button is the only
-    other way back to ``defined``, and it disappears once the job is dismissed.
+    The reset action is the in-table recovery affordance for a failed/stopped/
+    cancelled job whose row would otherwise be stuck: the dashboard Reset
+    button is the only other way back to ``defined``, and it disappears once
+    the job is dismissed. ``additional_actions`` appends further per-row
+    actions after it (see :class:`RowMenuAction`); the default ``()`` keeps
+    every existing caller's menu single-action.
 
     Right-clicking a row outside the current selection selects that row first,
     matching the convergence table this was extracted from, so the action always
@@ -231,6 +270,8 @@ def open_reset_failed_context_menu(
 
     menu = QMenu(table)
     add_reset_failed_action(menu, keys=keys, statuses=statuses, emit_reset=emit_reset)
+    for action in additional_actions:
+        add_row_menu_action(menu, keys=keys, action=action)
     menu.exec(table.viewport().mapToGlobal(position))
     return menu
 
@@ -241,11 +282,13 @@ def bind_reset_failed_context_menu(
     key_for_row: Callable[[int], object | None],
     status_for_row: Callable[[int], str],
     emit_reset: Callable[[list[object]], None],
+    additional_actions: Sequence[RowMenuAction] = (),
 ) -> None:
     """Install :func:`open_reset_failed_context_menu` as ``table``'s row menu.
 
     Also stamps :data:`RESET_FAILED_TABLE_TOOLTIP` on the table so the menu is
     discoverable, unless the caller already set a tooltip of its own.
+    ``additional_actions`` is forwarded unchanged; see :class:`RowMenuAction`.
     """
 
     if not table.toolTip():
@@ -258,6 +301,7 @@ def bind_reset_failed_context_menu(
             key_for_row=key_for_row,
             status_for_row=status_for_row,
             emit_reset=emit_reset,
+            additional_actions=additional_actions,
         )
     )
 

@@ -1041,3 +1041,104 @@ def test_relaxation_widget_context_menu_disables_reset_for_running_row(qapp, mon
 
     assert menu is not None and menu.reset_action().enabled is False
     assert payloads == []
+
+
+def test_relaxation_widget_continue_action_defaults_disabled_when_unwired(qapp, monkeypatch) -> None:
+    # An unwired widget (e.g. a stray fixture in another test) never offers an
+    # action it cannot fulfil, whatever the row's displayed status is.
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+    widget.set_runtime_states({label: RelaxationRunState(status="completed")})
+
+    install_fake_menu(monkeypatch)
+    menu = open_reset_menu(widget._table, row=0)
+
+    assert menu is not None
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    assert action.enabled is False
+
+
+def test_relaxation_widget_continue_action_uses_injected_predicate(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+    widget.set_runtime_states({label: RelaxationRunState(status="completed")})
+
+    seen_keys: list[object] = []
+
+    def predicate(key: object) -> bool:
+        seen_keys.append(key)
+        return key == label
+
+    widget.set_continuable_predicate(predicate)
+
+    install_fake_menu(monkeypatch)
+    menu = open_reset_menu(widget._table, row=0)
+
+    assert menu is not None
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    assert action.enabled is True
+    assert seen_keys == [label]
+
+
+def test_relaxation_widget_continue_action_disabled_when_multiple_rows_selected(
+    qapp, monkeypatch
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    widget.set_continuable_predicate(lambda _key: True)
+    for row in range(2):
+        label = widget._label_at_row(row)
+        widget.set_runtime_states({label: RelaxationRunState(status="completed")})
+
+    install_fake_menu(monkeypatch)
+    widget._table.selectAll()
+    menu = open_reset_menu(widget._table, row=0)
+
+    assert menu is not None
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    assert action.enabled is False
+
+
+def test_relaxation_widget_continue_action_emits_row_label(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+    widget.set_continuable_predicate(lambda _key: True)
+
+    payloads: list[object] = []
+    widget.continue_relaxation_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(widget._table, row=0)
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    action.triggered.emit()
+
+    assert payloads == [label]
+
+
+def test_relaxation_widget_continue_dialog_seed_mirrors_row_parameter_dialog(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    label = widget._label_at_row(0)
+    row_id = widget._row_id_at(0)
+    widget._row_parameter_values[row_id] = {"geom_max_iter": 250}
+    widget._row_added_advanced[row_id] = {"geom_max_iter"}
+
+    seed = widget.continue_relaxation_dialog_seed(label)
+
+    assert seed is not None
+    assert seed["workflow_stage"] == "pristine_relaxation"
+    assert seed["specs"] == widget._specs
+    assert seed["parameter_values"]["geom_max_iter"] == 250
+    assert seed["added_advanced"] == ("geom_max_iter",)
+    assert seed["locked_values"]["task"] == "GEOMETRYOPTIMIZATION"
+    assert seed["species_options"] == widget._parameter_species_options
+
+    assert widget.continue_relaxation_dialog_seed("does-not-exist") is None

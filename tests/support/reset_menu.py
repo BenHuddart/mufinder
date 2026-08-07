@@ -69,8 +69,18 @@ class FakeMenu:
                 return
 
     def reset_action(self) -> FakeAction | None:
+        return self.action(RESET_FAILED_ACTION_TEXT)
+
+    def action(self, text: str) -> FakeAction | None:
+        """Return the action with this exact text, or ``None``.
+
+        Generalizes :meth:`reset_action` for tests exercising an
+        ``additional_actions`` entry (e.g. "Continue relaxation…") alongside
+        the shared reset action.
+        """
+
         for action in self.actions:
-            if action.text == RESET_FAILED_ACTION_TEXT:
+            if action.text == text:
                 return action
         return None
 

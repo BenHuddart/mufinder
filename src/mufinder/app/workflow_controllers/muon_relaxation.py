@@ -57,8 +57,8 @@ from mufinder.domain.models import (
     Job,
     Structure,
 )
-from mufinder.services.project_service import SiteHostMismatch
-from mufinder.workflow import StructureBridgeError, write_job_directory
+from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, SiteHostMismatch
+from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
 
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.relaxation_adapter import (
@@ -584,6 +584,158 @@ class MuonRelaxationController(WorkflowJobController):
                 else (),
             )
         return None
+
+    # --- continuation ("Continue relaxation…") ---
+
+    def row_is_continuable(self, key: object) -> bool:
+        """Return whether ``key``'s row has a job in :data:`CONTINUABLE_JOB_STATUSES`.
+
+        ``key`` must be the charge-qualified row key (``"{prefix}:{label}"`` —
+        see :meth:`jobs_for_keys`/:func:`_muon_relaxation_selection_matches`);
+        one label can be shared by two rows (one per charge state), so a bare
+        label would be ambiguous here. Resolves the row's job through
+        :meth:`jobs_for_keys` — never from a table's *displayed* status text,
+        which reads "not converged" for a completed-but-unconverged job and
+        "ready" for a dismissed failed job (see
+        ``mufinder.app.workflow_submission.effective_row_status``). Called live
+        at context-menu-open time (not cached), so a status change between
+        refreshes (e.g. a dashboard dismissal) is always reflected.
+        """
+
+        jobs = self.jobs_for_keys([key])
+        return bool(jobs) and jobs[0].status in CONTINUABLE_JOB_STATUSES
+
+    def render_row_param_text(
+        self,
+        key: object,
+        parameter_values: Mapping[str, object],
+        added_advanced: Sequence[str],
+    ) -> str:
+        """Render the ``.param`` text one row would produce with ``parameter_values``.
+
+        A pure preview: expands the row's ``JobSpec`` with ``parameter_values``/
+        ``added_advanced`` substituted for its currently-stored values and
+        renders it, without persisting anything or touching the filesystem.
+        Mirrors :meth:`materialize`'s own expansion call (same host structure
+        and project k-point/cutoff defaults) so the preview matches what a real
+        materialize would render. Powers the Continue-relaxation dialog's live
+        keyword diff — there is no ``.param`` reader in ``castep_io``, so the
+        diff is computed by expanding and re-rendering rather than parsing (see
+        the warm-start plan's diff-by-re-render note). Returns ``""`` when
+        there is no active definition, no host structure, no matching row, or
+        expansion fails.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return ""
+        definition = self._deps.active_muon_relaxation_definition()
+        if definition is None:
+            return ""
+        config = self._deps.deserialize_muon_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
+        if config is None or not definition.input_structure_ids:
+            return ""
+        host = document.structures.get(definition.input_structure_ids[0])
+        if host is None:
+            return ""
+        row_key = str(key)
+        if not any(
+            self._deps.muon_relaxation_row_key(row) == row_key for row in config.rows
+        ):
+            return ""
+
+        rows = tuple(
+            replace(
+                row,
+                parameter_values=dict(parameter_values),
+                added_advanced=tuple(str(name) for name in added_advanced),
+            )
+            if self._deps.muon_relaxation_row_key(row) == row_key
+            else row
+            for row in config.rows
+        )
+        try:
+            expansion = expand_muon_relaxation_jobs(
+                host_structure=host,
+                config=replace(config, rows=rows),
+                project_cutoff_energy=document.project.recommended_cutoff_energy,
+                project_kpoint_grid=document.project.recommended_kpoint_grid,
+                project_kpoint_reference_lattice=document.project.recommended_kpoint_lattice,
+            )
+        except (ValueError, StructureBridgeError):
+            return ""
+        for spec in expansion.jobs:
+            spec_key = (
+                f"{muon_charge_state_prefix(str(spec.provenance.get('charge_state', '')))}"
+                f":{spec.provenance.get('label', '')}"
+            )
+            if spec_key == row_key:
+                return render_job(spec)[1]
+        return ""
+
+    def continue_job(
+        self,
+        key: object,
+        parameter_values: Mapping[str, object],
+        added_advanced: Sequence[str] | None = None,
+    ) -> Job | None:
+        """Mutate the row in place, prepare its job for continuation, and re-render.
+
+        ``key`` must be the charge-qualified row key. Orchestrates the
+        controller-owned steps of the Continue-relaxation accept flow:
+        :meth:`update_row_parameters` mutates the row and mirrors the edit into
+        the widget form; ``ProjectService.prepare_job_continuation`` returns
+        the row's job to ``DEFINED`` while preserving ``remote_directory``;
+        ``record_job_continuation`` appends the provenance milestone;
+        :meth:`materialize` rewrites the job's directory in place from the new
+        parameters (the existing DEFINED path — no new ``Job`` is minted,
+        ``job_ids_by_label``/``job_seed_names_by_label`` are untouched,
+        matching finding 1 of the warm-start plan). This deliberately does not
+        route through :meth:`submit`/:meth:`pre_submit_check`: the row's site
+        already matched the active host when the job it is continuing was
+        first submitted, and the host-mismatch dialog has no sensible role in
+        resubmitting the very same site. Submission and view refresh are the
+        caller's responsibility.
+
+        The job's status is checked with :meth:`row_is_continuable` *before*
+        ``update_row_parameters`` runs, so a row whose job is not continuable
+        (e.g. it started running between the menu opening and the dialog being
+        accepted) is left completely untouched rather than having its stored
+        parameters mutated with no corresponding directory rewrite. The
+        document lookup is also hoisted above ``update_row_parameters`` for the
+        same reason: a missing document must not leave the definition row
+        mutated while the job itself is never touched. Returns ``None`` in
+        either case, or when there is no active definition or no matching row.
+
+        :meth:`materialize` can itself return an empty list (a caught
+        ``ValueError``/``StructureBridgeError`` from expansion, or a missing
+        host structure/output root) without raising — in that case the job is
+        left ``DEFINED`` with its remote directory preserved (so it stays
+        recoverable and a later submit re-runs materialize), but the directory
+        on disk still holds the *previous* run's ``.param``, not the
+        just-edited values. This method returns ``None`` in that case too, so
+        the caller never submits a job whose on-disk inputs disagree with the
+        diff it just showed the user.
+        """
+
+        jobs = self.jobs_for_keys([key])
+        if not jobs or jobs[0].status not in CONTINUABLE_JOB_STATUSES:
+            return None
+        job = jobs[0]
+        document = self._context.document()
+        if document is None:
+            return None
+        if not self.update_row_parameters(key, parameter_values, added_advanced):
+            return None
+        self._context.project_service.prepare_job_continuation(job)
+        self._context.project_service.record_job_continuation(
+            document, job=job, remote_directory=job.remote_directory
+        )
+        if not self.materialize([key]):
+            return None
+        return job
 
     # --- result contract ---
 

@@ -39,7 +39,8 @@ from mufinder.domain.models import (
     Job,
     Structure,
 )
-from mufinder.workflow import StructureBridgeError, write_job_directory
+from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES
+from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
 
 from mufinder.app.adapter_common import AdapterExpansion
 from mufinder.app.relaxation_types import PristineRelaxationConfig, RelaxationRunState
@@ -393,6 +394,133 @@ class PristineRelaxationController(WorkflowJobController):
                 else (),
             )
         return None
+
+    # --- continuation ("Continue relaxation…") ---
+
+    def row_is_continuable(self, key: object) -> bool:
+        """Return whether ``key``'s row has a job in :data:`CONTINUABLE_JOB_STATUSES`.
+
+        Resolves the row's job through :meth:`jobs_for_keys` — never from a
+        table's *displayed* status text, which reads "not converged" for a
+        completed-but-unconverged job and "ready" for a dismissed failed job
+        (see ``mufinder.app.workflow_submission.effective_row_status``). Both
+        of those rows must still gate on the job's real, durable status. Called
+        live at context-menu-open time (not cached), so a status change between
+        refreshes (e.g. a dashboard dismissal) is always reflected.
+        """
+
+        jobs = self.jobs_for_keys([key])
+        return bool(jobs) and jobs[0].status in CONTINUABLE_JOB_STATUSES
+
+    def render_row_param_text(
+        self,
+        key: object,
+        parameter_values: Mapping[str, object],
+        added_advanced: Sequence[str],
+    ) -> str:
+        """Render the ``.param`` text one row would produce with ``parameter_values``.
+
+        A pure preview: expands the row's ``JobSpec`` with ``parameter_values``/
+        ``added_advanced`` substituted for its currently-stored values and
+        renders it, without persisting anything or touching the filesystem.
+        Powers the Continue-relaxation dialog's live keyword diff — there is no
+        ``.param`` reader in ``castep_io``, so the diff is computed by
+        expanding and re-rendering rather than parsing (see the warm-start
+        plan's diff-by-re-render note). Returns ``""`` when there is no active
+        definition, no matching row, or expansion fails.
+        """
+
+        definition = self._deps.active_pristine_relaxation_definition()
+        if definition is None:
+            return ""
+        config = self._deps.deserialize_pristine_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
+        if config is None:
+            return ""
+        label = str(key)
+        if not any(row.label == label for row in config.rows):
+            return ""
+
+        rows = tuple(
+            replace(
+                row,
+                parameter_values=dict(parameter_values),
+                added_advanced=tuple(str(name) for name in added_advanced),
+            )
+            if row.label == label
+            else row
+            for row in config.rows
+        )
+        try:
+            expansion = self._deps.expand_pristine_relaxation_jobs(
+                definition, replace(config, rows=rows)
+            )
+        except (ValueError, StructureBridgeError):
+            return ""
+        if expansion is None:
+            return ""
+        for spec in expansion.jobs:
+            if str(spec.provenance.get("label", "")) == label:
+                return render_job(spec)[1]
+        return ""
+
+    def continue_job(
+        self,
+        key: object,
+        parameter_values: Mapping[str, object],
+        added_advanced: Sequence[str] | None = None,
+    ) -> Job | None:
+        """Mutate the row in place, prepare its job for continuation, and re-render.
+
+        Orchestrates the controller-owned steps of the Continue-relaxation
+        accept flow: :meth:`update_row_parameters` mutates the row and mirrors
+        the edit into the widget form; ``ProjectService.prepare_job_continuation``
+        returns the row's job to ``DEFINED`` while preserving
+        ``remote_directory``; ``record_job_continuation`` appends the
+        provenance milestone; :meth:`materialize` rewrites the job's directory
+        in place from the new parameters (the existing DEFINED path — no new
+        ``Job`` is minted, ``job_ids_by_label`` is untouched, matching finding 1
+        of the warm-start plan). Submission and view refresh are the caller's
+        responsibility: they need the job's original execution target and
+        cluster-connection/dialog state this controller does not have.
+
+        The job's status is checked with :meth:`row_is_continuable` *before*
+        ``update_row_parameters`` runs, so a row whose job is not continuable
+        (e.g. it started running between the menu opening and the dialog being
+        accepted) is left completely untouched rather than having its stored
+        parameters mutated with no corresponding directory rewrite. The
+        document lookup is also hoisted above ``update_row_parameters`` for the
+        same reason: a missing document must not leave the definition row
+        mutated while the job itself is never touched. Returns ``None`` in
+        either case, or when there is no active definition or no matching row.
+
+        :meth:`materialize` can itself return an empty list (a caught
+        ``ValueError``/``StructureBridgeError`` from expansion, or a missing
+        output root) without raising — in that case the job is left ``DEFINED``
+        with its remote directory preserved (so it stays recoverable and a
+        later submit re-runs materialize), but the directory on disk still
+        holds the *previous* run's ``.param``, not the just-edited values. This
+        method returns ``None`` in that case too, so the caller never submits a
+        job whose on-disk inputs disagree with the diff it just showed the user.
+        """
+
+        jobs = self.jobs_for_keys([key])
+        if not jobs or jobs[0].status not in CONTINUABLE_JOB_STATUSES:
+            return None
+        job = jobs[0]
+        document = self._context.document()
+        if document is None:
+            return None
+        if not self.update_row_parameters(key, parameter_values, added_advanced):
+            return None
+        self._context.project_service.prepare_job_continuation(job)
+        self._context.project_service.record_job_continuation(
+            document, job=job, remote_directory=job.remote_directory
+        )
+        if not self.materialize([key]):
+            return None
+        return job
 
     # --- result contract ---
 
