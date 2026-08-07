@@ -309,6 +309,19 @@ def test_is_dir_false_when_path_missing(monkeypatch: pytest.MonkeyPatch) -> None
     assert connection.is_dir("/does/not/exist") is False
 
 
+def test_is_file_false_when_path_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_paramiko = _FakeParamiko(
+        fail_key=False,
+        system_host_keys={"example.org": _FakeKey()},
+    )
+    _patch_paramiko(monkeypatch, fake_paramiko)
+
+    connection = SSHConnection(_config("key"))
+    connection.connect()
+
+    assert connection.is_file("/does/not/exist") is False
+
+
 def test_mkdir_noop_for_trivial_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_paramiko = _FakeParamiko(
         fail_key=False,

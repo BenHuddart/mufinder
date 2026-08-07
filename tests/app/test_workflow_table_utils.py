@@ -15,8 +15,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QPushButton, QTableWidgetItem
 
 from mufinder.app.workflow_table_utils import (
+    RESET_FAILED_ACTION_TEXT,
     RESET_FAILED_TABLE_TOOLTIP,
     RESETTABLE_ROW_STATUSES,
+    RowMenuAction,
     bind_reset_failed_context_menu,
     create_workflow_table,
     selection_supports_reset,
@@ -329,3 +331,120 @@ def test_bind_reset_failed_context_menu_preserves_a_callers_own_tooltip(qapp) ->
         emit_reset=lambda _keys: None,
     )
     assert table.toolTip() == "widget-specific guidance"
+
+
+# ---------------------------------------------------------------------------
+# RowMenuAction / additional_actions — the "Continue relaxation…" extension
+# ---------------------------------------------------------------------------
+
+
+def test_bind_reset_failed_context_menu_default_additional_actions_adds_nothing(
+    qapp, monkeypatch
+) -> None:
+    """The other five tables call ``bind_reset_failed_context_menu`` with no
+    ``additional_actions``, so their menu must stay exactly one action."""
+
+    install_fake_menu(monkeypatch)
+    table, _emitted = _reset_menu_table(qapp, ("failed",))
+
+    menu = open_reset_menu(table, row=0)
+
+    assert menu is not None
+    assert [action.text for action in menu.actions] == [RESET_FAILED_ACTION_TEXT]
+
+
+def _reset_menu_table_with_continue_action(
+    qapp,
+    statuses: tuple[str, ...],
+    *,
+    is_enabled,
+):
+    table = create_workflow_table(("Label", "Status"))
+    for row, status in enumerate(statuses):
+        table.insertRow(row)
+        table.setItem(row, 0, QTableWidgetItem(f"row_{row}"))
+        table.setItem(row, 1, QTableWidgetItem(status))
+    reset_emitted: list[list[object]] = []
+    continue_emitted: list[list[object]] = []
+    bind_reset_failed_context_menu(
+        table,
+        key_for_row=lambda row: (item.text() if (item := table.item(row, 0)) else None),
+        status_for_row=lambda row: workflow_row_status_text(table, row, 1),
+        emit_reset=reset_emitted.append,
+        additional_actions=(
+            RowMenuAction(
+                text="Continue relaxation…",
+                is_enabled=is_enabled,
+                trigger=continue_emitted.append,
+            ),
+        ),
+    )
+    table.resize(200, 200)
+    return table, reset_emitted, continue_emitted
+
+
+def test_open_reset_failed_context_menu_appends_additional_action_after_reset(
+    qapp, monkeypatch
+) -> None:
+    install_fake_menu(monkeypatch)
+    table, _reset_emitted, _continue_emitted = _reset_menu_table_with_continue_action(
+        qapp, ("completed",), is_enabled=lambda _keys: True
+    )
+
+    menu = open_reset_menu(table, row=0)
+
+    assert menu is not None
+    assert [action.text for action in menu.actions] == [
+        RESET_FAILED_ACTION_TEXT,
+        "Continue relaxation…",
+    ]
+
+
+def test_additional_action_enabled_state_is_driven_by_its_own_predicate(
+    qapp, monkeypatch
+) -> None:
+    # A completed row is never reset-eligible, but "Continue relaxation…" can
+    # still be enabled for it — the two actions gate independently.
+    install_fake_menu(monkeypatch)
+    table, _reset_emitted, _continue_emitted = _reset_menu_table_with_continue_action(
+        qapp, ("completed",), is_enabled=lambda keys: len(keys) == 1
+    )
+
+    menu = open_reset_menu(table, row=0)
+
+    assert menu is not None
+    assert menu.reset_action().enabled is False
+    assert menu.action("Continue relaxation…").enabled is True
+
+
+def test_additional_action_trigger_receives_the_resolved_keys_and_fires_independently(
+    qapp, monkeypatch
+) -> None:
+    install_fake_menu(monkeypatch)
+    table, reset_emitted, continue_emitted = _reset_menu_table_with_continue_action(
+        qapp, ("completed",), is_enabled=lambda keys: len(keys) == 1
+    )
+
+    menu = open_reset_menu(table, row=0)
+
+    assert menu is not None
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    action.triggered.emit()
+
+    assert continue_emitted == [["row_0"]]
+    # The (disabled, absent) reset action never fired from the same click.
+    assert reset_emitted == []
+
+
+def test_additional_action_disabled_when_multiple_rows_selected(qapp, monkeypatch) -> None:
+    install_fake_menu(monkeypatch)
+    table, _reset_emitted, _continue_emitted = _reset_menu_table_with_continue_action(
+        qapp, ("completed", "completed"), is_enabled=lambda keys: len(keys) == 1
+    )
+    table.selectAll()
+
+    menu = open_reset_menu(table, row=0)
+
+    assert menu is not None
+    assert menu.action("Continue relaxation…").enabled is False

@@ -141,6 +141,7 @@ from mufinder.app.relaxation_analysis_widget import (
 )
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
+from mufinder.app.continue_relaxation_dialog import ContinueRelaxationDialog
 from mufinder.app.muon_sites_summary_widget import MuonSitesSummaryWidget
 from mufinder.app.uep_adapter import expand_uep_jobs
 from mufinder.app.uep_types import UepConfig, UepSourceRow
@@ -183,7 +184,12 @@ from mufinder.app.workflow_dialogs import (
     NudgedElasticBandConfigDialog,
     QuantumCorrectionsConfigDialog,
 )
-from mufinder.app.workflow_parameters import build_workflow_parameter_surface, kpoint_exclusive_hint, workflow_basic_parameter_names
+from mufinder.app.workflow_parameters import (
+    build_workflow_parameter_surface,
+    kpoint_exclusive_hint,
+    reorder_workflow_parameter_specs,
+    workflow_basic_parameter_names,
+)
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
     effective_row_status,
@@ -223,6 +229,7 @@ from mufinder.castep_io.ts_parser import (
 from mufinder.castep_io.types import AtomicPosition, BlockSection, PositionBlock, ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
 from mufinder.app.cluster_controller import ClusterController
+from mufinder.services.cluster_runner import CheckpointProbeResult
 from mufinder.services.job_execution_controller import (
     ClusterJobSubmission,
     JobExecutionController,
@@ -234,7 +241,7 @@ from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.services.perf_trace import PerfTrace
-from mufinder.services.project_service import ProjectDocument, ProjectService
+from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, ProjectDocument, ProjectService
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
     SSHCredentials,
@@ -324,6 +331,42 @@ _QUANTUM_METHOD_TO_GUI = {value: key for key, value in _QUANTUM_GUI_TO_METHOD.it
 # of truth); aliased here so the still-inline stage helpers keep their names.
 _QUANTUM_STAGE_SINGLEPOINT = QUANTUM_STAGE_SINGLEPOINT
 _QUANTUM_STAGE_PHONON = QUANTUM_STAGE_PHONON
+
+
+#: Slack allowed between a run's start and an output file's mtime before the
+#: file counts as predating the run. It absorbs filesystem mtime granularity
+#: (1 s on ext3/HFS+, 2 s on FAT) and the small clock offset a network-mounted
+#: job directory can introduce. A genuinely stale output is a whole run old, so
+#: a few seconds of slack costs nothing.
+_STALE_OUTPUT_SLACK_SECONDS = 5.0
+
+
+def _output_predates_run(path: Path | None, started_at: datetime | None) -> bool:
+    """Return whether ``path`` was last written before the current run started.
+
+    Guards a continued relaxation against the *previous* run's ``-out.cell``. A
+    continuation re-uses its job directory, so a run that dies before writing a
+    new relaxed structure leaves the old file exactly where the completion path
+    looks for it — ``cell_missing`` is ``False`` and the last run's geometry is
+    silently accepted as this run's result. The cluster path makes that concrete:
+    the download is conditional on the remote file existing
+    (``ClusterJobRunner._retrieve_results``), so a missing remote ``-out.cell``
+    leaves the copy fetched by the *previous* retrieval in place.
+
+    ``sftp.get`` does not preserve mtimes, so a downloaded file is stamped with
+    its download time and a locally-run one with its write time; either way a
+    fresh output is stamped after the run started and a stale one before it.
+    ``started_at`` of ``None`` (a job the poller never observed running) returns
+    ``False``: the guard fails open rather than failing a job on no evidence.
+    """
+
+    if path is None or started_at is None:
+        return False
+    try:
+        modified = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+    except OSError:
+        return False
+    return (started_at - modified).total_seconds() > _STALE_OUTPUT_SLACK_SECONDS
 
 
 def _structure_species_options(structure: Structure | None) -> tuple[str, ...]:
@@ -1911,6 +1954,12 @@ class MainWindow(QMainWindow):
         self._pristine_relaxation_view.reset_failed_requested.connect(
             self._on_reset_failed_from_pristine_relaxation
         )
+        self._pristine_relaxation_view.set_continuable_predicate(
+            self._pristine_relaxation_controller.row_is_continuable
+        )
+        self._pristine_relaxation_view.continue_relaxation_requested.connect(
+            self._on_continue_relaxation_requested_from_pristine_relaxation
+        )
         self._uep_view = UEPWidget()
         self._uep_view.configure_requested.connect(self._on_uep_configured)
         self._uep_view.form_state_changed.connect(self._on_uep_form_state_changed)
@@ -1976,6 +2025,12 @@ class MainWindow(QMainWindow):
         self._muon_relaxation_view.remove_requested.connect(self._on_remove_muon_relaxation_rows)
         self._muon_relaxation_view.reset_failed_requested.connect(
             self._on_reset_failed_from_muon_relaxation
+        )
+        self._muon_relaxation_view.set_continuable_predicate(
+            self._muon_relaxation_controller.row_is_continuable
+        )
+        self._muon_relaxation_view.continue_relaxation_requested.connect(
+            self._on_continue_relaxation_requested_from_muon_relaxation
         )
         self._muon_relaxation_view.analysis_workspace_requested.connect(
             self._on_create_relaxation_analysis_workspace_requested
@@ -6723,12 +6778,50 @@ class MainWindow(QMainWindow):
         targets_to_check: list[tuple[UUID, str]] = []
         for job in eligible_jobs:
             allow_existing_remote_directory = False
-            remote_target = (job.remote_directory or "").strip() if reuse_existing_remote_files else ""
-            if not remote_target:
-                continuation_target = self._quantum_continuation_remote_target(job, cluster_name=selected_cluster.name)
-                if continuation_target:
-                    remote_target = continuation_target
-                    allow_existing_remote_directory = True
+            # A DEFINED job that still carries a remote directory is a continuation.
+            # Only ProjectService.prepare_job_continuation produces that combination
+            # (see its docstring for the writer audit), and it preserves the directory
+            # precisely so CASTEP resumes from the ``.check`` file already there. Reuse
+            # the directory verbatim and upload fresh inputs into it.
+            #
+            # This branch is evaluated first and cannot steal either path below.
+            # ``reuse_existing_remote_files`` is passed only by the dashboard resubmit
+            # action, whose eligible statuses are {FAILED, CANCELLED}, so DEFINED jobs
+            # never reach the loop on that call. The quantum branch needs a quantum
+            # phonon calc type with a COMPLETED singlepoint source; a continued phonon
+            # job would satisfy both, but its own preserved remote directory is the
+            # source directory that branch would have returned, so the two agree.
+            #
+            # The cluster in this call is only *preselected* to the job's original
+            # ``execution_target`` (see the Continue-relaxation caller): the
+            # submission dialog still lets the user pick a different one. A
+            # continuation must never carry ``job.remote_directory`` onto a
+            # DIFFERENT cluster — that path does not exist there, so
+            # ``allow_existing_remote_directory=True`` would submit a cold run into
+            # a foreign directory string, silently rewrite ``execution_target``, and
+            # orphan the checkpoint the continuation was meant to resume. Guarding on
+            # a cluster-name match makes a same-cluster continuation behave exactly
+            # as before and makes an off-cluster continuation fall through to the
+            # normal path (recomputed target, normal existence check).
+            continued_remote_target = (
+                (job.remote_directory or "").strip()
+                if job.status == JobStatus.DEFINED
+                and (job.execution_target or "").strip().casefold()
+                == selected_cluster.name.strip().casefold()
+                else ""
+            )
+            if continued_remote_target:
+                remote_target = continued_remote_target
+                allow_existing_remote_directory = True
+            else:
+                remote_target = (job.remote_directory or "").strip() if reuse_existing_remote_files else ""
+                if not remote_target:
+                    continuation_target = self._quantum_continuation_remote_target(
+                        job, cluster_name=selected_cluster.name
+                    )
+                    if continuation_target:
+                        remote_target = continuation_target
+                        allow_existing_remote_directory = True
             reuse_existing_files_for_job = bool(remote_target)
             if allow_existing_remote_directory:
                 reuse_existing_files_for_job = False
@@ -6759,6 +6852,13 @@ class MainWindow(QMainWindow):
         decision_by_job: dict[UUID, str] = {}
         overwrite_mode: str | None = None
         for job in eligible_jobs:
+            # Directories we deliberately submit into are never candidates for the
+            # overwrite prompt, whatever another job in the batch resolved to: this
+            # loop matches by target string, so without the guard a second job whose
+            # computed target collides with a preserved directory could mark it for
+            # deletion.
+            if allow_existing_remote_directory_by_job.get(job.id, False):
+                continue
             remote_target = remote_target_by_job.get(job.id)
             if not (remote_target and remote_target in existing_remote_targets):
                 continue
@@ -6781,6 +6881,15 @@ class MainWindow(QMainWindow):
                 )
 
         # 4. Prepare document state (GUI thread) and build the worker batch.
+        # Directories another job in the batch is submitting into as-is are never
+        # deleted, however that job's own overwrite prompt was answered: the
+        # decision belongs to the colliding job, but the deletion would land on a
+        # preserved continuation directory holding the run's ``.check`` file.
+        protected_remote_targets = {
+            remote_target_by_job[job_id]
+            for job_id, allowed in allow_existing_remote_directory_by_job.items()
+            if allowed and remote_target_by_job.get(job_id)
+        }
         prepared_by_job: dict[UUID, PreparedClusterSubmission] = {}
         submit_items: list[dict[str, object]] = []
         for job in eligible_jobs:
@@ -6830,7 +6939,10 @@ class MainWindow(QMainWindow):
                     "label": job.label,
                     "submit_kwargs": prepared.submit_kwargs,
                     "remote_dir_to_delete": (
-                        remote_target if decision_by_job.get(job.id) == "delete" else None
+                        remote_target
+                        if decision_by_job.get(job.id) == "delete"
+                        and remote_target not in protected_remote_targets
+                        else None
                     ),
                 }
             )
@@ -7033,6 +7145,30 @@ class MainWindow(QMainWindow):
         if isinstance(payload, TimeoutError):
             # Fail every checked job rather than silently submitting over
             # directories whose state is unknown.
+            return {
+                "existing": [],
+                "errors": {job_id: str(payload) for job_id, _target in targets},
+            }
+        return payload if isinstance(payload, dict) else {"existing": [], "errors": {}}
+
+    def _await_remote_file_check(self, targets: list[tuple[UUID, str]]) -> dict[str, object]:
+        """Twin of :meth:`_await_remote_dir_check` for a single-file existence probe.
+
+        Feeds the Continue-relaxation checkpoint probe
+        (:meth:`_continue_relaxation_checkpoint_probe`): the same nested-event-
+        loop wait ``_submit_jobs_on_cluster`` already uses mid-flow before
+        showing a dialog, so the probe can complete synchronously before the
+        Continue dialog is constructed (WP5 requires the probe run before
+        dialog construction, never inside the dialog's own ``__init__``).
+        """
+
+        payload = self._await_cluster_signal(
+            start=lambda: self._cluster_runner.check_remote_files(targets),
+            signal=self._cluster_runner.remote_files_checked,
+            title="Checking remote checkpoint",
+            label="Checking for an existing CASTEP checkpoint…",
+        )
+        if isinstance(payload, TimeoutError):
             return {
                 "existing": [],
                 "errors": {job_id: str(payload) for job_id, _target in targets},
@@ -7455,6 +7591,211 @@ class MainWindow(QMainWindow):
             )
         return True
 
+    def _continue_relaxation_checkpoint_probe(self, job: Job) -> CheckpointProbeResult:
+        """Probe for ``{seed}.check`` in the directory a Continue would reuse.
+
+        Local jobs get a plain :class:`~pathlib.Path` check. Cluster jobs are
+        probed only when the cluster runner is currently connected to that
+        job's cluster (:meth:`_is_cluster_connected_for_job`, the same check
+        cluster resubmission uses) via the WP5 bridge
+        (``ClusterController.check_remote_files``/``remote_files_checked``),
+        awaited synchronously through :meth:`_await_remote_file_check` — the
+        same nested-event-loop pattern ``_submit_jobs_on_cluster`` already uses
+        mid-flow before showing a dialog, run here before the Continue dialog
+        is constructed (never inside the dialog's own ``__init__``). Not
+        connected, a missing remote directory, or an SSH error all map to
+        :meth:`CheckpointProbeResult.unavailable` rather than blocking the
+        dialog from opening.
+        """
+
+        seed_name = self._job_seed_name(job)
+        if (job.execution_target or "").strip().casefold() == "local":
+            output_dir = self._job_output_directory(job)
+            if output_dir is None:
+                return CheckpointProbeResult.unavailable("The job's output directory is unknown")
+            checkpoint_path = output_dir / f"{seed_name}.check"
+            return (
+                CheckpointProbeResult.found()
+                if checkpoint_path.exists()
+                else CheckpointProbeResult.absent()
+            )
+
+        if not self._is_cluster_connected_for_job(job):
+            return CheckpointProbeResult.unavailable(f"Not connected to {job.execution_target}")
+
+        remote_directory = (job.remote_directory or "").strip()
+        if not remote_directory:
+            return CheckpointProbeResult.unavailable("No remote directory recorded for this job")
+
+        remote_path = posixpath.join(remote_directory, f"{seed_name}.check")
+        result = self._await_remote_file_check([(job.id, remote_path)])
+        errors = result.get("errors", {})
+        if job.id in errors:
+            return CheckpointProbeResult.unavailable(str(errors[job.id]))
+        existing = result.get("existing", [])
+        return CheckpointProbeResult.found() if remote_path in existing else CheckpointProbeResult.absent()
+
+    @staticmethod
+    def _resolve_continue_relaxation_seed_values(
+        seed: Mapping[str, object],
+    ) -> tuple[dict[str, object], tuple[str, ...]]:
+        """Resolve a Continue dialog seed to the values its editor will actually show.
+
+        ``ContinueRelaxationDialog.__init__`` documents the contract precisely:
+        ``old_param_text`` must be rendered from the exact values its own live
+        "new" render produces when unedited, or the diff panel shows spurious
+        rows for every basic-visible keyword that has no catalog
+        ``default_value`` (``ParameterDialog`` still gives such a field's editor
+        a sensible starting value — e.g. a dropdown defaults to its first
+        allowed option — even though the row's stored/effective
+        ``parameter_values`` never mentions it, so passing the seed straight to
+        ``render_param_text`` would omit it from "old" while the dialog's own
+        ``collect_values()`` includes it in "new"). This builds a throwaway
+        ``ParameterDialog`` with the identical specs/workflow_stage/locked_values
+        and the identical seed → ``set_values``/``set_advanced_names`` →
+        ``collect_values()`` sequence ``ContinueRelaxationDialog.__init__`` runs
+        internally, so the two agree keyword-for-keyword on an unedited row.
+        """
+
+        specs = reorder_workflow_parameter_specs(list(seed.get("specs", ())))
+        parameter_values = dict(seed.get("parameter_values", {}))
+        added_advanced = tuple(seed.get("added_advanced", ()))
+        reference = ParameterDialog(
+            specs=specs,
+            workflow_stage=str(seed.get("workflow_stage", "")),
+            locked_values=seed.get("locked_values"),
+            species_options=seed.get("species_options", ()),
+        )
+        try:
+            reference.set_values(
+                dict(parameter_values),
+                preferred_exclusive=kpoint_exclusive_hint([parameter_values]),
+            )
+            reference.set_advanced_names(added_advanced)
+            values = dict(reference.collect_values())
+            values.pop("task", None)
+            return values, reference.advanced_names()
+        finally:
+            reference.close()
+
+    def _continue_relaxation_row(
+        self,
+        *,
+        controller: PristineRelaxationController | MuonRelaxationController,
+        view: PristineRelaxationWidget | MuonRelaxationWidget,
+        key: object,
+        autosave_failure_message: str,
+    ) -> None:
+        """Open "Continue relaxation…" for one row and drive it to submission.
+
+        Owns every side effect the workflow controller and the
+        ``ContinueRelaxationDialog`` (WP4) deliberately do not: resolving the
+        row's job, probing for a checkpoint, rendering the old/new ``.param``
+        diff text, opening the dialog, and — on accept — running the
+        controller's ``continue_job`` (row mutation -> ``prepare_job_continuation``
+        -> provenance -> re-materialize) followed by submission to the job's
+        ORIGINAL execution target (finding 9 of the warm-start plan: local jobs
+        through the local submit path, cluster jobs through
+        ``_submit_jobs_on_cluster`` with that cluster preselected, mirroring
+        how ``_on_resubmit_from_dashboard`` picks ``default_cluster_name``).
+
+        Deliberately bypasses ``controller.submit()``: that template method has
+        no hook for preselecting a specific cluster (``submission_groups``
+        supplies no per-group ``default_cluster_name``), and — for muon
+        relaxation — its ``pre_submit_check`` host-mismatch validation would be
+        redundant here: the row's site already matched the active host when
+        this job was first submitted, and offers no sensible resolution for
+        resubmitting that same site. Because ``continue_job`` already leaves
+        the job ``DEFINED`` before either submit path runs,
+        ``job_is_resubmittable_after_dismissal`` is false for it, so the
+        dismissed-job cleanup prompt (``_prepare_jobs_for_resubmission``) is
+        never reached — Continue never asks about deleting the very directory
+        it just preserved and rewrote.
+        """
+
+        if self._document is None:
+            return
+        jobs = controller.jobs_for_keys([key])
+        if not jobs:
+            return
+        job = jobs[0]
+        if job.status not in CONTINUABLE_JOB_STATUSES:
+            return
+
+        seed = view.continue_relaxation_dialog_seed(key)
+        if seed is None:
+            return
+
+        checkpoint_probe = self._continue_relaxation_checkpoint_probe(job)
+
+        def render_param_text(
+            values: Mapping[str, object], advanced: tuple[str, ...]
+        ) -> str:
+            return controller.render_row_param_text(key, values, advanced)
+
+        resolved_values, resolved_advanced = self._resolve_continue_relaxation_seed_values(seed)
+        old_param_text = render_param_text(resolved_values, resolved_advanced)
+
+        if (job.execution_target or "").strip().casefold() == "local":
+            output_dir = self._job_output_directory(job)
+            reused_directory = str(output_dir) if output_dir is not None else job.label
+        else:
+            reused_directory = job.remote_directory or "(directory will be computed at submission)"
+
+        dialog = ContinueRelaxationDialog(
+            **seed,
+            old_param_text=old_param_text,
+            render_param_text=render_param_text,
+            checkpoint_probe=checkpoint_probe,
+            execution_target=job.execution_target,
+            reused_directory=reused_directory,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        parameter_values, added_advanced = dialog.edited_parameters()
+        continued_job = controller.continue_job(key, parameter_values, added_advanced)
+        if continued_job is None:
+            # The row's parameters may already be mutated (update_row_parameters
+            # ran before materialize failed), but nothing was submitted: warn
+            # rather than fail silently, since the user just accepted a diff
+            # that promised the new parameters would run.
+            QMessageBox.warning(
+                self,
+                "Continue relaxation failed",
+                "Could not regenerate this job's input files, so it was not "
+                "resubmitted. The row's job was left in a recoverable state; "
+                "try Continue relaxation again.",
+            )
+            return
+
+        if (continued_job.execution_target or "").strip().casefold() == "local":
+            self._submit_jobs_locally([continued_job])
+        else:
+            self._submit_jobs_on_cluster(
+                [continued_job], default_cluster_name=continued_job.execution_target
+            )
+
+        self._refresh_views_after_job_reset()
+        self._persist_document_ui_state(failure_message=autosave_failure_message)
+
+    def _on_continue_relaxation_requested_from_pristine_relaxation(self, key: object) -> None:
+        self._continue_relaxation_row(
+            controller=self._pristine_relaxation_controller,
+            view=self._pristine_relaxation_view,
+            key=key,
+            autosave_failure_message="Relaxation was continued, but autosave failed.",
+        )
+
+    def _on_continue_relaxation_requested_from_muon_relaxation(self, key: object) -> None:
+        self._continue_relaxation_row(
+            controller=self._muon_relaxation_controller,
+            view=self._muon_relaxation_view,
+            key=key,
+            autosave_failure_message="Relaxation was continued, but autosave failed.",
+        )
+
     @staticmethod
     def _dedupe_jobs(jobs: list[Job]) -> list[Job]:
         deduped: list[Job] = []
@@ -7560,6 +7901,9 @@ class MainWindow(QMainWindow):
             deserialize_pristine_relaxation_config=(
                 lambda payload: self._deserialize_pristine_relaxation_config(payload)
             ),
+            serialize_pristine_relaxation_config=(
+                lambda config: self._serialize_pristine_relaxation_config(config)
+            ),
             sync_equivalent_pristine_relaxation_mappings=(
                 lambda definition: self._sync_equivalent_pristine_relaxation_mappings(definition)
             ),
@@ -7621,6 +7965,9 @@ class MainWindow(QMainWindow):
             ),
             deserialize_muon_relaxation_config=(
                 lambda payload: self._deserialize_muon_relaxation_config(payload)
+            ),
+            serialize_muon_relaxation_config=(
+                lambda config: self._serialize_muon_relaxation_config(config)
             ),
             sync_equivalent_muon_relaxation_mappings=(
                 lambda definition: self._sync_equivalent_muon_relaxation_mappings(definition)
@@ -8769,6 +9116,21 @@ class MainWindow(QMainWindow):
                 self._on_local_job_failed(
                     job_id,
                     f"Failed to parse relaxed CELL output: {artifacts.cell_error}",
+                )
+                return
+
+            # Stale-output guard, for the same reason the two guards above are
+            # inline: ControllerResult has no failure channel, so a result must
+            # not be built from a file this run never wrote. A continuation
+            # re-uses its job directory, so a present -out.cell is not by itself
+            # evidence that *this* run produced it — see _output_predates_run.
+            if _output_predates_run(
+                artifacts.out_cell_path, run.started_at or job.started_at
+            ):
+                self._on_local_job_failed(
+                    job_id,
+                    f"{seed_name}-out.cell predates this run: no relaxed structure "
+                    "was written, so the previous run's geometry is still in place.",
                 )
                 return
 

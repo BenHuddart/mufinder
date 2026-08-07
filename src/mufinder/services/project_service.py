@@ -65,6 +65,23 @@ TERMINAL_RECOVERABLE_JOB_STATUSES = frozenset(
     {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
 )
 
+#: Job statuses a calculation can be *continued* from:
+#: :meth:`ProjectService.prepare_job_continuation` accepts exactly these. The set
+#: is deliberately wider than :data:`TERMINAL_RECOVERABLE_JOB_STATUSES` because a
+#: COMPLETED relaxation is continuable — running more geometry-optimisation steps
+#: from its checkpoint is a normal outcome, not a recovery from failure.
+#: Widening it does not weaken the dismissed-row reasoning above: continuation is
+#: a distinct primitive with its own entry point, and the reset/dismiss sets stay
+#: identical to each other. See docs/job_lifecycle.rst.
+CONTINUABLE_JOB_STATUSES = frozenset(
+    {
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+        JobStatus.STOPPED,
+        JobStatus.CANCELLED,
+    }
+)
+
 #: Message stamped on a local job that was still in progress when MuFinder was
 #: closed and is reconciled to STOPPED on the next project open. See
 #: ``ProjectService.reconcile_orphaned_local_jobs`` and docs/job_lifecycle.rst.
@@ -641,6 +658,39 @@ class ProjectService:
                     "calc_type": job.calc_type,
                     "execution_target": job.execution_target,
                     "cleaned_output_directory": cleaned_output_directory,
+                },
+                output_entity_ids=[job.id],
+                job_id=job.id,
+            ),
+        )
+
+    def record_job_continuation(
+        self,
+        document: ProjectDocument,
+        *,
+        job: Job,
+        remote_directory: str | None,
+    ) -> None:
+        """Append one provenance milestone when a job is prepared for continuation.
+
+        ``remote_directory`` is the directory the continuation run will reuse
+        (see :meth:`prepare_job_continuation`); ``None`` for a local job or a
+        job that never reached a cluster.
+        """
+
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="job_continuation",
+                workflow_stage=job.workflow_stage,
+                actor="user",
+                description=f"Continued calculation {job.label}",
+                parameters={
+                    "job_label": job.label,
+                    "calc_type": job.calc_type,
+                    "execution_target": job.execution_target,
+                    "preserved_remote_directory": remote_directory is not None,
+                    "remote_directory": remote_directory,
                 },
                 output_entity_ids=[job.id],
                 job_id=job.id,
@@ -2120,6 +2170,47 @@ class ProjectService:
         job.completed_at = None
         job.remote_job_id = None
         job.remote_directory = None
+        job.num_processes = None
+        job.error_message = None
+        job.last_checked_at = None
+        job.last_status_source = None
+        job.last_status_message = None
+        job.dismissed_at = None
+
+    def prepare_job_continuation(self, job: Job) -> None:
+        """Return a finished job to defined for a continuation run, keeping its directory.
+
+        Accepts :data:`CONTINUABLE_JOB_STATUSES` (completed, failed, stopped, or
+        cancelled). Like :meth:`reset_failed_job` this direct-assigns
+        ``DEFINED`` instead of going through :meth:`_assert_transition`: DEFINED
+        is not a target in the validated transition table, and COMPLETED has no
+        validated exit at all.
+
+        Every field the previous run stamped is cleared, but
+        ``remote_directory`` is **deliberately preserved** — that is the whole
+        point of the primitive. A DEFINED job carrying a non-null
+        ``remote_directory`` is the durable marker the cluster submission path
+        uses to detect a continuation: it resubmits into the existing remote
+        directory (where CASTEP's ``.check`` file lives) instead of recomputing
+        a target, checking for an existing directory, and offering to delete it.
+
+        No other code path can produce that status/field combination. The
+        writers of ``remote_directory`` are: ``JobExecutionController``, which
+        sets it while moving a job to SUBMITTING and clears it on local
+        submission; :meth:`reset_failed_job`, which clears it; and the main
+        window's cluster-tracking sync, which only touches active jobs.
+        """
+
+        if job.status not in CONTINUABLE_JOB_STATUSES:
+            raise ValueError(
+                "Only completed, failed, stopped, or cancelled jobs can be continued."
+            )
+
+        job.status = JobStatus.DEFINED
+        job.submitted_at = None
+        job.started_at = None
+        job.completed_at = None
+        job.remote_job_id = None
         job.num_processes = None
         job.error_message = None
         job.last_checked_at = None

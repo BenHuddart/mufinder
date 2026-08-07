@@ -1,9 +1,18 @@
-"""Pristine-relaxation configuration panel."""
+"""Pristine-relaxation configuration panel.
+
+Rows whose job has left the unlocked runtime statuses keep their inline
+parameter lock (``_runtime_controls_locked``): a submitted row's inputs must not
+drift away from the directory that was rendered from them. Editing a terminal
+row's parameters goes through the "Continue relaxation…" path instead, which
+mutates the active definition's row in place via
+:meth:`~mufinder.app.workflow_controllers.pristine_relaxation.PristineRelaxationController.update_row_parameters`
+and mirrors the edit back into this form, preserving the row→job binding.
+"""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
@@ -40,6 +49,7 @@ from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_work
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.workflow_table_utils import (
+    RowMenuAction,
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
     create_workflow_table,
@@ -135,12 +145,25 @@ class PristineRelaxationWidget(QWidget):
     remove_requested = Signal(object)
     row_supercell_edit_requested = Signal(object)
     form_state_changed = Signal(dict)
+    #: Emits the row's label when "Continue relaxation…" is chosen from the
+    #: row context menu. See :meth:`set_continuable_predicate` for how the
+    #: menu decides whether that action is enabled for a given row.
+    continue_relaxation_requested = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
         self._restoring_form_state = False
         self._next_row_id = 1
+
+        # Injected by the controller wiring (see MainWindow's
+        # ``set_continuable_predicate`` call): resolves a row's job through the
+        # controller and checks its real status, never the row's displayed
+        # status text (see the "Continue relaxation…" menu-gating rule in
+        # ``mufinder.app.workflow_table_utils.RowMenuAction``). Defaults to
+        # "never continuable" so an unwired widget (e.g. in a test) never
+        # offers an action it cannot fulfil.
+        self._continuable_predicate: Callable[[object], bool] = lambda _key: False
 
         self._host_lattice: list[list[float]] | None = None
         self._reference_lattice: list[list[float]] | None = None
@@ -285,11 +308,23 @@ class PristineRelaxationWidget(QWidget):
         self._add_row_button.clicked.connect(self._add_row)
         self._batch_configure_button.clicked.connect(self._configure_selected_rows)
         self._table.itemChanged.connect(self._on_table_item_changed)
+        self._table.setToolTip(
+            "Right-click a failed, stopped, or cancelled row to reset it back to ready for "
+            "rerun, or a completed/failed/stopped/cancelled row to continue its relaxation."
+        )
         bind_reset_failed_context_menu(
             self._table,
             key_for_row=self._reset_key_at_row,
             status_for_row=self._row_status,
             emit_reset=self.reset_failed_requested.emit,
+            additional_actions=(
+                RowMenuAction(
+                    text="Continue relaxation…",
+                    is_enabled=lambda keys: len(keys) == 1
+                    and self._continuable_predicate(keys[0]),
+                    trigger=lambda keys: self.continue_relaxation_requested.emit(keys[0]),
+                ),
+            ),
         )
 
         selection_model = self._table.selectionModel()
@@ -452,6 +487,17 @@ class PristineRelaxationWidget(QWidget):
         self._runtime_states = {str(label): state for label, state in states.items()}
         self._refresh_all_rows()
 
+    def set_continuable_predicate(self, predicate: Callable[[object], bool]) -> None:
+        """Inject the live "can this row's job be continued?" check.
+
+        Called by the controller wiring with ``PristineRelaxationController.row_is_continuable``.
+        Evaluated fresh every time the row context menu opens, not cached, so a
+        status change since the last refresh (e.g. a dashboard dismissal) is
+        always reflected in whether "Continue relaxation…" is enabled.
+        """
+
+        self._continuable_predicate = predicate
+
     def set_supercell_options(self, options: list[dict[str, object]]) -> None:
         parsed: list[tuple[str, SupercellMatrix]] = []
         for entry in options:
@@ -593,6 +639,12 @@ class PristineRelaxationWidget(QWidget):
         """Return the row's submission key, or ``None`` for an unlabeled row."""
 
         return self._label_at_row(row) or None
+
+    def _row_id_for_label(self, label: str) -> int | None:
+        for row in range(self._table.rowCount()):
+            if self._label_at_row(row) == label:
+                return self._row_id_at(row)
+        return None
 
     def _row_status(self, row: int) -> str:
         return workflow_row_status_text(self._table, row, self._STATUS_COLUMN)
@@ -1032,6 +1084,35 @@ class PristineRelaxationWidget(QWidget):
             if name in self._specs_by_name:
                 cleaned[name] = self._restore_structured_value(name, value)
         return cleaned
+
+    def continue_relaxation_dialog_seed(self, label: object) -> dict[str, object] | None:
+        """Return the ``ContinueRelaxationDialog`` seed kwargs for one row.
+
+        Mirrors :meth:`_open_row_parameter_dialog`'s single-row seeding (the
+        row's effective parameter values, its added-advanced set, and the same
+        locked task/fix-cell/write-cell-structure keywords), for the one row
+        the Continue action targets. MainWindow supplies everything this
+        widget cannot know (the checkpoint probe, the rendered old/new
+        ``.param`` text, and the job's execution target/directory) alongside
+        these kwargs when constructing the dialog. Returns ``None`` when
+        ``label`` does not resolve to a row.
+        """
+
+        row_id = self._row_id_for_label(str(label))
+        if row_id is None:
+            return None
+        return {
+            "specs": self._specs,
+            "workflow_stage": "pristine_relaxation",
+            "parameter_values": self._effective_params_for_row(row_id),
+            "added_advanced": tuple(sorted(self._row_added_advanced.get(row_id, set()))),
+            "locked_values": {
+                "task": "GEOMETRYOPTIMIZATION",
+                "fix_all_cell": "Variable (set by row control)",
+                "write_cell_structure": "TRUE (required for relaxed-cell outputs)",
+            },
+            "species_options": self._parameter_species_options,
+        }
 
     def _open_row_parameter_dialog(self, row_ids: tuple[int, ...]) -> None:
         intro_labels: list[str] = []

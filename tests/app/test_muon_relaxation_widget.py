@@ -881,3 +881,96 @@ def test_muon_relaxation_widget_context_menu_disables_reset_for_queued_row(qapp,
 
     assert menu is not None and menu.reset_action().enabled is False
     assert payloads == []
+
+
+def test_muon_relaxation_widget_continue_action_defaults_disabled_when_unwired(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Site 1", "fractional_position": [0.1, 0.2, 0.3]}]
+    )
+    widget.set_runtime_states({"positivemuon:Site 1": RelaxationRunState(status="completed")})
+
+    install_fake_menu(monkeypatch)
+    menu = open_reset_menu(widget._table, row=0)
+
+    assert menu is not None
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    assert action.enabled is False
+
+
+def test_muon_relaxation_widget_continue_action_uses_injected_predicate_with_charge_key(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Site 1", "fractional_position": [0.1, 0.2, 0.3]}]
+    )
+    widget.set_runtime_states({"positivemuon:Site 1": RelaxationRunState(status="completed")})
+
+    seen_keys: list[object] = []
+
+    def predicate(key: object) -> bool:
+        seen_keys.append(key)
+        return key == "positivemuon:Site 1"
+
+    widget.set_continuable_predicate(predicate)
+
+    install_fake_menu(monkeypatch)
+    menu = open_reset_menu(widget._table, row=0)
+
+    assert menu is not None
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    assert action.enabled is True
+    assert seen_keys == ["positivemuon:Site 1"]
+
+
+def test_muon_relaxation_widget_continue_action_emits_charge_qualified_key(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Mu Site", "fractional_position": [0.1, 0.2, 0.3]}],
+        charge_states=(MUONIUM_CHARGE_STATE,),
+    )
+    widget.set_continuable_predicate(lambda _key: True)
+    muonium_table = widget._tables_by_charge_state[MUONIUM_CHARGE_STATE]
+
+    payloads: list[object] = []
+    widget.continue_relaxation_requested.connect(payloads.append)
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(muonium_table, row=0)
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    action.triggered.emit()
+
+    assert payloads == ["muonium:Mu Site"]
+
+
+def test_muon_relaxation_widget_continue_dialog_seed_includes_charge_locked_value(
+    qapp,
+) -> None:
+    widget = MuonRelaxationWidget()
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Site 1", "fractional_position": [0.1, 0.2, 0.3]}]
+    )
+    row_id = widget._row_id_at(0)
+    widget._row_parameter_values[row_id] = {"geom_max_iter": 250}
+    widget._row_added_advanced[row_id] = {"geom_max_iter"}
+
+    seed = widget.continue_relaxation_dialog_seed("positivemuon:Site 1")
+
+    assert seed is not None
+    assert seed["workflow_stage"] == "muon_relaxation"
+    assert seed["specs"] == widget._specs
+    assert seed["parameter_values"]["geom_max_iter"] == 250
+    assert seed["added_advanced"] == ("geom_max_iter",)
+    assert seed["locked_values"]["task"] == "GEOMETRYOPTIMIZATION"
+    assert seed["locked_values"]["charge"] == "+1 (positive muon)"
+    assert seed["species_options"] == widget._parameter_species_options
+
+    assert widget.continue_relaxation_dialog_seed("positivemuon:does-not-exist") is None

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import copy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -32,6 +33,7 @@ from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.structure_io import StructureLoadError
 from mufinder.services.project_service import ProjectService
 from mufinder.services.ssh_client import SSHAuthenticationError, SSHCredentials
+from tests.support.reset_menu import install_fake_menu, open_reset_menu
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
 
 
@@ -3410,6 +3412,350 @@ def test_main_window_submit_jobs_on_cluster_reuses_quantum_continuation_director
     window.close()
 
 
+_CONTINUATION_CLUSTER = ClusterConfig(
+    name="alpha",
+    hostname="alpha.example",
+    username="alice",
+    auth_method="key",
+    key_path="/tmp/key",
+    default_working_directory="/remote/work",
+    queue_system="slurm",
+    cores_per_node=64,
+    default_walltime="01:00:00",
+    template_script_path="/templates/slurm.sh",
+)
+
+
+def _patch_continuation_cluster_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accept the cluster submission dialog with a fixed /remote/work config."""
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 1
+
+        def config(self):
+            return SimpleNamespace(
+                cluster_name="alpha",
+                working_directory="/remote/work",
+                username="alice",
+                job_name_prefix="conv",
+                num_processes=16,
+                walltime="01:00:00",
+            )
+
+        def password(self) -> str:
+            return ""
+
+    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [_CONTINUATION_CLUSTER])
+    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: _CONTINUATION_CLUSTER)
+    monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+
+
+def _add_cluster_input_job(service: ProjectService, doc, label: str) -> Job:
+    """Create a convergence job with its .cell/.param inputs on disk.
+
+    The job directory basename equals the label, exactly as a real submission
+    produces it, so ``_job_seed_name`` resolves the same seed from either the
+    local directory or the remote basename.
+    """
+
+    job = service.add_job(
+        doc,
+        label=label,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job_dir = doc.project_root / "files" / "convergence_cutoff" / label
+    job_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / f"{label}.cell").write_text("%BLOCK LATTICE_CART\n%ENDBLOCK LATTICE_CART\n", encoding="utf-8")
+    (job_dir / f"{label}.param").write_text("TASK : GEOMETRYOPTIMIZATION\n", encoding="utf-8")
+    return job
+
+
+def _continue_cluster_job(service: ProjectService, job: Job, remote_directory: str) -> None:
+    """Take a job through a failed cluster run and back to DEFINED for continuation."""
+
+    job.execution_target = "alpha"
+    job.remote_directory = remote_directory
+    job.remote_job_id = "55501"
+    job.status = JobStatus.FAILED
+    service.prepare_job_continuation(job)
+    assert job.status == JobStatus.DEFINED
+    assert job.remote_directory == remote_directory
+
+
+def _patch_continuation_cluster_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    window: MainWindow,
+    *,
+    directory_exists: bool,
+) -> dict[str, list]:
+    """Patch the SSH-facing runner calls and record what the flow asked for."""
+
+    recorded: dict[str, list] = {"checked": [], "deleted": [], "submitted": []}
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "remote_job_directory",
+        lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "remote_directory_exists",
+        lambda path: recorded["checked"].append(path) or directory_exists,
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "remove_remote_directory",
+        lambda path: recorded["deleted"].append(path),
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "submit",
+        lambda **kwargs: recorded["submitted"].append(kwargs) or "99123",
+    )
+    return recorded
+
+
+def test_main_window_submit_jobs_on_cluster_reuses_continued_job_remote_directory(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_continuation.mufinder", "ClusterContinuation")
+    window._document = doc
+
+    job = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    _continue_cluster_job(service, job, "/remote/work/conv_ecut_300")
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda *_args: pytest.fail("a continued job must never prompt to overwrite its own directory"),
+    )
+
+    window._submit_jobs_on_cluster([job])
+
+    # The preserved directory is never probed, never offered for deletion, and
+    # never deleted: it holds the .check file the continuation resumes from.
+    assert recorded["checked"] == []
+    assert recorded["deleted"] == []
+    assert len(recorded["submitted"]) == 1
+    submitted = recorded["submitted"][0]
+    assert submitted["remote_directory"] == "/remote/work/conv_ecut_300"
+    assert submitted["allow_existing_remote_directory"] is True
+    # Fresh .cell/.param are uploaded; only the reuse flag would suppress that.
+    assert submitted["reuse_existing_files"] is False
+    assert job.remote_directory == "/remote/work/conv_ecut_300"
+    assert job.execution_target == "alpha"
+
+    window.close()
+
+
+def test_main_window_submit_jobs_on_cluster_continuation_keeps_original_seed_name(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_continuation_seed.mufinder", "ClusterContinuationSeed")
+    window._document = doc
+
+    job = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    original_seed = window._job_seed_name(job)
+    assert original_seed == "conv_ecut_300"
+    _continue_cluster_job(service, job, "/remote/work/conv_ecut_300")
+
+    # The remote basename now drives the seed, and must agree with the local one.
+    assert window._job_seed_name(job) == original_seed
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda *_args: pytest.fail("a continued job must never prompt to overwrite its own directory"),
+    )
+
+    window._submit_jobs_on_cluster([job])
+
+    assert len(recorded["submitted"]) == 1
+    submitted = recorded["submitted"][0]
+    assert submitted["seed_name"] == original_seed
+    # The runner uploads {seed}.cell/{seed}.param from this directory, so a seed
+    # drift would fail the submission outright.
+    local_dir = Path(submitted["local_job_dir"])
+    assert (local_dir / f"{original_seed}.cell").is_file()
+    assert (local_dir / f"{original_seed}.param").is_file()
+
+    window.close()
+
+
+def test_main_window_submit_jobs_on_cluster_mixed_batch_checks_only_the_new_job(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_mixed_batch.mufinder", "ClusterMixedBatch")
+    window._document = doc
+
+    continued = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    _continue_cluster_job(service, continued, "/remote/work/conv_ecut_300")
+    fresh = _add_cluster_input_job(service, doc, "conv_ecut_400")
+    assert fresh.status == JobStatus.DEFINED
+    assert fresh.remote_directory is None
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=False)
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda *_args: pytest.fail("no directory exists, so nothing should prompt"),
+    )
+
+    window._submit_jobs_on_cluster([continued, fresh])
+
+    # Exactly the fresh job's computed target is probed: the continued job is
+    # excluded, the fresh job's existence check is unchanged.
+    assert recorded["checked"] == ["/remote/work/conv_ecut_400"]
+    assert recorded["deleted"] == []
+    by_directory = {call["remote_directory"]: call for call in recorded["submitted"]}
+    assert set(by_directory) == {"/remote/work/conv_ecut_300", "/remote/work/conv_ecut_400"}
+    assert by_directory["/remote/work/conv_ecut_300"]["allow_existing_remote_directory"] is True
+    assert by_directory["/remote/work/conv_ecut_400"]["allow_existing_remote_directory"] is False
+    assert by_directory["/remote/work/conv_ecut_400"]["reuse_existing_files"] is False
+
+    window.close()
+
+
+def test_main_window_submit_jobs_on_cluster_continuation_survives_target_collision(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A colliding batch job must not drag a preserved directory into the prompt.
+
+    Overwrite decisions are matched by target string, so a second job whose
+    computed target equals a continued job's preserved directory would otherwise
+    let one prompt answer skip or delete the continuation.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_collision.mufinder", "ClusterCollision")
+    window._document = doc
+
+    continued = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    collider = _add_cluster_input_job(service, doc, "conv_ecut_400")
+    # The continued job was originally submitted into the directory the collider
+    # now computes for itself.
+    _continue_cluster_job(service, continued, "/remote/work/conv_ecut_400")
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    prompted: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda label, _target: prompted.append(label) or "no",
+    )
+
+    window._submit_jobs_on_cluster([continued, collider])
+
+    assert prompted == ["conv_ecut_400"]
+    assert recorded["deleted"] == []
+    assert len(recorded["submitted"]) == 1
+    assert recorded["submitted"][0]["seed_name"] == "conv_ecut_400"
+    assert recorded["submitted"][0]["remote_directory"] == "/remote/work/conv_ecut_400"
+    assert recorded["submitted"][0]["allow_existing_remote_directory"] is True
+    assert continued.status == JobStatus.QUEUED
+    assert collider.status == JobStatus.DEFINED
+
+    window.close()
+
+
+def test_main_window_submit_jobs_on_cluster_collision_overwrite_spares_continued_directory(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Answering "yes" for a colliding job must not delete a preserved directory.
+
+    The overwrite decision belongs to the colliding job, but the deletion it
+    authorises would land on the directory holding the continuation's .check file.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_collision_yes.mufinder", "ClusterCollisionYes")
+    window._document = doc
+
+    continued = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    collider = _add_cluster_input_job(service, doc, "conv_ecut_400")
+    _continue_cluster_job(service, continued, "/remote/work/conv_ecut_400")
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "yes")
+
+    window._submit_jobs_on_cluster([continued, collider])
+
+    assert recorded["deleted"] == []
+    assert len(recorded["submitted"]) == 2
+    assert continued.status == JobStatus.QUEUED
+    assert collider.status == JobStatus.QUEUED
+
+    window.close()
+
+
+def test_main_window_submit_jobs_on_cluster_dashboard_resubmit_still_reuses_files(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The continuation branch must not capture the dashboard resubmit path.
+
+    Dashboard resubmission passes FAILED/CANCELLED jobs, which the continuation
+    branch ignores, and keeps its own reuse-the-remote-inputs semantics.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_resubmit.mufinder", "ClusterResubmit")
+    window._document = doc
+
+    job = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    job.execution_target = "alpha"
+    job.remote_directory = "/remote/work/conv_ecut_300"
+    job.status = JobStatus.FAILED
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda *_args: pytest.fail("a resubmission into its own directory must not prompt"),
+    )
+
+    window._submit_jobs_on_cluster(
+        [job],
+        eligible_statuses={JobStatus.FAILED, JobStatus.CANCELLED},
+        reuse_existing_remote_files=True,
+    )
+
+    assert recorded["checked"] == []
+    assert recorded["deleted"] == []
+    assert len(recorded["submitted"]) == 1
+    submitted = recorded["submitted"][0]
+    assert submitted["remote_directory"] == "/remote/work/conv_ecut_300"
+    assert submitted["reuse_existing_files"] is True
+    assert submitted["allow_existing_remote_directory"] is False
+
+    window.close()
+
+
 def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5045,6 +5391,212 @@ def test_main_window_local_finish_pristine_relaxation_missing_out_cell_fails_job
     assert not any(
         structure.origin == "pristine_relaxation" for structure in doc.structures.values()
     )
+    window.close()
+
+
+_PRISTINE_OUT_CELL_FIRST = """
+%BLOCK LATTICE_CART
+ang
+5.1 0.0 0.0
+0.0 5.2 0.0
+0.0 0.0 5.3
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Si 0.0 0.0 0.0
+%ENDBLOCK POSITIONS_FRAC
+"""
+
+_PRISTINE_OUT_CELL_CONTINUED = """
+%BLOCK LATTICE_CART
+ang
+5.4 0.0 0.0
+0.0 5.5 0.0
+0.0 0.0 5.6
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Si 0.01 0.02 0.03
+%ENDBLOCK POSITIONS_FRAC
+"""
+
+
+def _pristine_relaxation_job_fixture(window: MainWindow, service: ProjectService, tmp_path: Path, name: str):
+    """Build a document with one running pristine-relaxation job and its output dir."""
+
+    doc = service.create_project(tmp_path / f"{name}.mufinder", name)
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="pristine_relax_row1",
+        workflow_stage=main_window_module.WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    window._document = doc
+    output_dir = doc.project_root / "files" / "pristine_relaxation" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return doc, host, job, output_dir
+
+
+def _start_pristine_run(window: MainWindow, service: ProjectService, doc, job, run_index: int):
+    """Take ``job`` through submit → start and register a fresh active run."""
+
+    service.submit_job(job)
+    service.start_job(job)
+    run = CalculationRun(job_id=job.id, run_index=run_index, status=JobStatus.RUNNING)
+    run.started_at = job.started_at
+    doc.runs[run.id] = run
+    window._active_run_by_job[job.id] = run.id
+    return run
+
+
+def test_main_window_local_finish_relaxation_stale_out_cell_fails_job(
+    qapp, tmp_path: Path
+) -> None:
+    """A continued run that dies before writing a new ``-out.cell`` leaves the
+    PREVIOUS run's file in the re-used job directory, where the completion path
+    would happily validate it as this run's geometry. The inline stale-output
+    guard fails the job instead, so no result is built from a superseded file."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc, _host, job, output_dir = _pristine_relaxation_job_fixture(
+        window, service, tmp_path, "StaleOutCell"
+    )
+
+    # The previous run's relaxed structure, left behind in the re-used directory.
+    (output_dir / f"{job.label}-out.cell").write_text(
+        _PRISTINE_OUT_CELL_FIRST, encoding="utf-8"
+    )
+    run = _start_pristine_run(window, service, doc, job, run_index=2)
+    # This run started well after that file was written.
+    run.started_at = datetime.now(UTC) + timedelta(minutes=5)
+
+    parsed = CastepResult(
+        completed=True,
+        total_energy=-11.0,
+        warnings=(),
+        geom_converged=True,  # clears the geom prologue so we reach the stale guard
+    )
+    window._on_local_job_finished(job.id, parsed)
+
+    assert job.status == JobStatus.FAILED
+    assert "predates this run" in (job.error_message or "")
+    assert run.result_id is None
+    assert not any(
+        structure.origin == "pristine_relaxation" for structure in doc.structures.values()
+    )
+    window.close()
+
+
+def test_main_window_stale_output_guard_skips_jobs_with_no_start_time(tmp_path: Path) -> None:
+    """The guard fails open. A job the poller never observed running has no
+    ``started_at`` to compare against, so its output is accepted rather than a
+    job being failed on no evidence. Sub-slack differences are also accepted, so
+    filesystem mtime granularity cannot false-fail a fresh output."""
+
+    path = tmp_path / "seed-out.cell"
+    path.write_text("cell", encoding="utf-8")
+    written = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+
+    assert main_window_module._output_predates_run(path, None) is False
+    assert main_window_module._output_predates_run(None, written) is False
+    # Written after the run started, and written a hair before it: both fresh.
+    assert main_window_module._output_predates_run(
+        path, written - timedelta(minutes=5)
+    ) is False
+    assert main_window_module._output_predates_run(
+        path, written + timedelta(seconds=1)
+    ) is False
+    # A whole run older: stale.
+    assert main_window_module._output_predates_run(
+        path, written + timedelta(minutes=5)
+    ) is True
+    # An unreadable path is not evidence of staleness either.
+    assert main_window_module._output_predates_run(tmp_path / "absent", written) is False
+
+
+def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references(
+    qapp, tmp_path: Path
+) -> None:
+    """Drive a full continue → running → re-complete cycle through the real
+    completion path.
+
+    The pristine-relaxation workflow-trail milestone is table-driven
+    (``_workflow_pristine_relaxation_complete`` reads ``document.comparison_tables``),
+    **not** job-driven, so it stays complete across the whole cycle — continuing a
+    job neither un-completes nor re-completes it. What the cycle really has to
+    protect is the reference that milestone stands for: the comparison table's
+    ``dft_structure_ids`` must still resolve, which holds only because the second
+    completion updates the derived structure in place instead of minting a new one.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc, host, job, output_dir = _pristine_relaxation_job_fixture(
+        window, service, tmp_path, "PristineRecompletion"
+    )
+    parsed = CastepResult(
+        completed=True, total_energy=-11.0, warnings=(), geom_converged=True
+    )
+
+    run_one = _start_pristine_run(window, service, doc, job, run_index=1)
+    (output_dir / f"{job.label}-out.cell").write_text(
+        _PRISTINE_OUT_CELL_FIRST, encoding="utf-8"
+    )
+    window._on_local_job_finished(job.id, parsed)
+
+    assert job.status == JobStatus.COMPLETED
+    first_result = doc.results[run_one.result_id]
+    derived_id = first_result.derived_structure_ids[0]
+    structure_count = len(doc.structures)
+
+    # A comparison table built from that first completion.
+    table = ComparisonTable(
+        label="Comparison 1",
+        experimental_structure_id=host.id,
+        dft_structure_ids=[derived_id],
+        dft_labels=[job.label],
+    )
+    service.add_comparison_table(doc, table)
+    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+
+    # Continue the completed job and start its second run.
+    service.prepare_job_continuation(job)
+    assert job.status == JobStatus.DEFINED
+    run_two = _start_pristine_run(window, service, doc, job, run_index=2)
+    assert job.status == JobStatus.RUNNING
+    # Table-driven, so the milestone does not dip while the continued job runs.
+    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+
+    (output_dir / f"{job.label}-out.cell").write_text(
+        _PRISTINE_OUT_CELL_CONTINUED, encoding="utf-8"
+    )
+    window._on_local_job_finished(job.id, parsed)
+
+    assert job.status == JobStatus.COMPLETED
+    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+
+    # One derived structure, same id, refreshed geometry; both Results agree.
+    second_result = doc.results[run_two.result_id]
+    assert second_result.id != first_result.id
+    assert second_result.derived_structure_ids == [derived_id]
+    assert len(doc.structures) == structure_count
+    assert second_result.data["lattice_a"] == pytest.approx(5.4)
+    derived = doc.structures[derived_id]
+    assert derived.lattice_vectors == [[5.4, 0.0, 0.0], [0.0, 5.5, 0.0], [0.0, 0.0, 5.6]]
+
+    # The comparison table's reference survived the cycle intact.
+    assert table.dft_structure_ids == [derived_id]
+    assert service.validate_document(doc) == []
     window.close()
 
 
@@ -9015,6 +9567,179 @@ def test_uep_preserves_running_row_across_reconfiguration(qapp, tmp_path: Path) 
     window.close()
 
 
+def test_pristine_relaxation_row_parameter_edit_keeps_row_bound_to_its_job(
+    qapp, tmp_path: Path
+) -> None:
+    """In-place parameter edits must not sever the row→job binding.
+
+    Registering a new definition would give the row an empty
+    ``job_ids_by_label``; and because pristine relaxation has no active-status
+    escape hatch in ``build_states``, a form/definition signature mismatch would
+    drop the row to a jobless "ready". This drives the real widget, so the
+    table's own parameter normalization (implicit project defaults are stripped)
+    is exercised end to end.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "pristine_param_edit.mufinder", "PristineParamEdit")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    row = main_window_module.PristineRelaxationRow(
+        label="row_1", parameter_values={"geom_max_iter": 120}
+    )
+    definition = service.register_pristine_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_pristine_relaxation_config(
+            main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
+        ),
+        output_directory=doc.project_root / "files" / "pristine_relaxation",
+    )
+    doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    job = service.add_job(
+        doc,
+        label="pristine_relax_row_1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    job.status = JobStatus.COMPLETED
+    definition.parameters["job_ids_by_label"] = {"row_1": str(job.id)}
+    window._restore_pristine_relaxation_form_from_definition()
+    assert window._pristine_relaxation_controller.build_states()["row_1"].job_id == job.id
+
+    updated = window._pristine_relaxation_controller.update_row_parameters(
+        "row_1", {"geom_max_iter": 500, "task": "GEOMETRYOPTIMIZATION"}
+    )
+
+    assert updated is True
+    # No new definition; the binding is intact and the row still resolves its job.
+    assert [
+        candidate.id
+        for candidate in doc.calculations.values()
+        if candidate.workflow_stage == WorkflowStage.PRISTINE_RELAXATION
+    ] == [definition.id]
+    assert definition.parameters["job_ids_by_label"] == {"row_1": str(job.id)}
+    states = window._pristine_relaxation_controller.build_states()
+    assert states["row_1"].job_id == job.id
+    assert states["row_1"].status == JobStatus.COMPLETED.value
+
+    config = window._deserialize_pristine_relaxation_config(
+        definition.parameters["configuration"]
+    )
+    assert config.rows[0].parameter_values["geom_max_iter"] == 500
+    # The widget is the normalizer of record: it strips the implicit ``task``
+    # default, so the definition must not keep it either.
+    assert "task" not in config.rows[0].parameter_values
+    form_config = window._pristine_relaxation_form_config()
+    assert window._pristine_relaxation_row_signature(
+        form_config.rows[0]
+    ) == window._pristine_relaxation_row_signature(config.rows[0])
+    assert (
+        doc.ui_state["pristine_relaxation_form"]["rows"][0]["params"]["geom_max_iter"]
+        == 500
+    )
+    window.close()
+
+
+def test_muon_relaxation_row_parameter_edit_touches_only_its_charge_state(
+    qapp, tmp_path: Path
+) -> None:
+    """Two rows can share a label, so the edit is keyed by the charge-qualified
+    row key and must leave the other charge state's row alone."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_param_edit.mufinder", "MuonParamEdit")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    doc.sites[site.id] = site
+    window._document = doc
+
+    rows = (
+        main_window_module.MuonRelaxationRow(
+            site_id=site.id,
+            label="Site 1",
+            initial_fractional_position=(0.25, 0.25, 0.25),
+            charge_state="positive_muon",
+            parameter_values={"geom_max_iter": 120},
+        ),
+        main_window_module.MuonRelaxationRow(
+            site_id=site.id,
+            label="Site 1",
+            initial_fractional_position=(0.25, 0.25, 0.25),
+            charge_state="muonium",
+            parameter_values={"geom_max_iter": 400},
+        ),
+    )
+    definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_muon_relaxation_config(
+            main_window_module.MuonRelaxationConfig(rows=rows)
+        ),
+        output_directory=doc.project_root / "files" / "muon_relaxation",
+    )
+    doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    job = service.add_job(
+        doc,
+        label="Site 1",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
+    )
+    job.status = JobStatus.FAILED
+    definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
+    window._restore_muon_relaxation_form_from_definition()
+    assert (
+        window._muon_relaxation_controller.build_states()["positivemuon:Site 1"].job_id
+        == job.id
+    )
+
+    updated = window._muon_relaxation_controller.update_row_parameters(
+        "positivemuon:Site 1", {"geom_max_iter": 500}
+    )
+
+    assert updated is True
+    assert [
+        candidate.id
+        for candidate in doc.calculations.values()
+        if candidate.workflow_stage == WorkflowStage.MUON_RELAXATION
+    ] == [definition.id]
+    assert definition.parameters["job_ids_by_label"] == {"positivemuon:Site 1": str(job.id)}
+    states = window._muon_relaxation_controller.build_states()
+    assert states["positivemuon:Site 1"].job_id == job.id
+    assert states["positivemuon:Site 1"].status == JobStatus.FAILED.value
+
+    config = window._deserialize_muon_relaxation_config(
+        definition.parameters["configuration"]
+    )
+    by_charge = {row.charge_state: row for row in config.rows}
+    assert by_charge["positive_muon"].parameter_values["geom_max_iter"] == 500
+    assert by_charge["muonium"].parameter_values["geom_max_iter"] == 400
+    form_config = window._muon_relaxation_form_config()
+    form_by_charge = {row.charge_state: row for row in form_config.rows}
+    for charge_state in ("positive_muon", "muonium"):
+        assert window._muon_relaxation_row_signature(
+            form_by_charge[charge_state]
+        ) == window._muon_relaxation_row_signature(by_charge[charge_state])
+    window.close()
+
+
 def test_pristine_relaxation_deleted_row_does_not_reinherit_stale_status(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()
@@ -10955,4 +11680,799 @@ def test_main_window_row_reset_clears_the_displayed_status_for_a_bound_job(
     assert definition.parameters["job_ids_by_label"] == {"row_1": str(failed_job.id)}
     assert view._row_status(0) not in workflow_table_utils.RESETTABLE_ROW_STATUSES
     assert view._row_status(0) in READY_WORKFLOW_ROW_STATUSES
+    window.close()
+
+
+# --------------------------------------------------------------------------- #
+# "Continue relaxation…" — WP6 controller action wiring
+# --------------------------------------------------------------------------- #
+
+
+class _FakeContinueRelaxationDialog:
+    """Test double for ``ContinueRelaxationDialog``: records constructor kwargs
+    and returns a canned accept/cancel result without any Qt event loop."""
+
+    captured_kwargs: list[dict[str, object]] = []
+    accept: bool = True
+    result_to_return: tuple[dict[str, object], tuple[str, ...]] = ({}, ())
+
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+        type(self).captured_kwargs.append(kwargs)
+
+    def exec(self) -> int:
+        return (
+            main_window_module.QDialog.DialogCode.Accepted
+            if type(self).accept
+            else main_window_module.QDialog.DialogCode.Rejected
+        )
+
+    def edited_parameters(self) -> tuple[dict[str, object], tuple[str, ...]]:
+        return type(self).result_to_return
+
+
+@pytest.fixture()
+def fake_continue_dialog(monkeypatch: pytest.MonkeyPatch):
+    _FakeContinueRelaxationDialog.captured_kwargs = []
+    _FakeContinueRelaxationDialog.accept = True
+    _FakeContinueRelaxationDialog.result_to_return = ({}, ())
+    monkeypatch.setattr(
+        main_window_module, "ContinueRelaxationDialog", _FakeContinueRelaxationDialog
+    )
+    return _FakeContinueRelaxationDialog
+
+
+class _FakeClusterSubmissionDialogForContinue:
+    DialogCode = SimpleNamespace(Accepted=1)
+
+    def __init__(self, **_kwargs) -> None:
+        pass
+
+    def exec(self) -> int:
+        return 1
+
+    def config(self):
+        return SimpleNamespace(
+            cluster_name="alpha",
+            working_directory="/remote/work",
+            username="alice",
+            job_name_prefix="continue",
+            num_processes=16,
+            walltime="01:00:00",
+        )
+
+    def password(self) -> str:
+        return ""
+
+
+def _wire_fake_cluster_submission(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch, *, cluster_name: str = "alpha"
+) -> list[dict[str, object]]:
+    """Mirrors ``test_main_window_resubmits_failed_cluster_job_...``'s cluster
+    doubles: connect + submit succeed, and any existence-check/overwrite-delete
+    call fails the test outright, since a continuation must never reach them."""
+
+    cluster = ClusterConfig(
+        name=cluster_name,
+        hostname=f"{cluster_name}.example",
+        username="alice",
+        auth_method="key",
+        key_path="/tmp/key",
+        default_working_directory="/remote/work",
+        queue_system="slurm",
+        cores_per_node=64,
+        default_walltime="01:00:00",
+        template_script_path="/templates/slurm.sh",
+    )
+    monkeypatch.setattr(
+        main_window_module, "ClusterSubmissionDialog", _FakeClusterSubmissionDialogForContinue
+    )
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [cluster])
+    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: cluster)
+    monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "connect_to_cluster", lambda _config, password=None: None
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "remote_directory_exists",
+        lambda _path: pytest.fail("Continue must never check for an existing remote directory"),
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "remove_remote_directory",
+        lambda _path: pytest.fail("Continue must never delete the preserved remote directory"),
+    )
+    submit_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "submit",
+        lambda **kwargs: submit_calls.append(kwargs) or "new-remote-job-id",
+    )
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_a, **_k: None)
+    return submit_calls
+
+
+def _pristine_continue_fixture(tmp_path: Path):
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "continue_pristine.mufinder", "ContinuePristine")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    row = main_window_module.PristineRelaxationRow(label="row_1", parameter_values={"geom_max_iter": 120})
+    output_root = doc.project_root / "files" / "pristine_relaxation"
+    definition = service.register_pristine_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_pristine_relaxation_config(
+            main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
+        ),
+        output_directory=output_root,
+    )
+    job = service.add_job(
+        doc,
+        label="pristine_relax_row_1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    definition.parameters["job_ids_by_label"] = {"row_1": str(job.id)}
+    doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    doc.ui_state["pristine_relaxation_form"] = {
+        "name_prefix": "pristine_relax",
+        "rows": [
+            {"label": "row_1", "fix_all_cell": False, "params": {"geom_max_iter": 120}, "added_advanced": []}
+        ],
+    }
+    window._refresh_ui_after_project_change()
+    materialized = window._pristine_relaxation_controller.materialize(["row_1"])
+    assert materialized == [job]
+    param_path = output_root / job.label / f"{job.label}.param"
+    assert "GEOM_MAX_ITER : 120" in param_path.read_text(encoding="utf-8")
+    return window, service, doc, definition, job, output_root, param_path
+
+
+def _muon_continue_fixture(tmp_path: Path):
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "continue_muon.mufinder", "ContinueMuon")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    site = MuonSite(label="Site 1", fractional_position=[0.1, 0.2, 0.3], status="staged")
+    doc.sites[site.id] = site
+    window._document = doc
+
+    row = main_window_module.MuonRelaxationRow(
+        site_id=site.id,
+        label="Site 1",
+        initial_fractional_position=(0.1, 0.2, 0.3),
+        charge_state="positive_muon",
+        parameter_values={"geom_max_iter": 120},
+    )
+    output_root = doc.project_root / "files" / "muon_relaxation"
+    definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_muon_relaxation_config(
+            main_window_module.MuonRelaxationConfig(rows=(row,))
+        ),
+        output_directory=output_root,
+    )
+    job = service.add_job(
+        doc,
+        label="Site 1",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
+    )
+    definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
+    doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    doc.ui_state["muon_relaxation_form"] = window._serialize_muon_relaxation_config(
+        main_window_module.MuonRelaxationConfig(rows=(row,))
+    )
+    window._refresh_ui_after_project_change()
+    materialized = window._muon_relaxation_controller.materialize(["positivemuon:Site 1"])
+    assert materialized == [job]
+    seed_name = definition.parameters["job_seed_names_by_label"]["positivemuon:Site 1"]
+    param_path = output_root / "positivemuon" / seed_name / f"{seed_name}.param"
+    assert "GEOM_MAX_ITER : 120" in param_path.read_text(encoding="utf-8")
+    return window, service, doc, definition, job, output_root, param_path
+
+
+def test_continue_relaxation_pristine_cluster_dismissed_failed_row_end_to_end(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_continue_dialog
+) -> None:
+    window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
+        tmp_path
+    )
+
+    job.execution_target = "alpha"
+    job.status = JobStatus.FAILED
+    job.remote_directory = "/remote/work/pristine_relax_row_1"
+    job.remote_job_id = "old-remote-id"
+    job.error_message = "previous castep failure"
+    job.dismissed_at = datetime.now(UTC)
+    window._refresh_ui_after_project_change()
+    assert window._pristine_relaxation_view._row_status(0) == "ready"  # dismissed -> displays "ready"
+
+    fake_continue_dialog.result_to_return = ({"geom_max_iter": 500}, ())
+    submit_calls = _wire_fake_cluster_submission(window, monkeypatch, cluster_name="alpha")
+    cleanup_prompted: list[int] = []
+    monkeypatch.setattr(
+        window,
+        "_prompt_failed_job_cleanup",
+        lambda count: cleanup_prompted.append(count) or pytest.fail(
+            "Continue must never trigger the dismissed-job cleanup prompt"
+        ),
+    )
+
+    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+
+    # Row params mutated in place.
+    config = window._deserialize_pristine_relaxation_config(definition.parameters["configuration"])
+    assert {row.label: row.parameter_values for row in config.rows} == {
+        "row_1": {"geom_max_iter": 500}
+    }
+    # Same directory rewritten with the new parameters.
+    rendered = param_path.read_text(encoding="utf-8")
+    assert "GEOM_MAX_ITER : 500" in rendered
+    assert "GEOM_MAX_ITER : 120" not in rendered
+    # No duplicate job; job_ids_by_label untouched.
+    assert list(doc.jobs) == [job.id]
+    assert definition.parameters["job_ids_by_label"] == {"row_1": str(job.id)}
+    # Submitted into the same remote directory without any existence/overwrite prompt.
+    assert len(submit_calls) == 1
+    assert submit_calls[0]["remote_directory"] == "/remote/work/pristine_relax_row_1"
+    assert submit_calls[0]["allow_existing_remote_directory"] is True
+    assert submit_calls[0]["reuse_existing_files"] is False
+    # dismissed_at/error/old remote id cleared by prepare_job_continuation, and
+    # the job is back in an active state after a successful cluster submit.
+    assert job.status == JobStatus.QUEUED
+    assert job.dismissed_at is None
+    assert job.error_message is None
+    assert job.remote_job_id == "new-remote-job-id"
+    assert job.remote_directory == "/remote/work/pristine_relax_row_1"
+    assert cleanup_prompted == []
+    # Journal-visible provenance milestone.
+    assert any(record.action == "job_continuation" for record in doc.provenance)
+    window.close()
+
+
+def test_continue_relaxation_muon_cluster_completed_row_end_to_end(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_continue_dialog
+) -> None:
+    window, service, doc, definition, job, output_root, param_path = _muon_continue_fixture(
+        tmp_path
+    )
+
+    job.execution_target = "alpha"
+    job.status = JobStatus.COMPLETED
+    job.remote_directory = "/remote/work/positivemuon_site1"
+    window._refresh_ui_after_project_change()
+
+    fake_continue_dialog.result_to_return = ({"geom_max_iter": 777}, ())
+    submit_calls = _wire_fake_cluster_submission(window, monkeypatch, cluster_name="alpha")
+
+    window._on_continue_relaxation_requested_from_muon_relaxation("positivemuon:Site 1")
+
+    config = window._deserialize_muon_relaxation_config(definition.parameters["configuration"])
+    assert {row.charge_state: row.parameter_values for row in config.rows} == {
+        "positive_muon": {"geom_max_iter": 777}
+    }
+    rendered = param_path.read_text(encoding="utf-8")
+    assert "GEOM_MAX_ITER : 777" in rendered
+    assert list(doc.jobs) == [job.id]
+    assert definition.parameters["job_ids_by_label"] == {"positivemuon:Site 1": str(job.id)}
+    assert len(submit_calls) == 1
+    assert submit_calls[0]["remote_directory"] == "/remote/work/positivemuon_site1"
+    assert submit_calls[0]["allow_existing_remote_directory"] is True
+    assert job.status == JobStatus.QUEUED
+    assert any(record.action == "job_continuation" for record in doc.provenance)
+    window.close()
+
+
+def test_continue_relaxation_local_job_round_trip(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_continue_dialog
+) -> None:
+    window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
+        tmp_path
+    )
+    job.status = JobStatus.FAILED
+    job.error_message = "boom"
+    assert job.execution_target == "local"
+
+    # A local job's checkpoint probe is a plain Path check: write a real
+    # ``.check`` file so the probe reports "found".
+    checkpoint_path = param_path.parent / f"{job.label}.check"
+    checkpoint_path.write_text("", encoding="utf-8")
+
+    fake_continue_dialog.result_to_return = ({"geom_max_iter": 42}, ())
+    local_submitted: list[list[Job]] = []
+    monkeypatch.setattr(
+        window, "_submit_jobs_locally", lambda jobs, **_kwargs: local_submitted.append(list(jobs))
+    )
+    monkeypatch.setattr(
+        window,
+        "_submit_jobs_on_cluster",
+        lambda *_a, **_k: pytest.fail("A local job must submit through the local path"),
+    )
+
+    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+
+    probe = fake_continue_dialog.captured_kwargs[-1]["checkpoint_probe"]
+    assert probe.status == main_window_module.CheckpointProbeResult.found().status
+    assert [[j.id for j in jobs] for jobs in local_submitted] == [[job.id]]
+    rendered = param_path.read_text(encoding="utf-8")
+    assert "GEOM_MAX_ITER : 42" in rendered
+    window.close()
+
+
+def test_continue_relaxation_cluster_not_connected_dialog_still_opens_with_unavailable_probe(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_continue_dialog
+) -> None:
+    window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
+        tmp_path
+    )
+    job.execution_target = "alpha"
+    job.status = JobStatus.FAILED
+    job.remote_directory = "/remote/work/pristine_relax_row_1"
+    assert window._cluster_runner.is_connected is False
+
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "check_remote_files",
+        lambda *_a, **_k: pytest.fail("Not connected: the checkpoint probe must not hit the network"),
+    )
+    fake_continue_dialog.accept = False  # cancel: no submission wiring needed
+
+    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+
+    assert len(fake_continue_dialog.captured_kwargs) == 1
+    probe = fake_continue_dialog.captured_kwargs[0]["checkpoint_probe"]
+    assert probe.status == main_window_module.CheckpointProbeResult.unavailable("x").status
+    assert "alpha" in probe.reason
+    window.close()
+
+
+def test_continue_relaxation_cancel_leaves_everything_unchanged(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_continue_dialog
+) -> None:
+    window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
+        tmp_path
+    )
+    job.status = JobStatus.FAILED
+    job.error_message = "boom"
+    before_config = copy.deepcopy(definition.parameters["configuration"])
+
+    fake_continue_dialog.accept = False
+    monkeypatch.setattr(
+        window, "_submit_jobs_locally", lambda *_a, **_k: pytest.fail("Cancel must not submit")
+    )
+    monkeypatch.setattr(
+        window, "_submit_jobs_on_cluster", lambda *_a, **_k: pytest.fail("Cancel must not submit")
+    )
+
+    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+
+    assert definition.parameters["configuration"] == before_config
+    assert job.status == JobStatus.FAILED
+    assert job.error_message == "boom"
+    assert not any(record.action == "job_continuation" for record in doc.provenance)
+    window.close()
+
+
+def test_continue_relaxation_gating_disabled_running_enabled_not_converged(
+    qapp, tmp_path: Path
+) -> None:
+    window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
+        tmp_path
+    )
+
+    job.status = JobStatus.RUNNING
+    assert window._pristine_relaxation_controller.row_is_continuable("row_1") is False
+
+    job.status = JobStatus.QUEUED
+    assert window._pristine_relaxation_controller.row_is_continuable("row_1") is False
+
+    # A completed-but-unconverged job displays "not converged" on the row, but
+    # its raw status (COMPLETED) is continuable.
+    job.status = JobStatus.COMPLETED
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED, convergence_achieved=False)
+    doc.runs[run.id] = run
+    window._refresh_ui_after_project_change()
+    assert window._pristine_relaxation_view._row_status(0) == "not converged"
+    assert window._pristine_relaxation_controller.row_is_continuable("row_1") is True
+    window.close()
+
+
+def test_continue_relaxation_unedited_real_dialog_shows_no_parameter_changes(
+    qapp, tmp_path: Path
+) -> None:
+    """WP4 contract check: ``old_param_text`` must be rendered through the same
+    ``render_param_text`` callable applied to the row's pre-edit values -- the
+    exact values seeded into the dialog's own editor -- so an unedited dialog
+    reads "No parameter changes." This constructs the REAL
+    ``ContinueRelaxationDialog`` (not the fake double the other tests use) to
+    prove the seeding path this module wires up actually satisfies that
+    contract, rather than merely asserting the fake was called correctly."""
+
+    window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
+        tmp_path
+    )
+    job.status = JobStatus.FAILED
+
+    seed = window._pristine_relaxation_view.continue_relaxation_dialog_seed("row_1")
+    assert seed is not None
+
+    def render_param_text(values, advanced):
+        return window._pristine_relaxation_controller.render_row_param_text(
+            "row_1", values, advanced
+        )
+
+    resolved_values, resolved_advanced = window._resolve_continue_relaxation_seed_values(seed)
+    old_param_text = render_param_text(resolved_values, resolved_advanced)
+
+    dialog = main_window_module.ContinueRelaxationDialog(
+        **seed,
+        old_param_text=old_param_text,
+        render_param_text=render_param_text,
+        checkpoint_probe=main_window_module.CheckpointProbeResult.absent(),
+        execution_target=job.execution_target,
+        reused_directory=str(param_path.parent),
+        parent=window,
+    )
+    try:
+        assert dialog._diff_table.rowCount() == 0
+        assert dialog._diff_no_changes_label.isHidden() is False
+        assert dialog._diff_table.isHidden() is True
+    finally:
+        dialog.close()
+    window.close()
+
+
+def test_continue_relaxation_muon_unedited_real_dialog_shows_no_parameter_changes(
+    qapp, tmp_path: Path
+) -> None:
+    """Muon counterpart of the pristine no-changes contract check above,
+    using the charge-qualified key end to end (finding 7)."""
+
+    window, service, doc, definition, job, output_root, param_path = _muon_continue_fixture(
+        tmp_path
+    )
+    job.status = JobStatus.FAILED
+
+    seed = window._muon_relaxation_view.continue_relaxation_dialog_seed("positivemuon:Site 1")
+    assert seed is not None
+
+    def render_param_text(values, advanced):
+        return window._muon_relaxation_controller.render_row_param_text(
+            "positivemuon:Site 1", values, advanced
+        )
+
+    resolved_values, resolved_advanced = window._resolve_continue_relaxation_seed_values(seed)
+    old_param_text = render_param_text(resolved_values, resolved_advanced)
+
+    dialog = main_window_module.ContinueRelaxationDialog(
+        **seed,
+        old_param_text=old_param_text,
+        render_param_text=render_param_text,
+        checkpoint_probe=main_window_module.CheckpointProbeResult.absent(),
+        execution_target=job.execution_target,
+        reused_directory=str(param_path.parent),
+        parent=window,
+    )
+    try:
+        assert dialog._diff_table.rowCount() == 0
+        assert dialog._diff_no_changes_label.isHidden() is False
+        assert dialog._diff_table.isHidden() is True
+    finally:
+        dialog.close()
+    window.close()
+
+
+# --------------------------------------------------------------------------- #
+# Opus audit follow-ups (findings 1-4)
+# --------------------------------------------------------------------------- #
+
+
+def test_continue_relaxation_warns_and_does_not_submit_when_materialize_fails(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_continue_dialog
+) -> None:
+    """Audit finding 1 (MainWindow half): when continue_job returns None after
+    the user accepted the dialog -- e.g. because materialize swallowed an
+    expansion error and rewrote nothing -- the row must not be silently
+    submitted with stale on-disk inputs, and the user must be told."""
+
+    window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
+        tmp_path
+    )
+    job.status = JobStatus.FAILED
+    fake_continue_dialog.result_to_return = ({"geom_max_iter": 500}, ())
+
+    # Force the continuation's own materialize call to fail, exactly like the
+    # real one does on a caught ValueError/StructureBridgeError.
+    window._pristine_relaxation_controller.materialize = lambda keys: []
+
+    monkeypatch.setattr(
+        window, "_submit_jobs_locally", lambda *_a, **_k: pytest.fail("must not submit")
+    )
+    monkeypatch.setattr(
+        window, "_submit_jobs_on_cluster", lambda *_a, **_k: pytest.fail("must not submit")
+    )
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, title, text: warnings.append((title, text)),
+    )
+
+    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+
+    assert len(warnings) == 1
+    # The job was still transitioned (prepare_job_continuation ran before the
+    # failed materialize) -- it stays recoverable -- but nothing was submitted.
+    assert job.status == JobStatus.DEFINED
+    assert "GEOM_MAX_ITER : 500" not in param_path.read_text(encoding="utf-8")
+    window.close()
+
+
+class _FakeClusterSubmissionDialogSelectsCluster:
+    """Like ``_FakeClusterSubmissionDialogForContinue``, but the user picks a
+    DIFFERENT cluster than the one the row was preselected onto -- proving the
+    cross-cluster misroute guard (audit finding 2)."""
+
+    DialogCode = SimpleNamespace(Accepted=1)
+    selected_cluster_name = "beta"
+
+    def __init__(self, **_kwargs) -> None:
+        pass
+
+    def exec(self) -> int:
+        return 1
+
+    def config(self):
+        return SimpleNamespace(
+            cluster_name=type(self).selected_cluster_name,
+            working_directory="/remote/work",
+            username="bob",
+            job_name_prefix="continue",
+            num_processes=16,
+            walltime="01:00:00",
+        )
+
+    def password(self) -> str:
+        return ""
+
+
+def test_continue_relaxation_cross_cluster_misroute_guard(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_continue_dialog
+) -> None:
+    """Audit finding 2: the submission dialog preselects the job's original
+    cluster, but the user can still pick a different one. The continuation
+    branch in ``_submit_jobs_on_cluster`` must not fire in that case -- a
+    continued job's ``remote_directory`` string means nothing on a different
+    cluster's filesystem. This asserts the NORMAL path is taken instead: the
+    remote-directory existence check runs (it is skipped entirely for a
+    same-cluster continuation), and nothing is deleted."""
+
+    window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
+        tmp_path
+    )
+    job.execution_target = "alpha"
+    job.status = JobStatus.FAILED
+    job.remote_directory = "/remote/work/pristine_relax_row_1"
+    fake_continue_dialog.result_to_return = ({"geom_max_iter": 500}, ())
+
+    alpha = ClusterConfig(
+        name="alpha",
+        hostname="alpha.example",
+        username="alice",
+        auth_method="key",
+        key_path="/tmp/key",
+        default_working_directory="/remote/work",
+        queue_system="slurm",
+        cores_per_node=64,
+        default_walltime="01:00:00",
+        template_script_path="/templates/slurm.sh",
+    )
+    beta = ClusterConfig(
+        name="beta",
+        hostname="beta.example",
+        username="bob",
+        auth_method="key",
+        key_path="/tmp/key",
+        default_working_directory="/remote/work",
+        queue_system="slurm",
+        cores_per_node=64,
+        default_walltime="01:00:00",
+        template_script_path="/templates/slurm.sh",
+    )
+    monkeypatch.setattr(
+        main_window_module, "ClusterSubmissionDialog", _FakeClusterSubmissionDialogSelectsCluster
+    )
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [alpha, beta])
+    monkeypatch.setattr(
+        main_window_module,
+        "load_cluster_config",
+        lambda _settings, name: beta if name == "beta" else alpha,
+    )
+    monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
+    monkeypatch.setattr(
+        window._cluster_runner._runner, "connect_to_cluster", lambda _config, password=None: None
+    )
+    checked_paths: list[str] = []
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "remote_directory_exists",
+        lambda path: checked_paths.append(path) or False,
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "remove_remote_directory",
+        lambda _path: pytest.fail("must never delete on the misrouted path"),
+    )
+    submit_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "submit",
+        lambda **kwargs: submit_calls.append(kwargs) or "new-remote-job-id",
+    )
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_a, **_k: None)
+
+    window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
+
+    # The continuation branch was NOT taken: the existence check ran, and the
+    # job was submitted with allow_existing_remote_directory=False /
+    # reuse_existing_files=False -- the ordinary cold-target path, not a
+    # blind directory reuse onto a cluster that never saw this job.
+    assert len(checked_paths) == 1
+    assert len(submit_calls) == 1
+    assert submit_calls[0]["allow_existing_remote_directory"] is False
+    assert submit_calls[0]["reuse_existing_files"] is False
+    assert job.execution_target == "beta"
+    window.close()
+
+
+def test_continue_relaxation_pristine_context_menu_action_invokes_the_real_handler(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_continue_dialog
+) -> None:
+    """Audit finding 3: prove the MainWindow wiring lines themselves (the
+    ``set_continuable_predicate``/``continue_relaxation_requested.connect``
+    calls in ``__init__``) are live, by driving the action through the REAL
+    row context menu rather than calling the handler method directly."""
+
+    window, service, doc, definition, job, output_root, param_path = _pristine_continue_fixture(
+        tmp_path
+    )
+    # COMPLETED (not FAILED/STOPPED/CANCELLED): continuable but NOT resettable,
+    # so the shared FakeMenu's "auto-fire the one enabled action" behavior
+    # (tests/support/reset_menu.py) cannot land on "Reset Failed Jobs..."
+    # instead of the action under test.
+    job.status = JobStatus.COMPLETED
+    window._refresh_ui_after_project_change()
+    fake_continue_dialog.accept = False  # the handler running is all this proves
+
+    install_fake_menu(monkeypatch)
+    menu = open_reset_menu(window._pristine_relaxation_view._table, row=0)
+
+    assert menu is not None
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    assert action.enabled is True
+
+    action.triggered.emit()
+
+    assert len(fake_continue_dialog.captured_kwargs) == 1
+    window.close()
+
+
+def test_continue_relaxation_muon_context_menu_action_invokes_the_real_handler(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_continue_dialog
+) -> None:
+    """Muon counterpart of the pristine context-menu wiring check above."""
+
+    window, service, doc, definition, job, output_root, param_path = _muon_continue_fixture(
+        tmp_path
+    )
+    job.status = JobStatus.COMPLETED
+    window._refresh_ui_after_project_change()
+    fake_continue_dialog.accept = False
+
+    install_fake_menu(monkeypatch)
+    table = window._muon_relaxation_view._tables_by_charge_state["positive_muon"]
+    menu = open_reset_menu(table, row=0)
+
+    assert menu is not None
+    action = menu.action("Continue relaxation…")
+    assert action is not None
+    assert action.enabled is True
+
+    action.triggered.emit()
+
+    assert len(fake_continue_dialog.captured_kwargs) == 1
+    window.close()
+
+
+def test_await_remote_file_check_reports_found(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit finding 4: drive the real nested-QEventLoop wait in
+    ``_await_remote_file_check`` end to end (worker thread + signal), rather
+    than only unit-testing ``ClusterController.check_remote_files`` in
+    isolation (already covered by ``tests/app/test_cluster_controller.py``)."""
+
+    window = MainWindow()
+    job_id = uuid4()
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "remote_file_exists",
+        lambda path: path == "/remote/x/seed.check",
+    )
+
+    result = window._await_remote_file_check([(job_id, "/remote/x/seed.check")])
+
+    assert result == {"existing": ["/remote/x/seed.check"], "errors": {}}
+    window.close()
+
+
+def test_await_remote_file_check_reports_absent(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    job_id = uuid4()
+    monkeypatch.setattr(window._cluster_runner._runner, "remote_file_exists", lambda _path: False)
+
+    result = window._await_remote_file_check([(job_id, "/remote/x/seed.check")])
+
+    assert result == {"existing": [], "errors": {}}
+    window.close()
+
+
+def test_await_remote_file_check_reports_worker_exception_as_unavailable(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    job_id = uuid4()
+
+    def _boom(_path: str) -> bool:
+        raise ConnectionError("stat failed")
+
+    monkeypatch.setattr(window._cluster_runner._runner, "remote_file_exists", _boom)
+
+    result = window._await_remote_file_check([(job_id, "/remote/x/seed.check")])
+
+    assert result["existing"] == []
+    assert result["errors"] == {job_id: "stat failed"}
+
+    # And the probe helper built on top of it maps that into an unavailable
+    # CheckpointProbeResult rather than raising or blocking the dialog.
+    job = Job(
+        label="probe_job",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+        execution_target="alpha",
+        remote_directory="/remote/x",
+    )
+    job.status = JobStatus.FAILED
+    monkeypatch.setattr(window, "_is_cluster_connected_for_job", lambda _job: True)
+    monkeypatch.setattr(window, "_job_seed_name", lambda _job: "seed")
+    monkeypatch.setattr(window._cluster_runner._runner, "remote_file_exists", _boom)
+
+    probe = window._continue_relaxation_checkpoint_probe(job)
+
+    from mufinder.services.cluster_runner import CheckpointProbeStatus
+
+    assert probe.status == CheckpointProbeStatus.UNAVAILABLE
+    assert "stat failed" in probe.reason
     window.close()

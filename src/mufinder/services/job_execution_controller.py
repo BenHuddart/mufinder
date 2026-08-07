@@ -275,10 +275,20 @@ class JobExecutionController:
         cluster runner's ``submit`` on the worker thread; the document is not
         touched again until :meth:`finalize_cluster_submission` or
         :meth:`fail_cluster_submission`.
+
+        The accepted statuses are the ones that can legally transition to
+        SUBMITTING from outside an active run: DEFINED plus the terminal statuses
+        the resubmit paths accept.
         """
 
         document = self._document_getter()
-        if document is None or request.job.status not in {JobStatus.DEFINED, JobStatus.FAILED, JobStatus.CANCELLED}:
+        accepted_statuses = {
+            JobStatus.DEFINED,
+            JobStatus.FAILED,
+            JobStatus.STOPPED,
+            JobStatus.CANCELLED,
+        }
+        if document is None or request.job.status not in accepted_statuses:
             return None
 
         job = request.job

@@ -34,8 +34,10 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
+from mufinder.castep_io.cell_parser import ParsedCell
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.models import CalculationDefinition, CalculationRun, Job
+from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.project_service import ProjectDocument, ProjectService
@@ -267,6 +269,174 @@ class WorkflowJobController:
         raise NotImplementedError
 
 
+def apply_row_parameters_to_form_state(
+    form_state: object,
+    *,
+    row_matches: Callable[[Mapping[str, object]], bool],
+    parameter_values: Mapping[str, object],
+    added_advanced: Sequence[str] | None,
+    parameter_key: str,
+) -> dict[str, object] | None:
+    """Return a copy of ``form_state`` with one row's parameters replaced.
+
+    ``parameter_key`` is the widget's own spelling for the row's parameter
+    mapping (``"params"`` for the pristine-relaxation table, ``"parameter_values"``
+    for the muon-relaxation tables), because callers pass the state the widget
+    itself produced. ``added_advanced`` of ``None`` leaves the row's advanced-name
+    list alone.
+
+    Returns ``None`` when no row matches, so the caller can tell "mirrored" from
+    "the form does not hold this row" instead of silently writing nothing. The
+    input is never mutated.
+    """
+
+    if not isinstance(form_state, dict):
+        return None
+    rows = form_state.get("rows")
+    if not isinstance(rows, list):
+        return None
+
+    updated_rows: list[object] = []
+    matched = False
+    for row in rows:
+        if matched or not isinstance(row, dict) or not row_matches(row):
+            updated_rows.append(row)
+            continue
+        matched = True
+        updated_row = dict(row)
+        updated_row[parameter_key] = dict(parameter_values)
+        # Keep the serialized alias consistent when the source state carries
+        # both spellings (``_restore_*_form_from_definition`` writes
+        # ``parameter_values`` alongside the widget's ``params``): the
+        # deserializer prefers ``parameter_values``, so a stale alias would win.
+        if parameter_key != "parameter_values" and "parameter_values" in row:
+            updated_row["parameter_values"] = dict(parameter_values)
+        if added_advanced is not None:
+            updated_row["added_advanced"] = [str(name) for name in added_advanced]
+        updated_rows.append(updated_row)
+
+    if not matched:
+        return None
+    updated_state = dict(form_state)
+    updated_state["rows"] = updated_rows
+    return updated_state
+
+
+def find_job_derived_structure(
+    document: ProjectDocument, job: Job, *, origin: str
+) -> Structure | None:
+    """Return the derived structure an earlier completion of ``job`` created.
+
+    Two job-scoped keys are tried, in order:
+
+    1. ``properties["source_job_id"]``. Both relaxation controllers have written
+       it on every derived structure since the first release, so in practice
+       every candidate carries it.
+    2. The ``derived_structure_ids`` of the :class:`~mufinder.domain.models.Result`
+       reachable from each of this job's own runs. This is the fallback for a
+       structure written before that property existed; runs are walked in
+       ``run_index`` order so the choice is deterministic.
+
+    A structure's *label* is deliberately **not** a key. A muon-relaxation job
+    is labelled with its site label alone, so one site's two charge states are
+    two jobs with the same ``job.label`` and two derived structures both called
+    ``"{label} relaxed"``; matching on that could hand the positive-muon job the
+    muonium structure.
+
+    When several structures match — the duplicate pair a continued job minted by
+    completing twice before the update-in-place behaviour existed — the first in
+    ``document.structures`` insertion order wins. That is the older one, which is
+    what any comparison table or downstream consumer built in the meantime
+    already references.
+    """
+
+    job_id = str(job.id)
+    for structure in document.structures.values():
+        if structure.origin != origin:
+            continue
+        if str(structure.properties.get("source_job_id", "")) == job_id:
+            return structure
+
+    runs = sorted(
+        (run for run in document.runs.values() if run.job_id == job.id),
+        key=lambda run: run.run_index,
+    )
+    for run in runs:
+        result = document.results.get(run.result_id) if run.result_id else None
+        if result is None:
+            continue
+        for structure_id in result.derived_structure_ids:
+            structure = document.structures.get(structure_id)
+            if structure is not None and structure.origin == origin:
+                return structure
+    return None
+
+
+def upsert_job_derived_structure(
+    project_service: ProjectService,
+    document: ProjectDocument,
+    job: Job,
+    *,
+    origin: str,
+    workflow_stage: WorkflowStage,
+    relaxed: ParsedCell,
+    parent_structure_id: UUID | None,
+) -> Structure:
+    """Create — or refresh in place — ``job``'s derived relaxed structure.
+
+    A job can complete more than once: "Continue relaxation…" returns a finished
+    job to ``defined`` and re-runs it from its CASTEP checkpoint. Minting a
+    second ``"{label} relaxed"`` structure on that second completion would
+    duplicate the entry, orphan the first :class:`~mufinder.domain.models.Result`,
+    and strand every reference to the old structure id — comparison tables hold
+    ``dft_structure_ids``, and downstream workflows (quantum corrections, energy
+    barriers) consume derived structures by id.
+
+    So when :func:`find_job_derived_structure` finds one, its geometry is
+    refreshed from the new ``-out.cell`` and the **same id** is returned: both
+    Results then name the same structure, and every existing reference keeps
+    resolving to the current geometry. Only ``id`` and ``label`` survive the
+    refresh — the label because a user may have renamed the structure, and
+    ``job.label`` (its only input) cannot change across a continuation anyway.
+    ``parent_structure_id`` is left alone when the caller cannot resolve one, so
+    a missing active definition never wipes a good parent.
+
+    On first completion this is exactly the former behaviour: a new
+    :class:`~mufinder.domain.models.Structure` registered through
+    ``ProjectService.add_structure``.
+    """
+
+    properties = {
+        "source_job_id": str(job.id),
+        "source_workflow_stage": workflow_stage.value,
+    }
+    lattice_vectors = [list(vector) for vector in relaxed.lattice_vectors]
+    species = list(relaxed.species)
+    fractional_positions = [list(position) for position in relaxed.fractional_positions]
+
+    existing = find_job_derived_structure(document, job, origin=origin)
+    if existing is None:
+        structure = Structure(
+            label=f"{job.label} relaxed",
+            origin=origin,
+            lattice_vectors=lattice_vectors,
+            species=species,
+            fractional_positions=fractional_positions,
+            parent_structure_id=parent_structure_id,
+            properties=properties,
+        )
+        project_service.add_structure(document, structure)
+        return structure
+
+    existing.lattice_vectors = lattice_vectors
+    existing.species = species
+    existing.fractional_positions = fractional_positions
+    if parent_structure_id is not None:
+        existing.parent_structure_id = parent_structure_id
+    existing.properties.update(properties)
+    return existing
+
+
 def merge_controller_result(
     controllers: Sequence[WorkflowJobController],
     job: Job,
@@ -313,5 +483,8 @@ __all__ = [
     "ControllerResult",
     "WorkflowControllerContext",
     "WorkflowJobController",
+    "apply_row_parameters_to_form_state",
+    "find_job_derived_structure",
     "merge_controller_result",
+    "upsert_job_derived_structure",
 ]

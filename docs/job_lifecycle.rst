@@ -57,6 +57,15 @@ the remote inputs and outputs only: the scheduler submit script is regenerated
 on every submission, so an updated walltime, core count, or memory request
 takes effect on resubmission.
 
+The pristine- and muon-relaxation tables additionally offer a per-row
+``Continue relaxation…`` action for ``completed``, ``failed``, ``stopped``,
+or ``cancelled`` rows: it edits that row's parameters in place and resumes
+the same job from its CASTEP checkpoint rather than starting over, so it is
+the recovery path that keeps a run directory's ``.check``/``.castep`` files
+intact (unlike ``Reset``, whose optional cleanup deletes them). See
+:doc:`implemented_functionality` for the full user-facing description and
+:ref:`job-continuation-primitive` below for the technical contract.
+
 Technical API behavior
 ----------------------
 
@@ -85,11 +94,16 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
    * - ``stopped``
      - ``submitting``, ``cancelled``
    * - ``completed``
-     - none
+     - none (validated); ``defined`` via ``prepare_job_continuation``
    * - ``failed``
      - ``submitting``, ``cancelled``
    * - ``cancelled``
      - ``submitting``
+
+Two primitives deliberately bypass ``_assert_transition`` and direct-assign
+``defined``, which is a target the table above contains nowhere:
+``reset_failed_job`` and ``prepare_job_continuation``. Each carries its own
+status guard instead; both are described below.
 
 ``ProjectService`` owns the primitive mutations:
 
@@ -114,6 +128,10 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
 - ``reset_failed_job`` moves ``failed``, ``stopped``, or ``cancelled`` back to
   ``defined`` and clears remote/process metadata (including the monitor
   metadata and any ``dismissed_at`` stamp).
+- ``prepare_job_continuation`` moves ``completed``, ``failed``, ``stopped``, or
+  ``cancelled`` back to ``defined`` for a continuation run, clearing the same
+  run metadata as ``reset_failed_job`` **except** ``remote_directory``, which it
+  preserves. See :ref:`job-continuation-primitive`.
 - ``retry_job_retrieval`` moves a ``failed`` or ``stopped`` job back to
   ``retrieving`` (the FAILED/STOPPED → RETRIEVING edges), clears
   ``error_message``, and preserves remote metadata. The failed/stopped-only
@@ -131,6 +149,106 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
 in the module constant ``TERMINAL_RECOVERABLE_JOB_STATUSES``. Keeping the two
 identical is what makes the derived projection sound: anything the user can
 dismiss, the app can also reset back to ``defined``.
+
+.. _job-continuation-primitive:
+
+Continuation: a job that keeps its remote directory
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The word "continuation" is used in two distinct senses in this document. The
+older one, in the user-facing summary above, describes a *resubmission* that
+happens to reuse existing remote files. This section is about the separate
+service primitive ``ProjectService.prepare_job_continuation``, which exists so a
+finished calculation can be run further from its own CASTEP checkpoint.
+
+The primitive accepts the module constant ``CONTINUABLE_JOB_STATUSES`` —
+``completed``, ``failed``, ``stopped``, ``cancelled`` — and direct-assigns
+``defined``, clearing ``submitted_at``, ``started_at``, ``completed_at``,
+``remote_job_id``, ``num_processes``, ``error_message``, the monitor metadata
+(``last_checked_at``, ``last_status_source``, ``last_status_message``), and any
+``dismissed_at`` stamp. It deliberately preserves ``remote_directory``.
+
+That preserved field is the point. **A job that is ``defined`` and still carries
+a non-null ``remote_directory`` is the durable marker for a continuation run**:
+the cluster submission path reads exactly that combination and resubmits into
+the existing remote directory — where the previous run's ``.check`` file lives —
+rather than recomputing a target, testing whether it already exists, and
+offering to delete it. No other code path produces the combination. Every writer
+of ``remote_directory`` either sets it while moving a job to ``submitting``
+(``JobExecutionController``), clears it for local submission (also
+``JobExecutionController``), clears it on ``reset_failed_job``, or touches only
+active jobs (``MainWindow._sync_cluster_tracking_from_document``).
+
+``CONTINUABLE_JOB_STATUSES`` is a *third* status set, wider than the shared
+reset/dismiss set, because a ``completed`` relaxation is continuable: running
+more geometry-optimisation steps from a converged-enough checkpoint is a normal
+outcome rather than a recovery from failure. This does not disturb the
+reset/dismiss reasoning restated above. That argument depends only on
+``reset_failed_job`` and ``dismiss_job`` accepting *the same* statuses as each
+other, so that anything the user can dismiss the app can also return to
+``defined``; both still read ``TERMINAL_RECOVERABLE_JOB_STATUSES``, and the
+derived ``"ready"`` projection for dismissed rows is unchanged. Continuation is
+a separate entry point with its own guard, and it also clears ``dismissed_at``,
+so continuing a dismissed job makes its dashboard row visible again on the same
+terms as a reset.
+
+This is a deliberate divergence from the quantum-corrections precedent, where a
+``completed`` stage-1 job is rewound by *deleting* the job records and clearing
+the directory (``MainWindow._on_reset_quantum_corrections_to_stage_one``, gated
+by ``_QUANTUM_STAGE_ONE_RESETTABLE_STATUSES`` — the same four statuses).
+Deleting is right there because the row genuinely starts over. A relaxation
+continuation must instead keep the job's identity: the job id is what binds the
+workflow-table row to the calculation, and the job record is what carries the
+output/remote directory holding the checkpoint the continuation depends on.
+Deleting and re-creating would sever the row binding and abandon the directory.
+
+``record_job_continuation`` appends the matching ``job_continuation`` provenance
+milestone, recording the job label and whether a remote directory was preserved.
+No persisted field is added, so no compatibility-ledger entry is required.
+
+Re-completing a continued job
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A continued job completes **more than once**, which changes what the completion
+path is allowed to do.
+
+*The derived structure is updated in place.* Both relaxation controllers'
+``build_result`` create a ``"{job label} relaxed"`` structure on the document.
+On a re-completion they do not create a second one: they locate the structure an
+earlier completion of the *same job* produced and refresh its lattice, species,
+and positions from the new ``-out.cell``, keeping its id. Nothing else would be
+safe — a comparison table stores ``dft_structure_ids``, and downstream workflows
+consume derived structures by id, so minting a replacement would orphan the
+first ``Result`` and strand every existing reference on a superseded geometry.
+Both ``Result`` records end up naming the same structure id, and
+``ProjectService.validate_document`` reports no dangling references across the
+cycle. The lookup key is ``Structure.properties["source_job_id"]``, with the
+derived structures of the job's own earlier runs as a fallback for records
+written before that property existed; the label is deliberately not a key,
+because a muon-relaxation job is labelled with its site label alone and one
+site's two charge states share it. The muon site's
+``status``/``relaxation_run_id``/``relative_energy_eV`` are rewritten from the
+same completion, so the site and the structure always describe the same run.
+
+*A stale ``-out.cell`` fails the job.* A continuation re-uses its job directory,
+so the previous run's relaxed structure is still sitting where the completion
+path looks for it: a run that dies before writing a new one would have the old
+geometry accepted as its result. The cluster path makes this concrete — the
+download is conditional on the remote file existing, so a missing remote
+``-out.cell`` simply leaves the copy fetched by the previous retrieval in place.
+``MainWindow._on_local_job_finished`` therefore fails a relaxation job whose
+``-out.cell`` predates the current run's ``started_at``, alongside the existing
+missing-file and parse-failure guards (all three are inline because
+``ControllerResult`` has no failure channel). The comparison allows a few
+seconds of slack for filesystem mtime granularity and network-mount clock
+offsets, and skips entirely when ``started_at`` is unset — a job the poller
+never observed running fails open rather than failing on no evidence.
+
+*Parser fields are not all per-run.* CASTEP appends to an existing ``.castep``,
+so a continued job's output holds every restart. ``completed``,
+``geom_converged`` and ``error_message`` are read from the last restart only;
+``num_scf_cycles`` (a ``max()``) and ``warnings`` span the whole file. See the
+``parse_castep_output`` docstring for the full split.
 
 State authority and runner contract
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -84,6 +84,26 @@ def parse_castep_output(path: Path) -> CastepResult:
     """Parse a CASTEP output file and extract summary information.
 
     This parser is intentionally conservative. Unknown lines are ignored.
+
+    **Multi-restart files.** CASTEP appends to an existing ``.castep``, so a
+    continued calculation's output holds every restart end to end. The fields
+    divide into two groups, and the split is deliberate:
+
+    - ``completed``, ``geom_converged`` and ``error_message`` describe **the
+      most recent restart only**. They are read from the segment after the last
+      ``Run started:`` banner, so an earlier restart's transient failure cannot
+      shadow a later success (and vice versa).
+    - ``num_scf_cycles`` is the ``max()`` over the whole file and ``warnings``
+      accumulates every ``WARNING`` line in it, so both span all restarts. A
+      continued job therefore reports its highest SCF count and its warnings
+      from any run, not just the last. This is a known, accepted caveat: they
+      are diagnostic values, and a per-restart split would silently drop the
+      history a user continuing a calculation wants to see. Do not read them as
+      "what the last run did".
+
+    The remaining numeric fields (energies, forces, stress, lattice) take the
+    *last* match in the file, which for an appended output is the last restart
+    that reported one.
     """
 
     output_path = Path(path)

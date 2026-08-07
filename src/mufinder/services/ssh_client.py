@@ -442,6 +442,12 @@ class SSHConnection:
             return False
         return bool(attributes.st_mode & 0o040000)
 
+    def is_file(self, remote_path: str) -> bool:
+        attributes = self.stat(remote_path)
+        if attributes is None:
+            return False
+        return bool(attributes.st_mode & 0o100000)
+
     def mkdir(self, remote_path: str, exist_ok: bool = True) -> None:
         """Create remote directory recursively."""
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 import posixpath
 import re
@@ -74,6 +75,56 @@ class QueueCheckSnapshot:
     #: ``JobExecutionController.mark_queue_checked`` to stamp per-job monitor
     #: metadata on the document.
     observations_by_job_id: dict[UUID, str] = field(default_factory=dict)
+
+
+class CheckpointProbeStatus(StrEnum):
+    """Outcome vocabulary for a ``{seed}.check`` checkpoint existence probe.
+
+    Feeds the informational "checkpoint found / not found / cannot verify"
+    line in the Continue-relaxation dialog. The same three-way result covers
+    both local jobs (a plain :class:`pathlib.Path` check, which can only ever
+    report ``FOUND``/``ABSENT``) and cluster jobs (an SSH stat that can also
+    fail to connect, time out, or hit a transport error, reported as
+    ``UNAVAILABLE`` rather than blocking the dialog).
+    """
+
+    FOUND = "found"
+    ABSENT = "absent"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointProbeResult:
+    """Result of probing whether a job's checkpoint file exists.
+
+    Construct via :meth:`found`, :meth:`absent`, or :meth:`unavailable` rather
+    than the constructor directly, so ``reason`` is only ever populated
+    alongside :attr:`CheckpointProbeStatus.UNAVAILABLE`. The dialog that
+    displays this result performs no I/O itself; the probe runs in the
+    controller (or, for local jobs, a plain path check) before the dialog is
+    constructed.
+    """
+
+    status: CheckpointProbeStatus
+    reason: str = ""
+
+    @classmethod
+    def found(cls) -> "CheckpointProbeResult":
+        """Return a result reporting the checkpoint file exists."""
+
+        return cls(CheckpointProbeStatus.FOUND)
+
+    @classmethod
+    def absent(cls) -> "CheckpointProbeResult":
+        """Return a result reporting the checkpoint file does not exist."""
+
+        return cls(CheckpointProbeStatus.ABSENT)
+
+    @classmethod
+    def unavailable(cls, reason: str) -> "CheckpointProbeResult":
+        """Return a result reporting the probe could not be completed."""
+
+        return cls(CheckpointProbeStatus.UNAVAILABLE, reason)
 
 
 class ClusterJobRunner(QObject):
@@ -215,6 +266,12 @@ class ClusterJobRunner(QObject):
         script is therefore the sole carrier of walltime, task count, and memory.
         Reusing a stale script would silently ignore the resources the current
         submission asked for.
+
+        ``allow_existing_remote_directory`` is deliberately unread here. It is a
+        caller-side marker: the main window uses it to skip the remote-directory
+        existence check and the overwrite prompt for a directory it means to
+        submit into. This method already creates the directory with
+        ``exist_ok=True``, so it needs no separate opt-in.
         """
 
         ssh = self._require_ssh()
@@ -505,6 +562,16 @@ class ClusterJobRunner(QObject):
 
         ssh = self._require_ssh()
         return ssh.is_dir(remote_directory)
+
+    def remote_file_exists(self, remote_path: str) -> bool:
+        """Return true when remote file exists.
+
+        Used to probe for a job's ``{seed}.check`` checkpoint file ahead of a
+        relaxation continuation (see :class:`CheckpointProbeResult`).
+        """
+
+        ssh = self._require_ssh()
+        return ssh.is_file(remote_path)
 
     def remove_remote_directory(self, remote_directory: str) -> None:
         """Remove one remote directory recursively."""

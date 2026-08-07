@@ -159,6 +159,7 @@ def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
         "job_stopped": _job_stopped_entry,
         "job_cancelled": _job_cancelled_entry,
         "job_reset": _job_reset_entry,
+        "job_continuation": _job_continuation_entry,
         "create_comparison_table": _create_comparison_table_entry,
     }
     builder = mapping.get(record.action)
@@ -357,6 +358,19 @@ def _job_reset_entry(record: ProvenanceRecord) -> JournalEntry:
         stamp_kind="milestone",
         title="Calculation reset",
         body=f"Reset {job_label} back to the ready-to-submit state{clean_text}.",
+    )
+
+
+def _job_continuation_entry(record: ProvenanceRecord) -> JournalEntry:
+    job_label = _text_param(record, "job_label") or "job"
+    directory = _text_param(record, "remote_directory")
+    preserved = bool(record.parameters.get("preserved_remote_directory")) and bool(directory)
+    reuse_text = f" reusing {directory}" if preserved else ""
+    return _entry(
+        record,
+        stamp_kind="milestone",
+        title="Calculation continued",
+        body=f"Queued {job_label} for a continuation run{reuse_text}.",
     )
 
 

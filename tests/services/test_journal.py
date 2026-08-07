@@ -73,6 +73,52 @@ def test_rendered_journal_omits_clock_times() -> None:
     assert "## Tuesday 21 April 2026" in markdown
 
 
+def test_job_continuation_entry_names_the_reused_directory() -> None:
+    record = ProvenanceRecord(
+        timestamp=datetime(2026, 8, 1, 11, 0, tzinfo=UTC),
+        action="job_continuation",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        parameters={
+            "job_label": "relax_row_1",
+            "calc_type": "castep_pristine_relaxation",
+            "execution_target": "scarf",
+            "preserved_remote_directory": True,
+            "remote_directory": "/scratch/user/relax_row_1",
+        },
+        job_id=uuid4(),
+    )
+
+    journal = build_journal("ContinueTest", [record])
+    entry = journal.days[0].entries[0]
+
+    assert entry.title == "Calculation continued"
+    assert entry.stamp_kind == "milestone"
+    assert "relax_row_1" in entry.body
+    assert "/scratch/user/relax_row_1" in entry.body
+    assert entry.workflow_label == "Pristine Relaxation"
+    assert entry.linked_job_id == record.job_id
+
+
+def test_job_continuation_entry_omits_directory_for_a_local_job() -> None:
+    record = ProvenanceRecord(
+        timestamp=datetime(2026, 8, 1, 11, 0, tzinfo=UTC),
+        action="job_continuation",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        parameters={
+            "job_label": "mu_row_1",
+            "execution_target": "local",
+            "preserved_remote_directory": False,
+            "remote_directory": None,
+        },
+    )
+
+    journal = build_journal("ContinueLocal", [record])
+    entry = journal.days[0].entries[0]
+
+    assert entry.title == "Calculation continued"
+    assert "reusing" not in entry.body
+
+
 def test_export_journal_writes_text_and_markdown(tmp_path: Path) -> None:
     record = ProvenanceRecord(
         timestamp=datetime(2026, 4, 21, 12, 0, tzinfo=UTC),

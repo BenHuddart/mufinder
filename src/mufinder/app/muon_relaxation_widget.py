@@ -1,8 +1,18 @@
-"""Muon structural-relaxation configuration panel."""
+"""Muon structural-relaxation configuration panel.
+
+Rows whose job has left the unlocked runtime statuses keep their inline
+parameter lock: a submitted row's inputs must not drift away from the directory
+that was rendered from them. Editing a terminal row's parameters goes through
+the "Continue relaxation…" path instead, which mutates the active definition's
+row in place via
+:meth:`~mufinder.app.workflow_controllers.muon_relaxation.MuonRelaxationController.update_row_parameters`
+(keyed by the charge-qualified row key) and mirrors the edit back into this
+form, preserving the row→job binding.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any
 from uuid import UUID
@@ -41,6 +51,7 @@ from mufinder.app.relaxation_adapter import (
 )
 from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.workflow_table_utils import (
+    RowMenuAction,
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
     create_workflow_table,
@@ -228,6 +239,10 @@ class MuonRelaxationWidget(QWidget):
     reset_failed_requested = Signal(object)
     analysis_workspace_requested = Signal(object)
     form_state_changed = Signal(dict)
+    #: Emits the row's charge-qualified key when "Continue relaxation…" is
+    #: chosen from the row context menu. See :meth:`set_continuable_predicate`
+    #: for how the menu decides whether that action is enabled for a given row.
+    continue_relaxation_requested = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -236,6 +251,13 @@ class MuonRelaxationWidget(QWidget):
         self._host_lattice: list[list[float]] | None = None
         self._reference_lattice: list[list[float]] | None = None
         self._reference_grid: tuple[int, int, int] | None = None
+
+        # Injected by the controller wiring (see MainWindow's
+        # ``set_continuable_predicate`` call): resolves a row's job through the
+        # controller and checks its real status, never the row's displayed
+        # status text. Defaults to "never continuable" so an unwired widget
+        # (e.g. in a test) never offers an action it cannot fulfil.
+        self._continuable_predicate: Callable[[object], bool] = lambda _key: False
 
         self._row_site_ids: dict[int, UUID] = {}
         self._row_positions: dict[int, tuple[float, float, float]] = {}
@@ -404,6 +426,11 @@ class MuonRelaxationWidget(QWidget):
         self._charge_tabs.currentChanged.connect(lambda *_: self._refresh_batch_button_state())
         for table in self._tables_by_charge_state.values():
             table.itemChanged.connect(self._on_table_item_changed)
+            table.setToolTip(
+                "Right-click a failed, stopped, or cancelled row to reset it back to ready "
+                "for rerun, or a completed/failed/stopped/cancelled row to continue its "
+                "relaxation."
+            )
             # Each charge state has its own table, so the reset menu is bound
             # per table with that table captured — a right-click must act on the
             # rows it was raised over, not on the currently-active tab.
@@ -412,6 +439,14 @@ class MuonRelaxationWidget(QWidget):
                 key_for_row=lambda row, bound=table: self._reset_key_at_row(row, table=bound),
                 status_for_row=lambda row, bound=table: self._row_status(row, table=bound),
                 emit_reset=self.reset_failed_requested.emit,
+                additional_actions=(
+                    RowMenuAction(
+                        text="Continue relaxation…",
+                        is_enabled=lambda keys: len(keys) == 1
+                        and self._continuable_predicate(keys[0]),
+                        trigger=lambda keys: self.continue_relaxation_requested.emit(keys[0]),
+                    ),
+                ),
             )
             selection_model = table.selectionModel()
             if selection_model is not None:
@@ -583,6 +618,17 @@ class MuonRelaxationWidget(QWidget):
         self._runtime_states = {str(label): state for label, state in states.items()}
         self._refresh_all_rows()
 
+    def set_continuable_predicate(self, predicate: Callable[[object], bool]) -> None:
+        """Inject the live "can this row's job be continued?" check.
+
+        Called by the controller wiring with ``MuonRelaxationController.row_is_continuable``.
+        Evaluated fresh every time a row context menu opens, not cached, so a
+        status change since the last refresh (e.g. a dashboard dismissal) is
+        always reflected in whether "Continue relaxation…" is enabled.
+        """
+
+        self._continuable_predicate = predicate
+
     def set_supercell_options(self, options: list[dict[str, object]]) -> None:
         parsed: list[tuple[str, SupercellMatrix]] = []
         for entry in options:
@@ -751,6 +797,15 @@ class MuonRelaxationWidget(QWidget):
     def _row_index_for_id(self, row_id: int) -> int | None:
         location = self._row_location_for_id(row_id)
         return None if location is None else location[1]
+
+    def _row_location_for_key(self, key: str) -> tuple[QTableWidget, int] | None:
+        for table in self._all_tables():
+            for row in range(table.rowCount()):
+                if not self._label_at_row(row, table=table):
+                    continue
+                if self._submission_key_at_row(row, table=table) == key:
+                    return table, row
+        return None
 
     def _row_id_at(self, row: int, *, table: QTableWidget | None = None) -> int | None:
         target = table or self._table
@@ -1218,6 +1273,43 @@ class MuonRelaxationWidget(QWidget):
             if name in self._specs_by_name:
                 cleaned[name] = self._restore_structured_value(name, value)
         return cleaned
+
+    def continue_relaxation_dialog_seed(self, key: object) -> dict[str, object] | None:
+        """Return the ``ContinueRelaxationDialog`` seed kwargs for one row.
+
+        ``key`` must be the row's charge-qualified key. Mirrors
+        :meth:`_open_row_parameter_dialog`'s single-row seeding (effective
+        parameter values, added-advanced set, and the same locked task/
+        fix-cell/write-cell-structure/charge keywords), for the one row the
+        Continue action targets. MainWindow supplies everything this widget
+        cannot know (the checkpoint probe, the rendered old/new ``.param``
+        text, and the job's execution target/directory) alongside these
+        kwargs when constructing the dialog. Returns ``None`` when ``key``
+        does not resolve to a row.
+        """
+
+        location = self._row_location_for_key(str(key))
+        if location is None:
+            return None
+        table, row = location
+        row_id = self._row_id_at(row, table=table)
+        if row_id is None:
+            return None
+        charge_state = self._charge_state_at_row(row, table=table)
+        charge_text = f"{muon_charge_for_state(charge_state):+d} ({muon_charge_state_label(charge_state)})"
+        return {
+            "specs": self._specs,
+            "workflow_stage": _WORKFLOW_STAGE,
+            "parameter_values": self._effective_params_for_row(row_id),
+            "added_advanced": tuple(sorted(self._row_added_advanced.get(row_id, set()))),
+            "locked_values": {
+                "task": "GEOMETRYOPTIMIZATION",
+                "fix_all_cell": "TRUE (required for muon relaxation)",
+                "write_cell_structure": "TRUE (required for relaxed-cell outputs)",
+                "charge": charge_text,
+            },
+            "species_options": self._parameter_species_options,
+        }
 
     def _open_row_parameter_dialog(self, row_ids: tuple[int, ...]) -> None:
         row_locations = [
