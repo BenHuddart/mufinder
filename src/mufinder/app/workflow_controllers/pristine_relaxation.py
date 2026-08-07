@@ -26,8 +26,8 @@ shared-context + per-controller-deps + view pattern documented in
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
@@ -48,6 +48,7 @@ from mufinder.app.workflow_controllers.base import (
     ControllerResult,
     WorkflowControllerContext,
     WorkflowJobController,
+    apply_row_parameters_to_form_state,
 )
 from mufinder.app.workflow_submission import effective_row_status
 
@@ -71,6 +72,9 @@ class PristineRelaxationDeps:
     active_pristine_relaxation_definition: Callable[[], CalculationDefinition | None]
     deserialize_pristine_relaxation_config: Callable[
         [object], PristineRelaxationConfig | None
+    ]
+    serialize_pristine_relaxation_config: Callable[
+        [PristineRelaxationConfig], dict[str, object]
     ]
     sync_equivalent_pristine_relaxation_mappings: Callable[
         [CalculationDefinition], None
@@ -276,6 +280,119 @@ class PristineRelaxationController(WorkflowJobController):
             seen.add(job.id)
             deduped.append(job)
         return deduped
+
+    # --- in-place row parameter mutation ---
+
+    def update_row_parameters(
+        self,
+        key: object,
+        parameter_values: Mapping[str, object],
+        added_advanced: Sequence[str] | None = None,
+    ) -> bool:
+        """Rewrite one row's CASTEP parameters inside the ACTIVE definition.
+
+        ``key`` is the row label. Returns ``False`` when there is no active
+        definition or it holds no such row.
+
+        The edit must never go through ``register_pristine_relaxation_definition``:
+        a new definition arrives with an empty ``job_ids_by_label``, which severs
+        the row→job binding, so ``materialize`` would mint a duplicate ``Job``
+        onto the row's existing directory. This mutates the very definition
+        ``materialize`` reads, leaving ``job_ids_by_label`` and every other row
+        untouched, and rewrites the row through the serialize/deserialize pair so
+        the stored shape stays canonical.
+
+        The parameters actually stored are the ones the *widget* reports after the
+        mirror, not the caller's raw mapping: the table strips implicit project
+        defaults, and :meth:`build_states` drops a row whose form signature differs
+        from its definition signature (this workflow has no active-job escape
+        hatch, so a desynced row falls back to a jobless "ready").
+        """
+
+        definition = self._deps.active_pristine_relaxation_definition()
+        if definition is None:
+            return False
+        config = self._deps.deserialize_pristine_relaxation_config(
+            definition.parameters.get("configuration", {})
+        )
+        if config is None:
+            return False
+        label = str(key)
+        if not any(row.label == label for row in config.rows):
+            return False
+
+        values = dict(parameter_values)
+        advanced = (
+            tuple(str(name) for name in added_advanced)
+            if added_advanced is not None
+            else None
+        )
+        mirrored = self._mirror_row_parameters_into_form(label, values, advanced)
+        if mirrored is not None:
+            values, advanced = mirrored
+
+        rows = tuple(
+            replace(
+                row,
+                parameter_values=dict(values),
+                added_advanced=(advanced if advanced is not None else row.added_advanced),
+            )
+            if row.label == label
+            else row
+            for row in config.rows
+        )
+        definition.parameters["configuration"] = (
+            self._deps.serialize_pristine_relaxation_config(replace(config, rows=rows))
+        )
+
+        self._context.persist_ui_state(
+            failure_message="Pristine relaxation parameters were updated, but autosave failed."
+        )
+        self.refresh_view()
+        return True
+
+    def _mirror_row_parameters_into_form(
+        self,
+        label: str,
+        parameter_values: Mapping[str, object],
+        added_advanced: tuple[str, ...] | None,
+    ) -> tuple[dict[str, object], tuple[str, ...] | None] | None:
+        """Apply the edit to the widget form state and read the result back.
+
+        Returns the widget's normalized ``(parameter_values, added_advanced)`` for
+        the row, or ``None`` when the form does not hold it (in which case the
+        caller stores its own values — the row is not projected from the form
+        anyway).
+        """
+
+        updated = apply_row_parameters_to_form_state(
+            self._view.collect_state(),
+            row_matches=lambda row: str(row.get("label", "")).strip() == label,
+            parameter_values=parameter_values,
+            added_advanced=added_advanced,
+            parameter_key="params",
+        )
+        if updated is None:
+            return None
+
+        self._view.set_form_state(updated)
+        normalized = self._view.collect_state()
+        document = self._context.document()
+        if document is not None and isinstance(normalized, dict):
+            document.ui_state["pristine_relaxation_form"] = normalized
+        rows = normalized.get("rows", []) if isinstance(normalized, dict) else []
+        for row in rows:
+            if not isinstance(row, dict) or str(row.get("label", "")).strip() != label:
+                continue
+            raw_params = row.get("params", {})
+            raw_advanced = row.get("added_advanced", [])
+            return (
+                dict(raw_params) if isinstance(raw_params, dict) else {},
+                tuple(str(name) for name in raw_advanced)
+                if isinstance(raw_advanced, list)
+                else (),
+            )
+        return None
 
     # --- result contract ---
 

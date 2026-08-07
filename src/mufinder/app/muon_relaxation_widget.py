@@ -1,4 +1,14 @@
-"""Muon structural-relaxation configuration panel."""
+"""Muon structural-relaxation configuration panel.
+
+Rows whose job has left the unlocked runtime statuses keep their inline
+parameter lock: a submitted row's inputs must not drift away from the directory
+that was rendered from them. Editing a terminal row's parameters goes through
+the "Continue relaxation…" path instead, which mutates the active definition's
+row in place via
+:meth:`~mufinder.app.workflow_controllers.muon_relaxation.MuonRelaxationController.update_row_parameters`
+(keyed by the charge-qualified row key) and mirrors the edit back into this
+form, preserving the row→job binding.
+"""
 
 from __future__ import annotations
 

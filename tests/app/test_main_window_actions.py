@@ -9359,6 +9359,179 @@ def test_uep_preserves_running_row_across_reconfiguration(qapp, tmp_path: Path) 
     window.close()
 
 
+def test_pristine_relaxation_row_parameter_edit_keeps_row_bound_to_its_job(
+    qapp, tmp_path: Path
+) -> None:
+    """In-place parameter edits must not sever the row→job binding.
+
+    Registering a new definition would give the row an empty
+    ``job_ids_by_label``; and because pristine relaxation has no active-status
+    escape hatch in ``build_states``, a form/definition signature mismatch would
+    drop the row to a jobless "ready". This drives the real widget, so the
+    table's own parameter normalization (implicit project defaults are stripped)
+    is exercised end to end.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "pristine_param_edit.mufinder", "PristineParamEdit")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+
+    row = main_window_module.PristineRelaxationRow(
+        label="row_1", parameter_values={"geom_max_iter": 120}
+    )
+    definition = service.register_pristine_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_pristine_relaxation_config(
+            main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
+        ),
+        output_directory=doc.project_root / "files" / "pristine_relaxation",
+    )
+    doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    job = service.add_job(
+        doc,
+        label="pristine_relax_row_1",
+        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    job.status = JobStatus.COMPLETED
+    definition.parameters["job_ids_by_label"] = {"row_1": str(job.id)}
+    window._restore_pristine_relaxation_form_from_definition()
+    assert window._pristine_relaxation_controller.build_states()["row_1"].job_id == job.id
+
+    updated = window._pristine_relaxation_controller.update_row_parameters(
+        "row_1", {"geom_max_iter": 500, "task": "GEOMETRYOPTIMIZATION"}
+    )
+
+    assert updated is True
+    # No new definition; the binding is intact and the row still resolves its job.
+    assert [
+        candidate.id
+        for candidate in doc.calculations.values()
+        if candidate.workflow_stage == WorkflowStage.PRISTINE_RELAXATION
+    ] == [definition.id]
+    assert definition.parameters["job_ids_by_label"] == {"row_1": str(job.id)}
+    states = window._pristine_relaxation_controller.build_states()
+    assert states["row_1"].job_id == job.id
+    assert states["row_1"].status == JobStatus.COMPLETED.value
+
+    config = window._deserialize_pristine_relaxation_config(
+        definition.parameters["configuration"]
+    )
+    assert config.rows[0].parameter_values["geom_max_iter"] == 500
+    # The widget is the normalizer of record: it strips the implicit ``task``
+    # default, so the definition must not keep it either.
+    assert "task" not in config.rows[0].parameter_values
+    form_config = window._pristine_relaxation_form_config()
+    assert window._pristine_relaxation_row_signature(
+        form_config.rows[0]
+    ) == window._pristine_relaxation_row_signature(config.rows[0])
+    assert (
+        doc.ui_state["pristine_relaxation_form"]["rows"][0]["params"]["geom_max_iter"]
+        == 500
+    )
+    window.close()
+
+
+def test_muon_relaxation_row_parameter_edit_touches_only_its_charge_state(
+    qapp, tmp_path: Path
+) -> None:
+    """Two rows can share a label, so the edit is keyed by the charge-qualified
+    row key and must leave the other charge state's row alone."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "muon_param_edit.mufinder", "MuonParamEdit")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    site = MuonSite(label="Site 1", fractional_position=[0.25, 0.25, 0.25])
+    doc.sites[site.id] = site
+    window._document = doc
+
+    rows = (
+        main_window_module.MuonRelaxationRow(
+            site_id=site.id,
+            label="Site 1",
+            initial_fractional_position=(0.25, 0.25, 0.25),
+            charge_state="positive_muon",
+            parameter_values={"geom_max_iter": 120},
+        ),
+        main_window_module.MuonRelaxationRow(
+            site_id=site.id,
+            label="Site 1",
+            initial_fractional_position=(0.25, 0.25, 0.25),
+            charge_state="muonium",
+            parameter_values={"geom_max_iter": 400},
+        ),
+    )
+    definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters=window._serialize_muon_relaxation_config(
+            main_window_module.MuonRelaxationConfig(rows=rows)
+        ),
+        output_directory=doc.project_root / "files" / "muon_relaxation",
+    )
+    doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+    job = service.add_job(
+        doc,
+        label="Site 1",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type=main_window_module.muon_relaxation_calc_type("positive_muon"),
+    )
+    job.status = JobStatus.FAILED
+    definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
+    window._restore_muon_relaxation_form_from_definition()
+    assert (
+        window._muon_relaxation_controller.build_states()["positivemuon:Site 1"].job_id
+        == job.id
+    )
+
+    updated = window._muon_relaxation_controller.update_row_parameters(
+        "positivemuon:Site 1", {"geom_max_iter": 500}
+    )
+
+    assert updated is True
+    assert [
+        candidate.id
+        for candidate in doc.calculations.values()
+        if candidate.workflow_stage == WorkflowStage.MUON_RELAXATION
+    ] == [definition.id]
+    assert definition.parameters["job_ids_by_label"] == {"positivemuon:Site 1": str(job.id)}
+    states = window._muon_relaxation_controller.build_states()
+    assert states["positivemuon:Site 1"].job_id == job.id
+    assert states["positivemuon:Site 1"].status == JobStatus.FAILED.value
+
+    config = window._deserialize_muon_relaxation_config(
+        definition.parameters["configuration"]
+    )
+    by_charge = {row.charge_state: row for row in config.rows}
+    assert by_charge["positive_muon"].parameter_values["geom_max_iter"] == 500
+    assert by_charge["muonium"].parameter_values["geom_max_iter"] == 400
+    form_config = window._muon_relaxation_form_config()
+    form_by_charge = {row.charge_state: row for row in form_config.rows}
+    for charge_state in ("positive_muon", "muonium"):
+        assert window._muon_relaxation_row_signature(
+            form_by_charge[charge_state]
+        ) == window._muon_relaxation_row_signature(by_charge[charge_state])
+    window.close()
+
+
 def test_pristine_relaxation_deleted_row_does_not_reinherit_stale_status(qapp, tmp_path: Path) -> None:
     window = MainWindow()
     service = ProjectService()

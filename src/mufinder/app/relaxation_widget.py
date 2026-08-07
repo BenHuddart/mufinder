@@ -1,4 +1,13 @@
-"""Pristine-relaxation configuration panel."""
+"""Pristine-relaxation configuration panel.
+
+Rows whose job has left the unlocked runtime statuses keep their inline
+parameter lock (``_runtime_controls_locked``): a submitted row's inputs must not
+drift away from the directory that was rendered from them. Editing a terminal
+row's parameters goes through the "Continue relaxation…" path instead, which
+mutates the active definition's row in place via
+:meth:`~mufinder.app.workflow_controllers.pristine_relaxation.PristineRelaxationController.update_row_parameters`
+and mirrors the edit back into this form, preserving the row→job binding.
+"""
 
 from __future__ import annotations
 

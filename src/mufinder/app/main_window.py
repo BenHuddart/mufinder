@@ -7601,6 +7601,9 @@ class MainWindow(QMainWindow):
             deserialize_pristine_relaxation_config=(
                 lambda payload: self._deserialize_pristine_relaxation_config(payload)
             ),
+            serialize_pristine_relaxation_config=(
+                lambda config: self._serialize_pristine_relaxation_config(config)
+            ),
             sync_equivalent_pristine_relaxation_mappings=(
                 lambda definition: self._sync_equivalent_pristine_relaxation_mappings(definition)
             ),
@@ -7662,6 +7665,9 @@ class MainWindow(QMainWindow):
             ),
             deserialize_muon_relaxation_config=(
                 lambda payload: self._deserialize_muon_relaxation_config(payload)
+            ),
+            serialize_muon_relaxation_config=(
+                lambda config: self._serialize_muon_relaxation_config(config)
             ),
             sync_equivalent_muon_relaxation_mappings=(
                 lambda definition: self._sync_equivalent_muon_relaxation_mappings(definition)

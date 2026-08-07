@@ -16,6 +16,7 @@ layer is meant to provide.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
@@ -78,6 +79,108 @@ class _RecordingBackend:
 
     def __call__(self, jobs: list[Job], **kwargs: object) -> None:
         self.calls.append((list(jobs), dict(kwargs)))
+
+
+# The relaxation controllers serialize/deserialize their definition configuration
+# through required deps. These mirror the shape ``MainWindow`` stores (the real
+# pair is exercised end to end in ``tests/app/test_main_window_actions.py``);
+# structured CASTEP value restoration is not reproduced here.
+
+
+def _serialize_pristine_config(config) -> dict[str, object]:
+    return {
+        "name_prefix": config.name_prefix,
+        "rows": [
+            {
+                "label": row.label,
+                "fix_all_cell": bool(row.fix_all_cell),
+                "supercell_matrix": (
+                    [list(line) for line in row.supercell_matrix]
+                    if row.supercell_matrix is not None
+                    else None
+                ),
+                "parameter_values": dict(row.parameter_values),
+                "added_advanced": list(row.added_advanced),
+            }
+            for row in config.rows
+        ],
+    }
+
+
+def _deserialize_pristine_config(payload: object):
+    from mufinder.app.relaxation_types import (
+        PristineRelaxationConfig,
+        PristineRelaxationRow,
+    )
+
+    if not isinstance(payload, dict):
+        return None
+    rows = [
+        PristineRelaxationRow(
+            label=str(entry.get("label", "")),
+            fix_all_cell=bool(entry.get("fix_all_cell", False)),
+            parameter_values=dict(
+                entry.get("parameter_values", entry.get("params", {}))
+            ),
+            added_advanced=tuple(str(name) for name in entry.get("added_advanced", ())),
+        )
+        for entry in payload.get("rows", [])
+        if isinstance(entry, dict)
+    ]
+    return PristineRelaxationConfig(
+        name_prefix=str(payload.get("name_prefix", "pristine_relax")),
+        rows=tuple(rows),
+    )
+
+
+def _serialize_muon_config(config) -> dict[str, object]:
+    return {
+        "rows": [
+            {
+                "site_id": str(row.site_id),
+                "label": row.label,
+                "initial_fractional_position": list(row.initial_fractional_position),
+                "charge_state": row.charge_state,
+                "supercell_matrix": (
+                    [list(line) for line in row.supercell_matrix]
+                    if row.supercell_matrix is not None
+                    else None
+                ),
+                "parameter_values": dict(row.parameter_values),
+                "added_advanced": list(row.added_advanced),
+            }
+            for row in config.rows
+        ]
+    }
+
+
+def _deserialize_muon_config(payload: object):
+    from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow
+
+    if not isinstance(payload, dict):
+        return None
+    rows = []
+    for entry in payload.get("rows", []):
+        if not isinstance(entry, dict):
+            continue
+        position = entry.get("initial_fractional_position", (0.0, 0.0, 0.0))
+        rows.append(
+            MuonRelaxationRow(
+                site_id=UUID(str(entry.get("site_id"))),
+                label=str(entry.get("label", "")),
+                initial_fractional_position=(
+                    float(position[0]),
+                    float(position[1]),
+                    float(position[2]),
+                ),
+                charge_state=str(entry.get("charge_state", "positive_muon")),
+                parameter_values=dict(entry.get("parameter_values", {})),
+                added_advanced=tuple(
+                    str(name) for name in entry.get("added_advanced", ())
+                ),
+            )
+        )
+    return MuonRelaxationConfig(rows=tuple(rows))
 
 
 def _make_context(
@@ -1144,6 +1247,64 @@ def test_kpoint_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
     assert controller.handles_job(other) is False
 
 
+def test_apply_row_parameters_to_form_state_updates_one_row_and_its_alias() -> None:
+    from mufinder.app.workflow_controllers.base import (
+        apply_row_parameters_to_form_state,
+    )
+
+    state = {
+        "name_prefix": "pristine_relax",
+        "rows": [
+            {"label": "row1", "params": {"a": 1}, "parameter_values": {"a": 1}},
+            {"label": "row2", "params": {"a": 2}},
+            "not a row",
+        ],
+    }
+
+    updated = apply_row_parameters_to_form_state(
+        state,
+        row_matches=lambda row: row.get("label") == "row1",
+        parameter_values={"a": 9},
+        added_advanced=["extra"],
+        parameter_key="params",
+    )
+
+    assert updated is not None
+    assert updated["rows"][0]["params"] == {"a": 9}
+    # Both spellings move together: the deserializer prefers "parameter_values",
+    # so a stale alias would win.
+    assert updated["rows"][0]["parameter_values"] == {"a": 9}
+    assert updated["rows"][0]["added_advanced"] == ["extra"]
+    assert updated["rows"][1] == {"label": "row2", "params": {"a": 2}}
+    assert updated["rows"][2] == "not a row"
+    # The input is untouched.
+    assert state["rows"][0]["params"] == {"a": 1}
+    assert "added_advanced" not in state["rows"][0]
+
+    # No matching row, and malformed states, are reported as "not mirrored".
+    assert (
+        apply_row_parameters_to_form_state(
+            state,
+            row_matches=lambda _row: False,
+            parameter_values={"a": 9},
+            added_advanced=None,
+            parameter_key="params",
+        )
+        is None
+    )
+    for malformed in ([], {"rows": "nope"}):
+        assert (
+            apply_row_parameters_to_form_state(
+                malformed,
+                row_matches=lambda _row: True,
+                parameter_values={"a": 9},
+                added_advanced=None,
+                parameter_key="params",
+            )
+            is None
+        )
+
+
 # --------------------------------------------------------------------------- #
 # PristineRelaxationController
 # --------------------------------------------------------------------------- #
@@ -1155,13 +1316,26 @@ def test_kpoint_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
 
 
 class _FakeRelaxationView:
-    """Minimal PristineRelaxationWidget stand-in for controller tests."""
+    """Minimal PristineRelaxationWidget stand-in for controller tests.
 
-    def __init__(self) -> None:
+    ``collect_state``/``set_form_state`` store the form state verbatim: the real
+    widget also normalizes it (stripping implicit project defaults), and that
+    round trip is pinned against the real widget in
+    ``tests/app/test_main_window_actions.py``.
+    """
+
+    def __init__(self, form_state: dict | None = None) -> None:
         self.runtime_states: list[dict] = []
+        self.form_state: dict = form_state if form_state is not None else {"rows": []}
 
     def set_runtime_states(self, states) -> None:
         self.runtime_states.append(dict(states))
+
+    def collect_state(self) -> dict:
+        return copy.deepcopy(self.form_state)
+
+    def set_form_state(self, state: dict) -> None:
+        self.form_state = copy.deepcopy(state)
 
 
 _OUT_CELL_TEXT = """
@@ -1182,6 +1356,7 @@ def _stub_pristine_deps(**overrides) -> PristineRelaxationDeps:
     base = dict(
         active_pristine_relaxation_definition=lambda: None,
         deserialize_pristine_relaxation_config=lambda _payload: None,
+        serialize_pristine_relaxation_config=_serialize_pristine_config,
         sync_equivalent_pristine_relaxation_mappings=lambda _definition: None,
         pristine_relaxation_form_config=lambda: None,
         pristine_relaxation_row_signature=lambda _row: (),
@@ -1485,6 +1660,311 @@ def test_pristine_controller_submit_local_reaches_local_backend(tmp_path: Path) 
     assert submitted[0].calc_type == "castep_pristine_relaxation"
 
 
+def _pristine_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
+    """Definition with two rows, ``row1`` bound to a job, and a matching form.
+
+    This is the Continue-relaxation precondition: a submitted row whose
+    ``job_ids_by_label`` entry must survive a parameter edit.
+    """
+
+    from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
+    from mufinder.app.relaxation_types import (
+        PristineRelaxationConfig,
+        PristineRelaxationRow,
+    )
+    from mufinder.domain.models import Structure
+
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+
+    config = PristineRelaxationConfig(
+        name_prefix="pristine_relax",
+        rows=(
+            PristineRelaxationRow(label="row1", parameter_values={"geom_max_iter": 120}),
+            PristineRelaxationRow(label="row2", parameter_values={"geom_max_iter": 400}),
+        ),
+    )
+    output_root = document.project_root / "files" / "pristine_relaxation"
+    definition = service.register_pristine_relaxation_definition(
+        document,
+        input_structure_id=host.id,
+        parameters=_serialize_pristine_config(config),
+        output_directory=output_root,
+    )
+    job = _pristine_job(service, document, "pristine_relax_row1")
+    definition.parameters["job_ids_by_label"] = {"row1": str(job.id)}
+
+    view = _FakeRelaxationView(
+        {
+            "name_prefix": "pristine_relax",
+            "rows": [
+                {
+                    "label": "row1",
+                    "fix_all_cell": False,
+                    "supercell_matrix": None,
+                    "params": {"geom_max_iter": 120},
+                    "added_advanced": [],
+                },
+                {
+                    "label": "row2",
+                    "fix_all_cell": False,
+                    "supercell_matrix": None,
+                    "params": {"geom_max_iter": 400},
+                    "added_advanced": [],
+                },
+            ],
+        }
+    )
+
+    def job_for_label(defn, label):
+        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
+        raw_job_id = mapping.get(label)
+        return document.jobs.get(UUID(raw_job_id)) if isinstance(raw_job_id, str) else None
+
+    def expand(_defn, cfg):
+        return expand_pristine_relaxation_jobs(
+            host_structure=host,
+            config=cfg,
+            project_cutoff_energy=None,
+            project_kpoint_grid=None,
+            project_kpoint_reference_lattice=None,
+        )
+
+    deps = _stub_pristine_deps(
+        active_pristine_relaxation_definition=lambda: definition,
+        deserialize_pristine_relaxation_config=_deserialize_pristine_config,
+        pristine_relaxation_form_config=lambda: _deserialize_pristine_config(
+            view.collect_state()
+        ),
+        pristine_relaxation_row_signature=lambda row: (
+            tuple(sorted(row.parameter_values.items())),
+            tuple(row.added_advanced),
+        ),
+        job_for_pristine_relaxation_label=job_for_label,
+        expand_pristine_relaxation_jobs=expand,
+    )
+    return document, definition, job, deps, view, output_root
+
+
+def _pristine_edit_controller(service, document, deps, view, output_root, persists):
+    import dataclasses
+
+    context = dataclasses.replace(
+        _make_context(
+            document=document,
+            project_service=service,
+            definition_output_directory=lambda _defn: output_root,
+        ),
+        persist_ui_state=lambda **kwargs: persists.append(dict(kwargs)),
+    )
+    return PristineRelaxationController(context, deps, view)
+
+
+def test_pristine_controller_update_row_parameters_preserves_row_job_binding(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+        service, tmp_path
+    )
+    definitions_before = set(document.calculations)
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is True
+
+    # No new definition was registered: the binding lives on this very object.
+    assert set(document.calculations) == definitions_before
+    assert document.calculations[definition.id] is definition
+    assert definition.parameters["job_ids_by_label"] == {"row1": str(job.id)}
+    assert controller.jobs_for_keys(["row1"]) == [job]
+
+    config = _deserialize_pristine_config(definition.parameters["configuration"])
+    rows = {row.label: row for row in config.rows}
+    assert rows["row1"].parameter_values == {"geom_max_iter": 500}
+    assert rows["row2"].parameter_values == {"geom_max_iter": 400}
+
+    # The form state was mirrored so the row signatures still match.
+    form_rows = {row["label"]: row for row in view.form_state["rows"]}
+    assert form_rows["row1"]["params"] == {"geom_max_iter": 500}
+    assert form_rows["row2"]["params"] == {"geom_max_iter": 400}
+    assert document.ui_state["pristine_relaxation_form"] == view.form_state
+    assert persists == [
+        {
+            "failure_message": (
+                "Pristine relaxation parameters were updated, but autosave failed."
+            )
+        }
+    ]
+
+
+def test_pristine_controller_update_row_parameters_rejects_unknown_row(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, _job, deps, view, output_root = (
+        _pristine_parameter_edit_fixture(service, tmp_path)
+    )
+    before = copy.deepcopy(definition.parameters["configuration"])
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    assert controller.update_row_parameters("row9", {"geom_max_iter": 500}) is False
+
+    assert definition.parameters["configuration"] == before
+    assert persists == []
+
+
+def test_pristine_controller_update_row_parameters_edits_a_later_unbound_row(
+    tmp_path: Path,
+) -> None:
+    """Editing the second (jobless) row leaves the first row — and its job
+    binding — alone in both the definition and the form."""
+
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    assert controller.update_row_parameters("row2", {"geom_max_iter": 700}) is True
+
+    config = _deserialize_pristine_config(definition.parameters["configuration"])
+    rows = {row.label: row for row in config.rows}
+    assert rows["row1"].parameter_values == {"geom_max_iter": 120}
+    assert rows["row2"].parameter_values == {"geom_max_iter": 700}
+    assert definition.parameters["job_ids_by_label"] == {"row1": str(job.id)}
+    form_rows = {row["label"]: row for row in view.form_state["rows"]}
+    assert form_rows["row1"]["params"] == {"geom_max_iter": 120}
+    assert form_rows["row2"]["params"] == {"geom_max_iter": 700}
+
+
+def test_pristine_controller_update_row_parameters_without_definition_or_config(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, _job, deps, view, output_root = (
+        _pristine_parameter_edit_fixture(service, tmp_path)
+    )
+    persists: list[dict] = []
+
+    no_definition = _stub_pristine_deps()
+    controller = _pristine_edit_controller(
+        service, document, no_definition, view, output_root, persists
+    )
+    assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is False
+
+    unparseable = _stub_pristine_deps(
+        active_pristine_relaxation_definition=lambda: definition,
+        deserialize_pristine_relaxation_config=lambda _payload: None,
+    )
+    controller = _pristine_edit_controller(
+        service, document, unparseable, view, output_root, persists
+    )
+    assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is False
+    assert persists == []
+
+
+def test_pristine_controller_update_row_parameters_without_the_row_in_the_form(
+    tmp_path: Path,
+) -> None:
+    """With no form row to mirror into, the caller's own values are stored: the
+    row is not projected from the form either, so no signature can desync."""
+
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+        service, tmp_path
+    )
+    view.form_state = {"name_prefix": "pristine_relax", "rows": []}
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is True
+
+    config = _deserialize_pristine_config(definition.parameters["configuration"])
+    rows = {row.label: row for row in config.rows}
+    assert rows["row1"].parameter_values == {"geom_max_iter": 500}
+    assert definition.parameters["job_ids_by_label"] == {"row1": str(job.id)}
+    assert view.form_state["rows"] == []
+    assert "pristine_relaxation_form" not in document.ui_state
+
+
+def test_pristine_controller_materialize_after_edit_rewrites_same_directory(
+    tmp_path: Path,
+) -> None:
+    """The Continue cycle: render, finish, edit parameters, return to DEFINED,
+    re-materialize. The row keeps its job and its directory; only the rendered
+    ``.param`` changes."""
+
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _pristine_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    assert controller.materialize(["row1"]) == [job]
+    param_path = output_root / job.label / f"{job.label}.param"
+    assert "GEOM_MAX_ITER : 120" in param_path.read_text(encoding="utf-8")
+
+    job.status = JobStatus.COMPLETED
+    assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is True
+    # WP1's prepare_job_continuation returns the job to DEFINED (with its
+    # remote_directory preserved) before the directory is rewritten.
+    job.status = JobStatus.DEFINED
+
+    assert controller.materialize(["row1"]) == [job]
+
+    assert list(document.jobs) == [job.id]
+    assert definition.parameters["job_ids_by_label"] == {"row1": str(job.id)}
+    rendered = param_path.read_text(encoding="utf-8")
+    assert "GEOM_MAX_ITER : 500" in rendered
+    assert "GEOM_MAX_ITER : 120" not in rendered
+
+
+def test_pristine_controller_build_states_keeps_job_after_parameter_edit(
+    tmp_path: Path,
+) -> None:
+    """Finding 5: pristine relaxation has no active-status escape hatch, so a
+    form/definition signature mismatch would drop the row to a jobless "ready"."""
+
+    service = ProjectService()
+    document, _definition, job, deps, view, output_root = (
+        _pristine_parameter_edit_fixture(service, tmp_path)
+    )
+    job.status = JobStatus.RUNNING
+    persists: list[dict] = []
+    controller = _pristine_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+    before = controller.build_states()
+    assert before["row1"].job_id == job.id
+
+    assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is True
+
+    after = controller.build_states()
+    assert after["row1"].job_id == job.id
+    assert after["row1"].status == JobStatus.RUNNING.value
+
+
 # --------------------------------------------------------------------------- #
 # MuonRelaxationController
 # --------------------------------------------------------------------------- #
@@ -1500,13 +1980,24 @@ def test_pristine_controller_submit_local_reaches_local_backend(tmp_path: Path) 
 
 
 class _FakeMuonRelaxationView:
-    """Minimal MuonRelaxationWidget stand-in for controller tests."""
+    """Minimal MuonRelaxationWidget stand-in for controller tests.
 
-    def __init__(self) -> None:
+    ``collect_state``/``set_form_state`` store the form state verbatim; see
+    :class:`_FakeRelaxationView`.
+    """
+
+    def __init__(self, form_state: dict | None = None) -> None:
         self.runtime_states: list[dict] = []
+        self.form_state: dict = form_state if form_state is not None else {"rows": []}
 
     def set_runtime_states(self, states) -> None:
         self.runtime_states.append(dict(states))
+
+    def collect_state(self) -> dict:
+        return copy.deepcopy(self.form_state)
+
+    def set_form_state(self, state: dict) -> None:
+        self.form_state = copy.deepcopy(state)
 
 
 _MUON_OUT_CELL_TEXT = """
@@ -1555,6 +2046,7 @@ def _stub_muon_deps(**overrides) -> MuonRelaxationDeps:
     base = dict(
         active_muon_relaxation_definition=lambda: None,
         deserialize_muon_relaxation_config=lambda _payload: None,
+        serialize_muon_relaxation_config=_serialize_muon_config,
         sync_equivalent_muon_relaxation_mappings=lambda _definition: None,
         sync_active_muon_relaxation_dashboard_jobs=lambda _definition: None,
         muon_relaxation_form_config=lambda: None,
@@ -1911,6 +2403,324 @@ def test_muon_controller_submit_local_splits_groups_across_backend_calls(
     # Both jobs were recorded under charge-prefixed mapping keys.
     mapping = definition.parameters["job_ids_by_label"]
     assert set(mapping) == {"positivemuon:Site 1", "muonium:Site 2"}
+
+
+def _muon_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
+    """One site staged in BOTH charge states under the same label.
+
+    The two rows share a label, so only the charge-qualified key distinguishes
+    them; this is the fixture that proves an edit reaches exactly one row.
+    """
+
+    from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow
+    from mufinder.domain.models import MuonSite
+
+    document, host = _muon_host_document(service, tmp_path)
+    site = MuonSite(
+        label="Site 1",
+        status="staged",
+        fractional_position=[0.1, 0.2, 0.3],
+        source_structure_id=host.id,
+    )
+    document.sites[site.id] = site
+
+    config = MuonRelaxationConfig(
+        rows=(
+            MuonRelaxationRow(
+                site_id=site.id,
+                label="Site 1",
+                initial_fractional_position=(0.1, 0.2, 0.3),
+                charge_state="positive_muon",
+                parameter_values={"geom_max_iter": 120},
+            ),
+            MuonRelaxationRow(
+                site_id=site.id,
+                label="Site 1",
+                initial_fractional_position=(0.1, 0.2, 0.3),
+                charge_state="muonium",
+                parameter_values={"geom_max_iter": 400},
+            ),
+        )
+    )
+    output_root = document.project_root / "files" / "muon_relaxation"
+    definition = service.register_muon_relaxation_definition(
+        document,
+        input_structure_id=host.id,
+        parameters=_serialize_muon_config(config),
+        output_directory=output_root,
+    )
+    job = _muon_job(service, document, "Site 1", "castep_positivemuon_relaxation")
+    definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
+
+    view = _FakeMuonRelaxationView(_serialize_muon_config(config))
+
+    def job_for_label(defn, label, charge_state):
+        from mufinder.app.relaxation_adapter import muon_charge_state_prefix
+
+        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
+        keys = (
+            [f"{muon_charge_state_prefix(charge_state)}:{label}"] if charge_state else []
+        )
+        keys.append(label)
+        for key in keys:
+            raw_job_id = mapping.get(key)
+            if isinstance(raw_job_id, str):
+                return document.jobs.get(UUID(raw_job_id))
+        return None
+
+    deps = _stub_muon_deps(
+        active_muon_relaxation_definition=lambda: definition,
+        deserialize_muon_relaxation_config=_deserialize_muon_config,
+        muon_relaxation_form_config=lambda: _deserialize_muon_config(
+            view.collect_state()
+        ),
+        muon_relaxation_row_signature=lambda row: (
+            tuple(sorted(row.parameter_values.items())),
+            tuple(row.added_advanced),
+        ),
+        job_for_muon_relaxation_label=job_for_label,
+    )
+    return document, definition, job, deps, view, output_root
+
+
+def _muon_edit_controller(service, document, deps, view, output_root, persists):
+    import dataclasses
+
+    context = dataclasses.replace(
+        _make_context(
+            document=document,
+            project_service=service,
+            definition_output_directory=lambda _defn: output_root,
+        ),
+        persist_ui_state=lambda **kwargs: persists.append(dict(kwargs)),
+    )
+    return MuonRelaxationController(context, deps, view)
+
+
+def test_muon_controller_update_row_parameters_touches_only_the_charge_state_row(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    definitions_before = set(document.calculations)
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    assert (
+        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
+        is True
+    )
+
+    assert set(document.calculations) == definitions_before
+    assert document.calculations[definition.id] is definition
+    assert definition.parameters["job_ids_by_label"] == {
+        "positivemuon:Site 1": str(job.id)
+    }
+    assert controller.jobs_for_keys(["positivemuon:Site 1"]) == [job]
+
+    config = _deserialize_muon_config(definition.parameters["configuration"])
+    by_charge = {row.charge_state: row for row in config.rows}
+    assert by_charge["positive_muon"].parameter_values == {"geom_max_iter": 500}
+    # The muonium row shares the label and is left untouched.
+    assert by_charge["muonium"].parameter_values == {"geom_max_iter": 400}
+
+    form_by_charge = {row["charge_state"]: row for row in view.form_state["rows"]}
+    assert form_by_charge["positive_muon"]["parameter_values"] == {"geom_max_iter": 500}
+    assert form_by_charge["muonium"]["parameter_values"] == {"geom_max_iter": 400}
+    assert document.ui_state["muon_relaxation_form"] == view.form_state
+    assert persists == [
+        {
+            "failure_message": (
+                "Muon relaxation parameters were updated, but autosave failed."
+            )
+        }
+    ]
+
+
+def test_muon_controller_update_row_parameters_rejects_bare_label(
+    tmp_path: Path,
+) -> None:
+    """A bare label is ambiguous when two charge states share it, so it is
+    refused rather than applied to whichever row matches first."""
+
+    service = ProjectService()
+    document, definition, _job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    before = copy.deepcopy(definition.parameters["configuration"])
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    assert controller.update_row_parameters("Site 1", {"geom_max_iter": 500}) is False
+
+    assert definition.parameters["configuration"] == before
+    assert persists == []
+
+
+def test_muon_controller_update_row_parameters_edits_the_second_charge_state_row(
+    tmp_path: Path,
+) -> None:
+    """The mirror reaches the muonium row (second in both the definition and the
+    form) without disturbing the bound positive-muon row."""
+
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    assert (
+        controller.update_row_parameters("muonium:Site 1", {"geom_max_iter": 700})
+        is True
+    )
+
+    config = _deserialize_muon_config(definition.parameters["configuration"])
+    by_charge = {row.charge_state: row for row in config.rows}
+    assert by_charge["positive_muon"].parameter_values == {"geom_max_iter": 120}
+    assert by_charge["muonium"].parameter_values == {"geom_max_iter": 700}
+    assert definition.parameters["job_ids_by_label"] == {
+        "positivemuon:Site 1": str(job.id)
+    }
+    form_by_charge = {row["charge_state"]: row for row in view.form_state["rows"]}
+    assert form_by_charge["positive_muon"]["parameter_values"] == {"geom_max_iter": 120}
+    assert form_by_charge["muonium"]["parameter_values"] == {"geom_max_iter": 700}
+
+
+def test_muon_controller_update_row_parameters_without_definition_or_config(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, _job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+
+    no_definition = _stub_muon_deps()
+    controller = _muon_edit_controller(
+        service, document, no_definition, view, output_root, persists
+    )
+    assert (
+        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
+        is False
+    )
+
+    unparseable = _stub_muon_deps(
+        active_muon_relaxation_definition=lambda: definition,
+        deserialize_muon_relaxation_config=lambda _payload: None,
+    )
+    controller = _muon_edit_controller(
+        service, document, unparseable, view, output_root, persists
+    )
+    assert (
+        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
+        is False
+    )
+    assert persists == []
+
+
+def test_muon_controller_update_row_parameters_without_the_row_in_the_form(
+    tmp_path: Path,
+) -> None:
+    """With no form row to mirror into, the caller's own values are stored; see
+    the pristine equivalent."""
+
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    view.form_state = {"rows": []}
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    assert (
+        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
+        is True
+    )
+
+    config = _deserialize_muon_config(definition.parameters["configuration"])
+    by_charge = {row.charge_state: row for row in config.rows}
+    assert by_charge["positive_muon"].parameter_values == {"geom_max_iter": 500}
+    assert by_charge["muonium"].parameter_values == {"geom_max_iter": 400}
+    assert definition.parameters["job_ids_by_label"] == {
+        "positivemuon:Site 1": str(job.id)
+    }
+    assert view.form_state["rows"] == []
+    assert "muon_relaxation_form" not in document.ui_state
+
+
+def test_muon_controller_materialize_after_edit_rewrites_same_directory(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, definition, job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+
+    assert controller.materialize(["positivemuon:Site 1"]) == [job]
+    seed_mapping_before = dict(definition.parameters["job_seed_names_by_label"])
+    seed = seed_mapping_before["positivemuon:Site 1"]
+    param_path = output_root / "positivemuon" / seed / f"{seed}.param"
+    assert "GEOM_MAX_ITER : 120" in param_path.read_text(encoding="utf-8")
+
+    job.status = JobStatus.FAILED
+    assert (
+        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
+        is True
+    )
+    job.status = JobStatus.DEFINED
+
+    assert controller.materialize(["positivemuon:Site 1"]) == [job]
+
+    assert list(document.jobs) == [job.id]
+    assert definition.parameters["job_ids_by_label"] == {
+        "positivemuon:Site 1": str(job.id)
+    }
+    # A changed seed name would relocate the directory and orphan the preserved
+    # remote directory.
+    assert definition.parameters["job_seed_names_by_label"] == seed_mapping_before
+    rendered = param_path.read_text(encoding="utf-8")
+    assert "GEOM_MAX_ITER : 500" in rendered
+    assert "GEOM_MAX_ITER : 120" not in rendered
+
+
+def test_muon_controller_build_states_keeps_job_after_parameter_edit(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, _definition, job, deps, view, output_root = _muon_parameter_edit_fixture(
+        service, tmp_path
+    )
+    job.status = JobStatus.COMPLETED
+    persists: list[dict] = []
+    controller = _muon_edit_controller(
+        service, document, deps, view, output_root, persists
+    )
+    before = controller.build_states()
+    assert before["positivemuon:Site 1"].job_id == job.id
+
+    assert (
+        controller.update_row_parameters("positivemuon:Site 1", {"geom_max_iter": 500})
+        is True
+    )
+
+    after = controller.build_states()
+    assert after["positivemuon:Site 1"].job_id == job.id
+    assert after["positivemuon:Site 1"].status == JobStatus.COMPLETED.value
 
 
 def test_muon_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:

@@ -278,6 +278,27 @@ previously accreted on ``MainWindow``.
   (missing/unparseable file) stays inline in ``_on_local_job_finished`` and reads
   the carrier (``ts_missing`` / ``ts_error``).
 
+- **In-place row parameter mutation.** Editing one already-submitted relaxation
+  row's CASTEP parameters goes through
+  ``PristineRelaxationController.update_row_parameters`` /
+  ``MuonRelaxationController.update_row_parameters`` (keyed by row label and by
+  the charge-qualified ``"{prefix}:{label}"`` key respectively), never through
+  ``register_*_relaxation_definition``. Registering a definition produces a *new*
+  ``CalculationDefinition`` with an empty ``job_ids_by_label``, which severs the
+  row→job binding — ``materialize`` would then mint a duplicate ``Job`` onto the
+  row's existing directory. The helpers rewrite that single row inside the
+  **active** definition's ``parameters["configuration"]`` (through the
+  serialize/deserialize pair, so the stored shape stays canonical), leaving
+  ``job_ids_by_label``, ``job_seed_names_by_label`` and every other row untouched.
+  They then mirror the same edit into the widget form state with
+  :func:`~mufinder.app.workflow_controllers.base.apply_row_parameters_to_form_state`
+  and store back the values the *widget* reports, because the tables strip
+  implicit project defaults and ``build_states`` matches each row's form
+  signature against its definition signature — pristine relaxation has no
+  active-job escape hatch, so a desynced row would fall back to a jobless
+  "ready". ``ui_state`` is refreshed from the widget and persisted through the
+  shared context.
+
 The set of ``_on_submit_*`` / ``_materialize_*`` handlers still on
 ``MainWindow`` is pinned by ``tests/test_agent_harness.py`` as a ratchet: it may
 only shrink as workflows migrate onto controllers, and no new handler may appear

@@ -267,6 +267,59 @@ class WorkflowJobController:
         raise NotImplementedError
 
 
+def apply_row_parameters_to_form_state(
+    form_state: object,
+    *,
+    row_matches: Callable[[Mapping[str, object]], bool],
+    parameter_values: Mapping[str, object],
+    added_advanced: Sequence[str] | None,
+    parameter_key: str,
+) -> dict[str, object] | None:
+    """Return a copy of ``form_state`` with one row's parameters replaced.
+
+    ``parameter_key`` is the widget's own spelling for the row's parameter
+    mapping (``"params"`` for the pristine-relaxation table, ``"parameter_values"``
+    for the muon-relaxation tables), because callers pass the state the widget
+    itself produced. ``added_advanced`` of ``None`` leaves the row's advanced-name
+    list alone.
+
+    Returns ``None`` when no row matches, so the caller can tell "mirrored" from
+    "the form does not hold this row" instead of silently writing nothing. The
+    input is never mutated.
+    """
+
+    if not isinstance(form_state, dict):
+        return None
+    rows = form_state.get("rows")
+    if not isinstance(rows, list):
+        return None
+
+    updated_rows: list[object] = []
+    matched = False
+    for row in rows:
+        if matched or not isinstance(row, dict) or not row_matches(row):
+            updated_rows.append(row)
+            continue
+        matched = True
+        updated_row = dict(row)
+        updated_row[parameter_key] = dict(parameter_values)
+        # Keep the serialized alias consistent when the source state carries
+        # both spellings (``_restore_*_form_from_definition`` writes
+        # ``parameter_values`` alongside the widget's ``params``): the
+        # deserializer prefers ``parameter_values``, so a stale alias would win.
+        if parameter_key != "parameter_values" and "parameter_values" in row:
+            updated_row["parameter_values"] = dict(parameter_values)
+        if added_advanced is not None:
+            updated_row["added_advanced"] = [str(name) for name in added_advanced]
+        updated_rows.append(updated_row)
+
+    if not matched:
+        return None
+    updated_state = dict(form_state)
+    updated_state["rows"] = updated_rows
+    return updated_state
+
+
 def merge_controller_result(
     controllers: Sequence[WorkflowJobController],
     job: Job,
@@ -313,5 +366,6 @@ __all__ = [
     "ControllerResult",
     "WorkflowControllerContext",
     "WorkflowJobController",
+    "apply_row_parameters_to_form_state",
     "merge_controller_result",
 ]
