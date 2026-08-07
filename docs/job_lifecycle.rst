@@ -85,11 +85,16 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
    * - ``stopped``
      - ``submitting``, ``cancelled``
    * - ``completed``
-     - none
+     - none (validated); ``defined`` via ``prepare_job_continuation``
    * - ``failed``
      - ``submitting``, ``cancelled``
    * - ``cancelled``
      - ``submitting``
+
+Two primitives deliberately bypass ``_assert_transition`` and direct-assign
+``defined``, which is a target the table above contains nowhere:
+``reset_failed_job`` and ``prepare_job_continuation``. Each carries its own
+status guard instead; both are described below.
 
 ``ProjectService`` owns the primitive mutations:
 
@@ -114,6 +119,10 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
 - ``reset_failed_job`` moves ``failed``, ``stopped``, or ``cancelled`` back to
   ``defined`` and clears remote/process metadata (including the monitor
   metadata and any ``dismissed_at`` stamp).
+- ``prepare_job_continuation`` moves ``completed``, ``failed``, ``stopped``, or
+  ``cancelled`` back to ``defined`` for a continuation run, clearing the same
+  run metadata as ``reset_failed_job`` **except** ``remote_directory``, which it
+  preserves. See :ref:`job-continuation-primitive`.
 - ``retry_job_retrieval`` moves a ``failed`` or ``stopped`` job back to
   ``retrieving`` (the FAILED/STOPPED → RETRIEVING edges), clears
   ``error_message``, and preserves remote metadata. The failed/stopped-only
@@ -131,6 +140,62 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
 in the module constant ``TERMINAL_RECOVERABLE_JOB_STATUSES``. Keeping the two
 identical is what makes the derived projection sound: anything the user can
 dismiss, the app can also reset back to ``defined``.
+
+.. _job-continuation-primitive:
+
+Continuation: a job that keeps its remote directory
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The word "continuation" is used in two distinct senses in this document. The
+older one, in the user-facing summary above, describes a *resubmission* that
+happens to reuse existing remote files. This section is about the separate
+service primitive ``ProjectService.prepare_job_continuation``, which exists so a
+finished calculation can be run further from its own CASTEP checkpoint.
+
+The primitive accepts the module constant ``CONTINUABLE_JOB_STATUSES`` —
+``completed``, ``failed``, ``stopped``, ``cancelled`` — and direct-assigns
+``defined``, clearing ``submitted_at``, ``started_at``, ``completed_at``,
+``remote_job_id``, ``num_processes``, ``error_message``, the monitor metadata
+(``last_checked_at``, ``last_status_source``, ``last_status_message``), and any
+``dismissed_at`` stamp. It deliberately preserves ``remote_directory``.
+
+That preserved field is the point. **A job that is ``defined`` and still carries
+a non-null ``remote_directory`` is the durable marker for a continuation run**:
+the cluster submission path reads exactly that combination and resubmits into
+the existing remote directory — where the previous run's ``.check`` file lives —
+rather than recomputing a target, testing whether it already exists, and
+offering to delete it. No other code path produces the combination. Every writer
+of ``remote_directory`` either sets it while moving a job to ``submitting``
+(``JobExecutionController``), clears it for local submission (also
+``JobExecutionController``), clears it on ``reset_failed_job``, or touches only
+active jobs (``MainWindow._sync_cluster_tracking_from_document``).
+
+``CONTINUABLE_JOB_STATUSES`` is a *third* status set, wider than the shared
+reset/dismiss set, because a ``completed`` relaxation is continuable: running
+more geometry-optimisation steps from a converged-enough checkpoint is a normal
+outcome rather than a recovery from failure. This does not disturb the
+reset/dismiss reasoning restated above. That argument depends only on
+``reset_failed_job`` and ``dismiss_job`` accepting *the same* statuses as each
+other, so that anything the user can dismiss the app can also return to
+``defined``; both still read ``TERMINAL_RECOVERABLE_JOB_STATUSES``, and the
+derived ``"ready"`` projection for dismissed rows is unchanged. Continuation is
+a separate entry point with its own guard, and it also clears ``dismissed_at``,
+so continuing a dismissed job makes its dashboard row visible again on the same
+terms as a reset.
+
+This is a deliberate divergence from the quantum-corrections precedent, where a
+``completed`` stage-1 job is rewound by *deleting* the job records and clearing
+the directory (``MainWindow._on_reset_quantum_corrections_to_stage_one``, gated
+by ``_QUANTUM_STAGE_ONE_RESETTABLE_STATUSES`` — the same four statuses).
+Deleting is right there because the row genuinely starts over. A relaxation
+continuation must instead keep the job's identity: the job id is what binds the
+workflow-table row to the calculation, and the job record is what carries the
+output/remote directory holding the checkpoint the continuation depends on.
+Deleting and re-creating would sever the row binding and abandon the directory.
+
+``record_job_continuation`` appends the matching ``job_continuation`` provenance
+milestone, recording the job label and whether a remote directory was preserved.
+No persisted field is added, so no compatibility-ledger entry is required.
 
 State authority and runner contract
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

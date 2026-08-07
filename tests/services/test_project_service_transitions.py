@@ -2,8 +2,9 @@
 
 These pin the full 9x9 transition matrix enforced by
 ``ProjectService._assert_transition`` (both allowed edges and the exact
-``ValueError`` message on disallowed edges), plus the separate ``reset_failed_job``
-guard which bypasses ``_assert_transition`` entirely.
+``ValueError`` message on disallowed edges), plus the separate
+``reset_failed_job`` and ``prepare_job_continuation`` guards, which bypass
+``_assert_transition`` entirely.
 """
 
 from __future__ import annotations
@@ -172,6 +173,27 @@ def test_reset_failed_job_bypasses_assert_transition_and_targets_defined() -> No
         assert job.status == JobStatus.DEFINED
         assert job.error_message is None
         assert job.remote_job_id is None
+
+
+def test_prepare_job_continuation_bypasses_assert_transition_and_targets_defined() -> None:
+    # characterization: prepare_job_continuation does NOT go through
+    # _assert_transition either. Its guard set {COMPLETED, FAILED, STOPPED,
+    # CANCELLED} -> DEFINED includes COMPLETED, which the validated matrix gives
+    # no exit at all, and DEFINED is a target that appears nowhere in it.
+    service = _service()
+    for source in (
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+        JobStatus.STOPPED,
+        JobStatus.CANCELLED,
+    ):
+        assert JobStatus.DEFINED not in ALLOWED[source]
+        job = _job(source)
+        job.remote_directory = "/scratch/run"
+        service.prepare_job_continuation(job)
+        assert job.status == JobStatus.DEFINED
+        # The remote directory is the continuation marker and must survive.
+        assert job.remote_directory == "/scratch/run"
 
 
 @pytest.mark.parametrize(
