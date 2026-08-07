@@ -730,6 +730,65 @@ Future extension boundary:
 - HPC scheduler and transport metadata is intentionally deferred.
 - Future execution metadata will accompany ``JobSpec`` rather than replacing it.
 
+Continuing a relaxation from its checkpoint
+-------------------------------------------
+
+Every relaxation ``.param`` MuFinder generates already contains
+``CONTINUATION : DEFAULT``, and CASTEP resumes from a matching ``{seed}.check``
+file automatically whenever one is present in the run directory. The
+``Pristine Relaxation`` and ``Muon Relaxation`` tables expose this as a
+per-row ``Continue relaxation…`` action, available whenever the row's job is
+``completed``, ``failed``, ``stopped``, or ``cancelled``:
+
+- The action opens a dialog seeded with the row's current parameters: the
+  same shared CASTEP parameter editor used elsewhere, plus a live
+  keyword-level diff of the old vs. new rendered ``.param`` text (added,
+  changed, and removed keywords), a checkpoint-probe status line (checkpoint
+  found / not found / could not be verified), a fixed note that the ``.cell``
+  will be regenerated from the definition's structure (atomic positions are
+  not edited by this dialog), and a submit summary naming the execution
+  target and the directory that will be reused.
+- On accept, the row's parameters are mutated **in place** inside the active
+  definition — no new definition or job is created, so the workflow row keeps
+  resolving to the same job. The job is returned to ``defined`` while
+  **preserving its ``remote_directory``**, and ``.cell``/``.param`` are
+  rewritten into that same directory (local or remote).
+- The job is then resubmitted to its **original execution target**. A local
+  job goes back through the local submit path. A cluster job goes back into
+  its existing remote directory with no existence prompt and no deletion of
+  the previous contents — only if the resubmission dialog's selected cluster
+  still matches the job's original cluster; picking a different cluster falls
+  back to the normal (recomputed target, existence-checked) submission path
+  instead of carrying the old remote directory onto a cluster where it does
+  not exist.
+- A ``job_continuation`` provenance entry records each continuation. See
+  :ref:`job-continuation-primitive` in :doc:`job_lifecycle` for the full
+  technical contract (status transition, cleared/preserved fields, and why
+  this diverges from the quantum-corrections stage-1 reset).
+- Re-completion of a continued job refreshes the job's existing derived
+  ``"{label} relaxed"`` structure in place (stable structure id) rather than
+  minting a duplicate, so comparison tables and other downstream references
+  stay valid; muon site fields are refreshed from the same completion. See
+  :doc:`job_lifecycle` for the stale-``-out.cell`` guard that applies when a
+  continued run dies before writing a new one.
+- The checkpoint probe that feeds the dialog's status line is built from the
+  remote-file checkpoint primitives documented under
+  :ref:`remote-checkpoint-probe` below; local jobs are probed with a plain
+  filesystem check instead.
+
+**v1 non-goals** (documented follow-ups, not implemented): a "restart from
+latest geometry" mode that would override the continued row's structure; use
+of the CASTEP ``reuse`` keyword; and any change to the existing Reset
+action's cleanup behavior.
+
+.. warning::
+   The existing per-row ``Reset Failed Jobs...`` action's optional "clean
+   directory" cleanup still deletes local ``.check`` and ``.castep`` files
+   from the job's output directory (it preserves only ``.cell``/``.param``).
+   ``Continue relaxation…`` is the path that preserves them: it never deletes
+   the run directory's contents, so it is the only supported way to resume a
+   terminal relaxation job from its checkpoint rather than restarting cold.
+
 Local CASTEP execution
 ----------------------
 
@@ -965,6 +1024,35 @@ Remote submission and monitoring includes:
 	by falling back to per-job status checks instead of failing the full refresh.
 - Poll failures now force a full runner disconnect state (not just UI signal changes),
 	so subsequent ``Refresh Queue`` actions can cleanly reconnect rather than remaining stuck.
+
+.. _remote-checkpoint-probe:
+
+Relaxation-continuation checkpoint probe
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A remote-file checkpoint probe feeds the "checkpoint found / not found /
+could not be verified" line in the Continue-relaxation dialog described above
+under "Continuing a relaxation from its checkpoint":
+
+- ``ClusterJobRunner.remote_file_exists`` stats one remote path over the
+  existing SSH connection (the file-level analogue of
+  ``remote_directory_exists``).
+- ``ClusterController.check_remote_files`` bridges this onto the worker
+  thread for a batch of ``(job_id, remote_path)`` targets and emits
+  ``remote_files_checked`` with the paths that exist and any per-job errors,
+  mirroring the existing ``check_remote_dirs``/``remote_dirs_checked``
+  pattern so the GUI thread awaits the result instead of blocking on SSH
+  itself. The probe always runs in the controller before a dialog is
+  constructed, never inside a widget's own ``__init__``.
+- ``CheckpointProbeStatus`` (``found``/``absent``/``unavailable``) and
+  ``CheckpointProbeResult`` (built via the ``found()``/``absent()``/
+  ``unavailable(reason)`` constructors) give the three-way result its
+  vocabulary: not connected, a missing remote directory, and SSH/transport
+  errors all map to ``unavailable`` with a reason rather than blocking the
+  dialog from opening.
+- Local jobs use a plain ``pathlib.Path`` check for ``{seed}.check`` in the
+  local job directory instead, which can only ever report
+  ``found``/``absent``.
 
 Remote lifecycle and retrieval includes:
 

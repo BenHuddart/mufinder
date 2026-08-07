@@ -423,7 +423,7 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
             "advanced_workflows": ALL_WORKFLOWS,
             "allowed_values": (),
             "default_value": None,
-            "notes": "Exposed in cutoff convergence with the CASTEP default behavior left implicit unless the user enters a value.",
+            "notes": "Free-text continuation source for resuming an earlier CASTEP run; CASTEP itself resumes from a matching seed.check file placed in the run directory. MuFinder's relaxation workflows always emit CONTINUATION : DEFAULT so a preserved run directory warm-starts automatically.",
         },
         "xc_functional": {
             "label": "XC Functional",

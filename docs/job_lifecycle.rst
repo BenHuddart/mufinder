@@ -57,6 +57,15 @@ the remote inputs and outputs only: the scheduler submit script is regenerated
 on every submission, so an updated walltime, core count, or memory request
 takes effect on resubmission.
 
+The pristine- and muon-relaxation tables additionally offer a per-row
+``Continue relaxation…`` action for ``completed``, ``failed``, ``stopped``,
+or ``cancelled`` rows: it edits that row's parameters in place and resumes
+the same job from its CASTEP checkpoint rather than starting over, so it is
+the recovery path that keeps a run directory's ``.check``/``.castep`` files
+intact (unlike ``Reset``, whose optional cleanup deletes them). See
+:doc:`implemented_functionality` for the full user-facing description and
+:ref:`job-continuation-primitive` below for the technical contract.
+
 Technical API behavior
 ----------------------
 

@@ -411,6 +411,24 @@ keywords:
       default_value: 0
       advanced_workflows: [muon_relaxation]
 
+  - name: CONTINUATION
+    canonical_name: continuation
+    file: param
+    kind: scalar
+    value_type: text
+    unit:
+    allowed_values: []
+    mutually_exclusive_with: []
+    requires: []
+    example: CONTINUATION : DEFAULT
+    notes: Free-text continuation source for resuming an earlier CASTEP run; CASTEP itself resumes from a matching seed.check file placed in the run directory. MuFinder's relaxation workflows always emit CONTINUATION : DEFAULT so a preserved run directory warm-starts automatically.
+    gui:
+      label: Continuation
+      category: io
+      widget_hint: text
+      basic_workflows: [convergence_cutoff]
+      advanced_workflows: [all]
+
   - name: TASK
     canonical_name: task
     file: param
