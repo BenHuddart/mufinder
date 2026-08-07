@@ -266,6 +266,12 @@ class ClusterJobRunner(QObject):
         script is therefore the sole carrier of walltime, task count, and memory.
         Reusing a stale script would silently ignore the resources the current
         submission asked for.
+
+        ``allow_existing_remote_directory`` is deliberately unread here. It is a
+        caller-side marker: the main window uses it to skip the remote-directory
+        existence check and the overwrite prompt for a directory it means to
+        submit into. This method already creates the directory with
+        ``exist_ok=True``, so it needs no separate opt-in.
         """
 
         ssh = self._require_ssh()

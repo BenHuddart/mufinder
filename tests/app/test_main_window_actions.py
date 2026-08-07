@@ -3410,6 +3410,350 @@ def test_main_window_submit_jobs_on_cluster_reuses_quantum_continuation_director
     window.close()
 
 
+_CONTINUATION_CLUSTER = ClusterConfig(
+    name="alpha",
+    hostname="alpha.example",
+    username="alice",
+    auth_method="key",
+    key_path="/tmp/key",
+    default_working_directory="/remote/work",
+    queue_system="slurm",
+    cores_per_node=64,
+    default_walltime="01:00:00",
+    template_script_path="/templates/slurm.sh",
+)
+
+
+def _patch_continuation_cluster_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accept the cluster submission dialog with a fixed /remote/work config."""
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 1
+
+        def config(self):
+            return SimpleNamespace(
+                cluster_name="alpha",
+                working_directory="/remote/work",
+                username="alice",
+                job_name_prefix="conv",
+                num_processes=16,
+                walltime="01:00:00",
+            )
+
+        def password(self) -> str:
+            return ""
+
+    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [_CONTINUATION_CLUSTER])
+    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: _CONTINUATION_CLUSTER)
+    monkeypatch.setattr(main_window_module.QApplication, "processEvents", lambda: None)
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda *_args, **_kwargs: None)
+
+
+def _add_cluster_input_job(service: ProjectService, doc, label: str) -> Job:
+    """Create a convergence job with its .cell/.param inputs on disk.
+
+    The job directory basename equals the label, exactly as a real submission
+    produces it, so ``_job_seed_name`` resolves the same seed from either the
+    local directory or the remote basename.
+    """
+
+    job = service.add_job(
+        doc,
+        label=label,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job_dir = doc.project_root / "files" / "convergence_cutoff" / label
+    job_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / f"{label}.cell").write_text("%BLOCK LATTICE_CART\n%ENDBLOCK LATTICE_CART\n", encoding="utf-8")
+    (job_dir / f"{label}.param").write_text("TASK : GEOMETRYOPTIMIZATION\n", encoding="utf-8")
+    return job
+
+
+def _continue_cluster_job(service: ProjectService, job: Job, remote_directory: str) -> None:
+    """Take a job through a failed cluster run and back to DEFINED for continuation."""
+
+    job.execution_target = "alpha"
+    job.remote_directory = remote_directory
+    job.remote_job_id = "55501"
+    job.status = JobStatus.FAILED
+    service.prepare_job_continuation(job)
+    assert job.status == JobStatus.DEFINED
+    assert job.remote_directory == remote_directory
+
+
+def _patch_continuation_cluster_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    window: MainWindow,
+    *,
+    directory_exists: bool,
+) -> dict[str, list]:
+    """Patch the SSH-facing runner calls and record what the flow asked for."""
+
+    recorded: dict[str, list] = {"checked": [], "deleted": [], "submitted": []}
+    monkeypatch.setattr(window._cluster_runner._runner, "connect_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window._cluster_runner,
+        "remote_job_directory",
+        lambda *, working_directory, seed_name: f"{working_directory}/{seed_name}",
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "remote_directory_exists",
+        lambda path: recorded["checked"].append(path) or directory_exists,
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "remove_remote_directory",
+        lambda path: recorded["deleted"].append(path),
+    )
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "submit",
+        lambda **kwargs: recorded["submitted"].append(kwargs) or "99123",
+    )
+    return recorded
+
+
+def test_main_window_submit_jobs_on_cluster_reuses_continued_job_remote_directory(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_continuation.mufinder", "ClusterContinuation")
+    window._document = doc
+
+    job = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    _continue_cluster_job(service, job, "/remote/work/conv_ecut_300")
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda *_args: pytest.fail("a continued job must never prompt to overwrite its own directory"),
+    )
+
+    window._submit_jobs_on_cluster([job])
+
+    # The preserved directory is never probed, never offered for deletion, and
+    # never deleted: it holds the .check file the continuation resumes from.
+    assert recorded["checked"] == []
+    assert recorded["deleted"] == []
+    assert len(recorded["submitted"]) == 1
+    submitted = recorded["submitted"][0]
+    assert submitted["remote_directory"] == "/remote/work/conv_ecut_300"
+    assert submitted["allow_existing_remote_directory"] is True
+    # Fresh .cell/.param are uploaded; only the reuse flag would suppress that.
+    assert submitted["reuse_existing_files"] is False
+    assert job.remote_directory == "/remote/work/conv_ecut_300"
+    assert job.execution_target == "alpha"
+
+    window.close()
+
+
+def test_main_window_submit_jobs_on_cluster_continuation_keeps_original_seed_name(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_continuation_seed.mufinder", "ClusterContinuationSeed")
+    window._document = doc
+
+    job = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    original_seed = window._job_seed_name(job)
+    assert original_seed == "conv_ecut_300"
+    _continue_cluster_job(service, job, "/remote/work/conv_ecut_300")
+
+    # The remote basename now drives the seed, and must agree with the local one.
+    assert window._job_seed_name(job) == original_seed
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda *_args: pytest.fail("a continued job must never prompt to overwrite its own directory"),
+    )
+
+    window._submit_jobs_on_cluster([job])
+
+    assert len(recorded["submitted"]) == 1
+    submitted = recorded["submitted"][0]
+    assert submitted["seed_name"] == original_seed
+    # The runner uploads {seed}.cell/{seed}.param from this directory, so a seed
+    # drift would fail the submission outright.
+    local_dir = Path(submitted["local_job_dir"])
+    assert (local_dir / f"{original_seed}.cell").is_file()
+    assert (local_dir / f"{original_seed}.param").is_file()
+
+    window.close()
+
+
+def test_main_window_submit_jobs_on_cluster_mixed_batch_checks_only_the_new_job(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_mixed_batch.mufinder", "ClusterMixedBatch")
+    window._document = doc
+
+    continued = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    _continue_cluster_job(service, continued, "/remote/work/conv_ecut_300")
+    fresh = _add_cluster_input_job(service, doc, "conv_ecut_400")
+    assert fresh.status == JobStatus.DEFINED
+    assert fresh.remote_directory is None
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=False)
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda *_args: pytest.fail("no directory exists, so nothing should prompt"),
+    )
+
+    window._submit_jobs_on_cluster([continued, fresh])
+
+    # Exactly the fresh job's computed target is probed: the continued job is
+    # excluded, the fresh job's existence check is unchanged.
+    assert recorded["checked"] == ["/remote/work/conv_ecut_400"]
+    assert recorded["deleted"] == []
+    by_directory = {call["remote_directory"]: call for call in recorded["submitted"]}
+    assert set(by_directory) == {"/remote/work/conv_ecut_300", "/remote/work/conv_ecut_400"}
+    assert by_directory["/remote/work/conv_ecut_300"]["allow_existing_remote_directory"] is True
+    assert by_directory["/remote/work/conv_ecut_400"]["allow_existing_remote_directory"] is False
+    assert by_directory["/remote/work/conv_ecut_400"]["reuse_existing_files"] is False
+
+    window.close()
+
+
+def test_main_window_submit_jobs_on_cluster_continuation_survives_target_collision(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A colliding batch job must not drag a preserved directory into the prompt.
+
+    Overwrite decisions are matched by target string, so a second job whose
+    computed target equals a continued job's preserved directory would otherwise
+    let one prompt answer skip or delete the continuation.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_collision.mufinder", "ClusterCollision")
+    window._document = doc
+
+    continued = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    collider = _add_cluster_input_job(service, doc, "conv_ecut_400")
+    # The continued job was originally submitted into the directory the collider
+    # now computes for itself.
+    _continue_cluster_job(service, continued, "/remote/work/conv_ecut_400")
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    prompted: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda label, _target: prompted.append(label) or "no",
+    )
+
+    window._submit_jobs_on_cluster([continued, collider])
+
+    assert prompted == ["conv_ecut_400"]
+    assert recorded["deleted"] == []
+    assert len(recorded["submitted"]) == 1
+    assert recorded["submitted"][0]["seed_name"] == "conv_ecut_400"
+    assert recorded["submitted"][0]["remote_directory"] == "/remote/work/conv_ecut_400"
+    assert recorded["submitted"][0]["allow_existing_remote_directory"] is True
+    assert continued.status == JobStatus.QUEUED
+    assert collider.status == JobStatus.DEFINED
+
+    window.close()
+
+
+def test_main_window_submit_jobs_on_cluster_collision_overwrite_spares_continued_directory(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Answering "yes" for a colliding job must not delete a preserved directory.
+
+    The overwrite decision belongs to the colliding job, but the deletion it
+    authorises would land on the directory holding the continuation's .check file.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_collision_yes.mufinder", "ClusterCollisionYes")
+    window._document = doc
+
+    continued = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    collider = _add_cluster_input_job(service, doc, "conv_ecut_400")
+    _continue_cluster_job(service, continued, "/remote/work/conv_ecut_400")
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    monkeypatch.setattr(window, "_prompt_remote_directory_overwrite", lambda *_args: "yes")
+
+    window._submit_jobs_on_cluster([continued, collider])
+
+    assert recorded["deleted"] == []
+    assert len(recorded["submitted"]) == 2
+    assert continued.status == JobStatus.QUEUED
+    assert collider.status == JobStatus.QUEUED
+
+    window.close()
+
+
+def test_main_window_submit_jobs_on_cluster_dashboard_resubmit_still_reuses_files(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The continuation branch must not capture the dashboard resubmit path.
+
+    Dashboard resubmission passes FAILED/CANCELLED jobs, which the continuation
+    branch ignores, and keeps its own reuse-the-remote-inputs semantics.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_resubmit.mufinder", "ClusterResubmit")
+    window._document = doc
+
+    job = _add_cluster_input_job(service, doc, "conv_ecut_300")
+    job.execution_target = "alpha"
+    job.remote_directory = "/remote/work/conv_ecut_300"
+    job.status = JobStatus.FAILED
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda *_args: pytest.fail("a resubmission into its own directory must not prompt"),
+    )
+
+    window._submit_jobs_on_cluster(
+        [job],
+        eligible_statuses={JobStatus.FAILED, JobStatus.CANCELLED},
+        reuse_existing_remote_files=True,
+    )
+
+    assert recorded["checked"] == []
+    assert recorded["deleted"] == []
+    assert len(recorded["submitted"]) == 1
+    submitted = recorded["submitted"][0]
+    assert submitted["remote_directory"] == "/remote/work/conv_ecut_300"
+    assert submitted["reuse_existing_files"] is True
+    assert submitted["allow_existing_remote_directory"] is False
+
+    window.close()
+
+
 def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

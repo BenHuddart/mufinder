@@ -664,6 +664,68 @@ def test_prepare_cluster_submission_forwards_mem_per_cpu_to_the_runner(tmp_path:
     assert prepared.submit_kwargs["mem_per_cpu_gb"] == 6.0
 
 
+def test_prepare_cluster_submission_accepts_every_resubmittable_status(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    runner = FakeClusterRunner()
+
+    for status in (JobStatus.DEFINED, JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED):
+        label = f"status-{status.value}"
+        job = document.jobs[_job(service, document, label)]
+        job.status = status
+        controller = _controller(
+            document=document,
+            service=service,
+            cluster_runner=runner,
+            output_dir=tmp_path / label,
+        )
+
+        prepared = controller.prepare_cluster_submission(
+            ClusterJobSubmission(
+                job=job,
+                output_dir=tmp_path / label,
+                seed_name=label,
+                remote_target=f"/remote/{label}",
+                execution_target="test-cluster",
+                num_processes=8,
+                walltime="01:00:00",
+                working_directory="/remote",
+                template_script_path="",
+                cores_per_node=4,
+            )
+        )
+
+        assert prepared is not None, f"{status.value} should be submittable to a cluster"
+        assert job.status == JobStatus.SUBMITTING
+
+    # Statuses with an in-flight or finished run are still refused.
+    running = document.jobs[_job(service, document, "status-running")]
+    running.status = JobStatus.RUNNING
+    controller = _controller(
+        document=document,
+        service=service,
+        cluster_runner=runner,
+        output_dir=tmp_path / "status-running",
+    )
+    assert (
+        controller.prepare_cluster_submission(
+            ClusterJobSubmission(
+                job=running,
+                output_dir=tmp_path / "status-running",
+                seed_name="status-running",
+                remote_target="/remote/status-running",
+                execution_target="test-cluster",
+                num_processes=8,
+                walltime="01:00:00",
+                working_directory="/remote",
+                template_script_path="",
+                cores_per_node=4,
+            )
+        )
+        is None
+    )
+    assert running.status == JobStatus.RUNNING
+
+
 def test_prepare_cluster_submission_defaults_mem_per_cpu_to_unset(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
     job_id = _job(service, document, "no-mem-job")

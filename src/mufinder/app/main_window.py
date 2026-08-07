@@ -6723,12 +6723,34 @@ class MainWindow(QMainWindow):
         targets_to_check: list[tuple[UUID, str]] = []
         for job in eligible_jobs:
             allow_existing_remote_directory = False
-            remote_target = (job.remote_directory or "").strip() if reuse_existing_remote_files else ""
-            if not remote_target:
-                continuation_target = self._quantum_continuation_remote_target(job, cluster_name=selected_cluster.name)
-                if continuation_target:
-                    remote_target = continuation_target
-                    allow_existing_remote_directory = True
+            # A DEFINED job that still carries a remote directory is a continuation.
+            # Only ProjectService.prepare_job_continuation produces that combination
+            # (see its docstring for the writer audit), and it preserves the directory
+            # precisely so CASTEP resumes from the ``.check`` file already there. Reuse
+            # the directory verbatim and upload fresh inputs into it.
+            #
+            # This branch is evaluated first and cannot steal either path below.
+            # ``reuse_existing_remote_files`` is passed only by the dashboard resubmit
+            # action, whose eligible statuses are {FAILED, CANCELLED}, so DEFINED jobs
+            # never reach the loop on that call. The quantum branch needs a quantum
+            # phonon calc type with a COMPLETED singlepoint source; a continued phonon
+            # job would satisfy both, but its own preserved remote directory is the
+            # source directory that branch would have returned, so the two agree.
+            continued_remote_target = (
+                (job.remote_directory or "").strip() if job.status == JobStatus.DEFINED else ""
+            )
+            if continued_remote_target:
+                remote_target = continued_remote_target
+                allow_existing_remote_directory = True
+            else:
+                remote_target = (job.remote_directory or "").strip() if reuse_existing_remote_files else ""
+                if not remote_target:
+                    continuation_target = self._quantum_continuation_remote_target(
+                        job, cluster_name=selected_cluster.name
+                    )
+                    if continuation_target:
+                        remote_target = continuation_target
+                        allow_existing_remote_directory = True
             reuse_existing_files_for_job = bool(remote_target)
             if allow_existing_remote_directory:
                 reuse_existing_files_for_job = False
@@ -6759,6 +6781,13 @@ class MainWindow(QMainWindow):
         decision_by_job: dict[UUID, str] = {}
         overwrite_mode: str | None = None
         for job in eligible_jobs:
+            # Directories we deliberately submit into are never candidates for the
+            # overwrite prompt, whatever another job in the batch resolved to: this
+            # loop matches by target string, so without the guard a second job whose
+            # computed target collides with a preserved directory could mark it for
+            # deletion.
+            if allow_existing_remote_directory_by_job.get(job.id, False):
+                continue
             remote_target = remote_target_by_job.get(job.id)
             if not (remote_target and remote_target in existing_remote_targets):
                 continue
@@ -6781,6 +6810,15 @@ class MainWindow(QMainWindow):
                 )
 
         # 4. Prepare document state (GUI thread) and build the worker batch.
+        # Directories another job in the batch is submitting into as-is are never
+        # deleted, however that job's own overwrite prompt was answered: the
+        # decision belongs to the colliding job, but the deletion would land on a
+        # preserved continuation directory holding the run's ``.check`` file.
+        protected_remote_targets = {
+            remote_target_by_job[job_id]
+            for job_id, allowed in allow_existing_remote_directory_by_job.items()
+            if allowed and remote_target_by_job.get(job_id)
+        }
         prepared_by_job: dict[UUID, PreparedClusterSubmission] = {}
         submit_items: list[dict[str, object]] = []
         for job in eligible_jobs:
@@ -6830,7 +6868,10 @@ class MainWindow(QMainWindow):
                     "label": job.label,
                     "submit_kwargs": prepared.submit_kwargs,
                     "remote_dir_to_delete": (
-                        remote_target if decision_by_job.get(job.id) == "delete" else None
+                        remote_target
+                        if decision_by_job.get(job.id) == "delete"
+                        and remote_target not in protected_remote_targets
+                        else None
                     ),
                 }
             )
