@@ -333,6 +333,42 @@ _QUANTUM_STAGE_SINGLEPOINT = QUANTUM_STAGE_SINGLEPOINT
 _QUANTUM_STAGE_PHONON = QUANTUM_STAGE_PHONON
 
 
+#: Slack allowed between a run's start and an output file's mtime before the
+#: file counts as predating the run. It absorbs filesystem mtime granularity
+#: (1 s on ext3/HFS+, 2 s on FAT) and the small clock offset a network-mounted
+#: job directory can introduce. A genuinely stale output is a whole run old, so
+#: a few seconds of slack costs nothing.
+_STALE_OUTPUT_SLACK_SECONDS = 5.0
+
+
+def _output_predates_run(path: Path | None, started_at: datetime | None) -> bool:
+    """Return whether ``path`` was last written before the current run started.
+
+    Guards a continued relaxation against the *previous* run's ``-out.cell``. A
+    continuation re-uses its job directory, so a run that dies before writing a
+    new relaxed structure leaves the old file exactly where the completion path
+    looks for it — ``cell_missing`` is ``False`` and the last run's geometry is
+    silently accepted as this run's result. The cluster path makes that concrete:
+    the download is conditional on the remote file existing
+    (``ClusterJobRunner._retrieve_results``), so a missing remote ``-out.cell``
+    leaves the copy fetched by the *previous* retrieval in place.
+
+    ``sftp.get`` does not preserve mtimes, so a downloaded file is stamped with
+    its download time and a locally-run one with its write time; either way a
+    fresh output is stamped after the run started and a stale one before it.
+    ``started_at`` of ``None`` (a job the poller never observed running) returns
+    ``False``: the guard fails open rather than failing a job on no evidence.
+    """
+
+    if path is None or started_at is None:
+        return False
+    try:
+        modified = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+    except OSError:
+        return False
+    return (started_at - modified).total_seconds() > _STALE_OUTPUT_SLACK_SECONDS
+
+
 def _structure_species_options(structure: Structure | None) -> tuple[str, ...]:
     if structure is None:
         return ()
@@ -9080,6 +9116,21 @@ class MainWindow(QMainWindow):
                 self._on_local_job_failed(
                     job_id,
                     f"Failed to parse relaxed CELL output: {artifacts.cell_error}",
+                )
+                return
+
+            # Stale-output guard, for the same reason the two guards above are
+            # inline: ControllerResult has no failure channel, so a result must
+            # not be built from a file this run never wrote. A continuation
+            # re-uses its job directory, so a present -out.cell is not by itself
+            # evidence that *this* run produced it — see _output_predates_run.
+            if _output_predates_run(
+                artifacts.out_cell_path, run.started_at or job.started_at
+            ):
+                self._on_local_job_failed(
+                    job_id,
+                    f"{seed_name}-out.cell predates this run: no relaxed structure "
+                    "was written, so the previous run's geometry is still in place.",
                 )
                 return
 

@@ -197,6 +197,50 @@ Deleting and re-creating would sever the row binding and abandon the directory.
 milestone, recording the job label and whether a remote directory was preserved.
 No persisted field is added, so no compatibility-ledger entry is required.
 
+Re-completing a continued job
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A continued job completes **more than once**, which changes what the completion
+path is allowed to do.
+
+*The derived structure is updated in place.* Both relaxation controllers'
+``build_result`` create a ``"{job label} relaxed"`` structure on the document.
+On a re-completion they do not create a second one: they locate the structure an
+earlier completion of the *same job* produced and refresh its lattice, species,
+and positions from the new ``-out.cell``, keeping its id. Nothing else would be
+safe — a comparison table stores ``dft_structure_ids``, and downstream workflows
+consume derived structures by id, so minting a replacement would orphan the
+first ``Result`` and strand every existing reference on a superseded geometry.
+Both ``Result`` records end up naming the same structure id, and
+``ProjectService.validate_document`` reports no dangling references across the
+cycle. The lookup key is ``Structure.properties["source_job_id"]``, with the
+derived structures of the job's own earlier runs as a fallback for records
+written before that property existed; the label is deliberately not a key,
+because a muon-relaxation job is labelled with its site label alone and one
+site's two charge states share it. The muon site's
+``status``/``relaxation_run_id``/``relative_energy_eV`` are rewritten from the
+same completion, so the site and the structure always describe the same run.
+
+*A stale ``-out.cell`` fails the job.* A continuation re-uses its job directory,
+so the previous run's relaxed structure is still sitting where the completion
+path looks for it: a run that dies before writing a new one would have the old
+geometry accepted as its result. The cluster path makes this concrete — the
+download is conditional on the remote file existing, so a missing remote
+``-out.cell`` simply leaves the copy fetched by the previous retrieval in place.
+``MainWindow._on_local_job_finished`` therefore fails a relaxation job whose
+``-out.cell`` predates the current run's ``started_at``, alongside the existing
+missing-file and parse-failure guards (all three are inline because
+``ControllerResult`` has no failure channel). The comparison allows a few
+seconds of slack for filesystem mtime granularity and network-mount clock
+offsets, and skips entirely when ``started_at`` is unset — a job the poller
+never observed running fails open rather than failing on no evidence.
+
+*Parser fields are not all per-run.* CASTEP appends to an existing ``.castep``,
+so a continued job's output holds every restart. ``completed``,
+``geom_converged`` and ``error_message`` are read from the last restart only;
+``num_scf_cycles`` (a ``max()``) and ``warnings`` span the whole file. See the
+``parse_castep_output`` docstring for the full split.
+
 State authority and runner contract
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

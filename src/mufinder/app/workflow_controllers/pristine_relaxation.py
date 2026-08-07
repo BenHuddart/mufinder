@@ -37,7 +37,6 @@ from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
     Job,
-    Structure,
 )
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES
 from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
@@ -50,6 +49,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
     apply_row_parameters_to_form_state,
+    upsert_job_derived_structure,
 )
 from mufinder.app.workflow_submission import effective_row_status
 
@@ -544,6 +544,10 @@ class PristineRelaxationController(WorkflowJobController):
         call site already passes ``_output_files_for_job(job)`` for every job, and
         that list already includes ``{seed_name}-out.cell``. Adding them again
         would duplicate entries.
+
+        The derived structure is created on first completion and **refreshed in
+        place** on every later one, so a continued job keeps a single, stable
+        structure id — see :func:`~mufinder.app.workflow_controllers.base.upsert_job_derived_structure`.
         """
 
         document = self._context.document()
@@ -567,19 +571,15 @@ class PristineRelaxationController(WorkflowJobController):
             if definition is not None and definition.input_structure_ids
             else None
         )
-        relaxed_structure = Structure(
-            label=f"{job.label} relaxed",
+        relaxed_structure = upsert_job_derived_structure(
+            self._context.project_service,
+            document,
+            job,
             origin="pristine_relaxation",
-            lattice_vectors=[list(vector) for vector in relaxed.lattice_vectors],
-            species=list(relaxed.species),
-            fractional_positions=[list(pos) for pos in relaxed.fractional_positions],
+            workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+            relaxed=relaxed,
             parent_structure_id=parent_structure_id,
-            properties={
-                "source_job_id": str(job.id),
-                "source_workflow_stage": WorkflowStage.PRISTINE_RELAXATION.value,
-            },
         )
-        self._context.project_service.add_structure(document, relaxed_structure)
 
         return ControllerResult(
             payload=payload,

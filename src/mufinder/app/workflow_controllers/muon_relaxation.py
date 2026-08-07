@@ -55,7 +55,6 @@ from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
     Job,
-    Structure,
 )
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, SiteHostMismatch
 from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
@@ -78,6 +77,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
     apply_row_parameters_to_form_state,
+    upsert_job_derived_structure,
 )
 from mufinder.app.workflow_submission import effective_row_status
 
@@ -761,6 +761,13 @@ class MuonRelaxationController(WorkflowJobController):
         sanctioned document side effect (see the ``ControllerResult``
         docstring). Output files are **not** contributed here: the call site
         already passes ``_output_files_for_job(job)`` for every job.
+
+        The derived structure is created on first completion and **refreshed in
+        place** on every later one, so a continued job keeps a single, stable
+        structure id — see
+        :func:`~mufinder.app.workflow_controllers.base.upsert_job_derived_structure`.
+        The site fields are rewritten from the same completion, so they and the
+        structure always describe the same run.
         """
 
         document = self._context.document()
@@ -802,20 +809,20 @@ class MuonRelaxationController(WorkflowJobController):
             if definition is not None and definition.input_structure_ids
             else None
         )
-        relaxed_structure = Structure(
-            label=f"{job.label} relaxed",
+        relaxed_structure = upsert_job_derived_structure(
+            self._context.project_service,
+            document,
+            job,
             origin="muon_relaxation",
-            lattice_vectors=[list(vector) for vector in relaxed.lattice_vectors],
-            species=list(relaxed.species),
-            fractional_positions=[list(pos) for pos in relaxed.fractional_positions],
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            relaxed=relaxed,
             parent_structure_id=parent_structure_id,
-            properties={
-                "source_job_id": str(job.id),
-                "source_workflow_stage": WorkflowStage.MUON_RELAXATION.value,
-            },
         )
-        self._context.project_service.add_structure(document, relaxed_structure)
 
+        # ``run`` is the run this completion belongs to — every submission mints
+        # a fresh CalculationRun (``JobExecutionController._create_active_run``),
+        # so a continued job's re-completion advances the site's link to the new
+        # run rather than leaving it on the superseded one.
         site = document.sites.get(row.site_id) if row is not None else None
         if site is not None:
             site.status = "relaxed"

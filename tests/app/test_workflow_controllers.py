@@ -1516,6 +1516,235 @@ def test_pristine_controller_build_result_missing_out_cell_is_empty(tmp_path: Pa
     )
 
 
+_OUT_CELL_TEXT_CONTINUED = """
+%BLOCK LATTICE_CART
+ang
+5.4 0.0 0.0
+0.0 5.5 0.0
+0.0 0.0 5.6
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Si 0.01 0.02 0.03
+%ENDBLOCK POSITIONS_FRAC
+"""
+
+
+def test_pristine_controller_recompletion_updates_derived_structure_in_place(
+    tmp_path: Path,
+) -> None:
+    """A continued pristine job completes twice. The second completion must
+    refresh the SAME derived structure rather than mint a duplicate: a
+    comparison table holds ``dft_structure_ids``, so a replacement structure
+    would strand that reference on a superseded geometry."""
+
+    from mufinder.domain.models import ComparisonTable, Result, Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+    definition = service.register_pristine_relaxation_definition(
+        document,
+        host_structure_id=host.id,
+        parameters={"name_prefix": "pristine_relax", "rows": []},
+        output_directory=document.project_root / "files" / "pristine_relaxation",
+    )
+
+    job = _pristine_job(service, document, "pristine_relax_row1")
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    out_cell = output_dir / f"{job.label}-out.cell"
+
+    context = _make_context(
+        document=document,
+        project_service=service,
+        job_output_directory=lambda _job: output_dir,
+    )
+    controller = PristineRelaxationController(
+        context,
+        _stub_pristine_deps(active_pristine_relaxation_definition=lambda: definition),
+        _FakeRelaxationView(),
+    )
+    parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
+
+    def complete(run_index: int, cell_text: str):
+        run = CalculationRun(job_id=job.id, run_index=run_index)
+        document.runs[run.id] = run
+        out_cell.write_text(cell_text, encoding="utf-8")
+        artifacts = collect_job_artifacts(output_dir, job.label, want_out_cell=True)
+        controller_result = controller.build_result(job, parsed, run, artifacts)
+        result = Result(
+            calculation_run_id=run.id,
+            result_type=job.calc_type,
+            derived_structure_ids=list(controller_result.derived_structure_ids),
+        )
+        document.results[result.id] = result
+        run.result_id = result.id
+        return run, result
+
+    _first_run, first_result = complete(1, _OUT_CELL_TEXT)
+    first_id = first_result.derived_structure_ids[0]
+    structure_count = len(document.structures)
+
+    # A comparison table built from the first completion — the reference the
+    # update-in-place behaviour exists to protect.
+    table = ComparisonTable(
+        label="Comparison 1",
+        experimental_structure_id=host.id,
+        dft_structure_ids=[first_id],
+        dft_labels=[job.label],
+    )
+    service.add_comparison_table(document, table)
+
+    _second_run, second_result = complete(2, _OUT_CELL_TEXT_CONTINUED)
+
+    # Same structure id, no duplicate structure, both Results converge on it.
+    assert second_result.derived_structure_ids == [first_id]
+    assert len(document.structures) == structure_count
+    assert first_result.derived_structure_ids == second_result.derived_structure_ids
+
+    # The structure now carries the SECOND run's geometry.
+    derived = document.structures[first_id]
+    assert derived.lattice_vectors == [[5.4, 0.0, 0.0], [0.0, 5.5, 0.0], [0.0, 0.0, 5.6]]
+    assert derived.fractional_positions == [pytest.approx([0.01, 0.02, 0.03])]
+    assert len(derived.species) == len(derived.fractional_positions)
+    assert derived.label == "pristine_relax_row1 relaxed"
+    assert derived.properties["source_job_id"] == str(job.id)
+    assert derived.parent_structure_id == host.id
+
+    # Every reference — the comparison table's and both Results' — still resolves.
+    assert table.dft_structure_ids == [first_id]
+    assert service.validate_document(document) == []
+
+
+def test_pristine_controller_recompletion_refreshes_result_payload(
+    tmp_path: Path,
+) -> None:
+    """The re-completion's payload comes from the new ``-out.cell``, so the
+    workflow row reports the continued run's lattice, not the first run's."""
+
+    from mufinder.domain.models import Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, host)
+
+    job = _pristine_job(service, document, "pristine_relax_row1")
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    out_cell = output_dir / f"{job.label}-out.cell"
+    context = _make_context(
+        document=document,
+        project_service=service,
+        job_output_directory=lambda _job: output_dir,
+    )
+    controller = PristineRelaxationController(
+        context, _stub_pristine_deps(), _FakeRelaxationView()
+    )
+    parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
+
+    out_cell.write_text(_OUT_CELL_TEXT, encoding="utf-8")
+    run_one = CalculationRun(job_id=job.id, run_index=1)
+    document.runs[run_one.id] = run_one
+    controller.build_result(
+        job, parsed, run_one, collect_job_artifacts(output_dir, job.label, want_out_cell=True)
+    )
+
+    out_cell.write_text(_OUT_CELL_TEXT_CONTINUED, encoding="utf-8")
+    run_two = CalculationRun(job_id=job.id, run_index=2)
+    document.runs[run_two.id] = run_two
+    second = controller.build_result(
+        job, parsed, run_two, collect_job_artifacts(output_dir, job.label, want_out_cell=True)
+    )
+
+    assert second.payload["lattice_a"] == pytest.approx(5.4)
+    assert second.payload["lattice_b"] == pytest.approx(5.5)
+    assert second.payload["lattice_c"] == pytest.approx(5.6)
+
+
+def test_find_job_derived_structure_falls_back_to_earlier_run_results(
+    tmp_path: Path,
+) -> None:
+    """A derived structure written before ``properties["source_job_id"]`` existed
+    is still found — through the ``derived_structure_ids`` of a Result reachable
+    from one of the job's own runs — so it is refreshed rather than duplicated."""
+
+    from mufinder.app.workflow_controllers.base import find_job_derived_structure
+    from mufinder.domain.models import Result, Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    job = _pristine_job(service, document, "pristine_relax_row1")
+
+    legacy = Structure(
+        label="pristine_relax_row1 relaxed",
+        origin="pristine_relaxation",
+        lattice_vectors=[[5.1, 0.0, 0.0], [0.0, 5.2, 0.0], [0.0, 0.0, 5.3]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(document, legacy)
+    assert "source_job_id" not in legacy.properties
+
+    run = CalculationRun(job_id=job.id, run_index=1)
+    document.runs[run.id] = run
+    result = Result(calculation_run_id=run.id, derived_structure_ids=[legacy.id])
+    document.results[result.id] = result
+    run.result_id = result.id
+
+    found = find_job_derived_structure(document, job, origin="pristine_relaxation")
+    assert found is legacy
+
+    # A structure belonging to a DIFFERENT job is never reached by the fallback.
+    other_job = _pristine_job(service, document, "pristine_relax_row2")
+    assert find_job_derived_structure(document, other_job, origin="pristine_relaxation") is None
+
+
+def test_find_job_derived_structure_prefers_the_first_of_a_duplicate_pair(
+    tmp_path: Path,
+) -> None:
+    """A job that completed twice before update-in-place existed left a duplicate
+    pair. The lookup resolves to the FIRST in document order — the one any
+    comparison table built in the meantime already references."""
+
+    from mufinder.app.workflow_controllers.base import find_job_derived_structure
+    from mufinder.domain.models import Structure
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    job = _pristine_job(service, document, "pristine_relax_row1")
+
+    first = Structure(
+        label="pristine_relax_row1 relaxed",
+        origin="pristine_relaxation",
+        properties={"source_job_id": str(job.id)},
+    )
+    second = Structure(
+        label="pristine_relax_row1 relaxed",
+        origin="pristine_relaxation",
+        properties={"source_job_id": str(job.id)},
+    )
+    service.add_structure(document, first)
+    service.add_structure(document, second)
+
+    assert find_job_derived_structure(document, job, origin="pristine_relaxation") is first
+    # Origin is part of the key: a muon-origin structure is never returned for a
+    # pristine lookup even when it names the same job.
+    assert find_job_derived_structure(document, job, origin="muon_relaxation") is None
+
+
 def test_pristine_controller_materialize_writes_job_ids_by_label(tmp_path: Path) -> None:
     from mufinder.app.relaxation_adapter import expand_pristine_relaxation_jobs
     from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow
@@ -3272,6 +3501,212 @@ def test_muon_controller_build_result_records_position_structure_and_site_mutati
     assert site.status == "relaxed"
     assert site.relaxation_run_id == run.id
     assert site.relative_energy_eV == pytest.approx(-12.0)
+
+
+_MUON_OUT_CELL_TEXT_CONTINUED = """
+%BLOCK LATTICE_CART
+ang
+8.2 0.0 0.0
+0.0 8.2 0.0
+0.0 0.0 4.1
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Si 0.0 0.0 0.0
+H:mu 0.35 0.45 0.55
+%ENDBLOCK POSITIONS_FRAC
+"""
+
+
+def _muon_row_and_definition(document, host, site, charge_state: str):
+    from mufinder.app.relaxation_types import MuonRelaxationRow
+    from mufinder.domain.models import CalculationDefinition
+
+    row = MuonRelaxationRow(
+        site_id=site.id,
+        label=site.label,
+        initial_fractional_position=(0.1, 0.2, 0.3),
+        charge_state=charge_state,
+        supercell_matrix=((2, 0, 0), (0, 2, 0), (0, 0, 1)),
+    )
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_muon_relaxation",
+        parameters={},
+        input_structure_ids=[host.id],
+        input_site_ids=[site.id],
+    )
+    document.calculations[definition.id] = definition
+    return row, definition
+
+
+def test_muon_controller_recompletion_updates_structure_and_site_to_new_run(
+    tmp_path: Path,
+) -> None:
+    """A continued muon job's re-completion refreshes the same derived structure
+    and re-points the site's ``relaxation_run_id``/``relative_energy_eV`` at the
+    new run, so the site and the structure never describe different runs."""
+
+    from mufinder.domain.models import MuonSite, Result
+
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    site = MuonSite(
+        label="Shared Site",
+        status="staged",
+        fractional_position=[0.1, 0.2, 0.3],
+        source_structure_id=host.id,
+    )
+    document.sites[site.id] = site
+    row, definition = _muon_row_and_definition(document, host, site, "muonium")
+
+    job = _muon_job(service, document, "Shared Site", "castep_muonium_relaxation")
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    out_cell = output_dir / f"{job.label}-out.cell"
+
+    deps = _stub_muon_deps(
+        active_muon_relaxation_definition=lambda: definition,
+        muon_relaxation_definition_and_row_for_job=lambda _job: (definition, row),
+    )
+    context = _make_context(
+        document=document,
+        project_service=service,
+        job_output_directory=lambda _job: output_dir,
+    )
+    controller = MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
+
+    def complete(run_index: int, cell_text: str, total_energy: float):
+        run = CalculationRun(job_id=job.id, run_index=run_index)
+        document.runs[run.id] = run
+        out_cell.write_text(cell_text, encoding="utf-8")
+        artifacts = collect_job_artifacts(output_dir, job.label, want_out_cell=True)
+        parsed = CastepResult(completed=True, total_energy=total_energy, warnings=())
+        controller_result = controller.build_result(job, parsed, run, artifacts)
+        result = Result(
+            calculation_run_id=run.id,
+            result_type=job.calc_type,
+            derived_structure_ids=list(controller_result.derived_structure_ids),
+        )
+        document.results[result.id] = result
+        run.result_id = result.id
+        return run, result, controller_result
+
+    run_one, first_result, _first = complete(1, _MUON_OUT_CELL_TEXT, -12.0)
+    first_id = first_result.derived_structure_ids[0]
+    structure_count = len(document.structures)
+    assert site.relaxation_run_id == run_one.id
+
+    run_two, second_result, second = complete(2, _MUON_OUT_CELL_TEXT_CONTINUED, -12.5)
+
+    # Stable structure id, no duplicate, both Results converge on it.
+    assert second_result.derived_structure_ids == [first_id]
+    assert len(document.structures) == structure_count
+    assert first_result.derived_structure_ids == second_result.derived_structure_ids
+
+    derived = document.structures[first_id]
+    assert derived.lattice_vectors == [[8.2, 0.0, 0.0], [0.0, 8.2, 0.0], [0.0, 0.0, 4.1]]
+    assert derived.fractional_positions[-1] == pytest.approx([0.35, 0.45, 0.55])
+    assert derived.parent_structure_id == host.id
+    # The refresh replaces the geometry as a set: species and positions must not
+    # be able to drift out of step with each other.
+    assert len(derived.species) == len(derived.fractional_positions)
+    assert derived.species[-1].strip().casefold() == "h:mu"
+
+    # Payload follows the new run, and so do the site fields.
+    assert second.payload["muon_final_fractional_position_supercell"] == pytest.approx(
+        [0.35, 0.45, 0.55]
+    )
+    assert site.status == "relaxed"
+    assert site.relaxation_run_id == run_two.id
+    assert site.relaxation_run_id != run_one.id
+    assert site.relative_energy_eV == pytest.approx(-12.5)
+    assert service.validate_document(document) == []
+
+
+def test_muon_controller_recompletion_keeps_charge_states_separate(
+    tmp_path: Path,
+) -> None:
+    """One site's two charge states are two jobs with the SAME ``job.label`` and
+    two derived structures with the same ``"{label} relaxed"`` label. Each job's
+    re-completion must refresh its own structure — the reason the lookup keys on
+    the job id and never on the label."""
+
+    from mufinder.domain.models import MuonSite
+
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    site = MuonSite(
+        label="Shared Site",
+        status="staged",
+        fractional_position=[0.1, 0.2, 0.3],
+        source_structure_id=host.id,
+    )
+    document.sites[site.id] = site
+
+    positive_row, definition = _muon_row_and_definition(document, host, site, "positive_muon")
+    muonium_row, _ = _muon_row_and_definition(document, host, site, "muonium")
+
+    positive_job = _muon_job(
+        service, document, "Shared Site", "castep_positivemuon_relaxation"
+    )
+    muonium_job = _muon_job(service, document, "Shared Site", "castep_muonium_relaxation")
+    assert positive_job.label == muonium_job.label
+
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    out_cell = output_dir / f"{positive_job.label}-out.cell"
+    context = _make_context(
+        document=document,
+        project_service=service,
+        job_output_directory=lambda _job: output_dir,
+    )
+
+    def controller_for(row):
+        deps = _stub_muon_deps(
+            active_muon_relaxation_definition=lambda: definition,
+            muon_relaxation_definition_and_row_for_job=lambda _job: (definition, row),
+        )
+        return MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
+
+    def complete(controller, job, run_index: int, cell_text: str):
+        run = CalculationRun(job_id=job.id, run_index=run_index)
+        document.runs[run.id] = run
+        out_cell.write_text(cell_text, encoding="utf-8")
+        artifacts = collect_job_artifacts(output_dir, job.label, want_out_cell=True)
+        parsed = CastepResult(completed=True, total_energy=-12.0, warnings=())
+        return controller.build_result(job, parsed, run, artifacts)
+
+    positive_controller = controller_for(positive_row)
+    muonium_controller = controller_for(muonium_row)
+
+    positive_id = complete(
+        positive_controller, positive_job, 1, _MUON_OUT_CELL_TEXT
+    ).derived_structure_ids[0]
+    muonium_id = complete(
+        muonium_controller, muonium_job, 1, _MUON_OUT_CELL_TEXT
+    ).derived_structure_ids[0]
+    assert positive_id != muonium_id
+    assert (
+        document.structures[positive_id].label == document.structures[muonium_id].label
+    )
+
+    # Continue only the positive-muon job: its structure moves, the muonium
+    # structure is untouched.
+    second_positive = complete(
+        positive_controller, positive_job, 2, _MUON_OUT_CELL_TEXT_CONTINUED
+    )
+    assert second_positive.derived_structure_ids == [positive_id]
+    assert document.structures[positive_id].lattice_vectors == [
+        [8.2, 0.0, 0.0],
+        [0.0, 8.2, 0.0],
+        [0.0, 0.0, 4.1],
+    ]
+    assert document.structures[muonium_id].lattice_vectors == [
+        [8.0, 0.0, 0.0],
+        [0.0, 8.0, 0.0],
+        [0.0, 0.0, 4.0],
+    ]
 
 
 def test_muon_controller_build_result_fails_loudly_on_muonless_cell(tmp_path: Path) -> None:

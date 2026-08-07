@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -5391,6 +5391,212 @@ def test_main_window_local_finish_pristine_relaxation_missing_out_cell_fails_job
     assert not any(
         structure.origin == "pristine_relaxation" for structure in doc.structures.values()
     )
+    window.close()
+
+
+_PRISTINE_OUT_CELL_FIRST = """
+%BLOCK LATTICE_CART
+ang
+5.1 0.0 0.0
+0.0 5.2 0.0
+0.0 0.0 5.3
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Si 0.0 0.0 0.0
+%ENDBLOCK POSITIONS_FRAC
+"""
+
+_PRISTINE_OUT_CELL_CONTINUED = """
+%BLOCK LATTICE_CART
+ang
+5.4 0.0 0.0
+0.0 5.5 0.0
+0.0 0.0 5.6
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_FRAC
+Si 0.01 0.02 0.03
+%ENDBLOCK POSITIONS_FRAC
+"""
+
+
+def _pristine_relaxation_job_fixture(window: MainWindow, service: ProjectService, tmp_path: Path, name: str):
+    """Build a document with one running pristine-relaxation job and its output dir."""
+
+    doc = service.create_project(tmp_path / f"{name}.mufinder", name)
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+
+    job = service.add_job(
+        doc,
+        label="pristine_relax_row1",
+        workflow_stage=main_window_module.WorkflowStage.PRISTINE_RELAXATION,
+        calc_type="castep_pristine_relaxation",
+    )
+    window._document = doc
+    output_dir = doc.project_root / "files" / "pristine_relaxation" / job.label
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return doc, host, job, output_dir
+
+
+def _start_pristine_run(window: MainWindow, service: ProjectService, doc, job, run_index: int):
+    """Take ``job`` through submit → start and register a fresh active run."""
+
+    service.submit_job(job)
+    service.start_job(job)
+    run = CalculationRun(job_id=job.id, run_index=run_index, status=JobStatus.RUNNING)
+    run.started_at = job.started_at
+    doc.runs[run.id] = run
+    window._active_run_by_job[job.id] = run.id
+    return run
+
+
+def test_main_window_local_finish_relaxation_stale_out_cell_fails_job(
+    qapp, tmp_path: Path
+) -> None:
+    """A continued run that dies before writing a new ``-out.cell`` leaves the
+    PREVIOUS run's file in the re-used job directory, where the completion path
+    would happily validate it as this run's geometry. The inline stale-output
+    guard fails the job instead, so no result is built from a superseded file."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc, _host, job, output_dir = _pristine_relaxation_job_fixture(
+        window, service, tmp_path, "StaleOutCell"
+    )
+
+    # The previous run's relaxed structure, left behind in the re-used directory.
+    (output_dir / f"{job.label}-out.cell").write_text(
+        _PRISTINE_OUT_CELL_FIRST, encoding="utf-8"
+    )
+    run = _start_pristine_run(window, service, doc, job, run_index=2)
+    # This run started well after that file was written.
+    run.started_at = datetime.now(UTC) + timedelta(minutes=5)
+
+    parsed = CastepResult(
+        completed=True,
+        total_energy=-11.0,
+        warnings=(),
+        geom_converged=True,  # clears the geom prologue so we reach the stale guard
+    )
+    window._on_local_job_finished(job.id, parsed)
+
+    assert job.status == JobStatus.FAILED
+    assert "predates this run" in (job.error_message or "")
+    assert run.result_id is None
+    assert not any(
+        structure.origin == "pristine_relaxation" for structure in doc.structures.values()
+    )
+    window.close()
+
+
+def test_main_window_stale_output_guard_skips_jobs_with_no_start_time(tmp_path: Path) -> None:
+    """The guard fails open. A job the poller never observed running has no
+    ``started_at`` to compare against, so its output is accepted rather than a
+    job being failed on no evidence. Sub-slack differences are also accepted, so
+    filesystem mtime granularity cannot false-fail a fresh output."""
+
+    path = tmp_path / "seed-out.cell"
+    path.write_text("cell", encoding="utf-8")
+    written = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+
+    assert main_window_module._output_predates_run(path, None) is False
+    assert main_window_module._output_predates_run(None, written) is False
+    # Written after the run started, and written a hair before it: both fresh.
+    assert main_window_module._output_predates_run(
+        path, written - timedelta(minutes=5)
+    ) is False
+    assert main_window_module._output_predates_run(
+        path, written + timedelta(seconds=1)
+    ) is False
+    # A whole run older: stale.
+    assert main_window_module._output_predates_run(
+        path, written + timedelta(minutes=5)
+    ) is True
+    # An unreadable path is not evidence of staleness either.
+    assert main_window_module._output_predates_run(tmp_path / "absent", written) is False
+
+
+def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references(
+    qapp, tmp_path: Path
+) -> None:
+    """Drive a full continue → running → re-complete cycle through the real
+    completion path.
+
+    The pristine-relaxation workflow-trail milestone is table-driven
+    (``_workflow_pristine_relaxation_complete`` reads ``document.comparison_tables``),
+    **not** job-driven, so it stays complete across the whole cycle — continuing a
+    job neither un-completes nor re-completes it. What the cycle really has to
+    protect is the reference that milestone stands for: the comparison table's
+    ``dft_structure_ids`` must still resolve, which holds only because the second
+    completion updates the derived structure in place instead of minting a new one.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc, host, job, output_dir = _pristine_relaxation_job_fixture(
+        window, service, tmp_path, "PristineRecompletion"
+    )
+    parsed = CastepResult(
+        completed=True, total_energy=-11.0, warnings=(), geom_converged=True
+    )
+
+    run_one = _start_pristine_run(window, service, doc, job, run_index=1)
+    (output_dir / f"{job.label}-out.cell").write_text(
+        _PRISTINE_OUT_CELL_FIRST, encoding="utf-8"
+    )
+    window._on_local_job_finished(job.id, parsed)
+
+    assert job.status == JobStatus.COMPLETED
+    first_result = doc.results[run_one.result_id]
+    derived_id = first_result.derived_structure_ids[0]
+    structure_count = len(doc.structures)
+
+    # A comparison table built from that first completion.
+    table = ComparisonTable(
+        label="Comparison 1",
+        experimental_structure_id=host.id,
+        dft_structure_ids=[derived_id],
+        dft_labels=[job.label],
+    )
+    service.add_comparison_table(doc, table)
+    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+
+    # Continue the completed job and start its second run.
+    service.prepare_job_continuation(job)
+    assert job.status == JobStatus.DEFINED
+    run_two = _start_pristine_run(window, service, doc, job, run_index=2)
+    assert job.status == JobStatus.RUNNING
+    # Table-driven, so the milestone does not dip while the continued job runs.
+    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+
+    (output_dir / f"{job.label}-out.cell").write_text(
+        _PRISTINE_OUT_CELL_CONTINUED, encoding="utf-8"
+    )
+    window._on_local_job_finished(job.id, parsed)
+
+    assert job.status == JobStatus.COMPLETED
+    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+
+    # One derived structure, same id, refreshed geometry; both Results agree.
+    second_result = doc.results[run_two.result_id]
+    assert second_result.id != first_result.id
+    assert second_result.derived_structure_ids == [derived_id]
+    assert len(doc.structures) == structure_count
+    assert second_result.data["lattice_a"] == pytest.approx(5.4)
+    derived = doc.structures[derived_id]
+    assert derived.lattice_vectors == [[5.4, 0.0, 0.0], [0.0, 5.5, 0.0], [0.0, 0.0, 5.6]]
+
+    # The comparison table's reference survived the cycle intact.
+    assert table.dft_structure_ids == [derived_id]
+    assert service.validate_document(doc) == []
     window.close()
 
 
