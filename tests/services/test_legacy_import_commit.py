@@ -425,3 +425,55 @@ class TestJournal:
         assert entry.stamp_kind == "warning"
         assert "skipped" in entry.body
         assert "disagreement" in entry.body
+
+
+class TestCoordinateFrames:
+    """A row and a site both record host-frame coordinates, like native ones.
+
+    Legacy states the muon position in the *supercell* frame. Every other
+    relaxation row takes this field from ``MuonSite.fractional_position`` in host
+    coordinates, and job expansion converts host to supercell on the way out, so
+    storing supercell coordinates would both display wrong numbers and, if the
+    row were ever re-expanded, transform them a second time.
+    """
+
+    def test_the_row_position_is_in_the_host_frame(
+        self, tmp_path: Path, document: ProjectDocument, host_structure: Structure
+    ) -> None:
+        folder = build_folder(tmp_path / "legacy", sites=(1,))
+        _scan, outcome = _commit(document, folder, host_structure)
+
+        payload = outcome.row_payloads[0]
+        # The fixture muon sits at 0.1/0.2/0.3 in a 2x2x2 supercell, which is
+        # 0.2/0.4/0.6 in the host cell.
+        assert payload["initial_fractional_position"] == pytest.approx([0.2, 0.4, 0.6])
+
+    def test_the_site_keeps_the_initial_position_not_the_relaxed_one(
+        self, tmp_path: Path, document: ProjectDocument, host_structure: Structure
+    ) -> None:
+        """Native completion updates status, run id and energy but never rewrites
+        the site's coordinates, so an imported site must not either. The relaxed
+        position lives on the derived structure and in the result payload."""
+
+        folder = build_folder(tmp_path / "legacy", sites=(1,))
+        _scan, outcome = _commit(document, folder, host_structure)
+
+        site = document.sites[outcome.imported[0].site_id]
+        assert site.fractional_position == pytest.approx([0.2, 0.4, 0.6])
+        # The relaxed position is still recorded, just not on the site.
+        data = document.results[outcome.imported[0].result_id].data
+        assert data["muon_final_fractional_position_host"] == pytest.approx([0.22, 0.42, 0.62])
+
+    def test_the_site_carries_a_cartesian_position(
+        self, tmp_path: Path, document: ProjectDocument, host_structure: Structure
+    ) -> None:
+        """Left at the model default, every imported site would read as sitting
+        at the origin to any code preferring Cartesian coordinates."""
+
+        folder = build_folder(tmp_path / "legacy", sites=(1,))
+        _scan, outcome = _commit(document, folder, host_structure)
+
+        site = document.sites[outcome.imported[0].site_id]
+        # 0.2/0.4/0.6 of a 4 A cubic host.
+        assert site.cartesian_position == pytest.approx([0.8, 1.6, 2.4])
+        assert site.cartesian_position != [0.0, 0.0, 0.0]

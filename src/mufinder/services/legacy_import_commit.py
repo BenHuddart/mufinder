@@ -72,6 +72,7 @@ from mufinder.domain.models import (
     Structure,
     utc_now,
 )
+from mufinder.science.site_generation import lattice_frac_to_cart
 from mufinder.services.legacy_import import (
     MUON_SPECIES,
     DetectedRun,
@@ -432,7 +433,16 @@ def _row_payload(
     app layer, which ``services`` may not import.
     """
 
-    initial = run.initial_muon_fractional_supercell or (0.0, 0.0, 0.0)
+    # Host frame, not the supercell frame the input cell states it in. Every
+    # other relaxation row takes this field from ``MuonSite.fractional_position``
+    # (host coordinates), and job expansion converts host -> supercell on the way
+    # out. Storing supercell coordinates here would show the wrong numbers in the
+    # table's Initial columns and, if the row were ever re-expanded, transform
+    # them a second time.
+    initial = _fold_to_host(
+        run.initial_muon_fractional_supercell or (0.0, 0.0, 0.0),
+        run.supercell_matrix,
+    )
     return {
         "site_id": str(site_id),
         "label": label,
@@ -554,16 +564,24 @@ def commit_legacy_import(
             mulliken_spins=None,
         )
 
+        # A site records where the muon *started*, not where it ended up: the
+        # native completion path updates status, run id and energy and never
+        # rewrites the coordinates. The relaxed position lives on the derived
+        # structure and in the result payload, where the rest of the app looks
+        # for it. Diverging here would make imported sites mean something
+        # different from every other site in the project.
+        initial_host = _fold_to_host(
+            run.initial_muon_fractional_supercell
+            or run.final_muon_fractional_supercell
+            or (0.0, 0.0, 0.0),
+            run.supercell_matrix,
+        )
         site = MuonSite(
             label=label,
             status="relaxed",
-            fractional_position=list(
-                _fold_to_host(
-                    run.final_muon_fractional_supercell
-                    or run.initial_muon_fractional_supercell
-                    or (0.0, 0.0, 0.0),
-                    run.supercell_matrix,
-                )
+            fractional_position=list(initial_host),
+            cartesian_position=lattice_frac_to_cart(
+                initial_host, host_structure.lattice_vectors
             ),
             generation_method="imported_legacy",
             source_structure_id=host_structure.id,

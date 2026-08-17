@@ -209,6 +209,18 @@ Per imported site, one five-entity chain satisfying the eligibility contract.
    absolute total energy from the ``.castep`` — matching what the native
    completion path stores, despite the field name.
 
+   The site records where the muon *started*, not where it ended up. Native
+   completion updates status, run id and energy and never rewrites the
+   coordinates, so the relaxed position lives on the derived structure and in
+   the result payload instead. Diverging here would make an imported site mean
+   something different from every other site in the project.
+
+   Every position an imported row or site records is in the **host** frame.
+   Legacy states the muon position in the supercell frame, and job expansion
+   converts host to supercell on the way out, so storing supercell coordinates
+   would display the wrong numbers and transform them a second time if the row
+   were ever re-expanded.
+
 ``Job``
    ``MUON_RELAXATION``, ``COMPLETED``, calc type by detected charge state, tagged
    ``imported`` and ``legacy_mufinder``. ``execution_target`` stays ``"local"``;
@@ -495,7 +507,17 @@ Host structure and supercell inference
    relaxed cell equals ``S * L_host`` only when the cell was held fixed.
 2. Verify that ``S`` is integer within tolerance and that ``det(S) > 0``.
 3. Verify the atom count equals ``det(S) * N_host + 1``.
-4. Verify the host sublattice matches, modulo the muon.
+4. Verify the composition matches: the non-muon species are exactly the host's
+   composition repeated ``det(S)`` times.
+
+Steps 3 and 4 matter because a matching lattice is not proof on its own — two
+chemically unrelated materials can share a lattice closely enough to pass the
+integer-transform test, and importing against the wrong host would attach every
+site to a structure it has nothing to do with. Atomic *positions* are
+deliberately not compared: composition and count already exclude an unrelated
+cell, and a positional test would need the host tiled and matched atom-by-atom
+for no additional protection here. Scanning without host species skips both
+checks, so a host-less scan stays possible.
 
 On failure, refuse with a readable difference report. When the project has no
 host structure, offer to import the legacy folder's CIF as the host.

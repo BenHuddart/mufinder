@@ -25,9 +25,22 @@ HOST_LATTICE = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
 
 
 def _input_cell(*, muon_label: str = "H:mu", scale: int = 2, muon=(0.1, 0.2, 0.3)) -> str:
-    """A 2x2x2 supercell of a one-atom host with a muon appended."""
+    """A genuine ``scale``-cubed supercell of a one-atom host, plus a muon.
+
+    The host atoms really are tiled, not just the lattice scaled: the scan
+    verifies that the atom count is ``det(S) * N_host + 1`` and that the
+    composition matches, so a cell with a supercell lattice but un-tiled
+    contents is correctly rejected as not belonging to the host.
+    """
 
     length = 4.0 * scale
+    step = 1.0 / scale
+    host_atoms = "\n".join(
+        f"Si {i * step:.6f} {j * step:.6f} {k * step:.6f}"
+        for i in range(scale)
+        for j in range(scale)
+        for k in range(scale)
+    )
     return f"""%BLOCK LATTICE_CART
 ang
 {length} 0.0 0.0
@@ -36,7 +49,7 @@ ang
 %ENDBLOCK LATTICE_CART
 
 %BLOCK POSITIONS_FRAC
-Si 0.0 0.0 0.0
+{host_atoms}
 {muon_label} {muon[0]} {muon[1]} {muon[2]}
 %ENDBLOCK POSITIONS_FRAC
 
@@ -162,13 +175,13 @@ class TestSiteIndex:
 class TestMuonIndex:
     def test_prefers_the_muon_species(self) -> None:
         parsed = parse_cell_text(_input_cell())
-        assert muon_index(parsed) == (1, "H:mu")
+        assert muon_index(parsed) == (8, "H:mu")
 
     def test_falls_back_to_a_lone_bare_hydrogen(self) -> None:
         """The legacy label detector accepted a bare ``H``."""
 
         parsed = parse_cell_text(_input_cell(muon_label="H"))
-        assert muon_index(parsed) == (1, "H")
+        assert muon_index(parsed) == (8, "H")
 
     def test_refuses_a_bare_hydrogen_when_the_host_also_has_one(self) -> None:
         """Two hydrogens make a bare ``H`` ambiguous, so identify nothing.
@@ -176,7 +189,7 @@ class TestMuonIndex:
         Guessing here would silently import the wrong atom as the muon.
         """
 
-        text = _input_cell(muon_label="H").replace("Si 0.0 0.0 0.0", "H 0.0 0.0 0.0")
+        text = _input_cell(muon_label="H").replace("Si 0.000000 0.000000 0.000000", "H 0.0 0.0 0.0")
         assert muon_index(parse_cell_text(text)) is None
 
 
@@ -419,3 +432,57 @@ def test_parameter_conflict_describes_itself_readably() -> None:
     described = conflict.describe()
     assert "CUT_OFF_ENERGY" in described
     assert "castep" in described and "param" in described
+
+
+class TestHostCompositionChecks:
+    """A matching lattice is not enough to prove the cell belongs to the host.
+
+    Two unrelated materials can share a lattice closely enough to pass the
+    integer-transform test, and importing against the wrong host would attach
+    every site to a structure it has nothing to do with.
+    """
+
+    def test_a_matching_composition_is_accepted(self, tmp_path: Path) -> None:
+        root = build_folder(tmp_path, sites=(1,))
+
+        run = scan_legacy_folder(root, host_lattice=HOST_LATTICE, host_species=["Si"]).runs[0]
+
+        assert run.importable
+
+    def test_a_wrong_atom_count_is_blocked(self, tmp_path: Path) -> None:
+        """The fixture cell is a 2x2x2 supercell of a one-atom host, so a
+        two-atom host would need eight more atoms than are present."""
+
+        root = build_folder(tmp_path, sites=(1,))
+
+        run = scan_legacy_folder(
+            root, host_lattice=HOST_LATTICE, host_species=["Si", "Si"]
+        ).runs[0]
+
+        assert not run.importable
+        assert any("host atom(s)" in item for item in run.blockers)
+
+    def test_a_wrong_composition_is_blocked(self, tmp_path: Path) -> None:
+        root = build_folder(tmp_path, sites=(1,))
+
+        run = scan_legacy_folder(root, host_lattice=HOST_LATTICE, host_species=["Ge"]).runs[0]
+
+        assert not run.importable
+        assert any("composition" in item for item in run.blockers)
+
+    def test_the_muon_is_excluded_from_the_count(self, tmp_path: Path) -> None:
+        """The input cell is the tiled host *plus* one muon."""
+
+        root = build_folder(tmp_path, sites=(1,))
+        run = scan_legacy_folder(root, host_lattice=HOST_LATTICE, host_species=["Si"]).runs[0]
+
+        # 8 host atoms (2x2x2 of one) + 1 muon; a check that counted the muon
+        # would demand nine host atoms and reject a valid cell.
+        assert run.importable
+
+    def test_scanning_without_host_species_skips_the_check(self, tmp_path: Path) -> None:
+        """Scanning without a host stays possible."""
+
+        root = build_folder(tmp_path, sites=(1,))
+
+        assert scan_legacy_folder(root, host_lattice=HOST_LATTICE).runs[0].importable

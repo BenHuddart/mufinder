@@ -51,15 +51,21 @@ class LegacyScanWorker(QObject):
         self,
         root: Path,
         host_lattice: list[list[float]] | None,
+        host_species: list[str] | None = None,
     ) -> None:
         super().__init__()
         self._root = root
         self._host_lattice = host_lattice
+        self._host_species = host_species
 
     @Slot()
     def run(self) -> None:
         try:
-            scan = scan_legacy_folder(self._root, host_lattice=self._host_lattice)
+            scan = scan_legacy_folder(
+                self._root,
+                host_lattice=self._host_lattice,
+                host_species=self._host_species,
+            )
         except Exception as exc:  # noqa: BLE001 - reported to the user, never raised across threads
             self.failed.emit(str(exc))
             return
@@ -70,6 +76,7 @@ def start_legacy_scan(
     parent: QObject,
     root: Path,
     host_lattice: list[list[float]] | None,
+    host_species: list[str] | None,
     on_completed,
     on_failed,
 ) -> QThread:
@@ -80,7 +87,7 @@ def start_legacy_scan(
     queued connections.
     """
 
-    worker = LegacyScanWorker(root, host_lattice)
+    worker = LegacyScanWorker(root, host_lattice, host_species)
     thread = QThread(parent)
     worker.moveToThread(thread)
     thread.started.connect(worker.run)

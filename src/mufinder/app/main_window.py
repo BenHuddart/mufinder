@@ -12264,6 +12264,7 @@ class MainWindow(QMainWindow):
             self,
             root,
             [list(vector) for vector in host.lattice_vectors],
+            list(host.species),
             self._on_legacy_scan_completed,
             self._on_legacy_scan_failed,
         )

@@ -22,6 +22,7 @@ whole scan.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
@@ -293,6 +294,57 @@ def _magnitude(value: object) -> float | None:
     return None
 
 
+
+def _host_composition_blockers(
+    *,
+    input_cell: ParsedCell,
+    host_species: Sequence[str] | None,
+    determinant: int,
+) -> list[str]:
+    """Check the input cell really is the host tiled ``determinant`` times, plus a muon.
+
+    A matching lattice is not enough on its own. Two chemically unrelated
+    materials can share a lattice closely enough to pass the integer-transform
+    test, and importing against the wrong host would attach every site to a
+    structure it has nothing to do with.
+
+    Verifies the atom count (``det(S) * N_host + 1``) and that the non-muon
+    species are exactly the host's composition repeated ``det(S)`` times.
+    Positions are deliberately not compared: composition and count already
+    exclude an unrelated cell, and a positional test would need the host tiled
+    and matched atom-by-atom for no additional protection here.
+
+    Returns an empty list when the host composition is unknown — the caller
+    passed no species — so scanning without a host stays possible.
+    """
+
+    if not host_species:
+        return []
+
+    blockers: list[str] = []
+    species = [str(item).strip() for item in input_cell.species]
+    muon = muon_index(input_cell)
+    if muon is not None:
+        species.pop(muon[0])
+
+    expected_count = determinant * len(host_species)
+    if len(species) != expected_count:
+        blockers.append(
+            f"The input cell has {len(species)} host atom(s) but a "
+            f"{determinant}x supercell of the active host needs {expected_count}."
+        )
+        return blockers
+
+    expected = Counter(str(item).strip() for item in host_species)
+    for name in expected:
+        expected[name] *= determinant
+    if Counter(species) != expected:
+        blockers.append(
+            "The input cell's composition does not match the active host structure."
+        )
+    return blockers
+
+
 def _scan_castep(path: Path) -> tuple[CastepResult | None, CastepRunParameters | None, list[str]]:
     warnings: list[str] = []
     result: CastepResult | None = None
@@ -317,6 +369,7 @@ def _detect_run(
     out_cell_path: Path | None,
     run_param_path: Path | None,
     host_lattice: list[list[float]] | None,
+    host_species: Sequence[str] | None,
     supercell_tolerance: float,
 ) -> DetectedRun:
     warnings: list[str] = []
@@ -440,6 +493,14 @@ def _detect_run(
             blockers.append(
                 "The input cell is not an integer supercell of the active host structure."
             )
+        else:
+            blockers.extend(
+                _host_composition_blockers(
+                    input_cell=input_cell,
+                    host_species=host_species,
+                    determinant=detection.determinant,
+                )
+            )
 
     completed = bool(result.completed) if result is not None else False
     converged = result.geom_converged if result is not None else None
@@ -477,6 +538,7 @@ def scan_legacy_folder(
     root: Path | str,
     *,
     host_lattice: list[list[float]] | None = None,
+    host_species: Sequence[str] | None = None,
     supercell_tolerance: float = IMPORT_SUPERCELL_TOLERANCE,
 ) -> LegacyFolderScan:
     """Report the muon relaxations in a legacy working directory.
@@ -559,6 +621,7 @@ def scan_legacy_folder(
                 out_cell_path=paths.get("out_cell"),
                 run_param_path=paths.get("run_param"),
                 host_lattice=host_lattice,
+                host_species=host_species,
                 supercell_tolerance=supercell_tolerance,
             )
         )
