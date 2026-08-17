@@ -9,8 +9,7 @@ can be used as inputs for Quantum Corrections and Energy Barriers calculations.
 Scope is deliberately narrow: **muon structural relaxations only**. Convergence
 sweeps, pristine relaxations, UEP, and dipolar-field data are out of scope.
 
-Status: design agreed; phases 1-6 implemented (see Phasing). The remaining work
-is the removal cascade.
+Status: design agreed and fully implemented (see Phasing).
 
 Research data boundary
 ----------------------
@@ -755,7 +754,27 @@ Phasing
    project or no active host structure. Every imported structure hangs off the
    active host, so without one its downstream jobs would fail host resolution at
    submission time.
-7. **Removal cascade.**
+7. **Removal cascade** — *done*.
+   :mod:`mufinder.services.legacy_import_removal` resolves an import batch,
+   scans for references, and deletes entities, definition rows, job bindings and
+   files as one unit, with a provenance record and journal entry.
+
+   Removal **refuses** rather than warns, because an imported relaxation owns the
+   only copy of its results: the ``.castep``, the relaxed cell and the archive of
+   originals exist nowhere else in the project. A natively-run relaxation can be
+   re-run; this cannot.
+
+   The reference scan is the substance of the phase, and each referrer has its
+   own test so a scan that stops covering one fails a test that names it. The
+   muon-relaxation definition holding the imported rows is deliberately *not*
+   treated as a referrer — it is the thing being removed from, not a dependant,
+   or removal could never proceed at all.
+
+   Two guards sit inside the removal rather than only at its call site: a plan
+   with blockers removes nothing even if constructed by hand, and a job that has
+   stopped carrying the imported tag between planning and confirmation is left
+   alone. Plan ids are resolved before the user confirms, so if something changed
+   underneath, removing nothing beats deleting a job MuFinder itself ran.
 
 Verification checklist
 ----------------------

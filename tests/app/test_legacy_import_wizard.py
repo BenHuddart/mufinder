@@ -287,3 +287,135 @@ class TestScanWorker:
         worker.run()
 
         assert failures == ["disk on fire"]
+
+
+class TestRemovalAction:
+    def _imported_window(self, window: MainWindow, tmp_path: Path, host: Structure):
+        from mufinder.services.legacy_import_commit import commit_legacy_import
+
+        window._document = _document(tmp_path, host)
+        scan = _scan(build_folder(tmp_path / "legacy", sites=(1, 2)))
+        output_root = window._document.project_root / "files" / "muon_relaxation"
+        outcome = commit_legacy_import(
+            window._document,
+            scan=scan,
+            runs=scan.importable_runs,
+            host_structure=host,
+            output_root=output_root,
+        )
+        window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+        return outcome
+
+    def test_it_reports_when_nothing_is_imported(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window._document = _document(tmp_path, host_structure)
+        shown: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information",
+            lambda *args, **kwargs: shown.append(args[1]),
+        )
+
+        window._on_remove_imported_relaxations()
+
+        assert shown == ["Nothing imported"]
+
+    def test_batches_are_listed_with_their_source_and_size(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure
+    ) -> None:
+        self._imported_window(window, tmp_path, host_structure)
+
+        batches = window._imported_relaxation_batches()
+
+        assert len(batches) == 1
+        label, count, _batch_id = batches[0]
+        assert count == 2
+        assert label == "legacy"
+
+    def test_removal_refuses_while_something_still_uses_the_sites(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from uuid import uuid4
+
+        from mufinder.domain.models import CalculationDefinition
+        from mufinder.domain.enums import WorkflowStage as Stage
+
+        outcome = self._imported_window(window, tmp_path, host_structure)
+        window._document.calculations[uuid4()] = CalculationDefinition(
+            workflow_stage=Stage.QUANTUM_CORRECTIONS,
+            calc_type="castep_quantum_phonon",
+            input_site_ids=[outcome.imported[0].site_id],
+        )
+        warned: list[str] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning",
+            lambda *args, **kwargs: warned.append(args[2]),
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QInputDialog.getItem",
+            lambda *args, **kwargs: (args[3][0], True),
+        )
+        asked: list[int] = []
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.question",
+            lambda *args, **kwargs: asked.append(1),
+        )
+
+        window._on_remove_imported_relaxations()
+
+        assert warned and "quantum_corrections" in warned[0]
+        # Refused before the confirmation, so the user is never asked to confirm
+        # something that cannot happen.
+        assert asked == []
+        assert outcome.imported[0].site_id in window._document.sites
+
+    def test_removal_drops_the_rows_and_the_entities(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        outcome = self._imported_window(window, tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QInputDialog.getItem",
+            lambda *args, **kwargs: (args[3][0], True),
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.question",
+            lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        window._on_remove_imported_relaxations()
+
+        assert window._document.sites == {}
+        assert window._document.jobs == {}
+        definition = window._active_muon_relaxation_definition()
+        assert definition.parameters["configuration"]["rows"] == []
+        assert definition.parameters["job_ids_by_label"] == {}
+        # The widget no longer shows them either.
+        assert window._muon_relaxation_view.collect_state()["rows"] == []
+
+    def test_declining_the_confirmation_changes_nothing(
+        self, window: MainWindow, tmp_path: Path, host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        outcome = self._imported_window(window, tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QInputDialog.getItem",
+            lambda *args, **kwargs: (args[3][0], True),
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.question",
+            lambda *args, **kwargs: QMessageBox.StandardButton.No,
+        )
+
+        window._on_remove_imported_relaxations()
+
+        assert len(window._document.sites) == 2
+        assert all(item.job_directory.is_dir() for item in outcome.imported)

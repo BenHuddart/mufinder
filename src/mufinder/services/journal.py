@@ -145,6 +145,7 @@ def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
     mapping = {
         "import_structure": _import_structure_entry,
         "import_legacy_relaxations": _import_legacy_relaxations_entry,
+        "remove_imported_relaxations": _remove_imported_relaxations_entry,
         "configure_convergence_cutoff": _configure_cutoff_entry,
         "configure_convergence_kpoint": _configure_kpoint_entry,
         "configure_pristine_relaxation": _configure_pristine_relaxation_entry,
@@ -259,6 +260,30 @@ def _import_legacy_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
         record,
         stamp_kind="warning" if (skipped or conflicts) else "milestone",
         title="Legacy relaxations imported",
+        body=body,
+    )
+
+
+def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
+    """Describe one removal of imported relaxations.
+
+    Stamped as a warning rather than a milestone: an imported relaxation holds
+    the only copy of its results, so its removal is not recoverable from within
+    the project the way re-running a native relaxation is.
+    """
+
+    labels = record.parameters.get("labels")
+    count = len(labels) if isinstance(labels, list) else 0
+    body = f"Removed {count} imported muon relaxation(s) from the project."
+    if record.parameters.get("deleted_files"):
+        body += (
+            " Their job directories were deleted, including the archived original "
+            "input files."
+        )
+    return _entry(
+        record,
+        stamp_kind="warning",
+        title="Imported relaxations removed",
         body=body,
     )
 

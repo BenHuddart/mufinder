@@ -114,7 +114,13 @@ from mufinder.app.energy_barriers_widget import (
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
 from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
 from mufinder.services.legacy_import import LegacyFolderScan
-from mufinder.services.legacy_import_commit import commit_legacy_import
+from mufinder.services.legacy_import_commit import IMPORT_ACTION, commit_legacy_import
+from mufinder.services.legacy_import_removal import (
+    detach_rows_from_definition,
+    imported_relaxations_in_batch,
+    plan_removal,
+    remove_imported_relaxations,
+)
 from mufinder.app.relaxation_adapter import (
     MUON_RELAXATION_CALC_TYPES,
     MUONIUM_CHARGE_STATE,
@@ -2013,6 +2019,7 @@ class MainWindow(QMainWindow):
         self._muon_generation_view.create_jobs_requested.connect(self._on_create_muon_relaxation_jobs_requested)
         self._muon_generation_view.form_state_changed.connect(self._on_muon_form_state_changed)
         self._import_legacy_action = None
+        self._remove_imported_action = None
         self._legacy_scan_thread = None
         self._legacy_scan_host: Structure | None = None
         self._legacy_scan_root: Path | None = None
@@ -2598,6 +2605,9 @@ class MainWindow(QMainWindow):
 
         self._import_legacy_action = file_menu.addAction("Import Legacy Relaxations...")
         self._import_legacy_action.triggered.connect(self._on_import_legacy_relaxations)
+
+        self._remove_imported_action = file_menu.addAction("Remove Imported Relaxations...")
+        self._remove_imported_action.triggered.connect(self._on_remove_imported_relaxations)
 
         file_menu.addSeparator()
 
@@ -12354,6 +12364,132 @@ class MainWindow(QMainWindow):
             messages.extend(f"- {note}" for note in dict.fromkeys(row_warnings))
         QMessageBox.information(self, "Import complete", "\n".join(messages))
         self.statusBar().showMessage(f"Imported {len(outcome.imported)} legacy relaxation(s)")
+
+    def _on_remove_imported_relaxations(self) -> None:
+        """Remove one import batch, or explain why it cannot be removed.
+
+        An imported relaxation owns the only copy of its results, so this is
+        irreversible in a way that removing a natively-run relaxation is not:
+        that one can be re-run. The reference check therefore refuses rather
+        than warns, and the confirmation names what will be deleted.
+        """
+
+        document = self._document
+        if document is None:
+            QMessageBox.information(self, "No project open", "Open a project first.")
+            return
+
+        batches = self._imported_relaxation_batches()
+        if not batches:
+            QMessageBox.information(
+                self,
+                "Nothing imported",
+                "This project contains no imported relaxations.",
+            )
+            return
+
+        labels = [
+            f"{label} ({count} relaxation(s))" for label, count, _batch_id in batches
+        ]
+        choice, accepted = QInputDialog.getItem(
+            self, "Remove Imported Relaxations", "Import batch", labels, 0, False
+        )
+        if not accepted:
+            return
+        batch_id = batches[labels.index(choice)][2]
+
+        refs = imported_relaxations_in_batch(document, batch_id)
+        directories = {
+            ref.job_id: path
+            for ref in refs
+            if (path := self._job_output_directory(document.jobs[ref.job_id])) is not None
+        }
+        plan = plan_removal(document, refs, job_directories=directories)
+
+        if plan.blockers:
+            QMessageBox.warning(
+                self,
+                "Still in use",
+                "These imported relaxations cannot be removed because they are still "
+                "used by:\n\n"
+                + "\n".join(f"- {item}" for item in plan.blockers)
+                + "\n\nRemove those first.",
+            )
+            return
+
+        confirmed = QMessageBox.question(
+            self,
+            "Remove imported relaxations?",
+            f"Permanently remove {len(plan.targets)} imported relaxation(s) and delete "
+            "their job directories, including the archived original input files?\n\n"
+            "MuFinder did not run these calculations and cannot recreate them.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+
+        removed, errors = remove_imported_relaxations(document, plan, batch_id=batch_id)
+        definition = self._active_muon_relaxation_definition()
+        if definition is not None:
+            detach_rows_from_definition(definition, plan.targets)
+            self._muon_relaxation_view.set_form_state(
+                self._muon_relaxation_form_state_without(plan.targets)
+            )
+            document.ui_state["muon_relaxation_form"] = (
+                self._muon_relaxation_view.collect_state()
+            )
+
+        self._refresh_muon_relaxation_rows()
+        self._refresh_jobs_table()
+        self._refresh_muon_sites_summary()
+        self._persist_document_ui_state(
+            failure_message="Imported relaxations were removed, but autosave failed.",
+        )
+
+        if errors:
+            QMessageBox.warning(self, "Removal issues", "\n".join(errors))
+        self.statusBar().showMessage(f"Removed {removed} imported relaxation(s)")
+
+    def _muon_relaxation_form_state_without(self, targets) -> dict[str, object]:
+        """Return the widget's form state with ``targets``' rows dropped."""
+
+        state = self._muon_relaxation_view.collect_state()
+        rows = state.get("rows", []) if isinstance(state, dict) else []
+        removed = {str(ref.site_id) for ref in targets}
+        return {
+            "rows": [row for row in rows if str(row.get("site_id", "")) not in removed]
+        }
+
+    def _imported_relaxation_batches(self) -> list[tuple[str, int, UUID]]:
+        """Return ``(label, count, batch_id)`` for every import batch present."""
+
+        document = self._document
+        if document is None:
+            return []
+        counts: dict[str, int] = {}
+        for site in document.sites.values():
+            raw = site.properties.get("import_batch_id")
+            if raw:
+                counts[str(raw)] = counts.get(str(raw), 0) + 1
+
+        labels: dict[str, str] = {}
+        for record in document.provenance:
+            if record.action != IMPORT_ACTION:
+                continue
+            raw_batch = record.parameters.get("batch_id")
+            source = record.parameters.get("source_folder")
+            if raw_batch:
+                labels[str(raw_batch)] = Path(str(source)).name if source else "imported batch"
+
+        batches: list[tuple[str, int, UUID]] = []
+        for raw_batch, count in counts.items():
+            try:
+                batch_id = UUID(raw_batch)
+            except ValueError:
+                continue
+            batches.append((labels.get(raw_batch, "imported batch"), count, batch_id))
+        return sorted(batches, key=lambda item: item[0])
 
     def merge_imported_relaxation_rows(
         self,
