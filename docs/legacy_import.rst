@@ -314,12 +314,32 @@ widget honours them to render a badge and to disable in-place editing, row
 removal, inclusion in a batch parameter edit, and continuation. The parameter
 dialog is opened read-only, which it already supports.
 
-**The flag must survive reconfiguration.** Whenever the user configures rows, a
-*new* definition is registered from the widget's current configuration. Unless
-the flag and batch id are threaded through the widget's internal row state, its
-state collection and restoration, *and* the configuration serialiser and
-deserialiser, the flag is silently dropped on the first reconfigure — every
-read-only gate dissolves while the imported entities and files remain.
+**The flag must survive reconfiguration** — *implemented*. Whenever the user
+configures rows, a *new* definition is registered from the widget's current
+configuration. Unless the flag and batch id are threaded through the widget's
+internal row state, its state collection and restoration, *and* the
+configuration serialiser and deserialiser, the flag is silently dropped on the
+first reconfigure — every read-only gate dissolves while the imported entities
+and files remain.
+
+Both fields are additive with defaults, so a project saved before the import
+existed loads with every row treated as natively staged, which is correct. They
+carry a ledger entry in ``compatibility_policy``: neither may be dropped without
+a migration that first relocates the marker, because a row that loses its flag
+becomes editable and resubmittable while its imported entities and files remain.
+
+The row signature includes both fields deliberately. Signature equality gates
+whether a row renders with its real status, so a marker dropped from one side of
+the form/definition pair makes the row visibly fall back to "ready" — far better
+than rendering correctly while silently becoming editable.
+
+.. warning::
+
+   The widget's state shape is **not** the definition's configuration shape.
+   The widget names the position ``fractional_position`` where the configuration
+   says ``initial_fractional_position``, so feeding one directly to the other
+   parses without error and silently zeroes every position. The import commit
+   writes both shapes and must build each explicitly.
 
 **Recovered parameters are filtered by the widget.** Row normalisation discards
 names outside the widget's spec set and values equal to implicit project
@@ -668,9 +688,11 @@ Phasing
    ``.cell`` rounding, of order 1e-6. Keeping comparison's default here would
    accept a 7% lattice mismatch as a supercell and import a run against the
    wrong host.
-3. **Row model.** The ``imported`` flag and batch id, threaded through widget
-   state and the serialiser pair. Deliberately ahead of entity construction,
-   which writes definition rows that must already carry the flag.
+3. **Row model** — *done*. The ``imported`` flag and batch id on
+   ``MuonRelaxationRow``, threaded through the widget's per-row state, its state
+   collection and restoration, the configuration serialiser pair, and the row
+   signature. Deliberately ahead of entity construction, which writes definition
+   rows that must already carry the flag.
 4. **Entity construction and file materialisation.** The five-entity chain, the
    rendered seed files, the archive, provenance. Testable against the
    eligibility gate *and* host resolution — but not "done" on eligibility alone,

@@ -35,7 +35,20 @@ class PristineRelaxationConfig:
 
 @dataclass(frozen=True, slots=True)
 class MuonRelaxationRow:
-    """One staged muon structural-relaxation job row."""
+    """One staged muon structural-relaxation job row.
+
+    ``imported`` marks a row that was ingested from a calculation performed
+    outside MuFinder rather than staged and run here. Such a row is read-only:
+    its parameters describe a run that has already happened, so editing them
+    would misdescribe it, and re-running it would discard the very result the
+    import exists to preserve.
+
+    The flag must survive every round trip that touches a row — the widget's
+    state collection and restoration, and the configuration serialiser pair.
+    Configuring any row re-registers the whole definition from the widget's
+    current state, so a flag dropped anywhere in that loop silently unlocks
+    every imported row while its entities and files remain.
+    """
 
     site_id: UUID
     label: str
@@ -44,6 +57,10 @@ class MuonRelaxationRow:
     supercell_matrix: SupercellMatrix | None = None
     parameter_values: dict[str, object] = field(default_factory=dict)
     added_advanced: tuple[str, ...] = ()
+    imported: bool = False
+    #: Groups rows ingested by one import, so they can be reported and removed
+    #: together. ``None`` on a natively staged row.
+    import_batch_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)

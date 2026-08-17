@@ -265,6 +265,10 @@ class MuonRelaxationWidget(QWidget):
         self._row_supercells: dict[int, SupercellMatrix | None] = {}
         self._row_parameter_values: dict[int, dict[str, object]] = {}
         self._row_added_advanced: dict[int, set[str]] = {}
+        # Rows ingested from a calculation performed outside MuFinder. Membership
+        # is the read-only marker; the batch id groups one import's rows.
+        self._row_imported: set[int] = set()
+        self._row_import_batch_ids: dict[int, UUID] = {}
         self._runtime_states: dict[str, RelaxationRunState] = {}
         self._supercell_options: list[tuple[str, SupercellMatrix]] = []
         self._parameter_species_options: tuple[str, ...] = ()
@@ -1378,6 +1382,8 @@ class MuonRelaxationWidget(QWidget):
             self._row_supercells.pop(row_id, None)
             self._row_parameter_values.pop(row_id, None)
             self._row_added_advanced.pop(row_id, None)
+            self._row_imported.discard(row_id)
+            self._row_import_batch_ids.pop(row_id, None)
         if removed_labels:
             self.remove_requested.emit(removed_labels)
             self._refresh_batch_button_state()
@@ -1418,6 +1424,8 @@ class MuonRelaxationWidget(QWidget):
                         supercell_matrix=self._row_supercells.get(row_id),
                         parameter_values=dict(self._row_parameter_values.get(row_id, {})),
                         added_advanced=tuple(sorted(self._row_added_advanced.get(row_id, set()))),
+                        imported=row_id in self._row_imported,
+                        import_batch_id=self._row_import_batch_ids.get(row_id),
                     )
                 )
         return MuonRelaxationConfig(rows=tuple(rows))
@@ -1512,6 +1520,12 @@ class MuonRelaxationWidget(QWidget):
                         ),
                         "parameter_values": dict(self._row_parameter_values.get(row_id, {})),
                         "added_advanced": sorted(self._row_added_advanced.get(row_id, set())),
+                        "imported": row_id in self._row_imported,
+                        "import_batch_id": (
+                            str(self._row_import_batch_ids[row_id])
+                            if row_id in self._row_import_batch_ids
+                            else None
+                        ),
                     }
                 )
         return {"rows": rows}
@@ -1529,6 +1543,8 @@ class MuonRelaxationWidget(QWidget):
             self._row_supercells.clear()
             self._row_parameter_values.clear()
             self._row_added_advanced.clear()
+            self._row_imported.clear()
+            self._row_import_batch_ids.clear()
             raw_rows = state.get("rows", []) if isinstance(state, dict) else []
             if not isinstance(raw_rows, list):
                 raw_rows = []
@@ -1559,6 +1575,16 @@ class MuonRelaxationWidget(QWidget):
                 added = entry.get("added_advanced", [])
                 if isinstance(added, list):
                     self._row_added_advanced[row_id] = {str(name) for name in added if isinstance(name, str)}
+                if bool(entry.get("imported", False)):
+                    self._row_imported.add(row_id)
+                    raw_batch_id = entry.get("import_batch_id")
+                    if raw_batch_id is not None:
+                        try:
+                            self._row_import_batch_ids[row_id] = UUID(str(raw_batch_id))
+                        except (TypeError, ValueError):
+                            # A malformed batch id must not silently unlock the
+                            # row: keep it imported, just ungrouped.
+                            pass
             self._normalize_all_row_parameter_values()
             self._refresh_all_rows()
             self._refresh_batch_button_state()

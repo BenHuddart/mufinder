@@ -11147,6 +11147,12 @@ class MainWindow(QMainWindow):
             self._normalized_supercell_matrix(row.supercell_matrix),
             self._normalized_parameter_values(row.parameter_values),
             tuple(str(name) for name in row.added_advanced),
+            # Included deliberately. If the imported marker is ever dropped from
+            # one side of the form/definition pair, the signatures stop matching
+            # and the row visibly falls back to "ready" -- far better than the
+            # row rendering correctly while silently becoming editable.
+            bool(row.imported),
+            str(row.import_batch_id) if row.import_batch_id is not None else None,
         )
 
     def _uep_row_signature(self, row: UepSourceRow) -> tuple[object, ...]:
@@ -12172,6 +12178,10 @@ class MainWindow(QMainWindow):
                     ),
                     "parameter_values": dict(row.parameter_values),
                     "added_advanced": list(row.added_advanced),
+                    "imported": bool(row.imported),
+                    "import_batch_id": (
+                        str(row.import_batch_id) if row.import_batch_id is not None else None
+                    ),
                 }
                 for row in config.rows
             ]
@@ -12220,6 +12230,13 @@ class MainWindow(QMainWindow):
                 if isinstance(raw_advanced, list)
                 else ()
             )
+            import_batch_id: UUID | None = None
+            raw_batch_id = entry.get("import_batch_id")
+            if raw_batch_id is not None:
+                try:
+                    import_batch_id = UUID(str(raw_batch_id))
+                except (TypeError, ValueError):
+                    import_batch_id = None
             rows.append(
                 MuonRelaxationRow(
                     site_id=site_id,
@@ -12233,6 +12250,8 @@ class MainWindow(QMainWindow):
                     supercell_matrix=matrix,
                     parameter_values=restored_params,
                     added_advanced=added_advanced,
+                    imported=bool(entry.get("imported", False)),
+                    import_batch_id=import_batch_id,
                 )
             )
         return MuonRelaxationConfig(rows=tuple(rows))
