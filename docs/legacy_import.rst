@@ -693,10 +693,25 @@ Phasing
    collection and restoration, the configuration serialiser pair, and the row
    signature. Deliberately ahead of entity construction, which writes definition
    rows that must already carry the flag.
-4. **Entity construction and file materialisation.** The five-entity chain, the
-   rendered seed files, the archive, provenance. Testable against the
+4. **Entity construction and file materialisation** — *done*.
+   :mod:`mufinder.services.legacy_import_commit` builds the five-entity chain,
+   renders the seed files, archives the originals with digests, and appends one
+   provenance record per batch with a matching journal entry. Tested against the
    eligibility gate *and* host resolution — but not "done" on eligibility alone,
    since a row cannot render completed with an energy until the next phase.
+
+   The rendered ``.param`` resolves mutually exclusive keywords rather than
+   merging them. A legacy run typically declares ``BASIS_PRECISION`` while the
+   output echo reports the ``CUT_OFF_ENERGY`` CASTEP derived from it, so a
+   merged parameter set legitimately holds both — and CASTEP treats them as
+   exclusive. The resolved cutoff wins, because it is what the calculation
+   actually used and what downstream jobs inherit; the superseded keyword is
+   reported rather than dropped silently.
+
+   Because ``services`` may not import ``app``, the definition rows this stage
+   produces are plain payload dictionaries in the persisted configuration shape.
+   Merging them into the active definition needs the widget and so belongs to
+   the next phase.
 5. **Table integration.** Form-state mirroring, read-only rendering, gating of
    continuation, editing, batch configuration and removal, and the dashboard
    resubmit, reset and cleanup gates for failed imports.
