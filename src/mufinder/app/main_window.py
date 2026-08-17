@@ -19,7 +19,7 @@ from typing import TypeVar
 from uuid import UUID, uuid4
 
 import numpy as np
-from PySide6.QtCore import QByteArray, QEventLoop, QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QByteArray, QEventLoop, QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import (
     QActionGroup,
     QBrush,
@@ -112,6 +112,9 @@ from mufinder.app.energy_barriers_widget import (
     EnergyBarrierSourceRow,
 )
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
+from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
+from mufinder.services.legacy_import import LegacyFolderScan
+from mufinder.services.legacy_import_commit import commit_legacy_import
 from mufinder.app.relaxation_adapter import (
     MUON_RELAXATION_CALC_TYPES,
     MUONIUM_CHARGE_STATE,
@@ -2009,6 +2012,10 @@ class MainWindow(QMainWindow):
         self._muon_generation_view.delete_candidates_requested.connect(self._on_delete_muon_candidates_requested)
         self._muon_generation_view.create_jobs_requested.connect(self._on_create_muon_relaxation_jobs_requested)
         self._muon_generation_view.form_state_changed.connect(self._on_muon_form_state_changed)
+        self._import_legacy_action = None
+        self._legacy_scan_thread = None
+        self._legacy_scan_host: Structure | None = None
+        self._legacy_scan_root: Path | None = None
         self._muon_relaxation_view = MuonRelaxationWidget()
         self._muon_relaxation_view.configure_requested.connect(self._on_muon_relaxation_configured)
         self._muon_relaxation_view.form_state_changed.connect(self._on_muon_relaxation_form_state_changed)
@@ -2586,6 +2593,11 @@ class MainWindow(QMainWindow):
 
         save_action = file_menu.addAction(icon("save_project"), "Save Project")
         save_action.triggered.connect(self._save_project)
+
+        file_menu.addSeparator()
+
+        self._import_legacy_action = file_menu.addAction("Import Legacy Relaxations...")
+        self._import_legacy_action.triggered.connect(self._on_import_legacy_relaxations)
 
         file_menu.addSeparator()
 
@@ -12195,6 +12207,153 @@ class MainWindow(QMainWindow):
             name_prefix=str(payload.get("name_prefix", "pristine_relax")).strip() or "pristine_relax",
             rows=tuple(rows),
         )
+
+    def _on_import_legacy_relaxations(self) -> None:
+        """Scan a legacy MuFinder folder and import the relaxations chosen from it."""
+
+        document = self._document
+        if document is None:
+            QMessageBox.information(
+                self,
+                "No project open",
+                "Open or create a project before importing legacy relaxations.",
+            )
+            return
+
+        host = self._project_service.active_host_structure(document)
+        if host is None:
+            # Deliberately not offered as "import anyway": every imported
+            # structure must hang off the active host, or its downstream jobs
+            # fail host resolution at submission time.
+            QMessageBox.information(
+                self,
+                "No host structure",
+                "Import a host structure first. Imported relaxations are anchored to "
+                "the project's active host so the sites they create can be used "
+                "downstream.",
+            )
+            return
+
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select a legacy MuFinder working folder"
+        )
+        if not directory:
+            return
+
+        self._begin_legacy_scan(Path(directory), host)
+
+    def _begin_legacy_scan(self, root: Path, host: Structure) -> None:
+        """Scan ``root`` on a worker thread, then review and commit."""
+
+        self.statusBar().showMessage(f"Scanning {root.name} for legacy relaxations...")
+        if self._import_legacy_action is not None:
+            self._import_legacy_action.setEnabled(False)
+        self._legacy_scan_host = host
+        self._legacy_scan_root = root
+        self._legacy_scan_thread = start_legacy_scan(
+            self,
+            root,
+            [list(vector) for vector in host.lattice_vectors],
+            self._on_legacy_scan_completed,
+            self._on_legacy_scan_failed,
+        )
+
+    @Slot(str)
+    def _on_legacy_scan_failed(self, message: str) -> None:
+        self._finish_legacy_scan()
+        QMessageBox.warning(self, "Import failed", f"Could not scan the folder:\n{message}")
+
+    @Slot(object)
+    def _on_legacy_scan_completed(self, scan: object) -> None:
+        self._finish_legacy_scan()
+        document = self._document
+        host = self._legacy_scan_host
+        if document is None or host is None or not isinstance(scan, LegacyFolderScan):
+            return
+
+        if not scan.runs:
+            QMessageBox.information(
+                self,
+                "Nothing to import",
+                "No muon relaxations were found in that folder.\n\n"
+                + "\n".join(scan.warnings),
+            )
+            return
+
+        dialog = LegacyImportDialog(scan, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dialog.selected_runs()
+        if not selected:
+            return
+
+        self._commit_legacy_import(scan, selected, host)
+
+    def _finish_legacy_scan(self) -> None:
+        self._legacy_scan_thread = None
+        if self._import_legacy_action is not None:
+            self._import_legacy_action.setEnabled(True)
+        self.statusBar().clearMessage()
+
+    def _commit_legacy_import(
+        self, scan: LegacyFolderScan, runs: list, host: Structure
+    ) -> None:
+        """Build entities and files, attach the rows, and save."""
+
+        document = self._document
+        if document is None:
+            return
+
+        output_root = document.project_root / "files" / WorkflowStage.MUON_RELAXATION.value
+        definition = self._active_muon_relaxation_definition()
+        existing_labels: list[str] = []
+        if definition is not None:
+            config = self._deserialize_muon_relaxation_config(
+                definition.parameters.get("configuration", {})
+            )
+            if config is not None:
+                existing_labels = [row.label for row in config.rows]
+
+        try:
+            outcome = commit_legacy_import(
+                document,
+                scan=scan,
+                runs=runs,
+                host_structure=host,
+                output_root=output_root,
+                existing_labels=existing_labels,
+            )
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Import failed", f"Could not write the imported files:\n{exc}"
+            )
+            return
+
+        if not self.merge_imported_relaxation_rows(outcome, output_directory=output_root):
+            QMessageBox.warning(
+                self,
+                "Import incomplete",
+                "The relaxations were imported but could not be attached to the "
+                "relaxations table.",
+            )
+            return
+
+        self._refresh_muon_relaxation_rows()
+        self._refresh_jobs_table()
+        self._refresh_muon_sites_summary()
+        self._persist_document_ui_state(
+            failure_message="Legacy relaxations were imported, but autosave failed.",
+        )
+
+        messages = [f"Imported {len(outcome.imported)} relaxation(s)."]
+        if outcome.skipped:
+            messages.append(f"{len(outcome.skipped)} were skipped.")
+        row_warnings = [note for item in outcome.imported for note in item.warnings]
+        if row_warnings:
+            messages.append("")
+            messages.extend(f"- {note}" for note in dict.fromkeys(row_warnings))
+        QMessageBox.information(self, "Import complete", "\n".join(messages))
+        self.statusBar().showMessage(f"Imported {len(outcome.imported)} legacy relaxation(s)")
 
     def merge_imported_relaxation_rows(
         self,

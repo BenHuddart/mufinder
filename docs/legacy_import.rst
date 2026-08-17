@@ -9,8 +9,8 @@ can be used as inputs for Quantum Corrections and Energy Barriers calculations.
 Scope is deliberately narrow: **muon structural relaxations only**. Convergence
 sweeps, pristine relaxations, UEP, and dipolar-field data are out of scope.
 
-Status: design agreed; implementation in progress. Sections marked *planned*
-describe behaviour that is specified but not yet implemented.
+Status: design agreed; phases 1-6 implemented (see Phasing). The remaining work
+is the removal cascade.
 
 Research data boundary
 ----------------------
@@ -730,8 +730,31 @@ Phasing
    already does. The marker is applied by style and tooltip, never by editing the
    label text: the label is read back as the row's identity, so decorating it
    would corrupt the row key.
-6. **Wizard.** Folder picker, detected-run table with selection, conflict,
-   catalog-fidelity and host-match warnings, commit.
+6. **Wizard** — *done*. ``File > Import Legacy Relaxations...`` picks a folder,
+   scans it on a worker thread, and opens
+   :class:`~mufinder.app.legacy_import_dialog.LegacyImportDialog` for review
+   before anything is committed.
+
+   The dialog is a **review** step rather than a confirmation. An import writes
+   entities and files that are then read-only, and it resolves real ambiguities
+   along the way: a stale local input tree disagreeing with the output, an
+   undetermined charge state, a muon labelled with a bare ``H``. Those
+   resolutions are defensible, but they are the user's science, so each is shown
+   before the commit rather than reported after it.
+
+   Runs that *cannot* be imported are listed rather than hidden, with the reason
+   in their Notes column, so their absence is explained instead of mysterious.
+   Converged runs are pre-ticked; everything else is offered unticked.
+
+   Scanning runs on a worker thread. A folder can hold dozens of multi-megabyte
+   outputs, and parsing them on the GUI thread would freeze the window — the
+   risk noted below. The worker reports failure as a signal rather than raising,
+   because an exception crossing a thread boundary would simply be lost.
+
+   The action refuses early — before the folder picker opens — when there is no
+   project or no active host structure. Every imported structure hangs off the
+   active host, so without one its downstream jobs would fail host resolution at
+   submission time.
 7. **Removal cascade.**
 
 Verification checklist
@@ -775,8 +798,10 @@ Open risks
 - **Multi-restart ``.castep`` files.** The existing parser reads the last run
   segment for status, but the header dump repeats per restart. Read the *last*
   dump.
-- **Large folders.** Parsing dozens of multi-megabyte outputs must not run on the
-  Qt main thread.
+- **Large folders** — *addressed*. Scanning runs on a worker thread, so parsing
+  dozens of multi-megabyte outputs no longer blocks the GUI. The commit itself
+  still runs inline; it copies files rather than parsing them, but a very large
+  batch may warrant the same treatment.
 - **Catalog drift between imports.** Two imports into the same project under
   different CASTEP versions can map different keyword sets. The recorded CASTEP
   version per import makes this diagnosable rather than invisible.
