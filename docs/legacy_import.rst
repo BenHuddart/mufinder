@@ -279,7 +279,15 @@ the definition row drops the row to a fallback that only accepts jobs in an
 active status — and an imported job is ``COMPLETED``, not active — so the row
 renders as "ready" with no energy. The importer must therefore store *the
 widget's normalised values*: push rows in, read the widget's state back, and
-persist what comes back.
+persist what comes back. ``merge_imported_relaxation_rows`` mirrors **before** it
+appends, and builds the definition rows from what the widget returns rather than
+from the payloads it passed in; if the mirror declines the batch, the definition
+is left untouched rather than holding rows the form never received.
+
+For an imported row the widget's normalisation is coercion only — see
+`Recovered parameters on an imported row`_ — so the read-back is value-identical
+to what went in. That is what makes the two sides stable against later changes to
+project defaults and host lattice.
 
 **Label uniqueness is mandatory.** The job mapping is keyed on
 ``{prefix}:{label}``, so an imported label colliding with a native one in the
@@ -352,12 +360,66 @@ than rendering correctly while silently becoming editable.
    parses without error and silently zeroes every position. The import commit
    writes both shapes and must build each explicitly.
 
-**Recovered parameters are filtered by the widget.** Row normalisation discards
-names outside the widget's spec set and values equal to implicit project
-defaults, so some recovered keywords never appear as row parameters or in the
-dialog. That is acceptable under the priority ordering, but the wizard must not
-imply the row carries the complete recovered set: the on-disk ``.param`` and the
-provenance record are the authoritative copies.
+Recovered parameters on an imported row
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An imported row carries the parameters its run actually used, and the parameter
+dialog shows exactly those. Anything else is a fabrication: the workflow's
+current defaults are plausible values for the same material, so a default cutoff
+or tolerance displayed against a historical run reads as fact.
+
+**One resolution feeds both the row and the rendered files.**
+``resolve_recovered_parameters`` is shared by ``_param_for_seed`` and
+``row_parameter_values``. The row is what the dialog shows; the ``.param`` is
+what downstream jobs inherit. Two descriptions of the same run that disagree
+would be worse than either being wrong alone, so the mutually-exclusive
+resolution rule lives in one place rather than being restated at each call site.
+The row additionally carries ``KPOINT_MP_GRID``, which belongs to the ``.cell``,
+and omits the four keywords the import *asserts* rather than recovers
+(``TASK``, ``CHARGE``, ``FIX_ALL_CELL``, ``WRITE_CELL_STRUCTURE``) because the
+dialog already renders those as locked values.
+
+**Imported rows are exempt from default-stripping and default-layering, and this
+is a correctness requirement rather than a display preference.** Normalisation
+strips values equal to ``_implicit_params_for_row``, which folds in the *current*
+project defaults and the *current* suggested k-point grid — and it re-runs over
+every row on each ``set_form_state``, ``set_project_defaults`` and
+``set_host_lattice``. The definition row is a frozen snapshot taken at import and
+never re-registered. So if stripping applied, the day a project default came to
+equal an imported value — adopting the very cutoff a convergence run recommends
+is the obvious way — the value would vanish from the form but not the definition,
+the signature would stop matching, and the completed import would render as
+"ready" with no energy. What an imported row stores must be a pure function of
+the import.
+
+For the same reason, an imported row keeps keyword names the runtime catalog does
+not recognise instead of dropping them: catalog discovery is environment-dependent
+(see :mod:`mufinder.castep_io.schema`), so the same project can meet a thinner
+catalog on another machine. The passed-through values are inert — imported rows
+are never edited, expanded or submitted.
+
+``added_advanced`` is stored **empty** and must stay that way. The parameter
+dialog promotes any advanced keyword arriving with an active value, so a
+recovered advanced keyword renders without being listed; computing the list at
+import time would instead tie the row signature to the runtime catalog.
+
+**Imported rows must not reach job expansion or GUI validation.** Both run over
+the whole configuration and both turn one bad row into a result indistinguishable
+from "nothing to submit" — ``materialize`` swallows the ``ValueError`` into an
+empty list, and ``_build_config_or_warn`` returns ``None``, disabling the Run
+buttons for the entire table. Since a recovered value comes from third-party
+output rather than being authored against the current schema, one imported row
+could otherwise take every *native* row's submission down with it. Expansion
+filters them via ``_without_imported_rows``; validation skips them outright.
+Neither loses anything: an imported row already owns a COMPLETED job.
+
+.. note::
+
+   The dialog also suppresses its k-point pre-fill for imported rows. The
+   suggested spacing is derived from the project reference lattice and grid, not
+   from the row's own recovered grid, so pre-filling it would display a spacing
+   the run never used — in a dialog that opens read-only precisely to report what
+   the run did use.
 
 Files on disk
 -------------
@@ -716,18 +778,30 @@ Phasing
    rows that must already carry the flag.
 4. **Entity construction and file materialisation** — *done*.
    :mod:`mufinder.services.legacy_import_commit` builds the five-entity chain,
-   renders the seed files, archives the originals with digests, and appends one
+   renders the seed files, archives the originals with digests, and returns one
    provenance record per batch with a matching journal entry. Tested against the
    eligibility gate *and* host resolution — but not "done" on eligibility alone,
    since a row cannot render completed with an energy until the next phase.
 
-   The rendered ``.param`` resolves mutually exclusive keywords rather than
-   merging them. A legacy run typically declares ``BASIS_PRECISION`` while the
-   output echo reports the ``CUT_OFF_ENERGY`` CASTEP derived from it, so a
-   merged parameter set legitimately holds both — and CASTEP treats them as
-   exclusive. The resolved cutoff wins, because it is what the calculation
-   actually used and what downstream jobs inherit; the superseded keyword is
-   reported rather than dropped silently.
+   ``resolve_recovered_parameters`` resolves mutually exclusive keywords rather
+   than merging them, for both the rendered ``.param`` and the definition row. A
+   legacy run typically declares ``BASIS_PRECISION`` while the output echo
+   reports the ``CUT_OFF_ENERGY`` CASTEP derived from it, so a merged parameter
+   set legitimately holds both — and CASTEP treats them as exclusive. The
+   resolved cutoff wins, because it is what the calculation actually used and
+   what downstream jobs inherit; the superseded keyword is reported rather than
+   dropped silently.
+
+   .. important::
+
+      The provenance record is **returned, not appended**. ``provenance.jsonl``
+      is append-only through ``ProjectService.append_provenance`` and
+      ``save_project`` never rewrites it, so a record appended straight to
+      ``document.provenance`` would live only until the project was reloaded.
+      The same applies to
+      :func:`~mufinder.services.legacy_import_removal.remove_imported_relaxations`.
+      Callers append only *after* their document edits succeed, so a durable
+      record never describes a state the project did not reach.
 
    Because ``services`` may not import ``app``, the definition rows this stage
    produces are plain payload dictionaries in the persisted configuration shape.
@@ -837,6 +911,16 @@ Verification checklist
   k-point grid rather than project defaults.
 - An imported row renders with its correct status, **total energy** and final
   fractional position.
+- An imported row's parameter dialog shows the values the *legacy run* used —
+  its cutoff, tolerance and k-point grid — and no parameter it did not use.
+- Adopting project defaults equal to an imported row's own values (the same
+  cutoff and grid) leaves that row still rendering completed with its energy.
+  This is the regression that default-stripping would cause, and it does not
+  reproduce until the defaults happen to coincide.
+- An imported row whose recovered parameters the current schema dislikes does not
+  disable the Run buttons or block a native row from materialising.
+- Both the import and the removal appear in ``provenance.jsonl`` — not merely in
+  the in-memory journal — and survive a reload.
 - An imported row cannot be submitted, continued, edited in place, or included in
   a batch parameter edit.
 - The imported flag survives a reconfigure: change an unrelated native row,

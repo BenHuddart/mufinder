@@ -83,6 +83,26 @@ from mufinder.app.workflow_controllers.base import (
 from mufinder.app.workflow_submission import effective_row_status
 
 
+def _without_imported_rows(config: MuonRelaxationConfig) -> MuonRelaxationConfig:
+    """Return ``config`` with imported rows dropped.
+
+    Job expansion must never see them. An imported row carries the parameters
+    its legacy run actually used, recovered from third-party output rather than
+    authored against the current schema, so expansion can legitimately reject a
+    value — and both callers turn that into a silent empty result. Since
+    expansion is all-or-nothing over the whole configuration, one such row would
+    take every *native* row's submission down with it.
+
+    Dropping them costs nothing: an imported row already owns a COMPLETED job
+    and is barred from submission, so it has no job to materialise and no
+    ``.param`` worth previewing.
+    """
+
+    if not any(row.imported for row in config.rows):
+        return config
+    return replace(config, rows=tuple(row for row in config.rows if not row.imported))
+
+
 def _muon_relaxation_selection_matches(row: MuonRelaxationRow, selection: str) -> bool:
     """Return whether a raw selection value targets ``row``.
 
@@ -389,6 +409,7 @@ class MuonRelaxationController(WorkflowJobController):
         )
         if config is None or not definition.input_structure_ids:
             return []
+        config = _without_imported_rows(config)
         host = document.structures.get(definition.input_structure_ids[0])
         output_root = self._context.definition_output_directory(definition)
         if host is None or output_root is None:
@@ -647,6 +668,10 @@ class MuonRelaxationController(WorkflowJobController):
         )
         if config is None or not definition.input_structure_ids:
             return ""
+        # Also drops an imported row's own key, so previewing one yields "" —
+        # correct, since the run it describes is already finished and its real
+        # ``.param`` is archived in its job directory.
+        config = _without_imported_rows(config)
         host = document.structures.get(definition.input_structure_ids[0])
         if host is None:
             return ""

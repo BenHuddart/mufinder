@@ -228,12 +228,12 @@ class TestRemoval:
         directories = list(plan.directories)
         assert all(path.is_dir() for path in directories)
 
-        removed, errors = remove_imported_relaxations(
+        result = remove_imported_relaxations(
             document, plan, batch_id=outcome.batch_id
         )
 
-        assert removed == 2
-        assert errors == []
+        assert result.removed == 2
+        assert result.errors == []
         for item in outcome.imported:
             assert item.site_id not in document.sites
             assert item.job_id not in document.jobs
@@ -248,9 +248,9 @@ class TestRemoval:
         document, outcome = imported
         plan = self._plan(document, outcome)
 
-        removed, _errors = remove_imported_relaxations(document, plan, delete_files=False)
+        result = remove_imported_relaxations(document, plan, delete_files=False)
 
-        assert removed == 2
+        assert result.removed == 2
         assert all(path.is_dir() for path in plan.directories)
 
     def test_a_blocked_plan_removes_nothing(self, imported) -> None:
@@ -265,10 +265,11 @@ class TestRemoval:
         )
         plan = self._plan(document, outcome)
 
-        removed, errors = remove_imported_relaxations(document, plan)
+        result = remove_imported_relaxations(document, plan)
 
-        assert removed == 0
-        assert errors
+        assert result.removed == 0
+        assert result.errors
+        assert result.provenance is None
         assert outcome.imported[0].site_id in document.sites
 
     def test_a_job_that_is_no_longer_imported_is_left_alone(self, imported) -> None:
@@ -279,34 +280,44 @@ class TestRemoval:
         plan = self._plan(document, outcome)
         document.jobs[outcome.imported[0].job_id].tags = ["muon_relaxation"]
 
-        removed, errors = remove_imported_relaxations(document, plan)
+        result = remove_imported_relaxations(document, plan)
 
-        assert removed == 1
-        assert errors and "no longer an imported job" in errors[0]
+        assert result.removed == 1
+        assert result.errors and "no longer an imported job" in result.errors[0]
         assert outcome.imported[0].site_id in document.sites
         assert outcome.imported[1].site_id not in document.sites
 
-    def test_removal_is_recorded_in_provenance(self, imported) -> None:
+    def test_the_removal_is_returned_for_the_caller_to_persist(self, imported) -> None:
+        """Returned, not appended to the document.
+
+        ``provenance.jsonl`` is append-only through
+        ``ProjectService.append_provenance`` and ``save_project`` never rewrites
+        it, so a record this function appended itself would never reach disk.
+        """
+
         document, outcome = imported
 
-        remove_imported_relaxations(
+        result = remove_imported_relaxations(
             document, self._plan(document, outcome), batch_id=outcome.batch_id
         )
 
-        records = [item for item in document.provenance if item.action == REMOVAL_ACTION]
-        assert len(records) == 1
-        assert records[0].parameters["batch_id"] == str(outcome.batch_id)
-        assert len(records[0].parameters["labels"]) == 2
+        assert not [item for item in document.provenance if item.action == REMOVAL_ACTION]
+        record = result.provenance
+        assert record is not None
+        assert record.action == REMOVAL_ACTION
+        assert record.parameters["batch_id"] == str(outcome.batch_id)
+        assert len(record.parameters["labels"]) == 2
 
     def test_the_removal_appears_in_the_journal(self, imported) -> None:
         from mufinder.services.journal import build_journal
 
         document, outcome = imported
-        remove_imported_relaxations(document, self._plan(document, outcome))
+        result = remove_imported_relaxations(document, self._plan(document, outcome))
+        assert result.provenance is not None
 
         entries = [
             entry
-            for day in build_journal("T", document.provenance).days
+            for day in build_journal("T", [result.provenance]).days
             for entry in day.entries
         ]
         removal = [entry for entry in entries if entry.title == "Imported relaxations removed"]
