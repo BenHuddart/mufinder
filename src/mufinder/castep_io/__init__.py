@@ -15,7 +15,26 @@ from .gui_metadata import (
     normalize_gui_value,
 )
 from .output_parser import CastepResult, parse_castep_mulliken_atomic_spins, parse_castep_output
+from .param_parser import (
+    ParamObservation,
+    canonical_enum_value,
+    ParamParseError,
+    ParsedParam,
+    parse_param_assignments,
+    parse_param_file,
+    parse_param_observations,
+    parse_param_text,
+    parse_param_value,
+)
 from .param_writer import write_param
+from .run_parameters import (
+    CastepRunParameters,
+    RunParameterObservation,
+    RunParameterParseError,
+    keyword_is_supported,
+    parse_run_parameters,
+    parse_run_parameters_text,
+)
 from .presets import geometry_optimization, molecular_dynamics, single_point
 from .ts_parser import (
     TransitionStateImage,
@@ -80,6 +99,21 @@ __all__ = [
     "parse_castep_mulliken_atomic_spins",
     "parse_transition_state_file",
     "parse_transition_state_text",
+    "CastepRunParameters",
+    "canonical_enum_value",
+    "ParamObservation",
+    "ParamParseError",
+    "ParsedParam",
+    "RunParameterObservation",
+    "RunParameterParseError",
+    "keyword_is_supported",
+    "parse_param_assignments",
+    "parse_param_file",
+    "parse_param_observations",
+    "parse_param_text",
+    "parse_param_value",
+    "parse_run_parameters",
+    "parse_run_parameters_text",
     "parse_cell_file",
     "parse_cell_text",
     "write_cell",

@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import posixpath
 import re
-import shlex
 import shutil
 import stat
 import threading
@@ -221,6 +220,7 @@ from mufinder.app.workflow_controllers.quantum_corrections import (
 )
 from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
 from mufinder.castep_io.output_parser import CastepResult
+from mufinder.castep_io.param_parser import parse_param_assignments, parse_param_value
 from mufinder.castep_io.ts_parser import (
     TransitionStateImage,
     TransitionStateParseError,
@@ -5224,105 +5224,20 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _parse_param_scalar_value(raw_value: str, spec: KeywordSpec | None) -> object:
-        if spec is not None and spec.value_type == "text":
-            return raw_value.strip()
+        """Delegate to :func:`mufinder.castep_io.param_parser.parse_param_value`.
 
-        tokens = shlex.split(raw_value)
-        if not tokens:
-            return None
+        Kept as a thin wrapper because existing callers reach it here; the
+        coercion itself belongs in ``castep_io`` beside the ``.param`` reader
+        that shares it.
+        """
 
-        if spec is not None and spec.value_type == "bool":
-            token = tokens[0].strip().lower()
-            if token in {"true", "t", ".true.", "yes", "1"}:
-                return True
-            if token in {"false", "f", ".false.", "no", "0"}:
-                return False
-            raise ValueError(f"Invalid boolean value '{tokens[0]}' for {spec.name.upper()}.")
-
-        if spec is not None and spec.value_type == "int_triplet":
-            if len(tokens) < 3:
-                raise ValueError(f"{spec.name.upper()} requires three integer values.")
-            return (int(tokens[0]), int(tokens[1]), int(tokens[2]))
-
-        if spec is not None and spec.value_type in {"physical", "positive_float_with_optional_unit"}:
-            if len(tokens) == 1:
-                return float(tokens[0])
-            if len(tokens) >= 2:
-                return ValueWithUnit(value=float(tokens[0]), unit=tokens[1])
-
-        if spec is not None and spec.value_type == "int":
-            return int(tokens[0])
-
-        if spec is not None and spec.value_type in {"float", "number"}:
-            return float(tokens[0])
-
-        if len(tokens) == 1:
-            token = tokens[0]
-            lowered = token.strip().lower()
-            if lowered in {"true", "t", ".true.", "yes"}:
-                return True
-            if lowered in {"false", "f", ".false.", "no"}:
-                return False
-            try:
-                return int(token)
-            except ValueError:
-                pass
-            try:
-                return float(token)
-            except ValueError:
-                return token
-
-        values: list[object] = []
-        for token in tokens:
-            try:
-                values.append(int(token))
-                continue
-            except ValueError:
-                pass
-            try:
-                values.append(float(token))
-                continue
-            except ValueError:
-                values.append(token)
-        return tuple(values)
+        return parse_param_value(raw_value, spec)
 
     @staticmethod
     def _parse_param_scalar_assignments(text: str) -> dict[str, object]:
-        assignments: dict[str, object] = {}
-        in_block = False
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            for marker in ("!", "#"):
-                if marker in line:
-                    line = line.split(marker, maxsplit=1)[0].strip()
-            if not line:
-                continue
-            upper = line.upper()
-            if upper.startswith("%BLOCK "):
-                in_block = True
-                continue
-            if upper.startswith("%ENDBLOCK "):
-                in_block = False
-                continue
-            if in_block:
-                continue
-            if ":" in line:
-                raw_name, raw_value = line.split(":", maxsplit=1)
-            else:
-                parts = line.split(maxsplit=1)
-                if not parts:
-                    continue
-                raw_name = parts[0]
-                raw_value = parts[1] if len(parts) > 1 else ""
-            canonical_name = canonical_keyword_name("param", raw_name.strip())
-            spec = get_keyword_spec("param", canonical_name)
-            if not raw_value.strip():
-                assignments[canonical_name] = None
-                continue
-            assignments[canonical_name] = MainWindow._parse_param_scalar_value(raw_value.strip(), spec)
-        return assignments
+        """Delegate to :func:`mufinder.castep_io.param_parser.parse_param_assignments`."""
+
+        return parse_param_assignments(text)
 
     def _quantum_source_default_parameter_values(self, candidate: _QuantumSourceCandidate) -> dict[str, object]:
         values: dict[str, object] = {}
