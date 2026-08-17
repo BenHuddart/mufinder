@@ -460,7 +460,21 @@ Two readers are required, both in :mod:`mufinder.castep_io`. Both are
   moved here as ``parse_param_value``, which both the importer and the existing
   quantum-inheritance path now share.
 - :mod:`mufinder.castep_io.run_parameters` — the ``.castep`` header-dump reader,
-  covering the parameter blocks CASTEP echoes near the top of its output.
+  covering the parameter blocks CASTEP echoes near the top of its output,
+  including the Density Mixing Parameters block.
+
+  That block is worth calling out because it is the clearest illustration of why
+  the echo is preferred over the ``.param``: CASTEP writes it only when
+  ``METALS_METHOD`` is ``DM``, and a legacy ``.param`` need not state any of it.
+  Without reading the echo, whether a run's mixing settings survive an import
+  depends on whether the local input file happened to carry them — so two runs
+  of the same calculation can import with different parameter sets purely
+  because one ``.param`` was older than the other.
+
+  CASTEP also gates most of the block's lines on output verbosity (the
+  amplitudes need intermediate mode, the g-vectors and metric coefficient
+  expert). A value the echo did not print is a genuine absence and is left
+  absent rather than filled in from a schema default.
 
 Both were validated against real legacy output from two CASTEP versions, and
 correctly reproduce the input-tree disagreement described above: the echo

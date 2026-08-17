@@ -27,6 +27,17 @@ Coverage is deliberately narrow — the keyword set MuFinder needs to describe a
 imported relaxation, plus the two values downstream jobs inherit — and is
 expected to grow by transcription, not by pattern-matching.
 
+**A mapped keyword is not necessarily a supported one.** These tables are fixed,
+but the schema they resolve against is discovered at runtime and is much smaller
+when no CASTEP installation is found, so a line can be translated here and still
+resolve to no spec. :func:`keyword_is_supported` draws that distinction; the
+density-mixing keywords are the current example.
+
+**Not every line in a section is always written.** CASTEP gates much of the echo
+on output verbosity — the density-mixing amplitudes need at least intermediate
+mode, the g-vectors expert mode — so a keyword missing from a parse is a genuine
+absence rather than a failure, and must never be filled in from a schema default.
+
 **The echo is lossy for some keywords, irreducibly.** CASTEP prints one display
 string for several distinct keyword values: ``LDA`` and ``LDA_PZ`` both print
 *Perdew-Zunger Local Density Approximation*, and ``SHF`` and ``SX`` both print
@@ -100,6 +111,17 @@ _TASK_VALUES: dict[str, tuple[str, ...]] = {
     "elastic constants calculation": ("ELASTIC",),
 }
 
+#: ``MIXING_SCHEME`` display strings, transcribed from ``parameters.f90``. Each
+#: is a literal in the ``select case (current_params%mixing_scheme)`` that opens
+#: the Density Mixing Parameters block, so the mapping is one-to-one rather than
+#: lossy.
+_MIXING_SCHEME_VALUES: dict[str, tuple[str, ...]] = {
+    "linear": ("LINEAR",),
+    "kerker": ("KERKER",),
+    "broyden": ("BROYDEN",),
+    "pulay": ("PULAY",),
+}
+
 #: ``XC_FUNCTIONAL`` display strings, transcribed from ``parameters.f90``.
 #: Several CASTEP values share a display string; the tuple records every value
 #: that could have produced the line, most-canonical first.
@@ -133,7 +155,46 @@ _LABEL_RULES: dict[str, _LabelRule] = {
     "max ionic |force| tolerance": _LabelRule("geom_force_tol", "param", "physical"),
     "max ionic |displacement| tolerance": _LabelRule("geom_disp_tol", "param", "physical"),
     "max |stress component| tolerance": _LabelRule("geom_stress_tol", "param", "physical"),
+    # Density Mixing Parameters. CASTEP writes this whole block only when
+    # METALS_METHOD is DM, and only the scheme and history length unconditionally
+    # — the amplitudes and mixing cutoff need at least intermediate output
+    # verbosity, and the g-vectors and metric coefficient need expert. A run at
+    # lower verbosity therefore echoes fewer of these, which is a genuine
+    # absence rather than a parse failure.
+    #
+    # Recovering them from the echo matters because a legacy `.param` need not
+    # state them: without these rules the values survive only when the local
+    # input file happens to carry them, so two runs of the same calculation can
+    # import with different parameter sets purely because one `.param` was older.
+    "density-mixing scheme": _LabelRule(
+        "mixing_scheme", "param", "enum", _MIXING_SCHEME_VALUES
+    ),
+    "max. length of mixing history": _LabelRule("mix_history_length", "param", "int"),
+    # Written by format 94 with no trailing unit argument, so these two are bare
+    # reals rather than physical quantities.
+    "charge density mixing amplitude": _LabelRule("mix_charge_amp", "param", "float"),
+    "spin density mixing amplitude": _LabelRule("mix_spin_amp", "param", "float"),
+    "cut-off energy for mixing": _LabelRule("mix_cut_off_energy", "param", "physical"),
+    "charge density mixing g-vector": _LabelRule("mix_charge_gmax", "param", "physical"),
+    "spin density mixing g-vector": _LabelRule("mix_spin_gmax", "param", "physical"),
+    "mixing metric coefficient": _LabelRule("mix_metric_q", "param", "physical"),
 }
+
+#: Every label CASTEP writes inside the Density Mixing Parameters block. Guarded
+#: by section for the reason given at :data:`_LABEL_SECTIONS`: these are the most
+#: generically-worded labels in the tables, and several ("cut-off energy for
+#: mixing", "mixing metric coefficient") would be plausible spellings elsewhere.
+_DENSITY_MIXING_SECTION = "Density Mixing Parameters"
+_DENSITY_MIXING_LABELS = (
+    "density-mixing scheme",
+    "max. length of mixing history",
+    "charge density mixing amplitude",
+    "spin density mixing amplitude",
+    "cut-off energy for mixing",
+    "charge density mixing g-vector",
+    "spin density mixing g-vector",
+    "mixing metric coefficient",
+)
 
 #: Labels that are only meaningful inside one section. ``total energy
 #: convergence tolerance`` is the geometry-optimisation criterion, while the
@@ -146,6 +207,7 @@ _LABEL_SECTIONS: dict[str, str] = {
     "max ionic |force| tolerance": "Geometry Optimization Parameters",
     "max ionic |displacement| tolerance": "Geometry Optimization Parameters",
     "max |stress component| tolerance": "Geometry Optimization Parameters",
+    **{label: _DENSITY_MIXING_SECTION for label in _DENSITY_MIXING_LABELS},
 }
 
 #: Bare statement lines (CASTEP format 98) that encode a keyword value without a

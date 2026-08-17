@@ -20,6 +20,35 @@ from mufinder.castep_io.run_parameters import (
 from mufinder.castep_io.types import ValueWithUnit
 
 
+def _mixing_block(
+    *,
+    scheme: str = "Broyden",
+    history: str = "        20",
+    amplitude: str | None = "0.2000",
+    mix_cutoff: str | None = "  900.0       eV",
+) -> str:
+    """Build a Density Mixing Parameters block in CASTEP's own layout.
+
+    CASTEP writes this block only when ``METALS_METHOD`` is ``DM``, and gates
+    most of its lines on output verbosity: the scheme and history length are
+    unconditional, the amplitudes and mixing cutoff need at least intermediate
+    mode, and the g-vectors and metric coefficient need expert mode. Pass
+    ``None`` for the optional lines to model a lower-verbosity run.
+    """
+
+    lines = [
+        " ***************************** Density Mixing Parameters ***********************",
+        "",
+        f" density-mixing scheme                          : {scheme}",
+        f" max. length of mixing history                  : {history}",
+    ]
+    if amplitude is not None:
+        lines.append(f" charge density mixing amplitude                : {amplitude}")
+    if mix_cutoff is not None:
+        lines.append(f" cut-off energy for mixing                      : {mix_cutoff}")
+    return "\n".join(lines)
+
+
 def _echo(
     *,
     task: str = "geometry optimization",
@@ -32,8 +61,12 @@ def _echo(
     ),
     mp_grid: str = "3  3  3",
     run_banner: str = " Run started: Fri, 10 Jan 2025 11:57:08 +0000",
+    mixing_block: str | None = None,
 ) -> str:
     """Build a minimal parameter echo in CASTEP's own layout."""
+
+    if mixing_block is None:
+        mixing_block = _mixing_block()
 
     return f"""
  | Welcome to Academic Release CASTEP version 26.11 |
@@ -72,6 +105,8 @@ def _echo(
  {metals_line}
  total energy / atom convergence tol.           : 0.1000E-09   eV
  max. number of SCF cycles                      :        100
+
+{mixing_block}
 
  ********************** Geometry Optimization Parameters ***********************
 
@@ -281,11 +316,50 @@ def test_observations_record_which_file_each_keyword_belongs_to() -> None:
 
 
 def test_keyword_is_supported_reflects_the_runtime_schema() -> None:
-    parsed = parse_run_parameters_text(_echo())
-    mapped = [item for item in parsed.observations if item.mapped]
+    """The keywords an import depends on resolve against any runtime catalog.
 
-    assert mapped, "expected at least one mapped observation"
-    assert all(keyword_is_supported(item) for item in mapped)
+    Asserted for the specific keywords the importer needs rather than for every
+    mapped line: the translation tables are fixed, but the schema they resolve
+    against is discovered at runtime and is much smaller when no CASTEP
+    installation is found. Requiring *all* mapped keywords to be present would
+    make this a test of whichever catalog happens to be installed.
+    """
+
+    parsed = parse_run_parameters_text(_echo())
+    by_keyword = {item.keyword: item for item in parsed.observations if item.mapped}
+
+    required = (
+        "task",
+        "xc_functional",
+        "cut_off_energy",
+        "charge",
+        "max_scf_cycles",
+        "geom_max_iter",
+        "kpoint_mp_grid",
+    )
+    for keyword in required:
+        assert keyword_is_supported(by_keyword[keyword]), keyword
+
+
+def test_a_mapped_keyword_can_still_be_absent_from_a_thin_catalog() -> None:
+    """"MuFinder cannot name this line" and "this catalog does not carry that
+    keyword" are different failures, and only the second is recoverable by
+    pointing MuFinder at a CASTEP installation.
+
+    The density-mixing keywords are the live example: the bundled starter
+    catalog does not carry them, so they are mapped from the echo but resolve to
+    no spec until a real catalog is found.
+    """
+
+    parsed = parse_run_parameters_text(_echo())
+    by_keyword = {item.keyword: item for item in parsed.observations if item.mapped}
+
+    observation = by_keyword["mix_charge_amp"]
+    assert observation.mapped
+    assert observation.value == 0.2
+    # Whether it is *supported* depends on the runtime catalog, so this asserts
+    # only that the question is answerable, not which answer it gives here.
+    assert isinstance(keyword_is_supported(observation), bool)
 
 
 def test_text_without_an_echo_yields_nothing() -> None:
@@ -302,3 +376,77 @@ def test_parse_run_parameters_reads_from_disk(tmp_path: Path) -> None:
 def test_parse_run_parameters_reports_a_missing_file(tmp_path: Path) -> None:
     with pytest.raises(RunParameterParseError, match="Failed to read"):
         parse_run_parameters(tmp_path / "absent.castep")
+
+
+def test_recovers_the_density_mixing_settings() -> None:
+    """A legacy ``.param`` need not state these.
+
+    Without them, whether a run's mixing settings survive an import depends on
+    whether the local input file happened to carry them — so two runs of the
+    same calculation can import with different parameter sets purely because one
+    ``.param`` was older than the other.
+    """
+
+    values = parse_run_parameters_text(_echo()).mapped_values()
+
+    assert values["mixing_scheme"] == "BROYDEN"
+    assert values["mix_history_length"] == 20
+    assert values["mix_charge_amp"] == 0.2
+    assert values["mix_cut_off_energy"] == ValueWithUnit(value=900.0, unit="eV")
+
+
+def test_the_mixing_amplitude_is_a_bare_number() -> None:
+    """CASTEP writes it with format 94's trailing unit argument absent, so
+    reading it as a physical quantity would attach a unit it never stated."""
+
+    values = parse_run_parameters_text(_echo()).mapped_values()
+
+    assert values["mix_charge_amp"] == 0.2
+    assert not isinstance(values["mix_charge_amp"], ValueWithUnit)
+
+
+@pytest.mark.parametrize(
+    "printed, expected",
+    [
+        ("Linear", "LINEAR"),
+        ("Kerker", "KERKER"),
+        ("Broyden", "BROYDEN"),
+        ("Pulay", "PULAY"),
+    ],
+)
+def test_mixing_scheme_display_strings_map_back_to_keyword_values(
+    printed: str, expected: str
+) -> None:
+    text = _echo(mixing_block=_mixing_block(scheme=printed))
+
+    assert parse_run_parameters_text(text).mapped_values()["mixing_scheme"] == expected
+
+
+def test_a_lower_verbosity_run_reports_only_what_it_printed() -> None:
+    """The amplitude and mixing cutoff need intermediate output verbosity. Their
+    absence is a genuine absence, not a parse failure, and must not be filled in
+    from the keyword's schema default."""
+
+    text = _echo(mixing_block=_mixing_block(amplitude=None, mix_cutoff=None))
+
+    values = parse_run_parameters_text(text).mapped_values()
+
+    assert values["mixing_scheme"] == "BROYDEN"
+    assert values["mix_history_length"] == 20
+    assert "mix_charge_amp" not in values
+    assert "mix_cut_off_energy" not in values
+
+
+def test_mixing_labels_are_only_read_inside_their_own_section() -> None:
+    """These are the most generically-worded labels in the tables, so a future
+    CASTEP reusing one elsewhere must not be mis-mapped."""
+
+    text = _echo().replace(
+        " ***************************** Density Mixing Parameters ***********************",
+        " ***************************** General Parameters ******************************",
+    )
+
+    parsed = parse_run_parameters_text(text)
+
+    assert "mix_charge_amp" not in parsed.mapped_values()
+    assert any(item.label == "charge density mixing amplitude" for item in parsed.unmapped())
