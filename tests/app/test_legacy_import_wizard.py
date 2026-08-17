@@ -441,3 +441,104 @@ class TestScanProgressReporting:
         window._on_legacy_scan_progress(3, 36)
 
         assert window.statusBar().currentMessage() == "Scanning legacy: relaxation 3 of 36..."
+
+
+class TestScanRunsOnAThread:
+    """The scan must survive being started and left to run.
+
+    Every other test in this file drives the worker synchronously by calling
+    ``run()``, which exercises the parsing but never the threading. That gap hid
+    a real defect: a ``QObject`` moved to a thread is parentless, so nothing but
+    a Python reference keeps it alive, and the worker was a local that died the
+    moment the starter returned. The scan never ran, and the GUI sat forever on
+    a status message that never changed.
+
+    These drive the real signal path through an event loop, so the same mistake
+    fails here instead of in the application.
+    """
+
+    def _run_to_completion(self, folder: Path, timeout_ms: int = 15000):
+        from PySide6.QtCore import QEventLoop, QTimer
+
+        from mufinder.app.legacy_import_dialog import start_legacy_scan
+
+        events: list[tuple] = []
+        loop = QEventLoop()
+
+        def completed(scan) -> None:
+            events.append(("completed", scan))
+            loop.quit()
+
+        def failed(message: str) -> None:
+            events.append(("failed", message))
+            loop.quit()
+
+        start_legacy_scan(
+            None,
+            folder,
+            HOST_LATTICE,
+            ["Si"],
+            completed,
+            failed,
+            lambda done, total: events.append(("progress", done, total)),
+        )
+        QTimer.singleShot(timeout_ms, loop.quit)
+        loop.exec()
+        return events
+
+    def test_a_started_scan_completes_without_being_held_by_the_caller(
+        self, qapp, tmp_path: Path
+    ) -> None:
+        events = self._run_to_completion(build_folder(tmp_path, sites=(1, 2)))
+
+        kinds = [item[0] for item in events]
+        assert "completed" in kinds, f"scan never completed; got {events!r}"
+        scan = next(item[1] for item in events if item[0] == "completed")
+        assert len(scan.runs) == 2
+
+    def test_progress_is_delivered_across_the_thread_boundary(
+        self, qapp, tmp_path: Path
+    ) -> None:
+        """Queued delivery to a GUI-thread receiver, not just a direct call."""
+
+        events = self._run_to_completion(build_folder(tmp_path, sites=(1, 2, 3)))
+
+        progress = [item for item in events if item[0] == "progress"]
+        assert progress == [("progress", 1, 3), ("progress", 2, 3), ("progress", 3, 3)]
+        # Progress always lands before completion, so the final message is never
+        # left showing a partial count.
+        assert [item[0] for item in events][-1] == "completed"
+
+    def test_a_failing_scan_reports_across_the_thread_boundary(
+        self, qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from mufinder.app import legacy_import_dialog
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr(legacy_import_dialog, "scan_legacy_folder", _boom)
+
+        events = self._run_to_completion(build_folder(tmp_path, sites=(1,)))
+
+        assert [item[0] for item in events] == ["failed"]
+        assert events[0][1] == "disk on fire"
+
+    def test_the_registry_is_emptied_once_the_thread_exits(
+        self, qapp, tmp_path: Path
+    ) -> None:
+        """A registry that never drains would leak a thread per import."""
+
+        from PySide6.QtCore import QDeadlineTimer
+
+        from mufinder.app.legacy_import_dialog import _LIVE_SCANS
+
+        self._run_to_completion(build_folder(tmp_path, sites=(1,)))
+
+        # Cleanup is asynchronous: the loop quits on `completed`, which fires
+        # before the thread has finished, so drain rather than sample once.
+        deadline = QDeadlineTimer(5000)
+        while _LIVE_SCANS and not deadline.hasExpired():
+            qapp.processEvents()
+
+        assert _LIVE_SCANS == set(), "a scan leaked its thread and worker"
