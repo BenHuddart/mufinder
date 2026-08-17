@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -50,8 +51,29 @@ def detect_supercell_matrix(
 ) -> SupercellDetection:
     """Infer an integer supercell matrix M such that dft_lattice ~= M * exp_lattice."""
 
-    experimental_lattice = np.asarray(experimental.lattice_vectors, dtype=float)
-    dft_lattice = np.asarray(dft.lattice_vectors, dtype=float)
+    return detect_supercell_matrix_from_lattices(
+        experimental.lattice_vectors,
+        dft.lattice_vectors,
+        tolerance=tolerance,
+    )
+
+
+def detect_supercell_matrix_from_lattices(
+    base_lattice: Sequence[Sequence[float]],
+    candidate_lattice: Sequence[Sequence[float]],
+    *,
+    tolerance: float = 0.2,
+) -> SupercellDetection:
+    """Infer an integer supercell matrix from two lattices alone.
+
+    The lattice-level form of :func:`detect_supercell_matrix`, for callers that
+    hold parsed cells rather than :class:`~mufinder.domain.models.Structure`
+    records — notably the legacy-import scanner, which must infer a supercell
+    before it has built any project entities.
+    """
+
+    experimental_lattice = np.asarray(base_lattice, dtype=float)
+    dft_lattice = np.asarray(candidate_lattice, dtype=float)
 
     try:
         candidate = dft_lattice @ np.linalg.inv(experimental_lattice)

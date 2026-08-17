@@ -643,9 +643,31 @@ Phasing
    moved down out of the app layer) and ``run_parameters``, the ``.castep``
    header-dump reader, with synthetic fixtures. Independently useful: it
    unblocks a parsed rather than re-rendered continue-relaxation diff.
-2. **Scanner and inference.** Folder to detected-run report: site index, charge
-   state, convergence, supercell matrix, merged parameters, conflicts. Pure and
-   fully testable, with no document mutation.
+2. **Scanner and inference** — *done*.
+   :mod:`mufinder.services.legacy_import` turns a folder into a
+   ``LegacyFolderScan``: site index, charge state, convergence, supercell
+   matrix, merged parameters and conflicts per run. Pure with respect to the
+   project — it mutates no document, writes no file, creates no entity — so the
+   whole detection path is testable without a project on disk and the wizard can
+   show a user what was found before anything is committed.
+
+   Two properties are load-bearing. **Nothing raises for one bad run**: a
+   directory of third-party output contains surprises, and the honest outcome is
+   a report saying which runs are importable and why the others are not. And
+   **blockers are distinct from warnings**: a blocker means the run cannot be
+   imported (no ``.castep``, an unparseable input cell, a lattice that is not an
+   integer supercell of the host), while a warning is something the user should
+   know but that does not prevent import (an undetermined charge state, a muon
+   labelled with a bare ``H``).
+
+   Supercell inference reuses ``science.supercell_matching`` through a new
+   lattice-level entry point, but with a **much tighter tolerance**. Structure
+   comparison defaults to 0.2 because an experimental and a DFT lattice
+   legitimately differ by a percent or so; a legacy input cell was constructed
+   as an exact integer supercell of its host, so the only expected residual is
+   ``.cell`` rounding, of order 1e-6. Keeping comparison's default here would
+   accept a 7% lattice mismatch as a supercell and import a run against the
+   wrong host.
 3. **Row model.** The ``imported`` flag and batch id, threaded through widget
    state and the serialiser pair. Deliberately ahead of entity construction,
    which writes definition rows that must already carry the flag.
@@ -720,6 +742,10 @@ Open risks
   workflow a magnetic host usually does **not** imply a spin-polarised DFT
   relaxation, so the common import case is the simple one.
 - **Position block variants.** Dataset A's cells use ``POSITIONS_FRAC`` and
-  dataset B's use ``POSITIONS_ABS``. Both are handled by the cell parser, but
-  muon-position extraction and supercell inference must be exercised against
-  both, not only the fractional case.
+  dataset B's use ``POSITIONS_ABS``. Exercising both found a real defect: the
+  absolute-position branch of the cell parser converted coordinates by
+  round-tripping through ``ase.Atoms``, which resolves every symbol against the
+  periodic table and so raised on the ``H:mu`` species *label*. Every muonated
+  cell written with ``POSITIONS_ABS`` was unparseable, which affected far more
+  than this feature. The conversion is now arithmetic and label-agnostic. Both
+  variants remain exercised by the scanner tests.

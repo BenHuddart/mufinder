@@ -8,7 +8,7 @@ import re
 import shlex
 from typing import Any
 
-from ase import Atoms
+import numpy as np
 from ase.geometry import cellpar_to_cell
 
 from .schema import canonical_keyword_name, get_keyword_spec
@@ -145,15 +145,9 @@ def parse_cell_text(text: str) -> ParsedCell:
     else:
         assert positions_abs is not None
         species = tuple(position.species for position in positions_abs.positions)
-        atoms = Atoms(
-            symbols=list(species),
-            positions=[position.coordinates for position in positions_abs.positions],
-            cell=lattice_vectors,
-            pbc=True,
-        )
-        fractional = tuple(
-            tuple(float(value) for value in row)
-            for row in atoms.get_scaled_positions(wrap=True).tolist()
+        fractional = _fractional_from_cartesian(
+            [position.coordinates for position in positions_abs.positions],
+            lattice_vectors,
         )
 
     return ParsedCell(
@@ -163,6 +157,38 @@ def parse_cell_text(text: str) -> ParsedCell:
         fractional_positions=fractional,
         atomic_spins=spins,
     )
+
+
+def _fractional_from_cartesian(
+    coordinates: list[tuple[float, float, float]],
+    lattice_vectors: tuple[
+        tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]
+    ],
+) -> tuple[tuple[float, float, float], ...]:
+    """Convert absolute positions to wrapped fractional coordinates.
+
+    Deliberately arithmetic rather than a round trip through ``ase.Atoms``:
+    ASE resolves every symbol against the periodic table, so a CASTEP species
+    *label* such as ``H:mu`` raises ``KeyError`` before any conversion happens.
+    That made muonated cells written with ``POSITIONS_ABS`` unparseable, even
+    though nothing about the conversion needs chemical identity.
+
+    Raises:
+        CellParseError: If the lattice is singular and cannot be inverted.
+    """
+
+    if not coordinates:
+        return ()
+
+    lattice = np.asarray(lattice_vectors, dtype=float)
+    cartesian = np.asarray(coordinates, dtype=float)
+    try:
+        fractional = cartesian @ np.linalg.inv(lattice)
+    except np.linalg.LinAlgError as exc:
+        raise CellParseError(f"CELL lattice vectors are singular and cannot be inverted: {exc}") from exc
+
+    wrapped = np.mod(fractional, 1.0)
+    return tuple(tuple(float(value) for value in row) for row in wrapped.tolist())
 
 
 def _partition_cell_text(
