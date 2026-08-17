@@ -158,3 +158,53 @@ UNIT_CELL 0.0 0.0 0.0
 
     scalar_map = {assignment.name: assignment.value for assignment in parsed.cell_file.scalars}
     assert scalar_map["unit_cell"] == "0.0 0.0 0.0"
+
+
+def test_positions_abs_accepts_a_castep_species_label() -> None:
+    """``H:mu`` is a CASTEP species *label*, not a chemical symbol.
+
+    The absolute-position branch used to convert coordinates by round-tripping
+    through ``ase.Atoms``, which resolves every symbol against the periodic
+    table and raised ``KeyError`` on the muon label. Any muonated ``-out.cell``
+    written with ``POSITIONS_ABS`` was therefore unparseable.
+    """
+
+    text = """
+%BLOCK LATTICE_CART
+ang
+4.0 0.0 0.0
+0.0 4.0 0.0
+0.0 0.0 4.0
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_ABS
+ang
+Si 0.0 0.0 0.0
+H:mu 1.0 2.0 3.0
+%ENDBLOCK POSITIONS_ABS
+"""
+
+    parsed = parse_cell_text(text)
+
+    assert parsed.species == ("Si", "H:mu")
+    assert parsed.fractional_positions[1] == pytest.approx((0.25, 0.5, 0.75))
+
+
+def test_positions_abs_wraps_coordinates_into_the_cell() -> None:
+    text = """
+%BLOCK LATTICE_CART
+ang
+4.0 0.0 0.0
+0.0 4.0 0.0
+0.0 0.0 4.0
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_ABS
+ang
+H:mu 5.0 -1.0 0.0
+%ENDBLOCK POSITIONS_ABS
+"""
+
+    parsed = parse_cell_text(text)
+
+    assert parsed.fractional_positions[0] == pytest.approx((0.25, 0.75, 0.0))

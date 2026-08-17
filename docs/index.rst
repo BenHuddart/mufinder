@@ -23,6 +23,7 @@ features, and quality standards that must be maintained as development expands.
    site_generation
    uep_workflow
    structural_relaxation_analysis
+   legacy_import
    magnetic_fields
    quantum_corrections
    energy_barriers

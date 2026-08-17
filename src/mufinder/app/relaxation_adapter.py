@@ -29,12 +29,41 @@ from mufinder.castep_io.types import (
 from mufinder.domain.models import Structure
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.charge_states import (
+    MUON_RELAXATION_CALC_TYPES,
+    MUON_RELAXATION_CHARGES,
+    MUON_RELAXATION_JOB_PREFIXES,
     MUONIUM_CHARGE_STATE,
     MUONIUM_MUON_SPIN,
     POSITIVE_MUON_CHARGE_STATE,
+    _charge_state_key,
     canonical_charge_state,
+    is_muon_relaxation_calc_type,
+    muon_charge_for_state,
+    muon_charge_state_label,
+    muon_charge_state_prefix,
+    muon_relaxation_calc_type,
     seed_muon_spins,
 )
+
+# These names moved to ``mufinder.domain.charge_states`` (durable persisted
+# vocabulary, not presentation detail) and are re-exported here because app-layer
+# call sites and tests import them from this module.
+__all__ = [
+    "MUON_RELAXATION_CALC_TYPES",
+    "MUON_RELAXATION_CHARGES",
+    "MUON_RELAXATION_JOB_PREFIXES",
+    "MUONIUM_CHARGE_STATE",
+    "POSITIVE_MUON_CHARGE_STATE",
+    "RelaxationExpansion",
+    "expand_muon_relaxation_jobs",
+    "expand_pristine_relaxation_jobs",
+    "is_muon_relaxation_calc_type",
+    "muon_charge_for_state",
+    "muon_charge_state_label",
+    "muon_charge_state_prefix",
+    "muon_relaxation_calc_type",
+    "suggested_grid_for_row",
+]
 from mufinder.science.kpoint_grids import (
     equivalent_grid_for_supercell,
     supercell_lattice_vectors,
@@ -47,19 +76,6 @@ from mufinder.workflow.merge import merge_templates
 from mufinder.workflow.relaxation import RelaxationJobConfig, expand_relaxation_jobs
 from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamTemplate
 
-
-MUON_RELAXATION_CALC_TYPES = {
-    POSITIVE_MUON_CHARGE_STATE: "castep_positivemuon_relaxation",
-    MUONIUM_CHARGE_STATE: "castep_muonium_relaxation",
-}
-MUON_RELAXATION_JOB_PREFIXES = {
-    POSITIVE_MUON_CHARGE_STATE: "positivemuon",
-    MUONIUM_CHARGE_STATE: "muonium",
-}
-MUON_RELAXATION_CHARGES = {
-    POSITIVE_MUON_CHARGE_STATE: 1,
-    MUONIUM_CHARGE_STATE: 0,
-}
 
 # ``RelaxationExpansion`` is a thin backward-compatible alias for the generic
 # :class:`~mufinder.app.adapter_common.AdapterExpansion`. The former per-workflow
@@ -126,44 +142,10 @@ def _structure_for_row(host_structure: Structure, row: PristineRelaxationRow) ->
     return structure
 
 
-def _charge_state_key(value: str) -> str:
-    return canonical_charge_state(value) or POSITIVE_MUON_CHARGE_STATE
 
 
-def muon_charge_state_label(charge_state: str) -> str:
-    """Return a user-facing charge-state label."""
-
-    key = _charge_state_key(charge_state)
-    if key == MUONIUM_CHARGE_STATE:
-        return "muonium"
-    return "positive muon"
 
 
-def muon_charge_state_prefix(charge_state: str) -> str:
-    """Return the filesystem-safe prefix for one muon charge state."""
-
-    key = _charge_state_key(charge_state)
-    return MUON_RELAXATION_JOB_PREFIXES.get(key, MUON_RELAXATION_JOB_PREFIXES[POSITIVE_MUON_CHARGE_STATE])
-
-
-def muon_charge_for_state(charge_state: str) -> int:
-    """Return the CASTEP total charge for one muon charge state."""
-
-    key = _charge_state_key(charge_state)
-    return MUON_RELAXATION_CHARGES.get(key, MUON_RELAXATION_CHARGES[POSITIVE_MUON_CHARGE_STATE])
-
-
-def muon_relaxation_calc_type(charge_state: str) -> str:
-    """Return the persisted calc type for one muon charge state."""
-
-    key = _charge_state_key(charge_state)
-    return MUON_RELAXATION_CALC_TYPES.get(key, MUON_RELAXATION_CALC_TYPES[POSITIVE_MUON_CHARGE_STATE])
-
-
-def is_muon_relaxation_calc_type(calc_type: str) -> bool:
-    """Return true for any CASTEP muon structural-relaxation calc type."""
-
-    return calc_type in set(MUON_RELAXATION_CALC_TYPES.values())
 
 
 def _muon_supercell_fractional_position(

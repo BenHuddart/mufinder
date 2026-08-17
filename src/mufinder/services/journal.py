@@ -144,6 +144,8 @@ def export_journal(journal: JournalDocument, output_path: Path, *, format_name: 
 def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
     mapping = {
         "import_structure": _import_structure_entry,
+        "import_legacy_relaxations": _import_legacy_relaxations_entry,
+        "remove_imported_relaxations": _remove_imported_relaxations_entry,
         "configure_convergence_cutoff": _configure_cutoff_entry,
         "configure_convergence_kpoint": _configure_kpoint_entry,
         "configure_pristine_relaxation": _configure_pristine_relaxation_entry,
@@ -217,6 +219,72 @@ def _import_structure_entry(record: ProvenanceRecord) -> JournalEntry:
         stamp_kind="milestone",
         title="Host structure imported",
         body=f"Imported {file_name} into the project and recorded a portable project copy.",
+    )
+
+
+def _import_legacy_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
+    """Describe one legacy-import batch.
+
+    The journal is where a reader learns that some relaxations in this project
+    were not run here, so the entry leads with that and surfaces the two things
+    most likely to matter later: runs that were skipped, and parameter sources
+    that disagreed.
+    """
+
+    sites = record.parameters.get("imported_sites")
+    imported = len(sites) if isinstance(sites, list) else 0
+    skipped_raw = record.parameters.get("skipped")
+    skipped = len(skipped_raw) if isinstance(skipped_raw, list) else 0
+    source = _text_param(record, "source_folder")
+    folder = Path(source).name if source else "a legacy folder"
+
+    conflicts = 0
+    if isinstance(sites, list):
+        for entry in sites:
+            if isinstance(entry, dict) and isinstance(entry.get("conflicts"), list):
+                conflicts += len(entry["conflicts"])
+
+    body = (
+        f"Imported {imported} muon relaxation(s) from {folder}. These were run "
+        "outside MuFinder; their rows are read-only."
+    )
+    if skipped:
+        body += f" {skipped} run(s) were skipped."
+    if conflicts:
+        body += (
+            f" {conflicts} parameter disagreement(s) were resolved in favour of the "
+            "value the calculation actually used."
+        )
+
+    return _entry(
+        record,
+        stamp_kind="warning" if (skipped or conflicts) else "milestone",
+        title="Legacy relaxations imported",
+        body=body,
+    )
+
+
+def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry:
+    """Describe one removal of imported relaxations.
+
+    Stamped as a warning rather than a milestone: an imported relaxation holds
+    the only copy of its results, so its removal is not recoverable from within
+    the project the way re-running a native relaxation is.
+    """
+
+    labels = record.parameters.get("labels")
+    count = len(labels) if isinstance(labels, list) else 0
+    body = f"Removed {count} imported muon relaxation(s) from the project."
+    if record.parameters.get("deleted_files"):
+        body += (
+            " Their job directories were deleted, including the archived original "
+            "input files."
+        )
+    return _entry(
+        record,
+        stamp_kind="warning",
+        title="Imported relaxations removed",
+        body=body,
     )
 
 

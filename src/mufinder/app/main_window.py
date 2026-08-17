@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import posixpath
 import re
-import shlex
 import shutil
 import stat
 import threading
@@ -20,7 +19,7 @@ from typing import TypeVar
 from uuid import UUID, uuid4
 
 import numpy as np
-from PySide6.QtCore import QByteArray, QEventLoop, QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QByteArray, QEventLoop, QPointF, QRectF, QSize, QSettings, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import (
     QActionGroup,
     QBrush,
@@ -78,6 +77,7 @@ from mufinder.branding import (
 from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_cluster_configs
 from mufinder.castep_io.gui_metadata import make_block_section, make_keyword_assignment, normalize_gui_value
 from mufinder.castep_io.schema import KeywordSpec, canonical_keyword_name, get_keyword_spec
+from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure, utc_now
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
@@ -112,6 +112,15 @@ from mufinder.app.energy_barriers_widget import (
     EnergyBarrierSourceRow,
 )
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
+from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
+from mufinder.services.legacy_import import LegacyFolderScan
+from mufinder.services.legacy_import_commit import IMPORT_ACTION, commit_legacy_import
+from mufinder.services.legacy_import_removal import (
+    detach_rows_from_definition,
+    imported_relaxations_in_batch,
+    plan_removal,
+    remove_imported_relaxations,
+)
 from mufinder.app.relaxation_adapter import (
     MUON_RELAXATION_CALC_TYPES,
     MUONIUM_CHARGE_STATE,
@@ -221,6 +230,7 @@ from mufinder.app.workflow_controllers.quantum_corrections import (
 )
 from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
 from mufinder.castep_io.output_parser import CastepResult
+from mufinder.castep_io.param_parser import parse_param_assignments, parse_param_value
 from mufinder.castep_io.ts_parser import (
     TransitionStateImage,
     TransitionStateParseError,
@@ -385,6 +395,17 @@ def _merge_species_options(structures: list[Structure | None]) -> tuple[str, ...
             seen.add(species)
             values.append(species)
     return tuple(values)
+
+
+def job_is_imported(job: Job) -> bool:
+    """Return whether ``job`` records a calculation performed outside MuFinder.
+
+    Imported jobs must never be reset, resubmitted, or continued: MuFinder did
+    not run them, and their directories hold the only copy of the imported
+    results together with the archived originals.
+    """
+
+    return IMPORTED_JOB_TAG in (job.tags or ())
 
 
 def _format_energy(value: object) -> str:
@@ -1997,6 +2018,11 @@ class MainWindow(QMainWindow):
         self._muon_generation_view.delete_candidates_requested.connect(self._on_delete_muon_candidates_requested)
         self._muon_generation_view.create_jobs_requested.connect(self._on_create_muon_relaxation_jobs_requested)
         self._muon_generation_view.form_state_changed.connect(self._on_muon_form_state_changed)
+        self._import_legacy_action = None
+        self._remove_imported_action = None
+        self._legacy_scan_thread = None
+        self._legacy_scan_host: Structure | None = None
+        self._legacy_scan_root: Path | None = None
         self._muon_relaxation_view = MuonRelaxationWidget()
         self._muon_relaxation_view.configure_requested.connect(self._on_muon_relaxation_configured)
         self._muon_relaxation_view.form_state_changed.connect(self._on_muon_relaxation_form_state_changed)
@@ -2574,6 +2600,14 @@ class MainWindow(QMainWindow):
 
         save_action = file_menu.addAction(icon("save_project"), "Save Project")
         save_action.triggered.connect(self._save_project)
+
+        file_menu.addSeparator()
+
+        self._import_legacy_action = file_menu.addAction("Import Legacy Relaxations...")
+        self._import_legacy_action.triggered.connect(self._on_import_legacy_relaxations)
+
+        self._remove_imported_action = file_menu.addAction("Remove Imported Relaxations...")
+        self._remove_imported_action.triggered.connect(self._on_remove_imported_relaxations)
 
         file_menu.addSeparator()
 
@@ -5224,105 +5258,20 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _parse_param_scalar_value(raw_value: str, spec: KeywordSpec | None) -> object:
-        if spec is not None and spec.value_type == "text":
-            return raw_value.strip()
+        """Delegate to :func:`mufinder.castep_io.param_parser.parse_param_value`.
 
-        tokens = shlex.split(raw_value)
-        if not tokens:
-            return None
+        Kept as a thin wrapper because existing callers reach it here; the
+        coercion itself belongs in ``castep_io`` beside the ``.param`` reader
+        that shares it.
+        """
 
-        if spec is not None and spec.value_type == "bool":
-            token = tokens[0].strip().lower()
-            if token in {"true", "t", ".true.", "yes", "1"}:
-                return True
-            if token in {"false", "f", ".false.", "no", "0"}:
-                return False
-            raise ValueError(f"Invalid boolean value '{tokens[0]}' for {spec.name.upper()}.")
-
-        if spec is not None and spec.value_type == "int_triplet":
-            if len(tokens) < 3:
-                raise ValueError(f"{spec.name.upper()} requires three integer values.")
-            return (int(tokens[0]), int(tokens[1]), int(tokens[2]))
-
-        if spec is not None and spec.value_type in {"physical", "positive_float_with_optional_unit"}:
-            if len(tokens) == 1:
-                return float(tokens[0])
-            if len(tokens) >= 2:
-                return ValueWithUnit(value=float(tokens[0]), unit=tokens[1])
-
-        if spec is not None and spec.value_type == "int":
-            return int(tokens[0])
-
-        if spec is not None and spec.value_type in {"float", "number"}:
-            return float(tokens[0])
-
-        if len(tokens) == 1:
-            token = tokens[0]
-            lowered = token.strip().lower()
-            if lowered in {"true", "t", ".true.", "yes"}:
-                return True
-            if lowered in {"false", "f", ".false.", "no"}:
-                return False
-            try:
-                return int(token)
-            except ValueError:
-                pass
-            try:
-                return float(token)
-            except ValueError:
-                return token
-
-        values: list[object] = []
-        for token in tokens:
-            try:
-                values.append(int(token))
-                continue
-            except ValueError:
-                pass
-            try:
-                values.append(float(token))
-                continue
-            except ValueError:
-                values.append(token)
-        return tuple(values)
+        return parse_param_value(raw_value, spec)
 
     @staticmethod
     def _parse_param_scalar_assignments(text: str) -> dict[str, object]:
-        assignments: dict[str, object] = {}
-        in_block = False
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            for marker in ("!", "#"):
-                if marker in line:
-                    line = line.split(marker, maxsplit=1)[0].strip()
-            if not line:
-                continue
-            upper = line.upper()
-            if upper.startswith("%BLOCK "):
-                in_block = True
-                continue
-            if upper.startswith("%ENDBLOCK "):
-                in_block = False
-                continue
-            if in_block:
-                continue
-            if ":" in line:
-                raw_name, raw_value = line.split(":", maxsplit=1)
-            else:
-                parts = line.split(maxsplit=1)
-                if not parts:
-                    continue
-                raw_name = parts[0]
-                raw_value = parts[1] if len(parts) > 1 else ""
-            canonical_name = canonical_keyword_name("param", raw_name.strip())
-            spec = get_keyword_spec("param", canonical_name)
-            if not raw_value.strip():
-                assignments[canonical_name] = None
-                continue
-            assignments[canonical_name] = MainWindow._parse_param_scalar_value(raw_value.strip(), spec)
-        return assignments
+        """Delegate to :func:`mufinder.castep_io.param_parser.parse_param_assignments`."""
+
+        return parse_param_assignments(text)
 
     def _quantum_source_default_parameter_values(self, candidate: _QuantumSourceCandidate) -> dict[str, object]:
         values: dict[str, object] = {}
@@ -7433,9 +7382,22 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
 
-        resettable_jobs = [
+        terminal_jobs = [
             job for job in jobs if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
         ]
+        resettable_jobs = [job for job in terminal_jobs if not job_is_imported(job)]
+        imported_count = len(terminal_jobs) - len(resettable_jobs)
+        if imported_count:
+            # Resetting an imported job would relaunch a calculation MuFinder
+            # never ran, and its cleanup would delete the only copy of the
+            # imported results and their archived originals.
+            QMessageBox.information(
+                self,
+                "Imported jobs cannot be reset",
+                f"{imported_count} imported job(s) were skipped. They record calculations "
+                "run outside MuFinder, and their directories hold the only copy of those "
+                "results.",
+            )
         if not resettable_jobs:
             QMessageBox.information(
                 self,
@@ -7518,6 +7480,10 @@ class MainWindow(QMainWindow):
         cleanup_errors: list[str] = []
         reset_count = 0
         for job in jobs:
+            if job_is_imported(job):
+                # Defensive: this core is shared with the resubmission path, and
+                # the directory cleanup below is irreversible.
+                continue
             cleaned_output_directory = False
             if cleanup_choice:
                 output_dir = self._job_output_directory(job)
@@ -7562,7 +7528,11 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return False
 
-        resettable_jobs = [job for job in jobs if job_is_resubmittable_after_dismissal(job)]
+        resettable_jobs = [
+            job
+            for job in jobs
+            if job_is_resubmittable_after_dismissal(job) and not job_is_imported(job)
+        ]
         if not resettable_jobs:
             return True
 
@@ -11232,6 +11202,12 @@ class MainWindow(QMainWindow):
             self._normalized_supercell_matrix(row.supercell_matrix),
             self._normalized_parameter_values(row.parameter_values),
             tuple(str(name) for name in row.added_advanced),
+            # Included deliberately. If the imported marker is ever dropped from
+            # one side of the form/definition pair, the signatures stop matching
+            # and the row visibly falls back to "ready" -- far better than the
+            # row rendering correctly while silently becoming editable.
+            bool(row.imported),
+            str(row.import_batch_id) if row.import_batch_id is not None else None,
         )
 
     def _uep_row_signature(self, row: UepSourceRow) -> tuple[object, ...]:
@@ -12242,6 +12218,383 @@ class MainWindow(QMainWindow):
             rows=tuple(rows),
         )
 
+    def _on_import_legacy_relaxations(self) -> None:
+        """Scan a legacy MuFinder folder and import the relaxations chosen from it."""
+
+        document = self._document
+        if document is None:
+            QMessageBox.information(
+                self,
+                "No project open",
+                "Open or create a project before importing legacy relaxations.",
+            )
+            return
+
+        host = self._project_service.active_host_structure(document)
+        if host is None:
+            # Deliberately not offered as "import anyway": every imported
+            # structure must hang off the active host, or its downstream jobs
+            # fail host resolution at submission time.
+            QMessageBox.information(
+                self,
+                "No host structure",
+                "Import a host structure first. Imported relaxations are anchored to "
+                "the project's active host so the sites they create can be used "
+                "downstream.",
+            )
+            return
+
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select a legacy MuFinder working folder"
+        )
+        if not directory:
+            return
+
+        self._begin_legacy_scan(Path(directory), host)
+
+    def _begin_legacy_scan(self, root: Path, host: Structure) -> None:
+        """Scan ``root`` on a worker thread, then review and commit."""
+
+        self.statusBar().showMessage(f"Scanning {root.name} for legacy relaxations...")
+        if self._import_legacy_action is not None:
+            self._import_legacy_action.setEnabled(False)
+        self._legacy_scan_host = host
+        self._legacy_scan_root = root
+        self._legacy_scan_thread = start_legacy_scan(
+            self,
+            root,
+            [list(vector) for vector in host.lattice_vectors],
+            list(host.species),
+            self._on_legacy_scan_completed,
+            self._on_legacy_scan_failed,
+        )
+
+    @Slot(str)
+    def _on_legacy_scan_failed(self, message: str) -> None:
+        self._finish_legacy_scan()
+        QMessageBox.warning(self, "Import failed", f"Could not scan the folder:\n{message}")
+
+    @Slot(object)
+    def _on_legacy_scan_completed(self, scan: object) -> None:
+        self._finish_legacy_scan()
+        document = self._document
+        host = self._legacy_scan_host
+        if document is None or host is None or not isinstance(scan, LegacyFolderScan):
+            return
+
+        if not scan.runs:
+            QMessageBox.information(
+                self,
+                "Nothing to import",
+                "No muon relaxations were found in that folder.\n\n"
+                + "\n".join(scan.warnings),
+            )
+            return
+
+        dialog = LegacyImportDialog(scan, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dialog.selected_runs()
+        if not selected:
+            return
+
+        self._commit_legacy_import(scan, selected, host)
+
+    def _finish_legacy_scan(self) -> None:
+        self._legacy_scan_thread = None
+        if self._import_legacy_action is not None:
+            self._import_legacy_action.setEnabled(True)
+        self.statusBar().clearMessage()
+
+    def _commit_legacy_import(
+        self, scan: LegacyFolderScan, runs: list, host: Structure
+    ) -> None:
+        """Build entities and files, attach the rows, and save."""
+
+        document = self._document
+        if document is None:
+            return
+
+        output_root = document.project_root / "files" / WorkflowStage.MUON_RELAXATION.value
+        definition = self._active_muon_relaxation_definition()
+        existing_labels: list[str] = []
+        if definition is not None:
+            config = self._deserialize_muon_relaxation_config(
+                definition.parameters.get("configuration", {})
+            )
+            if config is not None:
+                existing_labels = [row.label for row in config.rows]
+
+        try:
+            outcome = commit_legacy_import(
+                document,
+                scan=scan,
+                runs=runs,
+                host_structure=host,
+                output_root=output_root,
+                existing_labels=existing_labels,
+            )
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Import failed", f"Could not write the imported files:\n{exc}"
+            )
+            return
+
+        if not self.merge_imported_relaxation_rows(outcome, output_directory=output_root):
+            QMessageBox.warning(
+                self,
+                "Import incomplete",
+                "The relaxations were imported but could not be attached to the "
+                "relaxations table.",
+            )
+            return
+
+        self._refresh_muon_relaxation_rows()
+        self._refresh_jobs_table()
+        self._refresh_muon_sites_summary()
+        self._persist_document_ui_state(
+            failure_message="Legacy relaxations were imported, but autosave failed.",
+        )
+
+        messages = [f"Imported {len(outcome.imported)} relaxation(s)."]
+        if outcome.skipped:
+            messages.append(f"{len(outcome.skipped)} were skipped.")
+        row_warnings = [note for item in outcome.imported for note in item.warnings]
+        if row_warnings:
+            messages.append("")
+            messages.extend(f"- {note}" for note in dict.fromkeys(row_warnings))
+        QMessageBox.information(self, "Import complete", "\n".join(messages))
+        self.statusBar().showMessage(f"Imported {len(outcome.imported)} legacy relaxation(s)")
+
+    def _on_remove_imported_relaxations(self) -> None:
+        """Remove one import batch, or explain why it cannot be removed.
+
+        An imported relaxation owns the only copy of its results, so this is
+        irreversible in a way that removing a natively-run relaxation is not:
+        that one can be re-run. The reference check therefore refuses rather
+        than warns, and the confirmation names what will be deleted.
+        """
+
+        document = self._document
+        if document is None:
+            QMessageBox.information(self, "No project open", "Open a project first.")
+            return
+
+        batches = self._imported_relaxation_batches()
+        if not batches:
+            QMessageBox.information(
+                self,
+                "Nothing imported",
+                "This project contains no imported relaxations.",
+            )
+            return
+
+        labels = [
+            f"{label} ({count} relaxation(s))" for label, count, _batch_id in batches
+        ]
+        choice, accepted = QInputDialog.getItem(
+            self, "Remove Imported Relaxations", "Import batch", labels, 0, False
+        )
+        if not accepted:
+            return
+        batch_id = batches[labels.index(choice)][2]
+
+        refs = imported_relaxations_in_batch(document, batch_id)
+        directories = {
+            ref.job_id: path
+            for ref in refs
+            if (path := self._job_output_directory(document.jobs[ref.job_id])) is not None
+        }
+        plan = plan_removal(document, refs, job_directories=directories)
+
+        if plan.blockers:
+            QMessageBox.warning(
+                self,
+                "Still in use",
+                "These imported relaxations cannot be removed because they are still "
+                "used by:\n\n"
+                + "\n".join(f"- {item}" for item in plan.blockers)
+                + "\n\nRemove those first.",
+            )
+            return
+
+        confirmed = QMessageBox.question(
+            self,
+            "Remove imported relaxations?",
+            f"Permanently remove {len(plan.targets)} imported relaxation(s) and delete "
+            "their job directories, including the archived original input files?\n\n"
+            "MuFinder did not run these calculations and cannot recreate them.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+
+        removed, errors = remove_imported_relaxations(document, plan, batch_id=batch_id)
+        definition = self._active_muon_relaxation_definition()
+        if definition is not None:
+            detach_rows_from_definition(definition, plan.targets)
+            self._muon_relaxation_view.set_form_state(
+                self._muon_relaxation_form_state_without(plan.targets)
+            )
+            document.ui_state["muon_relaxation_form"] = (
+                self._muon_relaxation_view.collect_state()
+            )
+
+        self._refresh_muon_relaxation_rows()
+        self._refresh_jobs_table()
+        self._refresh_muon_sites_summary()
+        self._persist_document_ui_state(
+            failure_message="Imported relaxations were removed, but autosave failed.",
+        )
+
+        if errors:
+            QMessageBox.warning(self, "Removal issues", "\n".join(errors))
+        self.statusBar().showMessage(f"Removed {removed} imported relaxation(s)")
+
+    def _muon_relaxation_form_state_without(self, targets) -> dict[str, object]:
+        """Return the widget's form state with ``targets``' rows dropped."""
+
+        state = self._muon_relaxation_view.collect_state()
+        rows = state.get("rows", []) if isinstance(state, dict) else []
+        removed = {str(ref.site_id) for ref in targets}
+        return {
+            "rows": [row for row in rows if str(row.get("site_id", "")) not in removed]
+        }
+
+    def _imported_relaxation_batches(self) -> list[tuple[str, int, UUID]]:
+        """Return ``(label, count, batch_id)`` for every import batch present."""
+
+        document = self._document
+        if document is None:
+            return []
+        counts: dict[str, int] = {}
+        for site in document.sites.values():
+            raw = site.properties.get("import_batch_id")
+            if raw:
+                counts[str(raw)] = counts.get(str(raw), 0) + 1
+
+        labels: dict[str, str] = {}
+        for record in document.provenance:
+            if record.action != IMPORT_ACTION:
+                continue
+            raw_batch = record.parameters.get("batch_id")
+            source = record.parameters.get("source_folder")
+            if raw_batch:
+                labels[str(raw_batch)] = Path(str(source)).name if source else "imported batch"
+
+        batches: list[tuple[str, int, UUID]] = []
+        for raw_batch, count in counts.items():
+            try:
+                batch_id = UUID(raw_batch)
+            except ValueError:
+                continue
+            batches.append((labels.get(raw_batch, "imported batch"), count, batch_id))
+        return sorted(batches, key=lambda item: item[0])
+
+    def merge_imported_relaxation_rows(
+        self,
+        outcome,
+        *,
+        output_directory: Path,
+    ) -> bool:
+        """Attach an import batch's rows to the muon-relaxation definition.
+
+        The app-layer half of an import. ``services`` builds the entities and
+        files but cannot finish the job: the relaxations table renders the
+        *intersection* of the widget's form state and the active definition's
+        rows, matched on a signature that includes normalised parameter values,
+        so the rows have to be pushed through the live widget and read back.
+        A services-only import would appear to succeed while every imported row
+        rendered "ready" with no energy.
+
+        The active definition is mutated **in place**. Re-registering it would
+        arrive with an empty ``job_ids_by_label``, and the synchronisation pass
+        that normally re-adopts those bindings only matches rows whose
+        signatures already agree — which an import's never do — so every
+        existing row would lose its job.
+
+        Returns ``False`` when there is no document or no host structure to
+        anchor a new definition to.
+        """
+
+        document = self._document
+        if document is None:
+            return False
+        payloads = list(outcome.row_payloads)
+        if not payloads:
+            return True
+
+        definition = self._active_muon_relaxation_definition()
+        if definition is None:
+            host_id = document.project.host_structure_id
+            if host_id is None:
+                return False
+            definition = self._project_service.register_muon_relaxation_definition(
+                document,
+                input_structure_id=host_id,
+                parameters={"rows": []},
+                output_directory=output_directory,
+            )
+            document.ui_state[self._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+
+        configuration = definition.parameters.setdefault("configuration", {"rows": []})
+        if not isinstance(configuration, dict):
+            configuration = {"rows": []}
+            definition.parameters["configuration"] = configuration
+        rows = configuration.setdefault("rows", [])
+        if not isinstance(rows, list):
+            rows = []
+            configuration["rows"] = rows
+
+        mapping = self._ensure_label_mapping(definition)
+        seed_mapping = definition.parameters.setdefault("job_seed_names_by_label", {})
+        if not isinstance(seed_mapping, dict):
+            seed_mapping = {}
+            definition.parameters["job_seed_names_by_label"] = seed_mapping
+
+        for item, payload in zip(outcome.imported, payloads, strict=False):
+            rows.append(dict(payload))
+            key = f"{muon_charge_state_prefix(item.charge_state)}:{item.label}"
+            mapping[key] = str(item.job_id)
+            seed_mapping[key] = item.seed_name
+            if item.site_id not in definition.input_site_ids:
+                definition.input_site_ids.append(item.site_id)
+
+        self._mirror_imported_rows_into_form(payloads)
+        return True
+
+    def _mirror_imported_rows_into_form(self, payloads: list[dict[str, object]]) -> None:
+        """Add imported rows to the widget's form state and store the result.
+
+        The widget's state shape is **not** the definition's configuration shape
+        — it names the position ``fractional_position`` where the configuration
+        says ``initial_fractional_position`` — so the payloads are translated
+        rather than passed through. Feeding the configuration shape straight in
+        parses without error and silently zeroes every position.
+
+        What is stored afterwards is the widget's own normalised state, not the
+        input: the tables strip implicit project defaults, and the row signature
+        that decides whether a row renders with its real status is computed over
+        those normalised values.
+        """
+
+        document = self._document
+        if document is None:
+            return
+        state = self._muon_relaxation_view.collect_state()
+        rows = list(state.get("rows", [])) if isinstance(state, dict) else []
+        for payload in payloads:
+            entry = dict(payload)
+            entry["fractional_position"] = list(
+                entry.pop("initial_fractional_position", [0.0, 0.0, 0.0])
+            )
+            rows.append(entry)
+        self._muon_relaxation_view.set_form_state({"rows": rows})
+        normalized = self._muon_relaxation_view.collect_state()
+        if isinstance(normalized, dict):
+            document.ui_state["muon_relaxation_form"] = normalized
+
     def _serialize_muon_relaxation_config(self, config: MuonRelaxationConfig) -> dict[str, object]:
         return {
             "rows": [
@@ -12257,6 +12610,10 @@ class MainWindow(QMainWindow):
                     ),
                     "parameter_values": dict(row.parameter_values),
                     "added_advanced": list(row.added_advanced),
+                    "imported": bool(row.imported),
+                    "import_batch_id": (
+                        str(row.import_batch_id) if row.import_batch_id is not None else None
+                    ),
                 }
                 for row in config.rows
             ]
@@ -12305,6 +12662,13 @@ class MainWindow(QMainWindow):
                 if isinstance(raw_advanced, list)
                 else ()
             )
+            import_batch_id: UUID | None = None
+            raw_batch_id = entry.get("import_batch_id")
+            if raw_batch_id is not None:
+                try:
+                    import_batch_id = UUID(str(raw_batch_id))
+                except (TypeError, ValueError):
+                    import_batch_id = None
             rows.append(
                 MuonRelaxationRow(
                     site_id=site_id,
@@ -12318,6 +12682,8 @@ class MainWindow(QMainWindow):
                     supercell_matrix=matrix,
                     parameter_values=restored_params,
                     added_advanced=added_advanced,
+                    imported=bool(entry.get("imported", False)),
+                    import_batch_id=import_batch_id,
                 )
             )
         return MuonRelaxationConfig(rows=tuple(rows))

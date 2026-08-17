@@ -73,3 +73,61 @@ def seed_muon_spins(
     for index in muon_indices:
         spins[index] = muon_spin
     return spins
+
+#: Persisted ``calc_type`` for each muon charge state. These strings are written
+#: into saved projects and are matched by the job-directory resolver, so they are
+#: durable vocabulary rather than presentation detail — which is why they live in
+#: ``domain`` rather than beside the UI adapter that first defined them.
+MUON_RELAXATION_CALC_TYPES: dict[str, str] = {
+    POSITIVE_MUON_CHARGE_STATE: "castep_positivemuon_relaxation",
+    MUONIUM_CHARGE_STATE: "castep_muonium_relaxation",
+}
+#: Filesystem-safe directory prefix for each charge state.
+MUON_RELAXATION_JOB_PREFIXES: dict[str, str] = {
+    POSITIVE_MUON_CHARGE_STATE: "positivemuon",
+    MUONIUM_CHARGE_STATE: "muonium",
+}
+#: CASTEP total ``CHARGE`` for each charge state.
+MUON_RELAXATION_CHARGES: dict[str, int] = {
+    POSITIVE_MUON_CHARGE_STATE: 1,
+    MUONIUM_CHARGE_STATE: 0,
+}
+
+
+def _charge_state_key(value: str) -> str:
+    return canonical_charge_state(value) or POSITIVE_MUON_CHARGE_STATE
+
+
+def muon_charge_state_label(charge_state: str) -> str:
+    """Return a user-facing charge-state label."""
+
+    if _charge_state_key(charge_state) == MUONIUM_CHARGE_STATE:
+        return "muonium"
+    return "positive muon"
+
+
+def muon_charge_state_prefix(charge_state: str) -> str:
+    """Return the filesystem-safe prefix for one muon charge state."""
+
+    key = _charge_state_key(charge_state)
+    return MUON_RELAXATION_JOB_PREFIXES.get(key, MUON_RELAXATION_JOB_PREFIXES[POSITIVE_MUON_CHARGE_STATE])
+
+
+def muon_charge_for_state(charge_state: str) -> int:
+    """Return the CASTEP total charge for one muon charge state."""
+
+    key = _charge_state_key(charge_state)
+    return MUON_RELAXATION_CHARGES.get(key, MUON_RELAXATION_CHARGES[POSITIVE_MUON_CHARGE_STATE])
+
+
+def muon_relaxation_calc_type(charge_state: str) -> str:
+    """Return the persisted calc type for one muon charge state."""
+
+    key = _charge_state_key(charge_state)
+    return MUON_RELAXATION_CALC_TYPES.get(key, MUON_RELAXATION_CALC_TYPES[POSITIVE_MUON_CHARGE_STATE])
+
+
+def is_muon_relaxation_calc_type(calc_type: str) -> bool:
+    """Return true for any CASTEP muon structural-relaxation calc type."""
+
+    return calc_type in set(MUON_RELAXATION_CALC_TYPES.values())

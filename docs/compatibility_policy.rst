@@ -40,6 +40,17 @@ Compatibility ledger
      - Backward-compatible helper name for cutoff-only analysis callers.
      - Public science helper. Keep until a major release provides a documented
        replacement and migration note.
+   * - ``imported`` / ``import_batch_id`` row fields
+     - ``MuonRelaxationRow`` / muon-relaxation definition ``configuration``
+     - Mark a relaxation row ingested from a calculation performed outside
+       MuFinder, and group the rows one import produced. Both are additive with
+       defaults, so a project saved before the legacy import existed loads with
+       every row treated as natively staged, which is correct.
+     - Current project data, not deprecated. These fields are load-bearing for
+       read-only enforcement: a row whose ``imported`` flag is lost becomes
+       editable and resubmittable while its imported entities and files remain,
+       so neither field may be dropped without a schema migration that first
+       relocates the marker.
    * - ``recommended_cutoff_*`` project fields
      - ``Project`` / project manifest
      - Persisted project defaults used by current cutoff, k-point, relaxation,
