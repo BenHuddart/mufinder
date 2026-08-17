@@ -458,38 +458,64 @@ class TestScanRunsOnAThread:
     """
 
     def _run_to_completion(self, folder: Path, timeout_ms: int = 15000):
-        from PySide6.QtCore import QEventLoop, QTimer
+        """Drive a real scan and return (events, receiver thread ids).
+
+        Receivers are bound slots on a ``QObject`` that lives on the main
+        thread, matching what ``MainWindow`` actually connects. That is not
+        incidental: Qt picks the connection type from the receiver's thread
+        affinity, so a plain function or lambda has no receiver object and is
+        invoked **directly on the worker thread**. Connecting one here would
+        make this class silently test direct delivery while claiming to test
+        queued delivery, and it would stop catching regressions in the path the
+        application really uses.
+        """
+
+        import threading
+
+        from PySide6.QtCore import QEventLoop, QObject, QTimer, Slot
 
         from mufinder.app.legacy_import_dialog import start_legacy_scan
 
         events: list[tuple] = []
+        threads: dict[str, int] = {}
         loop = QEventLoop()
 
-        def completed(scan) -> None:
-            events.append(("completed", scan))
-            loop.quit()
+        class Receiver(QObject):
+            @Slot(object)
+            def completed(self, scan) -> None:
+                threads["completed"] = threading.get_ident()
+                events.append(("completed", scan))
+                loop.quit()
 
-        def failed(message: str) -> None:
-            events.append(("failed", message))
-            loop.quit()
+            @Slot(str)
+            def failed(self, message: str) -> None:
+                threads["failed"] = threading.get_ident()
+                events.append(("failed", message))
+                loop.quit()
 
+            @Slot(int, int)
+            def progressed(self, done: int, total: int) -> None:
+                threads.setdefault("progressed", threading.get_ident())
+                events.append(("progress", done, total))
+
+        receiver = Receiver()
         start_legacy_scan(
             None,
             folder,
             HOST_LATTICE,
             ["Si"],
-            completed,
-            failed,
-            lambda done, total: events.append(("progress", done, total)),
+            receiver.completed,
+            receiver.failed,
+            receiver.progressed,
         )
         QTimer.singleShot(timeout_ms, loop.quit)
         loop.exec()
-        return events
+        return events, threads
 
     def test_a_started_scan_completes_without_being_held_by_the_caller(
         self, qapp, tmp_path: Path
     ) -> None:
-        events = self._run_to_completion(build_folder(tmp_path, sites=(1, 2)))
+        events, _threads = self._run_to_completion(build_folder(tmp_path, sites=(1, 2)))
 
         kinds = [item[0] for item in events]
         assert "completed" in kinds, f"scan never completed; got {events!r}"
@@ -499,9 +525,21 @@ class TestScanRunsOnAThread:
     def test_progress_is_delivered_across_the_thread_boundary(
         self, qapp, tmp_path: Path
     ) -> None:
-        """Queued delivery to a GUI-thread receiver, not just a direct call."""
+        """Queued delivery onto the main thread, asserted rather than assumed.
 
-        events = self._run_to_completion(build_folder(tmp_path, sites=(1, 2, 3)))
+        The thread-identity check is the point of this test. Without it the
+        assertions below pass just as happily when the callbacks run directly on
+        the worker thread, which is what a plain-function receiver would do --
+        so the test would keep passing while no longer testing its own name.
+        """
+
+        import threading
+
+        main_thread = threading.get_ident()
+        events, threads = self._run_to_completion(build_folder(tmp_path, sites=(1, 2, 3)))
+
+        assert threads["progressed"] == main_thread
+        assert threads["completed"] == main_thread
 
         progress = [item for item in events if item[0] == "progress"]
         assert progress == [("progress", 1, 3), ("progress", 2, 3), ("progress", 3, 3)]
@@ -519,10 +557,14 @@ class TestScanRunsOnAThread:
 
         monkeypatch.setattr(legacy_import_dialog, "scan_legacy_folder", _boom)
 
-        events = self._run_to_completion(build_folder(tmp_path, sites=(1,)))
+        import threading
+
+        main_thread = threading.get_ident()
+        events, threads = self._run_to_completion(build_folder(tmp_path, sites=(1,)))
 
         assert [item[0] for item in events] == ["failed"]
         assert events[0][1] == "disk on fire"
+        assert threads["failed"] == main_thread
 
     def test_the_registry_is_emptied_once_the_thread_exits(
         self, qapp, tmp_path: Path

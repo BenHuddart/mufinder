@@ -791,6 +791,13 @@ Phasing
       cases in ``tests/app/test_legacy_import_wizard.py`` run the real signal
       path through an event loop for that reason.
 
+      Those tests must connect **bound slots on a main-thread QObject**, as
+      ``MainWindow`` does. Qt picks the connection type from the receiver's
+      thread affinity, so a plain function or lambda has no receiver object and
+      is invoked directly on the worker thread — a test wired that way passes
+      while testing the opposite of what it claims. The tests assert the
+      receiving thread's identity so that mistake fails rather than hides.
+
    The action refuses early — before the folder picker opens — when there is no
    project or no active host structure. Every imported structure hangs off the
    active host, so without one its downstream jobs would fail host resolution at
