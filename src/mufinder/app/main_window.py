@@ -77,6 +77,7 @@ from mufinder.branding import (
 from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_cluster_configs
 from mufinder.castep_io.gui_metadata import make_block_section, make_keyword_assignment, normalize_gui_value
 from mufinder.castep_io.schema import KeywordSpec, canonical_keyword_name, get_keyword_spec
+from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure, utc_now
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
@@ -385,6 +386,17 @@ def _merge_species_options(structures: list[Structure | None]) -> tuple[str, ...
             seen.add(species)
             values.append(species)
     return tuple(values)
+
+
+def job_is_imported(job: Job) -> bool:
+    """Return whether ``job`` records a calculation performed outside MuFinder.
+
+    Imported jobs must never be reset, resubmitted, or continued: MuFinder did
+    not run them, and their directories hold the only copy of the imported
+    results together with the archived originals.
+    """
+
+    return IMPORTED_JOB_TAG in (job.tags or ())
 
 
 def _format_energy(value: object) -> str:
@@ -7348,9 +7360,22 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
 
-        resettable_jobs = [
+        terminal_jobs = [
             job for job in jobs if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
         ]
+        resettable_jobs = [job for job in terminal_jobs if not job_is_imported(job)]
+        imported_count = len(terminal_jobs) - len(resettable_jobs)
+        if imported_count:
+            # Resetting an imported job would relaunch a calculation MuFinder
+            # never ran, and its cleanup would delete the only copy of the
+            # imported results and their archived originals.
+            QMessageBox.information(
+                self,
+                "Imported jobs cannot be reset",
+                f"{imported_count} imported job(s) were skipped. They record calculations "
+                "run outside MuFinder, and their directories hold the only copy of those "
+                "results.",
+            )
         if not resettable_jobs:
             QMessageBox.information(
                 self,
@@ -7433,6 +7458,10 @@ class MainWindow(QMainWindow):
         cleanup_errors: list[str] = []
         reset_count = 0
         for job in jobs:
+            if job_is_imported(job):
+                # Defensive: this core is shared with the resubmission path, and
+                # the directory cleanup below is irreversible.
+                continue
             cleaned_output_directory = False
             if cleanup_choice:
                 output_dir = self._job_output_directory(job)
@@ -7477,7 +7506,11 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return False
 
-        resettable_jobs = [job for job in jobs if job_is_resubmittable_after_dismissal(job)]
+        resettable_jobs = [
+            job
+            for job in jobs
+            if job_is_resubmittable_after_dismissal(job) and not job_is_imported(job)
+        ]
         if not resettable_jobs:
             return True
 
@@ -12162,6 +12195,109 @@ class MainWindow(QMainWindow):
             name_prefix=str(payload.get("name_prefix", "pristine_relax")).strip() or "pristine_relax",
             rows=tuple(rows),
         )
+
+    def merge_imported_relaxation_rows(
+        self,
+        outcome,
+        *,
+        output_directory: Path,
+    ) -> bool:
+        """Attach an import batch's rows to the muon-relaxation definition.
+
+        The app-layer half of an import. ``services`` builds the entities and
+        files but cannot finish the job: the relaxations table renders the
+        *intersection* of the widget's form state and the active definition's
+        rows, matched on a signature that includes normalised parameter values,
+        so the rows have to be pushed through the live widget and read back.
+        A services-only import would appear to succeed while every imported row
+        rendered "ready" with no energy.
+
+        The active definition is mutated **in place**. Re-registering it would
+        arrive with an empty ``job_ids_by_label``, and the synchronisation pass
+        that normally re-adopts those bindings only matches rows whose
+        signatures already agree — which an import's never do — so every
+        existing row would lose its job.
+
+        Returns ``False`` when there is no document or no host structure to
+        anchor a new definition to.
+        """
+
+        document = self._document
+        if document is None:
+            return False
+        payloads = list(outcome.row_payloads)
+        if not payloads:
+            return True
+
+        definition = self._active_muon_relaxation_definition()
+        if definition is None:
+            host_id = document.project.host_structure_id
+            if host_id is None:
+                return False
+            definition = self._project_service.register_muon_relaxation_definition(
+                document,
+                input_structure_id=host_id,
+                parameters={"rows": []},
+                output_directory=output_directory,
+            )
+            document.ui_state[self._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
+
+        configuration = definition.parameters.setdefault("configuration", {"rows": []})
+        if not isinstance(configuration, dict):
+            configuration = {"rows": []}
+            definition.parameters["configuration"] = configuration
+        rows = configuration.setdefault("rows", [])
+        if not isinstance(rows, list):
+            rows = []
+            configuration["rows"] = rows
+
+        mapping = self._ensure_label_mapping(definition)
+        seed_mapping = definition.parameters.setdefault("job_seed_names_by_label", {})
+        if not isinstance(seed_mapping, dict):
+            seed_mapping = {}
+            definition.parameters["job_seed_names_by_label"] = seed_mapping
+
+        for item, payload in zip(outcome.imported, payloads, strict=False):
+            rows.append(dict(payload))
+            key = f"{muon_charge_state_prefix(item.charge_state)}:{item.label}"
+            mapping[key] = str(item.job_id)
+            seed_mapping[key] = item.seed_name
+            if item.site_id not in definition.input_site_ids:
+                definition.input_site_ids.append(item.site_id)
+
+        self._mirror_imported_rows_into_form(payloads)
+        return True
+
+    def _mirror_imported_rows_into_form(self, payloads: list[dict[str, object]]) -> None:
+        """Add imported rows to the widget's form state and store the result.
+
+        The widget's state shape is **not** the definition's configuration shape
+        — it names the position ``fractional_position`` where the configuration
+        says ``initial_fractional_position`` — so the payloads are translated
+        rather than passed through. Feeding the configuration shape straight in
+        parses without error and silently zeroes every position.
+
+        What is stored afterwards is the widget's own normalised state, not the
+        input: the tables strip implicit project defaults, and the row signature
+        that decides whether a row renders with its real status is computed over
+        those normalised values.
+        """
+
+        document = self._document
+        if document is None:
+            return
+        state = self._muon_relaxation_view.collect_state()
+        rows = list(state.get("rows", [])) if isinstance(state, dict) else []
+        for payload in payloads:
+            entry = dict(payload)
+            entry["fractional_position"] = list(
+                entry.pop("initial_fractional_position", [0.0, 0.0, 0.0])
+            )
+            rows.append(entry)
+        self._muon_relaxation_view.set_form_state({"rows": rows})
+        normalized = self._muon_relaxation_view.collect_state()
+        if isinstance(normalized, dict):
+            document.ui_state["muon_relaxation_form"] = normalized
 
     def _serialize_muon_relaxation_config(self, config: MuonRelaxationConfig) -> dict[str, object]:
         return {

@@ -61,7 +61,7 @@ from mufinder.domain.charge_states import (
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
-from mufinder.domain.constants import MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
+from mufinder.domain.constants import IMPORTED_JOB_TAG, MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationRun,
@@ -536,7 +536,7 @@ def commit_legacy_import(
             tags=[
                 WorkflowStage.MUON_RELAXATION.value,
                 muon_relaxation_calc_type(charge_state),
-                "imported",
+                IMPORTED_JOB_TAG,
                 "legacy_mufinder",
             ],
             completed_at=utc_now(),

@@ -712,9 +712,24 @@ Phasing
    produces are plain payload dictionaries in the persisted configuration shape.
    Merging them into the active definition needs the widget and so belongs to
    the next phase.
-5. **Table integration.** Form-state mirroring, read-only rendering, gating of
-   continuation, editing, batch configuration and removal, and the dashboard
-   resubmit, reset and cleanup gates for failed imports.
+5. **Table integration** — *done*. ``MainWindow.merge_imported_relaxation_rows``
+   attaches a batch's rows to the active definition and mirrors them through the
+   widget; imported rows render read-only; continuation, editing, in-table
+   removal and batch configuration are gated; and the dashboard reset,
+   resubmission and directory-cleanup paths refuse imported jobs.
+
+   The gates key on an ``imported`` tag carried by the ``Job`` rather than on a
+   lookup through its definition row, because every guard that must respect it
+   already holds the job and may not hold the row. The reset guard sits inside
+   the shared reset core, not only at its call sites: that core is reached both
+   from the dashboard Reset action and from the lazy reset a dismissed row
+   performs on resubmit, and its cleanup is irreversible.
+
+   Read-only rendering reuses the widget's existing lock predicates rather than
+   adding parallel checks, so an imported row locks exactly where a queued row
+   already does. The marker is applied by style and tooltip, never by editing the
+   label text: the label is read back as the row's identity, so decorating it
+   would corrupt the row key.
 6. **Wizard.** Folder picker, detected-run table with selection, conflict,
    catalog-fidelity and host-match warnings, commit.
 7. **Removal cascade.**

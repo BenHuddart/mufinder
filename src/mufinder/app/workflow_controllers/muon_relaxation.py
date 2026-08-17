@@ -50,6 +50,7 @@ from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.services.job_artifacts import ParsedJobArtifacts
+from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
@@ -603,7 +604,16 @@ class MuonRelaxationController(WorkflowJobController):
         """
 
         jobs = self.jobs_for_keys([key])
-        return bool(jobs) and jobs[0].status in CONTINUABLE_JOB_STATUSES
+        if not jobs:
+            return False
+        # An imported job is COMPLETED, so it would otherwise qualify. Continuing
+        # one rebuilds the cell from the *initial* muon position and relies on a
+        # checkpoint file an import does not have, so it would silently restart
+        # from scratch while presenting itself as a warm start -- and discard the
+        # relaxed result the import exists to preserve.
+        if IMPORTED_JOB_TAG in (jobs[0].tags or ()):
+            return False
+        return jobs[0].status in CONTINUABLE_JOB_STATUSES
 
     def render_row_param_text(
         self,
