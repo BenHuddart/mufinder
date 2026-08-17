@@ -419,3 +419,25 @@ class TestRemovalAction:
 
         assert len(window._document.sites) == 2
         assert all(item.job_directory.is_dir() for item in outcome.imported)
+
+
+class TestScanProgressReporting:
+    def test_the_worker_relays_progress(self, qapp, tmp_path: Path) -> None:
+        from mufinder.app.legacy_import_dialog import LegacyScanWorker
+
+        seen: list[tuple[int, int]] = []
+        worker = LegacyScanWorker(build_folder(tmp_path, sites=(1, 2)), HOST_LATTICE)
+        worker.progressed.connect(lambda done, total: seen.append((done, total)))
+
+        worker.run()
+
+        assert seen == [(1, 2), (2, 2)]
+
+    def test_the_status_bar_names_the_folder_and_position(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        window._legacy_scan_root = tmp_path / "legacy"
+
+        window._on_legacy_scan_progress(3, 36)
+
+        assert window.statusBar().currentMessage() == "Scanning legacy: relaxation 3 of 36..."

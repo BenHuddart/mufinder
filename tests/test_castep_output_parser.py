@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from mufinder.castep_io.output_parser import parse_castep_mulliken_atomic_spins, parse_castep_output
+from mufinder.castep_io.output_parser import (
+    _FORCE_BLOCK_HEADER_RE,
+    parse_castep_mulliken_atomic_spins,
+    parse_castep_output,
+)
 
 
 GOLDEN_DIR = Path("tests/golden")
@@ -121,3 +125,99 @@ def test_parse_castep_mulliken_spins_preserves_species_local_ion_order(tmp_path:
     assert parse_castep_mulliken_atomic_spins(output) == pytest.approx(
         (-0.037, 0.038, 2.658, -2.656)
     )
+
+
+class TestBlockHeaderDetection:
+    """The substring guard in front of the header regexes is a speed device only.
+
+    It must not become a second, stricter rule. These pin the case-insensitivity
+    the guard could silently have broken — a lowercase ``forces`` header would
+    still match the regex but be rejected by a case-sensitive pre-filter, and the
+    result would be silently missing forces rather than an error.
+    """
+
+    def _output(self, force_header: str, stress_header: str) -> str:
+        return f"""
+ Run started: Fri, 10 Jan 2025 11:57:08 +0000
+ Final energy, E             =  -100.0     eV
+
+ {force_header}
+ * Si  1   0.10000   0.20000   0.30000 *
+
+ {stress_header}
+ *  x      1.000000      0.000000      0.000000  *
+ *  y      0.000000      2.000000      0.000000  *
+ *  z      0.000000      0.000000      3.000000  *
+
+ Total time =     1.00 s
+"""
+
+    @pytest.mark.parametrize(
+        "force_header",
+        [
+            "*********************** Forces ***********************",
+            "*********************** forces ***********************",
+            "*********************** FORCES ***********************",
+            "************* Unconstrained Forces *************",
+        ],
+    )
+    def test_force_headers_are_found_in_any_case(
+        self, tmp_path: Path, force_header: str
+    ) -> None:
+        path = tmp_path / "seed.castep"
+        path.write_text(
+            self._output(force_header, "***** Stress Tensor *****"), encoding="utf-8"
+        )
+
+        result = parse_castep_output(path)
+
+        assert result.forces == (("Si", 0.1, 0.2, 0.3),)
+
+    @pytest.mark.parametrize(
+        "stress_header",
+        [
+            "***** Stress Tensor *****",
+            "***** stress tensor *****",
+            "***** STRESS TENSOR *****",
+        ],
+    )
+    def test_stress_headers_are_found_in_any_case(
+        self, tmp_path: Path, stress_header: str
+    ) -> None:
+        path = tmp_path / "seed.castep"
+        path.write_text(
+            self._output("***** Forces *****", stress_header), encoding="utf-8"
+        )
+
+        result = parse_castep_output(path)
+
+        assert result.stress[0] == pytest.approx((1.0, 0.0, 0.0))
+
+    def test_the_guard_is_permissive_and_the_regex_still_decides(
+        self, tmp_path: Path
+    ) -> None:
+        """A line can pass the substring guard and still not be a header.
+
+        The guard only rejects lines the regex could never match; it must not be
+        allowed to become the decision. This line contains "orce" (so the guard
+        lets it through) but not the plural ``Forces`` the regex requires, so the
+        regex is what rejects it. A change that promoted the guard to the
+        decision would wrongly treat it as a header and truncate the real block.
+        """
+
+        prose = " the net force on each ion is reported below"
+        assert "orce" in prose.casefold()
+        assert _FORCE_BLOCK_HEADER_RE.search(prose) is None
+
+        path = tmp_path / "seed.castep"
+        path.write_text(
+            self._output("***** Forces *****", "***** Stress Tensor *****").replace(
+                " * Si  1   0.10000   0.20000   0.30000 *",
+                " * Si  1   0.10000   0.20000   0.30000 *\n" + prose,
+            ),
+            encoding="utf-8",
+        )
+
+        result = parse_castep_output(path)
+
+        assert result.forces == (("Si", 0.1, 0.2, 0.3),)

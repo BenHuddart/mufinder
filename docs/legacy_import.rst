@@ -839,10 +839,20 @@ Open risks
 - **Multi-restart ``.castep`` files.** The existing parser reads the last run
   segment for status, but the header dump repeats per restart. Read the *last*
   dump.
-- **Large folders** — *addressed*. Scanning runs on a worker thread, so parsing
-  dozens of multi-megabyte outputs no longer blocks the GUI. The commit itself
-  still runs inline; it copies files rather than parsing them, but a very large
-  batch may warrant the same treatment.
+- **Large folders** — *addressed*. Scanning runs on a worker thread and reports
+  per-run progress to the status bar, so a folder of dozens of multi-megabyte
+  outputs neither blocks the GUI nor sits on a static message.
+
+  Measured on a 36-run folder totalling 88 MB of ``.castep``: an initial 101 s
+  fell to 14 s once ``parse_castep_output`` stopped running two permissive
+  ``IGNORECASE`` block-header patterns against every line of every file. That
+  cost was invisible while the parser only ran once per completed job; an import
+  runs it once per relaxation, which is what made it visible. The fix is a
+  substring guard in front of each regex — a speed device, not a second rule, so
+  the header match stays case-insensitive.
+
+  The commit itself still runs inline; it copies files rather than parsing them,
+  but a very large batch may warrant the same treatment.
 - **Catalog drift between imports.** Two imports into the same project under
   different CASTEP versions can map different keyword sets. The recorded CASTEP
   version per import makes this diagnosable rather than invisible.

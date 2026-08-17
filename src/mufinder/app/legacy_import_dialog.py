@@ -46,6 +46,9 @@ class LegacyScanWorker(QObject):
 
     completed = Signal(object)
     failed = Signal(str)
+    #: ``(done, total)`` as each run is examined, so a folder of large outputs
+    #: reports progress instead of sitting on a static message.
+    progressed = Signal(int, int)
 
     def __init__(
         self,
@@ -65,6 +68,7 @@ class LegacyScanWorker(QObject):
                 self._root,
                 host_lattice=self._host_lattice,
                 host_species=self._host_species,
+                progress=self.progressed.emit,
             )
         except Exception as exc:  # noqa: BLE001 - reported to the user, never raised across threads
             self.failed.emit(str(exc))
@@ -79,6 +83,7 @@ def start_legacy_scan(
     host_species: list[str] | None,
     on_completed,
     on_failed,
+    on_progress=None,
 ) -> QThread:
     """Run :func:`scan_legacy_folder` on a worker thread.
 
@@ -93,6 +98,8 @@ def start_legacy_scan(
     thread.started.connect(worker.run)
     worker.completed.connect(on_completed)
     worker.failed.connect(on_failed)
+    if on_progress is not None:
+        worker.progressed.connect(on_progress)
     worker.completed.connect(thread.quit)
     worker.failed.connect(thread.quit)
     thread.finished.connect(worker.deleteLater)

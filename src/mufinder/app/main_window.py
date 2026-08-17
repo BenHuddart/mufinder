@@ -12267,7 +12267,14 @@ class MainWindow(QMainWindow):
             list(host.species),
             self._on_legacy_scan_completed,
             self._on_legacy_scan_failed,
+            self._on_legacy_scan_progress,
         )
+
+    @Slot(int, int)
+    def _on_legacy_scan_progress(self, done: int, total: int) -> None:
+        root = self._legacy_scan_root
+        name = root.name if root is not None else "folder"
+        self.statusBar().showMessage(f"Scanning {name}: relaxation {done} of {total}...")
 
     @Slot(str)
     def _on_legacy_scan_failed(self, message: str) -> None:

@@ -23,6 +23,7 @@ whole scan.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
@@ -540,6 +541,7 @@ def scan_legacy_folder(
     host_lattice: list[list[float]] | None = None,
     host_species: Sequence[str] | None = None,
     supercell_tolerance: float = IMPORT_SUPERCELL_TOLERANCE,
+    progress: Callable[[int, int], None] | None = None,
 ) -> LegacyFolderScan:
     """Report the muon relaxations in a legacy working directory.
 
@@ -606,11 +608,12 @@ def scan_legacy_folder(
             by_index.setdefault(index, {})["run_param"] = path
 
     runs: list[DetectedRun] = []
-    for index in sorted(by_index):
-        # Site 0 is the legacy pristine/neutral reference: it carries no muon
-        # and is not a stopping site, so it is never a relaxation to import.
-        if index == 0:
-            continue
+    # Site 0 is the legacy pristine/neutral reference: it carries no muon and is
+    # not a stopping site, so it is never a relaxation to import.
+    indices = [index for index in sorted(by_index) if index != 0]
+    for position, index in enumerate(indices, start=1):
+        if progress is not None:
+            progress(position, len(indices))
         paths = by_index[index]
         runs.append(
             _detect_run(
