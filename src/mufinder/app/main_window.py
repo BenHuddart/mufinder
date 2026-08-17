@@ -2020,7 +2020,6 @@ class MainWindow(QMainWindow):
         self._muon_generation_view.form_state_changed.connect(self._on_muon_form_state_changed)
         self._import_legacy_action = None
         self._remove_imported_action = None
-        self._legacy_scan_thread = None
         self._legacy_scan_host: Structure | None = None
         self._legacy_scan_root: Path | None = None
         self._muon_relaxation_view = MuonRelaxationWidget()
@@ -12260,7 +12259,7 @@ class MainWindow(QMainWindow):
             self._import_legacy_action.setEnabled(False)
         self._legacy_scan_host = host
         self._legacy_scan_root = root
-        self._legacy_scan_thread = start_legacy_scan(
+        start_legacy_scan(
             self,
             root,
             [list(vector) for vector in host.lattice_vectors],
@@ -12308,7 +12307,6 @@ class MainWindow(QMainWindow):
         self._commit_legacy_import(scan, selected, host)
 
     def _finish_legacy_scan(self) -> None:
-        self._legacy_scan_thread = None
         if self._import_legacy_action is not None:
             self._import_legacy_action.setEnabled(True)
         self.statusBar().clearMessage()

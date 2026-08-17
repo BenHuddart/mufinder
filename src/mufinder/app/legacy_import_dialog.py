@@ -41,6 +41,12 @@ from mufinder.domain.charge_states import muon_charge_state_label
 from mufinder.services.legacy_import import DetectedRun, LegacyFolderScan, scan_legacy_folder
 
 
+#: Scans in flight. A worker moved to a thread is parentless, so only a Python
+#: reference keeps it alive, and Qt aborts the process if a running ``QThread``
+#: is destroyed — both must stay referenced until the thread exits.
+_LIVE_SCANS: set[tuple[QThread, "LegacyScanWorker"]] = set()
+
+
 class LegacyScanWorker(QObject):
     """Scan a legacy folder off the GUI thread."""
 
@@ -84,16 +90,25 @@ def start_legacy_scan(
     on_completed,
     on_failed,
     on_progress=None,
-) -> QThread:
+) -> None:
     """Run :func:`scan_legacy_folder` on a worker thread.
 
-    Returns the started thread so the caller can keep it alive. Receivers must be
-    bound methods or slots on a GUI-thread object, so the signals deliver as
-    queued connections.
+    Returns nothing deliberately: the thread deletes itself once finished, so a
+    handle retained by the caller would dangle. Progress and completion are
+    reported entirely through the callbacks, which must be bound methods or
+    slots on a GUI-thread object so the signals deliver as queued connections.
+
+    **Both the thread and the worker are kept referenced until the thread
+    exits**, via :data:`_LIVE_SCANS`. A ``QObject`` that has been moved to a
+    thread has no parent, so nothing but a Python reference keeps it alive;
+    without one it is collected as soon as this function returns, the scan never
+    runs, and the caller waits forever on a status message that never changes.
+    Qt also aborts the process if a running ``QThread`` is destroyed, so the
+    thread needs the same protection.
     """
 
     worker = LegacyScanWorker(root, host_lattice, host_species)
-    thread = QThread(parent)
+    thread = QThread()
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
     worker.completed.connect(on_completed)
@@ -103,8 +118,11 @@ def start_legacy_scan(
     worker.completed.connect(thread.quit)
     worker.failed.connect(thread.quit)
     thread.finished.connect(worker.deleteLater)
+    thread.finished.connect(thread.deleteLater)
+    entry = (thread, worker)
+    _LIVE_SCANS.add(entry)
+    thread.finished.connect(lambda: _LIVE_SCANS.discard(entry))
     thread.start()
-    return thread
 
 
 def _status_text(run: DetectedRun) -> str:

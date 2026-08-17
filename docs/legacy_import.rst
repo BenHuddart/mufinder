@@ -772,6 +772,32 @@ Phasing
    risk noted below. The worker reports failure as a signal rather than raising,
    because an exception crossing a thread boundary would simply be lost.
 
+   .. warning::
+
+      **Both the thread and the worker must stay referenced until the thread
+      exits**, which ``_LIVE_SCANS`` in ``app/legacy_import_dialog`` exists to
+      do. A ``QObject`` moved to a thread is parentless, so nothing but a Python
+      reference keeps it alive; hold only the thread and the worker is collected
+      as soon as the starter returns. The scan then never runs at all and the
+      window sits forever on a status message that never changes — no error, no
+      traceback. Qt also aborts the process if a running ``QThread`` is
+      destroyed, so the thread needs the same protection.
+
+      The starter deliberately returns nothing: the thread deletes itself once
+      finished, so a handle retained by a caller would dangle.
+
+      Tests that drive the worker by calling ``run()`` directly exercise the
+      parsing but **not** the threading, and will not catch this. The threaded
+      cases in ``tests/app/test_legacy_import_wizard.py`` run the real signal
+      path through an event loop for that reason.
+
+      Those tests must connect **bound slots on a main-thread QObject**, as
+      ``MainWindow`` does. Qt picks the connection type from the receiver's
+      thread affinity, so a plain function or lambda has no receiver object and
+      is invoked directly on the worker thread — a test wired that way passes
+      while testing the opposite of what it claims. The tests assert the
+      receiving thread's identity so that mistake fails rather than hides.
+
    The action refuses early — before the folder picker opens — when there is no
    project or no active host structure. Every imported structure hangs off the
    active host, so without one its downstream jobs would fail host resolution at
