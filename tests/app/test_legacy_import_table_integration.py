@@ -418,3 +418,347 @@ class TestMergingABatch:
         after = window._active_muon_relaxation_definition().parameters["job_ids_by_label"]
         assert before.items() <= after.items()
         assert len(after) == 3
+
+
+class TestImportedRowParameters:
+    """An imported row reports the parameters its run actually used.
+
+    The row is what a user reads to learn what a legacy calculation was run
+    with. Showing the workflow's current defaults instead is not a cosmetic
+    problem: the defaults are plausible values for the same material, so a wrong
+    cutoff or tolerance reads as fact.
+    """
+
+    def _import_into(self, window: MainWindow, tmp_path: Path):
+        return TestMergingABatch()._import_into(window, tmp_path)
+
+    def _row_for(self, window: MainWindow, label: str):
+        config = window._muon_relaxation_form_config()
+        return next(row for row in config.rows if row.label == label)
+
+    def test_the_row_carries_what_the_run_used(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        _document, outcome, _merged = self._import_into(window, tmp_path)
+
+        row = self._row_for(window, outcome.imported[0].label)
+        values = dict(row.parameter_values)
+
+        assert float(getattr(values["cut_off_energy"], "value", values["cut_off_energy"])) == 600.0
+        assert values["xc_functional"] == "PBE"
+        assert tuple(values["kpoint_mp_grid"]) == (2, 2, 2)
+
+    def test_a_value_matching_todays_default_is_still_recorded(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        """Stripping values that match a default would make what the row stores
+        depend on ambient state that can change. Defaults move; the run cannot.
+        """
+
+        _document, outcome, _merged = self._import_into(window, tmp_path)
+
+        values = dict(self._row_for(window, outcome.imported[0].label).parameter_values)
+
+        # Present in the run's recovery *and* equal to the workflow default.
+        assert "max_scf_cycles" in values
+        assert "elec_energy_tol" in values
+
+    def test_the_losing_half_of_an_exclusive_pair_is_dropped(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        """The fixture states BASIS_PRECISION in its .param while the output
+        echo reports the CUT_OFF_ENERGY derived from it. Keeping both would
+        describe a calculation CASTEP would reject."""
+
+        _document, outcome, _merged = self._import_into(window, tmp_path)
+
+        values = dict(self._row_for(window, outcome.imported[0].label).parameter_values)
+
+        assert "cut_off_energy" in values
+        assert "basis_precision" not in values
+
+    def test_the_asserted_keywords_are_not_presented_as_row_choices(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        """TASK, CHARGE, FIX_ALL_CELL and WRITE_CELL_STRUCTURE are asserted by
+        the import and shown as locked values, not chosen by the row."""
+
+        _document, outcome, _merged = self._import_into(window, tmp_path)
+
+        values = dict(self._row_for(window, outcome.imported[0].label).parameter_values)
+
+        for name in ("charge", "fix_all_cell", "write_cell_structure"):
+            assert name not in values
+
+    def test_the_dialog_shows_no_parameter_the_run_did_not_use(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        """The effective values seed the read-only dialog. Layering the
+        workflow defaults underneath would present parameters the historical run
+        never used as though it had."""
+
+        _document, outcome, _merged = self._import_into(window, tmp_path)
+        widget = window._muon_relaxation_view
+        row_id = next(iter(widget._row_imported))
+
+        effective = widget._effective_params_for_row(row_id)
+
+        stored = set(widget._row_parameter_values[row_id])
+        # "task" is the workflow's own locked value, not a recovered one.
+        assert set(effective) - {"task"} == stored
+
+    def test_no_kpoint_spacing_is_invented_for_an_imported_row(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        """The suggested spacing comes from the project reference lattice, not
+        from the row's own recovered grid, so pre-filling it would display a
+        spacing the run never used."""
+
+        _document, _outcome, _merged = self._import_into(window, tmp_path)
+        widget = window._muon_relaxation_view
+        widget.set_project_defaults(
+            cutoff_energy=800.0,
+            kpoint_grid=(4, 4, 4),
+            kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        )
+        row_id = next(iter(widget._row_imported))
+
+        common = widget._common_params_for_rows((row_id,))
+
+        assert "kpoint_mp_spacing" not in common
+        assert tuple(common["kpoint_mp_grid"]) == (2, 2, 2)
+
+    def test_the_configured_indicator_reports_the_row_as_customized(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        _document, _outcome, _merged = self._import_into(window, tmp_path)
+        widget = window._muon_relaxation_view
+        row_id = next(iter(widget._row_imported))
+
+        assert widget._row_parameter_values[row_id]
+
+
+class TestSignatureStability:
+    """The imported row must survive changes to ambient project state.
+
+    The definition row is a frozen snapshot taken at import; the form row is
+    re-normalised on every project-default and host-lattice change. If
+    normalisation depended on that ambient state the two would drift apart, and
+    a signature mismatch drops the completed import to a row that renders
+    "ready" with no energy.
+    """
+
+    def _import_into(self, window: MainWindow, tmp_path: Path):
+        return TestMergingABatch()._import_into(window, tmp_path)
+
+    def _signatures(self, window: MainWindow):
+        definition_rows = window._deserialize_muon_relaxation_config(
+            window._active_muon_relaxation_definition().parameters["configuration"]
+        ).rows
+        form_rows = window._muon_relaxation_form_config().rows
+        return (
+            {
+                window._muon_relaxation_row_key(row): window._muon_relaxation_row_signature(row)
+                for row in definition_rows
+            },
+            {
+                window._muon_relaxation_row_key(row): window._muon_relaxation_row_signature(row)
+                for row in form_rows
+            },
+        )
+
+    def test_signatures_survive_defaults_moving_onto_the_imported_values(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        """The realistic trigger: adopting the very cutoff and grid a
+        convergence run on this system recommends, which the legacy run also
+        used."""
+
+        _document, _outcome, _merged = self._import_into(window, tmp_path)
+        definition_before, form_before = self._signatures(window)
+        assert form_before == definition_before
+
+        window._muon_relaxation_view.set_project_defaults(
+            cutoff_energy=600.0,
+            kpoint_grid=(2, 2, 2),
+            kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        )
+        window._muon_relaxation_view.set_host_lattice(
+            [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+        )
+
+        definition_after, form_after = self._signatures(window)
+        assert form_after == definition_after
+        assert form_after == form_before
+
+    def test_signatures_survive_a_save_and_reload(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        """The stored values are structured (units, triplets); a round trip
+        through the persisted form must coerce them back identically."""
+
+        document, _outcome, _merged = self._import_into(window, tmp_path)
+        definition_before, form_before = self._signatures(window)
+        assert form_before == definition_before
+
+        import json
+
+        from mufinder.persistence.codec import to_jsonable
+
+        # The real save path: encoded, written as JSON, read back.
+        reloaded = json.loads(
+            json.dumps(to_jsonable(document.ui_state["muon_relaxation_form"]))
+        )
+        window._muon_relaxation_view.set_form_state(reloaded)
+
+        _definition_after, form_after = self._signatures(window)
+        assert form_after == definition_before
+
+    def test_a_keyword_the_catalog_no_longer_knows_is_kept(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        """Catalog discovery is environment-dependent, so the same project can
+        meet a thinner one elsewhere. Dropping a name from the widget's state
+        while the definition keeps it would desynchronise the two."""
+
+        document, _outcome, _merged = self._import_into(window, tmp_path)
+        state = window._muon_relaxation_view.collect_state()
+        for row in state["rows"]:
+            if row.get("imported"):
+                row["parameter_values"]["not_a_known_keyword"] = 7
+
+        window._muon_relaxation_view.set_form_state(state)
+
+        kept = [
+            row
+            for row in window._muon_relaxation_view.collect_state()["rows"]
+            if row.get("imported")
+        ]
+        assert kept
+        assert all(row["parameter_values"]["not_a_known_keyword"] == 7 for row in kept)
+
+
+class TestNativeRowsAreUnaffected:
+    """An imported row's recovered values must never block a native row.
+
+    Expansion and validation both run over the whole configuration, and both
+    turn a single bad row into a result that looks like "nothing to submit".
+    """
+
+    def _import_into(self, window: MainWindow, tmp_path: Path):
+        return TestMergingABatch()._import_into(window, tmp_path)
+
+    def test_expansion_ignores_imported_rows(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        from mufinder.app.workflow_controllers.muon_relaxation import (
+            _without_imported_rows,
+        )
+
+        _document, _outcome, _merged = self._import_into(window, tmp_path)
+        config = window._muon_relaxation_form_config()
+        assert any(row.imported for row in config.rows)
+
+        stripped = _without_imported_rows(config)
+
+        assert stripped.rows == ()
+
+    def test_a_config_with_no_imported_rows_is_returned_unchanged(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        """Identity matters: the common case must not pay for a rebuild."""
+
+        from mufinder.app.relaxation_types import MuonRelaxationConfig
+        from mufinder.app.workflow_controllers.muon_relaxation import (
+            _without_imported_rows,
+        )
+
+        config = MuonRelaxationConfig(rows=())
+
+        assert _without_imported_rows(config) is config
+
+    def test_an_imported_row_cannot_veto_the_run_buttons(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        """A recovered value the current schema dislikes would otherwise abort
+        config building and disable submission for every native row."""
+
+        _document, _outcome, _merged = self._import_into(window, tmp_path)
+        widget = window._muon_relaxation_view
+        row_id = next(iter(widget._row_imported))
+        widget._row_parameter_values[row_id]["cut_off_energy"] = "not a number at all"
+
+        assert widget._build_config_or_warn() is not None
+
+
+class TestReadOnlyDialogContents:
+    """What the read-only dialog actually renders for an imported row."""
+
+    def _import_into(self, window: MainWindow, tmp_path: Path):
+        return TestMergingABatch()._import_into(window, tmp_path)
+
+    def _dialog_for_imported_row(self, window: MainWindow):
+        """Build the dialog the widget would open, without exec()ing it."""
+
+        from mufinder.app.param_dialog import ParameterDialog
+
+        widget = window._muon_relaxation_view
+        row_id = next(iter(widget._row_imported))
+        dialog = ParameterDialog(
+            specs=widget._specs,
+            workflow_stage="muon_relaxation",
+            read_only=True,
+        )
+        dialog.set_values(widget._common_params_for_rows((row_id,)))
+        dialog.set_advanced_names(widget._advanced_names_for_rows((row_id,)))
+        return widget, row_id, dialog
+
+    def test_a_recovered_advanced_keyword_renders_without_being_listed(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        """``added_advanced`` is deliberately stored empty: the dialog promotes
+        any advanced keyword carrying an active value. Computing the list at
+        import time instead would tie the row signature to the runtime keyword
+        catalog, which differs between machines.
+        """
+
+        _document, _outcome, _merged = self._import_into(window, tmp_path)
+        widget = window._muon_relaxation_view
+        row_id = next(iter(widget._row_imported))
+
+        # Chosen from the live spec set rather than named, so the test does not
+        # depend on how the runtime keyword catalog classifies any one keyword.
+        advanced = next(
+            spec.name
+            for spec in widget._specs
+            if "muon_relaxation" in spec.advanced_workflows
+            and "muon_relaxation" not in spec.basic_workflows
+            and spec.value_type == "int"
+            and not spec.mutually_exclusive_with
+        )
+        widget._row_parameter_values[row_id][advanced] = 7
+
+        _widget, _row_id, dialog = self._dialog_for_imported_row(window)
+
+        assert widget._row_added_advanced.get(row_id, set()) == set()
+        assert advanced in dialog.advanced_names()
+        assert advanced in dialog._rows
+
+    def test_the_recovered_cutoff_is_the_value_on_display(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        _document, _outcome, _merged = self._import_into(window, tmp_path)
+
+        _widget, _row_id, dialog = self._dialog_for_imported_row(window)
+
+        shown = dialog._rows["cut_off_energy"].editor.value()
+        assert float(getattr(shown, "value", shown)) == 600.0
+
+    def test_no_spacing_row_is_active_for_an_imported_row(
+        self, window: MainWindow, tmp_path: Path
+    ) -> None:
+        _document, _outcome, _merged = self._import_into(window, tmp_path)
+
+        _widget, _row_id, dialog = self._dialog_for_imported_row(window)
+
+        assert "kpoint_mp_spacing" not in dialog.collect_values()

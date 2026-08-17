@@ -333,9 +333,13 @@ class TestProvenance:
         folder = build_folder(tmp_path / "legacy", sites=(1, 2))
         _scan, outcome = _commit(document, folder, host_structure)
 
-        records = [item for item in document.provenance if item.action == IMPORT_ACTION]
-        assert len(records) == 1
-        record = records[0]
+        # Returned, not appended to the document: provenance.jsonl is
+        # append-only through ProjectService.append_provenance and save_project
+        # never rewrites it, so a record appended here would never reach disk.
+        assert not [item for item in document.provenance if item.action == IMPORT_ACTION]
+        record = outcome.provenance
+        assert record is not None
+        assert record.action == IMPORT_ACTION
         assert record.parameters["batch_id"] == str(outcome.batch_id)
         assert len(record.parameters["imported_sites"]) == 2
         assert set(record.output_entity_ids) == {item.site_id for item in outcome.imported}
@@ -351,9 +355,8 @@ class TestProvenance:
         folder = build_folder(tmp_path / "legacy", sites=(1,), param_text=_legacy_param(xc="LDA"))
         _scan, outcome = _commit(document, folder, host_structure)
 
-        site_record = [
-            item for item in document.provenance if item.action == IMPORT_ACTION
-        ][0].parameters["imported_sites"][0]
+        assert outcome.provenance is not None
+        site_record = outcome.provenance.parameters["imported_sites"][0]
 
         assert site_record["parameter_sources"]["cut_off_energy"] == "castep"
         assert any("XC_FUNCTIONAL" in item for item in site_record["conflicts"])
@@ -376,8 +379,8 @@ class TestProvenance:
 
         assert len(outcome.imported) == 1
         assert outcome.skipped and outcome.skipped[0][0] == 2
-        record = [item for item in document.provenance if item.action == IMPORT_ACTION][0]
-        assert record.parameters["skipped"][0]["site_index"] == 2
+        assert outcome.provenance is not None
+        assert outcome.provenance.parameters["skipped"][0]["site_index"] == 2
 
 
 class TestJournal:
@@ -390,9 +393,10 @@ class TestJournal:
         from mufinder.services.journal import build_journal
 
         folder = build_folder(tmp_path / "legacy", sites=(1, 2))
-        _scan, _outcome = _commit(document, folder, host_structure)
+        _scan, outcome = _commit(document, folder, host_structure)
+        assert outcome.provenance is not None
 
-        journal = build_journal("Test", document.provenance)
+        journal = build_journal("Test", [outcome.provenance])
         entries = [entry for day in journal.days for entry in day.entries]
 
         assert len(entries) == 1
@@ -412,15 +416,16 @@ class TestJournal:
         next(folder.glob("results/*_2-out.cell")).unlink()
 
         scan = scan_legacy_folder(folder, host_lattice=HOST_LATTICE)
-        commit_legacy_import(
+        outcome = commit_legacy_import(
             document,
             scan=scan,
             runs=scan.runs,
             host_structure=host_structure,
             output_root=document.project_root / "files" / "muon_relaxation",
         )
+        assert outcome.provenance is not None
 
-        entry = [e for day in build_journal("T", document.provenance).days for e in day.entries][0]
+        entry = [e for day in build_journal("T", [outcome.provenance]).days for e in day.entries][0]
 
         assert entry.stamp_kind == "warning"
         assert "skipped" in entry.body
@@ -477,3 +482,94 @@ class TestCoordinateFrames:
         # 0.2/0.4/0.6 of a 4 A cubic host.
         assert site.cartesian_position == pytest.approx([0.8, 1.6, 2.4])
         assert site.cartesian_position != [0.0, 0.0, 0.0]
+
+
+class TestResolvedParameters:
+    """One resolution feeds both the rendered ``.param`` and the definition row.
+
+    The row is what the parameter dialog shows; the file is what downstream jobs
+    inherit. Two descriptions of the same historical run that disagree would be
+    worse than either being wrong alone, so the rule lives in one place.
+    """
+
+    def test_the_cutoff_wins_over_the_precision_that_implied_it(self) -> None:
+        """A legacy run states BASIS_PRECISION while the output echo reports the
+        CUT_OFF_ENERGY CASTEP derived from it. CASTEP treats them as exclusive,
+        so a merged set holding both has to be resolved, not passed on."""
+
+        from mufinder.services.legacy_import_commit import resolve_recovered_parameters
+
+        resolved, dropped = resolve_recovered_parameters(
+            {"basis_precision": "FINE", "cut_off_energy": 900.0, "xc_functional": "PBE"}
+        )
+
+        assert resolved["cut_off_energy"] == 900.0
+        assert "basis_precision" not in resolved
+        assert dropped == ["basis_precision"]
+
+    def test_resolution_does_not_depend_on_sort_order(self) -> None:
+        """The priority pass exists because 'basis_precision' sorts before
+        'cut_off_energy'; without it the wrong half would win."""
+
+        from mufinder.services.legacy_import_commit import resolve_recovered_parameters
+
+        first, _ = resolve_recovered_parameters(
+            {"basis_precision": "FINE", "cut_off_energy": 900.0}
+        )
+        second, _ = resolve_recovered_parameters(
+            {"cut_off_energy": 900.0, "basis_precision": "FINE"}
+        )
+
+        assert first == second == {"cut_off_energy": 900.0}
+
+    def test_cell_keywords_stay_out_of_the_param_set(self) -> None:
+        """Emitting them in a ``.param`` would produce a file CASTEP rejects."""
+
+        from mufinder.services.legacy_import_commit import resolve_recovered_parameters
+
+        resolved, _ = resolve_recovered_parameters(
+            {"kpoint_mp_grid": (2, 2, 2), "fix_all_cell": True, "cut_off_energy": 900.0}
+        )
+
+        assert set(resolved) == {"cut_off_energy"}
+
+    def test_the_row_and_the_rendered_param_agree(
+        self, tmp_path: Path, document: ProjectDocument, host_structure: Structure
+    ) -> None:
+        folder = build_folder(tmp_path / "legacy", sites=(1,))
+        _scan, outcome = _commit(document, folder, host_structure)
+        item = outcome.imported[0]
+
+        param_text = (item.job_directory / f"{item.seed_name}.param").read_text(
+            encoding="utf-8"
+        )
+        row_values = outcome.row_payloads[0]["parameter_values"]
+
+        for name, value in row_values.items():
+            if name == "kpoint_mp_grid":
+                # Carried by the .cell, never the .param.
+                assert name.upper() not in param_text
+                continue
+            assert name.upper() in param_text, f"{name} is in the row but not the .param"
+        assert "BASIS_PRECISION" not in param_text
+        assert float(getattr(row_values["cut_off_energy"], "value", 0.0)) == 600.0
+
+    def test_the_row_carries_the_grid_the_run_used(
+        self, tmp_path: Path, document: ProjectDocument, host_structure: Structure
+    ) -> None:
+        """The grid is frequently recoverable only from the output echo: the
+        legacy input cell does not state it and the ``.param`` cannot."""
+
+        folder = build_folder(tmp_path / "legacy", sites=(1,))
+        _scan, outcome = _commit(document, folder, host_structure)
+
+        assert outcome.row_payloads[0]["parameter_values"]["kpoint_mp_grid"] == [2, 2, 2]
+
+    def test_a_run_with_no_recoverable_parameters_yields_an_empty_set(self) -> None:
+        """Empty means recovery found nothing — not that the run used whatever
+        the workflow currently defaults to."""
+
+        from mufinder.services.legacy_import import DetectedRun
+        from mufinder.services.legacy_import_commit import row_parameter_values
+
+        assert row_parameter_values(DetectedRun(site_index=1, seed_name="s_1")) == {}

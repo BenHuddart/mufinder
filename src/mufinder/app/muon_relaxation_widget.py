@@ -1024,6 +1024,19 @@ class MuonRelaxationWidget(QWidget):
         return ValueWithUnit(float(spacing), "1/ang")
 
     def _effective_params_for_row(self, row_id: int) -> dict[str, object]:
+        if row_id in self._row_imported:
+            # An imported row shows what its run used and nothing else. Layering
+            # today's workflow defaults underneath would present parameters the
+            # historical run never used as though it had used them, and the
+            # suggested grid would overwrite the grid actually recovered from the
+            # run's own output. An empty result means recovery found nothing,
+            # which is the honest answer.
+            values = self._sanitize_parameter_mapping(
+                dict(self._row_parameter_values.get(row_id, {})), keep_unknown=True
+            )
+            values["task"] = infer_task(_WORKFLOW_STAGE)
+            return values
+
         # See PristineRelaxationWidget._effective_params_for_row for the
         # rationale: kpoint_mp_grid and kpoint_mp_spacing are mutually
         # exclusive, so the row carries only one of them. The dialog
@@ -1053,6 +1066,24 @@ class MuonRelaxationWidget(QWidget):
         return self._drop_default_conflicts(implicit, locked_names={"task"})
 
     def _strip_implicit_row_defaults(self, row_id: int, values: dict[str, object]) -> dict[str, object]:
+        if row_id in self._row_imported:
+            # An imported row records a run that already happened, so what it
+            # stores must be a pure function of the import.
+            #
+            # Stripping compares against _implicit_params_for_row, which folds in
+            # the *current* project defaults and the *current* suggested k-point
+            # grid — and this method is re-run over every row by
+            # _normalize_all_row_parameter_values on each set_form_state,
+            # set_project_defaults and set_host_lattice. The definition row, by
+            # contrast, is a frozen snapshot taken at import and never
+            # re-registered. So the day a project default comes to equal an
+            # imported value (adopting the very cutoff a convergence run
+            # recommends is the obvious way), stripping would silently remove it
+            # here but not there, the row signature would stop matching, and the
+            # completed import would render as "ready" with no energy.
+            #
+            # Coerce, never strip.
+            return self._sanitize_parameter_mapping(values, keep_unknown=True)
         cleaned = self._sanitize_parameter_mapping(values)
         implicit = self._implicit_params_for_row(row_id)
         stripped: dict[str, object] = {}
@@ -1246,6 +1277,14 @@ class MuonRelaxationWidget(QWidget):
         for candidate in maps[1:]:
             common = {name: value for name, value in common.items() if name in candidate and candidate[name] == value}
         common["task"] = infer_task(_WORKFLOW_STAGE)
+        if any(row_id in self._row_imported for row_id in row_ids):
+            # No pre-fill for an imported row. The suggested spacing is derived
+            # from the project reference lattice and grid, not from the row's own
+            # recovered grid, so it would display a spacing the run never used —
+            # in a dialog that opens read-only precisely to report what the run
+            # did use. The toggle the pre-fill exists to serve is inert when the
+            # dialog is read-only anyway.
+            return common
         # Dialog-only pre-fill of the inactive half of the kpoint pair. See
         # PristineRelaxationWidget._common_params_for_rows for the rationale.
         has_grid = "kpoint_mp_grid" in common
@@ -1306,11 +1345,29 @@ class MuonRelaxationWidget(QWidget):
         except (TypeError, ValueError):
             return value
 
-    def _sanitize_parameter_mapping(self, values: dict[str, object]) -> dict[str, object]:
+    def _sanitize_parameter_mapping(
+        self, values: dict[str, object], *, keep_unknown: bool = False
+    ) -> dict[str, object]:
+        """Coerce stored values back to their structured form.
+
+        Names with no spec in the runtime keyword catalog are dropped, because a
+        row the user can still edit must not carry a value no editor can show.
+
+        ``keep_unknown`` passes them through instead, for imported rows. The
+        catalog is discovered from the environment, so the same project can see
+        a thinner one on another machine — and a name dropped from the widget's
+        state while the definition row keeps it desynchronises the two, which
+        drops the completed import to a "ready" row with no energy. The
+        passed-through values are inert: imported rows are never edited, never
+        expanded, and never submitted.
+        """
+
         cleaned: dict[str, object] = {}
         for name, value in values.items():
             if name in self._specs_by_name:
                 cleaned[name] = self._restore_structured_value(name, value)
+            elif keep_unknown:
+                cleaned[name] = value
         return cleaned
 
     def continue_relaxation_dialog_seed(self, key: object) -> dict[str, object] | None:
@@ -1459,11 +1516,17 @@ class MuonRelaxationWidget(QWidget):
                     QMessageBox.warning(self, "Duplicate label", f"Duplicate {muon_charge_state_label(charge_state)} job label '{label}'.")
                     return None
                 seen.add(unique)
-                effective_values = self._effective_params_for_row(row_id)
-                errors = validate_gui_values(effective_values, self._specs_by_name, task=infer_task(_WORKFLOW_STAGE))
-                if errors:
-                    QMessageBox.warning(self, "Invalid parameters", f"Row '{label}':\n" + "\n".join(errors))
-                    return None
+                # Imported rows are exempt: they describe runs that already
+                # happened and can never be submitted, so validating them can
+                # only fail. A recovered value the current schema dislikes would
+                # otherwise abort this whole method and block the Run buttons for
+                # every *native* row in the table.
+                if row_id not in self._row_imported:
+                    effective_values = self._effective_params_for_row(row_id)
+                    errors = validate_gui_values(effective_values, self._specs_by_name, task=infer_task(_WORKFLOW_STAGE))
+                    if errors:
+                        QMessageBox.warning(self, "Invalid parameters", f"Row '{label}':\n" + "\n".join(errors))
+                        return None
                 rows.append(
                     MuonRelaxationRow(
                         site_id=self._row_site_ids[row_id],
@@ -1618,12 +1681,9 @@ class MuonRelaxationWidget(QWidget):
                 if row_id is None:
                     continue
                 self._row_supercells[row_id] = self._coerce_supercell_matrix(entry.get("supercell_matrix"))
-                params = entry.get("parameter_values", {})
-                if isinstance(params, dict):
-                    self._row_parameter_values[row_id] = self._sanitize_parameter_mapping({str(name): value for name, value in params.items()})
-                added = entry.get("added_advanced", [])
-                if isinstance(added, list):
-                    self._row_added_advanced[row_id] = {str(name) for name in added if isinstance(name, str)}
+                # The imported marker is read *before* the parameter values,
+                # because sanitising them consults it: an imported row keeps
+                # names the current keyword catalog does not know.
                 if bool(entry.get("imported", False)):
                     self._row_imported.add(row_id)
                     raw_batch_id = entry.get("import_batch_id")
@@ -1634,6 +1694,15 @@ class MuonRelaxationWidget(QWidget):
                             # A malformed batch id must not silently unlock the
                             # row: keep it imported, just ungrouped.
                             pass
+                params = entry.get("parameter_values", {})
+                if isinstance(params, dict):
+                    self._row_parameter_values[row_id] = self._sanitize_parameter_mapping(
+                        {str(name): value for name, value in params.items()},
+                        keep_unknown=row_id in self._row_imported,
+                    )
+                added = entry.get("added_advanced", [])
+                if isinstance(added, list):
+                    self._row_added_advanced[row_id] = {str(name) for name in added if isinstance(name, str)}
             self._normalize_all_row_parameter_values()
             self._refresh_all_rows()
             self._refresh_batch_button_state()

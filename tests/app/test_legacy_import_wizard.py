@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from PySide6.QtWidgets import QMessageBox
 
 from mufinder.app.legacy_import_dialog import (
     LegacyImportDialog,
@@ -304,6 +305,10 @@ class TestRemovalAction:
             output_root=output_root,
         )
         window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+        # As _commit_legacy_import does: the record is returned rather than
+        # appended by the service, and the batch listing reads it back.
+        assert outcome.provenance is not None
+        window._project_service.append_provenance(window._document, outcome.provenance)
         return outcome
 
     def test_it_reports_when_nothing_is_imported(
@@ -584,3 +589,253 @@ class TestScanRunsOnAThread:
             qapp.processEvents()
 
         assert _LIVE_SCANS == set(), "a scan leaked its thread and worker"
+
+
+class TestProvenanceReachesDisk:
+    """``provenance.jsonl`` is append-only.
+
+    ``save_project`` never rewrites it, so a record appended straight to
+    ``document.provenance`` lives only until the project is reloaded. Both the
+    import and the removal record must go through
+    ``ProjectService.append_provenance``, which writes as well as appends — and
+    the removal record matters most, because the batch listing and the journal
+    are all that remain once the entities are gone.
+    """
+
+    def _lines(self, document: ProjectDocument) -> list[dict]:
+        import json
+
+        path = document.project_root / "provenance.jsonl"
+        if not path.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    def test_the_import_record_is_written(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mufinder.services.legacy_import_commit import IMPORT_ACTION
+
+        window._document = _document(tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        scan = _scan(build_folder(tmp_path / "legacy", sites=(1, 2)))
+        window._commit_legacy_import(scan, list(scan.importable_runs), host_structure)
+
+        records = [
+            item for item in self._lines(window._document) if item["action"] == IMPORT_ACTION
+        ]
+        assert len(records) == 1
+        assert len(records[0]["parameters"]["imported_sites"]) == 2
+
+    def test_the_import_record_names_the_source_of_each_value(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Which file each parameter came from survives only here — the row
+        itself carries the values, not their provenance."""
+
+        from mufinder.services.legacy_import_commit import IMPORT_ACTION
+
+        window._document = _document(tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        scan = _scan(build_folder(tmp_path / "legacy", sites=(1,)))
+        window._commit_legacy_import(scan, list(scan.importable_runs), host_structure)
+
+        record = [
+            item for item in self._lines(window._document) if item["action"] == IMPORT_ACTION
+        ][0]
+        sources = record["parameters"]["imported_sites"][0]["parameter_sources"]
+        assert sources["cut_off_energy"] == "castep"
+
+    def test_no_record_is_written_when_the_merge_fails(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """append_provenance writes immediately, so recording an import the
+        project never completed would leave a durable false claim."""
+
+        window._document = _document(tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.information", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        monkeypatch.setattr(
+            window, "merge_imported_relaxation_rows", lambda *args, **kwargs: False
+        )
+
+        scan = _scan(build_folder(tmp_path / "legacy", sites=(1,)))
+        window._commit_legacy_import(scan, list(scan.importable_runs), host_structure)
+
+        assert self._lines(window._document) == []
+
+    def test_the_removal_record_is_written(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mufinder.services.legacy_import_removal import REMOVAL_ACTION
+
+        TestRemovalAction()._imported_window(window, tmp_path, host_structure)
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QInputDialog.getItem",
+            lambda *args, **kwargs: (args[3][0], True),
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.question",
+            lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+
+        window._on_remove_imported_relaxations()
+
+        records = [
+            item for item in self._lines(window._document) if item["action"] == REMOVAL_ACTION
+        ]
+        assert len(records) == 1
+        assert len(records[0]["parameters"]["labels"]) == 2
+
+
+class TestRemoveThenReimport:
+    """Removing a batch and importing it again must land in the same place.
+
+    This is the supported recovery path when an import produced something
+    wrong, so residue left behind by the removal shows up as a duplicate or a
+    stale binding on the *second* import rather than the first.
+    """
+
+    def _import(self, window: MainWindow, tmp_path: Path, host: Structure, folder: Path):
+        from mufinder.services.legacy_import_commit import commit_legacy_import
+
+        scan = _scan(folder)
+        output_root = window._document.project_root / "files" / "muon_relaxation"
+        outcome = commit_legacy_import(
+            window._document,
+            scan=scan,
+            runs=scan.importable_runs,
+            host_structure=host,
+            output_root=output_root,
+        )
+        window.merge_imported_relaxation_rows(outcome, output_directory=output_root)
+        assert outcome.provenance is not None
+        window._project_service.append_provenance(window._document, outcome.provenance)
+        return outcome
+
+    def _remove(self, window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QInputDialog.getItem",
+            lambda *args, **kwargs: (args[3][0], True),
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.question",
+            lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+        )
+        monkeypatch.setattr(
+            "mufinder.app.main_window.QMessageBox.warning", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(window, "_persist_document_ui_state", lambda **kwargs: None)
+        monkeypatch.setattr(window, "_refresh_muon_sites_summary", lambda **kwargs: None)
+        window._on_remove_imported_relaxations()
+
+    def test_the_second_import_is_indistinguishable_from_the_first(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window._document = _document(tmp_path, host_structure)
+        folder = build_folder(tmp_path / "legacy", sites=(1, 2))
+
+        self._import(window, tmp_path, host_structure, folder)
+        first_rows = window._muon_relaxation_view.collect_state()["rows"]
+        first_values = sorted(
+            (row["label"], sorted(row["parameter_values"])) for row in first_rows
+        )
+
+        self._remove(window, monkeypatch)
+
+        assert window._document.sites == {}
+        assert window._document.jobs == {}
+        definition = window._active_muon_relaxation_definition()
+        assert definition.parameters["configuration"]["rows"] == []
+        assert definition.parameters["job_ids_by_label"] == {}
+        assert definition.input_site_ids == []
+        assert window._muon_relaxation_view.collect_state()["rows"] == []
+
+        self._import(window, tmp_path, host_structure, folder)
+        second_rows = window._muon_relaxation_view.collect_state()["rows"]
+
+        assert len(second_rows) == 2
+        # Same labels, not "Legacy Site 1 (2)" — the de-duplication counter must
+        # not have been left holding the removed batch's labels.
+        assert sorted(row["label"] for row in second_rows) == [
+            "Legacy Site 1",
+            "Legacy Site 2",
+        ]
+        assert (
+            sorted((row["label"], sorted(row["parameter_values"])) for row in second_rows)
+            == first_values
+        )
+
+    def test_the_reimported_rows_still_agree_with_the_definition(
+        self,
+        window: MainWindow,
+        tmp_path: Path,
+        host_structure: Structure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The signature check, on the second pass rather than the first."""
+
+        window._document = _document(tmp_path, host_structure)
+        folder = build_folder(tmp_path / "legacy", sites=(1, 2))
+
+        self._import(window, tmp_path, host_structure, folder)
+        self._remove(window, monkeypatch)
+        self._import(window, tmp_path, host_structure, folder)
+
+        definition_rows = window._deserialize_muon_relaxation_config(
+            window._active_muon_relaxation_definition().parameters["configuration"]
+        ).rows
+        form_rows = window._muon_relaxation_form_config().rows
+
+        definition_signatures = {
+            window._muon_relaxation_row_key(row): window._muon_relaxation_row_signature(row)
+            for row in definition_rows
+        }
+        form_signatures = {
+            window._muon_relaxation_row_key(row): window._muon_relaxation_row_signature(row)
+            for row in form_rows
+        }
+
+        assert len(definition_signatures) == 2
+        assert form_signatures == definition_signatures

@@ -12354,6 +12354,12 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # Only once the merge has succeeded: append_provenance writes straight to
+        # provenance.jsonl, so recording the import before the rows were attached
+        # would leave a durable claim about a state the project never reached.
+        if outcome.provenance is not None:
+            self._project_service.append_provenance(document, outcome.provenance)
+
         self._refresh_muon_relaxation_rows()
         self._refresh_jobs_table()
         self._refresh_muon_sites_summary()
@@ -12435,7 +12441,8 @@ class MainWindow(QMainWindow):
         if confirmed != QMessageBox.StandardButton.Yes:
             return
 
-        removed, errors = remove_imported_relaxations(document, plan, batch_id=batch_id)
+        outcome = remove_imported_relaxations(document, plan, batch_id=batch_id)
+        removed, errors = outcome.removed, outcome.errors
         definition = self._active_muon_relaxation_definition()
         if definition is not None:
             detach_rows_from_definition(definition, plan.targets)
@@ -12445,6 +12452,13 @@ class MainWindow(QMainWindow):
             document.ui_state["muon_relaxation_form"] = (
                 self._muon_relaxation_view.collect_state()
             )
+
+        # Appended once the document edits are done, because append_provenance
+        # writes straight to provenance.jsonl: recording the removal before the
+        # rows were detached would leave a durable claim about a state the
+        # project never reached.
+        if outcome.provenance is not None:
+            self._project_service.append_provenance(document, outcome.provenance)
 
         self._refresh_muon_relaxation_rows()
         self._refresh_jobs_table()
@@ -12558,18 +12572,35 @@ class MainWindow(QMainWindow):
             seed_mapping = {}
             definition.parameters["job_seed_names_by_label"] = seed_mapping
 
+        # Mirror first, then build the definition rows from what the widget gives
+        # back. The row signature is computed over both sides, so anything the
+        # widget normalises on ingest has to be what the definition stores too;
+        # appending the raw payload here would leave the two describing the same
+        # row differently, and a signature mismatch drops the imported row to a
+        # fallback that only accepts jobs in an active status — rendering a
+        # completed import as "ready" with no energy.
+        normalized_rows = self._mirror_imported_rows_into_form(payloads)
+        if normalized_rows is None:
+            return False
+
         for item, payload in zip(outcome.imported, payloads, strict=False):
-            rows.append(dict(payload))
+            row = normalized_rows.get(str(item.site_id))
+            if row is None:
+                # The widget did not take the row; adding it to the definition
+                # anyway would create exactly the mismatch described above.
+                continue
+            rows.append(row)
             key = f"{muon_charge_state_prefix(item.charge_state)}:{item.label}"
             mapping[key] = str(item.job_id)
             seed_mapping[key] = item.seed_name
             if item.site_id not in definition.input_site_ids:
                 definition.input_site_ids.append(item.site_id)
 
-        self._mirror_imported_rows_into_form(payloads)
         return True
 
-    def _mirror_imported_rows_into_form(self, payloads: list[dict[str, object]]) -> None:
+    def _mirror_imported_rows_into_form(
+        self, payloads: list[dict[str, object]]
+    ) -> dict[str, dict[str, object]] | None:
         """Add imported rows to the widget's form state and store the result.
 
         The widget's state shape is **not** the definition's configuration shape
@@ -12578,15 +12609,17 @@ class MainWindow(QMainWindow):
         rather than passed through. Feeding the configuration shape straight in
         parses without error and silently zeroes every position.
 
-        What is stored afterwards is the widget's own normalised state, not the
-        input: the tables strip implicit project defaults, and the row signature
-        that decides whether a row renders with its real status is computed over
-        those normalised values.
+        Returns the widget's own normalised rows, in the *configuration* shape,
+        keyed by site id — the caller stores these rather than the payloads it
+        passed in, because the row signature is computed over them. Returns
+        ``None`` when there is no document, so the caller can decline to touch
+        the definition at all rather than leave it holding rows the form never
+        received.
         """
 
         document = self._document
         if document is None:
-            return
+            return None
         state = self._muon_relaxation_view.collect_state()
         rows = list(state.get("rows", [])) if isinstance(state, dict) else []
         for payload in payloads:
@@ -12597,8 +12630,25 @@ class MainWindow(QMainWindow):
             rows.append(entry)
         self._muon_relaxation_view.set_form_state({"rows": rows})
         normalized = self._muon_relaxation_view.collect_state()
-        if isinstance(normalized, dict):
-            document.ui_state["muon_relaxation_form"] = normalized
+        if not isinstance(normalized, dict):
+            return None
+        document.ui_state["muon_relaxation_form"] = normalized
+
+        wanted = {str(payload.get("site_id", "")) for payload in payloads}
+        by_site: dict[str, dict[str, object]] = {}
+        for row in normalized.get("rows", []):
+            if not isinstance(row, dict):
+                continue
+            site_id = str(row.get("site_id", ""))
+            if site_id not in wanted:
+                continue
+            entry = dict(row)
+            # Back into the configuration shape the definition stores.
+            entry["initial_fractional_position"] = list(
+                entry.pop("fractional_position", [0.0, 0.0, 0.0])
+            )
+            by_site[site_id] = entry
+        return by_site
 
     def _serialize_muon_relaxation_config(self, config: MuonRelaxationConfig) -> dict[str, object]:
         return {

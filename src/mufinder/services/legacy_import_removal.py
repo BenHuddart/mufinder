@@ -87,6 +87,21 @@ class RemovalPlan:
         return bool(self.targets) and not self.blockers
 
 
+@dataclass(frozen=True, slots=True)
+class RemovalOutcome:
+    """What one removal actually did."""
+
+    removed: int = 0
+    errors: list[str] = field(default_factory=list)
+    #: The removal's provenance record, for the caller to persist. Returned
+    #: rather than appended to the document, because appending only reaches
+    #: memory: ``provenance.jsonl`` is append-only through
+    #: ``ProjectService.append_provenance`` and ``save_project`` never rewrites
+    #: it, so a record appended here would vanish on reload. ``None`` when
+    #: nothing was removed.
+    provenance: ProvenanceRecord | None = None
+
+
 def imported_relaxations_in_batch(document: Any, batch_id: UUID) -> list[ImportedRelaxationRef]:
     """Return the imported relaxations belonging to one import batch."""
 
@@ -231,8 +246,8 @@ def remove_imported_relaxations(
     *,
     batch_id: UUID | None = None,
     delete_files: bool = True,
-) -> tuple[int, list[str]]:
-    """Delete the entities and files in ``plan``. Returns (count, errors).
+) -> RemovalOutcome:
+    """Delete the entities and files in ``plan``.
 
     Refuses outright when the plan is not :attr:`~RemovalPlan.allowed`, so a
     caller cannot skip the reference check by constructing a plan by hand.
@@ -244,7 +259,10 @@ def remove_imported_relaxations(
     """
 
     if not plan.allowed:
-        return 0, ["Removal was refused because something still references these relaxations."]
+        return RemovalOutcome(
+            removed=0,
+            errors=["Removal was refused because something still references these relaxations."],
+        )
 
     errors: list[str] = []
     removed = 0
@@ -278,24 +296,23 @@ def remove_imported_relaxations(
             except OSError as exc:
                 errors.append(f"Could not delete {directory.name}: {exc}")
 
+    record: ProvenanceRecord | None = None
     if removed:
-        document.provenance.append(
-            ProvenanceRecord(
-                action=REMOVAL_ACTION,
-                workflow_stage=WorkflowStage.MUON_RELAXATION,
-                actor="user",
-                description=f"Removed {removed} imported muon relaxation(s)",
-                parameters={
-                    "batch_id": str(batch_id) if batch_id is not None else None,
-                    "labels": removed_labels,
-                    "deleted_files": bool(delete_files),
-                    "directories": [str(path) for path in plan.directories],
-                },
-                input_entity_ids=[ref.site_id for ref in plan.targets],
-            )
+        record = ProvenanceRecord(
+            action=REMOVAL_ACTION,
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            actor="user",
+            description=f"Removed {removed} imported muon relaxation(s)",
+            parameters={
+                "batch_id": str(batch_id) if batch_id is not None else None,
+                "labels": removed_labels,
+                "deleted_files": bool(delete_files),
+                "directories": [str(path) for path in plan.directories],
+            },
+            input_entity_ids=[ref.site_id for ref in plan.targets],
         )
 
-    return removed, errors
+    return RemovalOutcome(removed=removed, errors=errors, provenance=record)
 
 
 def detach_rows_from_definition(definition: Any, targets: Sequence[ImportedRelaxationRef]) -> int:
@@ -344,6 +361,7 @@ def detach_rows_from_definition(definition: Any, targets: Sequence[ImportedRelax
 __all__ = [
     "REMOVAL_ACTION",
     "ImportedRelaxationRef",
+    "RemovalOutcome",
     "RemovalPlan",
     "detach_rows_from_definition",
     "find_references",

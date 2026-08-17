@@ -40,7 +40,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 from uuid import UUID, uuid4
 
 from mufinder.castep_io.cell_writer import write_cell
@@ -118,6 +118,12 @@ class LegacyImportOutcome:
     imported: tuple[ImportedRelaxation, ...] = ()
     skipped: tuple[tuple[int, str], ...] = ()
     warnings: tuple[str, ...] = ()
+    #: The batch's provenance record, for the caller to persist. Returned rather
+    #: than appended to the document, because appending only reaches memory:
+    #: ``provenance.jsonl`` is append-only through
+    #: ``ProjectService.append_provenance`` and ``save_project`` never rewrites
+    #: it, so a record appended here would vanish on reload.
+    provenance: ProvenanceRecord | None = None
 
     @property
     def row_payloads(self) -> list[dict[str, Any]]:
@@ -229,18 +235,28 @@ def _cell_for_seed(
 #: emitting them here would produce a file CASTEP rejects.
 _PARAM_EXCLUDED = frozenset({"kpoint_mp_grid", "kpoint_mp_spacing", "fix_all_cell", "symmetry_generate"})
 
+#: Keywords the import *asserts* rather than recovers. ``TASK`` and ``CHARGE``
+#: define what the job is; ``FIX_ALL_CELL`` and ``WRITE_CELL_STRUCTURE`` are
+#: required by the workflow. All four are rendered as locked values in the
+#: parameter dialog, so a recovered value for one of them must never reach a
+#: definition row and appear as if the row had chosen it.
+_ASSERTED_KEYWORDS = frozenset({"task", "charge", "fix_all_cell", "write_cell_structure"})
 
-def _param_for_seed(
-    parameters: dict[str, Any], *, charge_state: str
-) -> tuple[ParamFile, list[str]]:
-    """Build the ``.param`` an imported job directory should carry.
+#: Resolved first, so a mutually exclusive pair resolves the right way round.
+_PRIORITY_KEYWORDS = ("cut_off_energy",)
 
-    Returns the file and the keywords deliberately dropped from it.
 
-    Only keywords the runtime schema recognises as ``param`` keywords are
-    emitted, so the file always validates. ``TASK`` and ``CHARGE`` are forced to
-    the values the import asserts rather than taken from recovery, because they
-    define what the job *is*.
+def resolve_recovered_parameters(
+    parameters: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Resolve a merged recovery into the parameter set the run actually used.
+
+    Returns the resolved ``param`` keywords in canonical form, in deterministic
+    emission order, and the keywords deliberately dropped because a mutually
+    exclusive partner won.
+
+    Only keywords the runtime schema recognises as ``param`` keywords survive,
+    so a file rendered from this always validates.
 
     **Mutually exclusive keywords must be resolved, not merged.** A legacy run
     typically declares ``BASIS_PRECISION`` in its ``.param`` while the output
@@ -249,13 +265,19 @@ def _param_for_seed(
     The resolved cutoff wins: it is what the calculation actually used, and it
     is the value downstream jobs inherit. Emitting them in the order they happen
     to sort would keep the wrong one.
+
+    Shared deliberately by the rendered ``.param`` and by the definition row the
+    parameter dialog displays. The row is what a user reads to learn what the
+    run used; the file is what downstream jobs inherit. Two descriptions of one
+    historical run that disagree would be worse than either being wrong alone,
+    so the rule lives here once rather than being restated at each call site.
     """
 
+    resolved: dict[str, Any] = {}
     dropped: list[str] = []
-    keywords: list[KeywordAssignment] = [
-        KeywordAssignment("task", "GEOMETRYOPTIMIZATION"),
-        KeywordAssignment("charge", muon_charge_for_state(charge_state)),
-    ]
+    # ``task`` and ``charge`` are forced by the caller, so seed them as seen:
+    # anything mutually exclusive with them must lose, exactly as it would have
+    # had they been emitted from recovery.
     seen = {"task", "charge"}
 
     def _emit(canonical: str, value: Any) -> None:
@@ -266,13 +288,12 @@ def _param_for_seed(
             if canonical_keyword_name("param", other) in seen:
                 dropped.append(canonical)
                 return
-        keywords.append(KeywordAssignment(canonical, value))
+        resolved[canonical] = value
         seen.add(canonical)
 
-    # Priority first, so an exclusive pair resolves the right way round.
-    for preferred in ("cut_off_energy",):
+    for preferred in _PRIORITY_KEYWORDS:
         canonical = canonical_keyword_name("param", preferred)
-        if canonical in parameters and parameters[canonical] is not None:
+        if parameters.get(canonical) is not None:
             _emit(canonical, parameters[canonical])
 
     for name, value in sorted(parameters.items()):
@@ -280,6 +301,29 @@ def _param_for_seed(
         if canonical in seen or canonical in _PARAM_EXCLUDED or value is None:
             continue
         _emit(canonical, value)
+
+    return resolved, dropped
+
+
+def _param_for_seed(
+    parameters: dict[str, Any], *, charge_state: str
+) -> tuple[ParamFile, list[str]]:
+    """Build the ``.param`` an imported job directory should carry.
+
+    Returns the file and the keywords deliberately dropped from it. ``TASK`` and
+    ``CHARGE`` are forced to the values the import asserts rather than taken from
+    recovery, because they define what the job *is*; everything else comes from
+    :func:`resolve_recovered_parameters`.
+    """
+
+    resolved, dropped = resolve_recovered_parameters(parameters)
+    keywords: list[KeywordAssignment] = [
+        KeywordAssignment("task", "GEOMETRYOPTIMIZATION"),
+        KeywordAssignment("charge", muon_charge_for_state(charge_state)),
+    ]
+    keywords.extend(
+        KeywordAssignment(name, value) for name, value in resolved.items()
+    )
 
     return ParamFile(keywords=tuple(keywords)), dropped
 
@@ -419,6 +463,34 @@ def _build_structure(
     )
 
 
+def row_parameter_values(run: DetectedRun) -> dict[str, Any]:
+    """Return the parameters an imported definition row should carry.
+
+    The resolved recovery — the same set the rendered ``.param`` holds — plus
+    ``KPOINT_MP_GRID``, which belongs to the ``.cell`` rather than the ``.param``
+    and is frequently recoverable only from the output echo. The keywords the
+    import asserts are excluded; see :data:`_ASSERTED_KEYWORDS`.
+
+    An empty result is meaningful and must be preserved: it says recovery found
+    nothing, not that the run used the workflow's current defaults.
+    """
+
+    resolved, _ = resolve_recovered_parameters(run.parameters)
+    values = {
+        name: value
+        for name, value in resolved.items()
+        if name not in _ASSERTED_KEYWORDS
+    }
+
+    grid = run.parameters.get(canonical_keyword_name("cell", "kpoint_mp_grid"))
+    if isinstance(grid, (list, tuple)) and len(grid) == 3:
+        try:
+            values["kpoint_mp_grid"] = [int(component) for component in grid]
+        except (TypeError, ValueError):
+            pass
+    return values
+
+
 def _row_payload(
     *,
     site_id: UUID,
@@ -431,6 +503,12 @@ def _row_payload(
 
     Plain data rather than a ``MuonRelaxationRow``: that dataclass lives in the
     app layer, which ``services`` may not import.
+
+    ``added_advanced`` is deliberately left empty rather than computed from the
+    recovered names. The parameter dialog promotes any advanced keyword that
+    arrives carrying an active value, so a recovered advanced keyword renders
+    without being listed here — and an empty list cannot drift with the runtime
+    keyword catalog, which keeps the row signature stable across machines.
     """
 
     # Host frame, not the supercell frame the input cell states it in. Every
@@ -453,7 +531,7 @@ def _row_payload(
             if run.supercell_matrix is not None
             else None
         ),
-        "parameter_values": {},
+        "parameter_values": row_parameter_values(run),
         "added_advanced": [],
         "imported": True,
         "import_batch_id": str(batch_id),
@@ -683,26 +761,24 @@ def commit_legacy_import(
             )
         )
 
-    document.provenance.append(
-        ProvenanceRecord(
-            action=IMPORT_ACTION,
-            workflow_stage=WorkflowStage.MUON_RELAXATION,
-            actor="user",
-            description=(
-                f"Imported {len(imported)} legacy muon relaxation(s) from {scan.root.name}"
-            ),
-            parameters={
-                "batch_id": str(batch),
-                "source_folder": str(scan.root),
-                "keyword_catalog_origin": scan.catalog_origin,
-                "imported_sites": site_records,
-                "skipped": [
-                    {"site_index": index, "reason": reason} for index, reason in skipped
-                ],
-            },
-            input_entity_ids=[host_structure.id],
-            output_entity_ids=[item.site_id for item in imported],
-        )
+    record = ProvenanceRecord(
+        action=IMPORT_ACTION,
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        actor="user",
+        description=(
+            f"Imported {len(imported)} legacy muon relaxation(s) from {scan.root.name}"
+        ),
+        parameters={
+            "batch_id": str(batch),
+            "source_folder": str(scan.root),
+            "keyword_catalog_origin": scan.catalog_origin,
+            "imported_sites": site_records,
+            "skipped": [
+                {"site_index": index, "reason": reason} for index, reason in skipped
+            ],
+        },
+        input_entity_ids=[host_structure.id],
+        output_entity_ids=[item.site_id for item in imported],
     )
 
     return LegacyImportOutcome(
@@ -710,6 +786,7 @@ def commit_legacy_import(
         imported=tuple(imported),
         skipped=tuple(skipped),
         warnings=tuple(warnings),
+        provenance=record,
     )
 
 
@@ -744,4 +821,6 @@ __all__ = [
     "ImportedRelaxation",
     "LegacyImportOutcome",
     "commit_legacy_import",
+    "resolve_recovered_parameters",
+    "row_parameter_values",
 ]
