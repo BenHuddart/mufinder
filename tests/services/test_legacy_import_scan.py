@@ -486,3 +486,37 @@ class TestHostCompositionChecks:
         root = build_folder(tmp_path, sites=(1,))
 
         assert scan_legacy_folder(root, host_lattice=HOST_LATTICE).runs[0].importable
+
+
+class TestScanProgress:
+    """A folder of large outputs takes long enough that silence reads as a hang."""
+
+    def test_progress_is_reported_once_per_run(self, tmp_path: Path) -> None:
+        seen: list[tuple[int, int]] = []
+
+        scan_legacy_folder(
+            build_folder(tmp_path, sites=(1, 2, 3)),
+            host_lattice=HOST_LATTICE,
+            progress=lambda done, total: seen.append((done, total)),
+        )
+
+        assert seen == [(1, 3), (2, 3), (3, 3)]
+
+    def test_the_pristine_reference_is_not_counted(self, tmp_path: Path) -> None:
+        """Site 0 is skipped, so counting it would report a total that is never
+        reached and leave the progress message stuck short of the end."""
+
+        seen: list[tuple[int, int]] = []
+
+        scan_legacy_folder(
+            build_folder(tmp_path, sites=(1, 2), include_site_zero=True),
+            host_lattice=HOST_LATTICE,
+            progress=lambda done, total: seen.append((done, total)),
+        )
+
+        assert seen == [(1, 2), (2, 2)]
+
+    def test_scanning_without_a_progress_callback_still_works(self, tmp_path: Path) -> None:
+        scan = scan_legacy_folder(build_folder(tmp_path, sites=(1,)), host_lattice=HOST_LATTICE)
+
+        assert len(scan.runs) == 1

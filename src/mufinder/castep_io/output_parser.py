@@ -51,6 +51,8 @@ _ASE_FORCE_LINE_RE = re.compile(
     rf"^\s*\*\s*([A-Za-z][A-Za-z0-9]*)\s+\d+\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+\*\s*$"
 )
 _STRESS_BLOCK_HEADER_RE = re.compile(r"\**.*\bStress\s+Tensor\b\s*\**", re.IGNORECASE)
+
+
 _STRESS_LINE_RE = re.compile(rf"^\s*({_FLOAT_RE})\s+({_FLOAT_RE})\s+({_FLOAT_RE})\s*$")
 _ASE_STRESS_LINE_RE = re.compile(
     rf"^\s*\*\s*[xyz]\s+({_FLOAT_RE})\s+({_FLOAT_RE})\s+({_FLOAT_RE})\s+\*\s*$",
@@ -58,6 +60,27 @@ _ASE_STRESS_LINE_RE = re.compile(
 )
 _LATTICE_HEADER_RE = re.compile(r"\b(?:real\s+)?lattice\b|\bunit\s+cell\b", re.IGNORECASE)
 _RUN_STARTED_RE = re.compile(r"^\s*Run started:", re.IGNORECASE)
+
+
+def _is_force_header(line: str) -> bool:
+    r"""Return whether ``line`` opens a forces block.
+
+    The substring test is a pure speed guard, not a second rule: the regex
+    requires the letters of "Forces" case-insensitively, so any line it could
+    match necessarily contains "orce" once folded. A ``.castep`` runs to tens of
+    thousands of lines and this is checked against every one of them, where the
+    permissive ``\**.*`` prefix combined with ``IGNORECASE`` costs about a
+    second per file; the guard rejects almost every line in nanoseconds and
+    leaves the regex to decide the handful that survive.
+    """
+
+    return "orce" in line.casefold() and _FORCE_BLOCK_HEADER_RE.search(line) is not None
+
+
+def _is_stress_header(line: str) -> bool:
+    """Return whether ``line`` opens a stress-tensor block. See :func:`_is_force_header`."""
+
+    return "stress" in line.casefold() and _STRESS_BLOCK_HEADER_RE.search(line) is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,7 +276,7 @@ def _parse_last_force_block(lines: list[str]) -> tuple[tuple[str, float, float, 
     blocks: list[list[tuple[str, float, float, float]]] = []
     index = 0
     while index < len(lines):
-        if _FORCE_BLOCK_HEADER_RE.search(lines[index]) is None:
+        if not _is_force_header(lines[index]):
             index += 1
             continue
         block, next_index = _read_force_block(lines, index + 1)
@@ -270,7 +293,7 @@ def _parse_last_stress_block(lines: list[str]) -> tuple[tuple[float, float, floa
     blocks: list[list[tuple[float, float, float]]] = []
     index = 0
     while index < len(lines):
-        if _STRESS_BLOCK_HEADER_RE.search(lines[index]) is None:
+        if not _is_stress_header(lines[index]):
             index += 1
             continue
         block, next_index = _read_stress_block(lines, index + 1)
@@ -290,7 +313,7 @@ def _read_force_block(
     index = start_index
     while index < len(lines):
         line = lines[index]
-        if _FORCE_BLOCK_HEADER_RE.search(line) or _STRESS_BLOCK_HEADER_RE.search(line):
+        if _is_force_header(line) or _is_stress_header(line):
             break
         parsed = _parse_force_row(line)
         if parsed is not None:
@@ -310,7 +333,7 @@ def _read_stress_block(lines: list[str], start_index: int) -> tuple[list[tuple[f
     index = start_index
     while index < len(lines):
         line = lines[index]
-        if _FORCE_BLOCK_HEADER_RE.search(line) or _STRESS_BLOCK_HEADER_RE.search(line):
+        if _is_force_header(line) or _is_stress_header(line):
             break
         parsed = _parse_stress_row(line)
         if parsed is not None:
