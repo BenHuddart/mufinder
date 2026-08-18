@@ -58,11 +58,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
+from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.science.quantum_phonons import (
+    muon_mass_warning,
     muon_zpe,
     w1_entanglement_witness,
 )
@@ -112,6 +114,23 @@ def _format_phonon_eigenvalues(value: object) -> str:
         except (TypeError, ValueError):
             continue
     return ", ".join(entries)
+
+
+def _cell_declares_species_mass(cell_path: Path) -> bool:
+    """Return whether a written ``.cell`` file carries a ``SPECIES_MASS`` block.
+
+    Deliberately fails *open*: a missing or unparseable file is no evidence that
+    the muon mass was omitted, and this backs a submission guard that must never
+    block a user over an unrelated read or parse problem.
+    """
+
+    if not cell_path.is_file():
+        return True
+    try:
+        parsed = parse_cell_file(cell_path)
+    except (CellParseError, OSError):
+        return True
+    return any(block.name.strip().lower() == "species_mass" for block in parsed.cell_file.blocks)
 
 
 @dataclass(frozen=True)
@@ -205,17 +224,74 @@ class QuantumCorrectionsController(WorkflowJobController):
         return str(value)
 
     def pre_submit_check(self, keys: list[object]) -> bool:
-        """Validate the active definition against the current host.
+        """Validate the active definition against the host and the stage-1 inputs.
 
-        Behavior-preserving move of the ``_check_definition_host`` guard the
-        former quantum submit handlers ran before building a submission plan. The
-        guard is shared with the NEB / energy-barriers workflow, so it stays on
-        ``MainWindow`` and is reached via the deps. A refusal is silent.
+        Two guards run here:
+
+        - the ``_check_definition_host`` guard the former quantum submit handlers
+          ran before building a submission plan (shared with the NEB /
+          energy-barriers workflow, so it stays on ``MainWindow`` and is reached
+          via the deps). A refusal is silent.
+        - :meth:`_stage_two_sources_missing_muon_mass`, which refuses a stage-2
+          phonon continuation whose stage-1 singlepoint cell has no
+          ``SPECIES_MASS`` block. That refusal explains itself via ``show_info``.
         """
 
-        return self._deps.check_definition_host(
+        if not self._deps.check_definition_host(
             self._deps.active_quantum_corrections_definition()
+        ):
+            return False
+
+        missing = self._stage_two_sources_missing_muon_mass(keys)
+        if not missing:
+            return True
+        labels = "\n".join(f"  - {label}" for label in missing)
+        self._context.show_info(
+            "Stage-1 muon mass missing",
+            "These rows cannot run their phonon continuation:\n\n"
+            f"{labels}\n\n"
+            "Their stage-1 singlepoint cell has no SPECIES_MASS block, so CASTEP "
+            "wrote the default hydrogen mass for H:mu into the checkpoint. A "
+            "continuation restores species masses from that checkpoint, so the "
+            "phonon run would use the wrong mass and report frequencies and a ZPE "
+            "roughly a factor of three too low. Reset each row to stage 1 and rerun "
+            "the singlepoint before submitting the phonon stage.",
         )
+        return False
+
+    def _stage_two_sources_missing_muon_mass(self, keys: list[object]) -> list[str]:
+        """Return labels of selected stage-2 rows whose stage-1 cell omits the mass.
+
+        The evidence is the stage-1 ``.cell`` file still on disk in the shared seed
+        directory. That check has one blind spot: both stages write ``{seed}.cell``
+        to the same path, so once a stage-2 job has been materialized the stage-1
+        cell is gone and this returns nothing. It runs before ``materialize`` in
+        :meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.submit`,
+        which keeps the first stage-2 submission of a legacy row catchable; a row
+        that slips through is still caught after the fact by the ``.phonon`` mass
+        check in :func:`~mufinder.science.quantum_phonons.muon_mass_warning`.
+        """
+
+        definition = self._deps.active_quantum_corrections_definition()
+        if definition is None:
+            return []
+        output_root = self._context.definition_output_directory(definition)
+        if output_root is None:
+            return []
+        missing: list[str] = []
+        for key in [str(value) for value in keys]:
+            candidate = self._deps.quantum_source_candidate_by_key(key)
+            if candidate is None:
+                continue
+            stage_state = self._deps.quantum_stage_state(definition, candidate)
+            if getattr(stage_state, "stage", None) != QUANTUM_STAGE_PHONON:
+                continue
+            seed_name = self._deps.quantum_seed_name_for_key(definition, key)
+            cell_path = output_root / seed_name / f"{seed_name}.cell"
+            if _cell_declares_species_mass(cell_path):
+                continue
+            missing.append(self._deps.quantum_source_label(candidate))
+        return missing
 
     def build_states(self) -> Mapping[str, object]:
         return self._deps.build_quantum_corrections_states()
@@ -444,7 +520,13 @@ class QuantumCorrectionsController(WorkflowJobController):
         }
         if zpe.warnings:
             payload["phonon_warnings"] = list(zpe.warnings)
-        return ControllerResult(payload=payload)
+        # The muon-mass check is also raised to the run's warnings so it reaches the
+        # jobs dashboard, not only the durable payload: a run CASTEP performed with
+        # the default hydrogen mass produces plausible-looking numbers that are
+        # roughly a factor of three off, and nothing downstream can repair them.
+        mass_warning = muon_mass_warning(phonon)
+        warnings = [] if mass_warning is None else [mass_warning]
+        return ControllerResult(payload=payload, warnings=warnings)
 
     # --- view contract ---
 

@@ -274,3 +274,38 @@ def test_quantum_analysis_help_dialog_renders_equations(qapp) -> None:
     assert any(label.math() == r"E_0=\frac{1}{2}\hbar\omega" for label in dialog.findChildren(MathLabel))
 
     dialog.close()
+
+
+def test_quantum_analysis_dialog_has_no_mass_banner_for_a_correct_run(qapp, tmp_path: Path) -> None:
+    phonon_path = tmp_path / "site.phonon"
+    phonon_path.write_text(PHONON_TEXT, encoding="utf-8")
+
+    dialog = QuantumPhononAnalysisDialog(
+        phonon_path=str(phonon_path), job_label="quantum_phonon_site"
+    )
+
+    assert dialog.muon_mass_warning is None
+    assert dialog._muon_mass_warning_label is None
+    dialog.close()
+
+
+def test_quantum_analysis_dialog_banners_a_hydrogen_mass_muon(qapp, tmp_path: Path) -> None:
+    """Every tab of this dialog reads plausibly for a run done at the wrong mass,
+    so the mismatch is stated up front instead of being left to be inferred."""
+
+    phonon_path = tmp_path / "site.phonon"
+    phonon_path.write_text(
+        PHONON_TEXT.replace("H:mu      0.113429", "H:mu      1.007940"), encoding="utf-8"
+    )
+
+    dialog = QuantumPhononAnalysisDialog(
+        phonon_path=str(phonon_path), job_label="quantum_phonon_site"
+    )
+
+    assert dialog.muon_mass_warning is not None
+    banner = dialog._muon_mass_warning_label
+    assert banner is not None
+    assert "not the muon mass" in banner.text()
+    assert banner.wordWrap() is True
+    assert banner.objectName() == "warningText"
+    dialog.close()

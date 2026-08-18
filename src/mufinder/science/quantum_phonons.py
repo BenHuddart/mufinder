@@ -98,6 +98,11 @@ LIGHT_SPEED_M_S = 299792458.0
 ELEMENTARY_CHARGE_C = 1.602176634e-19
 HBAR_J_S = PLANCK_CONSTANT_J_S / (2.0 * pi)
 ATOMIC_MASS_KG = 1.66053906660e-27
+#: Relative tolerance for accepting the CASTEP-reported muon mass. CASTEP echoes
+#: the ``SPECIES_MASS`` value with limited precision, so an exact match is not
+#: expected; the failure this guards against is the ~8.9x hydrogen-mass default,
+#: which no rounding tolerance can hide.
+MUON_MASS_RELATIVE_TOLERANCE = 1e-3
 BOLTZMANN_J_K = 1.380649e-23
 CM_INV_TO_EV = PLANCK_CONSTANT_J_S * LIGHT_SPEED_M_S * 100.0 / ELEMENTARY_CHARGE_C
 CM_INV_ZPE_TO_EV = 0.5 * CM_INV_TO_EV
@@ -261,6 +266,47 @@ def select_muon_modes(
     )
 
 
+def muon_mass_warning(
+    calculation: PhononCalculation,
+    *,
+    muon_species: str = "H:mu",
+) -> str | None:
+    """Return a warning when CASTEP did not use the muon mass for the muon.
+
+    CASTEP writes the mass it actually used into the ``.phonon`` header, so this is
+    the authoritative check on a finished run. The mass is *not* something MuFinder
+    can correct after the fact: omega scales as 1/sqrt(mass), so a phonon run that
+    used the default hydrogen mass (about 8.9 times the muon mass) yields
+    frequencies and a ZPE roughly a factor of three too low, and displacement
+    amplitudes wrong by the same square-root factor.
+
+    The usual cause is a stage-1 singlepoint written without a ``SPECIES_MASS``
+    block: the stage-2 phonon runs as a ``CONTINUATION`` and restores the species
+    masses from the stage-1 checkpoint, so a mass present only in the stage-2 cell
+    is ignored. Such a row has to be reset to stage 1 and rerun.
+
+    Returns ``None`` when the mass matches, and also when the muon cannot be
+    identified in the header — callers that need the muon raise their own
+    :class:`PhononParseError` for that case, and a warning helper must not.
+    """
+
+    try:
+        muon = _atom_by_index(calculation, calculation.atom_index_for_species(muon_species))
+    except PhononParseError:
+        return None
+    reported = float(muon.mass_amu)
+    if abs(reported - MUON_MASS_AMU) <= MUON_MASS_RELATIVE_TOLERANCE * MUON_MASS_AMU:
+        return None
+    return (
+        f"CASTEP used {reported:.6g} AMU for {muon_species}, not the muon mass "
+        f"{MUON_MASS_AMU:.6g} AMU. Frequencies scale as 1/sqrt(mass), so this run's "
+        "ZPE, mode frequencies, and displacement amplitudes are wrong. The stage-1 "
+        "singlepoint most likely ran without a SPECIES_MASS block and the stage-2 "
+        "continuation restored the wrong mass from its checkpoint: reset the row to "
+        "stage 1 and rerun both stages."
+    )
+
+
 def muon_zpe(
     calculation: PhononCalculation,
     *,
@@ -270,6 +316,9 @@ def muon_zpe(
     """Calculate the muon ZPE from the selected Gamma modes."""
 
     warnings: list[str] = []
+    mass_warning = muon_mass_warning(calculation, muon_species=muon_species)
+    if mass_warning is not None:
+        warnings.append(mass_warning)
     modes = select_muon_modes(calculation, muon_species=muon_species, count=count)
     unstable = [mode for mode in modes if mode.frequency_cm <= 0.0]
     if unstable:

@@ -9,9 +9,11 @@ import pytest
 
 from mufinder.science.quantum_phonons import (
     CM_INV_ZPE_TO_EV,
+    MUON_MASS_AMU,
     PhononParseError,
     correlation_matrix,
     covariance_matrix,
+    muon_mass_warning,
     muon_zpe,
     muon_mode_participations,
     parse_phonon_text,
@@ -133,3 +135,38 @@ def test_parser_rejects_missing_gamma_point() -> None:
 
     with pytest.raises(PhononParseError, match="Gamma"):
         calculation.gamma_point()
+
+
+#: The same phonon file as ``PHONON_TEXT`` but with the CASTEP default hydrogen
+#: mass on the muon — what a stage-2 continuation produces when the stage-1
+#: singlepoint was written without a ``SPECIES_MASS`` block.
+HYDROGEN_MASS_PHONON_TEXT = PHONON_TEXT.replace("H:mu      0.113429", "H:mu      1.007940")
+
+
+def test_muon_mass_warning_is_silent_for_a_correct_muon_mass() -> None:
+    assert muon_mass_warning(parse_phonon_text(PHONON_TEXT)) is None
+
+
+def test_muon_mass_warning_reports_a_hydrogen_mass_muon() -> None:
+    warning = muon_mass_warning(parse_phonon_text(HYDROGEN_MASS_PHONON_TEXT))
+
+    assert warning is not None
+    assert "1.00794" in warning
+    assert f"{MUON_MASS_AMU:.6g}" in warning
+    assert "SPECIES_MASS" in warning
+
+
+def test_muon_zpe_carries_the_mass_warning() -> None:
+    result = muon_zpe(parse_phonon_text(HYDROGEN_MASS_PHONON_TEXT))
+
+    assert any("not the muon mass" in warning for warning in result.warnings)
+    # The ZPE itself is still computed from the reported frequencies: the run has
+    # to be repeated, and nothing here can rescale it after the fact.
+    assert result.total_eV == pytest.approx((400.0 + 900.0 + 1600.0) * CM_INV_ZPE_TO_EV)
+
+
+def test_muon_mass_warning_is_silent_when_the_muon_is_absent() -> None:
+    """A warning helper must not raise where its callers raise for themselves."""
+
+    calculation = parse_phonon_text(PHONON_TEXT)
+    assert muon_mass_warning(calculation, muon_species="Xx") is None

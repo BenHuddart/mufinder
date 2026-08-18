@@ -4394,6 +4394,45 @@ def test_quantum_controller_build_result_phonon_parses_zpe_and_witness(tmp_path:
     # No output_files or derived structures contributed by build_result.
     assert result.output_files == []
     assert result.derived_structure_ids == []
+    # The muon mass CASTEP reported is the muon mass, so no warning is raised.
+    assert result.warnings == []
+
+
+def test_quantum_controller_build_result_warns_on_a_hydrogen_mass_muon(tmp_path: Path) -> None:
+    """A phonon run CASTEP performed with the default hydrogen mass for H:mu is
+    reported as a run warning (dashboard-visible), not only in the payload."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    job = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
+    run = CalculationRun(job_id=job.id)
+
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    (output_dir / "quantum_s.phonon").write_text(
+        _QUANTUM_PHONON_TEXT.replace("H:mu      0.113429", "H:mu      1.007940"),
+        encoding="utf-8",
+    )
+
+    controller = QuantumCorrectionsController(
+        _make_context(
+            document=document,
+            project_service=service,
+            job_output_directory=lambda _job: output_dir,
+            job_seed_name=lambda _job: "quantum_s",
+        ),
+        _stub_quantum_deps(),
+        _FakeQuantumView(),
+    )
+
+    artifacts = collect_job_artifacts(output_dir, "quantum_s", want_phonon=True)
+    result = controller.build_result(job, _parsed(), run, artifacts)
+
+    assert len(result.warnings) == 1
+    assert "not the muon mass" in result.warnings[0]
+    assert any(
+        "not the muon mass" in warning for warning in result.payload["phonon_warnings"]
+    )
 
 
 def test_quantum_controller_build_result_phonon_missing_dir_is_empty(tmp_path: Path) -> None:
@@ -4548,6 +4587,145 @@ def test_quantum_controller_materialize_two_stage_mixed_keys(tmp_path: Path) -> 
     assert singlepoint_key in seed_mapping and phonon_key in seed_mapping
     # The phonon mapping stays aliased into job_ids_by_label (load-bearing fallback).
     assert definition.parameters["job_ids_by_label"] is phonon_mapping
+
+
+def _write_stage_one_cell(output_root: Path, seed_name: str, *, with_species_mass: bool) -> Path:
+    """Write a stage-1 singlepoint ``.cell`` into the shared seed directory."""
+
+    job_dir = output_root / seed_name
+    job_dir.mkdir(parents=True, exist_ok=True)
+    cell_path = job_dir / f"{seed_name}.cell"
+    species_mass = (
+        "\n%BLOCK SPECIES_MASS\nAMU\nH:mu 0.11342892566\n%ENDBLOCK SPECIES_MASS\n"
+        if with_species_mass
+        else ""
+    )
+    cell_path.write_text(
+        "%BLOCK LATTICE_CART\nang\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK LATTICE_CART\n"
+        "\n%BLOCK POSITIONS_FRAC\nSi 0 0 0\nH:mu 0.25 0.25 0.25\n%ENDBLOCK POSITIONS_FRAC\n"
+        f"{species_mass}",
+        encoding="utf-8",
+    )
+    return cell_path
+
+
+def _quantum_stage_two_guard_setup(service: ProjectService, tmp_path: Path):
+    """Return (deps-kwargs, context-kwargs, phonon_key, output_root) for the guard."""
+
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(
+        service, tmp_path
+    )
+    phonon_key = list(candidates)[0]
+    deps_kwargs = dict(
+        active_quantum_corrections_definition=lambda: definition,
+        quantum_source_candidate_by_key=lambda key: candidates.get(key),
+        quantum_stage_state=lambda _definition, _candidate: _FakeQuantumStageState(
+            stage=QUANTUM_STAGE_PHONON, status="ready"
+        ),
+    )
+    context_kwargs = dict(
+        document=document,
+        project_service=service,
+        definition_output_directory=lambda _definition: output_root,
+    )
+    return deps_kwargs, context_kwargs, phonon_key, output_root
+
+
+def test_quantum_controller_refuses_stage_two_when_stage_one_omits_species_mass(
+    tmp_path: Path,
+) -> None:
+    """A phonon continuation whose stage-1 cell has no SPECIES_MASS is refused.
+
+    CASTEP restores species masses from the stage-1 checkpoint, so continuing from
+    a singlepoint that ran without the muon mass would silently produce phonons at
+    the default hydrogen mass. The refusal explains itself rather than being silent.
+    """
+
+    service = ProjectService()
+    deps_kwargs, context_kwargs, phonon_key, output_root = _quantum_stage_two_guard_setup(
+        service, tmp_path
+    )
+    _write_stage_one_cell(output_root, f"quantum_{phonon_key}", with_species_mass=False)
+    infos: list[tuple[str, str]] = []
+    controller = QuantumCorrectionsController(
+        _make_context(infos=infos, **context_kwargs),
+        _stub_quantum_deps(**deps_kwargs),
+        _FakeQuantumView(),
+    )
+
+    assert controller.pre_submit_check([phonon_key]) is False
+    assert len(infos) == 1
+    title, message = infos[0]
+    assert title == "Stage-1 muon mass missing"
+    assert "SPECIES_MASS" in message
+    assert "siteA" in message
+
+
+def test_quantum_controller_allows_stage_two_when_stage_one_declares_species_mass(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    deps_kwargs, context_kwargs, phonon_key, output_root = _quantum_stage_two_guard_setup(
+        service, tmp_path
+    )
+    _write_stage_one_cell(output_root, f"quantum_{phonon_key}", with_species_mass=True)
+    infos: list[tuple[str, str]] = []
+    controller = QuantumCorrectionsController(
+        _make_context(infos=infos, **context_kwargs),
+        _stub_quantum_deps(**deps_kwargs),
+        _FakeQuantumView(),
+    )
+
+    assert controller.pre_submit_check([phonon_key]) is True
+    assert infos == []
+
+
+def test_quantum_controller_stage_two_guard_fails_open_without_a_stage_one_cell(
+    tmp_path: Path,
+) -> None:
+    """No readable stage-1 cell is no evidence: the guard must not block."""
+
+    service = ProjectService()
+    deps_kwargs, context_kwargs, phonon_key, output_root = _quantum_stage_two_guard_setup(
+        service, tmp_path
+    )
+    unreadable = output_root / f"quantum_{phonon_key}" / f"quantum_{phonon_key}.cell"
+    unreadable.parent.mkdir(parents=True, exist_ok=True)
+    unreadable.write_text("this is not a cell file", encoding="utf-8")
+    infos: list[tuple[str, str]] = []
+    controller = QuantumCorrectionsController(
+        _make_context(infos=infos, **context_kwargs),
+        _stub_quantum_deps(**deps_kwargs),
+        _FakeQuantumView(),
+    )
+
+    # Unparseable cell, and (below) no cell at all: both allow submission.
+    assert controller.pre_submit_check([phonon_key]) is True
+    unreadable.unlink()
+    assert controller.pre_submit_check([phonon_key]) is True
+    assert infos == []
+
+
+def test_quantum_controller_stage_two_guard_ignores_stage_one_rows(tmp_path: Path) -> None:
+    """A row still on stage 1 is never blocked: it has no checkpoint to inherit."""
+
+    service = ProjectService()
+    deps_kwargs, context_kwargs, phonon_key, output_root = _quantum_stage_two_guard_setup(
+        service, tmp_path
+    )
+    _write_stage_one_cell(output_root, f"quantum_{phonon_key}", with_species_mass=False)
+    deps_kwargs["quantum_stage_state"] = lambda _definition, _candidate: _FakeQuantumStageState(
+        stage=QUANTUM_STAGE_SINGLEPOINT, status="ready"
+    )
+    infos: list[tuple[str, str]] = []
+    controller = QuantumCorrectionsController(
+        _make_context(infos=infos, **context_kwargs),
+        _stub_quantum_deps(**deps_kwargs),
+        _FakeQuantumView(),
+    )
+
+    assert controller.pre_submit_check([phonon_key]) is True
+    assert infos == []
 
 
 def test_quantum_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:
