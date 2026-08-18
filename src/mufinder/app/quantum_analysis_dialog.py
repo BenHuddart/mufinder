@@ -44,6 +44,7 @@ from mufinder.app.theme import (
     current_palette,
     style_hint_text,
     style_section_title,
+    style_warning_text,
 )
 from mufinder.app.workflow_table_utils import create_workflow_table
 from mufinder.domain.models import Structure
@@ -56,6 +57,7 @@ from mufinder.science.quantum_phonons import (
     PhononCalculation,
     correlation_matrix,
     covariance_matrix,
+    muon_mass_warning,
     muon_mode_participations,
     parse_phonon_path,
     real_mode_displacements,
@@ -137,6 +139,21 @@ class QuantumPhononAnalysisDialog(QDialog):
         style_section_title(title)
         layout.addWidget(title)
 
+        # A phonon run CASTEP performed with the wrong mass for H:mu produces
+        # entirely plausible numbers on every tab below, so say so up front rather
+        # than letting the analysis be read at face value.
+        self._muon_mass_warning = muon_mass_warning(self._calculation)
+        self._muon_mass_warning_label: QLabel | None = None
+        if self._muon_mass_warning is not None:
+            # The theme keys warning styling off the object name, which
+            # ``style_warning_text`` sets, so the label is identified by attribute
+            # rather than by a custom object name.
+            warning_label = QLabel(self._muon_mass_warning)
+            warning_label.setWordWrap(True)
+            style_warning_text(warning_label)
+            layout.addWidget(warning_label)
+            self._muon_mass_warning_label = warning_label
+
         tabs = QTabWidget()
         tabs.setObjectName("quantumAnalysisTabs")
         tabs.addTab(self._phonon_modes_tab(), "Phonon Modes")
@@ -154,6 +171,12 @@ class QuantumPhononAnalysisDialog(QDialog):
         """Return the parsed phonon calculation."""
 
         return self._calculation
+
+    @property
+    def muon_mass_warning(self) -> str | None:
+        """Return the muon-mass mismatch warning shown for this run, if any."""
+
+        return self._muon_mass_warning
 
     @property
     def single_particle_results(self) -> tuple[SingleParticleResult, ...]:

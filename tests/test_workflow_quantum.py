@@ -7,11 +7,12 @@ from uuid import uuid4
 import pytest
 
 from mufinder.castep_io import write_cell, write_param
-from mufinder.castep_io.types import KeywordAssignment
+from mufinder.castep_io.types import BlockSection, KeywordAssignment
+from mufinder.domain.constants import MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Structure
 from mufinder.workflow.bridge import structure_to_spec
-from mufinder.workflow.types import ParamTemplate
+from mufinder.workflow.types import CellTemplate, ParamTemplate
 from mufinder.workflow.quantum import (
     QUANTUM_SINGLEPOINT_CALC_TYPE,
     QUANTUM_PHONON_CALC_TYPE,
@@ -132,6 +133,62 @@ def test_expand_quantum_singlepoint_jobs_writes_singlepoint_inputs() -> None:
     assert "PHONON_METHOD" not in param_text
     assert "CONTINUATION" not in param_text
     assert "CHARGE : 1" in param_text
+
+
+def test_expand_quantum_singlepoint_jobs_writes_muon_species_mass() -> None:
+    """Stage 1 must carry SPECIES_MASS, not just stage 2.
+
+    The stage-2 phonon job is a CONTINUATION and CASTEP restores species masses
+    from the stage-1 checkpoint, so a mass written only in stage 2 is ignored and
+    the phonons run with the default hydrogen mass.
+    """
+
+    jobs = expand_quantum_singlepoint_jobs(
+        jobs=(QuantumPhononJobConfig(source=_source()),),
+        name_prefix="quantum_singlepoint",
+    )
+
+    cell_text = write_cell(jobs[0].cell_file)
+    assert "%BLOCK SPECIES_MASS" in cell_text
+    assert f"H:mu {MUON_MASS_AMU}" in cell_text
+    assert "%BLOCK SPECIES_GAMMA" in cell_text
+    assert f"H:mu {MUON_GAMMA_RAD_S_T}" in cell_text
+    assert jobs[0].provenance["muon_mass_amu"] == MUON_MASS_AMU
+
+
+def test_quantum_stages_agree_on_the_muon_species_mass() -> None:
+    """Both stages must declare the same mass for the same muon species."""
+
+    config = QuantumPhononJobConfig(source=_source())
+    singlepoint = expand_quantum_singlepoint_jobs(
+        jobs=(config,), name_prefix="quantum_singlepoint"
+    )[0]
+    phonon = expand_quantum_phonon_jobs(jobs=(config,), name_prefix="quantum_phonon")[0]
+
+    def _species_block(job, name: str):
+        return next(block for block in job.cell_file.blocks if block.name == name)
+
+    for name in ("species_mass", "species_gamma"):
+        assert _species_block(singlepoint, name).rows == _species_block(phonon, name).rows
+
+
+def test_expand_quantum_singlepoint_jobs_allows_overriding_species_mass() -> None:
+    """A caller-supplied SPECIES_MASS block still wins over the stage-1 base."""
+
+    override = BlockSection("species_mass", (("H:mu", 0.5),), unit="AMU")
+    jobs = expand_quantum_singlepoint_jobs(
+        jobs=(
+            QuantumPhononJobConfig(
+                source=_source(),
+                cell_overrides=CellTemplate(extra_blocks=(override,)),
+            ),
+        ),
+        name_prefix="quantum_singlepoint",
+    )
+
+    cell_text = write_cell(jobs[0].cell_file)
+    assert "H:mu 0.5" in cell_text
+    assert f"H:mu {MUON_MASS_AMU}" not in cell_text
 
 
 def test_expand_quantum_phonon_jobs_writes_gamma_phonon_inputs() -> None:

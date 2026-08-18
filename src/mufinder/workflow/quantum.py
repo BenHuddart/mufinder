@@ -180,10 +180,14 @@ def expand_quantum_singlepoint_jobs(
         structure = config.source.structure
         if is_muonium(config.source.charge_state):
             structure = _seed_muonium_spin(structure, config.muon_species)
-        # Singlepoint has no cell base template; its cell patch is the caller's
-        # cell_overrides alone.
+        # The singlepoint cell base carries the muon species blocks only: the
+        # phonon-specific scalars belong to stage 2. See ``_muon_species_blocks``
+        # for why the mass has to be written here and not only in stage 2.
         patch_template = compose_patch(
-            InputTemplate(param=_singlepoint_param_base_template(config)),
+            InputTemplate(
+                cell=_singlepoint_cell_base_template(config),
+                param=_singlepoint_param_base_template(config),
+            ),
             InputTemplate(cell=config.cell_overrides, param=config.param_overrides),
         )
         patch = JobPatch(
@@ -207,6 +211,9 @@ def expand_quantum_singlepoint_jobs(
                     "workflow": "quantum_corrections",
                     "calc_type": QUANTUM_SINGLEPOINT_CALC_TYPE,
                     "label": label,
+                    "muon_species": config.muon_species,
+                    "muon_mass_amu": MUON_MASS_AMU,
+                    "muon_gamma_rad_s_T": MUON_GAMMA_RAD_S_T,
                     "source_site_id": str(config.source.source_site_id),
                     "source_relaxation_run_id": str(config.source.source_relaxation_run_id),
                     "source_relaxation_job_id": (
@@ -298,13 +305,34 @@ def expand_quantum_phonon_jobs(
     return resolved
 
 
+def _muon_species_blocks(config: QuantumPhononJobConfig) -> tuple[BlockSection, ...]:
+    """Return the muon ``SPECIES_MASS`` / ``SPECIES_GAMMA`` blocks.
+
+    **Both** stages must emit these, not just the phonon stage. Stage 2 runs as a
+    ``CONTINUATION``, and CASTEP restores the model — species masses included —
+    from the stage-1 ``.check`` file. A mass written only into the stage-2 cell
+    therefore arrives too late: the phonons run with the default hydrogen mass for
+    ``H:mu``, and because omega scales as 1/sqrt(mass) the frequencies and the muon
+    ZPE come out roughly a factor of three too low. Emitting the blocks in the
+    stage-1 singlepoint is what puts the muon mass into the checkpoint the
+    continuation reads. Masses do not affect a singlepoint SCF energy, so this is
+    inert for the stage-1 result itself.
+    """
+
+    return (
+        BlockSection("species_mass", ((config.muon_species, MUON_MASS_AMU),), unit="AMU"),
+        BlockSection("species_gamma", ((config.muon_species, MUON_GAMMA_RAD_S_T),), unit="radsectesla"),
+    )
+
+
+def _singlepoint_cell_base_template(config: QuantumPhononJobConfig) -> CellTemplate:
+    return CellTemplate(extra_blocks=_muon_species_blocks(config))
+
+
 def _cell_base_template(config: QuantumPhononJobConfig) -> CellTemplate:
     return CellTemplate(
         extra_scalars=(KeywordAssignment("phonon_kpoint_mp_grid", (1, 1, 1)),),
-        extra_blocks=(
-            BlockSection("species_mass", ((config.muon_species, MUON_MASS_AMU),), unit="AMU"),
-            BlockSection("species_gamma", ((config.muon_species, MUON_GAMMA_RAD_S_T),), unit="radsectesla"),
-        ),
+        extra_blocks=_muon_species_blocks(config),
     )
 
 

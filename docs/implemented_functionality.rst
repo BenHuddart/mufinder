@@ -237,11 +237,17 @@ Current behavior includes:
 - locking shared Quantum Corrections parameters after the completed
   singlepoint so only the stage-2 farm count remains editable before phonon
   submission, with an explicit workflow action to reset a row back to stage 1;
-- expanding stage-1 CASTEP ``JobSpec`` objects with ``TASK : SINGLEPOINT``;
+- expanding stage-1 CASTEP ``JobSpec`` objects with ``TASK : SINGLEPOINT``
+  and explicit ``H:mu`` mass/gamma cell blocks, so the muon mass reaches the
+  checkpoint the stage-2 continuation restores its model from;
 - expanding Gamma-only stage-2 CASTEP phonon ``JobSpec`` objects with
   ``TASK : PHONON``, ``CONTINUATION : DEFAULT``, ``PHONON_METHOD``,
-  ``PHONON_KPOINT_MP_GRID 1 1 1``, optional ``NUM_FARMS``, and explicit
+  ``PHONON_KPOINT_MP_GRID 1 1 1``, optional ``NUM_FARMS``, and the same explicit
   ``H:mu`` mass/gamma cell blocks;
+- refusing a stage-2 phonon continuation whose stage-1 cell declares no
+  ``SPECIES_MASS``, and warning on any completed phonon run whose ``.phonon``
+  header reports a mass other than the muon mass for ``H:mu`` (job warning,
+  result payload, and a banner in the analysis window);
 - submitting selected eligible sites through the shared local and cluster
   CASTEP job runners;
 - reusing same-cluster stage-1 remote directories for stage-2 continuation

@@ -109,9 +109,9 @@ The implemented core supports:
 - Legacy-style ``w1`` and ``w2`` entanglement witnesses.
 - MuFinder ``JobSpec`` expansion for a stage-1 singlepoint job with
   ``TASK : SINGLEPOINT`` and a stage-2 continuation job with ``TASK : PHONON``,
-  ``CONTINUATION : DEFAULT``, explicit ``PHONON_METHOD``,
-  ``PHONON_KPOINT_MP_GRID 1 1 1``, ``SPECIES_MASS`` for ``H:mu``, and
-  ``SPECIES_GAMMA`` for ``H:mu``.
+  ``CONTINUATION : DEFAULT``, explicit ``PHONON_METHOD``, and
+  ``PHONON_KPOINT_MP_GRID 1 1 1``. **Both** stages write ``SPECIES_MASS`` and
+  ``SPECIES_GAMMA`` for ``H:mu`` (see `Muon mass across the two stages`_).
 - Stage-2 task farming through ``NUM_FARMS`` when the configured farm count is
   greater than one.
 - Project-page submission of selected eligible sites through the shared local
@@ -160,6 +160,41 @@ DFPT / linear response
   coupling, and some dispersion combinations. MuFinder therefore blocks DFPT
   when it knows ultrasoft pseudopotentials are in use and warns when the
   pseudopotential family is unknown.
+
+Muon mass across the two stages
+-------------------------------
+
+Both stages write the muon ``SPECIES_MASS`` and ``SPECIES_GAMMA`` blocks into
+their ``.cell`` file, and this is not redundant. Stage 2 runs as a
+``CONTINUATION``, and CASTEP rebuilds the model — species masses included — from
+the stage-1 ``.check`` file in the shared seed directory. A mass declared only in
+the stage-2 cell is therefore ignored: the phonon calculation runs with the
+default hydrogen mass for ``H:mu``, roughly 8.9 times the muon mass. Because a
+harmonic frequency scales as the inverse square root of the mass, the reported
+frequencies and the muon ZPE come out about a factor of three too low, and
+displacement amplitudes are wrong by the same square-root factor. Writing the
+blocks in the stage-1 singlepoint is what puts the muon mass into the checkpoint
+the continuation reads; masses do not affect a singlepoint SCF energy, so this is
+inert for the stage-1 result itself.
+
+Two guards protect against a run made at the wrong mass:
+
+- **Before submission.** A stage-2 phonon continuation is refused when the
+  stage-1 singlepoint ``.cell`` still on disk has no ``SPECIES_MASS`` block, with
+  an explanation pointing at ``Reset to Stage 1``. The guard fails open — a
+  missing or unparseable cell never blocks a submission — and it has one blind
+  spot: both stages write ``{seed}.cell`` to the same path, so a row whose
+  stage-2 job was already materialized no longer has stage-1 evidence on disk.
+- **After completion.** CASTEP records the mass it actually used in the
+  ``.phonon`` header, so
+  :func:`~mufinder.science.quantum_phonons.muon_mass_warning` compares it against
+  the muon mass on every parsed phonon run. A mismatch is raised as a job warning,
+  recorded in the result payload, and shown as a banner in the analysis window.
+  This catches the rows the pre-submission guard cannot, including projects whose
+  stage 1 ran before both stages emitted the block.
+
+Neither guard can repair an affected run: the row has to be reset to stage 1 and
+both stages rerun.
 
 Task farming
 ------------
