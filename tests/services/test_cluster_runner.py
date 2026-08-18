@@ -771,6 +771,304 @@ def test_cluster_runner_retrieve_skips_optional_files_when_not_requested(
     assert not (tmp_path / "seed.phonon").exists()
 
 
+class _TimestampedFakeSSH(_FakeSSH):
+    """A fake whose remote paths can carry explicit remote mtimes.
+
+    Only paths seeded in ``mtimes`` report one; every other path returns
+    ``None``, so a test that does not opt in keeps the fail-open behaviour of
+    the plain ``_FakeSSH`` (which has no ``mtime`` attribute at all, standing
+    in for an SFTP server or connection object that cannot report one).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.mtimes: dict[str, float] = {}
+
+    def mtime(self, remote_path: str) -> float | None:
+        return self.mtimes.get(remote_path)
+
+
+def _continuation_entry(tmp_path: Path) -> object:
+    return cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="900",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+        retrieve_out_cell=True,
+    )
+
+
+def _seed_continuation_files(
+    ssh: _TimestampedFakeSSH,
+    *,
+    submitted_at: float,
+    castep_offset: float,
+    out_cell_offset: float,
+) -> None:
+    """Seed a reused remote directory relative to the submission marker.
+
+    ``{seed}.param`` is uploaded fresh at submission, so its remote mtime is
+    the marker every output of this run must postdate. Offsets are relative to
+    it, on the cluster's own clock.
+    """
+
+    ssh.remote_files["/remote/job/seed.param"] = b"param"
+    ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
+    ssh.remote_files["/remote/job/seed-out.cell"] = b"relaxed cell"
+    ssh.mtimes["/remote/job/seed.param"] = submitted_at
+    ssh.mtimes["/remote/job/seed.castep"] = submitted_at + castep_offset
+    ssh.mtimes["/remote/job/seed-out.cell"] = submitted_at + out_cell_offset
+
+
+def test_cluster_runner_retrieve_skips_out_cell_predating_this_submission(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A continuation reuses its remote directory, so the previous run's
+    ``-out.cell`` is still there. Downloading it would restamp the local copy
+    with the retrieval time and defeat MainWindow's local staleness guard, so
+    an ``-out.cell`` older than this submission's ``.param`` is treated as
+    absent."""
+
+    runner = ClusterJobRunner()
+    ssh = _TimestampedFakeSSH()
+    runner._ssh = ssh
+    runner._scheduler = _FakeScheduler()
+    _seed_continuation_files(
+        ssh, submitted_at=1_700_000_000.0, castep_offset=120.0, out_cell_offset=-3600.0
+    )
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+    finished: list[tuple[object, object]] = []
+    runner.job_finished.connect(
+        lambda _jid, parsed, artifacts: finished.append((parsed, artifacts))
+    )
+
+    runner._retrieve_results(_continuation_entry(tmp_path))
+
+    assert ("get", "/remote/job/seed-out.cell") not in ssh.commands
+    assert not (tmp_path / "seed-out.cell").exists()
+    # The .castep is this run's, so the job still completes at the runner
+    # level; the relaxed cell is reported missing exactly as it would be if
+    # the remote file did not exist, which is what the workflow layer fails on.
+    assert len(finished) == 1
+    assert finished[0][1].cell_missing is True
+
+
+def test_cluster_runner_retrieve_leaves_previously_downloaded_out_cell_untouched(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The real continuation case: a local ``-out.cell`` fetched by the
+    PREVIOUS retrieval is already on disk. Skipping the download leaves it
+    carrying that earlier retrieval's mtime, which is what re-arms
+    ``MainWindow._output_predates_run`` for cluster jobs."""
+
+    runner = ClusterJobRunner()
+    ssh = _TimestampedFakeSSH()
+    runner._ssh = ssh
+    runner._scheduler = _FakeScheduler()
+    _seed_continuation_files(
+        ssh, submitted_at=1_700_000_000.0, castep_offset=120.0, out_cell_offset=-3600.0
+    )
+    local_out_cell = tmp_path / "seed-out.cell"
+    local_out_cell.write_bytes(b"previous run geometry")
+    modified_before = local_out_cell.stat().st_mtime
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+
+    runner._retrieve_results(_continuation_entry(tmp_path))
+
+    assert local_out_cell.read_bytes() == b"previous run geometry"
+    assert local_out_cell.stat().st_mtime == modified_before
+
+
+@pytest.mark.parametrize("out_cell_offset", [0.0, 60.0, 3600.0])
+def test_cluster_runner_retrieve_downloads_out_cell_written_by_this_run(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, out_cell_offset: float
+) -> None:
+    """The other direction of the comparison: an ``-out.cell`` at or after the
+    submission marker is this run's output and is downloaded normally."""
+
+    runner = ClusterJobRunner()
+    ssh = _TimestampedFakeSSH()
+    runner._ssh = ssh
+    runner._scheduler = _FakeScheduler()
+    _seed_continuation_files(
+        ssh,
+        submitted_at=1_700_000_000.0,
+        castep_offset=out_cell_offset,
+        out_cell_offset=out_cell_offset,
+    )
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+
+    runner._retrieve_results(_continuation_entry(tmp_path))
+
+    assert (tmp_path / "seed-out.cell").read_bytes() == b"relaxed cell"
+
+
+def test_cluster_runner_retrieve_fails_when_castep_predates_this_submission(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The failed-to-start continuation: CASTEP never ran, so the ``.castep``
+    left in the reused directory still ends with the PREVIOUS run's success
+    banner. Parsing it would complete the job on the old geometry under
+    parameters that were never applied, so retrieval aborts before the parse."""
+
+    runner = ClusterJobRunner()
+    ssh = _TimestampedFakeSSH()
+    runner._ssh = ssh
+    runner._scheduler = _FakeScheduler()
+    _seed_continuation_files(
+        ssh, submitted_at=1_700_000_000.0, castep_offset=-3600.0, out_cell_offset=-3600.0
+    )
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+    failures: list[str] = []
+    finished: list[object] = []
+    statuses: list[str] = []
+    runner.job_failed.connect(lambda _jid, message: failures.append(message))
+    runner.job_finished.connect(lambda *args: finished.append(args))
+    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
+
+    runner._retrieve_results(_continuation_entry(tmp_path))
+
+    assert finished == []
+    assert len(failures) == 1
+    assert "predates this submission" in failures[0]
+    assert statuses[-1] == JobStatus.FAILED.value
+
+
+def test_cluster_runner_stale_castep_defers_while_missing_from_queue(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A stale ``.castep`` is an output-unavailable condition, so a job that is
+    merely missing from the scheduler queue keeps its existing grace window
+    rather than failing on the first poll."""
+
+    runner = ClusterJobRunner()
+    ssh = _TimestampedFakeSSH()
+    runner._ssh = ssh
+    runner._scheduler = _FakeScheduler()
+    _seed_continuation_files(
+        ssh, submitted_at=1_700_000_000.0, castep_offset=-3600.0, out_cell_offset=-3600.0
+    )
+    entry = _continuation_entry(tmp_path)
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+    failures: list[str] = []
+    runner.job_failed.connect(lambda _jid, message: failures.append(message))
+
+    first = runner._retrieve_results(entry, missing_from_queue=True)
+
+    assert failures == []
+    assert "waiting for output" in first
+
+    for _ in range(cluster_runner_module.MISSING_ENTRY_RETRIEVAL_ATTEMPTS - 1):
+        runner._retrieve_results(entry, missing_from_queue=True)
+
+    assert failures == [cluster_runner_module.MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE]
+
+
+def test_cluster_runner_retrieve_fails_open_without_remote_mtimes(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No marker, no ordering: a connection that cannot report mtimes (or a
+    ``reuse_existing_files`` resubmission that never re-uploaded the ``.param``)
+    keeps the pre-existing behaviour of trusting whatever is in the directory."""
+
+    runner = ClusterJobRunner()
+    ssh = _TimestampedFakeSSH()
+    runner._ssh = ssh
+    runner._scheduler = _FakeScheduler()
+    ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
+    ssh.remote_files["/remote/job/seed-out.cell"] = b"relaxed cell"
+
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=True, total_energy=-1.0),
+    )
+
+    runner._retrieve_results(_continuation_entry(tmp_path))
+
+    assert (tmp_path / "seed-out.cell").read_bytes() == b"relaxed cell"
+
+    # Same outcome for a connection object with no ``mtime`` primitive at all.
+    plain = _FakeSSH()
+    plain.remote_files["/remote/job/seed.castep"] = b"castep output"
+    plain.remote_files["/remote/job/seed-out.cell"] = b"relaxed cell"
+    runner._ssh = plain
+    other_dir = tmp_path / "plain"
+    other_dir.mkdir()
+    entry = _continuation_entry(other_dir)
+
+    runner._retrieve_results(entry)
+
+    assert (other_dir / "seed-out.cell").read_bytes() == b"relaxed cell"
+
+
+def test_cluster_runner_addqueue_submission_uploads_the_staleness_marker(
+    qapp, tmp_path: Path
+) -> None:
+    """``addqueue`` clusters get no ``run.sh``, so the submit script cannot be
+    the staleness marker. ``{seed}.param`` is uploaded on every non-reuse
+    submission whatever the queue system, which is why it is the marker."""
+
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+    runner._config = cluster_runner_module.ClusterConfig(
+        name="Redwood",
+        hostname="glamdring.physics.ox.ac.uk",
+        username="user",
+        auth_method="key",
+        key_path="",
+        default_working_directory="/mnt/redwoodfs/user",
+        queue_system="addqueue",
+        cores_per_node=32,
+        default_walltime="",
+        template_script_path="",
+    )
+    seed = "seed"
+    job_dir = _prepare_local_job(tmp_path, seed)
+
+    runner.submit(
+        job_id=uuid4(),
+        local_job_dir=job_dir,
+        seed_name=seed,
+        num_processes=8,
+        walltime="",
+        working_directory="/remote/work",
+        template_script_path="",
+        cores_per_node=32,
+    )
+
+    uploads = [str(command[1]) for command in runner._ssh.commands if command[0] == "put"]
+    assert "/remote/work/seed/seed.param" in uploads
+    assert all(not upload.endswith("run.sh") for upload in uploads)
+
+
 def test_cluster_runner_retrieve_incomplete_walltime_marks_stopped(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

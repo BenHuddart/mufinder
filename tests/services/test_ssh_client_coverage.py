@@ -322,6 +322,57 @@ def test_is_file_false_when_path_missing(monkeypatch: pytest.MonkeyPatch) -> Non
     assert connection.is_file("/does/not/exist") is False
 
 
+def test_mtime_reports_the_remote_modification_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_paramiko = _FakeParamiko(
+        fail_key=False,
+        system_host_keys={"example.org": _FakeKey()},
+    )
+    _patch_paramiko(monkeypatch, fake_paramiko)
+
+    connection = SSHConnection(_config("key"))
+    connection.connect()
+    sftp = fake_paramiko._client._sftp
+    monkeypatch.setattr(
+        sftp,
+        "stat",
+        lambda _path: type("Attr", (), {"st_mode": 0o100644, "st_mtime": 1_700_000_000})(),
+    )
+
+    assert connection.mtime("/remote/job/seed.param") == 1_700_000_000.0
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        None,
+        type("NoMtime", (), {"st_mode": 0o100644})(),
+        type("BadMtime", (), {"st_mode": 0o100644, "st_mtime": "not-a-time"})(),
+    ],
+    ids=["missing-path", "no-mtime-attribute", "unparseable-mtime"],
+)
+def test_mtime_is_none_when_the_server_reports_nothing_usable(
+    monkeypatch: pytest.MonkeyPatch, attributes: object
+) -> None:
+    """Callers order two remote mtimes against each other, so "unknown" must be
+    distinguishable from an ordering and never coerced into one."""
+
+    fake_paramiko = _FakeParamiko(
+        fail_key=False,
+        system_host_keys={"example.org": _FakeKey()},
+    )
+    _patch_paramiko(monkeypatch, fake_paramiko)
+
+    connection = SSHConnection(_config("key"))
+    connection.connect()
+    sftp = fake_paramiko._client._sftp
+    if attributes is not None:
+        monkeypatch.setattr(sftp, "stat", lambda _path: attributes)
+
+    assert connection.mtime("/remote/job/seed.param") is None
+
+
 def test_mkdir_noop_for_trivial_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_paramiko = _FakeParamiko(
         fail_key=False,

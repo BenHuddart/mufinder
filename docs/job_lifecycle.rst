@@ -233,16 +233,43 @@ same completion, so the site and the structure always describe the same run.
 *A stale ``-out.cell`` fails the job.* A continuation re-uses its job directory,
 so the previous run's relaxed structure is still sitting where the completion
 path looks for it: a run that dies before writing a new one would have the old
-geometry accepted as its result. The cluster path makes this concrete — the
-download is conditional on the remote file existing, so a missing remote
-``-out.cell`` simply leaves the copy fetched by the previous retrieval in place.
-``MainWindow._on_local_job_finished`` therefore fails a relaxation job whose
-``-out.cell`` predates the current run's ``started_at``, alongside the existing
-missing-file and parse-failure guards (all three are inline because
-``ControllerResult`` has no failure channel). The comparison allows a few
-seconds of slack for filesystem mtime granularity and network-mount clock
-offsets, and skips entirely when ``started_at`` is unset — a job the poller
+geometry accepted as its result. Two guards cover this, each closing the other's
+blind spot.
+
+The local one is in ``MainWindow._on_local_job_finished``, alongside the
+existing missing-file and parse-failure guards (all three are inline because
+``ControllerResult`` has no failure channel): it fails a relaxation job whose
+local ``-out.cell`` predates the current run's ``started_at``. The comparison
+allows a few seconds of slack for filesystem mtime granularity and network-mount
+clock offsets, and skips entirely when ``started_at`` is unset — a job the poller
 never observed running fails open rather than failing on no evidence.
+
+The remote one is in ``ClusterJobRunner._retrieve_results``, and it is what makes
+the local guard meaningful for cluster jobs at all. ``sftp.get`` stamps a
+downloaded file with the *download* time, so an unconditionally retrieved
+``-out.cell`` always looks newer than ``started_at`` however old the remote file
+is. Retrieval therefore orders the remote outputs against the ``{seed}.param``
+uploaded at submission: both mtimes are on the cluster's own filesystem, so they
+compare directly, up to ``REMOTE_STALE_OUTPUT_SLACK_SECONDS`` of mtime
+granularity and node-clock drift. ``.param`` is the marker because it is
+uploaded fresh on every submission that does not set ``reuse_existing_files``,
+whatever the queue system — unlike ``run.sh``, which ``addqueue`` never receives.
+
+- A remote ``-out.cell`` older than the marker is **not downloaded**, exactly as
+  if it did not exist. The local copy keeps its previous-retrieval mtime, and
+  the local guard above rejects it.
+- A remote ``.castep`` older than the marker **aborts retrieval** as an
+  output-unavailable condition (so a job merely missing from the scheduler queue
+  still gets its usual grace window). This is the run that never started at all:
+  the surviving ``.castep`` still ends with the previous run's success banner and
+  would otherwise complete the job on the old geometry under parameters that
+  were never applied. The local guard cannot catch it, because a run that never
+  started has no ``started_at``.
+
+Both comparisons fail open when no marker is available — a
+``reuse_existing_files`` resubmission does not re-upload the ``.param``, and an
+SFTP server may not report mtimes at all — which leaves the pre-existing
+behaviour unchanged in those cases.
 
 *Parser fields are not all per-run.* CASTEP appends to an existing ``.castep``,
 so a continued job's output holds every restart. ``completed``,

@@ -358,14 +358,19 @@ def _output_predates_run(path: Path | None, started_at: datetime | None) -> bool
     continuation re-uses its job directory, so a run that dies before writing a
     new relaxed structure leaves the old file exactly where the completion path
     looks for it — ``cell_missing`` is ``False`` and the last run's geometry is
-    silently accepted as this run's result. The cluster path makes that concrete:
-    the download is conditional on the remote file existing
-    (``ClusterJobRunner._retrieve_results``), so a missing remote ``-out.cell``
-    leaves the copy fetched by the *previous* retrieval in place.
+    silently accepted as this run's result.
 
-    ``sftp.get`` does not preserve mtimes, so a downloaded file is stamped with
-    its download time and a locally-run one with its write time; either way a
-    fresh output is stamped after the run started and a stale one before it.
+    This compares *local* mtimes, which is decisive for a locally-run job (the
+    file carries its write time) and for a cluster job only because retrieval
+    refuses to download a remote ``-out.cell`` that predates its submission:
+    ``sftp.get`` restamps the local copy with the download time, so an
+    unconditional download would make every retrieved file look fresh. Skipping
+    that download leaves the local copy carrying the *previous* retrieval's
+    mtime, which is what this comparison then rejects. The remote-side half of
+    the guard lives in ``ClusterJobRunner._retrieve_results``, which also refuses
+    to parse a ``.castep`` that predates the submission — the case this function
+    cannot see, because a run that never started has no ``started_at``.
+
     ``started_at`` of ``None`` (a job the poller never observed running) returns
     ``False``: the guard fails open rather than failing a job on no evidence.
     """

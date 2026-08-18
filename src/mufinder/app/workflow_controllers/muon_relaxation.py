@@ -723,11 +723,11 @@ class MuonRelaxationController(WorkflowJobController):
         :meth:`update_row_parameters` mutates the row and mirrors the edit into
         the widget form; ``ProjectService.prepare_job_continuation`` returns
         the row's job to ``DEFINED`` while preserving ``remote_directory``;
-        ``record_job_continuation`` appends the provenance milestone;
         :meth:`materialize` rewrites the job's directory in place from the new
         parameters (the existing DEFINED path — no new ``Job`` is minted,
         ``job_ids_by_label``/``job_seed_names_by_label`` are untouched,
-        matching finding 1 of the warm-start plan). This deliberately does not
+        matching finding 1 of the warm-start plan); ``record_job_continuation``
+        then appends the provenance milestone. This deliberately does not
         route through :meth:`submit`/:meth:`pre_submit_check`: the row's site
         already matched the active host when the job it is continuing was
         first submitted, and the host-mismatch dialog has no sensible role in
@@ -752,7 +752,10 @@ class MuonRelaxationController(WorkflowJobController):
         on disk still holds the *previous* run's ``.param``, not the
         just-edited values. This method returns ``None`` in that case too, so
         the caller never submits a job whose on-disk inputs disagree with the
-        diff it just showed the user.
+        diff it just showed the user. The provenance milestone is appended only
+        *after* that check passes: a continuation that was never rendered (and
+        therefore never submitted) must not leave a journal entry claiming it
+        happened.
         """
 
         jobs = self.jobs_for_keys([key])
@@ -765,11 +768,11 @@ class MuonRelaxationController(WorkflowJobController):
         if not self.update_row_parameters(key, parameter_values, added_advanced):
             return None
         self._context.project_service.prepare_job_continuation(job)
+        if not self.materialize([key]):
+            return None
         self._context.project_service.record_job_continuation(
             document, job=job, remote_directory=job.remote_directory
         )
-        if not self.materialize([key]):
-            return None
         return job
 
     # --- result contract ---

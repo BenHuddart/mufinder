@@ -448,6 +448,25 @@ class SSHConnection:
             return False
         return bool(attributes.st_mode & 0o100000)
 
+    def mtime(self, remote_path: str) -> float | None:
+        """Return the remote path's modification time, or ``None`` if unknown.
+
+        Epoch seconds on the *remote* filesystem's clock, so two remote paths
+        can be ordered against each other without any allowance for the offset
+        between this machine and the cluster. ``None`` covers both a missing
+        path and an SFTP server that omits the attribute, so callers can fail
+        open rather than treat "unknown" as an ordering.
+        """
+
+        attributes = self.stat(remote_path)
+        value = getattr(attributes, "st_mtime", None) if attributes is not None else None
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     def mkdir(self, remote_path: str, exist_ok: bool = True) -> None:
         """Create remote directory recursively."""
 
