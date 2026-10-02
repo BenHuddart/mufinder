@@ -186,10 +186,19 @@ class ClusterSetupDialog(QDialog):
         self._queue_check_command_edit = QLineEdit(form_group)
         self._cancel_command_edit = QLineEdit(form_group)
         self._keyword_mode_combo = QComboBox(form_group)
-        self._keyword_mode_combo.addItems(["direct", "scheduler"])
+        self._keyword_mode_combo.addItem("Scheduler job (recommended)", "scheduler")
+        self._keyword_mode_combo.addItem("Login node", "direct")
+        self._keyword_mode_combo.setToolTip(
+            "Where MuFinder runs CASTEP to build the keyword catalog. A scheduler job reuses this "
+            "cluster's job script and is safe where running CASTEP on the login node is forbidden or "
+            "discouraged. The login node is quicker when it is permitted, because nothing waits in a queue."
+        )
         self._keyword_shell_init_edit = QLineEdit(form_group)
-        self._keyword_python_edit = QLineEdit(form_group)
-        self._keyword_python_edit.setPlaceholderText("python3")
+        self._keyword_shell_init_edit.setPlaceholderText("Optional, e.g. module load CASTEP")
+        self._keyword_shell_init_edit.setToolTip(
+            "Extra commands to run before CASTEP when generating keywords. Usually unnecessary: "
+            "the environment setup in this cluster's job script template is reused automatically."
+        )
 
         self._ssh_form.addRow("Cluster name", self._name_edit)
         self._ssh_form.addRow("Host name", self._hostname_edit)
@@ -224,12 +233,10 @@ class ClusterSetupDialog(QDialog):
         self._cluster_form.addRow("Submit command path", self._submit_command_edit)
         self._cluster_form.addRow("Queue check command path", self._queue_check_command_edit)
         self._cluster_form.addRow("Cancel command path", self._cancel_command_edit)
-        self._keyword_mode_label = QLabel("Keyword generation mode", form_group)
+        self._keyword_mode_label = QLabel("Generate keywords using", form_group)
         self._cluster_form.addRow(self._keyword_mode_label, self._keyword_mode_combo)
-        self._keyword_shell_init_label = QLabel("Keyword shell init", form_group)
+        self._keyword_shell_init_label = QLabel("Keyword shell init (optional)", form_group)
         self._cluster_form.addRow(self._keyword_shell_init_label, self._keyword_shell_init_edit)
-        self._keyword_python_label = QLabel("Keyword Python command", form_group)
-        self._cluster_form.addRow(self._keyword_python_label, self._keyword_python_edit)
 
         layout.addWidget(form_group)
 
@@ -257,7 +264,6 @@ class ClusterSetupDialog(QDialog):
         self._jump_auth_combo.currentTextChanged.connect(lambda *_: self._refresh_keychain_controls())
         self._jump_auth_combo.currentTextChanged.connect(lambda *_: self._refresh_jump_host_controls())
         self._queue_combo.currentTextChanged.connect(lambda *_: self._refresh_scheduler_controls())
-        self._keyword_mode_combo.currentTextChanged.connect(lambda *_: self._refresh_keyword_controls())
         self._default_mem_per_cpu_check.toggled.connect(self._default_mem_per_cpu_edit.setEnabled)
         self._default_mem_per_cpu_edit.setEnabled(self._default_mem_per_cpu_check.isChecked())
         self._username_edit.editingFinished.connect(self._maybe_sync_working_dir_for_username)
@@ -323,9 +329,8 @@ class ClusterSetupDialog(QDialog):
                 submit_command_path="",
                 queue_check_command_path="",
                 cancel_command_path="",
-                keyword_execution_mode="direct",
+                keyword_execution_mode="scheduler",
                 keyword_shell_init="",
-                keyword_python_command="python3",
             )
         )
         self._populate_cluster_combo()
@@ -368,15 +373,13 @@ class ClusterSetupDialog(QDialog):
             self._submit_command_edit.setText("")
             self._queue_check_command_edit.setText("")
             self._cancel_command_edit.setText("")
-            self._keyword_mode_combo.setCurrentText("direct")
+            self._set_keyword_mode("scheduler")
             self._keyword_shell_init_edit.setText("")
-            self._keyword_python_edit.setText("python3")
             self._last_username = ""
             self._refresh_auth_controls()
             self._refresh_jump_host_controls()
             self._refresh_keychain_controls()
             self._refresh_scheduler_controls()
-            self._refresh_keyword_controls()
             return
 
         self._name_edit.setText(config.name)
@@ -404,15 +407,17 @@ class ClusterSetupDialog(QDialog):
         self._submit_command_edit.setText(config.submit_command_path)
         self._queue_check_command_edit.setText(config.queue_check_command_path)
         self._cancel_command_edit.setText(config.cancel_command_path)
-        self._keyword_mode_combo.setCurrentText(config.keyword_execution_mode)
+        self._set_keyword_mode(config.keyword_execution_mode)
         self._keyword_shell_init_edit.setText(config.keyword_shell_init)
-        self._keyword_python_edit.setText(config.keyword_python_command)
         self._last_username = config.username
         self._refresh_auth_controls()
         self._refresh_jump_host_controls()
         self._refresh_keychain_controls()
         self._refresh_scheduler_controls()
-        self._refresh_keyword_controls()
+
+    def _set_keyword_mode(self, mode: str) -> None:
+        index = self._keyword_mode_combo.findData(mode.strip().lower())
+        self._keyword_mode_combo.setCurrentIndex(index if index >= 0 else 0)
 
     def _apply_default_mem_per_cpu(self, mem_per_cpu_gb: float | None) -> None:
         """Seed the default per-CPU memory row, treating ``None`` as "no request"."""
@@ -511,11 +516,6 @@ class ClusterSetupDialog(QDialog):
         self._default_mem_per_cpu_check.setVisible(is_slurm)
         self._default_mem_per_cpu_edit.setVisible(is_slurm)
 
-    def _refresh_keyword_controls(self) -> None:
-        is_scheduler = self._keyword_mode_combo.currentText().strip().lower() == "scheduler"
-        self._keyword_python_label.setVisible(is_scheduler)
-        self._keyword_python_edit.setVisible(is_scheduler)
-
     def _browse_key_path(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select SSH private key", str(Path.home()), "All Files (*)")
         if path:
@@ -585,9 +585,8 @@ class ClusterSetupDialog(QDialog):
             submit_command_path=self._submit_command_edit.text().strip(),
             queue_check_command_path=self._queue_check_command_edit.text().strip(),
             cancel_command_path=self._cancel_command_edit.text().strip(),
-            keyword_execution_mode=self._keyword_mode_combo.currentText().strip().lower() or "direct",
+            keyword_execution_mode=str(self._keyword_mode_combo.currentData() or "scheduler"),
             keyword_shell_init=self._keyword_shell_init_edit.text().strip(),
-            keyword_python_command=self._keyword_python_edit.text().strip() or "python3",
         )
 
     def _sync_selected_config_from_form(self) -> None:

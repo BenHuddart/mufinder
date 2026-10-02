@@ -7,6 +7,7 @@ from math import isclose
 from typing import Iterable
 
 from .schema import (
+    keyword_catalog_status,
     BlockColumnSpec,
     FileKind,
     canonical_keyword_name,
@@ -191,10 +192,27 @@ def _param_present_names(param_file: ParamFile) -> list[str]:
 def _validate_known_names(file: FileKind, names: Iterable[str]) -> None:
     for name in names:
         if get_keyword_spec(file, name) is None:
-            raise UnknownKeywordError(
-                f"Unsupported CASTEP {file} keyword '{name}'. "
-                "Add it to schema.py and docs/castep/keyword_catalog.yaml before using it."
-            )
+            raise UnknownKeywordError(_unknown_keyword_message(file, name))
+
+
+def _unknown_keyword_message(file: FileKind, name: str) -> str:
+    """Explain an unknown keyword in terms the person seeing it can act on.
+
+    On the bundled starter catalog the usual cause is not a bad file but a
+    missing ``castep_keywords.json``: CASTEP writes keywords into its own output
+    (``QUANTISATION_AXIS`` after a Hubbard U run, for example) that the starter
+    catalog does not list. Users need pointing at CASTEP setup; only with a full
+    catalog loaded is this a contributor-facing gap in the schema.
+    """
+
+    prefix = f"Unsupported CASTEP {file} keyword '{name}'. "
+    if keyword_catalog_status().is_starter:
+        return prefix + (
+            "MuFinder is running on its limited built-in keyword set because no CASTEP keyword catalog "
+            "(castep_keywords.json) is loaded. Generate or import one in Setup > CASTEP so MuFinder "
+            "recognises every keyword your CASTEP version writes."
+        )
+    return prefix + "Add it to schema.py and docs/castep/keyword_catalog.yaml before using it."
 
 
 def _validate_duplicates(file: FileKind, names: Iterable[str]) -> None:

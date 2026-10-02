@@ -135,6 +135,103 @@ def test_refresh_keyword_catalog_stays_strict_without_fallback_when_missing(
         refresh_keyword_catalog(allow_fallback=True)
 
 
+def test_corrupt_configured_catalog_falls_back_and_reports_why(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A corrupt configured catalog used to abort startup with JSONDecodeError."""
+
+    corrupt = tmp_path / "castep_keywords.json"
+    corrupt.write_text("{bad", encoding="utf-8")
+    monkeypatch.setattr(
+        schema_module,
+        "_candidate_catalog_sources",
+        lambda: (CatalogSourceInfo(path=corrupt, origin="setup"),),
+    )
+
+    refresh_keyword_catalog(allow_fallback=True)
+
+    status = schema_module.keyword_catalog_status()
+    assert status.is_starter is True
+    assert status.origin == "bundled_starter_catalog"
+    assert status.castep_version == ""
+    assert status.issue is not None and "is not valid JSON" in status.issue
+    assert get_keyword_spec("param", "task") is not None
+
+
+def test_setup_catalog_is_used_but_exported_env_var_overrides_it(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def _write(name: str, version: str) -> Path:
+        path = tmp_path / name
+        path.write_text(
+            '{"castep_version": "%s", "cell": {}, '
+            '"param": {"task": {"option_type": "String", "level": "Basic", "docstring": "Example"}}}' % version,
+            encoding="utf-8",
+        )
+        return path
+
+    managed = _write("managed.json", "25.1")
+    override = _write("override.json", "26.1")
+    monkeypatch.delenv("MUFINDER_CASTEP_KEYWORDS_JSON", raising=False)
+    monkeypatch.delenv("CASTEP_KEYWORDS_JSON", raising=False)
+    monkeypatch.setenv(schema_module.SETUP_KEYWORDS_JSON_ENV_VAR, str(managed))
+
+    refresh_keyword_catalog()
+    status = schema_module.keyword_catalog_status()
+    assert (status.origin, status.path, status.castep_version) == ("setup", managed, "25.1")
+    assert status.is_starter is False
+    assert status.issue is None
+
+    monkeypatch.setenv("MUFINDER_CASTEP_KEYWORDS_JSON", str(override))
+    refresh_keyword_catalog()
+    status = schema_module.keyword_catalog_status()
+    assert status.origin == "env_json:MUFINDER_CASTEP_KEYWORDS_JSON"
+    assert status.castep_version == "26.1"
+
+
+def test_unknown_keyword_error_points_at_castep_setup_on_starter_catalog(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Regression: CASTEP writes QUANTISATION_AXIS into -out.cell after a Hubbard U run."""
+
+    from mufinder.castep_io.cell_parser import CellParseError, parse_cell_text
+
+    cell_text = (
+        "%BLOCK lattice_cart\n5 0 0\n0 5 0\n0 0 5\n%ENDBLOCK lattice_cart\n"
+        "%BLOCK positions_frac\nH 0 0 0 SPIN= 1.000\n%ENDBLOCK positions_frac\n"
+        "QUANTISATION_AXIS :     0.000000    0.000000    1.000000\n"
+    )
+    monkeypatch.setattr(schema_module, "_candidate_catalog_sources", lambda: ())
+    refresh_keyword_catalog(allow_fallback=True)
+
+    with pytest.raises(CellParseError) as excinfo:
+        parse_cell_text(cell_text)
+    message = str(excinfo.value)
+    assert message.startswith("Unsupported CASTEP cell keyword 'quantisation_axis'.")
+    assert "Setup > CASTEP" in message
+    assert "schema.py" not in message
+
+    full = tmp_path / "castep_keywords.json"
+    full.write_text(
+        '{"castep_version": "26.11", "cell": {'
+        '"quantisation_axis": {"option_type": "Real Vector", "level": "Basic", "docstring": "Axis"},'
+        '"quantization_axis": {"option_type": "Real Vector", "level": "Basic", "docstring": "Axis"}'
+        '}, "param": {}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        schema_module,
+        "_candidate_catalog_sources",
+        lambda: (CatalogSourceInfo(path=full, origin="setup"),),
+    )
+    refresh_keyword_catalog()
+
+    assert parse_cell_text(cell_text).atomic_spins == (1.0,)
+
+
 def _stub_param_catalog(order: tuple[str, ...]) -> str:
     entries = ", ".join(
         f'"{name}": {{"option_type": "String", "level": "Basic", "docstring": "Example"}}'

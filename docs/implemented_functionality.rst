@@ -864,12 +864,31 @@ configurations that have been saved into the ``ready`` state.
 Setup integration includes:
 
 - CASTEP executable path persistence.
-- ``castep_keywords.json`` metadata path persistence.
 - ``mpirun`` launcher path persistence.
 - ``mpirun`` auto-discovery through PATH/common install prefixes.
-- In-dialog workflow guidance for keyword generation:
-  set the ``Keywords JSON`` destination path, generate metadata, then save
-  setup with ``OK`` so the selected metadata source is applied.
+- CASTEP keyword catalog installation (see :doc:`castep_keyword_catalog`):
+  generate the catalog from a cluster or a local CASTEP, or import an existing
+  ``castep_keywords.json``. Either way MuFinder validates the file, keeps its own
+  copy in the application-data directory, and uses it immediately; there is no
+  destination path to choose. The dialog shows which catalog is in use and why a
+  configured one was skipped, and preselects a set-up cluster as the generation
+  target when no local executable is configured.
+- The CASTEP setup dialog separates the keyword catalog from the optional
+  ``CASTEP on this computer`` paths, and states that the local executable and
+  MPI launcher are used only for local runs and local keyword generation. A
+  line under the generation target says which settings that target uses
+  (this computer, or a cluster as a scheduler job or on its login node).
+- A status-bar indicator for the catalog in use, a dismissible startup prompt
+  when none is loaded, and a warning (never a block) before submitting jobs
+  without one.
+- A missing or corrupt configured catalog falls back to the starter catalog and
+  is reported, rather than preventing startup.
+- Cluster keyword generation runs every ``castep -help`` query from a shell loop
+  on the cluster and needs no Python interpreter there. Each cluster generates
+  either through a scheduler job (the default) or on the login node. The
+  scheduler job is derived from the cluster's own job script template
+  (directives, environment setup, launcher), so no separate description of the
+  cluster is needed; ``Keyword shell init`` is optional.
 - Local keyword generation wraps the CASTEP executable in the configured MPI
   launcher (``mpirun -np 1``) when one is set. MPI-built binaries (e.g.
   ``castep.mpi``) hang when the ``-help`` queries are run directly, so without

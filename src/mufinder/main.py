@@ -6,7 +6,7 @@ import ctypes
 import os
 import sys
 
-from PySide6.QtCore import QEventLoop, QElapsedTimer, QSettings, QThread
+from PySide6.QtCore import QEventLoop, QElapsedTimer, QSettings, QThread, QTimer
 from PySide6.QtWidgets import QApplication
 
 
@@ -81,6 +81,18 @@ def _apply_saved_castep_environment(settings: QSettings) -> None:
     from mufinder.castep_setup import apply_saved_castep_environment
 
     apply_saved_castep_environment(settings)
+
+
+def _prompt_for_keyword_catalog(window: object) -> None:
+    """Ask the main window to explain a missing CASTEP keyword catalog.
+
+    Deferred to the first turn of the event loop so the prompt appears over a
+    fully shown window rather than while the splash screen is closing.
+    """
+
+    prompt = getattr(window, "prompt_for_keyword_catalog_if_needed", None)
+    if callable(prompt):
+        QTimer.singleShot(0, prompt)
 
 
 def _process_events(app: QApplication, *, max_ms: int | None = None) -> None:
@@ -173,6 +185,7 @@ def run() -> int:
     splash.set_progress(100, "Ready")
     _process_events(app, max_ms=10)
     splash.finish(window)
+    _prompt_for_keyword_catalog(window)
     return app.exec()
 
 

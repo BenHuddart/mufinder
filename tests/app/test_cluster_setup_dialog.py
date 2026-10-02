@@ -70,7 +70,12 @@ def test_cluster_setup_dialog_adds_default_cluster(qapp) -> None:
     assert dialog._name_edit.text() == "SCARF"
     assert dialog._hostname_edit.text() == "ui1.scarf.rl.ac.uk"
     assert dialog._queue_combo.currentText() == "SLURM"
-    assert dialog._keyword_mode_combo.currentText() == "scheduler"
+    assert dialog._keyword_mode_combo.currentText() == "Scheduler job (recommended)"
+    assert dialog._keyword_mode_combo.currentData() == "scheduler"
+    assert [dialog._keyword_mode_combo.itemData(i) for i in range(dialog._keyword_mode_combo.count())] == [
+        "scheduler",
+        "direct",
+    ]
     assert dialog._keyword_shell_init_edit.text() == "module load CASTEP"
     dialog.close()
 
@@ -85,9 +90,8 @@ def test_cluster_setup_dialog_saves_configuration(qapp) -> None:
     dialog._auth_combo.setCurrentText("password")
     dialog._working_dir_edit.setText("/work/alice")
     dialog._template_path_edit.setText("/templates/slurm.sh")
-    dialog._keyword_mode_combo.setCurrentText("scheduler")
+    dialog._keyword_mode_combo.setCurrentText("Login node")
     dialog._keyword_shell_init_edit.setText("module load CASTEP")
-    dialog._keyword_python_edit.setText("python")
 
     dialog._accept_and_save()
 
@@ -97,9 +101,25 @@ def test_cluster_setup_dialog_saves_configuration(qapp) -> None:
     assert alpha.hostname == "alpha.example"
     assert alpha.auth_method == "password"
     assert alpha.castep_executable == "castep.mpi"
-    assert alpha.keyword_execution_mode == "scheduler"
+    assert alpha.keyword_execution_mode == "direct"
     assert alpha.keyword_shell_init == "module load CASTEP"
-    assert alpha.keyword_python_command == "python"
+    dialog.close()
+
+
+def test_cluster_setup_dialog_defaults_new_clusters_to_scheduler_keyword_generation(qapp) -> None:
+    """The login node is opt-in: running CASTEP there is forbidden on some sites."""
+
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+
+    dialog._set_keyword_mode("direct")
+    assert dialog._keyword_mode_combo.currentData() == "direct"
+    dialog._add_cluster()
+    assert dialog._keyword_mode_combo.currentData() == "scheduler"
+    assert dialog._updated_selected_config().keyword_execution_mode == "scheduler"
+
+    # An unrecognised stored value falls back to the scheduler too.
+    dialog._set_keyword_mode("mystery")
+    assert dialog._keyword_mode_combo.currentData() == "scheduler"
     dialog.close()
 
 

@@ -223,7 +223,6 @@ def test_cluster_setup_helpers_cover_normalization_and_defaults() -> None:
     settings.setValue("clusters/example/default_memory_gb", "bad-memory")
     settings.setValue("clusters/example/default_queue_name", "")
     settings.setValue("clusters/example/keyword_execution_mode", "mystery")
-    settings.setValue("clusters/example/keyword_python_command", " ")
 
     config = _cluster_from_settings(settings, "example")
     assert config is not None
@@ -233,8 +232,8 @@ def test_cluster_setup_helpers_cover_normalization_and_defaults() -> None:
     assert config.default_walltime == ""
     assert config.default_memory_gb == 7.5
     assert config.default_queue_name == "redwood"
-    assert config.keyword_execution_mode == "direct"
-    assert config.keyword_python_command == "python3"
+    # An unrecognised mode falls back to the default: a scheduler job.
+    assert config.keyword_execution_mode == "scheduler"
 
     assert _normalise_cluster_names("alpha") == ["alpha"]
     assert _normalise_cluster_names(["alpha", " beta ", "alpha", ""]) == ["alpha", "beta"]

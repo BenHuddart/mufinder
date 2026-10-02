@@ -12,6 +12,10 @@ For detailed context, read these docs before making non-trivial changes:
 - `docs/quality_and_automation.rst` — local commands, CI gates, and validation loops
 - `docs/compatibility_policy.rst` — compatibility aliases and expiry rules
 - `docs/implemented_functionality.rst` — current feature surface
+- `docs/castep_keyword_catalog.rst` — how `castep_keywords.json` is discovered,
+  generated, imported, and surfaced to users (read before touching catalog
+  discovery in `castep_io/schema.py`, `castep_setup.py`, or
+  `services/cluster_keyword_generator.py`)
 - `docs/castep/kpoint_spacing_convention.md` — conventions and round-trip
   guarantees for the spacing↔grid mapping (read before touching
   `science/kpoint_grids.py`, `app/convergence_examiner.py`,

@@ -14,6 +14,7 @@ import yaml
 from mufinder.assets import starter_keyword_catalog_path
 
 from .catalog_overrides import ALL_WORKFLOWS, BLOCK_SCHEMAS, KEYWORD_OVERRIDES, MANUAL_ALIAS_MAP
+from .keyword_catalog_file import KeywordCatalogValidationError, read_keyword_catalog_file
 
 
 FileKind = Literal["cell", "param"]
@@ -31,6 +32,11 @@ ValueType = Literal[
 ]
 
 _ENV_JSON_VARS = ("MUFINDER_CASTEP_KEYWORDS_JSON", "CASTEP_KEYWORDS_JSON")
+#: Set by ``mufinder.castep_setup`` from the saved CASTEP setup. Kept separate from
+#: the user-facing ``*_KEYWORDS_JSON`` variables so that those stay a genuine
+#: override: an explicitly exported variable wins over the catalog MuFinder manages.
+SETUP_KEYWORDS_JSON_ENV_VAR = "MUFINDER_CASTEP_KEYWORDS_JSON_SETUP"
+_SETUP_CATALOG_ORIGIN = "setup"
 _ENV_ROOT_VARS = ("MUFINDER_CASTEP_ROOT", "CASTEP_ROOT")
 _CATALOG_RELATIVE_PATH = Path("Test/Utilities/ReadTS/castep_keywords.json")
 _STARTER_CATALOG_PATH = starter_keyword_catalog_path()
@@ -158,7 +164,25 @@ class CatalogSourceInfo:
     origin: str
 
 
+@dataclass(frozen=True, slots=True)
+class KeywordCatalogStatus:
+    """What keyword metadata the running session is using, and why."""
+
+    origin: str
+    path: Path | None
+    is_starter: bool
+    castep_version: str
+    cell_count: int
+    param_count: int
+    #: Why an explicitly configured catalog was skipped, if one was.
+    issue: str | None = None
+
+
 CATALOG_SOURCE_INFO: CatalogSourceInfo | None = None
+#: Why explicitly configured catalog files were passed over during the last
+#: refresh (missing or invalid), or ``None`` when nothing was skipped.
+CATALOG_ISSUE: str | None = None
+CATALOG_CASTEP_VERSION: str = ""
 
 
 def _candidate_catalog_sources() -> tuple[CatalogSourceInfo, ...]:
@@ -173,6 +197,15 @@ def _candidate_catalog_sources() -> tuple[CatalogSourceInfo, ...]:
                     origin=f"env_json:{env_name}",
                 )
             )
+
+    raw_setup = os.environ.get(SETUP_KEYWORDS_JSON_ENV_VAR)
+    if raw_setup:
+        candidates.append(
+            CatalogSourceInfo(
+                path=Path(raw_setup).expanduser(),
+                origin=_SETUP_CATALOG_ORIGIN,
+            )
+        )
 
     for env_name in _ENV_ROOT_VARS:
         raw = os.environ.get(env_name)
@@ -212,42 +245,68 @@ def _candidate_catalog_sources() -> tuple[CatalogSourceInfo, ...]:
     return tuple(unique)
 
 
-def _discover_catalog_source() -> CatalogSourceInfo:
-    for candidate in _candidate_catalog_sources():
-        if candidate.path.is_file():
-            return candidate
-    searched = "\n".join(f"  - {source.path}" for source in _candidate_catalog_sources())
+def _is_explicit_origin(origin: str) -> bool:
+    """Return whether ``origin`` names a catalog the user configured by path."""
+
+    return origin.startswith("env_json:") or origin == _SETUP_CATALOG_ORIGIN
+
+
+def _load_base_catalog() -> dict[str, Any]:
+    """Load the first usable ``castep_keywords.json`` among the candidates.
+
+    A candidate that is missing or not a keyword catalog is skipped rather than
+    fatal: the app must still start when a configured file was moved, deleted,
+    or corrupted. Skipped *explicit* candidates are recorded in
+    ``CATALOG_ISSUE`` so the UI can say why the session is degraded.
+
+    Raises:
+        FileNotFoundError: If no candidate yields a usable catalog.
+    """
+
+    global CATALOG_SOURCE_INFO
+    global CATALOG_ISSUE
+    global CATALOG_CASTEP_VERSION
+
+    issues: list[str] = []
+    candidates = _candidate_catalog_sources()
+    for candidate in candidates:
+        if not candidate.path.is_file():
+            if _is_explicit_origin(candidate.origin):
+                issues.append(f"The configured keyword catalog '{candidate.path}' no longer exists.")
+            continue
+        try:
+            payload, summary = read_keyword_catalog_file(candidate.path, require_complete=False)
+        except KeywordCatalogValidationError as exc:
+            issues.append(f"The keyword catalog '{candidate.path}' could not be used: {exc}")
+            continue
+
+        CATALOG_SOURCE_INFO = candidate
+        CATALOG_ISSUE = " ".join(issues) or None
+        CATALOG_CASTEP_VERSION = summary.castep_version
+        normalized: dict[str, Any] = {
+            "castep_version": payload.get("castep_version", ""),
+            "cell": [],
+            "param": [],
+        }
+        for file in ("cell", "param"):
+            normalized[file] = [
+                {
+                    "name": str(name).lower(),
+                    "order": index,
+                    **dict(metadata),
+                }
+                for index, (name, metadata) in enumerate(payload[file].items())
+            ]
+        return normalized
+
+    CATALOG_ISSUE = " ".join(issues) or None
+    searched = "\n".join(f"  - {source.path}" for source in candidates)
     raise FileNotFoundError(
         "MuFinder requires a local CASTEP metadata file at "
         "`Test/Utilities/ReadTS/castep_keywords.json`, but it is not bundled with the repository. "
         "Set MUFINDER_CASTEP_KEYWORDS_JSON or MUFINDER_CASTEP_ROOT, or place a CASTEP checkout next to this repo.\n"
         f"Searched:\n{searched}"
     )
-
-
-def _load_base_catalog() -> dict[str, Any]:
-    global CATALOG_SOURCE_INFO
-    catalog_source = _discover_catalog_source()
-    CATALOG_SOURCE_INFO = catalog_source
-    payload = json.loads(catalog_source.path.read_text(encoding="utf-8"))
-    normalized: dict[str, Any] = {
-        "castep_version": payload.get("castep_version", ""),
-        "cell": [],
-        "param": [],
-    }
-    for file in ("cell", "param"):
-        entries = payload.get(file, {})
-        if not isinstance(entries, dict):
-            raise TypeError(f"Expected '{file}' entries to be a mapping in {catalog_source.path}.")
-        normalized[file] = [
-            {
-                "name": str(name).lower(),
-                "order": index,
-                **dict(metadata),
-            }
-            for index, (name, metadata) in enumerate(entries.items())
-        ]
-    return normalized
 
 
 def _humanize(name: str) -> str:
@@ -1001,6 +1060,9 @@ def _starter_spec(
 
 def _build_starter_schema() -> tuple[dict[str, KeywordSpec], dict[str, KeywordSpec], dict[str, tuple[str, ...]]]:
     global CATALOG_SOURCE_INFO
+    global CATALOG_CASTEP_VERSION
+
+    CATALOG_CASTEP_VERSION = ""
 
     schema_by_file: dict[str, dict[str, KeywordSpec]] = {}
     source_names: dict[str, tuple[str, ...]] = {}
@@ -1186,3 +1248,25 @@ def keyword_catalog_source_info() -> CatalogSourceInfo | None:
     """Return how the active keyword catalog was located."""
 
     return CATALOG_SOURCE_INFO
+
+
+def keyword_catalog_status() -> KeywordCatalogStatus:
+    """Describe the keyword metadata the running session is using.
+
+    ``is_starter`` is the signal callers should branch on: it is true when no
+    ``castep_keywords.json`` could be loaded and MuFinder is running on the
+    small bundled starter catalog, which does not know every keyword CASTEP can
+    write back into its own output files.
+    """
+
+    source = CATALOG_SOURCE_INFO
+    origin = source.origin if source is not None else _STARTER_CATALOG_ORIGIN
+    return KeywordCatalogStatus(
+        origin=origin,
+        path=source.path if source is not None else None,
+        is_starter=origin == _STARTER_CATALOG_ORIGIN,
+        castep_version=CATALOG_CASTEP_VERSION,
+        cell_count=len(SOURCE_KEYWORDS.get("cell", ())),
+        param_count=len(SOURCE_KEYWORDS.get("param", ())),
+        issue=CATALOG_ISSUE,
+    )

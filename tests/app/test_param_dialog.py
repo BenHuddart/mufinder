@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from PySide6.QtWidgets import QDialogButtonBox, QLabel, QPushButton
 
@@ -391,19 +393,24 @@ def test_parameter_dialog_updates_task_visibility_and_prunes_incompatible_values
     assert "geom_method" not in dialog.collect_values()
 
 
-def test_parameter_dialog_shows_catalog_fallback_notice(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        param_dialog_module,
-        "keyword_catalog_source_info",
-        lambda: type("CatalogSource", (), {"path": "/tmp/discovered/castep_keywords.json", "origin": "auto_discovery"})(),
-    )
+def test_parameter_dialog_notice_only_appears_on_the_limited_keyword_set(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _status(*, is_starter: bool):
+        return SimpleNamespace(is_starter=is_starter)
 
-    dialog = ParameterDialog(
-        specs=_dialog_specs(),
-        workflow_stage="convergence_kpoint",
-    )
+    monkeypatch.setattr(param_dialog_module, "keyword_catalog_status", lambda: _status(is_starter=True))
+    dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint")
+    notice = dialog.findChild(QLabel, "catalogFallbackNotice")
+    assert notice is not None
+    assert "some CASTEP parameters are not offered here" in notice.text()
+    assert "Setup > CASTEP" in notice.text()
 
-    assert dialog.findChild(QLabel, "catalogFallbackNotice") is not None
+    # A full catalog, however it was found, needs no notice.
+    monkeypatch.setattr(param_dialog_module, "keyword_catalog_status", lambda: _status(is_starter=False))
+    dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint")
+    assert dialog.findChild(QLabel, "catalogFallbackNotice") is None
 
 
 def test_parameter_dialog_ignores_malformed_real_vector_values_in_set_values(qapp) -> None:

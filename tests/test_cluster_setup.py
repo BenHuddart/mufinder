@@ -38,7 +38,6 @@ def test_cluster_setup_roundtrip_multiple_configs() -> None:
             template_script_path="/templates/slurm.sh",
             keyword_execution_mode="direct",
             keyword_shell_init="",
-            keyword_python_command="python3",
         ),
         ClusterConfig(
             name="beta",
@@ -54,7 +53,6 @@ def test_cluster_setup_roundtrip_multiple_configs() -> None:
             template_script_path="/templates/beta.sh",
             keyword_execution_mode="scheduler",
             keyword_shell_init="module load CASTEP",
-            keyword_python_command="python",
         ),
     ]
 
@@ -142,7 +140,6 @@ def test_cluster_setup_returns_scarf_default_when_empty() -> None:
     assert loaded[0].default_memory_gb is None
     assert loaded[0].keyword_execution_mode == "scheduler"
     assert loaded[0].keyword_shell_init == "module load CASTEP"
-    assert loaded[0].keyword_python_command == "python3"
 
     assert loaded[1].name == "Redwood"
     assert loaded[1].hostname == "glamdring.physics.ox.ac.uk"
@@ -161,7 +158,6 @@ def test_cluster_setup_returns_scarf_default_when_empty() -> None:
     assert loaded[1].castep_executable == "/mnt/redwoodfs/muon/castep.mpi"
     assert loaded[1].keyword_execution_mode == "direct"
     assert loaded[1].keyword_shell_init == ""
-    assert loaded[1].keyword_python_command == "python3"
 
 
 def test_cluster_setup_load_by_name_uses_default_when_empty() -> None:
@@ -234,9 +230,7 @@ def test_cluster_setup_legacy_saved_configs_pick_keyword_defaults() -> None:
     redwood = next(config for config in loaded if config.name == "Redwood")
     assert scarf.keyword_execution_mode == "scheduler"
     assert scarf.keyword_shell_init == "module load CASTEP"
-    assert scarf.keyword_python_command == "python3"
     assert redwood.keyword_execution_mode == "direct"
-    assert redwood.keyword_python_command == "python3"
     assert redwood.auth_method == "password"
     assert redwood.jump_host_enabled is True
     assert redwood.jump_hostname == "bastion.physics.ox.ac.uk"

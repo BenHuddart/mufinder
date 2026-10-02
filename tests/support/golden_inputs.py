@@ -65,6 +65,8 @@ _SCHEMA_GLOBAL_NAMES = (
     "PARAM_SERIALIZATION_ORDER",
     "SERIALIZATION_INDEX",
     "CATALOG_SOURCE_INFO",
+    "CATALOG_ISSUE",
+    "CATALOG_CASTEP_VERSION",
     "_candidate_catalog_sources",
 )
 

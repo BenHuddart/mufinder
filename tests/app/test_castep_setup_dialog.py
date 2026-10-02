@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 import sys
 import time
@@ -12,6 +13,10 @@ import pytest
 from PySide6.QtWidgets import QApplication, QLabel
 
 import mufinder.app.castep_setup_dialog as dialog_module
+import mufinder.castep_io.schema as schema_module
+import mufinder.castep_setup as castep_setup_module
+from mufinder.castep_io.keyword_catalog_file import KeywordCatalogValidationError
+from mufinder.castep_io.schema import SETUP_KEYWORDS_JSON_ENV_VAR, keyword_catalog_status
 from mufinder.castep_setup import (
     CASTEP_EXECUTABLE_KEY,
     CASTEP_MPIRUN_KEY,
@@ -22,9 +27,12 @@ from mufinder.castep_setup import (
     build_castep_keyword_command,
     discover_mpirun,
     generate_castep_keywords_json,
+    install_keyword_catalog,
     load_castep_setup,
+    managed_keywords_json_path,
     save_castep_setup,
 )
+from tests.support.keyword_catalogs import write_complete_catalog
 from mufinder.app.castep_setup_dialog import CastepSetupDialog
 from mufinder.services.ssh_client import SSHCredentials
 
@@ -71,11 +79,13 @@ def test_castep_setup_roundtrip_and_environment(monkeypatch: pytest.MonkeyPatch)
     assert loaded == setup
 
     monkeypatch.delenv("CASTEP_COMMAND", raising=False)
-    monkeypatch.delenv("MUFINDER_CASTEP_KEYWORDS_JSON", raising=False)
+    monkeypatch.setenv("MUFINDER_CASTEP_KEYWORDS_JSON", "/tmp/user-override.json")
     apply_castep_environment(setup)
 
     assert "CASTEP_COMMAND" not in os.environ
-    assert os.environ["MUFINDER_CASTEP_KEYWORDS_JSON"] == setup.keywords_json_path
+    assert os.environ[SETUP_KEYWORDS_JSON_ENV_VAR] == setup.keywords_json_path
+    # The user-facing variable is an override and is never touched by setup.
+    assert os.environ["MUFINDER_CASTEP_KEYWORDS_JSON"] == "/tmp/user-override.json"
 
 
 def test_apply_saved_castep_environment_uses_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -85,14 +95,13 @@ def test_apply_saved_castep_environment_uses_settings(monkeypatch: pytest.Monkey
     settings.setValue(CASTEP_MPIRUN_KEY, "/opt/mpi/bin/mpirun")
 
     monkeypatch.delenv("CASTEP_COMMAND", raising=False)
-    monkeypatch.delenv("MUFINDER_CASTEP_KEYWORDS_JSON", raising=False)
 
     setup = apply_saved_castep_environment(settings)
 
     assert setup.executable_path == "/usr/local/bin/castep"
     assert setup.mpirun_path == "/opt/mpi/bin/mpirun"
     assert "CASTEP_COMMAND" not in os.environ
-    assert os.environ["MUFINDER_CASTEP_KEYWORDS_JSON"] == "/tmp/generated/castep_keywords.json"
+    assert os.environ[SETUP_KEYWORDS_JSON_ENV_VAR] == "/tmp/generated/castep_keywords.json"
 
 
 @pytest.mark.skipif(
@@ -232,51 +241,297 @@ def test_generate_castep_keywords_json_raises_when_generation_produces_no_file(
 def test_apply_castep_environment_clears_keywords_env_when_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("MUFINDER_CASTEP_KEYWORDS_JSON", "/tmp/old.json")
+    monkeypatch.setenv(SETUP_KEYWORDS_JSON_ENV_VAR, "/tmp/old.json")
 
     apply_castep_environment(CastepSetup(keywords_json_path="   "))
 
-    assert "MUFINDER_CASTEP_KEYWORDS_JSON" not in os.environ
+    assert SETUP_KEYWORDS_JSON_ENV_VAR not in os.environ
 
 
-def test_castep_setup_dialog_generates_keywords_and_saves(
-    qapp,
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.fixture
+def no_catalog_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start from a machine with no catalog configured or discoverable."""
+
+    for name in ("MUFINDER_CASTEP_KEYWORDS_JSON", "CASTEP_KEYWORDS_JSON", SETUP_KEYWORDS_JSON_ENV_VAR):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(schema_module, "_ENV_ROOT_VARS", ())
+    monkeypatch.setattr(
+        schema_module,
+        "_candidate_catalog_sources",
+        lambda: tuple(
+            schema_module.CatalogSourceInfo(path=Path(os.environ[name]), origin=origin)
+            for name, origin in (
+                ("MUFINDER_CASTEP_KEYWORDS_JSON", "env_json:MUFINDER_CASTEP_KEYWORDS_JSON"),
+                (SETUP_KEYWORDS_JSON_ENV_VAR, "setup"),
+            )
+            if os.environ.get(name)
+        ),
+    )
+    schema_module.refresh_keyword_catalog(allow_fallback=True)
+
+
+def test_startup_loads_the_installed_catalog(no_catalog_env, tmp_path: Path) -> None:
+    """Regression: a reopened MuFinder reported no catalog although one was installed.
+
+    The schema builds itself when first imported, which happens before the saved
+    setup is applied at startup, so applying the setup must rebuild it.
+    """
+
+    settings = _FakeSettings()
+    install_keyword_catalog(write_complete_catalog(tmp_path / "source.json", "26.11"), settings)
+
+    # A fresh process: the schema has been built with nothing configured.
+    os.environ.pop(SETUP_KEYWORDS_JSON_ENV_VAR, None)
+    schema_module.refresh_keyword_catalog(allow_fallback=True)
+    assert keyword_catalog_status().is_starter is True
+
+    apply_saved_castep_environment(settings)
+
+    status = keyword_catalog_status()
+    assert (status.origin, status.is_starter, status.castep_version) == ("setup", False, "26.11")
+    assert status.path == managed_keywords_json_path()
+
+
+def test_install_keyword_catalog_copies_validates_and_activates(
+    no_catalog_env,
     tmp_path: Path,
 ) -> None:
     settings = _FakeSettings()
-    dialog = CastepSetupDialog(settings=settings)
-    generated = tmp_path / "generated" / "castep_keywords.json"
+    settings.setValue(CASTEP_EXECUTABLE_KEY, "/opt/castep/bin/castep")
+    source = write_complete_catalog(tmp_path / "elsewhere" / "my_keywords.json", "25.12")
+    assert keyword_catalog_status().is_starter is True
 
-    infos: list[str] = []
-    refresh_calls: list[str] = []
+    summary = install_keyword_catalog(source, settings)
+
+    managed = managed_keywords_json_path()
+    assert managed.name == "castep_keywords.json"
+    assert managed != source and managed.read_text(encoding="utf-8") != ""
+    assert (summary.castep_version, summary.cell_count, summary.param_count) == ("25.12", 48, 163)
+    assert summary.describe() == "CASTEP 25.12: 48 cell and 163 param keywords"
+    # The setup now points at MuFinder's own copy and other settings survive.
+    assert load_castep_setup(settings) == CastepSetup(
+        executable_path="/opt/castep/bin/castep",
+        keywords_json_path=str(managed),
+    )
+    status = keyword_catalog_status()
+    assert (status.origin, status.is_starter, status.castep_version) == ("setup", False, "25.12")
+
+    # The copy is independent of the original file.
+    source.unlink()
+    schema_module.refresh_keyword_catalog(allow_fallback=True)
+    assert keyword_catalog_status().origin == "setup"
+
+
+@pytest.mark.parametrize(
+    ("content", "reason"),
+    [
+        ("{not json", "is not valid JSON"),
+        ("[]", "not a JSON object"),
+        ('{"cell": {}}', "no 'param' keyword section"),
+        ('{"cell": {"a": 1}, "param": {}}', "is not a keyword description"),
+        ('{"cell": {"a": {"level": "Basic"}}, "param": {}}', "is missing option_type, docstring"),
+        (
+            '{"cell": {"a": {"option_type": "S", "level": "B", "docstring": "d"}}, "param": {}}',
+            "does not describe LATTICE_CART, POSITIONS_FRAC, SPECIES_POT",
+        ),
+    ],
+)
+def test_install_keyword_catalog_rejects_unusable_files(
+    no_catalog_env,
+    tmp_path: Path,
+    content: str,
+    reason: str,
+) -> None:
+    settings = _FakeSettings()
+    good = write_complete_catalog(tmp_path / "good.json")
+    install_keyword_catalog(good, settings)
+    installed = managed_keywords_json_path().read_text(encoding="utf-8")
+    bad = tmp_path / "bad.json"
+    bad.write_text(content, encoding="utf-8")
+
+    with pytest.raises(KeywordCatalogValidationError, match=reason):
+        install_keyword_catalog(bad, settings)
+
+    # A rejected file leaves the working catalog exactly as it was.
+    assert managed_keywords_json_path().read_text(encoding="utf-8") == installed
+    assert keyword_catalog_status().origin == "setup"
+
+
+def test_install_keyword_catalog_rejects_truncated_catalog_and_missing_file(
+    no_catalog_env,
+    tmp_path: Path,
+) -> None:
+    import json
+
+    from tests.support.keyword_catalogs import complete_catalog_payload
+
+    payload = complete_catalog_payload()
+    payload["param"] = dict(list(payload["param"].items())[:20])
+    truncated = tmp_path / "truncated.json"
+    truncated.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(KeywordCatalogValidationError, match="48 cell and 20 param keywords"):
+        install_keyword_catalog(truncated, _FakeSettings())
+    with pytest.raises(KeywordCatalogValidationError, match="Could not read"):
+        install_keyword_catalog(tmp_path / "missing.json", _FakeSettings())
+    assert not managed_keywords_json_path().exists()
+
+
+def test_app_data_directory_falls_back_when_qt_reports_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.undo()  # drop the conftest redirection to exercise the real lookup
+    monkeypatch.setattr(castep_setup_module.QStandardPaths, "writableLocation", lambda _location: "")
+    assert castep_setup_module._app_data_directory() == Path.home() / ".mufinder"
+
+    monkeypatch.setattr(castep_setup_module.QStandardPaths, "writableLocation", lambda _location: "/data/MuFinder")
+    assert castep_setup_module._app_data_directory() == Path("/data/MuFinder")
+
+
+def test_castep_setup_dialog_installs_generated_catalog_immediately(
+    qapp,
+    no_catalog_env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _FakeSettings()
+    dialog = CastepSetupDialog(settings=settings)
+    assert "limited built-in keyword set" in dialog._catalog_status_label.text()
+
+    infos: list[tuple[str, str]] = []
     monkeypatch.setattr(
         dialog_module.QMessageBox,
         "information",
-        lambda _parent, title, _message: infos.append(title),
+        lambda _parent, title, message: infos.append((title, message)),
     )
-    # Saving setup applies environment variables; keep this side effect isolated to this test.
-    monkeypatch.delenv("MUFINDER_CASTEP_KEYWORDS_JSON", raising=False)
-    monkeypatch.setattr(dialog_module, "refresh_keyword_catalog", lambda: refresh_calls.append("refresh"))
+    scratch_paths: list[Path] = []
 
     def fake_start_generation_process(executable: str, output_path: Path) -> None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("{}", encoding="utf-8")
+        scratch_paths.append(output_path)
+        write_complete_catalog(output_path, "26.11")
         dialog._generation_output_path = output_path
         dialog._on_generation_finished(0, None)
 
     monkeypatch.setattr(dialog, "_start_generation_process", fake_start_generation_process)
 
     dialog._executable_edit.setText("/opt/castep/bin/castep")
-    dialog._keywords_edit.setText(str(generated))
-    dialog._generation_output_path = generated
     dialog._generate_keywords()
-    dialog._accept_and_save()
 
-    assert infos == ["Keywords generated"]
-    assert refresh_calls == ["refresh"]
+    # Installed and in use straight away, without the user choosing a path or
+    # pressing OK, and the scratch copy is gone.
+    managed = managed_keywords_json_path()
+    assert infos == [
+        ("Keyword catalog installed", "Keyword catalog generated: CASTEP 26.11: 48 cell and 163 param keywords.")
+    ]
+    assert scratch_paths[0].parent != managed.parent
+    assert not scratch_paths[0].parent.exists()
+    assert settings.value(CASTEP_KEYWORDS_JSON_KEY, "", str) == str(managed)
+    assert keyword_catalog_status().origin == "setup"
+    assert "Keyword catalog for CASTEP 26.11" in dialog._catalog_status_label.text()
+    assert "installed through CASTEP setup" in dialog._catalog_status_label.text()
+    assert dialog._progress_label.text() == "CASTEP keyword generation complete."
+
+    dialog._accept_and_save()
     assert settings.value(CASTEP_EXECUTABLE_KEY, "", str) == "/opt/castep/bin/castep"
-    assert settings.value(CASTEP_KEYWORDS_JSON_KEY, "", str) == str(generated)
+    assert settings.value(CASTEP_KEYWORDS_JSON_KEY, "", str) == str(managed)
+    assert keyword_catalog_status().origin == "setup"
+    dialog.close()
+
+
+def test_castep_setup_dialog_rejects_incomplete_generated_catalog(
+    qapp,
+    no_catalog_env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _FakeSettings()
+    dialog = CastepSetupDialog(settings=settings)
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        dialog_module.QMessageBox,
+        "warning",
+        lambda _parent, title, message: warnings.append((title, message)),
+    )
+
+    def fake_start_generation_process(executable: str, output_path: Path) -> None:
+        output_path.write_text("{}", encoding="utf-8")
+        dialog._generation_output_path = output_path
+        dialog._on_generation_finished(0, None)
+
+    monkeypatch.setattr(dialog, "_start_generation_process", fake_start_generation_process)
+    dialog._executable_edit.setText("/opt/castep/bin/castep")
+    dialog._generate_keywords()
+
+    assert [title for title, _message in warnings] == ["Keyword catalog not usable"]
+    assert "the current keyword catalog is unchanged" in warnings[0][1]
+    assert "no 'cell' keyword section" in warnings[0][1]
+    assert settings.value(CASTEP_KEYWORDS_JSON_KEY, "", str) == ""
+    assert keyword_catalog_status().is_starter is True
+    assert dialog._progress_label.text() == "Generation failed."
+    assert dialog._generation_scratch_dir is None
+    dialog.close()
+
+
+def test_castep_setup_dialog_imports_an_existing_catalog(
+    qapp,
+    no_catalog_env,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _FakeSettings()
+    dialog = CastepSetupDialog(settings=settings)
+    source = write_complete_catalog(tmp_path / "from_colleague.json", "24.1")
+    infos: list[str] = []
+    monkeypatch.setattr(dialog_module.QMessageBox, "information", lambda _parent, _title, message: infos.append(message))
+    monkeypatch.setattr(dialog_module.QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: (str(source), ""))
+
+    dialog._import_button.click()
+
+    assert infos == ["Keyword catalog imported: CASTEP 24.1: 48 cell and 163 param keywords."]
+    assert settings.value(CASTEP_KEYWORDS_JSON_KEY, "", str) == str(managed_keywords_json_path())
+    assert "CASTEP 24.1" in dialog._catalog_status_label.text()
+
+    # Cancelling the file chooser changes nothing.
+    monkeypatch.setattr(dialog_module.QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: ("", ""))
+    dialog._import_button.click()
+    assert len(infos) == 1
+    dialog.close()
+
+
+def test_castep_setup_dialog_import_says_when_an_env_override_wins(
+    qapp,
+    no_catalog_env,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    override = write_complete_catalog(tmp_path / "override.json", "23.1")
+    monkeypatch.setenv("MUFINDER_CASTEP_KEYWORDS_JSON", str(override))
+    dialog = CastepSetupDialog(settings=_FakeSettings())
+    infos: list[str] = []
+    monkeypatch.setattr(dialog_module.QMessageBox, "information", lambda _parent, _title, message: infos.append(message))
+
+    assert dialog._install_catalog(write_complete_catalog(tmp_path / "new.json", "26.11"), action="imported") is True
+
+    assert "It is not in use yet" in infos[0]
+    assert "MUFINDER_CASTEP_KEYWORDS_JSON environment variable overrides CASTEP setup" in infos[0]
+    assert keyword_catalog_status().castep_version == "23.1"
+    assert "which overrides CASTEP setup" in dialog._catalog_status_label.text()
+    dialog.close()
+
+
+def test_castep_setup_dialog_reports_unwritable_data_directory(
+    qapp,
+    no_catalog_env,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dialog = CastepSetupDialog(settings=_FakeSettings())
+    warnings: list[str] = []
+    monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda _parent, title, _message: warnings.append(title))
+
+    def refuse(*_args, **_kwargs):
+        raise PermissionError("read-only file system")
+
+    monkeypatch.setattr(dialog_module, "install_keyword_catalog", refuse)
+
+    assert dialog._install_catalog(tmp_path / "any.json", action="imported") is False
+    assert warnings == ["Keyword catalog not saved"]
     dialog.close()
 
 
@@ -347,19 +602,35 @@ class _FakeSignal:
         pass
 
 
-def test_castep_setup_dialog_shows_fallback_notice_when_json_not_configured(
-    qapp,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        dialog_module,
-        "keyword_catalog_source_info",
-        lambda: type("CatalogSource", (), {"path": Path("/tmp/discovered/castep_keywords.json"), "origin": "auto_discovery"})(),
-    )
-
+def test_castep_setup_dialog_explains_a_missing_catalog(qapp, no_catalog_env) -> None:
     dialog = CastepSetupDialog(settings=_FakeSettings())
 
-    assert dialog.findChild(QLabel, "catalogFallbackNotice") is not None
+    assert dialog.findChild(QLabel, "catalogStatusLabel").text() == (
+        "No keyword catalog is loaded; MuFinder is using its limited built-in keyword set."
+    )
+    intro = next(label.text() for label in dialog.findChildren(QLabel) if "castep_keywords.json" in label.text())
+    assert "some results cannot be loaded" in intro
+    assert "there is no location to choose" in intro
+    dialog.close()
+
+
+def test_castep_setup_dialog_reports_a_configured_catalog_that_went_missing(
+    qapp,
+    no_catalog_env,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _FakeSettings()
+    missing = tmp_path / "deleted" / "castep_keywords.json"
+    settings.setValue(CASTEP_KEYWORDS_JSON_KEY, str(missing))
+    apply_saved_castep_environment(settings)
+    schema_module.refresh_keyword_catalog(allow_fallback=True)
+
+    dialog = CastepSetupDialog(settings=settings)
+
+    text = dialog._catalog_status_label.text()
+    assert f"The configured keyword catalog '{missing}' no longer exists." in text
+    assert "No keyword catalog is loaded" in text
     dialog.close()
 
 
@@ -368,7 +639,7 @@ def test_castep_setup_dialog_lists_local_and_cluster_targets(qapp) -> None:
 
     targets = [dialog._generate_target_combo.itemText(index) for index in range(dialog._generate_target_combo.count())]
 
-    assert targets[:3] == ["Local", "SCARF", "Redwood"]
+    assert targets[:3] == ["This computer", "SCARF", "Redwood"]
     dialog.close()
 
 
@@ -378,7 +649,6 @@ def test_castep_setup_dialog_warns_on_incomplete_cluster_setup(
 ) -> None:
     dialog = CastepSetupDialog(settings=_FakeSettings())
     dialog._generate_target_combo.setCurrentText("Redwood")
-    dialog._keywords_edit.setText("/tmp/generated/castep_keywords.json")
 
     warnings: list[str] = []
     monkeypatch.setattr(dialog_module, "validate_cluster_keyword_config", lambda _config: ["Missing shell init"])
@@ -401,8 +671,6 @@ def test_castep_setup_dialog_starts_cluster_generation_for_selected_target(
 ) -> None:
     dialog = CastepSetupDialog(settings=_FakeSettings())
     dialog._generate_target_combo.setCurrentText("Redwood")
-    output_path = tmp_path / "castep_keywords.json"
-    dialog._keywords_edit.setText(str(output_path))
 
     credentials = SSHCredentials(target_secret="glam", jump_secret="phys")
     captured: list[tuple[str, Path, SSHCredentials | None]] = []
@@ -439,7 +707,12 @@ def test_castep_setup_dialog_starts_cluster_generation_for_selected_target(
     dialog._generate_keywords()
 
     assert _process_until(lambda: bool(captured))
-    assert captured == [("Redwood", output_path, credentials)]
+    assert [(name, path.name, creds) for name, path, creds in captured] == [
+        ("Redwood", "castep_keywords.json", credentials)
+    ]
+    # Generation writes to scratch, never over the installed catalog.
+    assert captured[0][1].parent == dialog._generation_scratch_dir
+    assert captured[0][1] != managed_keywords_json_path()
     dialog.close()
 
 
@@ -450,8 +723,6 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
 ) -> None:
     dialog = CastepSetupDialog(settings=_FakeSettings())
     dialog._generate_target_combo.setCurrentText("Redwood")
-    output_path = tmp_path / "castep_keywords.json"
-    dialog._keywords_edit.setText(str(output_path))
 
     prompts: list[str] = []
     credentials = SSHCredentials(target_secret="glam", jump_secret="phys")
@@ -502,7 +773,12 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
 
     assert _process_until(lambda: bool(captured))
     assert prompts == ["yes"]
-    assert captured == [("Redwood", output_path, credentials)]
+    assert [(name, path.name, creds) for name, path, creds in captured] == [
+        ("Redwood", "castep_keywords.json", credentials)
+    ]
+    # Generation writes to scratch, never over the installed catalog.
+    assert captured[0][1].parent == dialog._generation_scratch_dir
+    assert captured[0][1] != managed_keywords_json_path()
     assert dialog._settings.value(
         "trusted_host_keys/Redwood/glamdring.physics.ox.ac.uk/algorithm", "", str
     ) == "ssh-ed25519"
@@ -513,22 +789,119 @@ def test_castep_setup_dialog_text_fields_are_taller_by_default(qapp) -> None:
     dialog = CastepSetupDialog(settings=_FakeSettings())
 
     assert dialog._executable_edit.minimumHeight() >= 34
-    assert dialog._keywords_edit.minimumHeight() >= 34
     assert dialog._mpirun_edit.minimumHeight() >= 34
     assert dialog._executable_edit.minimumWidth() >= 740
-    assert dialog._keywords_edit.minimumWidth() >= 740
     assert dialog._mpirun_edit.minimumWidth() >= 740
     dialog.close()
 
 
-def test_castep_setup_dialog_shows_workflow_guidance(qapp) -> None:
-    dialog = CastepSetupDialog(settings=_FakeSettings())
+def test_castep_setup_dialog_prefers_a_set_up_cluster_without_a_local_executable(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cluster-only users should not have to discover the target selector."""
 
-    hint = dialog.findChild(QLabel, "castepSetupWorkflowHint")
-    assert hint is not None
-    text = hint.text()
-    assert "Recommended workflow" in text
-    assert "Set `Keywords JSON`" in text
-    assert "Generate Keywords JSON" in text
-    assert "click `OK`" in text
+    # The built-in presets still carry their placeholder username, so they are
+    # templates rather than clusters the user has set up.
+    dialog = CastepSetupDialog(settings=_FakeSettings())
+    assert dialog._generate_target_combo.currentData() == "local"
     dialog.close()
+
+    presets = dialog_module.load_cluster_configs(_FakeSettings())
+    monkeypatch.setattr(
+        dialog_module,
+        "load_cluster_configs",
+        lambda _settings: [
+            replace(config, username="alice") if config.name == "Redwood" else config for config in presets
+        ],
+    )
+    configured = _FakeSettings()
+    dialog = CastepSetupDialog(settings=configured)
+    assert dialog._generate_target_combo.currentText() == "Redwood"
+    dialog.close()
+
+    configured.setValue(CASTEP_EXECUTABLE_KEY, "/opt/castep/bin/castep")
+    dialog = CastepSetupDialog(settings=configured)
+    assert dialog._generate_target_combo.currentData() == "local"
+    dialog.close()
+
+
+def test_castep_setup_dialog_says_which_settings_each_target_uses(qapp) -> None:
+    """The local executable and MPI launcher apply to this computer only."""
+
+    dialog = CastepSetupDialog(settings=_FakeSettings())
+    dialog.show()
+    hint = dialog.findChild(QLabel, "generateTargetHint")
+
+    note = dialog.findChild(QLabel, "localCastepNote").text()
+    assert "Only needed to run calculations on this computer" in note
+    assert "Cluster jobs and cluster keyword generation never use these paths" in note
+    assert "Setup > HPC Clusters" in note
+    assert dialog._executable_edit.parent().parent().title() == "CASTEP on this computer (optional)"
+
+    # On this computer there is no scheduler/login-node choice to make.
+    assert dialog._generate_target_combo.currentData() == "local"
+    assert hint.text().startswith("Runs the CASTEP executable set below on this computer")
+    assert dialog._generate_method_combo.isVisible() is False
+
+    dialog._generate_target_combo.setCurrentText("SCARF")
+    assert dialog._generate_method_combo.isVisible() is True
+    assert dialog._generate_method_combo.isEnabled() is True
+    assert dialog._generate_method_combo.currentData() == "scheduler"
+    assert hint.text().startswith("Runs CASTEP on SCARF as a short scheduler job, using that cluster's settings")
+    assert "The paths below are not used." in hint.text()
+
+    dialog._generate_method_combo.setCurrentText("Login node")
+    assert hint.text().startswith("Runs CASTEP on SCARF on its login node, using that cluster's settings")
+    assert "Only use this where the site allows CASTEP on its login nodes." in hint.text()
+
+    # addqueue clusters can only generate through the scheduler.
+    dialog._generate_target_combo.setCurrentText("Redwood")
+    assert dialog._generate_method_combo.currentData() == "scheduler"
+    assert dialog._generate_method_combo.isEnabled() is False
+    assert hint.text().startswith("Runs CASTEP on Redwood as a short scheduler job")
+    dialog.close()
+
+
+def test_castep_setup_dialog_login_node_choice_is_used_and_remembered(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _FakeSettings()
+    dialog = CastepSetupDialog(settings=settings)
+    dialog._generate_target_combo.setCurrentText("SCARF")
+    dialog._generate_method_combo.setCurrentText("Login node")
+
+    started: list[str] = []
+    monkeypatch.setattr(dialog_module, "validate_cluster_keyword_config", lambda _config: [])
+    monkeypatch.setattr(dialog_module, "prompt_for_cluster_credentials", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(dialog_module.QMessageBox, "warning", lambda *_args, **_kwargs: None)
+    real_validate = dialog_module.validate_cluster_keyword_config
+
+    def record(config):
+        started.append(config.keyword_execution_mode)
+        return real_validate(config)
+
+    monkeypatch.setattr(dialog_module, "validate_cluster_keyword_config", record)
+
+    dialog._generate_keywords()
+
+    # Generation runs with the chosen method, and the cluster keeps it.
+    assert started == ["direct"]
+    saved = {config.name: config for config in dialog_module.load_cluster_configs(settings)}
+    assert saved["SCARF"].keyword_execution_mode == "direct"
+    assert saved["Redwood"].keyword_execution_mode == "direct"  # stored preset value, untouched
+    dialog.close()
+
+    reopened = CastepSetupDialog(settings=settings)
+    reopened._generate_target_combo.setCurrentText("SCARF")
+    assert reopened._generate_method_combo.currentData() == "direct"
+
+    # Choosing the stored method again writes nothing.
+    monkeypatch.setattr(
+        dialog_module,
+        "save_cluster_configs",
+        lambda *_args, **_kwargs: pytest.fail("unchanged method must not be re-saved"),
+    )
+    reopened._generate_keywords()
+    reopened.close()
