@@ -1038,6 +1038,11 @@ Runtime behavior includes:
 - Shared execution service reusable by convergence and dashboard flows.
 - Removing a cutoff entry now warns before touching associated files and either
 	deletes them or moves them into a ``removed_from_workflow`` archive subfolder.
+- Cutoff rows that use the default parameters keep their completed jobs across a
+	project refresh or reload: adding a cutoff and running submits only the new
+	row. (A restore bug previously re-read such rows as task-only, which made the
+	next run treat every row as new and submit completed jobs again; rows saved
+	in that state are repaired on load.)
 - Removing cutoff rows asks one confirmation for the whole batch (see
 	"Multi-row selection in job tables"); the file-handling prompt that follows
 	for rows with associated files still offers ``Yes to All`` / ``No to All``.
