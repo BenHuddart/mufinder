@@ -39,7 +39,10 @@ from mufinder.app.workflow_parameters import (
     seed_xc_functional_default,
 )
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
+from mufinder.app import workflow_table_utils
 from mufinder.app.workflow_table_utils import (
+    confirm_row_removal,
+    count_phrase,
     RESETTABLE_ROW_STATUSES,
     add_reset_failed_action,
     bind_delete_shortcuts,
@@ -731,6 +734,7 @@ class CutoffConvergenceWidget(QWidget):
             self._cutoff_value_at_row(r, strict=False)
             for r in button.selection_snapshot_rows
         ]
+        asked_single: list[bool] = []
         cutoffs = resolve_target_keys(
             button,
             clicked_key=clicked_cutoff,
@@ -738,143 +742,73 @@ class CutoffConvergenceWidget(QWidget):
             eligibility=lambda c: True,
             parent=self,
             action="Remove",
+            confirm_unprompted=lambda: asked_single.append(True)
+            or self._confirm_cutoff_removal(self._rows_for_cutoffs((clicked_cutoff,))),
         )
-        rows = tuple(
+        rows = self._rows_for_cutoffs(cutoffs)
+        if rows:
+            # The three-way prompt is the confirmation for a multi-row removal,
+            # but it says nothing about running jobs, so it is not consent to
+            # cancel them: those rows are confirmed again with that spelled out.
+            self._request_cutoff_removals(
+                rows,
+                confirmed=bool(asked_single) or not self._active_cutoffs(rows),
+            )
+
+    def _rows_for_cutoffs(self, cutoffs: Sequence[float]) -> tuple[int, ...]:
+        return tuple(
             r
             for r in range(self._cutoff_table.rowCount())
             if self._cutoff_value_at_row(r, strict=False) in cutoffs
         )
-        if rows:
-            self._request_cutoff_removals(rows)
 
-    def _request_cutoff_removal(self, row: int) -> None:
-        self._request_cutoff_removals((row,))
+    def _cutoff_status_at_row(self, row: int) -> str:
+        cutoff = self._cutoff_value_at_row(row, strict=False)
+        runtime = self._cutoff_runtime_states.get(cutoff) if cutoff is not None else None
+        return (runtime.status if runtime is not None else "").strip().lower()
 
-    def _confirm_cutoff_removal(self, cutoff: float | None) -> bool:
-        if cutoff is None:
-            return True
-
-        runtime = self._cutoff_runtime_states.get(cutoff)
-        status = (runtime.status if runtime is not None else "").strip().lower()
-        if status in _ACTIVE_JOB_STATUSES:
-            answer = QMessageBox.question(
-                self,
-                "Cancel running job?",
-                (
-                    f"Cutoff {cutoff:.8g} eV is currently {status}. "
-                    "Do you want to cancel the job and remove this row?"
-                ),
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return False
-            self.cancel_requested.emit([cutoff])
-            return True
-
-        if status in _PROGRESSED_JOB_STATUSES:
-            answer = QMessageBox.question(
-                self,
-                "Remove progressed cutoff?",
-                (
-                    f"Cutoff {cutoff:.8g} eV has already progressed to '{status}'. "
-                    "Remove it from the sweep list anyway?"
-                ),
-            )
-            return answer == QMessageBox.StandardButton.Yes
-
-        return True
-
-    def _confirm_cutoff_removals(self, rows: tuple[int, ...]) -> tuple[list[float], bool]:
-        approved: list[float] = []
-        active_to_cancel: list[float] = []
-        apply_active_to_all: bool | None = None
-        apply_progressed_to_all: bool | None = None
-
+    def _active_cutoffs(self, rows: Sequence[int]) -> list[float]:
+        active: list[float] = []
         for row in rows:
             cutoff = self._cutoff_value_at_row(row, strict=False)
-            if cutoff is None:
-                continue
+            if cutoff is not None and self._cutoff_status_at_row(row) in _ACTIVE_JOB_STATUSES:
+                active.append(cutoff)
+        return active
 
-            runtime = self._cutoff_runtime_states.get(cutoff)
-            status = (runtime.status if runtime is not None else "").strip().lower()
-            if status in _ACTIVE_JOB_STATUSES:
-                if apply_active_to_all is None:
-                    answer = self._ask_batch_cutoff_question(
-                        title="Cancel running job?",
-                        message=(
-                            f"Cutoff {cutoff:.8g} eV is currently {status}. "
-                            "Do you want to cancel the job and remove this row?"
-                        ),
-                        include_apply_all=len(rows) > 1,
-                    )
-                    if answer == QMessageBox.StandardButton.Cancel:
-                        return approved, True
-                    if answer == QMessageBox.StandardButton.YesToAll:
-                        apply_active_to_all = True
-                    elif answer == QMessageBox.StandardButton.NoToAll:
-                        apply_active_to_all = False
-                    elif answer == QMessageBox.StandardButton.Yes:
-                        pass
-                    else:
-                        continue
-                    should_accept = answer in {
-                        QMessageBox.StandardButton.Yes,
-                        QMessageBox.StandardButton.YesToAll,
-                    }
-                else:
-                    should_accept = apply_active_to_all
+    def _confirm_cutoff_removal(self, rows: Sequence[int]) -> bool:
+        submitted = sum(
+            1 for row in rows if self._cutoff_status_at_row(row) in _PROGRESSED_JOB_STATUSES
+        )
+        return confirm_row_removal(
+            self,
+            len(rows),
+            noun=("cutoff", "cutoffs"),
+            submitted_count=submitted,
+            cancelling_count=len(self._active_cutoffs(rows)),
+        )
 
-                if not should_accept:
-                    continue
-                approved.append(cutoff)
-                active_to_cancel.append(cutoff)
-                continue
+    def _request_cutoff_removals(self, rows: tuple[int, ...], *, confirmed: bool = False) -> None:
+        """Remove ``rows`` after one confirmation covering the whole batch.
 
-            if status in _PROGRESSED_JOB_STATUSES:
-                if apply_progressed_to_all is None:
-                    answer = self._ask_batch_cutoff_question(
-                        title="Remove progressed cutoff?",
-                        message=(
-                            f"Cutoff {cutoff:.8g} eV has already progressed to '{status}'. "
-                            "Remove it from the sweep list anyway?"
-                        ),
-                        include_apply_all=len(rows) > 1,
-                    )
-                    if answer == QMessageBox.StandardButton.Cancel:
-                        return approved, True
-                    if answer == QMessageBox.StandardButton.YesToAll:
-                        apply_progressed_to_all = True
-                    elif answer == QMessageBox.StandardButton.NoToAll:
-                        apply_progressed_to_all = False
-                    elif answer == QMessageBox.StandardButton.Yes:
-                        pass
-                    else:
-                        continue
-                    should_accept = answer in {
-                        QMessageBox.StandardButton.Yes,
-                        QMessageBox.StandardButton.YesToAll,
-                    }
-                else:
-                    should_accept = apply_progressed_to_all
+        Rows whose job is still queued or running have it cancelled first; the
+        confirmation says how many, so nothing is cancelled unannounced.
+        ``confirmed`` skips the prompt for a caller that has already asked.
+        """
 
-                if not should_accept:
-                    continue
-                approved.append(cutoff)
-                continue
-
-            approved.append(cutoff)
-
-        if active_to_cancel:
-            self.cancel_requested.emit(active_to_cancel)
-        return approved, False
-
-    def _request_cutoff_removals(self, rows: tuple[int, ...]) -> None:
         if not rows:
             return
-
-        cutoffs, aborted = self._confirm_cutoff_removals(rows)
-        if aborted:
+        if not confirmed and not self._confirm_cutoff_removal(rows):
             return
 
+        active = self._active_cutoffs(rows)
+        if active:
+            self.cancel_requested.emit(active)
+
+        cutoffs = [
+            cutoff
+            for row in rows
+            if (cutoff := self._cutoff_value_at_row(row, strict=False)) is not None
+        ]
         invalid_rows = [row for row in rows if self._cutoff_value_at_row(row, strict=False) is None]
         for row in sorted(invalid_rows, reverse=True):
             self._remove_cutoff_row(row)
@@ -893,30 +827,6 @@ class CutoffConvergenceWidget(QWidget):
         current_row = self._cutoff_table.currentRow()
         if current_row >= 0:
             self._request_cutoff_removals((current_row,))
-
-    def _ask_batch_cutoff_question(
-        self,
-        *,
-        title: str,
-        message: str,
-        include_apply_all: bool,
-    ):
-        if not include_apply_all:
-            return QMessageBox.question(self, title, message)
-
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Question)
-        dialog.setWindowTitle(title)
-        dialog.setText(message)
-        dialog.setStandardButtons(
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No
-            | QMessageBox.StandardButton.YesToAll
-            | QMessageBox.StandardButton.NoToAll
-            | QMessageBox.StandardButton.Cancel
-        )
-        dialog.setDefaultButton(QMessageBox.StandardButton.Yes)
-        return dialog.exec()
 
     def _remove_cutoff_row(self, row: int) -> None:
         cutoff = self._cutoff_value_at_row(row, strict=False)
@@ -1032,7 +942,7 @@ class CutoffConvergenceWidget(QWidget):
         cancel_action = menu.addAction("Cancel Calculation")
         cancel_action.setEnabled(can_cancel)
         cancel_action.triggered.connect(
-            lambda _checked=False, selected=cutoffs: self.cancel_requested.emit(list(selected))
+            lambda _checked=False, selected=cutoffs: self._confirm_and_cancel(selected)
         )
 
         if hasattr(menu, "addSeparator"):
@@ -1052,6 +962,19 @@ class CutoffConvergenceWidget(QWidget):
         )
 
         menu.exec(self._cutoff_table.viewport().mapToGlobal(position))
+
+    def _confirm_and_cancel(self, cutoffs: Sequence[float]) -> None:
+        phrase = count_phrase(len(cutoffs), ("calculation", "calculations"))
+        # Looked up on the module so tests can replace the modal dialog.
+        if workflow_table_utils.confirm_destructive(
+            self,
+            "Cancel calculations",
+            f"Cancel {phrase}?",
+            "",
+            f"Cancel {phrase}",
+            "Keep running",
+        ):
+            self.cancel_requested.emit(list(cutoffs))
 
     def set_runtime_states(self, states: Mapping[float, SweepPointRunState]) -> None:
         """Update row status/energy display using project job/result state."""

@@ -9,6 +9,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QDialog, QLabel, QPushButton, QToolButton
 
+from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app import uep_widget as uep_widget_module
@@ -659,3 +660,31 @@ def test_uep_supercell_cancel_restores_combo_and_changes_nothing(qapp, monkeypat
     assert widget.row_supercell_matrix(second_id) is None
     assert combo.currentText() == "Unit cell"
     assert states == []
+
+
+def test_uep_delete_shortcut_declined_removes_nothing(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    removed: list[object] = []
+    widget.remove_requested.connect(removed.append)
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
+
+    widget._table.selectRow(0)
+    widget._backspace_shortcut.activated.emit()
+
+    assert removed == []
+    assert widget._table.rowCount() == 2
+
+
+def test_uep_remove_button_single_row_is_confirmed(qapp, confirmed_destructive_actions) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+
+    btn = widget._table.cellWidget(1, widget._REMOVE_COLUMN)
+    btn.selection_snapshot_rows = (1,)
+    btn.clicked.emit()
+
+    assert widget._table.rowCount() == 1
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 1 row?"]

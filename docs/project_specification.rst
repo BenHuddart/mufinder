@@ -125,8 +125,15 @@ The local CASTEP execution path must satisfy the following requirements:
     - permanent deletion of the associated files
     - moving those files into a separate archival subfolder outside the active workflow set
 
-- When removing multiple cutoff rows in one action, repeated confirmations must offer
-   ``Yes to All`` / ``No to All`` choices for both status-transition prompts and file-handling prompts.
+- Removing cutoff rows must ask one confirmation for the whole batch, stating how many
+   rows have a submitted job and how many running jobs will be cancelled. When several
+   removed rows have associated files, the file-handling prompt must offer
+   ``Yes to All`` / ``No to All`` choices.
+
+- Every action that removes, cancels, resets, dismisses or deletes must be confirmed
+   before it takes effect, from every entry point, with the safe choice as the default.
+   An action that covers several operations at once (Delete/Backspace on a mixed
+   Job Dashboard selection) must present them in a single summary before any of them runs.
 
 - Failed and cancelled job management must be available from the shared dashboard UI:
 

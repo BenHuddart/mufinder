@@ -7,6 +7,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QDialog, QHeaderView, QMessageBox, QPushButton, QToolButton
 
+from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app import relaxation_widget as relaxation_widget_module
@@ -1299,3 +1300,69 @@ def test_relaxation_remove_button_cancel_removes_nothing(qapp, monkeypatch) -> N
     btn.clicked.emit()
 
     assert widget._table.rowCount() == 2
+
+
+def test_relaxation_delete_shortcut_confirms_and_declining_removes_nothing(
+    qapp, monkeypatch, confirmed_destructive_actions
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    widget.set_runtime_states({widget._label_at_row(1): RelaxationRunState(status="completed")})
+    removed: list[list[str]] = []
+    widget.remove_requested.connect(lambda labels: removed.append(list(labels)))
+    _select_relaxation_rows(widget, (0, 1))
+
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
+    widget._table_backspace_shortcut.activated.emit()
+    assert removed == []
+    assert widget._table.rowCount() == 2
+
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda _parent, *prompt: confirmed_destructive_actions.append(prompt) or True,
+    )
+    widget._table_delete_shortcut.activated.emit()
+    assert widget._table.rowCount() == 0
+    assert confirmed_destructive_actions == [
+        ("Remove rows", "Remove 2 rows?", "1 row already has a submitted job.", "Remove 2 rows")
+    ]
+
+
+def test_relaxation_remove_button_single_row_is_confirmed(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    answers = [False, True]
+    monkeypatch.setattr(
+        workflow_table_utils, "confirm_destructive", lambda *_a, **_k: answers.pop(0)
+    )
+
+    btn = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    btn.selection_snapshot_rows = (0,)
+    btn.clicked.emit()
+    assert widget._table.rowCount() == 2
+
+    btn.selection_snapshot_rows = (0,)
+    btn.clicked.emit()
+    assert widget._table.rowCount() == 1
+    assert answers == []
+
+
+def test_relaxation_remove_button_multi_row_prompt_is_the_only_confirmation(
+    qapp, monkeypatch, confirmed_destructive_actions
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED
+    )
+
+    btn = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    btn.selection_snapshot_rows = (0, 1)
+    btn.clicked.emit()
+
+    assert widget._table.rowCount() == 0
+    assert confirmed_destructive_actions == []

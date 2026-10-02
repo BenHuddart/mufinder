@@ -8,6 +8,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QMessageBox, QPushButton, QToolButton
 
 import mufinder.app.convergence_widget as convergence_widget_module
+from mufinder.app import workflow_table_utils
 from mufinder.app.convergence_types import ConvergenceConfig, CutoffRunState
 from mufinder.app.convergence_widget import ConvergenceWidget, CutoffRangeDialog
 
@@ -467,49 +468,74 @@ def test_convergence_widget_runtime_columns_use_higher_precision(qapp) -> None:
     assert widget._cutoff_table.item(0, widget._MAX_FORCE_COLUMN).text() == f"{max_force:.12g}"
 
 
-def test_convergence_widget_remove_cutoff_warns_for_completed_jobs(
+def test_convergence_widget_remove_cutoff_confirms_and_reports_submitted_jobs(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget.set_runtime_states({300.0: CutoffRunState(status="completed")})
-
-    answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
-    monkeypatch.setattr(
-        convergence_widget_module.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: answers.pop(0),
-    )
-
-    widget._request_cutoff_removal(0)
-    assert widget._cutoff_table.rowCount() == 1
-
     requested: list[object] = []
     widget.remove_cutoff_requested.connect(lambda payload: requested.append(payload))
-    widget._request_cutoff_removal(0)
+    answers = [False, True]
+    prompts: list[tuple[str, str, str, str]] = []
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda _parent, *prompt: prompts.append(prompt) or answers.pop(0),
+    )
+
+    widget._request_cutoff_removals((0,))
+    assert requested == []
+
+    widget._request_cutoff_removals((0,))
     assert requested == [[300.0]]
-    assert widget._cutoff_table.rowCount() == 1
+    assert prompts[1] == (
+        "Remove cutoff",
+        "Remove 1 cutoff?",
+        "1 cutoff already has a submitted job.",
+        "Remove 1 cutoff",
+    )
 
 
 def test_convergence_widget_remove_cutoff_running_emits_cancel_request(
+    qapp, confirmed_destructive_actions
+) -> None:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    widget._add_cutoff(360.0)
+    widget.set_runtime_states(
+        {
+            300.0: CutoffRunState(status="running"),
+            360.0: CutoffRunState(status="completed"),
+        }
+    )
+
+    cancelled: list[object] = []
+    widget.cancel_requested.connect(lambda payload: cancelled.append(payload))
+
+    widget._request_cutoff_removals((0, 1))
+
+    assert cancelled == [[300.0]]
+    assert confirmed_destructive_actions[0]["text"] == "Remove 2 cutoffs?"
+    assert confirmed_destructive_actions[0]["detail"] == (
+        "1 job is queued or running and will be cancelled. 1 cutoff already has a submitted job."
+    )
+
+
+def test_convergence_widget_declined_removal_cancels_nothing(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget.set_runtime_states({300.0: CutoffRunState(status="running")})
+    emitted: list[object] = []
+    widget.cancel_requested.connect(emitted.append)
+    widget.remove_cutoff_requested.connect(emitted.append)
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
 
-    cancelled: list[object] = []
-    widget.cancel_requested.connect(lambda payload: cancelled.append(payload))
-    monkeypatch.setattr(
-        convergence_widget_module.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
-    )
+    widget._request_cutoff_removals((0,))
 
-    widget._request_cutoff_removal(0)
-
-    assert cancelled == [[300.0]]
-    assert widget._cutoff_table.rowCount() == 1
+    assert emitted == []
 
 
 def test_convergence_widget_remove_button_emits_removal_request(qapp) -> None:
@@ -648,29 +674,19 @@ def test_convergence_widget_delete_key_requests_selected_cutoff_from_child_focus
     assert requested == [[300.0]]
 
 
-def test_convergence_widget_batch_confirm_uses_yes_to_all_for_progressed_rows(
-    qapp, monkeypatch: pytest.MonkeyPatch
+def test_convergence_widget_already_confirmed_removal_does_not_ask_again(
+    qapp, confirmed_destructive_actions
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget._add_cutoff(360.0)
-    widget.set_runtime_states(
-        {
-            300.0: CutoffRunState(status="completed"),
-            360.0: CutoffRunState(status="failed"),
-        }
-    )
+    requested: list[object] = []
+    widget.remove_cutoff_requested.connect(lambda payload: requested.append(payload))
 
-    monkeypatch.setattr(
-        widget,
-        "_ask_batch_cutoff_question",
-        lambda **_kwargs: QMessageBox.StandardButton.YesToAll,
-    )
+    widget._request_cutoff_removals((0, 1), confirmed=True)
 
-    approved, aborted = widget._confirm_cutoff_removals((0, 1))
-
-    assert approved == [300.0, 360.0]
-    assert aborted is False
+    assert requested == [[300.0, 360.0]]
+    assert confirmed_destructive_actions == []
 
 
 def test_convergence_widget_emit_config_groups_shared_and_override_values(
@@ -1072,3 +1088,63 @@ def test_convergence_widget_project_xc_functional_keeps_configured_rows(qapp) ->
     widget.set_xc_functional_default("PBE")
 
     assert widget._effective_params_for_cutoff(400.0)["xc_functional"] == "PBESOL"
+
+
+def test_convergence_widget_remove_button_scope_prompt_does_not_cover_running_jobs(
+    qapp, monkeypatch: pytest.MonkeyPatch, confirmed_destructive_actions
+) -> None:
+    from mufinder.app import selection_snapshot
+    from mufinder.app.selection_snapshot import SelectionScope
+
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    widget._add_cutoff(360.0)
+    monkeypatch.setattr(
+        selection_snapshot, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED
+    )
+    cancelled: list[object] = []
+    widget.cancel_requested.connect(cancelled.append)
+
+    # No running rows: the three-way prompt is the only confirmation.
+    button = widget._cutoff_table.cellWidget(0, widget._REMOVE_COLUMN)
+    button.selection_snapshot_rows = (0, 1)
+    button.clicked.emit()
+    assert confirmed_destructive_actions == []
+
+    # A running row: the prompt said nothing about cancelling, so ask again.
+    widget.set_runtime_states({300.0: CutoffRunState(status="running")})
+    button = widget._cutoff_table.cellWidget(0, widget._REMOVE_COLUMN)
+    button.selection_snapshot_rows = (0, 1)
+    button.clicked.emit()
+    assert [prompt["detail"] for prompt in confirmed_destructive_actions] == [
+        "1 job is queued or running and will be cancelled."
+    ]
+    assert cancelled == [[300.0]]
+
+
+def test_convergence_widget_context_cancel_is_confirmed(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = ConvergenceWidget()
+    cancelled: list[object] = []
+    widget.cancel_requested.connect(cancelled.append)
+    prompts: list[tuple[str, ...]] = []
+    answers = [False, True]
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda _parent, *prompt: prompts.append(prompt) or answers.pop(0),
+    )
+
+    widget._confirm_and_cancel((300.0, 360.0))
+    assert cancelled == []
+
+    widget._confirm_and_cancel((300.0, 360.0))
+    assert cancelled == [[300.0, 360.0]]
+    assert prompts[0] == (
+        "Cancel calculations",
+        "Cancel 2 calculations?",
+        "",
+        "Cancel 2 calculations",
+        "Keep running",
+    )

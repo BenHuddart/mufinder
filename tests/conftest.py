@@ -184,6 +184,37 @@ def _cleanup_qt_state_per_test() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def confirmed_destructive_actions(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
+    """Answer every destructive-action confirmation with "go ahead", and record it.
+
+    ``workflow_table_utils.confirm_destructive`` opens a modal dialog, which can
+    never be right in a test: it would block until the per-test timeout. So it
+    is replaced for every test with a stub that accepts. A test that cares
+    requests this fixture to inspect the recorded prompts, or patches the
+    function itself to decline.
+    """
+
+    from mufinder.app import workflow_table_utils
+
+    prompts: list[dict[str, str]] = []
+
+    def _accept(_parent, title, text, detail="", accept_label="Remove", reject_label="Cancel") -> bool:
+        prompts.append(
+            {
+                "title": title,
+                "text": text,
+                "detail": detail,
+                "accept_label": accept_label,
+                "reject_label": reject_label,
+            }
+        )
+        return True
+
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", _accept)
+    return prompts
+
+
+@pytest.fixture(autouse=True)
 def _isolate_qsettings(tmp_path) -> Iterator[None]:
     """Redirect QSettings to a per-test path so xdist workers cannot share state."""
 

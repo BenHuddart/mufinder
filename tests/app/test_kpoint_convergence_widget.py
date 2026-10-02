@@ -8,6 +8,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QPushButton
 
 import mufinder.app.kpoint_convergence_widget as kpoint_widget_module
+from mufinder.app import workflow_table_utils
 from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget, KPointGridDialog, KPointSpacingDialog
 from mufinder.castep_io.types import ValueWithUnit
@@ -736,3 +737,33 @@ def test_kpoint_widget_context_menu_disables_reset_for_completed_row(qapp, monke
 
     assert menu is not None and menu.reset_action().enabled is False
     assert payloads == []
+
+
+def test_kpoint_widget_delete_shortcut_declined_requests_nothing(qapp, monkeypatch) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget._add_grid((3, 3, 2))
+    requested: list[object] = []
+    widget.remove_grid_requested.connect(requested.append)
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
+
+    widget._table.selectRow(1)
+    widget._backspace_shortcut.activated.emit()
+
+    assert requested == []
+
+
+def test_kpoint_widget_removal_is_confirmed_once_per_request(
+    qapp, confirmed_destructive_actions
+) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_grid((2, 2, 2))
+    widget._add_grid((3, 3, 2))
+    requested: list[object] = []
+    widget.remove_grid_requested.connect(lambda grids: requested.append(list(grids)))
+
+    widget._request_grid_removals((0, 1))
+    widget._request_grid_removals((0,), confirmed=True)
+
+    assert requested == [[(2, 2, 2), (3, 3, 2)], [(2, 2, 2)]]
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 2 rows?"]
