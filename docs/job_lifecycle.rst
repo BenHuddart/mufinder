@@ -665,13 +665,14 @@ The shared implementation lives in ``mufinder.app.workflow_table_utils``:
   terminal job is deliberately excluded: after ``effective_row_status`` its row
   already reads ``"ready"`` and its recovery path is the row's own ``Submit``
   (see :ref:`dismissed-rows-stay-resubmittable`).
-- ``selection_supports_reset`` — enables the action only when the whole
-  selection is resettable. ``_reset_failed_jobs`` prompts once for the entire
-  batch, including the destructive output cleanup, so a selection is refused
-  rather than silently narrowed in either of two ways: a *mixed* selection
-  (some row not in ``RESETTABLE_ROW_STATUSES``), and a *partially keyed* one
-  (some selected row whose ``key_for_row`` returned ``None``, which would
-  otherwise reset its keyed siblings and leave that row untouched).
+- ``resettable_keys`` — picks, from the selected rows, the ones a reset applies
+  to: status in ``RESETTABLE_ROW_STATUSES`` and a non-``None`` ``key_for_row``.
+  The action is enabled when there is at least one and resets those rows only.
+  ``_reset_failed_jobs`` prompts once for the batch, including the destructive
+  output cleanup, so the selection must never be narrowed *silently*: for a
+  mixed or partially keyed selection the menu entry carries the count
+  (``Reset Failed Jobs... (2 of 5)``, from ``partial_count_suffix``), and the
+  prompt that follows names the same number of jobs.
 - ``bind_reset_failed_context_menu`` / ``open_reset_failed_context_menu`` —
   install and open the menu. Right-clicking a row outside the current selection
   retargets the selection first, so the action always describes the row under

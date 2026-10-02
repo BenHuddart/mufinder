@@ -95,6 +95,11 @@ The local CASTEP execution path must satisfy the following requirements:
 - Every workflow job table must offer the same right-click row menu, in the same order,
   omitting only the actions that table does not have.
 
+- An action on a selection that mixes rows it applies to with rows it does not must act
+  on the applicable rows and report how many it left out, before the action where the
+  control can show it (menu entries, prompts) and afterwards otherwise (the status bar
+  after a submission). It must be unavailable only when no selected row qualifies.
+
 - A control embedded in a table row must act on the whole selection when its
   row is part of a multi-row selection, after a prompt offering "all selected
   rows", "this row only" and "cancel". A control on a row outside the

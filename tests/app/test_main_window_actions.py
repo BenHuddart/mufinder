@@ -12788,21 +12788,22 @@ def test_main_window_dashboard_menu_acts_on_the_eligible_selected_jobs(
 
     menu = _open_dashboard_menu(window, monkeypatch)
 
+    # Entries that apply to only some of the three selected jobs say how many.
     assert [action.text for action in menu.actions] == [
-        "Resubmit",
+        "Resubmit (2 of 3)",
         "Retry Retrieval",
-        "Cancel",
-        "Inspect",
-        "Reset",
-        "Dismiss",
+        "Cancel (1 of 3)",
+        "Inspect (1 of 3)",
+        "Reset (2 of 3)",
+        "Dismiss (2 of 3)",
         "Delete...",
     ]
     assert menu.separators_before == [6]
     assert {action.text for action in menu.actions if not action.enabled} == {"Retry Retrieval"}
 
-    menu.action("Resubmit").triggered.emit()
-    menu.action("Inspect").triggered.emit()
-    menu.action("Reset").triggered.emit()
+    menu.action("Resubmit (2 of 3)").triggered.emit()
+    menu.action("Inspect (1 of 3)").triggered.emit()
+    menu.action("Reset (2 of 3)").triggered.emit()
     assert calls == [
         ("resubmit", [failed.id, cancelled_job.id]),
         ("inspect", [failed.id]),
@@ -12830,10 +12831,10 @@ def test_main_window_dashboard_menu_confirms_cancel_and_dismiss(
     _select_dashboard_rows(window, [0, 1])
     menu = _open_dashboard_menu(window, monkeypatch)
 
-    menu.action("Cancel").triggered.emit()
+    menu.action("Cancel (1 of 2)").triggered.emit()
     assert calls == []
-    menu.action("Cancel").triggered.emit()
-    menu.action("Dismiss").triggered.emit()
+    menu.action("Cancel (1 of 2)").triggered.emit()
+    menu.action("Dismiss (1 of 2)").triggered.emit()
 
     assert calls == [("cancel", [running.id]), ("dismiss", [failed.id])]
     assert prompts[0] == ("Cancel jobs", "Cancel 1 job?", "", "Cancel 1 job", "Keep running")
@@ -12887,3 +12888,4 @@ def test_main_window_connects_workflow_cancel_and_inspect_signals(
     assert cancelled == [sentinel_jobs]
     assert inspected == [sentinel_jobs]
     window.close()
+

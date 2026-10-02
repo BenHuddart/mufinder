@@ -236,42 +236,61 @@ def workflow_row_status_text(table: QTableWidget, row: int, column: int) -> str:
     return item.text().strip().lower()
 
 
-def selection_supports_reset(keys: Sequence[object], statuses: Sequence[str]) -> bool:
-    """Return whether the whole selection can be reset as one batch.
+def partial_count_suffix(eligible: int, selected: int) -> str:
+    """Return the " (2 of 5)" suffix a menu entry carries for a mixed selection.
 
-    ``statuses`` carries one entry per selected row; ``keys`` carries one entry
-    per selected row that yielded a submission key. Both conditions below exist
-    because ``_reset_failed_jobs`` prompts once for the entire batch, including
-    the destructive output cleanup — so any row the action would silently drop
-    makes that prompt misreport what is about to happen:
-
-    - every status must be resettable, which rules out a mixed selection; and
-    - ``len(keys)`` must equal ``len(statuses)``, which rules out a selection
-      containing a keyless row (an unlabeled or half-built row whose
-      ``key_for_row`` returned ``None``). Without this a two-row selection of
-      one keyed and one keyless failed row would enable the action and reset
-      only the first, leaving the second untouched with no indication why.
+    Empty when the action applies to every selected row or to none, so the
+    count appears only when it tells the user something: that the entry will
+    act on some of what is highlighted and skip the rest.
     """
 
-    return (
-        bool(keys)
-        and bool(statuses)
-        and len(keys) == len(statuses)
-        and all(status in RESETTABLE_ROW_STATUSES for status in statuses)
-    )
+    return f" ({eligible} of {selected})" if 0 < eligible < selected else ""
+
+
+def resettable_keys(
+    rows: Sequence[int],
+    *,
+    key_for_row: Callable[[int], object | None],
+    status_for_row: Callable[[int], str],
+) -> list[object]:
+    """Return the submission keys of the selected rows a reset can act on.
+
+    A row qualifies when its status is in :data:`RESETTABLE_ROW_STATUSES` and it
+    has a key. A row without one (unlabeled or half-built, ``key_for_row``
+    returned ``None``) has no job to reset and is skipped like any other row
+    the action does not apply to.
+    """
+
+    keys: list[object] = []
+    for row in rows:
+        if status_for_row(row) not in RESETTABLE_ROW_STATUSES:
+            continue
+        key = key_for_row(row)
+        if key is not None:
+            keys.append(key)
+    return keys
 
 
 def add_reset_failed_action(
     menu: QMenu,
     *,
     keys: Sequence[object],
-    statuses: Sequence[str],
+    selected_count: int,
     emit_reset: Callable[[list[object]], None],
 ):
-    """Append the shared "Reset Failed Jobs..." action to ``menu``."""
+    """Append the shared "Reset Failed Jobs..." action to ``menu``.
 
-    action = menu.addAction(RESET_FAILED_ACTION_TEXT)
-    action.setEnabled(selection_supports_reset(keys, statuses))
+    ``keys`` are the resettable rows' keys (see :func:`resettable_keys`) and
+    ``selected_count`` the size of the whole selection. The action is enabled
+    when there is at least one key and resets those rows only; for a mixed
+    selection its text carries the count, so the reset prompt that follows
+    (which names the number of jobs) never covers more than the menu said.
+    """
+
+    action = menu.addAction(
+        RESET_FAILED_ACTION_TEXT + partial_count_suffix(len(keys), selected_count)
+    )
+    action.setEnabled(bool(keys))
     action.triggered.connect(
         lambda _checked=False, selected=list(keys): emit_reset(list(selected))
     )
@@ -307,6 +326,11 @@ class RowMenuAction:
     #: Draw a separator above this action, to set table-specific actions apart
     #: from the shared core.
     separator_before: bool = False
+    #: For an ``on_rows`` action: whether the action applies to a given row.
+    #: When set, the action is offered for a mixed selection as long as one
+    #: row qualifies, receives only the qualifying rows, and shows how many
+    #: ("Cancel (2 of 5)"). ``is_enabled`` is then asked about those rows.
+    applies_to_row: Callable[[int], bool] | None = None
 
 
 #: Shared menu texts, so every job table names the same action identically.
@@ -340,14 +364,20 @@ def standard_row_actions(
     Remove. A table omits an action by leaving its callback ``None``. Callbacks
     receive the selected table rows.
 
-    Run, Cancel and Inspect are enabled only when every selected row is in a
-    state the action applies to. Cancel asks for confirmation first (it needs
+    Run, Cancel and Inspect are offered when at least one selected row is in a
+    state the action applies to. They receive only those rows, and for a mixed
+    selection the entry says how many ("Cancel (2 of 5)"). Configure and Remove
+    apply to every selected row. Cancel asks for confirmation first (it needs
     ``confirm_parent``); Remove is expected to confirm in the table's own
     removal path, which already knows what each row has at stake.
+
+    The run callbacks of the workflow tables act on the table selection rather
+    than on the rows they are handed; that is equivalent, because the
+    submission step drops rows that are not ready and reports how many.
     """
 
-    def _all_rows(predicate: Callable[[str], bool]) -> Callable[[Sequence[object]], bool]:
-        return lambda rows: bool(rows) and all(predicate(status_for_row(int(row))) for row in rows)
+    def _status_is(predicate: Callable[[str], bool]) -> Callable[[int], bool]:
+        return lambda row: predicate(status_for_row(row))
 
     def _confirmed_cancel(rows: Sequence[object]) -> None:
         phrase = count_phrase(len(rows), ("calculation", "calculations"))
@@ -366,41 +396,42 @@ def standard_row_actions(
     def _rows(callback: Callable[[Sequence[int]], None]) -> Callable[[Sequence[object]], None]:
         return lambda rows: callback([int(row) for row in rows])
 
+    is_ready = _status_is(lambda status: not workflow_row_is_locked(status))
     before: list[RowMenuAction] = []
     if run_local is not None:
         before.append(
             RowMenuAction(
-                RUN_LOCAL_ACTION_TEXT,
-                _all_rows(lambda status: not workflow_row_is_locked(status)),
-                _rows(run_local),
-                on_rows=True,
+                RUN_LOCAL_ACTION_TEXT, bool, _rows(run_local), on_rows=True, applies_to_row=is_ready
             )
         )
     if run_cluster is not None:
         before.append(
             RowMenuAction(
                 RUN_CLUSTER_ACTION_TEXT,
-                _all_rows(lambda status: not workflow_row_is_locked(status)),
+                bool,
                 _rows(run_cluster),
                 on_rows=True,
+                applies_to_row=is_ready,
             )
         )
     if cancel is not None:
         before.append(
             RowMenuAction(
                 CANCEL_ACTION_TEXT,
-                _all_rows(lambda status: status in _ACTIVE_ROW_STATUSES),
+                bool,
                 _confirmed_cancel,
                 on_rows=True,
+                applies_to_row=_status_is(lambda status: status in _ACTIVE_ROW_STATUSES),
             )
         )
     if inspect is not None:
         before.append(
             RowMenuAction(
                 INSPECT_FAILURE_ACTION_TEXT,
-                _all_rows(lambda status: status in _INSPECTABLE_ROW_STATUSES),
+                bool,
                 _rows(inspect),
                 on_rows=True,
+                applies_to_row=_status_is(lambda status: status in _INSPECTABLE_ROW_STATUSES),
             )
         )
 
@@ -421,11 +452,15 @@ def add_row_menu_action(
 ) -> QAction:
     """Append one :class:`RowMenuAction` to ``menu``, gated on ``keys`` (or ``rows``)."""
 
+    text = action.text
     if action.on_rows:
         keys = list(rows)
+        if action.applies_to_row is not None:
+            keys = [row for row in rows if action.applies_to_row(row)]
+            text += partial_count_suffix(len(keys), len(rows))
     if action.separator_before:
         menu.addSeparator()
-    qt_action = menu.addAction(action.text)
+    qt_action = menu.addAction(text)
     qt_action.setEnabled(action.is_enabled(keys))
     qt_action.triggered.connect(
         lambda _checked=False, selected=list(keys), trigger=action.trigger: trigger(selected)
@@ -478,13 +513,19 @@ def open_reset_failed_context_menu(
         selected_rows = (row,)
 
     keys = [key for row_index in selected_rows if (key := key_for_row(row_index)) is not None]
-    statuses = [status_for_row(row_index) for row_index in selected_rows]
 
     menu = QMenu(table)
     for action in leading_actions:
         add_row_menu_action(menu, keys=keys, action=action, rows=selected_rows)
     if emit_reset is not None:
-        add_reset_failed_action(menu, keys=keys, statuses=statuses, emit_reset=emit_reset)
+        add_reset_failed_action(
+            menu,
+            keys=resettable_keys(
+                selected_rows, key_for_row=key_for_row, status_for_row=status_for_row
+            ),
+            selected_count=len(selected_rows),
+            emit_reset=emit_reset,
+        )
     for action in additional_actions:
         add_row_menu_action(menu, keys=keys, action=action, rows=selected_rows)
     menu.exec(table.viewport().mapToGlobal(position))

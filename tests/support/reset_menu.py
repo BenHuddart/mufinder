@@ -67,12 +67,17 @@ class FakeMenu:
 
     def exec(self, *_args, **_kwargs) -> None:
         for action in self.actions:
-            if action.text == RESET_FAILED_ACTION_TEXT and action.enabled:
+            if action.text.startswith(RESET_FAILED_ACTION_TEXT) and action.enabled:
                 action.triggered.emit()
                 return
 
     def reset_action(self) -> FakeAction | None:
-        return self.action(RESET_FAILED_ACTION_TEXT)
+        """Return the reset action, whose text gains " (n of m)" for a mixed selection."""
+
+        for action in self.actions:
+            if action.text.startswith(RESET_FAILED_ACTION_TEXT):
+                return action
+        return None
 
     def action(self, text: str) -> FakeAction | None:
         """Return the action with this exact text, or ``None``.
