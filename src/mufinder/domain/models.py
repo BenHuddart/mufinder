@@ -147,6 +147,11 @@ class ProvenanceRecord:
     job_id: UUID | None = None
 
 
+#: ``Project.recommended_*_method`` value for a default the user typed in
+#: directly rather than adopting from a convergence analysis.
+MANUAL_DEFAULT_METHOD = "manual"
+
+
 @dataclass(slots=True)
 class Project:
     """Top-level project aggregate."""
@@ -168,6 +173,7 @@ class Project:
     recommended_cutoff_force_threshold: float | None = None
     recommended_cutoff_stress_threshold: float | None = None
     recommended_cutoff_cell_id: str | None = None
+    recommended_cutoff_xc_functional: str | None = None
     recommended_kpoint_grid: tuple[int, int, int] | None = None
     recommended_kpoint_lattice: list[list[float]] | None = None
     recommended_kpoint_method: str | None = None
@@ -175,4 +181,6 @@ class Project:
     recommended_kpoint_force_threshold: float | None = None
     recommended_kpoint_stress_threshold: float | None = None
     recommended_kpoint_cell_id: str | None = None
+    recommended_kpoint_xc_functional: str | None = None
+    recommended_xc_functional: str | None = None
     notes: str = ""

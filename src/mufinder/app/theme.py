@@ -1018,6 +1018,42 @@ def _panel_container_styles(p: MuFinderPalette) -> str:
         border-bottom-right-radius: 10px;
         background: {p.bg_surface};
     }}
+    QFrame#projectDefaultsStrip {{
+        border: 1px solid {p.border};
+        border-radius: 10px;
+        background: {p.bg_surface};
+    }}
+    QFrame#projectDefaultsSeparator {{
+        border: none;
+        background: {p.border};
+    }}
+    QLabel#projectDefaultsCaption {{
+        color: {p.text_muted};
+        font-weight: 600;
+    }}
+    QLabel#projectDefaultsName {{
+        color: {p.text_muted};
+    }}
+    QLabel#projectDefaultsValue {{
+        font-weight: 600;
+    }}
+    QLabel#projectDefaultsValue[valueState="unset"] {{
+        color: {p.text_muted};
+        font-weight: 400;
+    }}
+    QLabel#projectDefaultsValue[valueState="stale"] {{
+        color: {p.warning};
+    }}
+    QToolButton#projectDefaultsButton {{
+        border: 1px solid {p.border};
+        background: transparent;
+        color: {p.text_primary};
+        padding: 2px 9px;
+        border-radius: 6px;
+    }}
+    QToolButton#projectDefaultsButton:hover {{
+        background: {p.bg_surface_alt};
+    }}
     QDockWidget#jobDashboardDock {{
         border: 1px solid {p.border};
         border-radius: 10px;

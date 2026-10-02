@@ -328,3 +328,28 @@ unless a workflow has a strong reason to expose them by default.
 When adding a new workflow parameter surface, use the shared helper in
 ``mufinder.app.workflow_parameters`` instead of encoding another local ordering
 rule in an individual widget.
+
+Project defaults surface
+------------------------
+
+The project-wide calculation defaults (XC functional, cutoff energy, k-point
+grid) are shown by one shared widget,
+``mufinder.app.project_defaults_widget.ProjectDefaultsStrip``, placed in the
+header of every workflow tab that consumes them. Workflow widgets expose it as
+``project_defaults_strip`` and must not build their own "Project Defaults"
+labels: ``MainWindow`` pushes one ``ProjectDefaultsSummary`` (built from the
+``Project`` record) to every strip, so the tabs cannot drift apart.
+
+The strip only *displays* defaults and requests edits through its
+``xc_functional_change_requested``, ``cutoff_energy_change_requested`` and
+``kpoint_grid_change_requested`` signals (``None`` clears); ``ProjectService``
+owns the mutation and its provenance record. A hand-entered cutoff or grid is
+stored with ``MANUAL_DEFAULT_METHOD`` (``mufinder.domain.models``) as its
+method. Seeding a workflow widget's row defaults
+is a separate step: the widgets' ``set_project_defaults`` /
+``set_xc_functional_default`` methods update the shared row defaults, using
+``seed_xc_functional_default`` from ``mufinder.app.workflow_parameters`` for
+the functional. When adding a workflow that consumes project defaults, give
+its widget a strip, add it to ``MainWindow._project_defaults_strips``, and pass
+``project_xc_functional`` to its adapter alongside the cutoff and k-point
+defaults.

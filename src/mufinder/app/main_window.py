@@ -79,7 +79,16 @@ from mufinder.castep_io.gui_metadata import make_block_section, make_keyword_ass
 from mufinder.castep_io.schema import KeywordSpec, canonical_keyword_name, get_keyword_spec
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure, utc_now
+from mufinder.domain.models import (
+    MANUAL_DEFAULT_METHOD,
+    CalculationRun,
+    ComparisonTable,
+    Job,
+    MuonSite,
+    Result,
+    Structure,
+    utc_now,
+)
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig, ClusterSubmissionDialog
@@ -102,7 +111,11 @@ from mufinder.app.convergence_display import (
     format_kpoint_grid,
 )
 from mufinder.app.convergence_overview_widget import ConvergenceOverviewWidget
-from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
+from mufinder.app.convergence_types import (
+    ConvergenceConfig,
+    SweepPointRunState,
+    convergence_config_xc_functional,
+)
 from mufinder.app.convergence_widget import ConvergenceWidget
 from mufinder.app.energy_barriers_widget import (
     EnergyBarriersWidget,
@@ -163,6 +176,7 @@ from mufinder.app.journal_widget import JournalWidget
 from mufinder.app.magnetic_field_widget import MagneticFieldWidget
 from mufinder.app.muon_generation_widget import MuonGenerationWidget
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.project_defaults_widget import ProjectDefaultsStrip, ProjectDefaultsSummary
 from mufinder.app.quantum_analysis_dialog import QuantumPhononAnalysisDialog
 from mufinder.app.quantum_corrections_widget import (
     QuantumCorrectionsWidget,
@@ -2030,6 +2044,17 @@ class MainWindow(QMainWindow):
         self._muon_relaxation_view = MuonRelaxationWidget()
         self._muon_relaxation_view.configure_requested.connect(self._on_muon_relaxation_configured)
         self._muon_relaxation_view.form_state_changed.connect(self._on_muon_relaxation_form_state_changed)
+        for strip in self._project_defaults_strips():
+            strip.xc_functional_change_requested.connect(
+                self._on_project_xc_functional_change_requested
+            )
+            strip.cutoff_energy_change_requested.connect(
+                self._on_project_cutoff_change_requested
+            )
+            strip.kpoint_grid_change_requested.connect(
+                self._on_project_kpoint_grid_change_requested
+            )
+        self._refresh_convergence_project_defaults()
         self._muon_relaxation_view.row_supercell_edit_requested.connect(
             self._on_muon_relaxation_supercell_edit_requested
         )
@@ -3007,23 +3032,7 @@ class MainWindow(QMainWindow):
         self._muon_relaxation_view.set_form_state(
             self._document.ui_state.get("muon_relaxation_form", {})
         )
-        self._convergence_view.set_project_defaults(
-            cutoff_energy=self._document.project.recommended_cutoff_energy,
-            cutoff_method=self._document.project.recommended_cutoff_method,
-            energy_threshold=self._document.project.recommended_cutoff_energy_threshold,
-            force_threshold=self._document.project.recommended_cutoff_force_threshold,
-            stress_threshold=self._document.project.recommended_cutoff_stress_threshold,
-        )
-        self._kpoint_convergence_view.set_project_defaults(
-            kpoint_grid=self._document.project.recommended_kpoint_grid,
-            kpoint_method=self._document.project.recommended_kpoint_method,
-            energy_threshold=self._document.project.recommended_kpoint_energy_threshold,
-            force_threshold=self._document.project.recommended_kpoint_force_threshold,
-            stress_threshold=self._document.project.recommended_kpoint_stress_threshold,
-        )
-        self._kpoint_convergence_view.set_cutoff_default(
-            self._document.project.recommended_cutoff_energy
-        )
+        self._refresh_convergence_project_defaults()
         self._refresh_pristine_relaxation_defaults()
         self._pristine_relaxation_controller.refresh_view()
         self._refresh_muon_relaxation_defaults()
@@ -3141,11 +3150,16 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return [
                 ("Project default", "Not set"),
+                ("Functional", "Not recorded"),
                 ("Method", "Not set"),
                 ("Criteria", "Not set"),
             ]
         return [
             ("Project default", format_cutoff_energy(self._document.project.recommended_cutoff_energy)),
+            (
+                "Functional",
+                self._document.project.recommended_cutoff_xc_functional or "Not recorded",
+            ),
             ("Method", format_convergence_method(self._document.project.recommended_cutoff_method)),
             (
                 "Criteria",
@@ -3162,12 +3176,17 @@ class MainWindow(QMainWindow):
             return [
                 ("Project default", "Not set"),
                 ("Cutoff default", "Not set"),
+                ("Functional", "Not recorded"),
                 ("Method", "Not set"),
                 ("Criteria", "Not set"),
             ]
         return [
             ("Project default", format_kpoint_grid(self._document.project.recommended_kpoint_grid)),
             ("Cutoff default", format_cutoff_energy(self._document.project.recommended_cutoff_energy)),
+            (
+                "Functional",
+                self._document.project.recommended_kpoint_xc_functional or "Not recorded",
+            ),
             ("Method", format_convergence_method(self._document.project.recommended_kpoint_method)),
             (
                 "Criteria",
@@ -5180,6 +5199,9 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return {}
         values: dict[str, object] = {}
+        xc_functional = self._document.project.recommended_xc_functional
+        if xc_functional is not None:
+            values["xc_functional"] = xc_functional
         cutoff = self._document.project.recommended_cutoff_energy
         if cutoff is not None:
             values["cut_off_energy"] = ValueWithUnit(value=float(cutoff), unit="eV")
@@ -5302,6 +5324,11 @@ class MainWindow(QMainWindow):
             cutoff = assignments.get("cut_off_energy")
             if cutoff is not None:
                 values["cut_off_energy"] = cutoff
+            # A follow-on calculation is only comparable with its source
+            # relaxation when both use the same functional.
+            xc_functional = assignments.get("xc_functional")
+            if xc_functional is not None:
+                values["xc_functional"] = xc_functional
         return values
 
     def _quantum_row_configuration_with_source_defaults(
@@ -5952,6 +5979,9 @@ class MainWindow(QMainWindow):
         definition_cell_id = None
         if definition is not None and definition.input_structure_ids:
             definition_cell_id = str(definition.input_structure_ids[0])
+        xc_functional = self._convergence_definition_xc_functional(definition)
+        if not self._confirm_adopted_xc_functional(xc_functional):
+            return
         self._project_service.set_recommended_cutoff(
             self._document,
             cutoff_energy,
@@ -5964,6 +5994,7 @@ class MainWindow(QMainWindow):
                 if definition_cell_id is not None
                 else (str(self._document.project.host_structure_id) if self._document.project.host_structure_id else None)
             ),
+            xc_functional=xc_functional,
         )
         self._document.ui_state["default_cut_off_energy"] = float(cutoff_energy)
         self._document.ui_state["default_cut_off_energy_method"] = method
@@ -5984,14 +6015,7 @@ class MainWindow(QMainWindow):
                 stress_threshold=float(stress_threshold) if stress_threshold is not None else None,
             ),
         )
-        self._convergence_view.set_project_defaults(
-            cutoff_energy=float(cutoff_energy),
-            cutoff_method=method,
-            energy_threshold=float(energy_threshold),
-            force_threshold=float(force_threshold),
-            stress_threshold=float(stress_threshold) if stress_threshold is not None else None,
-        )
-        self._kpoint_convergence_view.set_cutoff_default(float(cutoff_energy))
+        self._refresh_project_defaults_views()
         self._refresh_convergence_overview()
         self._refresh_journal_view()
         self._persist_document_ui_state(
@@ -7918,6 +7942,7 @@ class MainWindow(QMainWindow):
             project_cutoff_energy=self._document.project.recommended_cutoff_energy,
             project_kpoint_grid=self._document.project.recommended_kpoint_grid,
             project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+            project_xc_functional=self._document.project.recommended_xc_functional,
         )
 
     def _build_muon_relaxation_deps(self) -> MuonRelaxationDeps:
@@ -10829,6 +10854,9 @@ class MainWindow(QMainWindow):
         definition_cell_id = None
         if active_definition is not None and active_definition.input_structure_ids:
             definition_cell_id = str(active_definition.input_structure_ids[0])
+        xc_functional = self._convergence_definition_xc_functional(active_definition)
+        if not self._confirm_adopted_xc_functional(xc_functional):
+            return
 
         self._project_service.set_recommended_kpoint_grid(
             self._document,
@@ -10842,21 +10870,13 @@ class MainWindow(QMainWindow):
                 if definition_cell_id is not None
                 else (str(self._document.project.host_structure_id) if self._document.project.host_structure_id else None)
             ),
+            xc_functional=xc_functional,
         )
         if stress_threshold is None:
             self._document.ui_state.pop("default_kpoint_stress_threshold", None)
         else:
             self._document.ui_state["default_kpoint_stress_threshold"] = float(stress_threshold)
-        self._kpoint_convergence_view.set_project_defaults(
-            kpoint_grid=grid,
-            kpoint_method=method,
-            energy_threshold=energy_threshold,
-            force_threshold=force_threshold,
-            stress_threshold=float(stress_threshold) if stress_threshold is not None else None,
-        )
-        self._refresh_pristine_relaxation_defaults()
-        self._refresh_muon_relaxation_defaults()
-        self._refresh_uep_defaults()
+        self._refresh_project_defaults_views()
         self._store_convergence_overview_snapshot(
             "kpoint",
             self._build_kpoint_overview_snapshot(
@@ -10878,6 +10898,154 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Project default k-point grid set to {grid[0]}x{grid[1]}x{grid[2]}"
         )
+
+    def _project_defaults_strips(self) -> tuple[ProjectDefaultsStrip, ...]:
+        return (
+            self._convergence_view.project_defaults_strip,
+            self._kpoint_convergence_view.project_defaults_strip,
+            self._pristine_relaxation_view.project_defaults_strip,
+            self._uep_view.project_defaults_strip,
+            self._muon_relaxation_view.project_defaults_strip,
+        )
+
+    def _refresh_convergence_project_defaults(self) -> None:
+        """Push the project defaults to every strip and to the convergence sweeps."""
+
+        project = self._document.project if self._document is not None else None
+        summary = ProjectDefaultsSummary.from_project(project)
+        for strip in self._project_defaults_strips():
+            strip.set_defaults(summary)
+            strip.setEnabled(project is not None)
+        self._convergence_view.set_xc_functional_default(summary.xc_functional)
+        self._kpoint_convergence_view.set_xc_functional_default(summary.xc_functional)
+        self._kpoint_convergence_view.set_cutoff_default(summary.cutoff_energy)
+
+    def _refresh_project_defaults_views(self) -> None:
+        """Re-apply the project defaults to every workflow view."""
+
+        self._refresh_convergence_project_defaults()
+        self._refresh_pristine_relaxation_defaults()
+        self._refresh_muon_relaxation_defaults()
+        self._refresh_uep_defaults()
+
+    def _convergence_definition_xc_functional(self, definition) -> str | None:
+        """Return the one functional a convergence definition's sweep ran with."""
+
+        if definition is None:
+            return None
+        config = self._deserialize_convergence_config(
+            definition.parameters.get("configuration", {})
+        )
+        if config is None:
+            return None
+        return convergence_config_xc_functional(config)
+
+    def _confirm_adopted_xc_functional(self, xc_functional: str | None) -> bool:
+        """Confirm adopting a result converged with a non-default functional.
+
+        Adopting a convergence result also makes the functional it was
+        converged with the project default, so switching functional is
+        confirmed rather than done silently.
+        """
+
+        if self._document is None or xc_functional is None:
+            return True
+        current = self._document.project.recommended_xc_functional
+        if current is None or current == xc_functional:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Change project functional?",
+            f"These convergence calculations used the {xc_functional} functional, "
+            f"but the project default functional is {current}.\n\n"
+            f"Adopting this result will also change the project default "
+            f"functional to {xc_functional}. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _on_project_xc_functional_change_requested(self, xc_functional: object) -> None:
+        if self._document is None:
+            return
+        functional = str(xc_functional) if xc_functional else None
+        if functional == self._document.project.recommended_xc_functional:
+            return
+        self._project_service.set_recommended_xc_functional(self._document, functional)
+        self._finish_project_default_edit(
+            f"Project default XC functional set to {functional}"
+            if functional is not None
+            else "Project default XC functional cleared"
+        )
+
+    def _on_project_cutoff_change_requested(self, cutoff_energy: object) -> None:
+        """Apply a cutoff typed into the Project Defaults dialog (``None`` clears)."""
+
+        if self._document is None:
+            return
+        ui_state = self._document.ui_state
+        for key in (
+            "default_cut_off_energy",
+            "default_cut_off_energy_method",
+            "default_cut_off_energy_threshold",
+            "default_cut_off_force_threshold",
+            "default_cut_off_stress_threshold",
+        ):
+            ui_state.pop(key, None)
+        if cutoff_energy is None:
+            self._project_service.clear_recommended_cutoff(self._document)
+            self._finish_project_default_edit("Project default cutoff cleared")
+            return
+        value = float(cutoff_energy)  # type: ignore[arg-type]
+        host_id = self._document.project.host_structure_id
+        self._project_service.set_recommended_cutoff(
+            self._document,
+            value,
+            method=MANUAL_DEFAULT_METHOD,
+            cell_id=str(host_id) if host_id else None,
+        )
+        ui_state["default_cut_off_energy"] = value
+        ui_state["default_cut_off_energy_method"] = MANUAL_DEFAULT_METHOD
+        self._finish_project_default_edit(f"Project default cutoff set to {value:.8g} eV")
+
+    def _on_project_kpoint_grid_change_requested(self, kpoint_grid: object) -> None:
+        """Apply a grid typed into the Project Defaults dialog (``None`` clears).
+
+        A manual grid is taken to be for the host unit cell, which is recorded
+        as its reference lattice so supercell jobs rescale it as usual.
+        """
+
+        if self._document is None:
+            return
+        self._document.ui_state.pop("default_kpoint_stress_threshold", None)
+        if kpoint_grid is None:
+            self._project_service.clear_recommended_kpoint_grid(self._document)
+            self._finish_project_default_edit("Project default k-point grid cleared")
+            return
+        grid = tuple(int(component) for component in kpoint_grid)  # type: ignore[union-attr]
+        host = self._project_service.active_host_structure(self._document)
+        self._project_service.set_recommended_kpoint_grid(
+            self._document,
+            grid,
+            lattice_vectors=(
+                [list(row) for row in host.lattice_vectors] if host is not None else None
+            ),
+            method=MANUAL_DEFAULT_METHOD,
+            cell_id=str(host.id) if host is not None else None,
+        )
+        self._finish_project_default_edit(
+            f"Project default k-point grid set to {grid[0]}x{grid[1]}x{grid[2]}"
+        )
+
+    def _finish_project_default_edit(self, message: str) -> None:
+        self._refresh_project_defaults_views()
+        self._refresh_convergence_overview()
+        self._refresh_journal_view()
+        self._persist_document_ui_state(
+            failure_message="Could not persist the project defaults to disk"
+        )
+        self._populate_project_tree()
+        self.statusBar().showMessage(message)
 
     def _refresh_pristine_relaxation_defaults(self) -> None:
         if self._document is None:
@@ -10902,6 +11070,7 @@ class MainWindow(QMainWindow):
             cutoff_energy=self._document.project.recommended_cutoff_energy,
             kpoint_grid=self._document.project.recommended_kpoint_grid,
             kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+            xc_functional=self._document.project.recommended_xc_functional,
         )
         self._refresh_pristine_relaxation_supercell_options()
 
@@ -10958,6 +11127,7 @@ class MainWindow(QMainWindow):
             cutoff_energy=self._document.project.recommended_cutoff_energy,
             kpoint_grid=self._document.project.recommended_kpoint_grid,
             kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+            xc_functional=self._document.project.recommended_xc_functional,
         )
         self._refresh_muon_relaxation_supercell_options()
 
@@ -10997,6 +11167,7 @@ class MainWindow(QMainWindow):
             cutoff_energy=self._document.project.recommended_cutoff_energy,
             kpoint_grid=self._document.project.recommended_kpoint_grid,
             kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+            xc_functional=self._document.project.recommended_xc_functional,
         )
         self._uep_view.set_host_lattice(
             None if source_structure is None else [list(row) for row in source_structure.lattice_vectors]
@@ -13206,6 +13377,7 @@ class MainWindow(QMainWindow):
                 project_cutoff_energy=self._document.project.recommended_cutoff_energy,
                 project_kpoint_grid=self._document.project.recommended_kpoint_grid,
                 project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+                project_xc_functional=self._document.project.recommended_xc_functional,
             )
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "Pristine relaxation setup invalid", str(exc))
@@ -13247,6 +13419,7 @@ class MainWindow(QMainWindow):
                 project_cutoff_energy=self._document.project.recommended_cutoff_energy,
                 project_kpoint_grid=self._document.project.recommended_kpoint_grid,
                 project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+                project_xc_functional=self._document.project.recommended_xc_functional,
             )
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "Muon relaxation setup invalid", str(exc))
@@ -14747,6 +14920,7 @@ class MainWindow(QMainWindow):
                 project_cutoff_energy=self._document.project.recommended_cutoff_energy,
                 project_kpoint_grid=self._document.project.recommended_kpoint_grid,
                 project_kpoint_reference_lattice=self._document.project.recommended_kpoint_lattice,
+                project_xc_functional=self._document.project.recommended_xc_functional,
             )
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "UEP setup invalid", str(exc))

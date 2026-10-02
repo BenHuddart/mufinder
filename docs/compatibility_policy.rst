@@ -57,6 +57,20 @@ Compatibility ledger
        and UEP setup flows.
      - Current project data, not deprecated. Do not remove without a schema
        migration and replacement project-default model.
+   * - ``recommended_xc_functional`` /
+       ``recommended_cutoff_xc_functional`` /
+       ``recommended_kpoint_xc_functional`` project fields
+     - ``Project`` / project manifest
+     - The project default XC functional, and the functional each convergence
+       default was converged with. All three are additive and default to
+       ``None``, so a project saved before they existed loads with no project
+       functional and no recorded converged-with functional: workflows keep
+       their schema-default functional and nothing is flagged as stale, which
+       matches the pre-existing behaviour. ``recommended_cutoff_method`` /
+       ``recommended_kpoint_method`` may now also hold ``manual`` for a
+       hand-entered default; older builds display that string verbatim.
+     - Current project data, not deprecated. Do not remove without a schema
+       migration and replacement project-default model.
    * - ``execution_target`` / ``num_processes`` /
        ``remote_job_id`` / ``remote_directory`` job fields
      - ``Job`` (``mufinder.domain.models``) / job entity files

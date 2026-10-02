@@ -42,10 +42,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.convergence_display import format_cutoff_energy, format_kpoint_grid
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_adapter import suggested_grid_for_row
-from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
+from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
+from mufinder.app.workflow_parameters import (
+    kpoint_exclusive_hint,
+    reorder_workflow_parameter_specs,
+    seed_xc_functional_default,
+)
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.workflow_table_utils import (
@@ -177,8 +181,7 @@ class PristineRelaxationWidget(QWidget):
         self._parameter_species_options: tuple[str, ...] = ()
 
         self._name_prefix = QLineEdit("pristine_relax")
-        self._project_default_cutoff = QLabel("Not set")
-        self._project_default_kpoint = QLabel("Not set")
+        self.project_defaults_strip = ProjectDefaultsStrip()
         self._kpoint_message = QLabel("")
         self._kpoint_message.setWordWrap(True)
         style_hint_text(self._kpoint_message)
@@ -236,6 +239,7 @@ class PristineRelaxationWidget(QWidget):
         self._specs = self._build_parameter_specs()
         self._specs_by_name = {spec.name: spec for spec in self._specs}
         self._default_params = self._default_shared_params()
+        self._schema_xc_functional = self._default_params.get("xc_functional")
 
         self._build_layout()
         self._connect_signals()
@@ -260,22 +264,8 @@ class PristineRelaxationWidget(QWidget):
         title_column.addWidget(title)
         title_column.addWidget(subtitle)
 
-        defaults_group = QGroupBox("Project Defaults")
-        defaults_layout = QVBoxLayout(defaults_group)
-        defaults_layout.setContentsMargins(10, 8, 10, 8)
-        cutoff_row = QHBoxLayout()
-        cutoff_row.addWidget(QLabel("Cutoff"))
-        cutoff_row.addWidget(self._project_default_cutoff)
-        cutoff_row.addStretch(1)
-        defaults_layout.addLayout(cutoff_row)
-        kpoint_row = QHBoxLayout()
-        kpoint_row.addWidget(QLabel("K-point grid"))
-        kpoint_row.addWidget(self._project_default_kpoint)
-        kpoint_row.addStretch(1)
-        defaults_layout.addLayout(kpoint_row)
-
         header_row.addLayout(title_column, 1)
-        header_row.addWidget(defaults_group)
+        header_row.addWidget(self.project_defaults_strip, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header_row)
 
         layout.addWidget(self._kpoint_message)
@@ -461,9 +451,14 @@ class PristineRelaxationWidget(QWidget):
         cutoff_energy: float | None,
         kpoint_grid: tuple[int, int, int] | None,
         kpoint_reference_lattice: list[list[float]] | None,
+        xc_functional: str | None = None,
     ) -> None:
-        self._project_default_cutoff.setText(format_cutoff_energy(cutoff_energy))
-        self._project_default_kpoint.setText(format_kpoint_grid(kpoint_grid))
+        """Seed row defaults from the project defaults (shown by the strip)."""
+        seed_xc_functional_default(
+            self._default_params,
+            xc_functional,
+            schema_default=self._schema_xc_functional,
+        )
         self._reference_grid = kpoint_grid
         self._reference_lattice = (
             [list(row) for row in kpoint_reference_lattice]

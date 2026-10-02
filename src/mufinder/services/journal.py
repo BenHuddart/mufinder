@@ -9,7 +9,7 @@ from typing import Iterable
 from uuid import UUID
 
 from mufinder.domain.enums import WorkflowStage
-from mufinder.domain.models import ProvenanceRecord
+from mufinder.domain.models import MANUAL_DEFAULT_METHOD, ProvenanceRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +152,9 @@ def _entry_from_record(record: ProvenanceRecord) -> JournalEntry | None:
         "configure_uep": _configure_uep_entry,
         "set_recommended_cutoff": _recommended_cutoff_entry,
         "set_recommended_kpoint_grid": _recommended_kpoint_entry,
+        "set_recommended_xc_functional": _recommended_xc_functional_entry,
+        "clear_recommended_cutoff": _cleared_cutoff_entry,
+        "clear_recommended_kpoint_grid": _cleared_kpoint_entry,
         "generate_candidates": _generate_candidates_entry,
         "generation_partial": _generation_partial_entry,
         "promote_uep_candidate": _promote_uep_candidate_entry,
@@ -331,12 +334,22 @@ def _configure_uep_entry(record: ProvenanceRecord) -> JournalEntry:
 def _recommended_cutoff_entry(record: ProvenanceRecord) -> JournalEntry:
     value = record.parameters.get("recommended_cutoff_energy")
     method = _text_param(record, "recommended_cutoff_method")
+    if method == MANUAL_DEFAULT_METHOD:
+        return _entry(
+            record,
+            stamp_kind="milestone",
+            title="Default cutoff set manually",
+            body=f"Set the project default cutoff to {float(value):.8g} eV by hand.",
+        )
     method_text = f" using {method}" if method else ""
     return _entry(
         record,
         stamp_kind="success",
         title="Recommended cutoff adopted",
-        body=f"Set the project default cutoff to {float(value):.8g} eV{method_text}.",
+        body=(
+            f"Set the project default cutoff to {float(value):.8g} eV{method_text}"
+            f"{_converged_with_text(record, 'recommended_cutoff_xc_functional')}."
+        ),
     )
 
 
@@ -344,12 +357,62 @@ def _recommended_kpoint_entry(record: ProvenanceRecord) -> JournalEntry:
     grid = record.parameters.get("recommended_kpoint_grid")
     grid_text = "x".join(str(int(component)) for component in grid) if isinstance(grid, list) and len(grid) == 3 else "unknown"
     method = _text_param(record, "recommended_kpoint_method")
+    if method == MANUAL_DEFAULT_METHOD:
+        return _entry(
+            record,
+            stamp_kind="milestone",
+            title="Default k-point grid set manually",
+            body=f"Set the project default k-point grid to {grid_text} by hand.",
+        )
     method_text = f" using {method}" if method else ""
     return _entry(
         record,
         stamp_kind="success",
         title="Recommended k-point grid adopted",
-        body=f"Set the project default k-point grid to {grid_text}{method_text}.",
+        body=(
+            f"Set the project default k-point grid to {grid_text}{method_text}"
+            f"{_converged_with_text(record, 'recommended_kpoint_xc_functional')}."
+        ),
+    )
+
+
+def _cleared_cutoff_entry(record: ProvenanceRecord) -> JournalEntry:
+    return _entry(
+        record,
+        stamp_kind="milestone",
+        title="Default cutoff cleared",
+        body="Cleared the project default cutoff energy.",
+    )
+
+
+def _cleared_kpoint_entry(record: ProvenanceRecord) -> JournalEntry:
+    return _entry(
+        record,
+        stamp_kind="milestone",
+        title="Default k-point grid cleared",
+        body="Cleared the project default k-point grid.",
+    )
+
+
+def _converged_with_text(record: ProvenanceRecord, key: str) -> str:
+    functional = _text_param(record, key)
+    return f" (converged with the {functional} functional)" if functional else ""
+
+
+def _recommended_xc_functional_entry(record: ProvenanceRecord) -> JournalEntry:
+    functional = _text_param(record, "recommended_xc_functional")
+    if functional is None:
+        return _entry(
+            record,
+            stamp_kind="milestone",
+            title="Default XC functional cleared",
+            body="Cleared the project default exchange-correlation functional.",
+        )
+    return _entry(
+        record,
+        stamp_kind="milestone",
+        title="Default XC functional set",
+        body=f"Set the project default exchange-correlation functional to {functional}.",
     )
 
 

@@ -146,3 +146,28 @@ def test_expand_uep_jobs_does_not_prepend_source_when_row_label_lacks_it() -> No
     )
 
     assert expansion.jobs[0].name == "uep_spin_norelax"
+
+
+def test_expand_uep_jobs_applies_project_xc_functional_unless_row_sets_one() -> None:
+    config = UepConfig(
+        name_prefix="uep",
+        rows=(
+            UepSourceRow(label="row_default", parameter_values={}),
+            UepSourceRow(label="row_explicit", parameter_values={"xc_functional": "LDA"}),
+        ),
+    )
+
+    expansion = expand_uep_jobs(
+        host_structure=_host_structure(),
+        config=config,
+        project_cutoff_energy=650.0,
+        project_kpoint_grid=(4, 4, 4),
+        project_kpoint_reference_lattice=None,
+        project_xc_functional="PBE",
+    )
+
+    functionals = [
+        {keyword.name: keyword.value for keyword in job.param_file.keywords}["xc_functional"]
+        for job in expansion.jobs
+    ]
+    assert functionals == ["PBE", "LDA"]

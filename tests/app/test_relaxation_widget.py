@@ -1142,3 +1142,33 @@ def test_relaxation_widget_continue_dialog_seed_mirrors_row_parameter_dialog(qap
     assert seed["species_options"] == widget._parameter_species_options
 
     assert widget.continue_relaxation_dialog_seed("does-not-exist") is None
+
+
+def test_relaxation_widget_uses_project_xc_functional_for_unconfigured_rows(qapp) -> None:
+    widget = PristineRelaxationWidget()
+    schema_default = widget._default_params["xc_functional"]
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    assert row_id is not None
+
+    widget.set_project_defaults(
+        cutoff_energy=None,
+        kpoint_grid=None,
+        kpoint_reference_lattice=None,
+        xc_functional="PBE",
+    )
+    assert widget._effective_params_for_row(row_id)["xc_functional"] == "PBE"
+
+    # A row configured with its own functional keeps it when the default changes.
+    widget._row_parameter_values[row_id] = {"xc_functional": "PBESOL"}
+    widget.set_project_defaults(
+        cutoff_energy=None,
+        kpoint_grid=None,
+        kpoint_reference_lattice=None,
+        xc_functional="LDA",
+    )
+    assert widget._effective_params_for_row(row_id)["xc_functional"] == "PBESOL"
+
+    widget._row_parameter_values.pop(row_id)
+    widget.set_project_defaults(cutoff_energy=None, kpoint_grid=None, kpoint_reference_lattice=None)
+    assert widget._effective_params_for_row(row_id)["xc_functional"] == schema_default

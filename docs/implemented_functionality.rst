@@ -609,6 +609,66 @@ The application now includes a metadata-driven CASTEP parameter entry framework 
 - Parameter-level help dialogs sourced from keyword metadata.
 - Structured form output mapped to ``InputTemplate``/``JobPatch`` compatible data rather than raw text.
 
+Project defaults
+----------------
+
+A project carries three calculation defaults that later workflows inherit: the
+XC functional, the plane-wave cutoff energy, and the Monkhorst-Pack k-point
+grid.
+
+- Every workflow tab that consumes them (cutoff convergence, k-point
+  convergence, pristine relaxation, UEP, muon relaxation) shows the same
+  single-line ``Project defaults`` strip in its header: ``XC``, ``Cutoff`` and
+  ``K-points``, each ``Not set`` until chosen.
+- The strip's ``Edit…`` button opens a ``Project Defaults`` dialog showing, for
+  the cutoff and the k-point grid, the convergence method, the criteria, and
+  the functional the value was converged with. The same information is
+  available as a tooltip on each value.
+- All three defaults can be edited in that dialog. The cutoff is entered in eV
+  and the grid as three positive integers (``4 4 4`` or ``4x4x4``); leaving
+  either blank clears that default. Invalid input is reported inline and the
+  dialog stays open.
+- A cutoff or grid typed in by hand is recorded with the method ``Set
+  manually``: it carries no criteria and no converged-with functional, so it is
+  never flagged as stale, and it does not change the project functional. A
+  manual grid is taken to be for the host unit cell and is rescaled for
+  supercell jobs like an adopted one. Because the pinned plot on the
+  convergence overview belongs to the adopted value, it is replaced by the
+  placeholder once the default is edited or cleared.
+- The project default XC functional is set in two ways:
+
+  - adopting a cutoff or k-point recommendation from a convergence examiner
+    records the functional those calculations used and makes it the project
+    default;
+  - it can be chosen directly in the ``Project Defaults`` dialog (for example
+    before any convergence test has been run), or cleared with ``Not set``.
+
+- A convergence sweep only has a recorded functional when every point in it
+  used the same one. Adopting a sweep whose points used different functionals
+  still sets the cutoff or grid, but records no functional and leaves the
+  project default functional unchanged.
+- Adopting a result converged with a functional other than the current project
+  default asks for confirmation first, because it also switches the project
+  default functional.
+- Converged values are never discarded when the functional changes. A cutoff
+  or k-point default converged with a different functional from the project
+  default is shown in warning colour with that functional in brackets (for
+  example ``700 eV (PBE)``), and the dialog recommends re-running the
+  convergence test.
+- The project functional becomes the default ``XC_FUNCTIONAL`` for new rows in
+  every workflow parameter dialog, including new convergence sweeps, and is
+  applied to generated jobs alongside the default cutoff and k-point grid. A
+  row configured with its own functional keeps it.
+- Quantum Corrections and NEB rows take their default functional from the
+  source relaxation's own ``.param`` file, alongside its cutoff and k-point
+  grid, so a follow-on calculation matches the structure it starts from even
+  if the project default has since changed.
+- Projects saved before this feature have no project functional; workflows
+  keep their previous schema-default functional until one is chosen.
+- Setting, changing, or clearing any of the three defaults is recorded in
+  provenance and appears in the Journal, which distinguishes adopted values
+  from manually entered ones.
+
 Convergence overview workflow page
 ----------------------------------
 
@@ -618,7 +678,7 @@ The parent ``Convergence Testing`` workflow now opens a dedicated overview page 
 - Two horizontally arranged notebook-style cards, one for cutoff convergence and one for k-point convergence.
 - Dotted pinned-plot regions that visually distinguish adopted analysis snapshots from live editing views.
 - Per-card action buttons that jump directly into the corresponding child workflow page.
-- Summary rows that mirror the project-default formatting used inside the child workflow panels.
+- Summary rows for the stored project default, the functional it was converged with, the method, and the criteria.
 - Read-only pinned plots that update only when a user adopts a project default from the corresponding analysis dialog.
 - Safe placeholder fallback when no adopted snapshot exists yet, or when a persisted snapshot no longer matches the current host/default context.
 - Persisted overview snapshot state in ``ui_state["convergence_overview_snapshots"]`` separate from the existing examiner-dialog restore state.
@@ -651,8 +711,8 @@ The convergence stage now includes a cutoff convergence panel with:
   k-point convergence parameter dialogs (basic visibility), defaulting to ``false``.
 - Method help text available directly in the examiner dialog via an info action.
 - Persisted examiner state (selected method, thresholds, text output, and plot inputs) so results and plots can be reopened without recomputation.
-- Project-default cutoff display inside the convergence panel, including both the stored default cutoff value and the method used to determine that default.
-- Adopting an examiner recommendation persists both project default cutoff energy and convergence-method metadata used to determine that cutoff.
+- The shared ``Project defaults`` strip in the panel header (see `Project defaults`_); the method and criteria used to determine the default cutoff are in its tooltip and details dialog.
+- Adopting an examiner recommendation persists the project default cutoff energy, the convergence-method metadata used to determine it, and the XC functional the sweep was run with.
 - Adopting an examiner recommendation also freezes a parent-overview pinned snapshot keyed to the active host structure, selected simulation cell, adopted default value, and plot payload.
 
 K-point convergence GUI
@@ -674,7 +734,7 @@ The convergence stage now also includes a dedicated k-point convergence panel wi
   axis transitions independently at its own spacing thresholds).
 - Cell-sensitive generation tracking: the panel records the simulation cell used for grid generation and warns if the simulation cell changes afterwards.
 - Shared CASTEP parameter form with per-grid override support, equivalent to cutoff convergence behavior.
-- Automatic propagation of project default cutoff energy into k-point convergence defaults when available.
+- Automatic propagation of the project default cutoff energy and XC functional into k-point convergence defaults when available.
 - K-point convergence examiner plotting total energy and max force vs number of k-points,
   with optional max-stress secondary axis on the force subplot when ``CALCULATE_STRESS`` was
   enabled across every grid in the sweep.
@@ -685,7 +745,7 @@ The convergence stage now also includes a dedicated k-point convergence panel wi
   ``N_i >= 2``. Feeding this value to CASTEP as ``KPOINT_MP_SPACING``
   reproduces the displayed grid exactly. The (1, 1, 1) Gamma-only grid has
   no single representative spacing and is shown without an annotation.
-- Persisted project defaults for adopted k-point recommendations, including method, thresholds, and the cell identifier used for the recommendation.
+- Persisted project defaults for adopted k-point recommendations, including method, thresholds, the cell identifier used for the recommendation, and the XC functional the sweep was run with.
 - Adopting a k-point recommendation also freezes a parent-overview pinned snapshot, including persisted grid-label metadata for compact redraw on the parent convergence page.
 
 Pristine-relaxation workflow GUI
@@ -697,7 +757,7 @@ The optional ``Pristine Relaxation`` stage now includes:
 - Per-row supercell selection via the supercell preview dialog (unit cell or custom 3x3 matrix).
 - Per-row ``FIX_ALL_CELL`` control with deterministic CASTEP ``FIX_ALL_CELL`` serialization.
 - Per-row parameter configuration through the shared workflow-aware CASTEP parameter dialog.
-- Project-default propagation of cutoff energy and k-point grid into generated pristine-relaxation jobs.
+- Project-default propagation of XC functional, cutoff energy and k-point grid into generated pristine-relaxation jobs.
 - Supercell-aware k-point remapping that preserves equivalent reciprocal-space sampling density relative to the recommended reference lattice by scaling each k-point component with the corresponding reciprocal-axis change and always rounding up to avoid undersampling. For example, a ``4x4x4`` default maps to ``2x2x2`` for diagonal ``2x2x2`` and ``2x2x3`` supercells.
 - Runtime status columns for each row including ``a``, ``b``, ``c`` lattice parameters extracted from relaxed outputs.
 

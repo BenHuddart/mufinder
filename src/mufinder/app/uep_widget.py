@@ -25,13 +25,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.convergence_display import format_cutoff_energy
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_adapter import suggested_grid_for_row
 from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.uep_types import SupercellMatrix, UepConfig, UepRunState, UepSourceRow
-from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
+from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
+from mufinder.app.workflow_parameters import (
+    kpoint_exclusive_hint,
+    reorder_workflow_parameter_specs,
+    seed_xc_functional_default,
+)
 from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
@@ -150,8 +154,7 @@ class UEPWidget(QWidget):
         self._parameter_species_options: tuple[str, ...] = ()
 
         self._name_prefix = QLineEdit("uep")
-        self._project_default_cutoff = QLabel("Not set")
-        self._project_default_kpoint = QLabel("Not set")
+        self.project_defaults_strip = ProjectDefaultsStrip()
         self._source_structure_summary = QLabel("Using the host structure.")
         self._source_structure_summary.setWordWrap(True)
         style_hint_text(self._source_structure_summary)
@@ -233,22 +236,8 @@ class UEPWidget(QWidget):
         title_column.addWidget(title)
         title_column.addWidget(subtitle)
 
-        defaults_group = QGroupBox("Project Defaults")
-        defaults_layout = QVBoxLayout(defaults_group)
-        defaults_layout.setContentsMargins(10, 8, 10, 8)
-        cutoff_row = QHBoxLayout()
-        cutoff_row.addWidget(QLabel("Cutoff"))
-        cutoff_row.addWidget(self._project_default_cutoff)
-        cutoff_row.addStretch(1)
-        defaults_layout.addLayout(cutoff_row)
-        kpoint_row = QHBoxLayout()
-        kpoint_row.addWidget(QLabel("K-point grid"))
-        kpoint_row.addWidget(self._project_default_kpoint)
-        kpoint_row.addStretch(1)
-        defaults_layout.addLayout(kpoint_row)
-
         header_row.addLayout(title_column, 1)
-        header_row.addWidget(defaults_group)
+        header_row.addWidget(self.project_defaults_strip, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header_row)
 
         source_group = QGroupBox("Source Structure")
@@ -331,14 +320,15 @@ class UEPWidget(QWidget):
         cutoff_energy: float | None,
         kpoint_grid: tuple[int, int, int] | None,
         kpoint_reference_lattice: list[list[float]] | None = None,
+        xc_functional: str | None = None,
     ) -> None:
+        """Seed row defaults from the project defaults (shown by the strip)."""
         with self._suspend_state_emission():
+            seed_xc_functional_default(
+                self._default_params, xc_functional, schema_default=None
+            )
             self._reference_grid = kpoint_grid
             self._reference_lattice = [list(row) for row in kpoint_reference_lattice] if kpoint_reference_lattice else None
-            self._project_default_cutoff.setText(format_cutoff_energy(cutoff_energy))
-            self._project_default_kpoint.setText(
-                " x ".join(str(int(value)) for value in kpoint_grid) if kpoint_grid is not None else "Not set"
-            )
             if cutoff_energy is not None:
                 self._default_params["cut_off_energy"] = ValueWithUnit(float(cutoff_energy), "eV")
             else:

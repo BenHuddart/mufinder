@@ -54,6 +54,14 @@ _GENERATED_SITE_STATUS = "generated"
 _LEGACY_GENERATED_SITE_STATUSES = {_GENERATED_SITE_STATUS, "candidate"}
 _STAGEABLE_SITE_STATUSES = {*_LEGACY_GENERATED_SITE_STATUSES, "staged"}
 
+
+def _normalized_xc_functional(value: object) -> str | None:
+    """Return an uppercase XC functional name, or ``None`` when unset/blank."""
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip().upper()
+
 #: Terminal job statuses a job can be recovered from without losing its record:
 #: :meth:`ProjectService.reset_failed_job` accepts exactly these, and
 #: :meth:`ProjectService.dismiss_job` hides exactly these from the dashboard.
@@ -2002,8 +2010,14 @@ class ProjectService:
         force_threshold: float | None = None,
         stress_threshold: float | None = None,
         cell_id: str | None = None,
+        xc_functional: str | None = None,
     ) -> None:
-        """Persist a project-wide recommended cutoff energy for future workflows."""
+        """Persist a project-wide recommended cutoff energy for future workflows.
+
+        ``xc_functional`` is the functional the converged runs used. It is
+        recorded against the cutoff and, when given, also becomes the project
+        default functional — a converged cutoff is only meaningful alongside it.
+        """
         document.project.recommended_cutoff_energy = float(cutoff_energy)
         document.project.recommended_cutoff_method = (
             str(method).strip() if method is not None and str(method).strip() else None
@@ -2020,6 +2034,11 @@ class ProjectService:
         document.project.recommended_cutoff_cell_id = (
             str(cell_id).strip() if cell_id is not None and str(cell_id).strip() else None
         )
+        document.project.recommended_cutoff_xc_functional = _normalized_xc_functional(xc_functional)
+        if document.project.recommended_cutoff_xc_functional is not None:
+            document.project.recommended_xc_functional = (
+                document.project.recommended_cutoff_xc_functional
+            )
 
         method_fragment = (
             f" using method '{document.project.recommended_cutoff_method}'"
@@ -2043,7 +2062,53 @@ class ProjectService:
                     "recommended_cutoff_force_threshold": document.project.recommended_cutoff_force_threshold,
                     "recommended_cutoff_stress_threshold": document.project.recommended_cutoff_stress_threshold,
                     "recommended_cutoff_cell_id": document.project.recommended_cutoff_cell_id,
+                    "recommended_cutoff_xc_functional": (
+                        document.project.recommended_cutoff_xc_functional
+                    ),
                 },
+            ),
+        )
+
+    def clear_recommended_cutoff(self, document: ProjectDocument) -> None:
+        """Remove the project default cutoff energy and how it was established."""
+
+        project = document.project
+        project.recommended_cutoff_energy = None
+        project.recommended_cutoff_method = None
+        project.recommended_cutoff_energy_threshold = None
+        project.recommended_cutoff_force_threshold = None
+        project.recommended_cutoff_stress_threshold = None
+        project.recommended_cutoff_cell_id = None
+        project.recommended_cutoff_xc_functional = None
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="clear_recommended_cutoff",
+                workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+                actor="user",
+                description="Cleared project recommended cutoff",
+            ),
+        )
+
+    def clear_recommended_kpoint_grid(self, document: ProjectDocument) -> None:
+        """Remove the project default k-point grid and how it was established."""
+
+        project = document.project
+        project.recommended_kpoint_grid = None
+        project.recommended_kpoint_lattice = None
+        project.recommended_kpoint_method = None
+        project.recommended_kpoint_energy_threshold = None
+        project.recommended_kpoint_force_threshold = None
+        project.recommended_kpoint_stress_threshold = None
+        project.recommended_kpoint_cell_id = None
+        project.recommended_kpoint_xc_functional = None
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="clear_recommended_kpoint_grid",
+                workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+                actor="user",
+                description="Cleared project recommended k-point grid",
             ),
         )
 
@@ -2058,8 +2123,13 @@ class ProjectService:
         force_threshold: float | None = None,
         stress_threshold: float | None = None,
         cell_id: str | None = None,
+        xc_functional: str | None = None,
     ) -> None:
-        """Persist a project-wide recommended k-point grid for future workflows."""
+        """Persist a project-wide recommended k-point grid for future workflows.
+
+        ``xc_functional`` is the functional the converged runs used; see
+        :meth:`set_recommended_cutoff`.
+        """
 
         grid = (int(kpoint_grid[0]), int(kpoint_grid[1]), int(kpoint_grid[2]))
         document.project.recommended_kpoint_grid = grid
@@ -2086,6 +2156,11 @@ class ProjectService:
         document.project.recommended_kpoint_cell_id = (
             str(cell_id).strip() if cell_id is not None and str(cell_id).strip() else None
         )
+        document.project.recommended_kpoint_xc_functional = _normalized_xc_functional(xc_functional)
+        if document.project.recommended_kpoint_xc_functional is not None:
+            document.project.recommended_xc_functional = (
+                document.project.recommended_kpoint_xc_functional
+            )
 
         self.append_provenance(
             document,
@@ -2105,7 +2180,38 @@ class ProjectService:
                     "recommended_kpoint_force_threshold": document.project.recommended_kpoint_force_threshold,
                     "recommended_kpoint_stress_threshold": document.project.recommended_kpoint_stress_threshold,
                     "recommended_kpoint_cell_id": document.project.recommended_kpoint_cell_id,
+                    "recommended_kpoint_xc_functional": (
+                        document.project.recommended_kpoint_xc_functional
+                    ),
                 },
+            ),
+        )
+
+    def set_recommended_xc_functional(
+        self,
+        document: ProjectDocument,
+        xc_functional: str | None,
+    ) -> None:
+        """Persist (or clear, with ``None``) the project default XC functional.
+
+        The functionals the cutoff and k-point defaults were converged with are
+        left untouched, so a mismatch stays visible rather than being silently
+        discarded.
+        """
+
+        functional = _normalized_xc_functional(xc_functional)
+        document.project.recommended_xc_functional = functional
+        self.append_provenance(
+            document,
+            ProvenanceRecord(
+                action="set_recommended_xc_functional",
+                actor="user",
+                description=(
+                    f"Set project default XC functional to {functional}"
+                    if functional is not None
+                    else "Cleared project default XC functional"
+                ),
+                parameters={"recommended_xc_functional": functional},
             ),
         )
 
@@ -3149,6 +3255,15 @@ class ProjectService:
             recommended_kpoint_cell_id = raw_recommended_kpoint_cell_id.strip()
 
         return Project(
+            recommended_cutoff_xc_functional=_normalized_xc_functional(
+                payload.get("recommended_cutoff_xc_functional")
+            ),
+            recommended_kpoint_xc_functional=_normalized_xc_functional(
+                payload.get("recommended_kpoint_xc_functional")
+            ),
+            recommended_xc_functional=_normalized_xc_functional(
+                payload.get("recommended_xc_functional")
+            ),
             id=UUID(payload["id"]),
             name=payload["name"],
             schema_version=payload["schema_version"],

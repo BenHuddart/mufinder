@@ -1045,33 +1045,30 @@ def test_convergence_widget_examine_button_emits_signal(qapp) -> None:
     assert emitted == [True]
 
 
-def test_convergence_widget_displays_project_defaults(qapp) -> None:
+def test_convergence_widget_seeds_rows_with_project_xc_functional(qapp) -> None:
     widget = ConvergenceWidget()
+    schema_default = widget._default_params["xc_functional"]
+    widget._add_cutoff(400.0)
 
-    widget.set_project_defaults(
-        cutoff_energy=550.0,
-        cutoff_method="asymptotic",
-        energy_threshold=0.001,
-        force_threshold=0.05,
-    )
+    widget.set_xc_functional_default("PBE")
 
-    assert widget._project_default_cutoff.text() == "550 eV"
-    assert widget._project_default_method.text() == "Asymptotic Extrapolation"
-    assert widget._project_default_criteria.text() == "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang"
+    assert widget._effective_params_for_cutoff(400.0)["xc_functional"] == "PBE"
+    config = widget.build_config()
+    assert config is not None
+    assert config.shared_params["xc_functional"] == "PBE"
+
+    # Clearing the project default restores the schema default.
+    widget.set_xc_functional_default(None)
+    assert widget._effective_params_for_cutoff(400.0)["xc_functional"] == schema_default
 
 
-def test_convergence_widget_project_defaults_include_stress_threshold(qapp) -> None:
+def test_convergence_widget_project_xc_functional_keeps_configured_rows(qapp) -> None:
     widget = ConvergenceWidget()
+    widget._add_cutoff(400.0)
+    configured = dict(widget._default_params)
+    configured["xc_functional"] = "PBESOL"
+    widget._set_cutoff_parameter_values(400.0, configured, set())
 
-    widget.set_project_defaults(
-        cutoff_energy=550.0,
-        cutoff_method="asymptotic",
-        energy_threshold=0.001,
-        force_threshold=0.05,
-        stress_threshold=0.1,
-    )
+    widget.set_xc_functional_default("PBE")
 
-    assert (
-        widget._project_default_criteria.text()
-        == "dE <= 0.001 eV/atom, dF <= 0.05 eV/Ang, dS <= 0.1 GPa"
-    )
+    assert widget._effective_params_for_cutoff(400.0)["xc_functional"] == "PBESOL"

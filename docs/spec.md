@@ -27,6 +27,7 @@
 | 1.14.0 | 2026-05-09 | Refined Energy Barriers UX to require explicit initial/final site selection before path generation and added a plotted NEB reaction-coordinate profile in the inline inspector. |
 | 1.15.0 | 2026-05-09 | Split the Energy Barriers workflow across dedicated tabs for path generation, transition-state jobs, and NEB analysis to improve usability on smaller displays. |
 | 1.16.0 | 2026-05-16 | Refined Quantum Corrections into an explicit two-stage singlepoint-to-phonon workflow with per-row stage/task-farming metadata and continuation-aware cluster submission. |
+| 1.17.0 | 2026-10-02 | Added a project default XC functional (adopted with convergence results or set directly), manual editing of the default cutoff and k-point grid, per-default converged-with functional tracking with stale-value warnings, and a single shared project-defaults strip replacing the per-workflow default panels. |
 
 ## 1. Executive Summary
 
@@ -291,6 +292,18 @@ Startup responsiveness requirements:
 - configured cutoff rows must be represented as ``ready`` before submission-time materialization
 - cutoff-energy values must become read-only once a row is ``ready`` or in any later runtime state
 - per-row total energy and max-force displays must preserve sufficient precision for small-difference comparisons
+
+#### Project defaults
+
+- the project stores three calculation defaults: XC functional, cutoff energy, and k-point grid
+- each workflow tab that consumes them must show the same compact project-defaults strip; method, criteria, and converged-with functional belong in its tooltips and details dialog, not in the tab header
+- adopting a cutoff or k-point default must record the XC functional the sweep was run with and make it the project default functional; a sweep whose points used different functionals records none and must not change the project default
+- adopting a result converged with a functional different from the current project default must be confirmed by the user
+- all three project defaults must also be directly editable, and clearable, without running a convergence test
+- a manually entered cutoff or k-point grid must be recorded as such (no convergence method, criteria, or converged-with functional) and must not change the project default functional
+- changing the functional must never discard a converged cutoff or k-point default; a default converged with a different functional must be visibly flagged instead
+- the project default functional must seed the default `XC_FUNCTIONAL` of new rows in every workflow, and must not override a functional set explicitly on a row
+- projects without a stored project functional must behave exactly as before
 
 ### 12.2 Pristine Relaxation
 

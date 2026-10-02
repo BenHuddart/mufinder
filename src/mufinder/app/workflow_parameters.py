@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
+from typing import Any
 
 from mufinder.castep_io.gui_metadata import get_gui_keyword_specs_for_files
 from mufinder.castep_io.schema import KeywordSpec, get_keyword_spec
@@ -38,6 +39,28 @@ COMMON_WORKFLOW_PARAMETER_NAMES = (
     "kpoint_mp_grid",
     "kpoint_mp_spacing",
 )
+
+
+def seed_xc_functional_default(
+    default_params: dict[str, Any],
+    xc_functional: str | None,
+    *,
+    schema_default: object | None,
+) -> None:
+    """Make the project default XC functional a workflow widget's row default.
+
+    ``default_params`` is the widget's shared row-default mapping, updated in
+    place. With no project functional the row default falls back to
+    ``schema_default`` (the value the widget started with), so clearing the
+    project default restores the pre-project behaviour.
+    """
+
+    if xc_functional:
+        default_params["xc_functional"] = xc_functional
+    elif schema_default is not None:
+        default_params["xc_functional"] = schema_default
+    else:
+        default_params.pop("xc_functional", None)
 
 
 def _append_workflow_stage(values: tuple[str, ...], workflow_stage: str) -> tuple[str, ...]:

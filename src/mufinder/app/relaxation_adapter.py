@@ -210,6 +210,7 @@ def expand_pristine_relaxation_jobs(
     project_cutoff_energy: float | None,
     project_kpoint_grid: tuple[int, int, int] | None,
     project_kpoint_reference_lattice: list[list[float]] | None,
+    project_xc_functional: str | None = None,
 ) -> RelaxationExpansion:
     """Expand pristine-relaxation UI config to workflow job specs."""
 
@@ -222,6 +223,8 @@ def expand_pristine_relaxation_jobs(
         "symmetry_generate": True,
         "write_cell_structure": True,
     }
+    if project_xc_functional is not None:
+        workflow_defaults_values["xc_functional"] = project_xc_functional
     if project_cutoff_energy is not None:
         workflow_defaults_values["cut_off_energy"] = float(project_cutoff_energy)
     workflow_defaults = _template_from_values(workflow_defaults_values)
@@ -302,6 +305,7 @@ def expand_muon_relaxation_jobs(
     project_cutoff_energy: float | None,
     project_kpoint_grid: tuple[int, int, int] | None,
     project_kpoint_reference_lattice: list[list[float]] | None,
+    project_xc_functional: str | None = None,
 ) -> RelaxationExpansion:
     """Expand staged muon sites to fixed-cell CASTEP geometry-optimization jobs."""
 
@@ -313,6 +317,8 @@ def expand_muon_relaxation_jobs(
         "geom_max_iter": 300,
         "write_cell_structure": True,
     }
+    if project_xc_functional is not None:
+        workflow_defaults_values["xc_functional"] = project_xc_functional
     if project_cutoff_energy is not None:
         workflow_defaults_values["cut_off_energy"] = float(project_cutoff_energy)
     species_mass_block = BlockSection("species_mass", (("H:mu", MUON_MASS_AMU),), unit="AMU")

@@ -10459,8 +10459,9 @@ def test_main_window_on_kpoint_default_adopted_sets_project_default(qapp, tmp_pa
     assert doc.project.recommended_kpoint_energy_threshold == pytest.approx(0.001)
     assert doc.project.recommended_kpoint_force_threshold == pytest.approx(0.05)
     assert doc.project.recommended_kpoint_cell_id == str(host.id)
-    assert window._pristine_relaxation_view._project_default_kpoint.text() == "2 x 2 x 2"
-    assert window._uep_view._project_default_kpoint.text() == "2 x 2 x 2"
+    for strip in window._project_defaults_strips():
+        assert strip.summary().kpoint_grid == (2, 2, 2)
+        assert strip._kpoint_value.text() == "2 x 2 x 2"
     snapshot = doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]["kpoint"]
     assert snapshot["host_structure_id"] == str(host.id)
     assert snapshot["simulation_cell_structure_id"] == str(host.id)

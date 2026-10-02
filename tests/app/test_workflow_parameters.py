@@ -7,6 +7,7 @@ from mufinder.app.workflow_parameters import (
     build_workflow_parameter_surface,
     kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
+    seed_xc_functional_default,
     workflow_basic_parameter_names,
 )
 from mufinder.castep_io.schema import KeywordSpec
@@ -164,3 +165,16 @@ def test_parameter_dialog_with_workflow_surface_shows_basic_and_allows_advanced(
     dialog.set_advanced_names({"xc_functional"})
 
     assert "xc_functional" in dialog._rows
+
+
+def test_seed_xc_functional_default_prefers_project_then_schema_default() -> None:
+    defaults: dict[str, object] = {"xc_functional": "LDA", "task": "SINGLEPOINT"}
+
+    seed_xc_functional_default(defaults, "PBE", schema_default="LDA")
+    assert defaults == {"xc_functional": "PBE", "task": "SINGLEPOINT"}
+
+    seed_xc_functional_default(defaults, None, schema_default="LDA")
+    assert defaults["xc_functional"] == "LDA"
+
+    seed_xc_functional_default(defaults, None, schema_default=None)
+    assert "xc_functional" not in defaults
