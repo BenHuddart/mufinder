@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -264,7 +265,9 @@ from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_arti
 from mufinder.services.job_monitoring import job_staleness
 from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
+from mufinder.app import workflow_table_utils
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
+from mufinder.app.workflow_table_utils import count_phrase
 from mufinder.services.perf_trace import PerfTrace
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, ProjectDocument, ProjectService
 from mufinder.services.ssh_client import (
@@ -4951,6 +4954,30 @@ class MainWindow(QMainWindow):
             "dismiss": "Dismiss",
         }
 
+        # Cancel and Dismiss act immediately, so a single-row click is confirmed
+        # here; on a multi-row selection the three-way prompt is the
+        # confirmation. Reset always asks its own clean-up question, which has
+        # a Cancel, so it needs nothing extra.
+        clicked_job = self._document.jobs.get(job_id)
+        clicked_label = clicked_job.label if clicked_job is not None else str(job_id)
+        single_confirmations = {
+            "cancel": lambda: workflow_table_utils.confirm_destructive(
+                self,
+                "Cancel job",
+                f"Cancel job '{clicked_label}'?",
+                "",
+                "Cancel job",
+                "Keep running",
+            ),
+            "dismiss": lambda: workflow_table_utils.confirm_destructive(
+                self,
+                "Dismiss job",
+                f"Dismiss job '{clicked_label}' from the dashboard?",
+                "The job stays in the project; its workflow row can still resubmit it.",
+                "Dismiss job",
+            ),
+        }
+
         target_ids = resolve_target_keys(
             button,
             clicked_key=job_id,
@@ -4959,6 +4986,7 @@ class MainWindow(QMainWindow):
             parent=self,
             action=actions[kind],
             noun=("job", "jobs"),
+            confirm_unprompted=single_confirmations.get(kind),
         )
         if not target_ids:
             return
@@ -4992,27 +5020,105 @@ class MainWindow(QMainWindow):
         self._reset_failed_jobs([job for job in jobs if job is not None])
 
     def _on_dashboard_delete_key_requested(self) -> None:
+        """Apply Delete/Backspace to the selected dashboard jobs.
+
+        What the key does depends on each job's state: running jobs are
+        cancelled, failed/stopped/cancelled ones are reset, and the rest have
+        their records deleted. One summary dialog states all of that before
+        anything happens, so nothing is cancelled or deleted unannounced and a
+        single Cancel leaves every selected job untouched.
+        """
+
         jobs = self._selected_dashboard_jobs()
         if not jobs:
             return
 
+        terminal_statuses = {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
         active_jobs = [job for job in jobs if job.status in ACTIVE_JOB_STATUSES]
-        resettable_jobs = [
-            job for job in jobs if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-        ]
+        terminal_jobs = [job for job in jobs if job.status in terminal_statuses]
+        resettable_jobs = [job for job in terminal_jobs if not job_is_imported(job)]
         deletable_jobs = [
             job
             for job in jobs
-            if job.status not in ACTIVE_JOB_STATUSES
-            and job.status not in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+            if job.status not in ACTIVE_JOB_STATUSES and job.status not in terminal_statuses
         ]
+
+        if not (active_jobs or resettable_jobs or deletable_jobs):
+            # Only imported terminal jobs are selected: let the reset path
+            # explain why they cannot be reset.
+            self._reset_failed_jobs(terminal_jobs)
+            return
+
+        cleanup_choice = self._prompt_dashboard_bulk_action(
+            cancel_count=len(active_jobs),
+            reset_count=len(resettable_jobs),
+            delete_count=len(deletable_jobs),
+            skipped_imported_count=len(terminal_jobs) - len(resettable_jobs),
+        )
+        if cleanup_choice is None:
+            return
 
         if active_jobs:
             self._cancel_jobs(active_jobs)
         if resettable_jobs:
-            self._reset_failed_jobs(resettable_jobs)
+            self._reset_failed_jobs(resettable_jobs, cleanup_choice=cleanup_choice)
         if deletable_jobs:
-            self._delete_dashboard_jobs(deletable_jobs)
+            self._delete_dashboard_jobs(deletable_jobs, confirmed=True)
+
+    def _prompt_dashboard_bulk_action(
+        self,
+        *,
+        cancel_count: int,
+        reset_count: int,
+        delete_count: int,
+        skipped_imported_count: int = 0,
+    ) -> bool | None:
+        """Show the dashboard Delete summary; return the clean-up choice or ``None``.
+
+        ``None`` means the user cancelled. Otherwise the bool says whether the
+        output directories of the jobs being reset should be cleaned (always
+        ``False`` when nothing is being reset, since the option is not shown).
+        """
+
+        lines: list[str] = []
+        if cancel_count:
+            lines.append(f"Cancel {count_phrase(cancel_count, ('running job', 'running jobs'))}")
+        if reset_count:
+            lines.append(f"Reset {count_phrase(reset_count, ('failed job', 'failed jobs'))} to ready")
+        if delete_count:
+            lines.append(
+                f"Delete {count_phrase(delete_count, ('finished job record', 'finished job records'))} "
+                "and linked results"
+            )
+        total = cancel_count + reset_count + delete_count
+
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle("Apply to selected jobs")
+        message.setText(f"Apply to {count_phrase(total, ('selected job', 'selected jobs'))}?")
+        informative = "\n".join(f"\u2022 {line}" for line in lines)
+        if skipped_imported_count:
+            informative += (
+                f"\n\n{count_phrase(skipped_imported_count, ('imported job', 'imported jobs'))} "
+                "will be left as is: imported jobs cannot be reset."
+            )
+        message.setInformativeText(informative)
+        cleanup_box: QCheckBox | None = None
+        if reset_count:
+            cleanup_box = QCheckBox(
+                "Also clean the output "
+                + ("directory of the job being reset" if reset_count == 1 else "directories of the jobs being reset"),
+                message,
+            )
+            message.setCheckBox(cleanup_box)
+        apply_button = message.addButton("Apply", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_button = message.addButton(QMessageBox.StandardButton.Cancel)
+        message.setDefaultButton(cancel_button)
+        message.setEscapeButton(cancel_button)
+        message.exec()
+        if message.clickedButton() is not apply_button:
+            return None
+        return bool(cleanup_box is not None and cleanup_box.isChecked())
 
     def _selected_dashboard_jobs(self) -> list[Job]:
         if self._document is None:
@@ -5043,7 +5149,7 @@ class MainWindow(QMainWindow):
             seen.add(job.id)
         return selected
 
-    def _delete_dashboard_jobs(self, jobs: list[Job]) -> None:
+    def _delete_dashboard_jobs(self, jobs: list[Job], *, confirmed: bool = False) -> None:
         if self._document is None:
             return
 
@@ -5063,7 +5169,7 @@ class MainWindow(QMainWindow):
         message.setInformativeText("This removes the selected job records and any linked run/result records.")
         message.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         message.setDefaultButton(QMessageBox.StandardButton.No)
-        if message.exec() != QMessageBox.StandardButton.Yes:
+        if not confirmed and message.exec() != QMessageBox.StandardButton.Yes:
             return
 
         for job in deletable_jobs:
@@ -7428,7 +7534,14 @@ class MainWindow(QMainWindow):
         message.setDetailedText(details)
         message.exec()
 
-    def _reset_failed_jobs(self, jobs: list[Job]) -> None:
+    def _reset_failed_jobs(self, jobs: list[Job], *, cleanup_choice: bool | None = None) -> None:
+        """Reset terminal jobs back to ``defined``.
+
+        ``cleanup_choice`` is for a caller that has already confirmed the reset
+        and asked whether to clean the job directories (the dashboard Delete
+        summary); left as ``None`` the user is asked here.
+        """
+
         if self._document is None:
             return
 
@@ -7456,7 +7569,8 @@ class MainWindow(QMainWindow):
             )
             return
 
-        cleanup_choice = self._prompt_failed_job_cleanup(len(resettable_jobs))
+        if cleanup_choice is None:
+            cleanup_choice = self._prompt_failed_job_cleanup(len(resettable_jobs))
         if cleanup_choice is None:
             return
 

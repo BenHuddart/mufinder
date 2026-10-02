@@ -625,7 +625,32 @@ affected.
   ``View`` in the Energy Barriers table) always act on their own row and never
   prompt.
 
-The shared implementation lives in ``mufinder.app.selection_snapshot``.
+Actions that remove, cancel, reset, dismiss or delete are always confirmed,
+whichever way they are triggered (row control, button below the table,
+right-click menu, or Delete/Backspace):
+
+- Removing rows asks once for the whole batch, stating the number of rows, how
+  many already have a submitted job, and how many jobs are still queued or
+  running and will be cancelled. This includes rows that were never submitted.
+- For a row control on a multi-row selection the three-way prompt is the
+  confirmation, so the user is not asked twice. The exception is removing
+  cutoff rows whose job is still queued or running: that prompt does not
+  mention cancellation, so those removals are confirmed again with it stated.
+- A single-row ``Cancel`` or ``Dismiss`` on the Job Dashboard, and ``Cancel
+  Calculation`` in the cutoff table's right-click menu, ask before acting.
+  ``Reset`` already asks its clean-up question, which can be cancelled.
+- The safe choice is the default button and the one Escape selects, and the
+  buttons are labelled with the action (``Remove 3 rows``, ``Keep running``)
+  rather than Yes/No.
+- Delete/Backspace in the Job Dashboard shows one summary of everything the key
+  will do to the selection (cancel running jobs, reset failed jobs, delete
+  finished job records), with the option to clean the reset jobs' output
+  directories, before anything happens. Cancelling leaves every selected job
+  untouched.
+
+The shared implementation lives in ``mufinder.app.selection_snapshot`` (row
+targeting and the three-way prompt) and
+``mufinder.app.workflow_table_utils.confirm_destructive`` (confirmations).
 
 Workflow-aware CASTEP parameter GUI
 -----------------------------------
@@ -963,8 +988,9 @@ Runtime behavior includes:
 - Shared execution service reusable by convergence and dashboard flows.
 - Removing a cutoff entry now warns before touching associated files and either
 	deletes them or moves them into a ``removed_from_workflow`` archive subfolder.
-- Multi-cutoff removals support shared ``Yes to All`` / ``No to All`` choices for
-	repeated removal and file-handling confirmations.
+- Removing cutoff rows asks one confirmation for the whole batch (see
+	"Multi-row selection in job tables"); the file-handling prompt that follows
+	for rows with associated files still offers ``Yes to All`` / ``No to All``.
 
 - Resetting failed jobs back to ``ready`` for rerun, with optional cleanup
 	of output files while preserving generated input files.

@@ -14,6 +14,8 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QPushButton, QTableWidgetItem
 
+from mufinder.app.workflow_table_utils import confirm_destructive as _real_confirm_destructive
+from mufinder.app import workflow_table_utils
 from mufinder.app.workflow_table_utils import (
     RESET_FAILED_ACTION_TEXT,
     RESET_FAILED_TABLE_TOOLTIP,
@@ -448,3 +450,82 @@ def test_additional_action_disabled_when_multiple_rows_selected(qapp, monkeypatc
 
     assert menu is not None
     assert menu.action("Continue relaxation…").enabled is False
+
+
+# ---------------------------------------------------------------------------
+# Destructive-action confirmation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("click_accept", "expected"), [(True, True), (False, False)])
+def test_confirm_destructive_maps_buttons_and_defaults_to_the_safe_choice(
+    qapp, monkeypatch, click_accept, expected
+) -> None:
+    from PySide6.QtWidgets import QMessageBox, QWidget
+
+    seen: dict[str, object] = {}
+
+    def _fake_exec(box):
+        labels = {button.text(): button for button in box.buttons()}
+        seen["labels"] = sorted(labels)
+        seen["default"] = box.defaultButton().text()
+        seen["escape"] = box.escapeButton().text()
+        # The window title is not asserted: macOS message boxes do not show one.
+        seen["text"] = (box.text(), box.informativeText())
+        chosen = labels["Cancel 2 jobs" if click_accept else "Keep running"]
+        monkeypatch.setattr(QMessageBox, "clickedButton", lambda _self: chosen)
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", _fake_exec)
+
+    parent = QWidget()
+    result = _real_confirm_destructive(
+        parent, "Cancel jobs", "Cancel 2 jobs?", "They are running.", "Cancel 2 jobs", "Keep running"
+    )
+
+    assert result is expected
+    assert seen["labels"] == ["Cancel 2 jobs", "Keep running"]
+    assert seen["default"] == "Keep running"
+    assert seen["escape"] == "Keep running"
+    assert seen["text"] == ("Cancel 2 jobs?", "They are running.")
+
+
+def test_confirm_row_removal_states_count_and_what_is_at_stake(
+    qapp, confirmed_destructive_actions
+) -> None:
+    from PySide6.QtWidgets import QWidget
+
+    parent = QWidget()
+    assert workflow_table_utils.confirm_row_removal(parent, 1) is True
+    assert workflow_table_utils.confirm_row_removal(
+        parent, 4, noun=("path", "paths"), submitted_count=3, cancelling_count=1
+    ) is True
+
+    assert confirmed_destructive_actions == [
+        {
+            "title": "Remove row",
+            "text": "Remove 1 row?",
+            "detail": "",
+            "accept_label": "Remove 1 row",
+            "reject_label": "Cancel",
+        },
+        {
+            "title": "Remove paths",
+            "text": "Remove 4 paths?",
+            "detail": (
+                "1 job is queued or running and will be cancelled. "
+                "2 paths already have a submitted job."
+            ),
+            "accept_label": "Remove 4 paths",
+            "reject_label": "Cancel",
+        },
+    ]
+
+
+def test_confirm_row_removal_of_nothing_is_declined_without_asking(
+    qapp, confirmed_destructive_actions
+) -> None:
+    from PySide6.QtWidgets import QWidget
+
+    assert workflow_table_utils.confirm_row_removal(QWidget(), 0) is False
+    assert confirmed_destructive_actions == []

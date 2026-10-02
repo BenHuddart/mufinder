@@ -542,3 +542,59 @@ def test_focus_on_widget_in_unselected_row_lets_selection_move(qapp):
 
     assert _selected(table) == [2]
     table.close()
+
+
+# ---------------------------------------------------------------------------
+# confirm_unprompted: destructive actions are confirmed exactly once
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("snapshot_keys", "answer", "expected"),
+    [
+        (["a"], True, ("a",)),  # single-row selection
+        (["a"], False, ()),
+        (["b", "c"], True, ("a",)),  # clicked row outside the selection
+        (["b", "c"], False, ()),
+    ],
+)
+def test_resolve_asks_confirm_unprompted_when_no_scope_prompt_is_shown(
+    qapp, monkeypatch, snapshot_keys, answer, expected
+):
+    scope_prompts: list[int] = []
+    monkeypatch.setattr(
+        selection_snapshot, "ask_selection_scope", lambda *a, **kw: scope_prompts.append(1)
+    )
+    asked: list[int] = []
+
+    btn = _make_widget(qapp)
+    result = resolve_target_keys(
+        btn,
+        clicked_key="a",
+        snapshot_keys=snapshot_keys,
+        eligibility=lambda k: True,
+        parent=btn,
+        confirm_unprompted=lambda: asked.append(1) or answer,
+    )
+
+    assert result == expected
+    assert asked == [1]
+    assert scope_prompts == []
+
+
+@pytest.mark.parametrize("scope", list(SelectionScope))
+def test_resolve_does_not_ask_confirm_unprompted_after_the_scope_prompt(qapp, monkeypatch, scope):
+    monkeypatch.setattr(selection_snapshot, "ask_selection_scope", lambda *a, **kw: scope)
+    asked: list[int] = []
+
+    btn = _make_widget(qapp)
+    resolve_target_keys(
+        btn,
+        clicked_key="a",
+        snapshot_keys=["a", "b"],
+        eligibility=lambda k: True,
+        parent=btn,
+        confirm_unprompted=lambda: asked.append(1) or True,
+    )
+
+    assert asked == []

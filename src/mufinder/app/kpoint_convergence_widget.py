@@ -40,6 +40,7 @@ from mufinder.app.workflow_parameters import (
     seed_xc_functional_default,
 )
 from mufinder.app.workflow_table_utils import (
+    confirm_row_removal,
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
     create_workflow_table,
@@ -868,6 +869,13 @@ class KPointConvergenceWidget(QWidget):
             eligibility=lambda g: True,
             parent=self,
             action="Remove",
+            confirm_unprompted=lambda: self._confirm_grid_removal(
+                tuple(
+                    r
+                    for r in range(self._table.rowCount())
+                    if self._grid_value_at_row(r, strict=False) == clicked_grid
+                )
+            ),
         )
         rows = tuple(
             r
@@ -875,10 +883,16 @@ class KPointConvergenceWidget(QWidget):
             if self._grid_value_at_row(r, strict=False) in grids
         )
         if rows:
-            self._request_grid_removals(rows)
+            self._request_grid_removals(rows, confirmed=True)
 
-    def _request_grid_removals(self, rows: tuple[int, ...]) -> None:
+    def _confirm_grid_removal(self, rows: tuple[int, ...]) -> bool:
+        submitted = sum(1 for row in rows if self._row_status(row) in _PROGRESSED_JOB_STATUSES)
+        return confirm_row_removal(self, len(rows), submitted_count=submitted)
+
+    def _request_grid_removals(self, rows: tuple[int, ...], *, confirmed: bool = False) -> None:
         if not rows:
+            return
+        if not confirmed and not self._confirm_grid_removal(rows):
             return
 
         grids: list[tuple[int, int, int]] = []

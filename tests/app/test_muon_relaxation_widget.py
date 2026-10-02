@@ -8,6 +8,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QDialog, QMessageBox, QPushButton, QToolButton
 
+from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app import muon_relaxation_widget as muon_relaxation_widget_module
@@ -975,3 +976,31 @@ def test_muon_relaxation_widget_continue_dialog_seed_includes_charge_locked_valu
     assert seed["species_options"] == widget._parameter_species_options
 
     assert widget.continue_relaxation_dialog_seed("positivemuon:does-not-exist") is None
+
+
+def test_muon_relaxation_delete_shortcut_declined_removes_nothing(qapp, monkeypatch) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+    removed: list[object] = []
+    widget.remove_requested.connect(removed.append)
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
+
+    widget._table.selectRow(0)
+    widget._delete_shortcut.activated.emit()
+
+    assert removed == []
+    assert widget._table.rowCount() == 2
+
+
+def test_muon_relaxation_remove_button_single_row_is_confirmed(
+    qapp, confirmed_destructive_actions
+) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+
+    btn = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    btn.selection_snapshot_rows = (0,)
+    btn.clicked.emit()
+
+    assert widget._table.rowCount() == 1
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 1 row?"]

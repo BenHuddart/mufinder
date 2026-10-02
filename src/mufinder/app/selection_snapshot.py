@@ -335,6 +335,7 @@ def resolve_target_keys(
     action: str = "Apply to",
     title: str | None = None,
     noun: tuple[str, str] = ("row", "rows"),
+    confirm_unprompted: Callable[[], bool] | None = None,
 ) -> tuple[KeyT, ...]:
     """Return the row keys the action should apply to, prompting when appropriate.
 
@@ -351,6 +352,11 @@ def resolve_target_keys(
        This row only → return (clicked_key,).
        Cancel → return (), so the caller does nothing (and a combo should put
        its previous value back).
+
+    *confirm_unprompted* is for destructive actions, which must always be
+    confirmed.  The three-way prompt is that confirmation when it is shown; in
+    rules 1 and 2, where it is not, this callable is asked instead and a False
+    answer returns () just as Cancel does.
 
     *action* is the verb phrase the prompt is built from ("Remove", "Set this
     supercell on", …) and *noun* the singular/plural name of a row, so every
@@ -369,13 +375,18 @@ def resolve_target_keys(
     widget.selection_snapshot_rows = ()
     widget.selection_snapshot_key = None
 
-    if clicked_key not in snapshot:
+    def _clicked_only() -> tuple[KeyT, ...]:
+        if confirm_unprompted is not None and not confirm_unprompted():
+            return ()
         return (clicked_key,)
+
+    if clicked_key not in snapshot:
+        return _clicked_only()
 
     eligible = tuple(k for k in snapshot if eligibility(k))
 
     if len(eligible) <= 1:
-        return (clicked_key,)
+        return _clicked_only()
 
     singular, plural = noun
     n_snapshot = len(snapshot)

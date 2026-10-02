@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMessageBox, QPushButton
 
+from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.theme import status_brush
@@ -810,3 +811,38 @@ def test_energy_barriers_widget_context_menu_resets_a_multi_row_selection(qapp, 
     open_reset_menu(widget._sources_table, row=0)
 
     assert payloads == [["path-a", "path-b"]]
+
+
+def test_energy_barriers_remove_selected_confirms_with_path_wording(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = EnergyBarriersWidget()
+    widget.set_sources(
+        [
+            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", status="ready"),
+            EnergyBarrierSourceRow(key="path-b", reactant="A", product="C", charge_state="M", path_length="1.0", status="completed"),
+        ]
+    )
+    removed: list[list[str]] = []
+    widget.remove_sources_requested.connect(lambda keys: removed.append(list(keys)))
+    prompts: list[tuple[str, ...]] = []
+    answers = [False, True]
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda _parent, *prompt: prompts.append(prompt) or answers.pop(0),
+    )
+    widget._sources_table.selectAll()
+
+    widget._remove_sources_button.click()
+    assert removed == []
+    assert widget._sources_table.rowCount() == 2
+
+    widget._delete_shortcut.activated.emit()
+    assert removed == [["path-a", "path-b"]]
+    assert prompts[1] == (
+        "Remove paths",
+        "Remove 2 paths?",
+        "1 path already has a submitted job.",
+        "Remove 2 paths",
+    )

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHeaderView,
     QMenu,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -70,6 +71,86 @@ def bind_delete_shortcuts(
     backspace_shortcut.setContext(context)
     backspace_shortcut.activated.connect(slot)
     return delete_shortcut, backspace_shortcut
+
+
+def confirm_destructive(
+    parent: QWidget,
+    title: str,
+    text: str,
+    detail: str = "",
+    accept_label: str = "Remove",
+    reject_label: str = "Cancel",
+) -> bool:
+    """Ask the user to confirm an action that removes, cancels, or discards something.
+
+    Every destructive action in a job table or the Job Dashboard goes through
+    this one dialog, whichever way it was triggered (row control, button, menu,
+    or Delete/Backspace), so the question always looks the same. The safe
+    choice is the default button and the one Escape maps to. Buttons carry
+    explicit labels because "Cancel" is ambiguous when the action being
+    confirmed is itself a cancellation.
+
+    Kept as a module-level function so tests replace it instead of driving a
+    modal dialog; callers must look it up on the module at call time.
+    """
+
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(title)
+    box.setText(text)
+    if detail:
+        box.setInformativeText(detail)
+    accept_button = box.addButton(accept_label, QMessageBox.ButtonRole.DestructiveRole)
+    reject_button = box.addButton(reject_label, QMessageBox.ButtonRole.RejectRole)
+    box.setDefaultButton(reject_button)
+    box.setEscapeButton(reject_button)
+    box.exec()
+    return box.clickedButton() is accept_button
+
+
+def count_phrase(count: int, noun: tuple[str, str]) -> str:
+    """Return ``"1 row"`` / ``"3 rows"`` for a ``(singular, plural)`` noun."""
+
+    return f"{count} {noun[0] if count == 1 else noun[1]}"
+
+
+def confirm_row_removal(
+    parent: QWidget,
+    count: int,
+    *,
+    noun: tuple[str, str] = ("row", "rows"),
+    submitted_count: int = 0,
+    cancelling_count: int = 0,
+) -> bool:
+    """Confirm removing ``count`` rows from a workflow table.
+
+    ``submitted_count`` is how many of them already have a job behind them, and
+    ``cancelling_count`` how many of those jobs are still queued or running and
+    will be cancelled by the removal; both are reported so the prompt says what
+    is at stake rather than just how many rows.
+    """
+
+    if count <= 0:
+        return False
+    details: list[str] = []
+    if cancelling_count:
+        details.append(
+            f"{count_phrase(cancelling_count, ('job is', 'jobs are'))} queued or running "
+            "and will be cancelled."
+        )
+    settled = submitted_count - cancelling_count
+    if settled > 0:
+        details.append(
+            f"{count_phrase(settled, noun)} already "
+            f"{'has' if settled == 1 else 'have'} a submitted job."
+        )
+    return confirm_destructive(
+        parent,
+        f"Remove {noun[0] if count == 1 else noun[1]}",
+        f"Remove {count_phrase(count, noun)}?",
+        " ".join(details),
+        f"Remove {count_phrase(count, noun)}",
+    )
 
 
 def create_workflow_table(

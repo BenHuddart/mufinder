@@ -48,6 +48,7 @@ from mufinder.app.theme import (
     style_section_title,
 )
 from mufinder.app.workflow_table_utils import (
+    confirm_row_removal,
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
     create_workflow_table,
@@ -976,6 +977,14 @@ class EnergyBarriersWidget(QWidget):
     def _delete_selected_sources(self) -> None:
         keys = self.selected_source_keys()
         if not keys:
+            return
+        selected_rows = sorted({index.row() for index in self._sources_table.selectedIndexes()})
+        submitted = sum(
+            1 for row in selected_rows if workflow_row_is_locked(self._source_row_status(row))
+        )
+        if not confirm_row_removal(
+            self, len(keys), noun=("path", "paths"), submitted_count=submitted
+        ):
             return
         removed = set(keys)
         self.set_sources([row for row in self._source_rows if row.key not in removed])

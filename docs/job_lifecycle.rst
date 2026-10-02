@@ -57,6 +57,16 @@ the remote inputs and outputs only: the scheduler submit script is regenerated
 on every submission, so an updated walltime, core count, or memory request
 takes effect on resubmission.
 
+Pressing Delete or Backspace with dashboard rows selected applies the action
+that fits each job's state: running jobs are cancelled, failed, stopped and
+cancelled jobs are reset, and any other job has its records deleted. One
+summary dialog lists those actions with their counts before anything happens
+and offers to clean the output directories of the jobs being reset; cancelling
+it leaves every selected job untouched. Imported jobs cannot be reset and are
+reported as left unchanged. A ``Cancel`` or ``Dismiss`` button on a single row
+asks for confirmation; on a multi-row selection the "all selected jobs / this
+job only / cancel" prompt serves as that confirmation.
+
 The pristine- and muon-relaxation tables additionally offer a per-row
 ``Continue relaxation…`` action for ``completed``, ``failed``, ``stopped``,
 or ``cancelled`` rows: it edits that row's parameters in place and resumes

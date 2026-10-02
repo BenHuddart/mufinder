@@ -37,6 +37,7 @@ from mufinder.app.workflow_parameters import (
     seed_xc_functional_default,
 )
 from mufinder.app.workflow_table_utils import (
+    confirm_row_removal,
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
     create_workflow_table,
@@ -615,9 +616,18 @@ class UEPWidget(QWidget):
                 eligibility=lambda rid: True,
                 parent=self,
                 action="Remove",
+                confirm_unprompted=lambda: self._confirm_removal((row_id,)),
             )
             if target_row_ids:
                 self._remove_rows_by_id(target_row_ids)
+
+    def _confirm_removal(self, row_ids: tuple[int, ...]) -> bool:
+        submitted = sum(
+            1
+            for row_id in row_ids
+            if self._runtime_controls_locked(self._runtime_state_for_row(row_id).status)
+        )
+        return confirm_row_removal(self, len(row_ids), submitted_count=submitted)
 
     @staticmethod
     def _runtime_controls_locked(status: str) -> bool:
@@ -880,7 +890,7 @@ class UEPWidget(QWidget):
         if self._table.state() == QAbstractItemView.State.EditingState:
             return
         row_ids = self._selected_or_current_row_ids()
-        if row_ids:
+        if row_ids and self._confirm_removal(row_ids):
             self._remove_rows_by_id(row_ids)
 
     def _emit_submit_local(self) -> None:

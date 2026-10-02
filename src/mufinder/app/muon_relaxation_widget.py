@@ -55,6 +55,7 @@ from mufinder.app.relaxation_adapter import (
 )
 from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.workflow_table_utils import (
+    confirm_row_removal,
     RowMenuAction,
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
@@ -962,9 +963,14 @@ class MuonRelaxationWidget(QWidget):
                 eligibility=lambda rid: True,
                 parent=self,
                 action="Remove",
+                confirm_unprompted=lambda: self._confirm_removal((row_id,)),
             )
             if target_row_ids:
                 self._remove_rows_by_id(target_row_ids)
+
+    def _confirm_removal(self, row_ids: tuple[int, ...]) -> bool:
+        submitted = sum(1 for row_id in row_ids if not self._row_supercell_is_editable(row_id))
+        return confirm_row_removal(self, len(row_ids), submitted_count=submitted)
 
     def _row_supercell_is_editable(self, row_id: int) -> bool:
         location = self._row_location_for_id(row_id)
@@ -1263,7 +1269,7 @@ class MuonRelaxationWidget(QWidget):
             row_id = self._row_id_at(target.currentRow(), table=target)
             if row_id is not None:
                 row_ids.append(row_id)
-        if not row_ids:
+        if not row_ids or not self._confirm_removal(tuple(row_ids)):
             return
         self._remove_rows_by_id(tuple(row_ids))
 

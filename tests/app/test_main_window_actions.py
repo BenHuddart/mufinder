@@ -18,6 +18,7 @@ import mufinder.app.convergence_widget as convergence_widget_module
 import mufinder.app.main_window as main_window_module
 import mufinder.services.job_artifacts as job_artifacts_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
+from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
@@ -6756,49 +6757,161 @@ def test_main_window_dashboard_handlers_forward_selected_jobs(
     window.close()
 
 
-def test_main_window_dashboard_delete_key_cancels_or_resets_selected_jobs(
+
+def _dashboard_with_jobs(window, service, doc, statuses):
+    jobs = []
+    for index, status in enumerate(statuses):
+        job = service.add_job(
+            doc,
+            label=f"job_{index}_{status.value}",
+            workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+            calc_type="castep_convergence_cutoff",
+        )
+        job.status = status
+        jobs.append(job)
+    window._document = doc
+    window._jobs_table.setRowCount(len(jobs))
+    selection_model = window._jobs_table.selectionModel()
+    for row, job in enumerate(jobs):
+        label_item = main_window_module.QTableWidgetItem(job.label)
+        label_item.setData(main_window_module.Qt.ItemDataRole.UserRole, str(job.id))
+        window._jobs_table.setItem(row, window._JOB_LABEL_COLUMN, label_item)
+    for row in range(len(jobs)):
+        selection_model.select(
+            window._jobs_table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+    return jobs
+
+
+def test_main_window_dashboard_delete_key_summarises_then_applies_each_action(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "dashboard_delete_key.mufinder", "DashboardDeleteKey")
-    running_job = service.add_job(
-        doc,
-        label="job_running",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
+    running_job, failed_job, completed_job = _dashboard_with_jobs(
+        window, service, doc, [JobStatus.RUNNING, JobStatus.FAILED, JobStatus.COMPLETED]
     )
-    failed_job = service.add_job(
-        doc,
-        label="job_failed",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
+
+    events: list[object] = []
+    monkeypatch.setattr(
+        window,
+        "_prompt_dashboard_bulk_action",
+        lambda **counts: events.append(("prompt", counts)) or True,
     )
-    running_job.status = JobStatus.RUNNING
-    failed_job.status = JobStatus.FAILED
-    window._document = doc
-    window._refresh_jobs_table()
-
-    selection_model = window._jobs_table.selectionModel()
-    assert selection_model is not None
-    for row in range(window._jobs_table.rowCount()):
-        selection_model.select(
-            window._jobs_table.model().index(row, 0),
-            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-        )
-
-    cancelled: list[list[Job]] = []
-    reset: list[list[Job]] = []
-    deleted: list[list[Job]] = []
-    monkeypatch.setattr(window, "_cancel_jobs", lambda jobs: cancelled.append(jobs))
-    monkeypatch.setattr(window, "_reset_failed_jobs", lambda jobs: reset.append(jobs))
-    monkeypatch.setattr(window, "_delete_dashboard_jobs", lambda jobs: deleted.append(jobs))
+    monkeypatch.setattr(window, "_cancel_jobs", lambda jobs: events.append(("cancel", jobs)))
+    monkeypatch.setattr(
+        window,
+        "_reset_failed_jobs",
+        lambda jobs, cleanup_choice=None: events.append(("reset", jobs, cleanup_choice)),
+    )
+    monkeypatch.setattr(
+        window,
+        "_delete_dashboard_jobs",
+        lambda jobs, confirmed=False: events.append(("delete", jobs, confirmed)),
+    )
 
     window._on_dashboard_delete_key_requested()
 
-    assert cancelled == [[running_job]]
-    assert reset == [[failed_job]]
-    assert deleted == []
+    # One prompt, before anything is touched, then each action already confirmed.
+    assert events == [
+        (
+            "prompt",
+            {"cancel_count": 1, "reset_count": 1, "delete_count": 1, "skipped_imported_count": 0},
+        ),
+        ("cancel", [running_job]),
+        ("reset", [failed_job], True),
+        ("delete", [completed_job], True),
+    ]
+    window.close()
+
+
+def test_main_window_dashboard_delete_key_cancelled_summary_touches_nothing(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "dashboard_delete_none.mufinder", "DashboardDeleteNone")
+    jobs = _dashboard_with_jobs(
+        window, service, doc, [JobStatus.RUNNING, JobStatus.FAILED, JobStatus.COMPLETED]
+    )
+
+    touched: list[str] = []
+    monkeypatch.setattr(window, "_prompt_dashboard_bulk_action", lambda **_counts: None)
+    monkeypatch.setattr(window, "_cancel_jobs", lambda *_a, **_k: touched.append("cancel"))
+    monkeypatch.setattr(window, "_reset_failed_jobs", lambda *_a, **_k: touched.append("reset"))
+    monkeypatch.setattr(window, "_delete_dashboard_jobs", lambda *_a, **_k: touched.append("delete"))
+
+    window._on_dashboard_delete_key_requested()
+
+    assert touched == []
+    assert all(job.id in doc.jobs for job in jobs)
+    window.close()
+
+
+@pytest.mark.parametrize(
+    ("counts", "expected_lines", "has_cleanup_box"),
+    [
+        (
+            {"cancel_count": 2, "reset_count": 1, "delete_count": 3},
+            [
+                "\u2022 Cancel 2 running jobs",
+                "\u2022 Reset 1 failed job to ready",
+                "\u2022 Delete 3 finished job records and linked results",
+            ],
+            True,
+        ),
+        (
+            {"cancel_count": 0, "reset_count": 0, "delete_count": 1},
+            ["\u2022 Delete 1 finished job record and linked results"],
+            False,
+        ),
+    ],
+)
+def test_main_window_dashboard_bulk_prompt_lists_only_what_applies(
+    qapp, monkeypatch: pytest.MonkeyPatch, counts, expected_lines, has_cleanup_box
+) -> None:
+    window = MainWindow()
+    seen: dict[str, object] = {}
+
+    def _fake_exec(box):
+        seen["text"] = box.text()
+        seen["lines"] = box.informativeText().splitlines()
+        seen["checkbox"] = box.checkBox()
+        seen["default"] = box.defaultButton().text()
+        if box.checkBox() is not None:
+            box.checkBox().setChecked(True)
+        apply_button = next(button for button in box.buttons() if button.text() == "Apply")
+        monkeypatch.setattr(main_window_module.QMessageBox, "clickedButton", lambda _self: apply_button)
+        return 0
+
+    monkeypatch.setattr(main_window_module.QMessageBox, "exec", _fake_exec)
+
+    result = window._prompt_dashboard_bulk_action(**counts)
+
+    total = sum(counts.values())
+    assert seen["text"] == f"Apply to {total} selected job{'' if total == 1 else 's'}?"
+    assert seen["lines"] == expected_lines
+    assert (seen["checkbox"] is not None) is has_cleanup_box
+    assert seen["default"] != "Apply"
+    assert result is has_cleanup_box
+    window.close()
+
+
+def test_main_window_dashboard_bulk_prompt_cancel_returns_none(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+
+    def _fake_exec(box):
+        cancel_button = next(button for button in box.buttons() if button.text() != "Apply")
+        monkeypatch.setattr(main_window_module.QMessageBox, "clickedButton", lambda _self: cancel_button)
+        return 0
+
+    monkeypatch.setattr(main_window_module.QMessageBox, "exec", _fake_exec)
+
+    assert window._prompt_dashboard_bulk_action(cancel_count=1, reset_count=1, delete_count=0) is None
     window.close()
 
 
@@ -6820,6 +6933,7 @@ def test_main_window_dashboard_backspace_shortcut_uses_delete_handler(
     window._jobs_table.selectRow(0)
     cancelled: list[list[Job]] = []
     monkeypatch.setattr(window, "_cancel_jobs", lambda jobs: cancelled.append(jobs))
+    monkeypatch.setattr(window, "_prompt_dashboard_bulk_action", lambda **_counts: False)
 
     assert window._jobs_backspace_shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
     window._jobs_backspace_shortcut.activated.emit()
@@ -6831,67 +6945,17 @@ def test_main_window_dashboard_backspace_shortcut_uses_delete_handler(
 def test_main_window_dashboard_delete_key_confirms_before_deleting_jobs(
     qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class _FakeMessageBox:
-        class Icon:
-            Warning = 1
-
-        class StandardButton:
-            Yes = 1
-            No = 2
-
-        _answer = 2
-
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
-
-        def setIcon(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setWindowTitle(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setText(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setInformativeText(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setStandardButtons(self, *_args, **_kwargs) -> None:
-            return None
-
-        def setDefaultButton(self, *_args, **_kwargs) -> None:
-            return None
-
-        def exec(self) -> int:
-            return _FakeMessageBox._answer
-
     window = MainWindow()
     service = ProjectService()
     doc = service.create_project(tmp_path / "dashboard_delete_confirm.mufinder", "DashboardDeleteConfirm")
-    job = service.add_job(
-        doc,
-        label="job_defined",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
-    )
-    window._document = doc
-    window._jobs_table.setRowCount(1)
-    label_item = main_window_module.QTableWidgetItem(job.label)
-    label_item.setData(main_window_module.Qt.ItemDataRole.UserRole, str(job.id))
-    window._jobs_table.setItem(0, window._JOB_LABEL_COLUMN, label_item)
-    window._jobs_table.selectRow(0)
-    monkeypatch.setattr(main_window_module, "QMessageBox", _FakeMessageBox)
+    (job,) = _dashboard_with_jobs(window, service, doc, [JobStatus.DEFINED])
 
-    _FakeMessageBox._answer = _FakeMessageBox.StandardButton.No
+    monkeypatch.setattr(window, "_prompt_dashboard_bulk_action", lambda **_counts: None)
     window._on_dashboard_delete_key_requested()
     assert job.id in doc.jobs
 
-    window._jobs_table.setRowCount(1)
-    label_item = main_window_module.QTableWidgetItem(job.label)
-    label_item.setData(main_window_module.Qt.ItemDataRole.UserRole, str(job.id))
-    window._jobs_table.setItem(0, window._JOB_LABEL_COLUMN, label_item)
-    window._jobs_table.selectRow(0)
-    _FakeMessageBox._answer = _FakeMessageBox.StandardButton.Yes
+    # The cancelled prompt left the row and its selection in place.
+    monkeypatch.setattr(window, "_prompt_dashboard_bulk_action", lambda **_counts: False)
     window._on_dashboard_delete_key_requested()
     assert job.id not in doc.jobs
     window.close()
@@ -12516,3 +12580,127 @@ def test_main_window_dashboard_scope_prompt_cancel_does_nothing(
     assert cancelled == []
     window.close()
 
+
+@pytest.mark.parametrize(
+    ("kind", "status", "column_attr", "handler", "expected_prompt"),
+    [
+        (
+            "cancel",
+            JobStatus.RUNNING,
+            "_JOB_CANCEL_COLUMN",
+            "_on_cancel_from_dashboard",
+            ("Cancel job", "Cancel job 'j0'?", "", "Cancel job", "Keep running"),
+        ),
+        (
+            "dismiss",
+            JobStatus.FAILED,
+            "_JOB_DISMISS_COLUMN",
+            "_on_dismiss_from_dashboard",
+            (
+                "Dismiss job",
+                "Dismiss job 'j0' from the dashboard?",
+                "The job stays in the project; its workflow row can still resubmit it.",
+                "Dismiss job",
+            ),
+        ),
+    ],
+)
+def test_main_window_dashboard_single_row_destructive_button_is_confirmed(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind, status, column_attr, handler, expected_prompt
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / f"single_{kind}.mufinder", "Single")
+    job = service.add_job(
+        doc,
+        label="j0",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job.status = status
+    window._document = doc
+    acted: list[list[object]] = []
+    monkeypatch.setattr(window, handler, lambda ids: acted.append(list(ids)))
+    prompts: list[tuple[str, ...]] = []
+    answers = [False, True]
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda _parent, *prompt: prompts.append(prompt) or answers.pop(0),
+    )
+    window._refresh_jobs_table()
+
+    button = window._jobs_table.cellWidget(0, getattr(window, column_attr))
+    button.selection_snapshot_rows = (0,)
+    button.clicked.emit()
+    assert acted == []
+
+    button.selection_snapshot_rows = (0,)
+    button.clicked.emit()
+    assert acted == [[job.id]]
+    assert prompts[0] == expected_prompt
+    window.close()
+
+
+def test_main_window_dashboard_multi_row_cancel_is_confirmed_by_the_scope_prompt_alone(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, confirmed_destructive_actions
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "multi_cancel.mufinder", "MultiCancel")
+    jobs = []
+    for label in ("j0", "j1"):
+        job = service.add_job(
+            doc,
+            label=label,
+            workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+            calc_type="castep_convergence_cutoff",
+        )
+        job.status = JobStatus.RUNNING
+        jobs.append(job)
+    window._document = doc
+    cancelled: list[list[object]] = []
+    monkeypatch.setattr(window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids)))
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED
+    )
+    window._refresh_jobs_table()
+
+    button = window._jobs_table.cellWidget(0, window._JOB_CANCEL_COLUMN)
+    button.selection_snapshot_rows = (0, 1)
+    button.clicked.emit()
+
+    assert [set(ids) for ids in cancelled] == [{job.id for job in jobs}]
+    assert confirmed_destructive_actions == []
+    window.close()
+
+
+def test_main_window_reset_failed_jobs_uses_supplied_cleanup_choice_without_asking(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "reset_preconfirmed.mufinder", "ResetPreconfirmed")
+    job = service.add_job(
+        doc,
+        label="j0",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    job.status = JobStatus.FAILED
+    window._document = doc
+    asked: list[int] = []
+    monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda count: asked.append(count))
+    applied: list[tuple[list[Job], bool]] = []
+    monkeypatch.setattr(
+        window,
+        "_apply_failed_job_reset",
+        lambda jobs, *, cleanup_choice, detach_convergence: applied.append((list(jobs), cleanup_choice))
+        or (0, []),
+    )
+
+    window._reset_failed_jobs([job], cleanup_choice=False)
+
+    assert asked == []
+    assert applied == [([job], False)]
+    window.close()
