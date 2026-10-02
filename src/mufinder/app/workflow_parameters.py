@@ -32,6 +32,65 @@ def kpoint_exclusive_hint(
     return None
 
 
+def mixed_parameter_names(
+    effective_params_sequence: Iterable[Mapping[str, object]],
+) -> set[str]:
+    """Return the parameters whose value differs between rows edited together.
+
+    A parameter is mixed when the rows do not all hold the same value for it,
+    which includes rows where it is absent. ``task`` is never reported: the
+    parameter dialog handles it separately.
+    """
+
+    params = [dict(p) for p in effective_params_sequence]
+    if len(params) < 2:
+        return set()
+    names = set().union(*params) - {"task"}
+    missing = object()
+    return {
+        name
+        for name in names
+        if any(p.get(name, missing) != params[0].get(name, missing) for p in params[1:])
+    }
+
+
+def merge_batch_values(
+    collected: Mapping[str, object],
+    row_values: Mapping[str, object],
+    untouched_mixed: Iterable[str],
+) -> dict[str, object]:
+    """Return one row's parameters after a batch edit.
+
+    ``collected`` is what the dialog returned, which leaves out the mixed
+    parameters the user did not touch; for those the row keeps the value it had
+    (or stays without one). Everything else comes from the dialog, so a
+    parameter the user edited or removed applies to every row.
+    """
+
+    merged = dict(collected)
+    for name in untouched_mixed:
+        if name in row_values:
+            merged[name] = row_values[name]
+        else:
+            merged.pop(name, None)
+    return merged
+
+
+def merge_batch_advanced(
+    dialog_advanced: Iterable[str],
+    row_advanced: Iterable[str],
+    untouched_mixed: Iterable[str],
+) -> set[str]:
+    """Return one row's visible advanced parameters after a batch edit.
+
+    An advanced parameter that is mixed and untouched stays shown only on the
+    rows that already showed it; the rest follow the dialog.
+    """
+
+    untouched = set(untouched_mixed)
+    return (set(dialog_advanced) - untouched) | (set(row_advanced) & untouched)
+
+
 COMMON_WORKFLOW_PARAMETER_NAMES = (
     "basis_precision",
     "cut_off_energy",

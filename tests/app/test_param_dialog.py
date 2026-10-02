@@ -750,3 +750,120 @@ def test_nudged_elastic_band_dialog_blocks_num_farms_keyword_row(qapp) -> None:
     # The dedicated control still carries the value.
     assert dialog.num_farms() == 2
     dialog.close()
+
+
+# ---------------------------------------------------------------------------
+# Mixed values: one dialog editing several rows
+# ---------------------------------------------------------------------------
+
+
+def _mixed_dialog(*mixed: str) -> ParameterDialog:
+    dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint")
+    dialog.set_advanced_names({"basis_precision", "cut_off_energy"})
+    dialog.set_values({"cut_off_energy": ValueWithUnit(420.0, "eV")})
+    dialog.set_mixed_names(mixed)
+    return dialog
+
+
+def test_parameter_dialog_without_mixed_names_shows_no_markers(qapp) -> None:
+    dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint")
+    dialog.set_values({"xc_functional": "LDA"})
+
+    assert dialog.untouched_mixed_names() == set()
+    assert dialog._mixed_markers == {}
+    assert dialog._mixed_notice.isHidden()
+    assert dialog.collect_values()["xc_functional"] == "LDA"
+
+
+def test_parameter_dialog_mixed_parameter_is_marked_and_left_out_until_edited(qapp) -> None:
+    dialog = _mixed_dialog("xc_functional")
+
+    assert dialog.untouched_mixed_names() == {"xc_functional"}
+    assert not dialog._mixed_notice.isHidden()
+    assert not dialog._mixed_markers["xc_functional"].isHidden()
+    # Every other row carries a marker label too, but hidden.
+    assert dialog._mixed_markers["cut_off_energy"].isHidden()
+    collected = dialog.collect_values()
+    assert "xc_functional" not in collected
+    assert collected["cut_off_energy"].value == 420.0
+
+    dialog._rows["xc_functional"].editor.set_value("LDA")  # type: ignore[union-attr]
+
+    assert dialog.untouched_mixed_names() == set()
+    assert dialog._mixed_markers["xc_functional"].isHidden()
+    assert dialog.collect_values()["xc_functional"] == "LDA"
+
+
+def test_parameter_dialog_reset_on_a_mixed_parameter_applies_the_default_to_every_row(qapp) -> None:
+    dialog = _mixed_dialog("xc_functional")
+
+    # The editor already shows the default, so resetting emits no change; it
+    # must still count as the user choosing that value.
+    dialog._reset_parameter("xc_functional")
+
+    assert dialog.untouched_mixed_names() == set()
+    assert dialog.collect_values()["xc_functional"] == "PBE"
+
+
+def test_parameter_dialog_mixed_marker_survives_a_row_rebuild(qapp) -> None:
+    dialog = _mixed_dialog("xc_functional")
+
+    dialog._search_input.setText("xc")
+    dialog._search_input.setText("")
+
+    assert dialog.untouched_mixed_names() == {"xc_functional"}
+    assert not dialog._mixed_markers["xc_functional"].isHidden()
+
+
+def test_parameter_dialog_mixed_member_keeps_its_whole_exclusive_group_untouched(qapp) -> None:
+    # The rows may differ in which member of the pair they use, so neither
+    # member is collected and both are reported, to be restored per row.
+    dialog = _mixed_dialog("basis_precision")
+
+    assert dialog.untouched_mixed_names() == {"basis_precision", "cut_off_energy"}
+    assert not dialog._mixed_markers["cut_off_energy"].isHidden()
+    collected = dialog.collect_values()
+    assert "basis_precision" not in collected
+    assert "cut_off_energy" not in collected
+
+
+def test_parameter_dialog_choosing_an_exclusive_member_applies_the_group_to_every_row(qapp) -> None:
+    dialog = _mixed_dialog("basis_precision")
+
+    dialog._rows["basis_precision"].radio.setChecked(True)  # type: ignore[union-attr]
+
+    assert dialog.untouched_mixed_names() == set()
+    collected = dialog.collect_values()
+    assert collected["basis_precision"] == "FINE"
+    assert "cut_off_energy" not in collected
+
+
+def test_parameter_dialog_editing_one_exclusive_member_clears_the_group(qapp) -> None:
+    dialog = _mixed_dialog("basis_precision")
+
+    dialog._rows["cut_off_energy"].editor.set_value(ValueWithUnit(500.0, "eV"))  # type: ignore[union-attr]
+
+    assert dialog.untouched_mixed_names() == set()
+    assert dialog.collect_values()["cut_off_energy"].value == 500.0
+
+
+def test_parameter_dialog_removing_a_mixed_advanced_row_removes_it_from_every_row(qapp) -> None:
+    dialog = _mixed_dialog("basis_precision")
+
+    dialog._remove_advanced("basis_precision")
+
+    assert dialog.untouched_mixed_names() == set()
+    assert "basis_precision" not in dialog.advanced_names()
+
+
+def test_parameter_dialog_validation_ignores_untouched_mixed_parameters(qapp, monkeypatch) -> None:
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        param_dialog_module,
+        "validate_gui_values",
+        lambda values, _specs, task: seen.append(dict(values)) or [],
+    )
+    dialog = _mixed_dialog("xc_functional")
+
+    assert dialog.validate() == []
+    assert "xc_functional" not in seen[0]

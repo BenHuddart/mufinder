@@ -178,3 +178,52 @@ def test_seed_xc_functional_default_prefers_project_then_schema_default() -> Non
 
     seed_xc_functional_default(defaults, None, schema_default=None)
     assert "xc_functional" not in defaults
+
+
+# ---------------------------------------------------------------------------
+# Batch edits of rows with differing values
+# ---------------------------------------------------------------------------
+
+
+def test_mixed_parameter_names_reports_differing_and_partly_absent_values() -> None:
+    from mufinder.app.workflow_parameters import mixed_parameter_names
+
+    rows = [
+        {"task": "SINGLEPOINT", "xc_functional": "PBE", "max_scf_cycles": 100, "nextra_bands": 4},
+        {"task": "GEOMETRYOPTIMIZATION", "xc_functional": "LDA", "max_scf_cycles": 100},
+    ]
+
+    # "task" is never reported; an absent value counts as different.
+    assert mixed_parameter_names(rows) == {"xc_functional", "nextra_bands"}
+    assert mixed_parameter_names(rows[:1]) == set()
+    assert mixed_parameter_names([]) == set()
+    assert mixed_parameter_names([{"a": None}, {}]) == {"a"}
+
+
+def test_merge_batch_values_keeps_each_rows_untouched_mixed_values() -> None:
+    from mufinder.app.workflow_parameters import merge_batch_values
+
+    collected = {"task": "SINGLEPOINT", "max_scf_cycles": 200}
+    untouched = {"xc_functional", "nextra_bands"}
+
+    assert merge_batch_values(
+        collected, {"xc_functional": "PBE", "nextra_bands": 4, "max_scf_cycles": 100}, untouched
+    ) == {"task": "SINGLEPOINT", "max_scf_cycles": 200, "xc_functional": "PBE", "nextra_bands": 4}
+    # A row that had no value for an untouched parameter stays without one.
+    assert merge_batch_values(collected, {"xc_functional": "LDA"}, untouched) == {
+        "task": "SINGLEPOINT",
+        "max_scf_cycles": 200,
+        "xc_functional": "LDA",
+    }
+    # Everything else follows the dialog, including a value the user removed.
+    assert merge_batch_values({"task": "SINGLEPOINT"}, {"max_scf_cycles": 100}, set()) == {
+        "task": "SINGLEPOINT"
+    }
+
+
+def test_merge_batch_advanced_keeps_untouched_rows_on_the_rows_that_showed_them() -> None:
+    from mufinder.app.workflow_parameters import merge_batch_advanced
+
+    assert merge_batch_advanced({"a", "b"}, {"b"}, {"b"}) == {"a", "b"}
+    assert merge_batch_advanced({"a", "b"}, set(), {"b"}) == {"a"}
+    assert merge_batch_advanced({"a"}, {"c"}, set()) == {"a"}

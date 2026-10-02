@@ -712,6 +712,30 @@ The application now includes a metadata-driven CASTEP parameter entry framework 
 - Parameter-level help dialogs sourced from keyword metadata.
 - Structured form output mapped to ``InputTemplate``/``JobPatch`` compatible data rather than raw text.
 
+Configuring several rows at once (``Configure Selected Parameters...``, a
+row's ``Configure`` on a multi-row selection, or ``Configure...`` in the row
+menu) opens one parameter dialog for all of them:
+
+- A parameter the rows agree on is shown with that value. A parameter on which
+  they differ is marked ``mixed``, and a note at the top of the dialog explains
+  the marker.
+- On ``OK`` each row keeps its own value for every mixed parameter that was left
+  alone, including rows that had no value for it. Everything else in the dialog
+  is written to every row.
+- Changing a mixed parameter, pressing its ``Reset``, removing its row, or
+  choosing which member of an either/or pair is active (for example k-point
+  grid or spacing) clears the marker, and that choice then applies to every
+  row. While one member of such a pair is still mixed the whole pair is left as
+  it is on each row, since the rows may differ in which member they use.
+- Accepting the dialog without changing anything leaves every mixed parameter as
+  it was on each row.
+
+This applies in the cutoff and k-point convergence, pristine and muon
+relaxation, UEP, Energy Barriers and Quantum Corrections tables. The farm count
+and pseudopotential family in the Energy Barriers and Quantum Corrections
+dialogs are not parameters in this sense: for a mixed selection they open at a
+single value, which is written to every selected row on ``OK``.
+
 Project defaults
 ----------------
 

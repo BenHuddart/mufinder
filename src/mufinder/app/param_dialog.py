@@ -188,6 +188,11 @@ class ParameterDialog(QDialog):
         # Name that should take priority in exclusive-group selection when
         # set by the caller via set_values(..., preferred_exclusive=...).
         self._preferred_exclusive: str | None = None
+        # Parameters whose value differs between the rows being edited and that
+        # the user has not touched yet (see set_mixed_names). Their "mixed"
+        # marker labels are kept so they can be hidden as soon as one is edited.
+        self._mixed_names: set[str] = set()
+        self._mixed_markers: dict[str, QLabel] = {}
 
         root = QVBoxLayout(self)
 
@@ -206,6 +211,16 @@ class ParameterDialog(QDialog):
             self._intro_label.setWordWrap(True)
             self._intro_label.setObjectName("parameterDialogIntro")
             root.addWidget(self._intro_label)
+
+        self._mixed_notice = QLabel(
+            "Parameters marked \u201cmixed\u201d differ between the selected rows. Each row keeps its "
+            "own value for them unless you change the parameter here.",
+            self,
+        )
+        self._mixed_notice.setWordWrap(True)
+        self._mixed_notice.setObjectName("hintText")
+        self._mixed_notice.hide()
+        root.addWidget(self._mixed_notice)
 
         task_row = QHBoxLayout()
         task_row.addWidget(QLabel("Task"))
@@ -301,12 +316,79 @@ class ParameterDialog(QDialog):
         self._exclusive_selection.clear()
         self._rebuild_rows(preserve_current=False)
 
+    def set_mixed_names(self, names: Iterable[str]) -> None:
+        """Mark parameters whose value differs between the rows being edited.
+
+        Call after :meth:`set_values` when one dialog edits several rows. A
+        mixed parameter is shown with a "mixed" marker and is left out of
+        :meth:`collect_values` until the user changes it, so the caller can keep
+        each row's own value (see :meth:`untouched_mixed_names`). Editing it,
+        resetting it, or switching the choice in its exclusive group clears the
+        marker, and its value is then collected and applies to every row.
+        """
+
+        self._mixed_names = {str(name) for name in names if str(name) in self._specs_by_name}
+        self._mixed_notice.setVisible(bool(self._mixed_names))
+        self._rebuild_rows()
+
+    def untouched_mixed_names(self) -> set[str]:
+        """Return the mixed parameters the user left alone.
+
+        Includes the other members of an exclusive group that has an untouched
+        mixed member (for example ``kpoint_mp_spacing`` when ``kpoint_mp_grid``
+        is mixed): the rows may differ in which member they use, so the group
+        as a whole is left as it is on each row.
+        """
+
+        return {name for name in self._specs_by_name if self._is_untouched_mixed(name)}
+
+    def _exclusive_partners(self, name: str) -> set[str]:
+        """Return the parameters that cannot be set together with ``name``."""
+
+        spec = self._specs_by_name.get(name)
+        if spec is None:
+            return set()
+        partners: set[str] = set()
+        for other_name, other in self._specs_by_name.items():
+            if other_name == name:
+                continue
+            if (
+                (spec.exclusive_group and other.exclusive_group == spec.exclusive_group)
+                or other_name in spec.mutually_exclusive_with
+                or name in other.mutually_exclusive_with
+            ):
+                partners.add(other_name)
+        return partners
+
+    def _is_untouched_mixed(self, name: str) -> bool:
+        if not self._mixed_names:
+            return False
+        return name in self._mixed_names or bool(self._exclusive_partners(name) & self._mixed_names)
+
+    def _mark_edited(self, name: str) -> None:
+        """Record that the user set ``name``, so it now applies to every row."""
+
+        if not self._is_untouched_mixed(name):
+            return
+        self._mixed_names -= {name, *self._exclusive_partners(name)}
+        self._refresh_mixed_markers()
+
+    def _refresh_mixed_markers(self) -> None:
+        for name, marker in self._mixed_markers.items():
+            marker.setVisible(self._is_untouched_mixed(name))
+
     def collect_values(self) -> dict[str, Any]:
-        """Collect structured values for currently active rows."""
+        """Collect structured values for currently active rows.
+
+        A mixed parameter the user did not touch is left out (see
+        :meth:`set_mixed_names`).
+        """
 
         values: dict[str, Any] = {"task": self._task}
         for name, row in self._rows.items():
             if row.editor is None:
+                continue
+            if self._is_untouched_mixed(name):
                 continue
             if self._in_inactive_exclusive_choice(name):
                 continue
@@ -505,6 +587,7 @@ class ParameterDialog(QDialog):
 
         self._rows.clear()
         self._row_default_values.clear()
+        self._mixed_markers.clear()
         # Detach and discard any prior button groups; new ones are created
         # below as rows are rebuilt. Reparenting to None lets Qt clean them
         # up alongside the rest of the row widgets.
@@ -588,12 +671,29 @@ class ParameterDialog(QDialog):
                         # runtime metadata changes shape. Keep the dialog usable
                         # by leaving that editor at its current default.
                         pass
-                editor.value_changed.connect(self._on_editor_changed)
+                editor.value_changed.connect(lambda param=name: self._on_row_edited(param))
                 if self._in_inactive_exclusive_choice(name):
                     editor.setEnabled(False)
                 elif not self._is_name_editable(name):
                     editor.setEnabled(False)
                 value_widget = editor
+                if self._mixed_names:
+                    # The editor cannot show several values at once, so a
+                    # marker beside it says the rows differ; it is hidden once
+                    # the parameter is edited.
+                    value_widget = QWidget(self._table_widget)
+                    value_layout = QHBoxLayout(value_widget)
+                    value_layout.setContentsMargins(0, 0, 0, 0)
+                    value_layout.addWidget(editor, 1)
+                    marker = QLabel("mixed", value_widget)
+                    marker.setObjectName("mixedValueMarker")
+                    marker.setToolTip(
+                        "The selected rows have different values for this parameter. "
+                        "Each row keeps its own value unless you change it here."
+                    )
+                    marker.setVisible(self._is_untouched_mixed(name))
+                    value_layout.addWidget(marker)
+                    self._mixed_markers[name] = marker
 
             self._table_layout.addWidget(value_widget, row_index, 1)
 
@@ -667,6 +767,9 @@ class ParameterDialog(QDialog):
             return
 
         self._values[name] = row.editor.value()
+        # Resetting is a deliberate choice of the default for every row, even
+        # when the editor already showed it and so emitted no change.
+        self._mark_edited(name)
 
     def _build_exclusive_groups(self, visible_names: list[str]) -> None:
         editable_names = [name for name in visible_names if not self._is_locked_name(name)]
@@ -760,6 +863,10 @@ class ParameterDialog(QDialog):
                 continue
             self._values[name] = row.editor.value()
 
+    def _on_row_edited(self, name: str) -> None:
+        self._mark_edited(name)
+        self._on_editor_changed()
+
     def _on_editor_changed(self) -> None:
         self._capture_editor_values()
 
@@ -768,6 +875,8 @@ class ParameterDialog(QDialog):
             return
 
         self._exclusive_selection[group_key] = name
+        # Choosing which member of the group is active is a choice for every row.
+        self._mark_edited(name)
         for candidate in self._exclusive_groups.get(group_key, set()):
             row = self._rows.get(candidate)
             if row is None or row.editor is None:
@@ -838,6 +947,8 @@ class ParameterDialog(QDialog):
     def _remove_advanced(self, name: str) -> None:
         if self._read_only:
             return
+        # Removing the row removes the parameter from every row being edited.
+        self._mark_edited(name)
         self._added_advanced.discard(name)
         self._rebuild_rows()
 

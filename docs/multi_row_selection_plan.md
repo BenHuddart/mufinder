@@ -1,6 +1,6 @@
 # Multi-row selection: design and implementation plan
 
-Status: design agreed 2026-10-02. Phases 1–4 implemented; phase 5 pending.
+Status: design agreed 2026-10-02. All five phases implemented.
 
 This plan makes actions on multi-row selections behave the same way in every
 job table (Pristine Relaxation, Muon Relaxation, UEP, Cutoff and K-point

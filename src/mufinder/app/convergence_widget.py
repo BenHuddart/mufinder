@@ -33,6 +33,9 @@ from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.workflow_parameters import (
+    merge_batch_advanced,
+    merge_batch_values,
+    mixed_parameter_names,
     kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     seed_xc_functional_default,
@@ -687,16 +690,27 @@ class CutoffConvergenceWidget(QWidget):
             preferred_exclusive=kpoint_hint,
         )
         dialog.set_advanced_names(self._advanced_names_for_cutoffs(cutoffs))
+        effective_by_cutoff = {c: self._effective_params_for_cutoff(c) for c in cutoffs}
+        dialog.set_mixed_names(mixed_parameter_names(effective_by_cutoff.values()))
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if read_only:
             return
 
+        # Parameters that differ between the cutoffs and were left alone keep
+        # each cutoff's own value; everything else follows the dialog.
         values = self._sanitize_parameter_mapping(dialog.collect_values())
         advanced_names = set(dialog.advanced_names())
+        untouched = dialog.untouched_mixed_names()
         for cutoff in cutoffs:
-            self._set_cutoff_parameter_values(cutoff, values, advanced_names)
+            self._set_cutoff_parameter_values(
+                cutoff,
+                merge_batch_values(values, effective_by_cutoff[cutoff], untouched),
+                merge_batch_advanced(
+                    advanced_names, self._cutoff_added_advanced.get(cutoff, set()), untouched
+                ),
+            )
 
         self._refresh_all_cutoff_rows()
         self._emit_state()

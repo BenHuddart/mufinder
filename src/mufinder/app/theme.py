@@ -1542,6 +1542,11 @@ def _label_styles(p: MuFinderPalette, heading_font: str) -> str:
         font-size: 11px;
         color: {p.text_muted};
     }}
+    QLabel#mixedValueMarker {{
+        font-size: 11px;
+        font-style: italic;
+        color: {p.warning};
+    }}
     QLabel#warningText {{
         color: {p.warning};
         font-weight: 600;
