@@ -7,6 +7,8 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QDialog, QHeaderView, QMessageBox, QPushButton, QToolButton
 
+from mufinder.app import selection_snapshot as selection_snapshot_module
+from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app import relaxation_widget as relaxation_widget_module
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
@@ -152,9 +154,9 @@ def test_relaxation_widget_supercell_selection_can_apply_to_selected_rows(
 
     questions: list[str] = []
     monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda _parent, title, *_args: questions.append(title) or QMessageBox.StandardButton.Yes,
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda _parent, title, *_args: questions.append(title) or SelectionScope.ALL_SELECTED,
     )
 
     selection = widget._table.selectionModel()
@@ -171,7 +173,7 @@ def test_relaxation_widget_supercell_selection_can_apply_to_selected_rows(
     combo.setCurrentIndex(combo.findText("convergence_cutoff 2x2x1"))
 
     expected = ((2, 0, 0), (0, 2, 0), (0, 0, 1))
-    assert questions == ["Apply supercell to selected rows?"]
+    assert questions == ["Apply to selected rows?"]
     assert widget.row_supercell_matrix(first_id) == expected
     assert widget.row_supercell_matrix(second_id) == expected
 
@@ -197,9 +199,9 @@ def test_relaxation_widget_supercell_selection_can_stay_on_current_row(
     assert second_id is not None
 
     monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *_args: QMessageBox.StandardButton.No,
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *_args: SelectionScope.CLICKED_ONLY,
     )
 
     selection = widget._table.selectionModel()
@@ -734,7 +736,7 @@ def test_relaxation_supercell_uses_snapshot_when_selection_collapsed(qapp, monke
     second_id = widget._row_id_at(1)
     third_id = widget._row_id_at(2)
 
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
 
     _select_rows(widget, [0, 1, 2])
     combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
@@ -763,7 +765,7 @@ def test_relaxation_supercell_single_row_no_prompt(qapp, monkeypatch):
     second_id = widget._row_id_at(1)
 
     prompts: list = []
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: prompts.append(1))
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(1))
 
     _select_rows(widget, [0])
     combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
@@ -790,7 +792,7 @@ def test_relaxation_supercell_click_unselected_row_no_prompt(qapp, monkeypatch):
     third_id = widget._row_id_at(2)
 
     prompts: list = []
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: prompts.append(1))
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(1))
 
     _select_rows(widget, [0, 1])  # rows 0, 1 selected
     combo = widget._table.cellWidget(2, widget._SUPERCELL_COLUMN)  # click row 2 (unselected)
@@ -820,7 +822,7 @@ def test_relaxation_configure_button_applies_to_snapshot_rows(qapp, monkeypatch)
     third_id = widget._row_id_at(2)
 
     monkeypatch.setattr(widget, "_open_row_parameter_dialog", _fake_dialog)
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
 
     btn = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(btn, SelectionSnapshotPushButton)
@@ -839,7 +841,7 @@ def test_relaxation_configure_button_single_row_no_prompt(qapp, monkeypatch):
         lambda self, row_ids: opened_for.extend(row_ids),
     )
     prompts: list = []
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: prompts.append(1))
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(1))
 
     widget = PristineRelaxationWidget()
     widget._add_row()
@@ -863,7 +865,7 @@ def test_relaxation_remove_button_applies_to_snapshot_rows(qapp, monkeypatch):
         "_remove_rows_by_id",
         lambda self, row_ids: removed.extend(row_ids),
     )
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
 
     widget = PristineRelaxationWidget()
     widget._add_row()
@@ -993,12 +995,11 @@ def test_relaxation_batch_configure_uses_selection_snapshot_not_collapsed(
     )
     # A multi-row snapshot prompts (via selection_snapshot.resolve_target_keys)
     # to confirm applying to all selected rows.
-    from mufinder.app import selection_snapshot as selection_snapshot_module
 
     monkeypatch.setattr(
-        selection_snapshot_module.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: selection_snapshot_module.QMessageBox.StandardButton.Yes,
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *_args, **_kwargs: SelectionScope.ALL_SELECTED,
     )
 
     _select_relaxation_rows(widget, (0, 1))
@@ -1172,3 +1173,129 @@ def test_relaxation_widget_uses_project_xc_functional_for_unconfigured_rows(qapp
     widget._row_parameter_values.pop(row_id)
     widget.set_project_defaults(cutoff_energy=None, kpoint_grid=None, kpoint_reference_lattice=None)
     assert widget._effective_params_for_row(row_id)["xc_functional"] == schema_default
+
+
+def test_relaxation_fix_cell_applies_to_selected_rows(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    for _ in range(3):
+        widget._add_row()
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED
+    )
+    states: list[dict] = []
+    widget.form_state_changed.connect(states.append)
+
+    _select_relaxation_rows(widget, (0, 1))
+    combo = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
+    assert isinstance(combo, QComboBox)
+    combo.selection_snapshot_rows = (0, 1)
+    combo.setCurrentIndex(combo.findData(True))
+
+    assert widget._fix_all_cell_at_row(0) is True
+    assert widget._fix_all_cell_at_row(1) is True
+    assert widget._fix_all_cell_at_row(2) is False
+    # One state emission for the whole batch, not one per propagated row.
+    assert len(states) == 1
+
+
+def test_relaxation_fix_cell_this_row_only(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.CLICKED_ONLY
+    )
+
+    _select_relaxation_rows(widget, (0, 1))
+    combo = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
+    combo.selection_snapshot_rows = (0, 1)
+    combo.setCurrentIndex(combo.findData(True))
+
+    assert widget._fix_all_cell_at_row(0) is True
+    assert widget._fix_all_cell_at_row(1) is False
+
+
+def test_relaxation_fix_cell_cancel_restores_previous_value(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.CANCEL
+    )
+    states: list[dict] = []
+    widget.form_state_changed.connect(states.append)
+
+    _select_relaxation_rows(widget, (0, 1))
+    combo = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
+    # Emulate the press: the combo records the value the user started from.
+    combo.pre_interaction_index = combo.currentIndex()
+    combo.selection_snapshot_rows = (0, 1)
+    combo.setCurrentIndex(combo.findData(True))
+
+    assert widget._fix_all_cell_at_row(0) is False
+    assert widget._fix_all_cell_at_row(1) is False
+    assert states == []
+
+
+def test_relaxation_fix_cell_skips_locked_rows(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    for _ in range(3):
+        widget._add_row()
+    locked_label = widget._label_at_row(2)
+    widget.set_runtime_states({locked_label: RelaxationRunState(status="running")})
+    bodies: list[str] = []
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda _parent, _title, body, *a: bodies.append(body) or SelectionScope.ALL_SELECTED,
+    )
+
+    _select_relaxation_rows(widget, (0, 1, 2))
+    combo = widget._table.cellWidget(0, widget._FIX_CELL_COLUMN)
+    combo.selection_snapshot_rows = (0, 1, 2)
+    combo.setCurrentIndex(combo.findData(True))
+
+    assert bodies == [
+        "Set this cell constraint on 2 of 3 selected rows? 1 is not eligible and will be skipped."
+    ]
+    assert widget._fix_all_cell_at_row(0) is True
+    assert widget._fix_all_cell_at_row(1) is True
+    assert widget._fix_all_cell_at_row(2) is False
+
+
+def test_relaxation_supercell_cancel_restores_combo_and_changes_nothing(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget.set_supercell_options(
+        [{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}]
+    )
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.CANCEL
+    )
+
+    _select_relaxation_rows(widget, (0, 1))
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    combo.selection_snapshot_rows = (0, 1)
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+
+    assert widget.row_supercell_matrix(first_id) is None
+    assert widget.row_supercell_matrix(second_id) is None
+    assert combo.currentText() == "Unit cell"
+
+
+def test_relaxation_remove_button_cancel_removes_nothing(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.CANCEL
+    )
+
+    btn = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    btn.selection_snapshot_rows = (0, 1)
+    btn.clicked.emit()
+
+    assert widget._table.rowCount() == 2

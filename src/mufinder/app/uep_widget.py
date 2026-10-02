@@ -563,9 +563,14 @@ class UEPWidget(QWidget):
             snapshot_keys=[k for k in snapshot_keys if k is not None],
             eligibility=lambda rid: True,
             parent=self,
-            title="Apply supercell to selected rows?",
-            message="Apply this supercell choice to all selected UEP rows?",
+            action="Set this supercell on",
         )
+        if not target_row_ids:
+            # Cancelled: put the combo back to the row's stored supercell.
+            previous = combo.blockSignals(True)
+            self._set_combo_to_supercell(combo, self._row_supercells.get(row_id))
+            combo.blockSignals(previous)
+            return
         for target_row_id in target_row_ids:
             self._row_supercells[target_row_id] = matrix
         self._refresh_table_rows()
@@ -582,23 +587,10 @@ class UEPWidget(QWidget):
             for r in widget.selection_snapshot_rows
         ]
         if kind == "wizard":
-            # Wizard is single-row only; if multi-row selected, confirm we run it for just this row.
-            if row_id in [k for k in snapshot_keys if k is not None] and len([k for k in snapshot_keys if k is not None]) > 1:
-                from PySide6.QtWidgets import QMessageBox as _QMB
-                response = _QMB.question(
-                    self,
-                    "Open wizard for this row?",
-                    "The wizard runs on one row at a time. Open the wizard for just this row?",
-                    _QMB.StandardButton.Yes | _QMB.StandardButton.No,
-                    _QMB.StandardButton.Yes,
-                )
-                widget.selection_snapshot_rows = ()
-                widget.selection_snapshot_key = None
-                if response != _QMB.StandardButton.Yes:
-                    return
-            else:
-                widget.selection_snapshot_rows = ()
-                widget.selection_snapshot_key = None
+            # The wizard runs on one row at a time, so it always opens for the
+            # clicked row and never asks about the rest of the selection.
+            widget.selection_snapshot_rows = ()
+            widget.selection_snapshot_key = None
             self._emit_wizard_for_row(row_id)
         elif kind == "configure":
             target_row_ids = resolve_target_keys(
@@ -607,9 +599,10 @@ class UEPWidget(QWidget):
                 snapshot_keys=[k for k in snapshot_keys if k is not None],
                 eligibility=lambda rid: True,
                 parent=self,
-                title="Configure selected rows?",
-                message="Open a shared parameter dialog for all selected UEP rows?",
+                action="Configure parameters for",
             )
+            if not target_row_ids:
+                return
             if len(target_row_ids) == 1:
                 self._configure_row(target_row_ids[0])
             else:
@@ -621,10 +614,10 @@ class UEPWidget(QWidget):
                 snapshot_keys=[k for k in snapshot_keys if k is not None],
                 eligibility=lambda rid: True,
                 parent=self,
-                title="Remove selected rows?",
-                message="Remove all selected UEP rows?",
+                action="Remove",
             )
-            self._remove_rows_by_id(target_row_ids)
+            if target_row_ids:
+                self._remove_rows_by_id(target_row_ids)
 
     @staticmethod
     def _runtime_controls_locked(status: str) -> bool:

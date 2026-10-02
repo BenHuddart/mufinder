@@ -598,6 +598,35 @@ Workflow-driven CASTEP job generation now includes:
 - Local output writing for ``.cell`` and ``.param`` files plus ``manifest.json`` for reproducibility/debugging.
 - Conditional spin serialization in ``.cell`` files by appending inline ``SPIN=...`` tokens to ``POSITIONS_FRAC`` rows when and only when spin polarization is enabled.
 
+Multi-row selection in job tables
+---------------------------------
+
+The workflow job tables (cutoff and k-point convergence, pristine and muon
+relaxation, UEP, Energy Barriers, Quantum Corrections) and the Job Dashboard
+share one rule for controls embedded in a row: highlighted rows are what is
+affected.
+
+- A control on a row that is part of a multi-row selection targets the
+  selection. MuFinder asks first, with three choices: apply to all selected
+  rows, apply to this row only, or cancel. Cancelling changes nothing, and a
+  dropdown returns to the value it showed before.
+- A control on a row outside the selection first makes that row the selection,
+  then acts on it alone, without a prompt.
+- The prompt uses the same wording in every table. It names the action and the
+  number of rows, and when some selected rows cannot take the action (for
+  example rows locked because their job has been queued) it states how many
+  will be skipped.
+- After the prompt is answered the table selection is set to the rows the
+  action applied to.
+- Controls that propagate: the ``Supercell`` and ``Fix Cell`` dropdowns, the
+  per-row ``Configure`` and remove buttons, and every Job Dashboard action
+  button.
+- Controls that only make sense for one row (``Open Wizard`` in the UEP table,
+  ``View`` in the Energy Barriers table) always act on their own row and never
+  prompt.
+
+The shared implementation lives in ``mufinder.app.selection_snapshot``.
+
 Workflow-aware CASTEP parameter GUI
 -----------------------------------
 

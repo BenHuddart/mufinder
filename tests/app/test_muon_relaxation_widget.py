@@ -8,6 +8,8 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QDialog, QMessageBox, QPushButton, QToolButton
 
+from mufinder.app import selection_snapshot as selection_snapshot_module
+from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app import muon_relaxation_widget as muon_relaxation_widget_module
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.param_dialog import ParameterDialog
@@ -625,9 +627,9 @@ def test_muon_relaxation_widget_supercell_selection_can_apply_to_selected_rows(
     assert second_id is not None
 
     monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *_args: QMessageBox.StandardButton.Yes,
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *_args: SelectionScope.ALL_SELECTED,
     )
 
     selection = widget._table.selectionModel()
@@ -757,7 +759,6 @@ def test_muon_relaxation_configure_uses_selection_snapshot_not_collapsed(
     # focus-collapse to the clicked row does not shrink a multi-row batch.
     from PySide6.QtWidgets import QPushButton as _QPushButton
 
-    from mufinder.app import selection_snapshot as selection_snapshot_module
     from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
 
     widget = MuonRelaxationWidget()
@@ -773,9 +774,9 @@ def test_muon_relaxation_configure_uses_selection_snapshot_not_collapsed(
         lambda _self, ids: captured.append(ids),
     )
     monkeypatch.setattr(
-        selection_snapshot_module.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: selection_snapshot_module.QMessageBox.StandardButton.Yes,
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *_args, **_kwargs: SelectionScope.ALL_SELECTED,
     )
 
     _select_muon_rows(widget, (0, 1))

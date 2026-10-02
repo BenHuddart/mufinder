@@ -9,6 +9,8 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QDialog, QLabel, QPushButton, QToolButton
 
+from mufinder.app import selection_snapshot as selection_snapshot_module
+from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app import uep_widget as uep_widget_module
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.uep_types import UepRunState
@@ -528,7 +530,6 @@ def test_uep_batch_configure_empty_selection_is_noop(qapp, monkeypatch) -> None:
 def test_uep_configure_uses_selection_snapshot_not_collapsed(qapp, monkeypatch) -> None:
     # The per-row Configure button snapshots the selection so a platform
     # focus-collapse to the clicked row does not shrink a multi-row batch.
-    from mufinder.app import selection_snapshot as selection_snapshot_module
     from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
 
     widget = UEPWidget()
@@ -546,9 +547,9 @@ def test_uep_configure_uses_selection_snapshot_not_collapsed(qapp, monkeypatch) 
         lambda _self, ids: captured.append(tuple(ids)),
     )
     monkeypatch.setattr(
-        selection_snapshot_module.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: selection_snapshot_module.QMessageBox.StandardButton.Yes,
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *_args, **_kwargs: SelectionScope.ALL_SELECTED,
     )
 
     _select_uep_rows(widget, (0, 1))
@@ -608,3 +609,53 @@ def test_uep_widget_context_menu_disables_reset_for_ready_row(qapp, monkeypatch)
 
     assert menu is not None and menu.reset_action().enabled is False
     assert payloads == []
+
+
+def test_uep_wizard_button_opens_clicked_row_without_prompt(qapp, monkeypatch) -> None:
+    # The wizard runs on one row at a time, so a multi-row selection neither
+    # prompts nor changes which row it opens for.
+    from PySide6.QtWidgets import QMessageBox
+
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    prompts: list[object] = []
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompts.append(a))
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: prompts.append(a))
+    requested: list[str] = []
+    widget.wizard_requested.connect(requested.append)
+
+    _select_uep_rows(widget, (0, 1))
+    wizard_button = widget._table.cellWidget(1, widget._WIZARD_COLUMN)
+    wizard_button.selection_snapshot_rows = (0, 1)
+    wizard_button.clicked.emit()
+
+    assert prompts == []
+    assert requested == [widget._table.item(1, widget._LABEL_COLUMN).text()]
+    assert wizard_button.selection_snapshot_rows == ()
+
+
+def test_uep_supercell_cancel_restores_combo_and_changes_nothing(qapp, monkeypatch) -> None:
+    widget = UEPWidget()
+    widget.set_supercell_options(
+        [{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}]
+    )
+    widget._add_row()
+    widget._add_row()
+    first_id = widget._row_id_at(0)
+    second_id = widget._row_id_at(1)
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.CANCEL
+    )
+    states: list[dict] = []
+    widget.form_state_changed.connect(states.append)
+
+    _select_uep_rows(widget, (0, 1))
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    combo.selection_snapshot_rows = (0, 1)
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+
+    assert widget.row_supercell_matrix(first_id) is None
+    assert widget.row_supercell_matrix(second_id) is None
+    assert combo.currentText() == "Unit cell"
+    assert states == []

@@ -603,8 +603,7 @@ class CutoffConvergenceWidget(QWidget):
             snapshot_keys=[c for c in snapshot_keys if c is not None],
             eligibility=lambda c: True,
             parent=self,
-            title="Configure parameters for selected cutoffs?",
-            message="Open a shared parameter dialog for all selected cutoff rows?",
+            action="Configure parameters for",
         )
         if cutoffs:
             self._open_cutoff_parameter_dialog(cutoffs)
@@ -738,8 +737,7 @@ class CutoffConvergenceWidget(QWidget):
             snapshot_keys=[c for c in snapshot_keys if c is not None],
             eligibility=lambda c: True,
             parent=self,
-            title="Remove selected cutoffs?",
-            message="Remove all selected cutoff rows?",
+            action="Remove",
         )
         rows = tuple(
             r

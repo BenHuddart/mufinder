@@ -18,6 +18,8 @@ import mufinder.app.convergence_widget as convergence_widget_module
 import mufinder.app.main_window as main_window_module
 import mufinder.services.job_artifacts as job_artifacts_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
+from mufinder.app import selection_snapshot as selection_snapshot_module
+from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.app.comparison_job_dialog import CompletedPristineJob
@@ -6562,7 +6564,7 @@ def test_main_window_dashboard_cancel_applies_to_snapshot_rows(
     window._document = doc
     cancelled: list[list[object]] = []
     monkeypatch.setattr(window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids)))
-    monkeypatch.setattr(main_window_module.QMessageBox, "question", staticmethod(lambda *a, **kw: main_window_module.QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
     window._refresh_jobs_table()
 
     cancel_btn = window._jobs_table.cellWidget(0, window._JOB_CANCEL_COLUMN)
@@ -6589,7 +6591,7 @@ def test_main_window_dashboard_cancel_single_row_no_prompt(
     cancelled: list[list[object]] = []
     monkeypatch.setattr(window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids)))
     prompted: list[bool] = []
-    monkeypatch.setattr(main_window_module.QMessageBox, "question", staticmethod(lambda *a, **kw: prompted.append(True) or main_window_module.QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompted.append(True) or SelectionScope.ALL_SELECTED)
     window._refresh_jobs_table()
 
     cancel_btn = window._jobs_table.cellWidget(0, window._JOB_CANCEL_COLUMN)
@@ -6618,7 +6620,7 @@ def test_main_window_dashboard_cancel_unselected_row_no_prompt(
     cancelled: list[list[object]] = []
     monkeypatch.setattr(window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids)))
     prompted: list[bool] = []
-    monkeypatch.setattr(main_window_module.QMessageBox, "question", staticmethod(lambda *a, **kw: prompted.append(True) or main_window_module.QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompted.append(True) or SelectionScope.ALL_SELECTED)
     window._refresh_jobs_table()
 
     # Snapshot only contains row 0; click Cancel on row 1 (not in snapshot)
@@ -10755,9 +10757,9 @@ def test_dashboard_dismiss_multi_select(
 
     window._document = doc
     monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "question",
-        staticmethod(lambda *a, **kw: main_window_module.QMessageBox.StandardButton.Yes),
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda *a, **kw: SelectionScope.ALL_SELECTED,
     )
     window._refresh_jobs_table()
 
@@ -12479,3 +12481,38 @@ def test_await_remote_file_check_reports_worker_exception_as_unavailable(
     assert probe.status == CheckpointProbeStatus.UNAVAILABLE
     assert "stat failed" in probe.reason
     window.close()
+
+
+def test_main_window_dashboard_scope_prompt_cancel_does_nothing(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "snap_scope_cancel.mufinder", "SnapScopeCancel")
+    for label in ("j0", "j1"):
+        job = service.add_job(
+            doc,
+            label=label,
+            workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+            calc_type="castep_convergence_cutoff",
+        )
+        job.status = JobStatus.RUNNING
+    window._document = doc
+    cancelled: list[list[object]] = []
+    monkeypatch.setattr(window, "_on_cancel_from_dashboard", lambda ids: cancelled.append(list(ids)))
+    asked: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        selection_snapshot_module,
+        "ask_selection_scope",
+        lambda _parent, title, body, *a: asked.append((title, body)) or SelectionScope.CANCEL,
+    )
+    window._refresh_jobs_table()
+
+    cancel_btn = window._jobs_table.cellWidget(0, window._JOB_CANCEL_COLUMN)
+    cancel_btn.selection_snapshot_rows = (0, 1)
+    cancel_btn.clicked.emit()
+
+    assert asked == [("Apply to selected jobs?", "Cancel all 2 selected jobs?")]
+    assert cancelled == []
+    window.close()
+

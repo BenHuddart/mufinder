@@ -5,6 +5,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMessageBox, QPushButton
 
+from mufinder.app import selection_snapshot as selection_snapshot_module
+from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.theme import status_brush
 from mufinder.app.energy_barriers_widget import (
     EnergyBarrierEndpointRow,
@@ -635,7 +637,7 @@ def test_energy_barriers_source_configure_applies_to_snapshot_rows(
     )
     configured: list[object] = []
     widget.configure_result_requested.connect(configured.append)
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
 
     btn = widget._sources_table.cellWidget(0, 6)
     assert isinstance(btn, SelectionSnapshotPushButton)
@@ -658,7 +660,7 @@ def test_energy_barriers_source_configure_single_row_no_prompt(
     configured: list[object] = []
     widget.configure_result_requested.connect(configured.append)
     prompted: list[bool] = []
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: prompted.append(True) or QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: prompted.append(True) or SelectionScope.ALL_SELECTED)
 
     btn = widget._sources_table.cellWidget(0, 6)
     assert isinstance(btn, SelectionSnapshotPushButton)
@@ -711,7 +713,7 @@ def test_quantum_source_configure_applies_to_snapshot_rows(
     )
     configured: list[object] = []
     widget.configure_requested.connect(configured.append)
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Yes))
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
 
     btn = widget._sources_table.cellWidget(0, 8)
     assert isinstance(btn, SelectionSnapshotPushButton)
