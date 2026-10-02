@@ -53,11 +53,16 @@ from mufinder.app.workflow_parameters import (
 from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.workflow_table_utils import (
-    confirm_row_removal,
+    REMOVE_SELECTED_TEXT,
     RowMenuAction,
+    SelectionFeedback,
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
+    confirm_row_removal,
     create_workflow_table,
+    multi_row_outcome_text,
+    show_status_message,
+    standard_row_actions,
     style_workflow_configure_button,
     workflow_row_status_text,
 )
@@ -232,9 +237,14 @@ class PristineRelaxationWidget(QWidget):
         self._add_row_button = QPushButton("Add Job")
         self._batch_configure_button = QPushButton("Configure Selected Parameters...")
         self._batch_configure_button.setEnabled(False)
+        self._remove_selected_button = QPushButton(REMOVE_SELECTED_TEXT)
+        self._selection_count_label = QLabel("")
+        style_hint_text(self._selection_count_label)
 
-        self._run_local_button = QPushButton("Run Local Calculations")
-        self._run_cluster_button = QPushButton("Run on Cluster")
+        # SelectionFeedback sets the run buttons' text ("Run All ..." / "Run
+        # Selected ...") from the selection.
+        self._run_local_button = QPushButton()
+        self._run_cluster_button = QPushButton()
         self._generate_comparison_button = QPushButton("Generate Comparison Table...")
 
         self._specs = self._build_parameter_specs()
@@ -279,6 +289,8 @@ class PristineRelaxationWidget(QWidget):
         control_row = QHBoxLayout()
         control_row.addWidget(self._add_row_button)
         control_row.addStretch(1)
+        control_row.addWidget(self._selection_count_label)
+        control_row.addWidget(self._remove_selected_button)
         control_row.addWidget(self._batch_configure_button)
         table_layout.addLayout(control_row)
         layout.addWidget(table_group, 1)
@@ -299,23 +311,46 @@ class PristineRelaxationWidget(QWidget):
         self._add_row_button.clicked.connect(self._add_row)
         self._batch_configure_button.clicked.connect(self._configure_selected_rows)
         self._table.itemChanged.connect(self._on_table_item_changed)
+        self._remove_selected_button.clicked.connect(self._delete_selected_rows)
         self._table.setToolTip(
-            "Right-click a failed, stopped, or cancelled row to reset it back to ready for "
-            "rerun, or a completed/failed/stopped/cancelled row to continue its relaxation."
+            "Right-click selected rows to run, cancel, inspect, reset, configure, or remove "
+            "them, or a completed/failed/stopped/cancelled row to continue its relaxation."
+        )
+        # A right-click makes the rows under it the selection, so the menu's
+        # run/configure/remove entries reuse the selection-based handlers.
+        leading_actions, trailing_actions = standard_row_actions(
+            status_for_row=self._row_status,
+            run_local=lambda _rows: self._run_local_selected_rows(),
+            run_cluster=lambda _rows: self._run_cluster_selected_rows(),
+            cancel=lambda rows: self.cancel_requested.emit(self._labels_at_rows(rows)),
+            inspect=lambda rows: self.inspect_failed_requested.emit(self._labels_at_rows(rows)),
+            configure=lambda _rows: self._configure_selected_rows(),
+            remove=lambda _rows: self._delete_selected_rows(),
+            confirm_parent=self,
         )
         bind_reset_failed_context_menu(
             self._table,
             key_for_row=self._reset_key_at_row,
             status_for_row=self._row_status,
             emit_reset=self.reset_failed_requested.emit,
+            leading_actions=leading_actions,
             additional_actions=(
+                *trailing_actions,
                 RowMenuAction(
                     text="Continue relaxation…",
                     is_enabled=lambda keys: len(keys) == 1
                     and self._continuable_predicate(keys[0]),
                     trigger=lambda keys: self.continue_relaxation_requested.emit(keys[0]),
+                    separator_before=True,
                 ),
             ),
+        )
+        self._selection_feedback = SelectionFeedback(
+            self._table,
+            count_label=self._selection_count_label,
+            run_local_button=self._run_local_button,
+            run_cluster_button=self._run_cluster_button,
+            selection_buttons=(self._remove_selected_button,),
         )
 
         selection_model = self._table.selectionModel()
@@ -634,6 +669,9 @@ class PristineRelaxationWidget(QWidget):
         item = self._table.item(row, self._LABEL_COLUMN)
         return item.text().strip() if item is not None else ""
 
+    def _labels_at_rows(self, rows: Sequence[int]) -> list[str]:
+        return [label for row in rows if (label := self._label_at_row(row))]
+
     def _reset_key_at_row(self, row: int) -> str | None:
         """Return the row's submission key, or ``None`` for an unlabeled row."""
 
@@ -746,6 +784,11 @@ class PristineRelaxationWidget(QWidget):
             # Cancelled: put the combo back to the row's stored supercell.
             self._refresh_row(row)
             return
+        if len(target_row_ids) > 1:
+            show_status_message(
+                self,
+                multi_row_outcome_text("Supercell set on", len(target_row_ids), len(snapshot_keys)),
+            )
         for target_row_id in target_row_ids:
             self._row_supercells[target_row_id] = matrix
             self._row_parameter_values[target_row_id] = self._strip_implicit_row_defaults(
@@ -774,6 +817,13 @@ class PristineRelaxationWidget(QWidget):
         if not target_row_ids:
             combo.restore_pre_interaction_index()
             return
+        if len(target_row_ids) > 1:
+            show_status_message(
+                self,
+                multi_row_outcome_text(
+                    "Cell constraint set on", len(target_row_ids), len(snapshot_keys)
+                ),
+            )
         for target_row_id in target_row_ids:
             if target_row_id == row_id:
                 continue

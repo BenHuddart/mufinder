@@ -21,7 +21,12 @@ from PySide6.QtWidgets import (
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.workflow_table_utils import (
+    RowMenuAction,
+    SelectionFeedback,
+    bind_reset_failed_context_menu,
     create_workflow_table,
+    standard_row_actions,
+    workflow_row_status_text,
     set_workflow_table_item,
     style_workflow_configure_button,
     workflow_row_is_locked,
@@ -64,6 +69,8 @@ class QuantumCorrectionsWidget(QWidget):
     source_label_renamed = Signal(str, str)
     submit_local_requested = Signal(list)
     submit_cluster_requested = Signal(list)
+    cancel_requested = Signal(object)
+    inspect_failed_requested = Signal(object)
     reset_stage_requested = Signal(list)
     analysis_requested = Signal(str)
 
@@ -137,8 +144,12 @@ class QuantumCorrectionsWidget(QWidget):
         actions = QHBoxLayout()
         actions.setSpacing(8)
         self._batch_configure_button = QPushButton("Configure Selected Parameters...")
-        self._submit_local_button = QPushButton("Run Local Calculations")
-        self._submit_cluster_button = QPushButton("Run on Cluster")
+        self._selection_count_label = QLabel("")
+        style_hint_text(self._selection_count_label)
+        # SelectionFeedback sets the run buttons' text ("Run All ..." / "Run
+        # Selected ...") from the selection.
+        self._submit_local_button = QPushButton()
+        self._submit_cluster_button = QPushButton()
         self._reset_stage_button = QPushButton("Reset to Stage 1")
         self._batch_configure_button.clicked.connect(self._emit_batch_configure)
         self._submit_local_button.clicked.connect(self._emit_submit_local)
@@ -148,8 +159,53 @@ class QuantumCorrectionsWidget(QWidget):
         actions.addWidget(self._submit_cluster_button)
         actions.addWidget(self._reset_stage_button)
         actions.addStretch(1)
+        actions.addWidget(self._selection_count_label)
         actions.addWidget(self._batch_configure_button)
         sources_layout.addLayout(actions)
+
+        # Rows here are derived from completed relaxations, so there is no
+        # Remove, and the recovery action is "Reset to Stage 1" rather than the
+        # shared failed-job reset. A right-click makes the rows under it the
+        # selection, so the entries reuse the selection-based handlers.
+        leading_actions, trailing_actions = standard_row_actions(
+            status_for_row=self._source_row_status,
+            run_local=lambda _rows: self._emit_submit_local(),
+            run_cluster=lambda _rows: self._emit_submit_cluster(),
+            cancel=lambda rows: self.cancel_requested.emit(self._source_keys_at_rows(rows)),
+            inspect=lambda rows: self.inspect_failed_requested.emit(self._source_keys_at_rows(rows)),
+            configure=lambda _rows: self._emit_batch_configure(),
+            confirm_parent=self,
+        )
+        self._sources_table.setToolTip(
+            "Right-click selected rows to run, cancel, inspect, configure, or reset them to stage 1."
+        )
+        bind_reset_failed_context_menu(
+            self._sources_table,
+            key_for_row=self._source_key_at_row,
+            status_for_row=self._source_row_status,
+            emit_reset=None,
+            leading_actions=leading_actions,
+            additional_actions=(
+                *trailing_actions,
+                RowMenuAction(
+                    text="Reset to Stage 1",
+                    is_enabled=lambda rows: any(
+                        self._source_rows[int(row)].resettable
+                        for row in rows
+                        if 0 <= int(row) < len(self._source_rows)
+                    ),
+                    trigger=lambda _rows: self._emit_reset_stage(),
+                    on_rows=True,
+                    separator_before=True,
+                ),
+            ),
+        )
+        self._sources_feedback = SelectionFeedback(
+            self._sources_table,
+            count_label=self._selection_count_label,
+            run_local_button=self._submit_local_button,
+            run_cluster_button=self._submit_cluster_button,
+        )
         layout.addWidget(sources_group)
 
         results_group = QGroupBox("Completed Results")
@@ -201,6 +257,8 @@ class QuantumCorrectionsWidget(QWidget):
         finally:
             self._updating_sources = False
         self._update_actions()
+        # The rebuild replaced every row's cell widgets.
+        self._sources_feedback.refresh()
 
     def set_results(self, rows: list[QuantumResultRow]) -> None:
         """Replace the displayed quantum-result rows.
@@ -275,8 +333,24 @@ class QuantumCorrectionsWidget(QWidget):
                 keys.append(self._source_rows[row].key)
         return keys
 
+    def _selected_or_all_source_keys(self) -> list[str]:
+        """Return the rows the run buttons act on: the selection, else every row."""
+
+        return self.selected_source_keys() or [row.key for row in self._source_rows if row.key]
+
+    def _source_key_at_row(self, row: int) -> str | None:
+        if not (0 <= row < len(self._source_rows)):
+            return None
+        return self._source_rows[row].key or None
+
+    def _source_keys_at_rows(self, rows) -> list[str]:
+        return [key for row in rows if (key := self._source_key_at_row(row))]
+
+    def _source_row_status(self, row: int) -> str:
+        return workflow_row_status_text(self._sources_table, row, 7)
+
     def _emit_submit_local(self) -> None:
-        self.submit_local_requested.emit(self.selected_source_keys())
+        self.submit_local_requested.emit(self._selected_or_all_source_keys())
 
     def _emit_batch_configure(self) -> None:
         keys = self.selected_source_keys()
@@ -284,7 +358,7 @@ class QuantumCorrectionsWidget(QWidget):
             self.configure_requested.emit(keys)
 
     def _emit_submit_cluster(self) -> None:
-        self.submit_cluster_requested.emit(self.selected_source_keys())
+        self.submit_cluster_requested.emit(self._selected_or_all_source_keys())
 
     def _emit_reset_stage(self) -> None:
         self.reset_stage_requested.emit(self.selected_source_keys())
@@ -292,9 +366,8 @@ class QuantumCorrectionsWidget(QWidget):
     def _update_actions(self) -> None:
         keys = self.selected_source_keys()
         enabled = bool(keys)
+        # The run buttons follow the selection through SelectionFeedback.
         self._batch_configure_button.setEnabled(enabled)
-        self._submit_local_button.setEnabled(enabled)
-        self._submit_cluster_button.setEnabled(enabled)
         selected_rows = [
             self._source_rows[index]
             for index in sorted({item.row() for item in self._sources_table.selectedIndexes()})

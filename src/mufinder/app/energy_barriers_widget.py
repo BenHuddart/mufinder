@@ -48,10 +48,13 @@ from mufinder.app.theme import (
     style_section_title,
 )
 from mufinder.app.workflow_table_utils import (
-    confirm_row_removal,
+    REMOVE_SELECTED_TEXT,
+    SelectionFeedback,
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
+    confirm_row_removal,
     create_workflow_table,
+    standard_row_actions,
     set_workflow_table_item,
     style_workflow_configure_button,
     workflow_row_is_locked,
@@ -538,6 +541,8 @@ class EnergyBarriersWidget(QWidget):
     endpoint_selection_changed = Signal(str, str)
     generate_paths_requested = Signal(str, str, str)
     remove_sources_requested = Signal(list)
+    cancel_requested = Signal(object)
+    inspect_failed_requested = Signal(object)
     reset_failed_requested = Signal(object)
     view_source_requested = Signal(str)
     configure_result_requested = Signal(object)
@@ -647,7 +652,7 @@ class EnergyBarriersWidget(QWidget):
             "Each row is a candidate hop between two relaxed endpoints. Configure the climbing-image "
             "NEB controls (image count, spring constant, tolerances) per path, then build the NEB job "
             "locally or on the cluster. Use View to preview a path in the undistorted supercell. "
-            "Right-click a failed, stopped, or cancelled row to reset it for rerun."
+            "Right-click selected rows to run, cancel, inspect, reset, configure, or remove them."
         )
         source_hint.setWordWrap(True)
         style_hint_text(source_hint)
@@ -658,20 +663,38 @@ class EnergyBarriersWidget(QWidget):
         )
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.itemSelectionChanged.connect(self._update_actions)
+        # A right-click makes the rows under it the selection, so the menu's
+        # run/configure/remove entries reuse the selection-based handlers.
+        leading_actions, trailing_actions = standard_row_actions(
+            status_for_row=self._source_row_status,
+            run_local=lambda _rows: self._emit_submit_neb_local(),
+            run_cluster=lambda _rows: self._emit_submit_neb_cluster(),
+            cancel=lambda rows: self.cancel_requested.emit(self._source_keys_at_rows(rows)),
+            inspect=lambda rows: self.inspect_failed_requested.emit(self._source_keys_at_rows(rows)),
+            configure=lambda _rows: self._emit_batch_configure_results(),
+            remove=lambda _rows: self._delete_selected_sources(),
+            confirm_parent=self,
+        )
         bind_reset_failed_context_menu(
             self._sources_table,
             key_for_row=self._source_key_at_row,
             status_for_row=self._source_row_status,
             emit_reset=self.reset_failed_requested.emit,
+            leading_actions=leading_actions,
+            additional_actions=trailing_actions,
         )
         sources_layout.addWidget(self._sources_table, 1)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
         self._batch_configure_results_button = QPushButton("Configure Selected Parameters...")
-        self._remove_sources_button = QPushButton("Remove Selected Paths")
-        self._submit_neb_local_button = QPushButton("Run Local Calculations")
-        self._submit_neb_cluster_button = QPushButton("Run on Cluster")
+        self._remove_sources_button = QPushButton(REMOVE_SELECTED_TEXT)
+        self._selection_count_label = QLabel("")
+        style_hint_text(self._selection_count_label)
+        # SelectionFeedback sets the run buttons' text ("Run All ..." / "Run
+        # Selected ...") and enables Remove Selected from the selection.
+        self._submit_neb_local_button = QPushButton()
+        self._submit_neb_cluster_button = QPushButton()
         self._batch_configure_results_button.clicked.connect(self._emit_batch_configure_results)
         self._remove_sources_button.clicked.connect(self._delete_selected_sources)
         self._submit_neb_local_button.clicked.connect(self._emit_submit_neb_local)
@@ -680,8 +703,16 @@ class EnergyBarriersWidget(QWidget):
         actions.addWidget(self._submit_neb_local_button)
         actions.addWidget(self._submit_neb_cluster_button)
         actions.addStretch(1)
+        actions.addWidget(self._selection_count_label)
         actions.addWidget(self._batch_configure_results_button)
         sources_layout.addLayout(actions)
+        self._sources_feedback = SelectionFeedback(
+            self._sources_table,
+            count_label=self._selection_count_label,
+            run_local_button=self._submit_neb_local_button,
+            run_cluster_button=self._submit_neb_cluster_button,
+            selection_buttons=(self._remove_sources_button,),
+        )
         paths_layout.addWidget(self._sources_group, 1)
         self._tabs.addTab(paths_tab, "Paths")
 
@@ -847,6 +878,8 @@ class EnergyBarriersWidget(QWidget):
             view_requested=self.view_source_requested.emit,
         )
         self._update_actions()
+        # The rebuild replaced every row's cell widgets.
+        self._sources_feedback.refresh()
 
     def set_neb_results(self, rows: list[EnergyBarrierNebResultRow]) -> None:
         previous_key = next(iter(self.selected_neb_result_keys()), "")
@@ -990,8 +1023,16 @@ class EnergyBarriersWidget(QWidget):
         self.set_sources([row for row in self._source_rows if row.key not in removed])
         self.remove_sources_requested.emit(keys)
 
+    def _selected_or_all_source_keys(self) -> list[str]:
+        """Return the paths the run buttons act on: the selection, else every row."""
+
+        return self.selected_source_keys() or [row.key for row in self._source_rows if row.key]
+
+    def _source_keys_at_rows(self, rows: Sequence[int]) -> list[str]:
+        return [key for row in rows if (key := self._source_key_at_row(row))]
+
     def _emit_submit_neb_local(self) -> None:
-        self.submit_neb_local_requested.emit(self.selected_source_keys())
+        self.submit_neb_local_requested.emit(self._selected_or_all_source_keys())
 
     def _emit_batch_configure_results(self) -> None:
         keys = self.selected_source_keys()
@@ -999,7 +1040,7 @@ class EnergyBarriersWidget(QWidget):
             self.configure_result_requested.emit(keys)
 
     def _emit_submit_neb_cluster(self) -> None:
-        self.submit_neb_cluster_requested.emit(self.selected_source_keys())
+        self.submit_neb_cluster_requested.emit(self._selected_or_all_source_keys())
 
     def selected_neb_result_keys(self) -> list[str]:
         indexes = sorted({index.row() for index in self._neb_results_table.selectedIndexes()})
@@ -1129,10 +1170,8 @@ class EnergyBarriersWidget(QWidget):
         source_enabled = bool(self.selected_source_keys())
         can_generate = bool(reactant_key and product_key and len(self._endpoint_rows) >= 1)
         self._generate_paths_button.setEnabled(can_generate)
-        self._remove_sources_button.setEnabled(source_enabled)
+        # The run and remove buttons follow the selection through SelectionFeedback.
         self._batch_configure_results_button.setEnabled(source_enabled)
-        self._submit_neb_local_button.setEnabled(source_enabled)
-        self._submit_neb_cluster_button.setEnabled(source_enabled)
 
     @staticmethod
     def _set_combo_key(combo: QComboBox, key: str, *, fallback_index: int) -> None:

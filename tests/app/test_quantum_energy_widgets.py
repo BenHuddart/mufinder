@@ -846,3 +846,115 @@ def test_energy_barriers_remove_selected_confirms_with_path_wording(
         "1 path already has a submitted job.",
         "Remove 2 paths",
     )
+
+
+def _quantum_rows(*statuses: str, resettable: bool = False) -> list[QuantumSourceRow]:
+    return [
+        QuantumSourceRow(
+            key=f"site-{index}",
+            label=f"Site {index}",
+            charge_state="Muonium",
+            relative_energy="0.0 eV",
+            displacements="9",
+            source_job=f"relax_{index}",
+            stage="singlepoint",
+            num_farms_display="",
+            status=status,
+            resettable=resettable,
+        )
+        for index, status in enumerate(statuses)
+    ]
+
+
+def test_quantum_run_buttons_run_all_rows_when_nothing_is_selected(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources(_quantum_rows("ready", "ready"))
+    local: list[list[str]] = []
+    cluster: list[list[str]] = []
+    widget.submit_local_requested.connect(local.append)
+    widget.submit_cluster_requested.connect(cluster.append)
+
+    assert widget._submit_local_button.text() == "Run All Locally"
+    assert widget._submit_local_button.isEnabled()
+    widget._submit_local_button.click()
+    widget._submit_cluster_button.click()
+    assert local == [["site-0", "site-1"]]
+    assert cluster == [["site-0", "site-1"]]
+
+    widget._sources_table.selectRow(1)
+    assert widget._submit_local_button.text() == "Run Selected Locally"
+    assert widget._selection_count_label.text() == "1 selected"
+    widget._submit_local_button.click()
+    assert local[-1] == ["site-1"]
+
+
+def test_quantum_row_menu_has_no_remove_or_failed_reset_and_offers_stage_reset(
+    qapp, monkeypatch: pytest.MonkeyPatch, confirmed_destructive_actions
+) -> None:
+    from tests.support.reset_menu import install_fake_menu, open_reset_menu
+
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources(_quantum_rows("running", "running", resettable=True))
+    cancelled: list[object] = []
+    reset: list[object] = []
+    widget.cancel_requested.connect(cancelled.append)
+    widget.reset_stage_requested.connect(reset.append)
+    install_fake_menu(monkeypatch)
+    widget._sources_table.selectAll()
+
+    menu = open_reset_menu(widget._sources_table)
+
+    assert [action.text for action in menu.actions] == [
+        "Run Local",
+        "Run on Cluster",
+        "Cancel",
+        "Inspect Failure",
+        "Configure...",
+        "Reset to Stage 1",
+    ]
+    assert menu.separators_before == [5]
+    menu.action("Cancel").triggered.emit()
+    menu.action("Reset to Stage 1").triggered.emit()
+    assert cancelled == [["site-0", "site-1"]]
+    assert reset == [["site-0", "site-1"]]
+
+
+def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.support.reset_menu import install_fake_menu, open_reset_menu
+
+    widget = EnergyBarriersWidget()
+    widget.set_sources(
+        [
+            EnergyBarrierSourceRow(key="path-a", reactant="A", product="B", charge_state="M", path_length="1.0", status="failed"),
+            EnergyBarrierSourceRow(key="path-b", reactant="A", product="C", charge_state="M", path_length="1.0", status="failed"),
+        ]
+    )
+    submitted: list[list[str]] = []
+    inspected: list[object] = []
+    widget.submit_neb_local_requested.connect(submitted.append)
+    widget.inspect_failed_requested.connect(inspected.append)
+
+    assert widget._remove_sources_button.text() == "Remove Selected"
+    assert not widget._remove_sources_button.isEnabled()
+    assert widget._submit_neb_local_button.text() == "Run All Locally"
+    widget._submit_neb_local_button.click()
+    assert submitted == [["path-a", "path-b"]]
+
+    install_fake_menu(monkeypatch)
+    widget._sources_table.selectAll()
+    assert widget._selection_count_label.text() == "2 selected"
+    assert widget._submit_neb_cluster_button.text() == "Run Selected on Cluster"
+    menu = open_reset_menu(widget._sources_table)
+    assert [action.text for action in menu.actions] == [
+        "Run Local",
+        "Run on Cluster",
+        "Cancel",
+        "Inspect Failure",
+        "Reset Failed Jobs...",
+        "Configure...",
+        "Remove",
+    ]
+    menu.action("Inspect Failure").triggered.emit()
+    assert inspected == [["path-a", "path-b"]]

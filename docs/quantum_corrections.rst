@@ -37,7 +37,8 @@ Typical use is:
 3. use ``Configure...`` to edit the shared electronic settings and the
    stage-2 phonon/task-farming controls for that row;
 4. submit the selected rows locally or on the cluster to run the required
-   stage-1 singlepoint calculation;
+   stage-1 singlepoint calculation (with nothing selected the run buttons read
+   ``Run All ...`` and submit every row);
 5. once stage 1 completes, submit the row again to launch the stage-2 phonon
    continuation;
 6. review the completed result table once the ``.phonon`` file has been parsed;

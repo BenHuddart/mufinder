@@ -40,15 +40,19 @@ from mufinder.app.workflow_parameters import (
     seed_xc_functional_default,
 )
 from mufinder.app.workflow_table_utils import (
-    confirm_row_removal,
+    REMOVE_SELECTED_TEXT,
+    SelectionFeedback,
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
+    confirm_row_removal,
     create_workflow_table,
+    standard_row_actions,
     style_workflow_configure_button,
     workflow_row_status_text,
 )
 from mufinder.app.theme import (
     status_brush,
+    style_hint_text,
     style_section_subtitle,
     style_section_title,
     style_warning_text,
@@ -275,11 +279,16 @@ class KPointConvergenceWidget(QWidget):
         self._generate_button = QPushButton("Generate From Spacing...")
         self._batch_configure_button = QPushButton("Configure Selected Parameters...")
         self._batch_configure_button.setEnabled(False)
+        self._remove_selected_button = QPushButton(REMOVE_SELECTED_TEXT)
+        self._selection_count_label = QLabel("")
+        style_hint_text(self._selection_count_label)
         self._examine_button = QPushButton("Examine K-Point Convergence")
         self._examine_button.setEnabled(False)
 
-        self._run_local_button = QPushButton("Run Local Calculations")
-        self._run_cluster_button = QPushButton("Run on Cluster")
+        # SelectionFeedback sets the run buttons' text ("Run All ..." / "Run
+        # Selected ...") from the selection.
+        self._run_local_button = QPushButton()
+        self._run_cluster_button = QPushButton()
 
         self._name_prefix = QLineEdit("kpoint_convergence")
         self._simulation_cell_summary = QLabel("Using single unit cell.")
@@ -368,6 +377,8 @@ class KPointConvergenceWidget(QWidget):
         controls_row.addWidget(self._add_grid_button)
         controls_row.addWidget(self._generate_button)
         controls_row.addStretch(1)
+        controls_row.addWidget(self._selection_count_label)
+        controls_row.addWidget(self._remove_selected_button)
         controls_row.addWidget(self._batch_configure_button)
         sweep_layout.addLayout(controls_row)
 
@@ -397,11 +408,29 @@ class KPointConvergenceWidget(QWidget):
         self._batch_configure_button.clicked.connect(self._configure_selected_grids)
 
         self._table.itemChanged.connect(self._on_table_changed)
+        self._remove_selected_button.clicked.connect(self._remove_selected_or_current_grids)
+        self._table.setToolTip(
+            "Right-click selected rows to run, cancel, inspect, reset, configure, or remove them."
+        )
+        # A right-click makes the rows under it the selection, so the menu's
+        # run/configure/remove entries reuse the selection-based handlers.
+        leading_actions, trailing_actions = standard_row_actions(
+            status_for_row=self._row_status,
+            run_local=lambda _rows: self._run_local_selected_grids(),
+            run_cluster=lambda _rows: self._run_cluster_selected_grids(),
+            cancel=lambda rows: self.cancel_requested.emit(self._grids_at_rows(rows)),
+            inspect=lambda rows: self.inspect_failed_requested.emit(self._grids_at_rows(rows)),
+            configure=lambda _rows: self._configure_selected_grids(),
+            remove=lambda _rows: self._remove_selected_or_current_grids(),
+            confirm_parent=self,
+        )
         bind_reset_failed_context_menu(
             self._table,
             key_for_row=lambda row: self._grid_value_at_row(row, strict=False),
             status_for_row=self._row_status,
             emit_reset=self.reset_failed_requested.emit,
+            leading_actions=leading_actions,
+            additional_actions=trailing_actions,
         )
         selection_model = self._table.selectionModel()
         if selection_model is not None:
@@ -411,6 +440,13 @@ class KPointConvergenceWidget(QWidget):
         self._examine_button.clicked.connect(self.examine_requested.emit)
         self._run_local_button.clicked.connect(self._run_local_selected_grids)
         self._run_cluster_button.clicked.connect(self._run_cluster_selected_grids)
+        self._selection_feedback = SelectionFeedback(
+            self._table,
+            count_label=self._selection_count_label,
+            run_local_button=self._run_local_button,
+            run_cluster_button=self._run_cluster_button,
+            selection_buttons=(self._remove_selected_button,),
+        )
 
         self._simulation_cell_combo.currentIndexChanged.connect(self._on_simulation_cell_combo_changed)
         self._simulation_cell_create_button.clicked.connect(self.simulation_cell_create_requested.emit)
@@ -714,23 +750,22 @@ class KPointConvergenceWidget(QWidget):
                 selected.append(grid)
         return tuple(selected)
 
-    def _selected_or_current_grids(self) -> tuple[tuple[int, int, int], ...]:
+    def _selected_or_all_grids(self) -> tuple[tuple[int, int, int], ...]:
+        """Return the grids the run buttons act on: the selection, else every row.
+
+        The buttons read "Run Selected ..." or "Run All ..." to match, so what
+        they run is always stated on the button.
+        """
+
         selected = self._selected_grids()
         if selected:
             return selected
+        return self._collect_grids(strict=False)
 
-        current_row = self._table.currentRow()
-        if current_row >= 0:
-            grid = self._grid_value_at_row(current_row, strict=False)
-            if grid is not None:
-                return (grid,)
-
-        if self._table.rowCount() == 1:
-            grid = self._grid_value_at_row(0, strict=False)
-            if grid is not None:
-                return (grid,)
-
-        return ()
+    def _grids_at_rows(self, rows: Sequence[int]) -> list[tuple[int, int, int]]:
+        return [
+            grid for row in rows if (grid := self._grid_value_at_row(row, strict=False)) is not None
+        ]
 
     def _configure_selected_grids(self) -> None:
         grids = self._selected_grids()
@@ -1250,7 +1285,7 @@ class KPointConvergenceWidget(QWidget):
         if config is None:
             return
 
-        selected = tuple(dict.fromkeys(self._selected_or_current_grids()))
+        selected = tuple(dict.fromkeys(self._selected_or_all_grids()))
         if not selected:
             QMessageBox.information(self, "No grids selected", "Select one or more k-point rows first.")
             return
@@ -1264,7 +1299,7 @@ class KPointConvergenceWidget(QWidget):
         if config is None:
             return
 
-        selected = tuple(dict.fromkeys(self._selected_or_current_grids()))
+        selected = tuple(dict.fromkeys(self._selected_or_all_grids()))
         if not selected:
             QMessageBox.information(self, "No grids selected", "Select one or more k-point rows first.")
             return

@@ -52,6 +52,8 @@ class FakeMenu:
 
     def __init__(self, *_args, **_kwargs) -> None:
         self.actions: list[FakeAction] = []
+        #: Index of the action each separator was added just before.
+        self.separators_before: list[int] = []
         FakeMenu.instances.append(self)
 
     def addAction(self, text: str) -> FakeAction:
@@ -60,6 +62,7 @@ class FakeMenu:
         return action
 
     def addSeparator(self) -> None:
+        self.separators_before.append(len(self.actions))
         return None
 
     def exec(self, *_args, **_kwargs) -> None:

@@ -529,3 +529,281 @@ def test_confirm_row_removal_of_nothing_is_declined_without_asking(
 
     assert workflow_table_utils.confirm_row_removal(QWidget(), 0) is False
     assert confirmed_destructive_actions == []
+
+
+# ---------------------------------------------------------------------------
+# Shared row menu
+# ---------------------------------------------------------------------------
+
+
+def _status_table(qapp, statuses: list[str]):
+    table = create_workflow_table(("Label", "Status"))
+    table.setRowCount(len(statuses))
+    for row, status in enumerate(statuses):
+        table.setItem(row, 0, QTableWidgetItem(f"row{row}"))
+        table.setItem(row, 1, QTableWidgetItem(status))
+    return table
+
+
+def _bind_standard_menu(table, calls, *, emit_reset=True, **omit):
+    def record(name):
+        return lambda rows: calls.append((name, list(rows)))
+
+    callbacks = {name: record(name) for name in ("run_local", "run_cluster", "cancel", "inspect", "configure", "remove")}
+    for name in omit:
+        callbacks[name] = None
+    leading, trailing = workflow_table_utils.standard_row_actions(
+        status_for_row=lambda row: workflow_row_status_text(table, row, 1),
+        confirm_parent=table,
+        **callbacks,
+    )
+    bind_reset_failed_context_menu(
+        table,
+        key_for_row=lambda row: table.item(row, 0).text(),
+        status_for_row=lambda row: workflow_row_status_text(table, row, 1),
+        emit_reset=(lambda keys: calls.append(("reset", list(keys)))) if emit_reset else None,
+        leading_actions=leading,
+        additional_actions=trailing,
+    )
+
+
+def test_standard_row_menu_has_one_order_with_reset_in_its_place(qapp, monkeypatch) -> None:
+    table = _status_table(qapp, ["ready"])
+    _bind_standard_menu(table, [])
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(table)
+
+    assert [action.text for action in menu.actions] == [
+        "Run Local",
+        "Run on Cluster",
+        "Cancel",
+        "Inspect Failure",
+        "Reset Failed Jobs...",
+        "Configure...",
+        "Remove",
+    ]
+
+
+def test_standard_row_menu_omits_actions_a_table_does_not_have(qapp, monkeypatch) -> None:
+    table = _status_table(qapp, ["ready"])
+    _bind_standard_menu(table, [], emit_reset=False, remove=None, inspect=None)
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(table)
+
+    assert [action.text for action in menu.actions] == [
+        "Run Local",
+        "Run on Cluster",
+        "Cancel",
+        "Configure...",
+    ]
+    # Without a reset action there is nothing for the reset tooltip to advertise.
+    assert table.toolTip() == ""
+
+
+@pytest.mark.parametrize(
+    ("statuses", "enabled"),
+    [
+        (["ready", "not generated"], {"Run Local", "Run on Cluster", "Configure...", "Remove"}),
+        (["running", "queued"], {"Cancel", "Configure...", "Remove"}),
+        (["failed", "stopped"], {"Inspect Failure", "Reset Failed Jobs...", "Configure...", "Remove"}),
+        (["ready", "running"], {"Configure...", "Remove"}),
+    ],
+)
+def test_standard_row_menu_enables_actions_from_row_status(qapp, monkeypatch, statuses, enabled) -> None:
+    table = _status_table(qapp, statuses)
+    _bind_standard_menu(table, [])
+    install_fake_menu(monkeypatch)
+    table.selectAll()
+
+    menu = open_reset_menu(table)
+
+    assert {action.text for action in menu.actions if action.enabled} == enabled
+
+
+def test_standard_row_menu_passes_selected_rows_and_confirms_cancel(
+    qapp, monkeypatch, confirmed_destructive_actions
+) -> None:
+    table = _status_table(qapp, ["running", "running"])
+    calls: list[tuple[str, list[int]]] = []
+    _bind_standard_menu(table, calls)
+    install_fake_menu(monkeypatch)
+    table.selectAll()
+
+    menu = open_reset_menu(table)
+    menu.action("Configure...").triggered.emit()
+    menu.action("Cancel").triggered.emit()
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
+    menu.action("Cancel").triggered.emit()
+
+    assert calls == [("configure", [0, 1]), ("cancel", [0, 1])]
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Cancel 2 calculations?"]
+
+
+def test_row_menu_action_separator_is_drawn_above_it(qapp, monkeypatch) -> None:
+    table = _status_table(qapp, ["ready"])
+    bind_reset_failed_context_menu(
+        table,
+        key_for_row=lambda row: table.item(row, 0).text(),
+        status_for_row=lambda row: workflow_row_status_text(table, row, 1),
+        emit_reset=lambda keys: None,
+        additional_actions=(
+            RowMenuAction("Extra", lambda keys: True, lambda keys: None, separator_before=True),
+        ),
+    )
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(table)
+
+    assert [action.text for action in menu.actions] == ["Reset Failed Jobs...", "Extra"]
+    assert menu.separators_before == [1]
+
+
+# ---------------------------------------------------------------------------
+# Selection feedback
+# ---------------------------------------------------------------------------
+
+
+def _feedback_table(qapp, rows: int = 3):
+    from PySide6.QtWidgets import QLabel
+
+    from mufinder.app.selection_snapshot import SelectionSnapshotPushButton
+
+    table = create_workflow_table(("Label", "Action", "Solo"))
+    table.setRowCount(rows)
+    for row in range(rows):
+        table.setItem(row, 0, QTableWidgetItem(f"row{row}"))
+        table.setCellWidget(row, 1, SelectionSnapshotPushButton("Go", table))
+        solo = SelectionSnapshotPushButton("Solo", table)
+        solo.propagates_to_selection = False
+        table.setCellWidget(row, 2, solo)
+    widgets = {
+        "count": QLabel(),
+        "hint": QLabel(),
+        "local": QPushButton(),
+        "cluster": QPushButton(),
+        "remove": QPushButton(),
+    }
+    return table, widgets
+
+
+def _select(table, rows) -> None:
+    from PySide6.QtCore import QItemSelectionModel
+
+    model = table.selectionModel()
+    model.clearSelection()
+    for row in rows:
+        model.select(
+            table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+
+def test_selection_feedback_tracks_count_hint_run_labels_and_buttons(qapp) -> None:
+    table, widgets = _feedback_table(qapp)
+    workflow_table_utils.SelectionFeedback(
+        table,
+        count_label=widgets["count"],
+        multi_row_hint=widgets["hint"],
+        multi_row_hint_text=lambda count: f"{count} rows",
+        run_local_button=widgets["local"],
+        run_cluster_button=widgets["cluster"],
+        selection_buttons=(widgets["remove"],),
+    )
+
+    assert widgets["count"].text() == ""
+    assert widgets["hint"].isHidden()
+    assert widgets["local"].text() == "Run All Locally"
+    assert widgets["cluster"].text() == "Run All on Cluster"
+    assert widgets["local"].isEnabled()
+    assert not widgets["remove"].isEnabled()
+
+    _select(table, [1])
+    assert widgets["count"].text() == "1 selected"
+    assert widgets["hint"].isHidden()
+    assert widgets["local"].text() == "Run Selected Locally"
+    assert widgets["cluster"].text() == "Run Selected on Cluster"
+    assert widgets["remove"].isEnabled()
+
+    _select(table, [0, 2])
+    assert widgets["count"].text() == "2 selected"
+    assert not widgets["hint"].isHidden()
+    assert widgets["hint"].text() == "2 rows"
+
+    table.setRowCount(0)
+    assert widgets["count"].text() == ""
+    assert not widgets["local"].isEnabled()
+    assert not widgets["cluster"].isEnabled()
+
+
+def test_selection_feedback_marks_only_propagating_controls_in_a_multi_row_selection(qapp) -> None:
+    table, _widgets = _feedback_table(qapp)
+    workflow_table_utils.SelectionFeedback(table)
+    prop = workflow_table_utils.MULTI_ROW_TARGET_PROPERTY
+
+    def marked(column: int) -> list[bool]:
+        return [bool(table.cellWidget(row, column).property(prop)) for row in range(3)]
+
+    _select(table, [1])
+    assert marked(1) == [False, False, False]
+
+    _select(table, [0, 2])
+    assert marked(1) == [True, False, True]
+    assert marked(2) == [False, False, False]
+
+    _select(table, [])
+    assert marked(1) == [False, False, False]
+
+
+def test_selection_feedback_only_the_active_table_drives_shared_controls(qapp) -> None:
+    first, widgets = _feedback_table(qapp)
+    second, _unused = _feedback_table(qapp)
+    active = {"table": first}
+    feedbacks = [
+        workflow_table_utils.SelectionFeedback(
+            table,
+            count_label=widgets["count"],
+            is_active=lambda bound=table: active["table"] is bound,
+        )
+        for table in (first, second)
+    ]
+
+    _select(second, [0, 1])
+    assert widgets["count"].text() == ""
+    prop = workflow_table_utils.MULTI_ROW_TARGET_PROPERTY
+    assert bool(second.cellWidget(0, 1).property(prop)) is True
+
+    active["table"] = second
+    for feedback in feedbacks:
+        feedback.refresh()
+    assert widgets["count"].text() == "2 selected"
+
+
+def test_multi_row_outcome_text_reports_skipped_rows() -> None:
+    assert workflow_table_utils.multi_row_outcome_text("Supercell set on", 3, 3) == (
+        "Supercell set on 3 rows"
+    )
+    assert workflow_table_utils.multi_row_outcome_text("Supercell set on", 1, 3) == (
+        "Supercell set on 1 row, 2 rows skipped"
+    )
+
+
+def test_show_status_message_uses_the_enclosing_main_window_only(qapp) -> None:
+    from PySide6.QtWidgets import QMainWindow, QStatusBar, QWidget
+
+    window = QMainWindow()
+    window.setStatusBar(QStatusBar(window))
+    child = QWidget()
+    window.setCentralWidget(child)
+    workflow_table_utils.show_status_message(child, "Done")
+    assert window.statusBar().currentMessage() == "Done"
+
+    bare_window = QMainWindow()
+    bare_child = QWidget()
+    bare_window.setCentralWidget(bare_child)
+    workflow_table_utils.show_status_message(bare_child, "Done")
+    assert bare_window.findChild(QStatusBar) is None
+
+    # A widget outside any main window is simply ignored.
+    workflow_table_utils.show_status_message(QWidget(), "Done")

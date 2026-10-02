@@ -1366,3 +1366,70 @@ def test_relaxation_remove_button_multi_row_prompt_is_the_only_confirmation(
 
     assert widget._table.rowCount() == 0
     assert confirmed_destructive_actions == []
+
+
+def test_relaxation_row_menu_has_shared_core_then_continue(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(widget._table)
+
+    assert [action.text for action in menu.actions] == [
+        "Run Local",
+        "Run on Cluster",
+        "Cancel",
+        "Inspect Failure",
+        "Reset Failed Jobs...",
+        "Configure...",
+        "Remove",
+        "Continue relaxation…",
+    ]
+    assert menu.separators_before == [7]
+
+
+def test_relaxation_row_menu_cancel_and_inspect_emit_row_labels(qapp, monkeypatch) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    labels = [widget._label_at_row(0), widget._label_at_row(1)]
+    cancelled: list[object] = []
+    inspected: list[object] = []
+    widget.cancel_requested.connect(cancelled.append)
+    widget.inspect_failed_requested.connect(inspected.append)
+    install_fake_menu(monkeypatch)
+
+    widget.set_runtime_states({label: RelaxationRunState(status="running") for label in labels})
+    widget._table.selectAll()
+    open_reset_menu(widget._table).action("Cancel").triggered.emit()
+
+    widget.set_runtime_states({label: RelaxationRunState(status="failed") for label in labels})
+    menu = open_reset_menu(widget._table)
+    menu.action("Inspect Failure").triggered.emit()
+
+    assert cancelled == [labels]
+    assert inspected == [labels]
+
+
+def test_relaxation_run_buttons_and_remove_selected_follow_the_selection(
+    qapp, confirmed_destructive_actions
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+
+    assert widget._run_local_button.text() == "Run All Locally"
+    assert widget._run_cluster_button.text() == "Run All on Cluster"
+    assert widget._selection_count_label.text() == ""
+    assert not widget._remove_selected_button.isEnabled()
+
+    _select_relaxation_rows(widget, (0, 1))
+    assert widget._run_local_button.text() == "Run Selected Locally"
+    assert widget._selection_count_label.text() == "2 selected"
+    prop = workflow_table_utils.MULTI_ROW_TARGET_PROPERTY
+    assert bool(widget._table.cellWidget(0, widget._SUPERCELL_COLUMN).property(prop)) is True
+    assert bool(widget._table.cellWidget(0, widget._FIX_CELL_COLUMN).property(prop)) is True
+
+    widget._remove_selected_button.click()
+    assert widget._table.rowCount() == 0
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 2 rows?"]

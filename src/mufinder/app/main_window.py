@@ -267,7 +267,7 @@ from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
-from mufinder.app.workflow_table_utils import count_phrase
+from mufinder.app.workflow_table_utils import SelectionFeedback, count_phrase
 from mufinder.services.perf_trace import PerfTrace
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, ProjectDocument, ProjectService
 from mufinder.services.ssh_client import (
@@ -1998,6 +1998,12 @@ class MainWindow(QMainWindow):
         self._pristine_relaxation_view.reset_failed_requested.connect(
             self._on_reset_failed_from_pristine_relaxation
         )
+        self._pristine_relaxation_view.cancel_requested.connect(
+            lambda keys: self._cancel_workflow_rows(self._pristine_relaxation_controller, keys)
+        )
+        self._pristine_relaxation_view.inspect_failed_requested.connect(
+            lambda keys: self._inspect_workflow_rows(self._pristine_relaxation_controller, keys)
+        )
         self._pristine_relaxation_view.set_continuable_predicate(
             self._pristine_relaxation_controller.row_is_continuable
         )
@@ -2085,6 +2091,12 @@ class MainWindow(QMainWindow):
         self._muon_relaxation_view.reset_failed_requested.connect(
             self._on_reset_failed_from_muon_relaxation
         )
+        self._muon_relaxation_view.cancel_requested.connect(
+            lambda keys: self._cancel_workflow_rows(self._muon_relaxation_controller, keys)
+        )
+        self._muon_relaxation_view.inspect_failed_requested.connect(
+            lambda keys: self._inspect_workflow_rows(self._muon_relaxation_controller, keys)
+        )
         self._muon_relaxation_view.set_continuable_predicate(
             self._muon_relaxation_controller.row_is_continuable
         )
@@ -2143,6 +2155,12 @@ class MainWindow(QMainWindow):
         )
         self._quantum_corrections_view.reset_stage_requested.connect(
             self._on_reset_quantum_corrections_to_stage_one
+        )
+        self._quantum_corrections_view.cancel_requested.connect(
+            lambda keys: self._cancel_workflow_rows(self._quantum_corrections_controller, keys)
+        )
+        self._quantum_corrections_view.inspect_failed_requested.connect(
+            lambda keys: self._inspect_workflow_rows(self._quantum_corrections_controller, keys)
         )
         self._quantum_corrections_view.analysis_requested.connect(
             self._on_launch_quantum_phonon_analysis
@@ -2206,7 +2224,21 @@ class MainWindow(QMainWindow):
         use_square_top_table_corners(self._jobs_table)
         self._jobs_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._jobs_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._jobs_table.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self._jobs_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._jobs_table.customContextMenuRequested.connect(self._open_jobs_table_context_menu)
+        # Shown only while two or more rows are selected, so it costs no height
+        # otherwise; it is what tells the user a row button acts on them all.
+        self._jobs_selection_hint = QLabel("")
+        self._jobs_selection_hint.setObjectName("hintText")
+        self._jobs_selection_hint.setContentsMargins(8, 2, 8, 2)
+        self._jobs_selection_hint.hide()
+        self._jobs_selection_feedback = SelectionFeedback(
+            self._jobs_table,
+            multi_row_hint=self._jobs_selection_hint,
+            multi_row_hint_text=lambda count: (
+                f"{count} selected \u00b7 row buttons apply to all selected"
+            ),
+        )
         self._configure_jobs_table_columns()
 
         self._local_runner.job_started.connect(self._on_local_job_started)
@@ -2295,7 +2327,13 @@ class MainWindow(QMainWindow):
         jobs_dock.setAllowedAreas(
             Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea
         )
-        jobs_dock.setWidget(self._jobs_table)
+        jobs_panel = QWidget(jobs_dock)
+        jobs_panel_layout = QVBoxLayout(jobs_panel)
+        jobs_panel_layout.setContentsMargins(0, 0, 0, 0)
+        jobs_panel_layout.setSpacing(0)
+        jobs_panel_layout.addWidget(self._jobs_selection_hint)
+        jobs_panel_layout.addWidget(self._jobs_table, 1)
+        jobs_dock.setWidget(jobs_panel)
         # Pause the 1s runtime timer while the dock is not visible (closed,
         # obscured, or window minimized), and refresh + re-arm when it returns,
         # so we do not update an invisible table every second.
@@ -4928,22 +4966,9 @@ class MainWindow(QMainWindow):
                 continue
             snapshot_keys.append(sid)
 
-        eligible_statuses = {
-            "resubmit": _RESUBMITTABLE_JOB_STATES,
-            "cancel": ACTIVE_JOB_STATUSES,
-            "inspect": {JobStatus.FAILED, JobStatus.STOPPED},
-            "reset": {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
-            "dismiss": {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED},
-        }
-
         def eligibility(uid: UUID) -> bool:
             job = self._document.jobs.get(uid)  # type: ignore[union-attr]
-            if job is None:
-                return False
-            if kind == "retry_retrieval":
-                # Retry needs remote metadata + a live connection, not just a status.
-                return self._can_retry_retrieval(job)
-            return job.status in eligible_statuses[kind]
+            return job is not None and self._dashboard_action_applies(kind, job)
 
         actions = {
             "resubmit": "Resubmit",
@@ -4991,15 +5016,107 @@ class MainWindow(QMainWindow):
         if not target_ids:
             return
 
-        handlers = {
-            "resubmit": self._on_resubmit_from_dashboard,
-            "retry_retrieval": self._on_retry_retrieval_from_dashboard,
-            "cancel": self._on_cancel_from_dashboard,
-            "inspect": self._on_inspect_failed_from_dashboard,
-            "reset": self._on_reset_failed_from_dashboard,
-            "dismiss": self._on_dismiss_from_dashboard,
+        self._dashboard_action_handler(kind)(list(target_ids))
+
+    def _dashboard_action_applies(self, kind: str, job: Job) -> bool:
+        """Return whether dashboard action ``kind`` can act on ``job``.
+
+        Single source of truth for the row buttons' multi-row prompt and the
+        right-click menu.
+        """
+
+        if kind == "retry_retrieval":
+            # Retry needs remote metadata + a live connection, not just a status.
+            return self._can_retry_retrieval(job)
+        terminal = {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+        eligible_statuses = {
+            "resubmit": _RESUBMITTABLE_JOB_STATES,
+            "cancel": ACTIVE_JOB_STATUSES,
+            "inspect": {JobStatus.FAILED, JobStatus.STOPPED},
+            "reset": terminal,
+            "dismiss": terminal,
         }
-        handlers[kind](list(target_ids))
+        return job.status in eligible_statuses[kind]
+
+    def _dashboard_action_handler(self, kind: str) -> Callable[[list[UUID]], None]:
+        # Looked up by name at call time so a replaced handler is honoured.
+        names = {
+            "resubmit": "_on_resubmit_from_dashboard",
+            "retry_retrieval": "_on_retry_retrieval_from_dashboard",
+            "cancel": "_on_cancel_from_dashboard",
+            "inspect": "_on_inspect_failed_from_dashboard",
+            "reset": "_on_reset_failed_from_dashboard",
+            "dismiss": "_on_dismiss_from_dashboard",
+        }
+        return getattr(self, names[kind])
+
+    #: Right-click menu entries for the Job Dashboard, in the row buttons' order.
+    _DASHBOARD_MENU_ACTIONS = (
+        ("Resubmit", "resubmit"),
+        ("Retry Retrieval", "retry_retrieval"),
+        ("Cancel", "cancel"),
+        ("Inspect", "inspect"),
+        ("Reset", "reset"),
+        ("Dismiss", "dismiss"),
+    )
+
+    def _open_jobs_table_context_menu(self, position) -> QMenu | None:
+        """Offer the dashboard actions for the selected jobs.
+
+        A right-click on a row outside the selection selects it first, so the
+        menu always describes what is highlighted. Each action is enabled when
+        it applies to at least one selected job and acts on those jobs only,
+        which is how the row buttons already treat a mixed selection.
+        """
+
+        if self._document is None:
+            return None
+        row = self._jobs_table.rowAt(position.y())
+        if row < 0:
+            return None
+        selection_model = self._jobs_table.selectionModel()
+        selected_rows = {index.row() for index in selection_model.selectedRows()}
+        if row not in selected_rows:
+            self._jobs_table.selectRow(row)
+        jobs = self._selected_dashboard_jobs()
+        if not jobs:
+            return None
+
+        menu = QMenu(self._jobs_table)
+        for text, kind in self._DASHBOARD_MENU_ACTIONS:
+            eligible_ids = [job.id for job in jobs if self._dashboard_action_applies(kind, job)]
+            action = menu.addAction(text)
+            action.setEnabled(bool(eligible_ids))
+            action.triggered.connect(
+                lambda _checked=False, k=kind, ids=eligible_ids: self._run_dashboard_menu_action(k, ids)
+            )
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete...")
+        delete_action.triggered.connect(
+            lambda _checked=False: self._on_dashboard_delete_key_requested()
+        )
+        menu.exec(self._jobs_table.viewport().mapToGlobal(position))
+        return menu
+
+    def _run_dashboard_menu_action(self, kind: str, job_ids: list[UUID]) -> None:
+        if not job_ids:
+            return
+        # Cancel and Dismiss act immediately, so they are confirmed here; Reset
+        # asks its own clean-up question, which has a Cancel.
+        phrase = count_phrase(len(job_ids), ("job", "jobs"))
+        if kind == "cancel" and not workflow_table_utils.confirm_destructive(
+            self, "Cancel jobs", f"Cancel {phrase}?", "", f"Cancel {phrase}", "Keep running"
+        ):
+            return
+        if kind == "dismiss" and not workflow_table_utils.confirm_destructive(
+            self,
+            "Dismiss jobs",
+            f"Dismiss {phrase} from the dashboard?",
+            "Dismissed jobs stay in the project; their workflow rows can still resubmit them.",
+            f"Dismiss {phrase}",
+        ):
+            return
+        self._dashboard_action_handler(kind)(list(job_ids))
 
     def _on_cancel_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:
@@ -5612,6 +5729,12 @@ class MainWindow(QMainWindow):
         )
         energy_barriers_view.reset_failed_requested.connect(
             self._on_reset_failed_from_energy_barriers
+        )
+        energy_barriers_view.cancel_requested.connect(
+            lambda keys: self._cancel_workflow_rows(self._energy_barriers_controller, keys)
+        )
+        energy_barriers_view.inspect_failed_requested.connect(
+            lambda keys: self._inspect_workflow_rows(self._energy_barriers_controller, keys)
         )
         energy_barriers_view.view_source_requested.connect(self._on_view_energy_barrier_source)
         energy_barriers_view.configure_result_requested.connect(self._on_configure_energy_barrier_result)
@@ -11974,6 +12097,16 @@ class MainWindow(QMainWindow):
         else:
             values = [payload]
         return {str(value).strip() for value in values if str(value).strip()}
+
+    def _cancel_workflow_rows(self, controller, keys: object) -> None:
+        """Cancel the jobs behind a workflow table's rows (row menu "Cancel")."""
+
+        self._cancel_jobs(controller.jobs_for_keys(list(keys)))
+
+    def _inspect_workflow_rows(self, controller, keys: object) -> None:
+        """Show failure diagnostics for a workflow table's rows (row menu "Inspect Failure")."""
+
+        self._inspect_failed_jobs(controller.jobs_for_keys(list(keys)))
 
     def _on_reset_failed_from_pristine_relaxation(self, labels: list[str]) -> None:
         self._reset_failed_jobs(self._pristine_relaxation_controller.jobs_for_keys(list(labels)))

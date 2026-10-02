@@ -688,3 +688,36 @@ def test_uep_remove_button_single_row_is_confirmed(qapp, confirmed_destructive_a
 
     assert widget._table.rowCount() == 1
     assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 1 row?"]
+
+
+def test_uep_wizard_button_is_not_marked_as_a_multi_row_target(qapp) -> None:
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    _select_uep_rows(widget, (0, 1))
+    prop = workflow_table_utils.MULTI_ROW_TARGET_PROPERTY
+
+    assert bool(widget._table.cellWidget(0, widget._CONFIGURE_COLUMN).property(prop)) is True
+    assert bool(widget._table.cellWidget(0, widget._WIZARD_COLUMN).property(prop)) is False
+    assert widget._selection_count_label.text() == "2 selected"
+    assert widget._run_cluster_button.text() == "Run Selected on Cluster"
+
+
+def test_uep_row_menu_uses_the_shared_core(qapp, monkeypatch) -> None:
+    from tests.support.reset_menu import install_fake_menu, open_reset_menu
+
+    widget = UEPWidget()
+    widget._add_row()
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(widget._table)
+
+    assert [action.text for action in menu.actions] == [
+        "Run Local",
+        "Run on Cluster",
+        "Cancel",
+        "Inspect Failure",
+        "Reset Failed Jobs...",
+        "Configure...",
+        "Remove",
+    ]
