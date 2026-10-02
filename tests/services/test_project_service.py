@@ -1962,3 +1962,82 @@ def test_validate_structures_no_active_host_returns_none(tmp_path: Path) -> None
     service, doc = _make_doc(tmp_path)
 
     assert service.validate_structures_match_active_host(doc, [uuid4()]) is None
+
+
+def test_recommended_xc_functional_follows_adopted_convergence_and_persists(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "recommended_xc.mufinder"
+    doc = service.create_project(root, "RecommendedXC")
+    assert doc.project.recommended_xc_functional is None
+
+    # Adopting a convergence result makes its functional the project default.
+    service.set_recommended_cutoff(doc, 550.0, xc_functional="pbe")
+    assert doc.project.recommended_cutoff_xc_functional == "PBE"
+    assert doc.project.recommended_xc_functional == "PBE"
+    assert doc.provenance[-1].parameters["recommended_cutoff_xc_functional"] == "PBE"
+
+    # A sweep with no single functional records nothing and leaves the default alone.
+    service.set_recommended_kpoint_grid(doc, (4, 4, 4), xc_functional=None)
+    assert doc.project.recommended_kpoint_xc_functional is None
+    assert doc.project.recommended_xc_functional == "PBE"
+
+    service.set_recommended_kpoint_grid(doc, (4, 4, 4), xc_functional="LDA")
+    assert doc.project.recommended_kpoint_xc_functional == "LDA"
+    assert doc.project.recommended_xc_functional == "LDA"
+
+    # Editing the default directly keeps what each value was converged with.
+    service.set_recommended_xc_functional(doc, " pbesol ")
+    assert doc.project.recommended_xc_functional == "PBESOL"
+    assert doc.project.recommended_cutoff_xc_functional == "PBE"
+    assert doc.project.recommended_kpoint_xc_functional == "LDA"
+    assert doc.provenance[-1].action == "set_recommended_xc_functional"
+    assert doc.provenance[-1].parameters == {"recommended_xc_functional": "PBESOL"}
+
+    service.save_project(doc)
+    loaded = service.load_project(root)
+    assert loaded.project.recommended_xc_functional == "PBESOL"
+    assert loaded.project.recommended_cutoff_xc_functional == "PBE"
+    assert loaded.project.recommended_kpoint_xc_functional == "LDA"
+
+    service.set_recommended_xc_functional(doc, None)
+    assert doc.project.recommended_xc_functional is None
+    assert "Cleared" in doc.provenance[-1].description
+
+
+def test_clear_recommended_defaults_removes_value_and_metadata(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "clear_defaults.mufinder"
+    doc = service.create_project(root, "ClearDefaults")
+    service.set_recommended_cutoff(
+        doc, 550.0, method="asymptotic", energy_threshold=0.001, cell_id="c", xc_functional="PBE"
+    )
+    service.set_recommended_kpoint_grid(
+        doc,
+        (4, 4, 4),
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        method="delta-threshold",
+        xc_functional="PBE",
+    )
+
+    service.clear_recommended_cutoff(doc)
+    assert doc.provenance[-1].action == "clear_recommended_cutoff"
+    service.clear_recommended_kpoint_grid(doc)
+    assert doc.provenance[-1].action == "clear_recommended_kpoint_grid"
+
+    project = doc.project
+    assert project.recommended_cutoff_energy is None
+    assert project.recommended_cutoff_method is None
+    assert project.recommended_cutoff_energy_threshold is None
+    assert project.recommended_cutoff_cell_id is None
+    assert project.recommended_cutoff_xc_functional is None
+    assert project.recommended_kpoint_grid is None
+    assert project.recommended_kpoint_lattice is None
+    assert project.recommended_kpoint_method is None
+    assert project.recommended_kpoint_xc_functional is None
+    # The functional is its own default and survives.
+    assert project.recommended_xc_functional == "PBE"
+
+    service.save_project(doc)
+    loaded = service.load_project(root)
+    assert loaded.project.recommended_cutoff_energy is None
+    assert loaded.project.recommended_kpoint_grid is None

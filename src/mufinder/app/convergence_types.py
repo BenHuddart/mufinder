@@ -51,6 +51,28 @@ class ConvergenceConfig:
             )
 
 
+def convergence_config_xc_functional(config: ConvergenceConfig) -> str | None:
+    """Return the single XC functional every sweep point in ``config`` uses.
+
+    ``None`` means the sweep has no single answer: the functional is unset, or
+    per-point overrides give different points different functionals. Callers
+    use this to record which functional a convergence default was established
+    with, so an ambiguous sweep must not be reported as any one functional.
+    """
+
+    functionals: set[str | None] = set()
+    for sweep_value in config.sweep_values:
+        value = config.shared_params.get("xc_functional")
+        for members, override in config.overrides.items():
+            if sweep_value in members and "xc_functional" in override:
+                value = override["xc_functional"]
+        text = str(value).strip().upper() if value is not None else ""
+        functionals.add(text or None)
+    if len(functionals) != 1:
+        return None
+    return next(iter(functionals))
+
+
 @dataclass(frozen=True, slots=True)
 class SweepPointRunState:
     """Runtime job/result information shown alongside each convergence row."""

@@ -12,7 +12,9 @@ useful for reconstructing what happened during a project, including:
 
 - structure import
 - workflow configuration for convergence, pristine relaxation, and UEP
-- adopted project defaults
+- adopted project defaults, including the functional a cutoff or k-point
+  default was converged with, any change to the project default XC
+  functional, and defaults entered or cleared by hand
 - muon candidate generation and UEP promotion
 - calculation submission milestones
 - terminal calculation outcomes such as completed, failed, stopped, cancelled,

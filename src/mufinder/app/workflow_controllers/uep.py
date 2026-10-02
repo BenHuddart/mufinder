@@ -200,6 +200,7 @@ class UepController(WorkflowJobController):
                 project_cutoff_energy=document.project.recommended_cutoff_energy,
                 project_kpoint_grid=document.project.recommended_kpoint_grid,
                 project_kpoint_reference_lattice=document.project.recommended_kpoint_lattice,
+                project_xc_functional=document.project.recommended_xc_functional,
             )
         except (ValueError, StructureBridgeError):
             return []

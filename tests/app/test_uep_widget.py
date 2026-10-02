@@ -43,6 +43,7 @@ def test_uep_widget_programmatic_defaults_and_source_updates_do_not_emit_form_st
         cutoff_energy=500.0,
         kpoint_grid=(2, 2, 2),
         kpoint_reference_lattice=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        xc_functional="PBE",
     )
     widget.set_source_structure_options(
         [
@@ -55,7 +56,11 @@ def test_uep_widget_programmatic_defaults_and_source_updates_do_not_emit_form_st
 
     assert emitted == []
     assert widget.selected_source_structure_id() == "relaxed"
-    assert widget._project_default_cutoff.text() == "500 eV"
+    assert widget._default_params["cut_off_energy"] == ValueWithUnit(500.0, "eV")
+    assert widget._default_params["xc_functional"] == "PBE"
+
+    widget.set_project_defaults(cutoff_energy=None, kpoint_grid=None)
+    assert "xc_functional" not in widget._default_params
 
 
 def test_uep_widget_supercell_dropdown_lists_project_cells(qapp) -> None:

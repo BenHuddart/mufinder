@@ -438,3 +438,38 @@ def test_expand_muon_relaxation_jobs_rejects_sanitized_seed_name_collisions() ->
             project_kpoint_grid=None,
             project_kpoint_reference_lattice=None,
         )
+
+
+def test_expand_pristine_relaxation_jobs_applies_project_xc_functional_unless_row_sets_one() -> None:
+    config = PristineRelaxationConfig(
+        name_prefix="pristine_relax",
+        rows=(
+            PristineRelaxationRow(
+                label="row_default",
+                fix_all_cell=True,
+                supercell_matrix=None,
+                parameter_values={"task": "GEOMETRYOPTIMIZATION"},
+            ),
+            PristineRelaxationRow(
+                label="row_explicit",
+                fix_all_cell=True,
+                supercell_matrix=None,
+                parameter_values={"task": "GEOMETRYOPTIMIZATION", "xc_functional": "LDA"},
+            ),
+        ),
+    )
+
+    expansion = expand_pristine_relaxation_jobs(
+        host_structure=_host_structure(),
+        config=config,
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(4, 4, 4),
+        project_kpoint_reference_lattice=None,
+        project_xc_functional="PBE",
+    )
+
+    functionals = [
+        {keyword.name: keyword.value for keyword in job.param_file.keywords}["xc_functional"]
+        for job in expansion.jobs
+    ]
+    assert functionals == ["PBE", "LDA"]

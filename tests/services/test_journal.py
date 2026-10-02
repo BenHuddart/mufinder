@@ -140,3 +140,86 @@ def test_export_journal_writes_text_and_markdown(tmp_path: Path) -> None:
     assert "Comparison table created" in text
     assert "# ExportMe Journal" in markdown
     assert "**[Completed] Comparison table created**" in markdown
+
+
+def test_journal_describes_project_xc_functional_defaults() -> None:
+    records = [
+        ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, 9, 0, tzinfo=UTC),
+            action="set_recommended_cutoff",
+            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+            parameters={
+                "recommended_cutoff_energy": 600.0,
+                "recommended_cutoff_xc_functional": "PBE",
+            },
+        ),
+        ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, 10, 0, tzinfo=UTC),
+            action="set_recommended_kpoint_grid",
+            workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+            parameters={
+                "recommended_kpoint_grid": [4, 4, 4],
+                "recommended_kpoint_xc_functional": "PBE",
+            },
+        ),
+        ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, 11, 0, tzinfo=UTC),
+            action="set_recommended_xc_functional",
+            parameters={"recommended_xc_functional": "PBESOL"},
+        ),
+        ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, 12, 0, tzinfo=UTC),
+            action="set_recommended_xc_functional",
+            parameters={"recommended_xc_functional": None},
+        ),
+    ]
+
+    entries = build_journal("XC", records).days[0].entries
+
+    assert entries[0].body == (
+        "Set the project default cutoff to 600 eV (converged with the PBE functional)."
+    )
+    assert entries[1].body == (
+        "Set the project default k-point grid to 4x4x4 (converged with the PBE functional)."
+    )
+    assert entries[2].title == "Default XC functional set"
+    assert "PBESOL" in entries[2].body
+    assert entries[3].title == "Default XC functional cleared"
+
+
+def test_journal_distinguishes_manual_and_cleared_defaults() -> None:
+    def record(hour: int, action: str, **parameters: object) -> ProvenanceRecord:
+        return ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, hour, 0, tzinfo=UTC),
+            action=action,
+            parameters=parameters,
+        )
+
+    entries = build_journal(
+        "Manual",
+        [
+            record(
+                9,
+                "set_recommended_cutoff",
+                recommended_cutoff_energy=800.0,
+                recommended_cutoff_method="manual",
+            ),
+            record(
+                10,
+                "set_recommended_kpoint_grid",
+                recommended_kpoint_grid=[6, 6, 4],
+                recommended_kpoint_method="manual",
+            ),
+            record(11, "clear_recommended_cutoff"),
+            record(12, "clear_recommended_kpoint_grid"),
+        ],
+    ).days[0].entries
+
+    assert [entry.title for entry in entries] == [
+        "Default cutoff set manually",
+        "Default k-point grid set manually",
+        "Default cutoff cleared",
+        "Default k-point grid cleared",
+    ]
+    assert "800 eV by hand" in entries[0].body
+    assert "6x6x4 by hand" in entries[1].body

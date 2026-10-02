@@ -165,21 +165,16 @@ def test_kpoint_widget_open_add_grid_dialog_ignores_cancel(
     assert _table_grids(widget) == []
 
 
-def test_kpoint_widget_set_project_defaults_formats_values(qapp) -> None:
+def test_kpoint_widget_applies_project_defaults_to_row_defaults(qapp) -> None:
     widget = KPointConvergenceWidget()
+    schema_default = widget._default_params["xc_functional"]
 
-    widget.set_project_defaults(
-        kpoint_grid=(2, 3, 4),
-        kpoint_method="delta-threshold",
-        energy_threshold=0.001,
-        force_threshold=0.05,
-    )
+    widget.set_xc_functional_default("PBE")
     widget.set_cutoff_default(450.0)
 
-    assert widget._project_default_grid.text() == "2 x 3 x 4"
-    assert "dE <= 0.001" in widget._project_default_criteria.text()
-    assert "dF <= 0.05" in widget._project_default_criteria.text()
-    assert widget._project_default_cutoff.text() == "450 eV"
+    assert widget._default_params["xc_functional"] == "PBE"
+    widget.set_xc_functional_default(None)
+    assert widget._default_params["xc_functional"] == schema_default
     assert widget._default_params["cut_off_energy"] == ValueWithUnit(450.0, "eV")
     assert "basis_precision" not in widget._default_params
 

@@ -31,6 +31,7 @@ def expand_uep_jobs(
     project_cutoff_energy: float | None,
     project_kpoint_grid: tuple[int, int, int] | None,
     project_kpoint_reference_lattice: list[list[float]] | None,
+    project_xc_functional: str | None = None,
 ) -> AdapterExpansion:
     """Expand one UEP source-job configuration into resolved CASTEP job specs."""
 
@@ -42,6 +43,8 @@ def expand_uep_jobs(
         "symmetry_generate": True,
         "write_formatted_density": True,
     }
+    if project_xc_functional is not None:
+        workflow_defaults_values["xc_functional"] = project_xc_functional
     if project_cutoff_energy is not None:
         workflow_defaults_values["cut_off_energy"] = float(project_cutoff_energy)
     workflow_defaults = _template_from_values(workflow_defaults_values)

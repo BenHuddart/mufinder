@@ -14,6 +14,7 @@ def format_convergence_method(method: str | None) -> str:
         "delta-threshold": "Delta-Threshold",
         "derivative": "Derivative (dE/dEcut)",
         "asymptotic": "Asymptotic Extrapolation",
+        "manual": "Set manually",
     }
     return labels.get(normalized, method)
 

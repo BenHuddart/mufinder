@@ -29,15 +29,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.convergence_display import (
-    format_convergence_criteria,
-    format_convergence_method,
-    format_cutoff_energy,
-)
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.param_dialog import ParameterDialog
-from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
+from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
+from mufinder.app.workflow_parameters import (
+    kpoint_exclusive_hint,
+    reorder_workflow_parameter_specs,
+    seed_xc_functional_default,
+)
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.app.workflow_table_utils import (
     RESETTABLE_ROW_STATUSES,
@@ -217,9 +217,7 @@ class CutoffConvergenceWidget(QWidget):
         self._batch_configure_button.setEnabled(False)
         self._examine_button = QPushButton("Examine Cutoff Convergence")
         self._examine_button.setEnabled(False)
-        self._project_default_cutoff = QLabel("Not set")
-        self._project_default_method = QLabel("Not set")
-        self._project_default_criteria = QLabel("Not set")
+        self.project_defaults_strip = ProjectDefaultsStrip()
         self._range_state: dict[str, object] = {
             "start": 300.0,
             "stop": 1400.0,
@@ -284,6 +282,7 @@ class CutoffConvergenceWidget(QWidget):
         self._specs = _reorder_specs_with_kpoint_anchor(self._specs)
         self._specs_by_name = {spec.name: spec for spec in self._specs}
         self._default_params = self._default_shared_params()
+        self._schema_xc_functional = self._default_params.get("xc_functional")
 
         self._build_layout()
         self._connect_signals()
@@ -295,28 +294,6 @@ class CutoffConvergenceWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
-
-        defaults_group = QGroupBox("Project Defaults")
-        defaults_layout = QVBoxLayout(defaults_group)
-        defaults_layout.setContentsMargins(10, 8, 10, 8)
-        defaults_layout.setSpacing(4)
-
-        defaults_top_row = QHBoxLayout()
-        defaults_top_row.setSpacing(8)
-        defaults_top_row.addWidget(QLabel("Cutoff"))
-        defaults_top_row.addWidget(self._project_default_cutoff)
-        defaults_top_row.addSpacing(8)
-        defaults_top_row.addWidget(QLabel("Method"))
-        defaults_top_row.addWidget(self._project_default_method)
-        defaults_top_row.addStretch(1)
-        defaults_layout.addLayout(defaults_top_row)
-
-        defaults_bottom_row = QHBoxLayout()
-        defaults_bottom_row.setSpacing(8)
-        defaults_bottom_row.addWidget(QLabel("Criteria"))
-        defaults_bottom_row.addWidget(self._project_default_criteria)
-        defaults_bottom_row.addStretch(1)
-        defaults_layout.addLayout(defaults_bottom_row)
 
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 0)
@@ -334,7 +311,7 @@ class CutoffConvergenceWidget(QWidget):
         title_column.addWidget(subtitle)
 
         header_row.addLayout(title_column, 1)
-        header_row.addWidget(defaults_group)
+        header_row.addWidget(self.project_defaults_strip, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header_row)
 
         simulation_group = QGroupBox("Simulation Cell")
@@ -414,28 +391,12 @@ class CutoffConvergenceWidget(QWidget):
             self.simulation_cell_use_unit_cell_requested.emit
         )
 
-    @staticmethod
-    def _format_convergence_method(method: str | None) -> str:
-        return format_convergence_method(method)
-
-    def set_project_defaults(
-        self,
-        *,
-        cutoff_energy: float | None,
-        cutoff_method: str | None,
-        energy_threshold: float | None,
-        force_threshold: float | None,
-        stress_threshold: float | None = None,
-    ) -> None:
-        """Display project-level default cutoff settings in the convergence panel."""
-        self._project_default_cutoff.setText(format_cutoff_energy(cutoff_energy))
-        self._project_default_method.setText(self._format_convergence_method(cutoff_method))
-        self._project_default_criteria.setText(
-            format_convergence_criteria(
-                energy_threshold=energy_threshold,
-                force_threshold=force_threshold,
-                stress_threshold=stress_threshold,
-            )
+    def set_xc_functional_default(self, xc_functional: str | None) -> None:
+        """Use the project default XC functional for rows without their own value."""
+        seed_xc_functional_default(
+            self._default_params,
+            xc_functional,
+            schema_default=self._schema_xc_functional,
         )
 
     def set_simulation_cell_options(

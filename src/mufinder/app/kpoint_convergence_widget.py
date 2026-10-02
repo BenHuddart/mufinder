@@ -30,16 +30,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.convergence_display import (
-    format_convergence_criteria,
-    format_convergence_method,
-    format_cutoff_energy,
-    format_kpoint_grid,
-)
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.param_dialog import ParameterDialog
-from mufinder.app.workflow_parameters import kpoint_exclusive_hint, reorder_workflow_parameter_specs
+from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
+from mufinder.app.workflow_parameters import (
+    kpoint_exclusive_hint,
+    reorder_workflow_parameter_specs,
+    seed_xc_functional_default,
+)
 from mufinder.app.workflow_table_utils import (
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
@@ -230,10 +229,7 @@ class KPointConvergenceWidget(QWidget):
         style_warning_text(self._warning_label)
         self._warning_label.hide()
 
-        self._project_default_grid = QLabel("Not set")
-        self._project_default_method = QLabel("Not set")
-        self._project_default_criteria = QLabel("Not set")
-        self._project_default_cutoff = QLabel("Not set")
+        self.project_defaults_strip = ProjectDefaultsStrip()
 
         self._range_state: dict[str, object] = {
             "spacing": _DEFAULT_KPOINT_SPACING,
@@ -311,6 +307,7 @@ class KPointConvergenceWidget(QWidget):
         self._specs = _reorder_specs_with_kpoint_anchor(self._specs)
         self._specs_by_name = {spec.name: spec for spec in self._specs}
         self._default_params = self._default_shared_params()
+        self._schema_xc_functional = self._default_params.get("xc_functional")
 
         self._build_layout()
         self._connect_signals()
@@ -322,35 +319,6 @@ class KPointConvergenceWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
-
-        defaults_group = QGroupBox("Project Defaults")
-        defaults_layout = QVBoxLayout(defaults_group)
-        defaults_layout.setContentsMargins(10, 8, 10, 8)
-        defaults_layout.setSpacing(4)
-
-        row1 = QHBoxLayout()
-        row1.setSpacing(8)
-        row1.addWidget(QLabel("Default k-point grid:"))
-        row1.addWidget(self._project_default_grid)
-        row1.addSpacing(8)
-        row1.addWidget(QLabel("Method:"))
-        row1.addWidget(self._project_default_method)
-        row1.addStretch(1)
-        defaults_layout.addLayout(row1)
-
-        row2 = QHBoxLayout()
-        row2.setSpacing(8)
-        row2.addWidget(QLabel("Criteria:"))
-        row2.addWidget(self._project_default_criteria)
-        row2.addStretch(1)
-        defaults_layout.addLayout(row2)
-
-        row3 = QHBoxLayout()
-        row3.setSpacing(8)
-        row3.addWidget(QLabel("Applied cutoff default:"))
-        row3.addWidget(self._project_default_cutoff)
-        row3.addStretch(1)
-        defaults_layout.addLayout(row3)
 
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 0)
@@ -368,7 +336,7 @@ class KPointConvergenceWidget(QWidget):
         title_column.addWidget(subtitle)
 
         header_row.addLayout(title_column, 1)
-        header_row.addWidget(defaults_group)
+        header_row.addWidget(self.project_defaults_strip, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header_row)
 
         layout.addWidget(self._warning_label)
@@ -473,27 +441,15 @@ class KPointConvergenceWidget(QWidget):
             raise ValueError("K-point grid values must be positive integers.")
         return grid
 
-    def set_project_defaults(
-        self,
-        *,
-        kpoint_grid: tuple[int, int, int] | None,
-        kpoint_method: str | None,
-        energy_threshold: float | None,
-        force_threshold: float | None,
-        stress_threshold: float | None = None,
-    ) -> None:
-        self._project_default_grid.setText(format_kpoint_grid(kpoint_grid))
-        self._project_default_method.setText(format_convergence_method(kpoint_method))
-        self._project_default_criteria.setText(
-            format_convergence_criteria(
-                energy_threshold=energy_threshold,
-                force_threshold=force_threshold,
-                stress_threshold=stress_threshold,
-            )
+    def set_xc_functional_default(self, xc_functional: str | None) -> None:
+        """Use the project default XC functional for rows without their own value."""
+        seed_xc_functional_default(
+            self._default_params,
+            xc_functional,
+            schema_default=self._schema_xc_functional,
         )
 
     def set_cutoff_default(self, cutoff_energy: float | None) -> None:
-        self._project_default_cutoff.setText(format_cutoff_energy(cutoff_energy))
         if cutoff_energy is None:
             self._default_params.pop("cut_off_energy", None)
         else:
