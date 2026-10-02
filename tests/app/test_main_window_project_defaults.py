@@ -201,6 +201,18 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
         tmp_path, shared_params={"task": "SINGLEPOINT", "xc_functional": "PBE"}
     )
     window._on_cutoff_adopted(400.0, "delta-threshold", 0.001, 0.05)
+    # Pinned overview plots as left behind by earlier adoptions.
+    doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {
+        "cutoff": {
+            "host_structure_id": str(doc.project.host_structure_id),
+            "default_value": 400.0,
+        },
+        "kpoint": {
+            "host_structure_id": str(doc.project.host_structure_id),
+            "default_value": [6, 6, 4],
+        },
+    }
+    assert window._validated_cutoff_overview_snapshot() is not None
     strip = window._pristine_relaxation_view.project_defaults_strip
 
     strip.cutoff_energy_change_requested.emit(850.0)
@@ -229,6 +241,14 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
     assert window._validated_cutoff_overview_snapshot() is None
     assert "850" in window.statusBar().currentMessage()
 
+    # Typing the adopted number back in is still a manual default: the plot
+    # that documented the adopted value must not come back.
+    strip.cutoff_energy_change_requested.emit(400.0)
+    assert project.recommended_cutoff_method == "manual"
+    assert window._validated_cutoff_overview_snapshot() is None
+    assert "cutoff" not in doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]
+    strip.cutoff_energy_change_requested.emit(850.0)
+
     strip.kpoint_grid_change_requested.emit((6, 6, 4))
 
     assert project.recommended_kpoint_grid == (6, 6, 4)
@@ -236,6 +256,7 @@ def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path
     assert project.recommended_kpoint_lattice == [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]]
     assert window._project_convergence_parameter_values()["kpoint_mp_grid"] == (6, 6, 4)
     assert window._uep_view._default_params["kpoint_mp_grid"] == (6, 6, 4)
+    assert "kpoint" not in doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY]
 
     loaded = ProjectService().load_project(doc.project_root)
     assert loaded.project.recommended_cutoff_method == "manual"

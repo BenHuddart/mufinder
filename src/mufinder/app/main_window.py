@@ -10992,6 +10992,10 @@ class MainWindow(QMainWindow):
             "default_cut_off_stress_threshold",
         ):
             ui_state.pop(key, None)
+        # The pinned overview plot documents the adopted value. Drop it, or
+        # typing that same number back in later would resurrect the plot for a
+        # default that is now manual.
+        self._store_convergence_overview_snapshot("cutoff", None)
         if cutoff_energy is None:
             self._project_service.clear_recommended_cutoff(self._document)
             self._finish_project_default_edit("Project default cutoff cleared")
@@ -11018,6 +11022,7 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return
         self._document.ui_state.pop("default_kpoint_stress_threshold", None)
+        self._store_convergence_overview_snapshot("kpoint", None)
         if kpoint_grid is None:
             self._project_service.clear_recommended_kpoint_grid(self._document)
             self._finish_project_default_edit("Project default k-point grid cleared")
