@@ -711,7 +711,12 @@ class CutoffConvergenceWidget(QWidget):
         self, cutoff: float, values: dict[str, Any], advanced_names: set[str]
     ) -> None:
         normalized = self._sanitize_parameter_mapping(values)
-        if normalized == self._default_params and not advanced_names:
+        # A task-only mapping is what the legacy-restore path used to write for
+        # a default row (see set_form_state); the parameter dialog cannot
+        # produce one. Reading it back as "defaults" repairs rows saved that
+        # way, so they match the definition their jobs ran under again.
+        task_only = {"task": self._default_params.get("task", infer_task("convergence_cutoff"))}
+        if normalized in (self._default_params, task_only) and not advanced_names:
             self._cutoff_parameter_values.pop(cutoff, None)
             self._cutoff_added_advanced.pop(cutoff, None)
             return
@@ -1225,7 +1230,13 @@ class CutoffConvergenceWidget(QWidget):
                         str(name) for name in entry.get("added_advanced", []) if isinstance(name, str)
                     }
                     self._set_cutoff_parameter_values(cutoff, params, advanced_names)
-            elif state:
+            elif "shared_params" in state or "overrides" in state:
+                # Only a legacy state (or a definition's configuration) carries
+                # shared_params/overrides. A current state whose rows all use the
+                # defaults has no cutoff_parameter_rows at all, and must be left
+                # alone: reading it as legacy would pin every row to an explicit
+                # task-only parameter set, so the rows would stop matching the
+                # definition their jobs ran under and be submitted again.
                 self._restore_legacy_cutoff_configs(state, cutoffs)
 
             self._refresh_all_cutoff_rows()

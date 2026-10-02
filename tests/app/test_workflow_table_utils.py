@@ -23,7 +23,6 @@ from mufinder.app.workflow_table_utils import (
     RowMenuAction,
     bind_reset_failed_context_menu,
     create_workflow_table,
-    selection_supports_reset,
     style_workflow_configure_button,
     workflow_row_status_text,
 )
@@ -206,29 +205,38 @@ def test_workflow_row_status_text_normalizes_and_tolerates_missing_items(qapp) -
     assert workflow_row_status_text(table, 1, 0) == ""
 
 
+def _resettable(statuses: list[str], keys: list[object | None]) -> list[object]:
+    return workflow_table_utils.resettable_keys(
+        range(len(statuses)),
+        key_for_row=lambda row: keys[row],
+        status_for_row=lambda row: statuses[row],
+    )
+
+
 @pytest.mark.parametrize("status", sorted(RESETTABLE_ROW_STATUSES))
-def test_selection_supports_reset_accepts_every_resettable_status(status: str) -> None:
-    assert selection_supports_reset(["a"], [status]) is True
+def test_resettable_keys_accepts_every_resettable_status(status: str) -> None:
+    assert _resettable([status], ["a"]) == ["a"]
 
 
-def test_selection_supports_reset_rejects_empty_and_mixed_selections() -> None:
-    assert selection_supports_reset([], []) is False
-    # A row with no key (unlabeled) leaves nothing to reset.
-    assert selection_supports_reset([], ["failed"]) is False
-    # Mixed selections stay disabled: the cleanup prompt covers the whole batch.
-    assert selection_supports_reset(["a", "b"], ["failed", "running"]) is False
-    assert selection_supports_reset(["a"], ["completed"]) is False
+def test_resettable_keys_keeps_only_rows_a_reset_applies_to() -> None:
+    assert _resettable([], []) == []
+    assert _resettable(["completed"], ["a"]) == []
+    # A mixed selection resets the rows it can and skips the rest.
+    assert _resettable(["failed", "running", "cancelled"], ["a", "b", "c"]) == ["a", "c"]
+    # A row with no key (unlabeled) has no job to reset.
+    assert _resettable(["failed", "failed"], ["a", None]) == ["a"]
+    assert _resettable(["failed"], [None]) == []
 
 
-def test_selection_supports_reset_rejects_a_partially_keyed_selection() -> None:
-    # Two selected failed rows but only one key: the second row is keyless, and
-    # enabling here would reset only the first while the batch cleanup prompt
-    # claimed to cover both.
-    assert selection_supports_reset(["a"], ["failed", "failed"]) is False
-    assert selection_supports_reset(["a", "b"], ["failed", "failed"]) is True
+@pytest.mark.parametrize(
+    ("eligible", "selected", "expected"),
+    [(0, 3, ""), (3, 3, ""), (2, 5, " (2 of 5)"), (1, 2, " (1 of 2)"), (0, 0, "")],
+)
+def test_partial_count_suffix_appears_only_for_a_mixed_selection(eligible, selected, expected) -> None:
+    assert workflow_table_utils.partial_count_suffix(eligible, selected) == expected
 
 
-def test_bind_reset_failed_context_menu_disables_reset_when_a_selected_row_has_no_key(
+def test_bind_reset_failed_context_menu_resets_keyed_rows_and_counts_the_keyless_one(
     qapp, monkeypatch
 ) -> None:
     install_fake_menu(monkeypatch)
@@ -250,9 +258,24 @@ def test_bind_reset_failed_context_menu_disables_reset_when_a_selected_row_has_n
 
     menu = open_reset_menu(table, row=0)
 
-    assert menu is not None
-    assert menu.reset_action().enabled is False
-    assert emitted == []
+    # The keyless row is skipped, and the entry says so before the reset prompt
+    # (which names the number of jobs) is shown.
+    assert menu.reset_action().text == "Reset Failed Jobs... (1 of 2)"
+    assert menu.reset_action().enabled is True
+    assert emitted == [["row_0"]]
+
+
+def test_bind_reset_failed_context_menu_resets_the_eligible_rows_of_a_mixed_selection(
+    qapp, monkeypatch
+) -> None:
+    install_fake_menu(monkeypatch)
+    table, emitted = _reset_menu_table(qapp, ("failed", "running", "cancelled", "completed"))
+    table.selectAll()
+
+    menu = open_reset_menu(table, row=0)
+
+    assert menu.reset_action().text == "Reset Failed Jobs... (2 of 4)"
+    assert emitted == [["row_0", "row_2"]]
 
 
 def test_bind_reset_failed_context_menu_emits_keys_for_failed_row(qapp, monkeypatch) -> None:
@@ -608,7 +631,7 @@ def test_standard_row_menu_omits_actions_a_table_does_not_have(qapp, monkeypatch
         (["ready", "not generated"], {"Run Local", "Run on Cluster", "Configure...", "Remove"}),
         (["running", "queued"], {"Cancel", "Configure...", "Remove"}),
         (["failed", "stopped"], {"Inspect Failure", "Reset Failed Jobs...", "Configure...", "Remove"}),
-        (["ready", "running"], {"Configure...", "Remove"}),
+        (["completed", "completed"], {"Configure...", "Remove"}),
     ],
 )
 def test_standard_row_menu_enables_actions_from_row_status(qapp, monkeypatch, statuses, enabled) -> None:
@@ -620,6 +643,42 @@ def test_standard_row_menu_enables_actions_from_row_status(qapp, monkeypatch, st
     menu = open_reset_menu(table)
 
     assert {action.text for action in menu.actions if action.enabled} == enabled
+
+
+def test_standard_row_menu_offers_actions_for_the_eligible_rows_of_a_mixed_selection(
+    qapp, monkeypatch, confirmed_destructive_actions
+) -> None:
+    table = _status_table(qapp, ["ready", "running", "failed", "running"])
+    calls: list[tuple[str, list[object]]] = []
+    _bind_standard_menu(table, calls)
+    install_fake_menu(monkeypatch)
+    table.selectAll()
+
+    menu = open_reset_menu(table)
+
+    assert [action.text for action in menu.actions] == [
+        "Run Local (1 of 4)",
+        "Run on Cluster (1 of 4)",
+        "Cancel (2 of 4)",
+        "Inspect Failure (1 of 4)",
+        "Reset Failed Jobs... (1 of 4)",
+        "Configure...",
+        "Remove",
+    ]
+    assert all(action.enabled for action in menu.actions)
+
+    menu.action("Cancel (2 of 4)").triggered.emit()
+    menu.action("Inspect Failure (1 of 4)").triggered.emit()
+    menu.action("Configure...").triggered.emit()
+
+    # The fake menu's exec() already clicked the enabled reset entry.
+    assert calls == [
+        ("reset", ["row2"]),
+        ("cancel", [1, 3]),
+        ("inspect", [2]),
+        ("configure", [0, 1, 2, 3]),
+    ]
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Cancel 2 calculations?"]
 
 
 def test_standard_row_menu_passes_selected_rows_and_confirms_cancel(

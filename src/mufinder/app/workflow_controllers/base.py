@@ -36,7 +36,7 @@ from uuid import UUID
 
 from mufinder.castep_io.cell_parser import ParsedCell
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_execution_controller import JobExecutionController
@@ -44,6 +44,7 @@ from mufinder.services.project_service import ProjectDocument, ProjectService
 
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
+    WorkflowSubmissionPlan,
     job_is_resubmittable_after_dismissal,
     workflow_row_state_is_ready,
 )
@@ -113,6 +114,16 @@ class ControllerResult:
     output_files: list[str] = field(default_factory=list)
     derived_structure_ids: list[UUID] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+
+
+def _success_message(target: str, skipped: int) -> Callable[..., str]:
+    """Build the backend status message that also reports ``skipped`` rows."""
+
+    rows = "row" if skipped == 1 else "rows"
+    note = f"; skipped {skipped} selected {rows} that {'was' if skipped == 1 else 'were'} not ready"
+    if target == "local":
+        return lambda count: f"Submitted {count} local job(s){note}"
+    return lambda count, cluster: f"Submitted {count} cluster job(s) on {cluster}{note}"
 
 
 class WorkflowJobController:
@@ -229,8 +240,29 @@ class WorkflowJobController:
             if target == "local"
             else self._context.submit_jobs_on_cluster
         )
-        for group, extras in self.submission_groups(list(plan.jobs)):
+        groups = self.submission_groups(list(plan.jobs))
+        skipped = self.skipped_row_count(plan)
+        for index, (group, extras) in enumerate(groups):
+            # The backends report what they submitted in the status bar. When
+            # the selection also held rows that were not ready, the last
+            # group's message says how many were left out, so a "Run All" or a
+            # mixed selection never looks as if it covered every row.
+            if skipped and index == len(groups) - 1 and "success_message" not in extras:
+                extras = {**extras, "success_message": _success_message(target, skipped)}
             backend(group, **extras)
+
+    @staticmethod
+    def skipped_row_count(plan: WorkflowSubmissionPlan) -> int:
+        """Return how many requested rows the submission will leave out.
+
+        Each requested row contributes at most one job to the plan, and the
+        backends submit only ``DEFINED`` jobs, so the rows left out are those
+        with no job in the plan (not ready, nothing to materialize) or whose
+        job is in another state (running, completed, failed and not dismissed).
+        """
+
+        submittable = sum(1 for job in plan.jobs if job.status == JobStatus.DEFINED)
+        return max(0, len(plan.ordered_values) - submittable)
 
     # --- result contract ---
 

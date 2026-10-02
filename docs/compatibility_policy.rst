@@ -51,6 +51,17 @@ Compatibility ledger
        editable and resubmittable while its imported entities and files remain,
        so neither field may be dropped without a schema migration that first
        relocates the marker.
+   * - Task-only ``cutoff_parameter_rows`` entries
+     - ``convergence_form`` UI state, read by
+       ``CutoffConvergenceWidget._set_cutoff_parameter_values``
+     - A cutoff row saved with parameters of exactly ``{"task": ...}`` and no
+       advanced keywords is read back as "uses the defaults". A restore bug
+       wrote such entries for default rows, which made the rows stop matching
+       the definition their jobs ran under, so they were submitted again. The
+       parameter dialog cannot produce a task-only row, so nothing a user
+       configured is reinterpreted.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that drops task-only rows from ``convergence_form``.
    * - ``recommended_cutoff_*`` project fields
      - ``Project`` / project manifest
      - Persisted project defaults used by current cutoff, k-point, relaxation,

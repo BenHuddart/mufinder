@@ -673,14 +673,28 @@ this order: ``Run Local``, ``Run on Cluster``, ``Cancel``, ``Inspect Failure``,
 ``Reset Failed Jobs...``, ``Configure...``, ``Remove``, then any table-specific
 entries below a separator (``Continue relaxation…`` in the relaxation tables;
 ``Reset to Stage 1`` in Quantum Corrections, which has no failed-job reset or
-``Remove``). Right-clicking a row outside the selection selects it first. Run,
-Cancel, Inspect and Reset are enabled only when every selected row is in a state
-the action applies to.
+``Remove``). Right-clicking a row outside the selection selects it first.
+
+A selection may mix rows an action applies to with rows it does not (a running
+row when resetting, a completed row when running). Every action then acts on
+the rows it applies to and says how many it left out:
+
+- Run, Cancel, Inspect and Reset in the row menu are offered when at least one
+  selected row qualifies, act on those rows only, and carry the count when it is
+  partial, for example ``Reset Failed Jobs... (2 of 5)``. An entry is greyed out
+  only when no selected row qualifies. A row with no label yet has no job and
+  counts as not qualifying.
+- The run buttons and the menu's run entries submit the rows that are ready and
+  the status bar reports the rest: ``Submitted 3 local job(s); skipped 2
+  selected rows that were not ready``.
+- The three-way prompt of a row control states the same split (``Set this
+  supercell on 3 of 5 selected rows? 2 are not eligible and will be skipped.``).
 
 The Job Dashboard has a right-click menu with ``Resubmit``, ``Retry
 Retrieval``, ``Cancel``, ``Inspect``, ``Reset``, ``Dismiss`` and ``Delete...``.
-Each entry is enabled when it applies to at least one selected job and acts on
-those jobs only, as the row buttons do. ``Delete...`` does what Delete/Backspace
+Each entry is enabled when it applies to at least one selected job, acts on
+those jobs only, as the row buttons do, and carries the count when it is partial
+(``Reset (2 of 3)``). ``Delete...`` does what Delete/Backspace
 does. The row buttons remain the primary controls.
 
 The shared implementation lives in ``mufinder.app.selection_snapshot`` (row
@@ -991,7 +1005,7 @@ Submission entry points include:
 - The shared right-click row menu on every workflow table (see "Multi-row
   selection in job tables"), including ``Reset Failed Jobs...`` on the cutoff
   and k-point convergence, pristine and muon relaxation, UEP, and energy
-  barriers/NEB diffusion-path tables, enabled only when the whole selection is
+  barriers/NEB diffusion-path tables, acting on the selected rows that are
   ``failed``/``stopped``/``cancelled``. Quantum Corrections uses its stage-1
   reset instead, which also accepts a failed, stopped, or cancelled stage-1
   singlepoint with no phonon job.
@@ -1024,6 +1038,11 @@ Runtime behavior includes:
 - Shared execution service reusable by convergence and dashboard flows.
 - Removing a cutoff entry now warns before touching associated files and either
 	deletes them or moves them into a ``removed_from_workflow`` archive subfolder.
+- Cutoff rows that use the default parameters keep their completed jobs across a
+	project refresh or reload: adding a cutoff and running submits only the new
+	row. (A restore bug previously re-read such rows as task-only, which made the
+	next run treat every row as new and submit completed jobs again; rows saved
+	in that state are repaired on load.)
 - Removing cutoff rows asks one confirmation for the whole batch (see
 	"Multi-row selection in job tables"); the file-handling prompt that follows
 	for rows with associated files still offers ``Yes to All`` / ``No to All``.

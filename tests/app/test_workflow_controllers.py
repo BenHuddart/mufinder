@@ -530,6 +530,73 @@ def test_submit_never_prepares_a_non_dismissed_failed_job(tmp_path: Path) -> Non
     assert still_failed.dismissed_at is None
 
 
+def test_submit_reports_rows_left_out_of_a_mixed_selection(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    ready_job = _job(service, document, "ready")
+    running_job = _job(service, document, "running")
+    running_job.status = JobStatus.RUNNING
+    local = _RecordingBackend()
+    cluster = _RecordingBackend()
+    context = _make_context(local_backend=local, cluster_backend=cluster)
+    controller = _FakeController(
+        context,
+        # "a" is ready, "b" has a running job, "c" is not ready and has no job.
+        states={"a": _State("ready"), "b": _State("running"), "c": _State("completed")},
+        existing={"b": running_job},
+        materialized={"a": ready_job},
+    )
+
+    controller.submit(["a", "b", "c"], target="local")
+    controller.submit(["a", "b", "c"], target="cluster")
+
+    (_jobs, local_extras), (_cluster_jobs, cluster_extras) = local.calls[0], cluster.calls[0]
+    assert local_extras["success_message"](1) == (
+        "Submitted 1 local job(s); skipped 2 selected rows that were not ready"
+    )
+    assert cluster_extras["success_message"](1, "hpc") == (
+        "Submitted 1 cluster job(s) on hpc; skipped 2 selected rows that were not ready"
+    )
+
+
+def test_submit_reports_a_single_skipped_row_in_the_singular(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    ready_job = _job(service, document, "ready")
+    local = _RecordingBackend()
+    controller = _FakeController(
+        _make_context(local_backend=local),
+        states={"a": _State("ready"), "b": _State("completed")},
+        materialized={"a": ready_job},
+    )
+
+    controller.submit(["a", "b"], target="local")
+
+    assert local.calls[0][1]["success_message"](1) == (
+        "Submitted 1 local job(s); skipped 1 selected row that was not ready"
+    )
+
+
+def test_submit_skipped_report_goes_on_the_last_group_only(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    job_a = _job(service, document, "a")
+    job_b = _job(service, document, "b")
+    local = _RecordingBackend()
+    controller = _FakeController(
+        _make_context(local_backend=local),
+        states={"a": _State("ready"), "b": _State("ready"), "c": _State("completed")},
+        materialized={"a": job_a, "b": job_b},
+        group_by_size=True,
+    )
+
+    controller.submit(["a", "b", "c"], target="local")
+
+    first_extras, last_extras = (extras for _jobs, extras in local.calls)
+    assert first_extras == {"index": 0}
+    assert set(last_extras) == {"index", "success_message"}
+
+
 def test_default_submission_groups_is_single_group() -> None:
     context = _make_context()
     controller = _FakeController(context, states={})

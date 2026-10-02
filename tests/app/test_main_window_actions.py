@@ -12788,21 +12788,22 @@ def test_main_window_dashboard_menu_acts_on_the_eligible_selected_jobs(
 
     menu = _open_dashboard_menu(window, monkeypatch)
 
+    # Entries that apply to only some of the three selected jobs say how many.
     assert [action.text for action in menu.actions] == [
-        "Resubmit",
+        "Resubmit (2 of 3)",
         "Retry Retrieval",
-        "Cancel",
-        "Inspect",
-        "Reset",
-        "Dismiss",
+        "Cancel (1 of 3)",
+        "Inspect (1 of 3)",
+        "Reset (2 of 3)",
+        "Dismiss (2 of 3)",
         "Delete...",
     ]
     assert menu.separators_before == [6]
     assert {action.text for action in menu.actions if not action.enabled} == {"Retry Retrieval"}
 
-    menu.action("Resubmit").triggered.emit()
-    menu.action("Inspect").triggered.emit()
-    menu.action("Reset").triggered.emit()
+    menu.action("Resubmit (2 of 3)").triggered.emit()
+    menu.action("Inspect (1 of 3)").triggered.emit()
+    menu.action("Reset (2 of 3)").triggered.emit()
     assert calls == [
         ("resubmit", [failed.id, cancelled_job.id]),
         ("inspect", [failed.id]),
@@ -12830,10 +12831,10 @@ def test_main_window_dashboard_menu_confirms_cancel_and_dismiss(
     _select_dashboard_rows(window, [0, 1])
     menu = _open_dashboard_menu(window, monkeypatch)
 
-    menu.action("Cancel").triggered.emit()
+    menu.action("Cancel (1 of 2)").triggered.emit()
     assert calls == []
-    menu.action("Cancel").triggered.emit()
-    menu.action("Dismiss").triggered.emit()
+    menu.action("Cancel (1 of 2)").triggered.emit()
+    menu.action("Dismiss (1 of 2)").triggered.emit()
 
     assert calls == [("cancel", [running.id]), ("dismiss", [failed.id])]
     assert prompts[0] == ("Cancel jobs", "Cancel 1 job?", "", "Cancel 1 job", "Keep running")
@@ -12886,4 +12887,104 @@ def test_main_window_connects_workflow_cancel_and_inspect_signals(
 
     assert cancelled == [sentinel_jobs]
     assert inspected == [sentinel_jobs]
+    window.close()
+
+
+def _cutoff_window_with_completed_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Run two default cutoff rows through the real flow and mark them completed."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cutoff_rerun.mufinder", "CutoffRerun")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    window._document = doc
+    window._refresh_ui_after_project_change()
+    view = window._convergence_view
+    for cutoff in (300.0, 360.0):
+        view._add_cutoff(cutoff)
+    sent: list[list[str]] = []
+    monkeypatch.setattr(
+        window,
+        "_submit_jobs_on_cluster",
+        lambda jobs, **_kwargs: sent.append(
+            [job.label for job in jobs if job.status == JobStatus.DEFINED]
+        ),
+    )
+    view._run_cluster_selected_cutoffs()
+    for job in doc.jobs.values():
+        job.status = JobStatus.COMPLETED
+    sent.clear()
+    return window, doc, view, sent
+
+
+def test_cutoff_rows_keep_their_completed_jobs_across_a_refresh_and_a_new_row(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: completed cutoff rows were submitted again after a refresh.
+
+    A form state whose rows all use the default parameters was restored as if it
+    were a legacy state, pinning each row to a task-only parameter set. The rows
+    then no longer matched the definition their jobs ran under, so the next run
+    registered a new definition, flipped them to ready and created new jobs.
+    """
+
+    window, doc, view, sent = _cutoff_window_with_completed_rows(tmp_path, monkeypatch)
+    defaults = sorted(view.build_config().shared_params)
+
+    window._refresh_ui_after_project_change()
+
+    assert view._cutoff_parameter_values == {}
+    assert sorted(view.build_config().shared_params) == defaults
+    status_column = view._STATUS_COLUMN
+    assert [view._cutoff_table.item(row, status_column).text() for row in range(2)] == [
+        "completed",
+        "completed",
+    ]
+
+    view._add_cutoff(420.0)
+    view._cutoff_table.selectAll()
+    view._run_cluster_selected_cutoffs()
+
+    # Only the new row is submitted; the completed rows keep their jobs.
+    assert sent == [["cutoff_convergence_ecut_420"]]
+    assert sorted((job.label, job.status) for job in doc.jobs.values()) == [
+        ("cutoff_convergence_ecut_300", JobStatus.COMPLETED),
+        ("cutoff_convergence_ecut_360", JobStatus.COMPLETED),
+        ("cutoff_convergence_ecut_420", JobStatus.DEFINED),
+    ]
+    assert [view._cutoff_table.item(row, status_column).text() for row in range(2)] == [
+        "completed",
+        "completed",
+    ]
+    window.close()
+
+
+def test_cutoff_rows_saved_with_task_only_parameters_are_read_back_as_defaults(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project saved while the restore bug was live is repaired on load."""
+
+    window, doc, view, sent = _cutoff_window_with_completed_rows(tmp_path, monkeypatch)
+    doc.ui_state["convergence_form"] = {
+        **doc.ui_state["convergence_form"],
+        "cutoff_parameter_rows": [
+            {"cutoff": cutoff, "params": {"task": "SINGLEPOINT"}, "added_advanced": []}
+            for cutoff in (300.0, 360.0)
+        ],
+    }
+
+    window._refresh_ui_after_project_change()
+
+    assert view._cutoff_parameter_values == {}
+    view._cutoff_table.selectAll()
+    view._run_cluster_selected_cutoffs()
+    assert sent in ([], [[]])
+    assert len(doc.jobs) == 2
     window.close()

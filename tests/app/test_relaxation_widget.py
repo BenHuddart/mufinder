@@ -1433,3 +1433,39 @@ def test_relaxation_run_buttons_and_remove_selected_follow_the_selection(
     widget._remove_selected_button.click()
     assert widget._table.rowCount() == 0
     assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 2 rows?"]
+
+
+def test_relaxation_row_menu_acts_on_the_eligible_rows_of_a_mixed_selection(
+    qapp, monkeypatch, confirmed_destructive_actions
+) -> None:
+    widget = PristineRelaxationWidget()
+    for _ in range(3):
+        widget._add_row()
+    ready, running, failed = (widget._label_at_row(row) for row in range(3))
+    widget.set_runtime_states(
+        {
+            running: RelaxationRunState(status="running"),
+            failed: RelaxationRunState(status="failed"),
+        }
+    )
+    reset: list[object] = []
+    cancelled: list[object] = []
+    widget.reset_failed_requested.connect(reset.append)
+    widget.cancel_requested.connect(cancelled.append)
+    install_fake_menu(monkeypatch)
+    widget._table.selectAll()
+
+    menu = open_reset_menu(widget._table)
+
+    assert [action.text for action in menu.actions][:5] == [
+        "Run Local (1 of 3)",
+        "Run on Cluster (1 of 3)",
+        "Cancel (1 of 3)",
+        "Inspect Failure (1 of 3)",
+        "Reset Failed Jobs... (1 of 3)",
+    ]
+    menu.action("Cancel (1 of 3)").triggered.emit()
+
+    # The fake menu's exec() already clicked the enabled reset entry.
+    assert reset == [[failed]]
+    assert cancelled == [[running]]

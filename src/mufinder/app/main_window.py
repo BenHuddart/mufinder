@@ -267,7 +267,7 @@ from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
-from mufinder.app.workflow_table_utils import SelectionFeedback, count_phrase
+from mufinder.app.workflow_table_utils import SelectionFeedback, count_phrase, partial_count_suffix
 from mufinder.services.perf_trace import PerfTrace
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, ProjectDocument, ProjectService
 from mufinder.services.ssh_client import (
@@ -5066,7 +5066,8 @@ class MainWindow(QMainWindow):
         A right-click on a row outside the selection selects it first, so the
         menu always describes what is highlighted. Each action is enabled when
         it applies to at least one selected job and acts on those jobs only,
-        which is how the row buttons already treat a mixed selection.
+        which is how the row buttons already treat a mixed selection; for a
+        mixed selection the entry says how many ("Reset (2 of 3)").
         """
 
         if self._document is None:
@@ -5085,7 +5086,7 @@ class MainWindow(QMainWindow):
         menu = QMenu(self._jobs_table)
         for text, kind in self._DASHBOARD_MENU_ACTIONS:
             eligible_ids = [job.id for job in jobs if self._dashboard_action_applies(kind, job)]
-            action = menu.addAction(text)
+            action = menu.addAction(text + partial_count_suffix(len(eligible_ids), len(jobs)))
             action.setEnabled(bool(eligible_ids))
             action.triggered.connect(
                 lambda _checked=False, k=kind, ids=eligible_ids: self._run_dashboard_menu_action(k, ids)
