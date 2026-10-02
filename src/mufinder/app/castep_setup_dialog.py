@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import re
+import shutil
 import sys
 import os
+import tempfile
 
 from PySide6.QtCore import QProcess, QSettings, QThread
 from PySide6.QtWidgets import (
@@ -14,6 +17,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -32,16 +36,19 @@ from mufinder.app.cluster_ui_utils import (
     prompt_to_trust_host_key,
     show_detailed_warning,
 )
-from mufinder.cluster_setup import ClusterConfig, load_cluster_configs
+from mufinder.app.keyword_catalog_notice import catalog_source_description
+from mufinder.cluster_setup import ClusterConfig, load_cluster_configs, save_cluster_configs
 from mufinder.castep_setup import (
     CastepSetup,
     apply_castep_environment,
     build_castep_keyword_command,
     discover_mpirun,
+    install_keyword_catalog,
     load_castep_setup,
     save_castep_setup,
 )
-from mufinder.castep_io.schema import keyword_catalog_source_info, refresh_keyword_catalog
+from mufinder.castep_io.keyword_catalog_file import KeywordCatalogValidationError
+from mufinder.castep_io.schema import keyword_catalog_status, refresh_keyword_catalog
 from mufinder.services.cluster_keyword_generator import (
     ClusterKeywordGenerationWorker,
     validate_cluster_keyword_config,
@@ -63,6 +70,18 @@ create_castep_keywords(executable, filename=filename, path=directory, force_writ
 """.strip()
 
 
+def _cluster_is_set_up(config: ClusterConfig) -> bool:
+    """Return whether ``config`` looks ready to generate keywords from.
+
+    The built-in cluster presets ship with the placeholder username
+    ``username``; until the user replaces it the preset is only a template.
+    """
+
+    if config.username.strip().lower() in {"", "username"}:
+        return False
+    return not validate_cluster_keyword_config(config)
+
+
 class CastepSetupDialog(QDialog):
     """Configure CASTEP executable and keyword metadata locations."""
 
@@ -81,44 +100,115 @@ class CastepSetupDialog(QDialog):
         self._generation_worker: ClusterKeywordGenerationWorker | None = None
         self._generation_cancelled = False
         self._generation_output_path: Path | None = None
+        self._generation_scratch_dir: Path | None = None
         self._generation_log = ""
         self._text_field_min_height = 34
         self._path_field_min_width = 740
 
         self.setWindowTitle("CASTEP Setup")
-        self.resize(720, 320)
+        self.resize(720, 420)
 
         root = QVBoxLayout(self)
 
+        # The keyword catalog comes first: it is the part every user needs,
+        # whereas a CASTEP installation on this computer is optional.
+        catalog_group = QGroupBox("Keyword catalog", self)
+        catalog_layout = QVBoxLayout(catalog_group)
+
         intro = QLabel(
-            "Tell MuFinder where CASTEP is installed and where keyword metadata should live. "
-            "You can generate a `castep_keywords.json` file directly from CASTEP using ASE."
+            "MuFinder needs a keyword catalog (castep_keywords.json) listing the keywords your CASTEP "
+            "version understands. Without one, fewer parameters are offered and some results cannot be "
+            "loaded. Generate it from a cluster or from CASTEP on this computer, or import a file you "
+            "already have; MuFinder keeps its own copy, so there is no location to choose."
         )
         intro.setWordWrap(True)
-        root.addWidget(intro)
+        catalog_layout.addWidget(intro)
 
-        self._workflow_hint = QLabel(
-            "Recommended workflow: 1) Set `Keywords JSON` to the destination path, "
-            "2) click `Generate Keywords JSON`, 3) click `OK` to save and apply. "
-            "If the path is blank, MuFinder will ask where to write the file."
+        self._catalog_status_label = QLabel(catalog_group)
+        self._catalog_status_label.setWordWrap(True)
+        self._catalog_status_label.setObjectName("catalogStatusLabel")
+        status_font = self._catalog_status_label.font()
+        status_font.setBold(True)
+        self._catalog_status_label.setFont(status_font)
+        catalog_layout.addWidget(self._catalog_status_label)
+
+        generate_row = QHBoxLayout()
+        generate_row.addWidget(QLabel("Generate from", catalog_group))
+        self._generate_target_combo = QComboBox(catalog_group)
+        self._generate_target_combo.addItem("This computer", "local")
+        for cluster_name in self._cluster_configs:
+            self._generate_target_combo.addItem(cluster_name, cluster_name)
+        if not self._setup.executable_path:
+            # Most users only have CASTEP on a cluster. Without a local
+            # executable, preselect the first cluster that is set up well
+            # enough to generate from.
+            for cluster_name, config in self._cluster_configs.items():
+                if _cluster_is_set_up(config):
+                    self._generate_target_combo.setCurrentIndex(
+                        self._generate_target_combo.findData(cluster_name)
+                    )
+                    break
+        generate_row.addWidget(self._generate_target_combo)
+        # How a cluster runs the queries. The same choice is offered in Setup >
+        # HPC Clusters; it is repeated here because this is where the user
+        # meets it.
+        self._generate_method_label = QLabel("using", catalog_group)
+        generate_row.addWidget(self._generate_method_label)
+        self._generate_method_combo = QComboBox(catalog_group)
+        self._generate_method_combo.addItem("Scheduler job (recommended)", "scheduler")
+        self._generate_method_combo.addItem("Login node", "direct")
+        self._generate_method_combo.setToolTip(
+            "A scheduler job is safe where running CASTEP on the login node is forbidden or discouraged. "
+            "The login node is quicker when it is permitted, because nothing waits in a queue. "
+            "Your choice is remembered for this cluster."
         )
-        self._workflow_hint.setWordWrap(True)
-        self._workflow_hint.setObjectName("castepSetupWorkflowHint")
-        root.addWidget(self._workflow_hint)
+        generate_row.addWidget(self._generate_method_combo)
+        self._generate_button = QPushButton("Generate Keyword Catalog", catalog_group)
+        self._generate_button.clicked.connect(self._generate_keywords)
+        generate_row.addWidget(self._generate_button)
+        self._import_button = QPushButton("Use Existing File…", catalog_group)
+        self._import_button.setToolTip(
+            "Import a castep_keywords.json you already have. MuFinder checks it and keeps its own copy."
+        )
+        self._import_button.clicked.connect(self._import_keywords_json)
+        generate_row.addWidget(self._import_button)
+        self._cancel_generation_button = QPushButton("Cancel", catalog_group)
+        self._cancel_generation_button.clicked.connect(self._cancel_generation)
+        self._cancel_generation_button.setVisible(False)
+        generate_row.addWidget(self._cancel_generation_button)
+        generate_row.addStretch(1)
+        catalog_layout.addLayout(generate_row)
 
-        catalog_source = keyword_catalog_source_info()
-        if not self._setup.keywords_json_path and catalog_source is not None and not catalog_source.origin.startswith("env_json:"):
-            self._fallback_notice = QLabel(
-                "No CASTEP keywords JSON is configured explicitly. The current session is using fallback "
-                f"metadata discovery from `{catalog_source.path}`."
-            )
-            self._fallback_notice.setWordWrap(True)
-            self._fallback_notice.setObjectName("catalogFallbackNotice")
-            root.addWidget(self._fallback_notice)
+        self._generate_target_hint = QLabel(catalog_group)
+        self._generate_target_hint.setWordWrap(True)
+        self._generate_target_hint.setObjectName("generateTargetHint")
+        catalog_layout.addWidget(self._generate_target_hint)
+
+        self._progress_label = QLabel("Idle", catalog_group)
+        catalog_layout.addWidget(self._progress_label)
+
+        self._progress_bar = QProgressBar(catalog_group)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(False)
+        catalog_layout.addWidget(self._progress_bar)
+
+        root.addWidget(catalog_group)
+
+        local_group = QGroupBox("CASTEP on this computer (optional)", self)
+        local_layout = QVBoxLayout(local_group)
+        local_note = QLabel(
+            "Only needed to run calculations on this computer, or to generate the keyword catalog from "
+            "\"This computer\". Cluster jobs and cluster keyword generation never use these paths: each "
+            "cluster's own CASTEP executable is set in Setup > HPC Clusters."
+        )
+        local_note.setWordWrap(True)
+        local_note.setObjectName("localCastepNote")
+        local_layout.addWidget(local_note)
 
         form = QFormLayout()
 
-        executable_row = QWidget(self)
+        executable_row = QWidget(local_group)
         executable_layout = QHBoxLayout(executable_row)
         executable_layout.setContentsMargins(0, 0, 0, 0)
         self._executable_edit = QLineEdit(self._setup.executable_path, executable_row)
@@ -130,19 +220,7 @@ class CastepSetupDialog(QDialog):
         executable_layout.addWidget(self._browse_executable_button)
         form.addRow("CASTEP executable", executable_row)
 
-        keywords_row = QWidget(self)
-        keywords_layout = QHBoxLayout(keywords_row)
-        keywords_layout.setContentsMargins(0, 0, 0, 0)
-        self._keywords_edit = QLineEdit(self._setup.keywords_json_path, keywords_row)
-        self._keywords_edit.setMinimumHeight(self._text_field_min_height)
-        self._keywords_edit.setMinimumWidth(self._path_field_min_width)
-        self._browse_keywords_button = QPushButton("Browse…", keywords_row)
-        self._browse_keywords_button.clicked.connect(self._browse_keywords_json)
-        keywords_layout.addWidget(self._keywords_edit, 1)
-        keywords_layout.addWidget(self._browse_keywords_button)
-        form.addRow("Keywords JSON", keywords_row)
-
-        mpirun_row = QWidget(self)
+        mpirun_row = QWidget(local_group)
         mpirun_layout = QHBoxLayout(mpirun_row)
         mpirun_layout.setContentsMargins(0, 0, 0, 0)
         self._mpirun_edit = QLineEdit(self._setup.mpirun_path, mpirun_row)
@@ -157,40 +235,12 @@ class CastepSetupDialog(QDialog):
         mpirun_layout.addWidget(self._detect_mpirun_button)
         form.addRow("MPI launcher (mpirun)", mpirun_row)
 
-        root.addLayout(form)
+        local_layout.addLayout(form)
+        root.addWidget(local_group)
 
-        generate_row = QHBoxLayout()
-        self._generate_target_combo = QComboBox(self)
-        self._generate_target_combo.addItem("Local", "local")
-        for cluster_name in self._cluster_configs:
-            self._generate_target_combo.addItem(cluster_name, cluster_name)
-        generate_row.addWidget(self._generate_target_combo)
-        self._generate_button = QPushButton("Generate Keywords JSON", self)
-        self._generate_button.clicked.connect(self._generate_keywords)
-        generate_row.addWidget(self._generate_button)
-        self._cancel_generation_button = QPushButton("Cancel", self)
-        self._cancel_generation_button.clicked.connect(self._cancel_generation)
-        self._cancel_generation_button.setVisible(False)
-        generate_row.addWidget(self._cancel_generation_button)
-        generate_row.addStretch(1)
-        root.addLayout(generate_row)
-
-        self._progress_label = QLabel("Idle", self)
-        root.addWidget(self._progress_label)
-
-        self._progress_bar = QProgressBar(self)
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
-        self._progress_bar.setVisible(False)
-        root.addWidget(self._progress_bar)
-
-        note = QLabel(
-            "Local generation uses `ase.calculators.castep.create_castep_keywords(...)`. "
-            "Cluster generation runs CASTEP help queries over SSH (or a scheduler job, depending on setup). "
-            "The output is written to the `Keywords JSON` location above."
-        )
-        note.setWordWrap(True)
-        root.addWidget(note)
+        self._generate_target_combo.currentIndexChanged.connect(lambda *_: self._on_generate_target_changed())
+        self._generate_method_combo.currentIndexChanged.connect(lambda *_: self._refresh_generate_target_hint())
+        self._on_generate_target_changed()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -201,12 +251,75 @@ class CastepSetupDialog(QDialog):
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
+        self._refresh_catalog_status()
+
+    def _selected_cluster_config(self) -> ClusterConfig | None:
+        target_key = str(self._generate_target_combo.currentData() or "local")
+        return self._cluster_configs.get(target_key)
+
+    def _on_generate_target_changed(self) -> None:
+        """Show the scheduler/login-node choice for cluster targets."""
+
+        config = self._selected_cluster_config()
+        is_cluster = config is not None
+        self._generate_method_label.setVisible(is_cluster)
+        self._generate_method_combo.setVisible(is_cluster)
+        if config is not None:
+            # addqueue clusters can only generate through the scheduler.
+            forced = config.queue_system.strip().lower() == "addqueue"
+            mode = "scheduler" if forced else config.keyword_execution_mode.strip().lower()
+            index = self._generate_method_combo.findData(mode)
+            self._generate_method_combo.blockSignals(True)
+            self._generate_method_combo.setCurrentIndex(index if index >= 0 else 0)
+            self._generate_method_combo.blockSignals(False)
+            self._generate_method_combo.setEnabled(not forced)
+        self._refresh_generate_target_hint()
+
+    def _cluster_config_with_selected_method(self, config: ClusterConfig) -> ClusterConfig:
+        """Return ``config`` with the method chosen here, remembering a change."""
+
+        mode = str(self._generate_method_combo.currentData() or "scheduler")
+        if config.queue_system.strip().lower() == "addqueue" or mode == config.keyword_execution_mode:
+            return config
+        updated = replace(config, keyword_execution_mode=mode)
+        self._cluster_configs[config.name] = updated
+        save_cluster_configs(self._settings, self._cluster_configs.values())
+        return updated
+
+    def _refresh_generate_target_hint(self) -> None:
+        """Say which settings the selected generation target will use."""
+
+        config = self._selected_cluster_config()
+        if config is None:
+            self._generate_target_hint.setText(
+                "Runs the CASTEP executable set below on this computer, through the MPI launcher if one "
+                "is set. Takes a minute or two."
+            )
+            return
+        if str(self._generate_method_combo.currentData()) == "direct":
+            how = "on its login node"
+            timing = "Takes a minute or two. Only use this where the site allows CASTEP on its login nodes."
+        else:
+            how = "as a short scheduler job"
+            timing = "Takes a few minutes, plus any time in the queue."
+        self._generate_target_hint.setText(
+            f"Runs CASTEP on {config.name} {how}, using that cluster's settings from Setup > HPC Clusters. "
+            f"The paths below are not used. {timing}"
+        )
+
+    def _refresh_catalog_status(self) -> None:
+        status = keyword_catalog_status()
+        parts = [catalog_source_description(status)]
+        if status.issue:
+            parts.append(status.issue)
+        self._catalog_status_label.setText("\n".join(parts))
+
     def setup(self) -> CastepSetup:
         """Return the currently edited setup values."""
 
         return CastepSetup(
             executable_path=self._executable_edit.text().strip(),
-            keywords_json_path=self._keywords_edit.text().strip(),
+            keywords_json_path=load_castep_setup(self._settings).keywords_json_path,
             mpirun_path=self._mpirun_edit.text().strip(),
         )
 
@@ -221,16 +334,46 @@ class CastepSetupDialog(QDialog):
         if path:
             self._executable_edit.setText(path)
 
-    def _browse_keywords_json(self) -> None:
-        start_dir = self._start_dir(self._keywords_edit.text())
-        path, _selected_filter = QFileDialog.getSaveFileName(
+    def _import_keywords_json(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
             self,
-            "Select CASTEP Keywords JSON",
-            str(Path(start_dir) / "castep_keywords.json"),
+            "Select an existing CASTEP keyword catalog",
+            self._start_dir(self._executable_edit.text()),
             "JSON Files (*.json);;All Files (*)",
         )
         if path:
-            self._keywords_edit.setText(path)
+            self._install_catalog(Path(path), action="imported")
+
+    def _install_catalog(self, source: Path, *, action: str) -> bool:
+        """Validate ``source``, adopt it as MuFinder's catalog, and report the result."""
+
+        try:
+            summary = install_keyword_catalog(source, self._settings)
+        except KeywordCatalogValidationError as exc:
+            QMessageBox.warning(
+                self,
+                "Keyword catalog not usable",
+                f"{source.name} was not installed, and the current keyword catalog is unchanged.\n\n{exc}",
+            )
+            return False
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Keyword catalog not saved",
+                f"MuFinder could not save its copy of the keyword catalog.\n\n{exc}",
+            )
+            return False
+
+        self._refresh_catalog_status()
+        message = f"Keyword catalog {action}: {summary.describe()}."
+        status = keyword_catalog_status()
+        if status.origin.startswith("env_json:"):
+            message += (
+                "\n\nIt is not in use yet: the "
+                f"{status.origin.split(':', maxsplit=1)[1]} environment variable overrides CASTEP setup."
+            )
+        QMessageBox.information(self, "Keyword catalog installed", message)
+        return True
 
     def _browse_mpirun(self) -> None:
         start_dir = self._start_dir(self._mpirun_edit.text())
@@ -265,16 +408,14 @@ class CastepSetupDialog(QDialog):
                     "Set the CASTEP executable path before generating castep_keywords.json.",
                 )
                 return
-            output_path = self._ensure_output_path()
-            if output_path is None:
-                return
-            self._start_generation_process(executable, output_path)
+            self._start_generation_process(executable, self._new_generation_output_path())
             return
 
         config = self._cluster_configs.get(target_key)
         if config is None:
             QMessageBox.warning(self, "Cluster not found", "The selected cluster is no longer configured.")
             return
+        config = self._cluster_config_with_selected_method(config)
 
         issues = validate_cluster_keyword_config(config)
         if issues:
@@ -285,9 +426,7 @@ class CastepSetupDialog(QDialog):
             )
             return
 
-        output_path = self._ensure_output_path()
-        if output_path is None:
-            return
+        output_path = self._new_generation_output_path()
 
         credentials = prompt_for_cluster_credentials(self, config)
         if credentials is None:
@@ -346,17 +485,7 @@ class CastepSetupDialog(QDialog):
                 return
         save_castep_setup(self._settings, setup)
         apply_castep_environment(setup)
-        try:
-            refresh_keyword_catalog()
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(
-                self,
-                "Keyword catalog reload failed",
-                (
-                    "Saved CASTEP setup but could not reload keyword metadata immediately. "
-                    f"Details:\n{exc}"
-                ),
-            )
+        refresh_keyword_catalog(allow_fallback=True)
         self.accept()
 
     def reject(self) -> None:
@@ -385,22 +514,23 @@ class CastepSetupDialog(QDialog):
             return str(path.parent)
         return str(Path.home())
 
-    def _ensure_output_path(self) -> Path | None:
-        output_path = self._keywords_edit.text().strip()
-        if output_path:
-            return Path(output_path)
+    def _new_generation_output_path(self) -> Path:
+        """Return a scratch path for a freshly generated catalog.
 
-        executable = self._executable_edit.text().strip()
-        suggested, _selected_filter = QFileDialog.getSaveFileName(
-            self,
-            "Choose CASTEP Keywords JSON Output",
-            str(Path(self._start_dir(executable)) / "castep_keywords.json"),
-            "JSON Files (*.json);;All Files (*)",
-        )
-        if not suggested:
-            return None
-        self._keywords_edit.setText(suggested)
-        return Path(suggested)
+        Generation never writes over the catalog in use: the result lands in a
+        temporary directory and only replaces the installed copy once it has
+        been validated.
+        """
+
+        self._discard_generation_scratch()
+        self._generation_scratch_dir = Path(tempfile.mkdtemp(prefix="mufinder-keywords-"))
+        return self._generation_scratch_dir / "castep_keywords.json"
+
+    def _discard_generation_scratch(self) -> None:
+        scratch = self._generation_scratch_dir
+        self._generation_scratch_dir = None
+        if scratch is not None:
+            shutil.rmtree(scratch, ignore_errors=True)
 
     def _start_generation_process(self, executable: str, output_path: Path) -> None:
         if self._generation_in_progress:
@@ -480,12 +610,15 @@ class CastepSetupDialog(QDialog):
     def _set_generation_running(self, running: bool) -> None:
         self._generate_button.setEnabled(not running)
         self._generate_target_combo.setEnabled(not running)
+        self._generate_method_combo.setEnabled(
+            not running
+            and getattr(self._selected_cluster_config(), "queue_system", "").strip().lower() != "addqueue"
+        )
         self._browse_executable_button.setEnabled(not running)
-        self._browse_keywords_button.setEnabled(not running)
+        self._import_button.setEnabled(not running)
         self._browse_mpirun_button.setEnabled(not running)
         self._detect_mpirun_button.setEnabled(not running)
         self._executable_edit.setEnabled(not running)
-        self._keywords_edit.setEnabled(not running)
         self._mpirun_edit.setEnabled(not running)
         self._cancel_generation_button.setVisible(running)
         self._button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(not running)
@@ -529,6 +662,7 @@ class CastepSetupDialog(QDialog):
         self._set_generation_running(False)
 
         if self._generation_cancelled:
+            self._discard_generation_scratch()
             self._progress_label.setText("CASTEP keyword generation cancelled.")
             self._progress_bar.setValue(0)
             return
@@ -538,6 +672,7 @@ class CastepSetupDialog(QDialog):
                 self._generation_log.strip() or "CASTEP keyword generation did not complete successfully."
             )
             self._progress_label.setText("Generation failed.")
+            self._discard_generation_scratch()
             return
 
         self._complete_generation_success(output_path)
@@ -564,12 +699,14 @@ class CastepSetupDialog(QDialog):
     def _on_cluster_generation_failed(self, message: str) -> None:
         self._set_generation_running(False)
         self._generation_worker = None
+        self._discard_generation_scratch()
         self._progress_label.setText("Generation failed.")
         self._show_generation_error(message.strip() or "CASTEP keyword generation did not complete successfully.")
 
     def _on_cluster_generation_cancelled(self) -> None:
         self._set_generation_running(False)
         self._generation_worker = None
+        self._discard_generation_scratch()
         self._progress_bar.setValue(0)
         self._progress_label.setText("CASTEP keyword generation cancelled.")
 
@@ -579,14 +716,14 @@ class CastepSetupDialog(QDialog):
 
     def _complete_generation_success(self, output_path: Path) -> None:
         self._set_generation_running(False)
-        self._keywords_edit.setText(str(output_path.resolve()))
-        self._progress_bar.setValue(100)
-        self._progress_label.setText("CASTEP keyword generation complete.")
-        QMessageBox.information(
-            self,
-            "Keywords generated",
-            f"Generated CASTEP keywords metadata at:\n{output_path.resolve()}",
-        )
+        installed = self._install_catalog(output_path, action="generated")
+        self._discard_generation_scratch()
+        if installed:
+            self._progress_bar.setValue(100)
+            self._progress_label.setText("CASTEP keyword generation complete.")
+        else:
+            self._progress_bar.setValue(0)
+            self._progress_label.setText("Generation failed.")
 
     def _show_generation_error(self, message: str) -> None:
         text = message.strip() or "CASTEP keyword generation did not complete successfully."

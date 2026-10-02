@@ -569,9 +569,9 @@ def scan_legacy_folder(
     catalog = keyword_catalog_source_info()
     if catalog is not None and catalog.origin == "bundled_starter_catalog":
         warnings.append(
-            "No CASTEP installation was found, so parameter recovery uses the bundled "
-            "starter catalog and will be less complete. Set MUFINDER_CASTEP_KEYWORDS_JSON "
-            "to improve it. This does not affect the relaxed structures themselves."
+            "No CASTEP keyword catalog is loaded, so parameter recovery uses the bundled "
+            "starter catalog and will be less complete. Generate or import a catalog in "
+            "Setup > CASTEP to improve it. This does not affect the relaxed structures themselves."
         )
 
     by_index: dict[int, dict[str, Path]] = {}

@@ -38,7 +38,8 @@ from mufinder.castep_io.gui_metadata import (
     normalize_gui_value,
     validate_gui_values,
 )
-from mufinder.castep_io.schema import KeywordSpec, keyword_catalog_source_info
+from mufinder.app.keyword_catalog_notice import CATALOG_SETUP_HINT
+from mufinder.castep_io.schema import KeywordSpec, keyword_catalog_status
 
 _ALWAYS_VISIBLE_ADVANCED_NAMES = ("spin_polarized",)
 # Fallback preference order when the caller has not supplied a
@@ -190,17 +191,15 @@ class ParameterDialog(QDialog):
 
         root = QVBoxLayout(self)
 
-        catalog_source = keyword_catalog_source_info()
-        if catalog_source is not None and catalog_source.origin != "env_json:MUFINDER_CASTEP_KEYWORDS_JSON":
-            if not catalog_source.origin.startswith("env_json:"):
-                self._catalog_notice = QLabel(
-                    "Using fallback CASTEP keyword metadata discovery from "
-                    f"`{catalog_source.path}`. Configure a specific keywords JSON in Setup > CASTEP "
-                    "if you want to pin the metadata source explicitly."
-                )
-                self._catalog_notice.setWordWrap(True)
-                self._catalog_notice.setObjectName("catalogFallbackNotice")
-                root.addWidget(self._catalog_notice)
+        catalog_status = keyword_catalog_status()
+        if catalog_status.is_starter:
+            self._catalog_notice = QLabel(
+                "Only MuFinder's limited built-in keyword set is available, so some CASTEP parameters are "
+                f"not offered here. {CATALOG_SETUP_HINT}"
+            )
+            self._catalog_notice.setWordWrap(True)
+            self._catalog_notice.setObjectName("catalogFallbackNotice")
+            root.addWidget(self._catalog_notice)
 
         if intro_text:
             self._intro_label = QLabel(intro_text, self)

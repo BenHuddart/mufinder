@@ -15,7 +15,6 @@ from mufinder.castep_io.schema import (
     _auto_alias_map,
     _build_block_schema,
     _clean_allowed_values_segment,
-    _discover_catalog_source,
     _extract_example,
     _first_sentence,
     _humanize,
@@ -101,31 +100,50 @@ def test_discover_and_load_base_catalog_handle_success_and_errors(
         lambda: (CatalogSourceInfo(path=custom_catalog, origin="env_json:test"),),
     )
 
-    source = _discover_catalog_source()
     payload = _load_base_catalog()
 
-    assert source.path == custom_catalog
+    assert schema_module.CATALOG_SOURCE_INFO.path == custom_catalog
+    assert schema_module.CATALOG_ISSUE is None
+    assert schema_module.CATALOG_CASTEP_VERSION == "test"
     assert payload["cell"][0]["name"] == "abc"
     assert payload["param"][0]["name"] == "task"
 
+    # A file that is not a keyword catalog is skipped, not fatal: the next
+    # candidate is used and the reason is kept for the UI.
     broken_catalog = tmp_path / "broken.json"
     broken_catalog.write_text(json.dumps({"cell": [], "param": {}}), encoding="utf-8")
     monkeypatch.setattr(
         schema_module,
         "_candidate_catalog_sources",
-        lambda: (CatalogSourceInfo(path=broken_catalog, origin="env_json:test"),),
+        lambda: (
+            CatalogSourceInfo(path=broken_catalog, origin="env_json:test"),
+            CatalogSourceInfo(path=custom_catalog, origin="setup"),
+        ),
     )
-    with pytest.raises(TypeError, match="Expected 'cell' entries to be a mapping"):
-        _load_base_catalog()
+    payload = _load_base_catalog()
+    assert schema_module.CATALOG_SOURCE_INFO.origin == "setup"
+    assert payload["param"][0]["name"] == "task"
+    assert "broken.json" in schema_module.CATALOG_ISSUE
+    assert "no 'cell' keyword section" in schema_module.CATALOG_ISSUE
 
+    corrupt_catalog = tmp_path / "corrupt.json"
+    corrupt_catalog.write_text("{not json", encoding="utf-8")
     missing_catalog = tmp_path / "missing.json"
     monkeypatch.setattr(
         schema_module,
         "_candidate_catalog_sources",
-        lambda: (CatalogSourceInfo(path=missing_catalog, origin="test_missing"),),
+        lambda: (
+            CatalogSourceInfo(path=corrupt_catalog, origin="setup"),
+            CatalogSourceInfo(path=missing_catalog, origin="env_json:test"),
+            CatalogSourceInfo(path=tmp_path / "undiscovered.json", origin="auto_discovery"),
+        ),
     )
     with pytest.raises(FileNotFoundError, match="requires a local CASTEP metadata file"):
-        _discover_catalog_source()
+        _load_base_catalog()
+    assert "is not valid JSON" in schema_module.CATALOG_ISSUE
+    assert "missing.json' no longer exists" in schema_module.CATALOG_ISSUE
+    # Auto-discovery misses are routine, not something to report.
+    assert "undiscovered.json" not in schema_module.CATALOG_ISSUE
 
 
 def test_schema_override_and_alias_helpers_cover_manual_and_auto_paths() -> None:

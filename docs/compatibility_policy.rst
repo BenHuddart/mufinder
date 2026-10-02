@@ -114,6 +114,17 @@ Compatibility ledger
        in existing projects, so it requires a schema-version bump with a
        migration entry and an update to the persistence codec, the dashboard
        visibility filter, and the workflow-row projection.
+   * - ``castep/keywords_json_path`` setting pointing outside the
+       application-data directory
+     - ``mufinder.castep_setup`` / application settings (``QSettings``)
+     - Before catalogs were installed as a managed copy, this setting held a
+       path the user chose. Such a path is still honoured as the configured
+       catalog, so existing installations keep working without re-running
+       setup. Generating or importing a catalog repoints the setting at the
+       managed copy.
+     - Application setting, not project data. Keep indefinitely: honouring an
+       arbitrary path costs nothing, and dropping it would silently return
+       existing users to the starter catalog.
    * - ``ConvergenceWorkflow``
      - ``mufinder.workflow.convergence`` (re-exported from
        ``mufinder.workflow``)
@@ -152,3 +163,12 @@ Rules for new shims
 - Tests that exercise legacy data should name the legacy field explicitly, so
   future cleanup work can find the remaining callers with ``rg``.
 
+
+Removed settings
+----------------
+
+- ``clusters/<name>/keyword_python_command`` (application setting, removed with
+  the shell-loop keyword generator described in :doc:`castep_keyword_catalog`).
+  Cluster keyword generation no longer runs Python on the cluster, so the value
+  has no meaning. It was never project data; a value left in saved settings is
+  ignored and needs no migration.

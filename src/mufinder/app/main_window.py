@@ -102,6 +102,7 @@ from mufinder.app.cluster_ui_utils import (
     show_detailed_warning,
 )
 from mufinder.app.castep_setup_dialog import CastepSetupDialog
+from mufinder.app.keyword_catalog_guard import KeywordCatalogGuard
 from mufinder.app.convergence_adapter import convergence_job_name, expand_convergence_jobs
 from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
 from mufinder.app.convergence_display import (
@@ -2228,6 +2229,12 @@ class MainWindow(QMainWindow):
         self._cluster_refresh_button = QPushButton("Refresh Queue", self)
         self._cluster_refresh_button.setEnabled(True)
         self._cluster_refresh_button.clicked.connect(self._on_refresh_cluster_queue)
+        self._keyword_catalog_guard = KeywordCatalogGuard(
+            parent=self,
+            settings=self._settings,
+            open_setup=self._open_castep_setup_dialog,
+        )
+        self.statusBar().addPermanentWidget(self._keyword_catalog_guard.status_button)
         self.statusBar().addPermanentWidget(self._cluster_connection_label)
         self.statusBar().addPermanentWidget(self._cluster_queue_checked_label)
         self.statusBar().addPermanentWidget(self._cluster_refresh_button)
@@ -2875,7 +2882,11 @@ class MainWindow(QMainWindow):
 
     def _open_castep_setup_dialog(self) -> None:
         dialog = CastepSetupDialog(settings=self._settings, parent=self)
-        if dialog.exec() != dialog.DialogCode.Accepted:
+        accepted = dialog.exec() == dialog.DialogCode.Accepted
+        # A keyword catalog generated or imported in the dialog is installed
+        # immediately, whether or not the dialog is then accepted.
+        self._keyword_catalog_guard.refresh()
+        if not accepted:
             return
         setup = dialog.setup()
         status_bits: list[str] = []
@@ -2887,6 +2898,11 @@ class MainWindow(QMainWindow):
             status_bits.append("mpirun configured")
         detail = ", ".join(status_bits) if status_bits else "paths cleared"
         self.statusBar().showMessage(f"CASTEP setup updated ({detail})")
+
+    def prompt_for_keyword_catalog_if_needed(self) -> None:
+        """Explain a missing CASTEP keyword catalog once the window is up."""
+
+        self._keyword_catalog_guard.prompt_at_startup_if_needed()
 
     def _open_cluster_setup_dialog(self) -> None:
         dialog = ClusterSetupDialog(settings=self._settings, parent=self)
@@ -6571,6 +6587,8 @@ class MainWindow(QMainWindow):
                 "Configure a CASTEP executable in Setup -> CASTEP before submitting jobs.",
             )
             return
+        if not self._keyword_catalog_guard.confirm_submission():
+            return
 
         dialog = LocalSubmissionDialog(
             job_labels=[job.label for job in eligible_jobs],
@@ -6658,6 +6676,8 @@ class MainWindow(QMainWindow):
                 "No configured clusters",
                 "Configure at least one cluster in Setup -> HPC Clusters before submitting.",
             )
+            return
+        if not self._keyword_catalog_guard.confirm_submission():
             return
 
         workflow_type = self._cluster_workflow_directory_fragment(eligible_jobs)

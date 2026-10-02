@@ -43,12 +43,16 @@ analysis into higher-level follow-on calculations.
 
 `castep_keywords.json` is intentionally not bundled with MuFinder and must not be committed to this repository.
 
-MuFinder supports two user-managed runtime inputs for CASTEP metadata discovery:
+MuFinder needs a keyword catalog to recognise every keyword your CASTEP version reads and writes. Without one it runs on a small built-in starter set, offers fewer parameters, and can fail to load results that contain keywords outside that set (for example `QUANTISATION_AXIS`, which CASTEP writes after a Hubbard U calculation).
 
-- `MUFINDER_CASTEP_KEYWORDS_JSON` or `CASTEP_KEYWORDS_JSON`
-- `MUFINDER_CASTEP_ROOT` or `CASTEP_ROOT`
+Open `Setup > CASTEP` and either generate the catalog from a cluster or a local CASTEP, or import a `castep_keywords.json` you already have. MuFinder validates it and keeps its own copy, so there is no location to choose. The status bar shows which catalog is in use, and MuFinder warns at startup and before submitting jobs when none is loaded.
 
-Users can either point MuFinder at an existing generated `castep_keywords.json` or generate one locally from a CASTEP installation. The packaged application includes only MuFinder's conservative starter catalog fallback for supported keywords.
+Developers can override the installed catalog with environment variables:
+
+- `MUFINDER_CASTEP_KEYWORDS_JSON` or `CASTEP_KEYWORDS_JSON` (a catalog file)
+- `MUFINDER_CASTEP_ROOT` or `CASTEP_ROOT` (a CASTEP source tree)
+
+See `docs/castep_keyword_catalog.rst` for the full behaviour.
 
 ## Install From Source
 

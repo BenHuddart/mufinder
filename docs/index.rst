@@ -24,6 +24,7 @@ features, and quality standards that must be maintained as development expands.
    uep_workflow
    structural_relaxation_analysis
    legacy_import
+   castep_keyword_catalog
    magnetic_fields
    quantum_corrections
    energy_barriers

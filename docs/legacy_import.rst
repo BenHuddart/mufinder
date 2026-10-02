@@ -565,7 +565,7 @@ structures usable downstream; parsed parameters are informational alongside that
 Blocking an import over an informational-fidelity difference would trade the
 feature's whole value against a cosmetic loss. The wizard notes the catalog in
 use and flags degraded fidelity when running on the starter catalog, pointing at
-the ``MUFINDER_CASTEP_KEYWORDS_JSON`` environment variable as the remedy. The
+``Setup > CASTEP`` as the remedy (see :doc:`castep_keyword_catalog`). The
 catalog source and its CASTEP version are recorded in the import provenance
 regardless, so a completed import always names the catalog that governed its
 parse.

@@ -32,9 +32,15 @@ _SCHEMA_GLOBAL_NAMES = (
     "PARAM_SERIALIZATION_ORDER",
     "SERIALIZATION_INDEX",
     "CATALOG_SOURCE_INFO",
+    "CATALOG_ISSUE",
+    "CATALOG_CASTEP_VERSION",
     "_candidate_catalog_sources",
 )
-_SCHEMA_ENV_VARS = ("MUFINDER_CASTEP_KEYWORDS_JSON", "CASTEP_KEYWORDS_JSON")
+_SCHEMA_ENV_VARS = (
+    "MUFINDER_CASTEP_KEYWORDS_JSON",
+    "CASTEP_KEYWORDS_JSON",
+    "MUFINDER_CASTEP_KEYWORDS_JSON_SETUP",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +63,32 @@ def _isolate_castep_keyword_catalog() -> Iterator[None]:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+@pytest.fixture(autouse=True)
+def _isolate_keyword_catalog_side_effects(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep catalog installs and catalog prompts away from the real machine.
+
+    The suite normally runs on the bundled starter catalog, the state in which
+    the application warns before submitting and offers to install a catalog.
+    Unpatched, that would open modal prompts in every submission test and let
+    an install write into the developer's real application-data directory.
+    Tests of the prompts themselves re-patch ``_show_choice``.
+    """
+
+    import mufinder.castep_setup as castep_setup_module
+    from mufinder.app.keyword_catalog_guard import CHOICE_CONTINUE, KeywordCatalogGuard
+
+    data_dir = tmp_path_factory.mktemp("mufinder-app-data")
+    monkeypatch.setattr(castep_setup_module, "_app_data_directory", lambda: data_dir)
+    monkeypatch.setattr(
+        KeywordCatalogGuard,
+        "_show_choice",
+        lambda self, **_kwargs: (CHOICE_CONTINUE, False),
+    )
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

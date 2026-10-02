@@ -264,3 +264,22 @@ def test_helper_import_wrappers(monkeypatch):
     settings = object()
     main_module._apply_saved_castep_environment(settings)
     assert recorded["settings"] is settings
+
+
+def test_prompt_for_keyword_catalog_is_deferred_to_the_event_loop(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(main_module.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
+    prompted = []
+    window = SimpleNamespace(prompt_for_keyword_catalog_if_needed=lambda: prompted.append(True))
+
+    main_module._prompt_for_keyword_catalog(window)
+
+    # Nothing is shown while run() is still tearing the splash screen down.
+    assert prompted == []
+    assert [delay for delay, _callback in scheduled] == [0]
+    scheduled[0][1]()
+    assert prompted == [True]
+
+    # A window without the hook (the test doubles above) is left alone.
+    main_module._prompt_for_keyword_catalog(_FakeWindow())
+    assert len(scheduled) == 1

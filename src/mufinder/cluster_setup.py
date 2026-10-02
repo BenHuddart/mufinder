@@ -18,8 +18,10 @@ _REDWOOD_SCANCEL = "/usr/local/shared/slurm/bin//scancel"
 _REDWOOD_PRESET_NAME = "Redwood"
 _REDWOOD_HOSTNAME = "glamdring.physics.ox.ac.uk"
 _REDWOOD_JUMP_HOSTNAME = "bastion.physics.ox.ac.uk"
-_DEFAULT_KEYWORD_EXECUTION_MODE = "direct"
-_DEFAULT_KEYWORD_PYTHON_COMMAND = "python3"
+# Keyword generation runs as a scheduler job unless the user opts for the login
+# node: many sites forbid or discourage running CASTEP there, and a scheduler job
+# can reuse the cluster's own job script.
+_DEFAULT_KEYWORD_EXECUTION_MODE = "scheduler"
 _SCARF_KEYWORD_SHELL_INIT = "module load CASTEP"
 
 
@@ -45,7 +47,6 @@ def _default_clusters() -> list["ClusterConfig"]:
             cancel_command_path="",
             keyword_execution_mode="scheduler",
             keyword_shell_init=_SCARF_KEYWORD_SHELL_INIT,
-            keyword_python_command=_DEFAULT_KEYWORD_PYTHON_COMMAND,
         ),
         ClusterConfig(
             name=_REDWOOD_PRESET_NAME,
@@ -74,7 +75,6 @@ def _default_clusters() -> list["ClusterConfig"]:
             cancel_command_path=_REDWOOD_SCANCEL,
             keyword_execution_mode="direct",
             keyword_shell_init="",
-            keyword_python_command=_DEFAULT_KEYWORD_PYTHON_COMMAND,
         )
     ]
 
@@ -110,7 +110,6 @@ class ClusterConfig:
     cancel_command_path: str = ""
     keyword_execution_mode: str = _DEFAULT_KEYWORD_EXECUTION_MODE
     keyword_shell_init: str = ""
-    keyword_python_command: str = _DEFAULT_KEYWORD_PYTHON_COMMAND
 
 
 def _builtin_cluster_by_name(name: str) -> ClusterConfig | None:
@@ -335,17 +334,6 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         or ""
     )
 
-    keyword_python_command = str(
-        settings.value(
-            f"{prefix}/keyword_python_command",
-            builtin.keyword_python_command if builtin is not None else _DEFAULT_KEYWORD_PYTHON_COMMAND,
-            str,
-        )
-        or _DEFAULT_KEYWORD_PYTHON_COMMAND
-    ).strip()
-    if not keyword_python_command:
-        keyword_python_command = _DEFAULT_KEYWORD_PYTHON_COMMAND
-
     return ClusterConfig(
         name=name,
         hostname=hostname,
@@ -382,7 +370,6 @@ def _cluster_from_settings(settings: QSettings, name: str) -> ClusterConfig | No
         cancel_command_path=str(settings.value(f"{prefix}/cancel_command_path", "", str) or "").strip(),
         keyword_execution_mode=keyword_execution_mode,
         keyword_shell_init=keyword_shell_init,
-        keyword_python_command=keyword_python_command,
     )
 
 
@@ -482,9 +469,6 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
                 cancel_command_path=config.cancel_command_path.strip(),
                 keyword_execution_mode=config.keyword_execution_mode.strip().lower() or _DEFAULT_KEYWORD_EXECUTION_MODE,
                 keyword_shell_init=config.keyword_shell_init.rstrip(),
-                keyword_python_command=(
-                    config.keyword_python_command.strip() or _DEFAULT_KEYWORD_PYTHON_COMMAND
-                ),
             )
         )
 
@@ -524,4 +508,3 @@ def save_cluster_configs(settings: QSettings, configs: Iterable[ClusterConfig]) 
         settings.setValue(f"{prefix}/cancel_command_path", config.cancel_command_path)
         settings.setValue(f"{prefix}/keyword_execution_mode", config.keyword_execution_mode)
         settings.setValue(f"{prefix}/keyword_shell_init", config.keyword_shell_init)
-        settings.setValue(f"{prefix}/keyword_python_command", config.keyword_python_command)
