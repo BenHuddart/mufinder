@@ -6505,7 +6505,7 @@ def test_main_window_dashboard_uses_row_buttons_and_no_context_menu(
 
     window._refresh_jobs_table()
 
-    assert window._jobs_table.contextMenuPolicy() == main_window_module.Qt.ContextMenuPolicy.NoContextMenu
+    assert window._jobs_table.contextMenuPolicy() == main_window_module.Qt.ContextMenuPolicy.CustomContextMenu
     assert window._jobs_table.rowCount() == 3
 
     running_resubmit_button = window._jobs_table.cellWidget(0, window._JOB_SUBMIT_COLUMN)
@@ -11210,9 +11210,8 @@ def test_dismissed_convergence_cutoff_job_row_is_resubmittable(
     assert window._convergence_view._cutoff_table.item(0, status_column).text() == "ready"
     # The cutoff panel's Submit actions are gated on the projected row status,
     # so they become available again for the dismissed row.
-    assert (
+    assert not workflow_table_utils.workflow_row_is_locked(
         window._convergence_view._row_status(0)
-        in convergence_widget_module._SUBMITTABLE_JOB_STATUSES
     )
 
     submitted: list[list[Job]] = []
@@ -12703,4 +12702,188 @@ def test_main_window_reset_failed_jobs_uses_supplied_cleanup_choice_without_aski
 
     assert asked == []
     assert applied == [([job], False)]
+    window.close()
+
+
+def _dashboard_window_with_statuses(tmp_path: Path, name: str, statuses):
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / f"{name}.mufinder", name)
+    jobs = []
+    for index, status in enumerate(statuses):
+        job = service.add_job(
+            doc,
+            label=f"j{index}",
+            workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+            calc_type="castep_convergence_cutoff",
+        )
+        job.status = status
+        jobs.append(job)
+    window._document = doc
+    window._refresh_jobs_table()
+    return window, jobs
+
+
+def _select_dashboard_rows(window, rows) -> None:
+    selection_model = window._jobs_table.selectionModel()
+    selection_model.clearSelection()
+    for row in rows:
+        selection_model.select(
+            window._jobs_table.model().index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+
+def test_main_window_dashboard_hint_appears_only_for_a_multi_row_selection(
+    qapp, tmp_path: Path
+) -> None:
+    window, _jobs = _dashboard_window_with_statuses(
+        tmp_path, "hint", [JobStatus.FAILED, JobStatus.FAILED, JobStatus.RUNNING]
+    )
+    hint = window._jobs_selection_hint
+    dock = window.findChild(main_window_module.QDockWidget, "jobDashboardDock")
+    assert window._jobs_table.parent() is dock.widget()
+    assert hint.parent() is dock.widget()
+    assert hint.isHidden()
+
+    _select_dashboard_rows(window, [0])
+    assert hint.isHidden()
+
+    _select_dashboard_rows(window, [0, 1])
+    assert not hint.isHidden()
+    assert hint.text() == "2 selected \u00b7 row buttons apply to all selected"
+    prop = workflow_table_utils.MULTI_ROW_TARGET_PROPERTY
+    assert bool(window._jobs_table.cellWidget(0, window._JOB_RESET_COLUMN).property(prop)) is True
+    assert bool(window._jobs_table.cellWidget(2, window._JOB_RESET_COLUMN).property(prop)) is False
+
+    _select_dashboard_rows(window, [])
+    assert hint.isHidden()
+    window.close()
+
+
+def _open_dashboard_menu(window, monkeypatch, row: int = 0):
+    from tests.support.reset_menu import FakeMenu
+
+    FakeMenu.instances = []
+    monkeypatch.setattr(main_window_module, "QMenu", FakeMenu)
+    rect = window._jobs_table.visualRect(window._jobs_table.model().index(row, 0))
+    window._jobs_table.customContextMenuRequested.emit(rect.center())
+    return FakeMenu.instances[-1]
+
+
+def test_main_window_dashboard_menu_acts_on_the_eligible_selected_jobs(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, (running, failed, cancelled_job) = _dashboard_window_with_statuses(
+        tmp_path, "menu", [JobStatus.RUNNING, JobStatus.FAILED, JobStatus.CANCELLED]
+    )
+    calls: list[tuple[str, list[object]]] = []
+    for kind, handler in (
+        ("resubmit", "_on_resubmit_from_dashboard"),
+        ("inspect", "_on_inspect_failed_from_dashboard"),
+        ("reset", "_on_reset_failed_from_dashboard"),
+    ):
+        monkeypatch.setattr(window, handler, lambda ids, k=kind: calls.append((k, list(ids))))
+    _select_dashboard_rows(window, [0, 1, 2])
+
+    menu = _open_dashboard_menu(window, monkeypatch)
+
+    assert [action.text for action in menu.actions] == [
+        "Resubmit",
+        "Retry Retrieval",
+        "Cancel",
+        "Inspect",
+        "Reset",
+        "Dismiss",
+        "Delete...",
+    ]
+    assert menu.separators_before == [6]
+    assert {action.text for action in menu.actions if not action.enabled} == {"Retry Retrieval"}
+
+    menu.action("Resubmit").triggered.emit()
+    menu.action("Inspect").triggered.emit()
+    menu.action("Reset").triggered.emit()
+    assert calls == [
+        ("resubmit", [failed.id, cancelled_job.id]),
+        ("inspect", [failed.id]),
+        ("reset", [failed.id, cancelled_job.id]),
+    ]
+    window.close()
+
+
+def test_main_window_dashboard_menu_confirms_cancel_and_dismiss(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, (running, failed) = _dashboard_window_with_statuses(
+        tmp_path, "menu_confirm", [JobStatus.RUNNING, JobStatus.FAILED]
+    )
+    calls: list[tuple[str, list[object]]] = []
+    monkeypatch.setattr(window, "_on_cancel_from_dashboard", lambda ids: calls.append(("cancel", list(ids))))
+    monkeypatch.setattr(window, "_on_dismiss_from_dashboard", lambda ids: calls.append(("dismiss", list(ids))))
+    prompts: list[tuple[str, ...]] = []
+    answers = [False, True, True]
+    monkeypatch.setattr(
+        workflow_table_utils,
+        "confirm_destructive",
+        lambda _parent, *prompt: prompts.append(prompt) or answers.pop(0),
+    )
+    _select_dashboard_rows(window, [0, 1])
+    menu = _open_dashboard_menu(window, monkeypatch)
+
+    menu.action("Cancel").triggered.emit()
+    assert calls == []
+    menu.action("Cancel").triggered.emit()
+    menu.action("Dismiss").triggered.emit()
+
+    assert calls == [("cancel", [running.id]), ("dismiss", [failed.id])]
+    assert prompts[0] == ("Cancel jobs", "Cancel 1 job?", "", "Cancel 1 job", "Keep running")
+    assert prompts[2][1] == "Dismiss 1 job from the dashboard?"
+    window.close()
+
+
+def test_main_window_dashboard_menu_selects_the_clicked_row_and_offers_delete(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window, _jobs = _dashboard_window_with_statuses(
+        tmp_path, "menu_delete", [JobStatus.FAILED, JobStatus.FAILED, JobStatus.FAILED]
+    )
+    deleted: list[int] = []
+    monkeypatch.setattr(window, "_on_dashboard_delete_key_requested", lambda: deleted.append(1))
+    _select_dashboard_rows(window, [0, 1])
+
+    menu = _open_dashboard_menu(window, monkeypatch, row=2)
+
+    selected = sorted(index.row() for index in window._jobs_table.selectionModel().selectedRows())
+    assert selected == [2]
+    menu.action("Delete...").triggered.emit()
+    assert deleted == [1]
+    window.close()
+
+
+@pytest.mark.parametrize(
+    ("view_attr", "controller_attr"),
+    [
+        ("_pristine_relaxation_view", "_pristine_relaxation_controller"),
+        ("_muon_relaxation_view", "_muon_relaxation_controller"),
+        ("_quantum_corrections_view", "_quantum_corrections_controller"),
+    ],
+)
+def test_main_window_connects_workflow_cancel_and_inspect_signals(
+    qapp, monkeypatch: pytest.MonkeyPatch, view_attr, controller_attr
+) -> None:
+    window = MainWindow()
+    controller = getattr(window, controller_attr)
+    sentinel_jobs = [object()]
+    monkeypatch.setattr(controller, "jobs_for_keys", lambda keys: sentinel_jobs if keys == ["k"] else [])
+    cancelled: list[object] = []
+    inspected: list[object] = []
+    monkeypatch.setattr(window, "_cancel_jobs", lambda jobs: cancelled.append(jobs))
+    monkeypatch.setattr(window, "_inspect_failed_jobs", lambda jobs: inspected.append(jobs))
+
+    view = getattr(window, view_attr)
+    view.cancel_requested.emit(["k"])
+    view.inspect_failed_requested.emit(["k"])
+
+    assert cancelled == [sentinel_jobs]
+    assert inspected == [sentinel_jobs]
     window.close()

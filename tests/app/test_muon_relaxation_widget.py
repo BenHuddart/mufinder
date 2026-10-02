@@ -1004,3 +1004,49 @@ def test_muon_relaxation_remove_button_single_row_is_confirmed(
 
     assert widget._table.rowCount() == 1
     assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 1 row?"]
+
+
+def test_muon_relaxation_row_menu_cancel_emits_submission_keys(
+    qapp, monkeypatch, confirmed_destructive_actions
+) -> None:
+    from tests.support.reset_menu import install_fake_menu, open_reset_menu
+
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+    keys = [widget._submission_key_at_row(row, table=widget._table) for row in range(2)]
+    widget.set_runtime_states({key: RelaxationRunState(status="running") for key in keys})
+    cancelled: list[object] = []
+    widget.cancel_requested.connect(cancelled.append)
+    install_fake_menu(monkeypatch)
+    widget._table.selectAll()
+
+    menu = open_reset_menu(widget._table)
+    assert [action.text for action in menu.actions][:4] == [
+        "Run Local",
+        "Run on Cluster",
+        "Cancel",
+        "Inspect Failure",
+    ]
+    menu.action("Cancel").triggered.emit()
+
+    assert cancelled == [keys]
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Cancel 2 calculations?"]
+
+
+def test_muon_relaxation_shared_controls_follow_the_table_on_show(qapp) -> None:
+    widget = MuonRelaxationWidget()
+    _stage_muon_rows(widget, 2)
+    _select_muon_rows(widget, (0, 1))
+    assert widget._selection_count_label.text() == "2 selected"
+    assert widget._run_local_button.text() == "Run Selected Locally"
+
+    other_index = next(
+        index
+        for index in range(widget._charge_tabs.count())
+        if widget._charge_tabs.widget(index) is not widget._table
+    )
+    widget._charge_tabs.setCurrentIndex(other_index)
+
+    assert widget._selection_count_label.text() == ""
+    assert widget._run_local_button.text() == "Run All Locally"
+    assert not widget._remove_selected_button.isEnabled()

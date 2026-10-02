@@ -6,15 +6,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Callable
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
     QHeaderView,
+    QLabel,
+    QMainWindow,
     QMenu,
     QMessageBox,
     QPushButton,
+    QStatusBar,
     QTableWidget,
     QTableWidgetItem,
     QWidget,
@@ -296,11 +299,132 @@ class RowMenuAction:
     text: str
     is_enabled: Callable[[Sequence[object]], bool]
     trigger: Callable[[Sequence[object]], None]
+    #: Pass the selected table row indexes to ``is_enabled``/``trigger`` instead
+    #: of submission keys. The standard actions built by
+    #: :func:`standard_row_actions` use this, since configuring or removing a
+    #: row has to work for a row that has no key yet.
+    on_rows: bool = False
+    #: Draw a separator above this action, to set table-specific actions apart
+    #: from the shared core.
+    separator_before: bool = False
 
 
-def add_row_menu_action(menu: QMenu, *, keys: Sequence[object], action: RowMenuAction) -> QAction:
-    """Append one :class:`RowMenuAction` to ``menu``, gated on ``keys``."""
+#: Shared menu texts, so every job table names the same action identically.
+RUN_LOCAL_ACTION_TEXT = "Run Local"
+RUN_CLUSTER_ACTION_TEXT = "Run on Cluster"
+CANCEL_ACTION_TEXT = "Cancel"
+INSPECT_FAILURE_ACTION_TEXT = "Inspect Failure"
+CONFIGURE_ACTION_TEXT = "Configure..."
+REMOVE_ACTION_TEXT = "Remove"
 
+_ACTIVE_ROW_STATUSES = frozenset({"submitting", "queued", "running", "retrieving"})
+_INSPECTABLE_ROW_STATUSES = frozenset({"failed", "stopped"})
+
+
+def standard_row_actions(
+    *,
+    status_for_row: Callable[[int], str],
+    run_local: Callable[[Sequence[int]], None] | None = None,
+    run_cluster: Callable[[Sequence[int]], None] | None = None,
+    cancel: Callable[[Sequence[int]], None] | None = None,
+    inspect: Callable[[Sequence[int]], None] | None = None,
+    configure: Callable[[Sequence[int]], None] | None = None,
+    remove: Callable[[Sequence[int]], None] | None = None,
+    confirm_parent: QWidget | None = None,
+) -> tuple[tuple[RowMenuAction, ...], tuple[RowMenuAction, ...]]:
+    """Build the shared core of a job table's row menu.
+
+    Returns ``(before_reset, after_reset)`` for
+    :func:`bind_reset_failed_context_menu`, giving every table the same order:
+    Run Local, Run on Cluster, Cancel, Inspect Failure, *Reset*, Configure...,
+    Remove. A table omits an action by leaving its callback ``None``. Callbacks
+    receive the selected table rows.
+
+    Run, Cancel and Inspect are enabled only when every selected row is in a
+    state the action applies to. Cancel asks for confirmation first (it needs
+    ``confirm_parent``); Remove is expected to confirm in the table's own
+    removal path, which already knows what each row has at stake.
+    """
+
+    def _all_rows(predicate: Callable[[str], bool]) -> Callable[[Sequence[object]], bool]:
+        return lambda rows: bool(rows) and all(predicate(status_for_row(int(row))) for row in rows)
+
+    def _confirmed_cancel(rows: Sequence[object]) -> None:
+        phrase = count_phrase(len(rows), ("calculation", "calculations"))
+        if confirm_parent is not None and not confirm_destructive(
+            confirm_parent,
+            "Cancel calculations",
+            f"Cancel {phrase}?",
+            "",
+            f"Cancel {phrase}",
+            "Keep running",
+        ):
+            return
+        assert cancel is not None
+        cancel([int(row) for row in rows])
+
+    def _rows(callback: Callable[[Sequence[int]], None]) -> Callable[[Sequence[object]], None]:
+        return lambda rows: callback([int(row) for row in rows])
+
+    before: list[RowMenuAction] = []
+    if run_local is not None:
+        before.append(
+            RowMenuAction(
+                RUN_LOCAL_ACTION_TEXT,
+                _all_rows(lambda status: not workflow_row_is_locked(status)),
+                _rows(run_local),
+                on_rows=True,
+            )
+        )
+    if run_cluster is not None:
+        before.append(
+            RowMenuAction(
+                RUN_CLUSTER_ACTION_TEXT,
+                _all_rows(lambda status: not workflow_row_is_locked(status)),
+                _rows(run_cluster),
+                on_rows=True,
+            )
+        )
+    if cancel is not None:
+        before.append(
+            RowMenuAction(
+                CANCEL_ACTION_TEXT,
+                _all_rows(lambda status: status in _ACTIVE_ROW_STATUSES),
+                _confirmed_cancel,
+                on_rows=True,
+            )
+        )
+    if inspect is not None:
+        before.append(
+            RowMenuAction(
+                INSPECT_FAILURE_ACTION_TEXT,
+                _all_rows(lambda status: status in _INSPECTABLE_ROW_STATUSES),
+                _rows(inspect),
+                on_rows=True,
+            )
+        )
+
+    after: list[RowMenuAction] = []
+    if configure is not None:
+        after.append(RowMenuAction(CONFIGURE_ACTION_TEXT, bool, _rows(configure), on_rows=True))
+    if remove is not None:
+        after.append(RowMenuAction(REMOVE_ACTION_TEXT, bool, _rows(remove), on_rows=True))
+    return tuple(before), tuple(after)
+
+
+def add_row_menu_action(
+    menu: QMenu,
+    *,
+    keys: Sequence[object],
+    action: RowMenuAction,
+    rows: Sequence[int] = (),
+) -> QAction:
+    """Append one :class:`RowMenuAction` to ``menu``, gated on ``keys`` (or ``rows``)."""
+
+    if action.on_rows:
+        keys = list(rows)
+    if action.separator_before:
+        menu.addSeparator()
     qt_action = menu.addAction(action.text)
     qt_action.setEnabled(action.is_enabled(keys))
     qt_action.triggered.connect(
@@ -315,10 +439,17 @@ def open_reset_failed_context_menu(
     *,
     key_for_row: Callable[[int], object | None],
     status_for_row: Callable[[int], str],
-    emit_reset: Callable[[list[object]], None],
+    emit_reset: Callable[[list[object]], None] | None,
     additional_actions: Sequence[RowMenuAction] = (),
+    leading_actions: Sequence[RowMenuAction] = (),
 ) -> QMenu | None:
     """Open a row menu on the workflow row under ``position``.
+
+    ``leading_actions`` are placed above the reset action and
+    ``additional_actions`` below it, so a table using
+    :func:`standard_row_actions` gets the shared order with reset in its place.
+    A table with no failed-job reset of its own passes ``emit_reset=None`` and
+    the reset action is left out.
 
     The reset action is the in-table recovery affordance for a failed/stopped/
     cancelled job whose row would otherwise be stuck: the dashboard Reset
@@ -350,9 +481,12 @@ def open_reset_failed_context_menu(
     statuses = [status_for_row(row_index) for row_index in selected_rows]
 
     menu = QMenu(table)
-    add_reset_failed_action(menu, keys=keys, statuses=statuses, emit_reset=emit_reset)
+    for action in leading_actions:
+        add_row_menu_action(menu, keys=keys, action=action, rows=selected_rows)
+    if emit_reset is not None:
+        add_reset_failed_action(menu, keys=keys, statuses=statuses, emit_reset=emit_reset)
     for action in additional_actions:
-        add_row_menu_action(menu, keys=keys, action=action)
+        add_row_menu_action(menu, keys=keys, action=action, rows=selected_rows)
     menu.exec(table.viewport().mapToGlobal(position))
     return menu
 
@@ -362,8 +496,9 @@ def bind_reset_failed_context_menu(
     *,
     key_for_row: Callable[[int], object | None],
     status_for_row: Callable[[int], str],
-    emit_reset: Callable[[list[object]], None],
+    emit_reset: Callable[[list[object]], None] | None,
     additional_actions: Sequence[RowMenuAction] = (),
+    leading_actions: Sequence[RowMenuAction] = (),
 ) -> None:
     """Install :func:`open_reset_failed_context_menu` as ``table``'s row menu.
 
@@ -372,7 +507,7 @@ def bind_reset_failed_context_menu(
     ``additional_actions`` is forwarded unchanged; see :class:`RowMenuAction`.
     """
 
-    if not table.toolTip():
+    if not table.toolTip() and emit_reset is not None:
         table.setToolTip(RESET_FAILED_TABLE_TOOLTIP)
     table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
     table.customContextMenuRequested.connect(
@@ -383,6 +518,7 @@ def bind_reset_failed_context_menu(
             status_for_row=status_for_row,
             emit_reset=emit_reset,
             additional_actions=additional_actions,
+            leading_actions=leading_actions,
         )
     )
 
@@ -392,6 +528,150 @@ def _selected_table_rows(table: QTableWidget) -> tuple[int, ...]:
     if selection_model is None:
         return ()
     return tuple(sorted(index.row() for index in selection_model.selectedRows()))
+
+
+#: Dynamic property set on a row control that will act on the whole selection;
+#: the theme draws it with an accent border.
+MULTI_ROW_TARGET_PROPERTY = "multiRowTarget"
+
+RUN_ALL_LOCAL_TEXT = "Run All Locally"
+RUN_SELECTED_LOCAL_TEXT = "Run Selected Locally"
+RUN_ALL_CLUSTER_TEXT = "Run All on Cluster"
+RUN_SELECTED_CLUSTER_TEXT = "Run Selected on Cluster"
+REMOVE_SELECTED_TEXT = "Remove Selected"
+
+
+def selection_count_text(count: int) -> str:
+    """Return the short count shown beside a table's buttons (empty for none)."""
+
+    return f"{count} selected" if count > 0 else ""
+
+
+class SelectionFeedback(QObject):
+    """Keeps a job table's selection visible in the controls around it.
+
+    Row text never changes with the selection (tables have to stay usable on a
+    small screen), so everything that tells the user what a click will affect
+    lives outside the rows and is kept current here:
+
+    - ``count_label`` shows "N selected";
+    - ``multi_row_hint`` is shown, with its text from ``multi_row_hint_text``,
+      only while two or more rows are selected;
+    - the run buttons read "Run All ..." with nothing selected and "Run
+      Selected ..." otherwise, and are disabled only when the table is empty;
+    - ``selection_buttons`` are enabled only while rows are selected;
+    - row controls that will act on the whole selection carry
+      :data:`MULTI_ROW_TARGET_PROPERTY` while two or more rows are selected.
+
+    Call :meth:`refresh` after rebuilding a table's cell widgets, since new
+    widgets start without the property.
+
+    Where several tables share one set of buttons (one table per tab), give
+    each its own instance with ``is_active`` saying whether it is the table on
+    show; only the active one drives the shared label and buttons, and
+    :meth:`refresh` should be called on every instance when the tab changes.
+    """
+
+    def __init__(
+        self,
+        table: QTableWidget,
+        *,
+        count_label: QLabel | None = None,
+        multi_row_hint: QLabel | None = None,
+        multi_row_hint_text: Callable[[int], str] | None = None,
+        run_local_button: QPushButton | None = None,
+        run_cluster_button: QPushButton | None = None,
+        selection_buttons: Sequence[QPushButton] = (),
+        is_active: Callable[[], bool] | None = None,
+    ) -> None:
+        super().__init__(table)
+        self._table = table
+        self._is_active = is_active
+        self._count_label = count_label
+        self._multi_row_hint = multi_row_hint
+        self._multi_row_hint_text = multi_row_hint_text
+        self._run_local_button = run_local_button
+        self._run_cluster_button = run_cluster_button
+        self._selection_buttons = tuple(selection_buttons)
+
+        selection_model = table.selectionModel()
+        if selection_model is not None:
+            selection_model.selectionChanged.connect(lambda *_: self.refresh())
+        model = table.model()
+        model.rowsInserted.connect(lambda *_: self.refresh())
+        model.rowsRemoved.connect(lambda *_: self.refresh())
+        model.modelReset.connect(lambda *_: self.refresh())
+        self.refresh()
+
+    def refresh(self) -> None:
+        rows = set(_selected_table_rows(self._table))
+        count = len(rows)
+        self._refresh_row_controls(rows)
+        if self._is_active is not None and not self._is_active():
+            return
+
+        if self._count_label is not None:
+            self._count_label.setText(selection_count_text(count))
+        if self._multi_row_hint is not None:
+            if count >= 2 and self._multi_row_hint_text is not None:
+                self._multi_row_hint.setText(self._multi_row_hint_text(count))
+            self._multi_row_hint.setVisible(count >= 2)
+
+        has_rows = self._table.rowCount() > 0
+        if self._run_local_button is not None:
+            self._run_local_button.setText(RUN_SELECTED_LOCAL_TEXT if count else RUN_ALL_LOCAL_TEXT)
+            self._run_local_button.setEnabled(has_rows)
+        if self._run_cluster_button is not None:
+            self._run_cluster_button.setText(
+                RUN_SELECTED_CLUSTER_TEXT if count else RUN_ALL_CLUSTER_TEXT
+            )
+            self._run_cluster_button.setEnabled(has_rows)
+        for button in self._selection_buttons:
+            button.setEnabled(count > 0)
+
+    def _refresh_row_controls(self, rows: set[int]) -> None:
+        multi = len(rows) >= 2
+        for row in range(self._table.rowCount()):
+            for column in range(self._table.columnCount()):
+                widget = self._table.cellWidget(row, column)
+                if widget is None or not getattr(widget, "propagates_to_selection", False):
+                    continue
+                targeted = multi and row in rows
+                if bool(widget.property(MULTI_ROW_TARGET_PROPERTY)) == targeted:
+                    continue
+                widget.setProperty(MULTI_ROW_TARGET_PROPERTY, targeted)
+                # A dynamic property only restyles the widget once repolished.
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+
+
+def show_status_message(widget: QWidget, text: str, timeout_ms: int = 6000) -> None:
+    """Show ``text`` in the status bar of the main window ``widget`` lives in.
+
+    Does nothing for a widget that is not inside a main window (as in a test),
+    and never creates a status bar a window does not already have.
+    """
+
+    window = widget.window()
+    if not isinstance(window, QMainWindow):
+        return
+    status_bar = window.findChild(QStatusBar)
+    if status_bar is not None:
+        status_bar.showMessage(text, timeout_ms)
+
+
+def multi_row_outcome_text(action: str, applied: int, selected: int) -> str:
+    """Describe a finished multi-row action, e.g. for the status bar.
+
+    ``action`` is a past-tense phrase ("Supercell set on"); ``selected`` is how
+    many rows were selected and ``applied`` how many the action reached.
+    """
+
+    text = f"{action} {count_phrase(applied, ('row', 'rows'))}"
+    skipped = selected - applied
+    if skipped > 0:
+        text += f", {count_phrase(skipped, ('row', 'rows'))} skipped"
+    return text
 
 
 def workflow_row_is_locked(status: str) -> bool:

@@ -1435,6 +1435,21 @@ def _button_styles(p: MuFinderPalette) -> str:
     QPushButton:disabled {{
         color: {p.text_muted};
     }}
+    /* A row control that will act on the whole multi-row selection. The
+       selected row behind it is filled with the accent colour, so the marker
+       uses the text colour to stay visible, and the padding gives back the
+       extra border pixel so the control (and its column) keeps its size. */
+    QPushButton[multiRowTarget="true"],
+    QToolButton[multiRowTarget="true"],
+    QComboBox[multiRowTarget="true"] {{
+        border: 2px solid {p.text_primary};
+    }}
+    QPushButton[multiRowTarget="true"] {{
+        padding: 5px 9px;
+    }}
+    QComboBox[multiRowTarget="true"] {{
+        padding: 3px 27px 3px 7px;
+    }}
     QPushButton#overviewActionButton {{
         border-color: {p.accent};
         background: {p.bg_surface};

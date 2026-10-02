@@ -636,8 +636,9 @@ right-click menu, or Delete/Backspace):
   confirmation, so the user is not asked twice. The exception is removing
   cutoff rows whose job is still queued or running: that prompt does not
   mention cancellation, so those removals are confirmed again with it stated.
-- A single-row ``Cancel`` or ``Dismiss`` on the Job Dashboard, and ``Cancel
-  Calculation`` in the cutoff table's right-click menu, ask before acting.
+- A single-row ``Cancel`` or ``Dismiss`` on the Job Dashboard, and ``Cancel``
+  or ``Dismiss`` in a workflow table's or the dashboard's right-click menu, ask
+  before acting.
   ``Reset`` already asks its clean-up question, which can be cancelled.
 - The safe choice is the default button and the one Escape selects, and the
   buttons are labelled with the action (``Remove 3 rows``, ``Keep running``)
@@ -648,9 +649,43 @@ right-click menu, or Delete/Backspace):
   directories, before anything happens. Cancelling leaves every selected job
   untouched.
 
+What a click will affect is shown before the click, without changing any text
+inside the rows (tables have to stay usable on a small laptop screen):
+
+- While two or more rows are selected, the row controls that will act on all of
+  them are drawn with a heavier border. Single-row controls are not.
+- Each workflow table shows ``N selected`` beside its buttons. The Job Dashboard
+  shows ``N selected · row buttons apply to all selected`` above the table, only
+  while two or more rows are selected.
+- After a multi-row ``Supercell`` or ``Fix Cell`` change the status bar reports
+  how many rows were changed and how many were skipped.
+- The run buttons state their scope: ``Run All Locally`` / ``Run All on
+  Cluster`` with nothing selected, ``Run Selected Locally`` / ``Run Selected on
+  Cluster`` otherwise. With nothing selected every row is submitted; rows that
+  are not ready are skipped by the submission step.
+- The button row below each table offers the same set: ``Configure Selected
+  Parameters...``, ``Remove Selected``, and the two run buttons. Quantum
+  Corrections has no ``Remove Selected`` because its rows are derived from
+  completed relaxations.
+
+Right-clicking selected rows opens the same menu in every workflow table, in
+this order: ``Run Local``, ``Run on Cluster``, ``Cancel``, ``Inspect Failure``,
+``Reset Failed Jobs...``, ``Configure...``, ``Remove``, then any table-specific
+entries below a separator (``Continue relaxation…`` in the relaxation tables;
+``Reset to Stage 1`` in Quantum Corrections, which has no failed-job reset or
+``Remove``). Right-clicking a row outside the selection selects it first. Run,
+Cancel, Inspect and Reset are enabled only when every selected row is in a state
+the action applies to.
+
+The Job Dashboard has a right-click menu with ``Resubmit``, ``Retry
+Retrieval``, ``Cancel``, ``Inspect``, ``Reset``, ``Dismiss`` and ``Delete...``.
+Each entry is enabled when it applies to at least one selected job and acts on
+those jobs only, as the row buttons do. ``Delete...`` does what Delete/Backspace
+does. The row buttons remain the primary controls.
+
 The shared implementation lives in ``mufinder.app.selection_snapshot`` (row
-targeting and the three-way prompt) and
-``mufinder.app.workflow_table_utils.confirm_destructive`` (confirmations).
+targeting and the three-way prompt) and ``mufinder.app.workflow_table_utils``
+(``confirm_destructive``, ``standard_row_actions``, ``SelectionFeedback``).
 
 Workflow-aware CASTEP parameter GUI
 -----------------------------------
@@ -950,15 +985,16 @@ Setup integration includes:
 
 Submission entry points include:
 
-- Dedicated ``Run Local Calculations`` action in the cutoff convergence panel,
-  operating on the current selection (or current row when a single cutoff is in focus).
-- Right-click context menu in cutoff convergence rows.
-- Right-click ``Reset Failed Jobs...`` on every workflow table row (cutoff and
-  k-point convergence, pristine and muon relaxation, UEP, and the energy
-  barriers/NEB diffusion-path table), enabled only when the whole selection is
+- Dedicated run actions in the cutoff convergence panel, operating on the
+  selected rows, or on every row when nothing is selected (the buttons read
+  ``Run Selected Locally`` or ``Run All Locally`` accordingly).
+- The shared right-click row menu on every workflow table (see "Multi-row
+  selection in job tables"), including ``Reset Failed Jobs...`` on the cutoff
+  and k-point convergence, pristine and muon relaxation, UEP, and energy
+  barriers/NEB diffusion-path tables, enabled only when the whole selection is
   ``failed``/``stopped``/``cancelled``. Quantum Corrections uses its stage-1
-  reset instead, which now also accepts a failed, stopped, or cancelled
-  stage-1 singlepoint with no phonon job.
+  reset instead, which also accepts a failed, stopped, or cancelled stage-1
+  singlepoint with no phonon job.
 - Delete/Backspace keyboard removal for the current cutoff row or a selected set of rows.
 - Per-row action buttons in the shared job dashboard table after a job has entered the queue/submission lifecycle.
 - Failed/cancelled-job resubmit, failed/stopped cluster-job retry-retrieval,
@@ -1130,7 +1166,7 @@ Cluster setup and authentication includes:
 
 Remote submission and monitoring includes:
 
-- A dedicated ``Run on Cluster`` action in the convergence panel.
+- A dedicated cluster run action in the convergence panel (``Run All on Cluster`` / ``Run Selected on Cluster``).
 - Cluster selection and runtime override dialog at submission time.
 - Upload of generated ``.cell`` / ``.param`` inputs and scheduler-aware submission.
 - SLURM submission through ``sbatch`` with populated templates and capture of

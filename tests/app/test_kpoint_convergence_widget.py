@@ -657,26 +657,29 @@ def test_kpoint_widget_emit_and_submit_actions(qapp, monkeypatch: pytest.MonkeyP
     assert cluster_submits == [[(2, 2, 2)]]
 
 
-def test_kpoint_widget_submit_requires_selected_rows_when_multiple(
-    qapp, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_kpoint_widget_run_with_nothing_selected_runs_every_row(qapp) -> None:
     widget = KPointConvergenceWidget()
     widget._add_grid((2, 2, 2))
     widget._add_grid((3, 3, 3))
     widget._table.clearSelection()
-    widget._table.setCurrentCell(-1, -1)
+    local: list[object] = []
+    cluster: list[object] = []
+    widget.submit_local_requested.connect(local.append)
+    widget.submit_cluster_requested.connect(cluster.append)
 
-    infos: list[str] = []
-    monkeypatch.setattr(
-        kpoint_widget_module.QMessageBox,
-        "information",
-        lambda _parent, title, _message: infos.append(title),
-    )
-
+    assert widget._run_local_button.text() == "Run All Locally"
+    assert widget._run_cluster_button.text() == "Run All on Cluster"
     widget._run_local_selected_grids()
     widget._run_cluster_selected_grids()
 
-    assert infos == ["No grids selected", "No grids selected"]
+    assert local == [[(2, 2, 2), (3, 3, 3)]]
+    assert cluster == [[(2, 2, 2), (3, 3, 3)]]
+
+    widget._table.selectRow(1)
+    assert widget._run_local_button.text() == "Run Selected Locally"
+    assert widget._run_cluster_button.text() == "Run Selected on Cluster"
+    widget._run_local_selected_grids()
+    assert local[-1] == [(3, 3, 3)]
 
 
 def test_kpoint_widget_set_form_state_restores_structured_values(qapp) -> None:

@@ -55,11 +55,16 @@ from mufinder.app.relaxation_adapter import (
 )
 from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.workflow_table_utils import (
-    confirm_row_removal,
+    REMOVE_SELECTED_TEXT,
     RowMenuAction,
+    SelectionFeedback,
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
+    confirm_row_removal,
     create_workflow_table,
+    multi_row_outcome_text,
+    show_status_message,
+    standard_row_actions,
     style_workflow_configure_button,
     workflow_row_status_text,
 )
@@ -245,6 +250,8 @@ class MuonRelaxationWidget(QWidget):
     submit_cluster_requested = Signal(object)
     row_supercell_edit_requested = Signal(object)
     remove_requested = Signal(object)
+    cancel_requested = Signal(object)
+    inspect_failed_requested = Signal(object)
     reset_failed_requested = Signal(object)
     analysis_workspace_requested = Signal(object)
     form_state_changed = Signal(dict)
@@ -300,9 +307,14 @@ class MuonRelaxationWidget(QWidget):
 
         self._batch_configure_button = QPushButton("Configure Selected Parameters...")
         self._batch_configure_button.setEnabled(False)
+        self._remove_selected_button = QPushButton(REMOVE_SELECTED_TEXT)
+        self._selection_count_label = QLabel("")
+        style_hint_text(self._selection_count_label)
         self._create_analysis_button = QPushButton("Create Analysis Workspace from Selection")
-        self._run_local_button = QPushButton("Run Local Calculations")
-        self._run_cluster_button = QPushButton("Run on Cluster")
+        # SelectionFeedback sets the run buttons' text ("Run All ..." / "Run
+        # Selected ...") from the active table's selection.
+        self._run_local_button = QPushButton()
+        self._run_cluster_button = QPushButton()
 
         self._specs = self._build_parameter_specs()
         self._specs_by_name = {spec.name: spec for spec in self._specs}
@@ -405,6 +417,8 @@ class MuonRelaxationWidget(QWidget):
         control_row = QHBoxLayout()
         control_row.addWidget(self._create_analysis_button)
         control_row.addStretch(1)
+        control_row.addWidget(self._selection_count_label)
+        control_row.addWidget(self._remove_selected_button)
         control_row.addWidget(self._batch_configure_button)
         table_layout.addLayout(control_row)
         layout.addWidget(table_group, 1)
@@ -422,13 +436,32 @@ class MuonRelaxationWidget(QWidget):
     def _connect_signals(self) -> None:
         self._batch_configure_button.clicked.connect(self._configure_selected_rows)
         self._create_analysis_button.clicked.connect(self._create_analysis_workspace_from_selection)
+        self._remove_selected_button.clicked.connect(lambda: self._delete_selected_rows())
         self._charge_tabs.currentChanged.connect(lambda *_: self._refresh_batch_button_state())
+        self._selection_feedbacks: list[SelectionFeedback] = []
         for table in self._tables_by_charge_state.values():
             table.itemChanged.connect(self._on_table_item_changed)
             table.setToolTip(
-                "Right-click a failed, stopped, or cancelled row to reset it back to ready "
-                "for rerun, or a completed/failed/stopped/cancelled row to continue its "
+                "Right-click selected rows to run, cancel, inspect, reset, configure, or "
+                "remove them, or a completed/failed/stopped/cancelled row to continue its "
                 "relaxation."
+            )
+            # A right-click makes the rows under it the selection in the table
+            # on show, so the run/configure/remove entries reuse the
+            # selection-based handlers.
+            leading_actions, trailing_actions = standard_row_actions(
+                status_for_row=lambda row, bound=table: self._row_status(row, table=bound),
+                run_local=lambda _rows: self._run_local_selected_rows(),
+                run_cluster=lambda _rows: self._run_cluster_selected_rows(),
+                cancel=lambda rows, bound=table: self.cancel_requested.emit(
+                    self._submission_keys_at_rows(rows, table=bound)
+                ),
+                inspect=lambda rows, bound=table: self.inspect_failed_requested.emit(
+                    self._submission_keys_at_rows(rows, table=bound)
+                ),
+                configure=lambda _rows: self._configure_selected_rows(),
+                remove=lambda _rows, bound=table: self._delete_selected_rows(bound),
+                confirm_parent=self,
             )
             # Each charge state has its own table, so the reset menu is bound
             # per table with that table captured — a right-click must act on the
@@ -438,14 +471,27 @@ class MuonRelaxationWidget(QWidget):
                 key_for_row=lambda row, bound=table: self._reset_key_at_row(row, table=bound),
                 status_for_row=lambda row, bound=table: self._row_status(row, table=bound),
                 emit_reset=self.reset_failed_requested.emit,
+                leading_actions=leading_actions,
                 additional_actions=(
+                    *trailing_actions,
                     RowMenuAction(
                         text="Continue relaxation…",
                         is_enabled=lambda keys: len(keys) == 1
                         and self._continuable_predicate(keys[0]),
                         trigger=lambda keys: self.continue_relaxation_requested.emit(keys[0]),
+                        separator_before=True,
                     ),
                 ),
+            )
+            self._selection_feedbacks.append(
+                SelectionFeedback(
+                    table,
+                    count_label=self._selection_count_label,
+                    run_local_button=self._run_local_button,
+                    run_cluster_button=self._run_cluster_button,
+                    selection_buttons=(self._remove_selected_button,),
+                    is_active=lambda bound=table: self._active_table() is bound,
+                )
             )
             selection_model = table.selectionModel()
             if selection_model is not None:
@@ -824,6 +870,13 @@ class MuonRelaxationWidget(QWidget):
         item = target.item(row, self._LABEL_COLUMN)
         return item.text().strip() if item is not None else ""
 
+    def _submission_keys_at_rows(self, rows: Sequence[int], *, table: QTableWidget) -> list[str]:
+        return [
+            self._submission_key_at_row(row, table=table)
+            for row in rows
+            if self._label_at_row(row, table=table)
+        ]
+
     def _reset_key_at_row(self, row: int, *, table: QTableWidget | None = None) -> str | None:
         """Return the row's submission key, or ``None`` for an unlabeled row."""
 
@@ -920,6 +973,11 @@ class MuonRelaxationWidget(QWidget):
             # Cancelled: put the combo back to the row's stored supercell.
             self._refresh_row(row, table=table)
             return
+        if len(target_row_ids) > 1:
+            show_status_message(
+                self,
+                multi_row_outcome_text("Supercell set on", len(target_row_ids), len(snapshot_keys)),
+            )
         for target_row_id in target_row_ids:
             self._row_supercells[target_row_id] = matrix
             self._row_parameter_values[target_row_id] = self._strip_implicit_row_defaults(
@@ -1227,6 +1285,10 @@ class MuonRelaxationWidget(QWidget):
 
     def _refresh_batch_button_state(self) -> None:
         self._batch_configure_button.setEnabled(bool(self._selected_row_ids()))
+        # The count label and run/remove buttons are shared by the per-charge
+        # tables; whichever is on show drives them.
+        for feedback in getattr(self, "_selection_feedbacks", ()):
+            feedback.refresh()
 
     def _configure_selected_rows(self) -> None:
         row_ids = self._selected_row_ids()

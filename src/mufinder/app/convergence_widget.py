@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -38,20 +37,20 @@ from mufinder.app.workflow_parameters import (
     reorder_workflow_parameter_specs,
     seed_xc_functional_default,
 )
-from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
-from mufinder.app import workflow_table_utils
 from mufinder.app.workflow_table_utils import (
-    confirm_row_removal,
-    count_phrase,
-    RESETTABLE_ROW_STATUSES,
-    add_reset_failed_action,
+    REMOVE_SELECTED_TEXT,
+    SelectionFeedback,
     bind_delete_shortcuts,
+    bind_reset_failed_context_menu,
+    confirm_row_removal,
     create_workflow_table,
+    standard_row_actions,
     style_workflow_configure_button,
     workflow_row_status_text,
 )
 from mufinder.app.theme import (
     status_brush,
+    style_hint_text,
     style_section_subtitle,
     style_section_title,
 )
@@ -79,14 +78,6 @@ _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
 }
 _ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
 _PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
-# Submit-enablement gate for the row context menu. It shares the single source
-# of truth used by the submit predicate (workflow_row_state_is_ready) so the
-# context-menu Submit action agrees with the always-enabled Run buttons, which
-# already submit "not generated" rows through the same materialize path.
-_SUBMITTABLE_JOB_STATUSES = set(READY_WORKFLOW_ROW_STATUSES)
-# Shared with every other workflow table's row reset action; see
-# ``workflow_table_utils.RESETTABLE_ROW_STATUSES``.
-_RESETTABLE_JOB_STATUSES = set(RESETTABLE_ROW_STATUSES)
 _LOCKED_CUTOFF_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"cancelled"}
 
 
@@ -218,6 +209,9 @@ class CutoffConvergenceWidget(QWidget):
         self._generate_range_button = QPushButton("Generate From Range...")
         self._batch_configure_button = QPushButton("Configure Selected Parameters...")
         self._batch_configure_button.setEnabled(False)
+        self._remove_selected_button = QPushButton(REMOVE_SELECTED_TEXT)
+        self._selection_count_label = QLabel("")
+        style_hint_text(self._selection_count_label)
         self._examine_button = QPushButton("Examine Cutoff Convergence")
         self._examine_button.setEnabled(False)
         self.project_defaults_strip = ProjectDefaultsStrip()
@@ -250,7 +244,6 @@ class CutoffConvergenceWidget(QWidget):
             | QAbstractItemView.EditTrigger.SelectedClicked
         )
         self._cutoff_table.verticalHeader().setDefaultSectionSize(self._ROW_HEIGHT)
-        self._cutoff_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header = self._cutoff_table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(self._CUTOFF_COLUMN, QHeaderView.ResizeMode.Interactive)
@@ -347,6 +340,8 @@ class CutoffConvergenceWidget(QWidget):
         controls_left.addWidget(self._generate_range_button)
         controls_row.addLayout(controls_left)
         controls_row.addStretch(1)
+        controls_row.addWidget(self._selection_count_label)
+        controls_row.addWidget(self._remove_selected_button)
         controls_row.addWidget(self._batch_configure_button)
         sweep_layout.addLayout(controls_row)
 
@@ -366,8 +361,10 @@ class CutoffConvergenceWidget(QWidget):
         run_row.setSpacing(8)
         run_row.addWidget(QLabel("Job name prefix"))
         run_row.addWidget(self._name_prefix, 1)
-        self._run_local_button = QPushButton("Run Local Calculations")
-        self._run_cluster_button = QPushButton("Run on Cluster")
+        # SelectionFeedback sets the run buttons' text ("Run All ..." / "Run
+        # Selected ...") from the selection.
+        self._run_local_button = QPushButton()
+        self._run_cluster_button = QPushButton()
         run_row.addWidget(self._run_local_button)
         run_row.addWidget(self._run_cluster_button)
         run_layout.addLayout(run_row)
@@ -380,7 +377,30 @@ class CutoffConvergenceWidget(QWidget):
         self._batch_configure_button.clicked.connect(self._configure_selected_cutoffs)
 
         self._cutoff_table.itemChanged.connect(self._on_cutoff_table_changed)
-        self._cutoff_table.customContextMenuRequested.connect(self._open_cutoff_context_menu)
+        self._remove_selected_button.clicked.connect(self._remove_selected_or_current_cutoffs)
+        self._cutoff_table.setToolTip(
+            "Right-click selected rows to run, cancel, inspect, reset, configure, or remove them."
+        )
+        # A right-click makes the rows under it the selection, so the menu's
+        # run/configure/remove entries reuse the selection-based handlers.
+        leading_actions, trailing_actions = standard_row_actions(
+            status_for_row=self._row_status,
+            run_local=lambda _rows: self._run_local_selected_cutoffs(),
+            run_cluster=lambda _rows: self._run_cluster_selected_cutoffs(),
+            cancel=lambda rows: self.cancel_requested.emit(self._cutoffs_at_rows(rows)),
+            inspect=lambda rows: self.inspect_failed_requested.emit(self._cutoffs_at_rows(rows)),
+            configure=lambda _rows: self._configure_selected_cutoffs(),
+            remove=lambda _rows: self._remove_selected_or_current_cutoffs(),
+            confirm_parent=self,
+        )
+        bind_reset_failed_context_menu(
+            self._cutoff_table,
+            key_for_row=lambda row: self._cutoff_value_at_row(row, strict=False),
+            status_for_row=self._row_status,
+            emit_reset=self.reset_failed_requested.emit,
+            leading_actions=leading_actions,
+            additional_actions=trailing_actions,
+        )
         selection_model = self._cutoff_table.selectionModel()
         if selection_model is not None:
             selection_model.selectionChanged.connect(lambda *_: self._refresh_batch_button_state())
@@ -388,6 +408,13 @@ class CutoffConvergenceWidget(QWidget):
         self._examine_button.clicked.connect(self.examine_requested.emit)
         self._run_local_button.clicked.connect(self._run_local_selected_cutoffs)
         self._run_cluster_button.clicked.connect(self._run_cluster_selected_cutoffs)
+        self._selection_feedback = SelectionFeedback(
+            self._cutoff_table,
+            count_label=self._selection_count_label,
+            run_local_button=self._run_local_button,
+            run_cluster_button=self._run_cluster_button,
+            selection_buttons=(self._remove_selected_button,),
+        )
         self._simulation_cell_combo.currentIndexChanged.connect(self._on_simulation_cell_combo_changed)
         self._simulation_cell_create_button.clicked.connect(self.simulation_cell_create_requested.emit)
         self._simulation_cell_use_unit_button.clicked.connect(
@@ -889,92 +916,27 @@ class CutoffConvergenceWidget(QWidget):
         rows = sorted(index.row() for index in selection_model.selectedRows())
         return tuple(rows)
 
-    def _selected_or_current_cutoffs(self) -> tuple[float, ...]:
+    def _selected_or_all_cutoffs(self) -> tuple[float, ...]:
+        """Return the cutoffs the run buttons act on: the selection, else every row.
+
+        The buttons read "Run Selected ..." or "Run All ..." to match, so what
+        they run is always stated on the button.
+        """
+
         selected = self._selected_cutoffs()
         if selected:
             return selected
+        return self._collect_cutoffs(strict=False)
 
-        current_row = self._cutoff_table.currentRow()
-        if current_row >= 0:
-            cutoff = self._cutoff_value_at_row(current_row, strict=False)
-            if cutoff is not None:
-                return (cutoff,)
-
-        if self._cutoff_table.rowCount() == 1:
-            cutoff = self._cutoff_value_at_row(0, strict=False)
-            if cutoff is not None:
-                return (cutoff,)
-
-        return ()
+    def _cutoffs_at_rows(self, rows: Sequence[int]) -> list[float]:
+        return [
+            cutoff
+            for row in rows
+            if (cutoff := self._cutoff_value_at_row(row, strict=False)) is not None
+        ]
 
     def _row_status(self, row: int) -> str:
         return workflow_row_status_text(self._cutoff_table, row, self._STATUS_COLUMN)
-
-    def _open_cutoff_context_menu(self, position) -> None:
-        row = self._cutoff_table.rowAt(position.y())
-        if row < 0:
-            return
-
-        selected_rows = set(self._selected_rows())
-        if row not in selected_rows:
-            self._cutoff_table.selectRow(row)
-
-        cutoffs = self._selected_cutoffs()
-        selected_rows = self._selected_rows()
-        statuses = [self._row_status(selected_row) for selected_row in selected_rows]
-        can_submit = bool(cutoffs) and all(status in _SUBMITTABLE_JOB_STATUSES for status in statuses)
-        can_cancel = bool(cutoffs) and all(status in _ACTIVE_JOB_STATUSES for status in statuses)
-        can_failed_actions = bool(cutoffs) and all(status == "failed" for status in statuses)
-
-        menu = QMenu(self)
-        submit_action = menu.addAction("Submit Local Calculation")
-        submit_action.setEnabled(can_submit)
-        submit_action.triggered.connect(
-            lambda _checked=False, selected=cutoffs: self.submit_local_requested.emit(list(selected))
-        )
-
-        submit_cluster_action = menu.addAction("Submit Cluster Calculation")
-        submit_cluster_action.setEnabled(can_submit)
-        submit_cluster_action.triggered.connect(
-            lambda _checked=False, selected=cutoffs: self.submit_cluster_requested.emit(list(selected))
-        )
-
-        cancel_action = menu.addAction("Cancel Calculation")
-        cancel_action.setEnabled(can_cancel)
-        cancel_action.triggered.connect(
-            lambda _checked=False, selected=cutoffs: self._confirm_and_cancel(selected)
-        )
-
-        if hasattr(menu, "addSeparator"):
-            menu.addSeparator()
-
-        inspect_failed_action = menu.addAction("Inspect Failure Files")
-        inspect_failed_action.setEnabled(can_failed_actions)
-        inspect_failed_action.triggered.connect(
-            lambda _checked=False, selected=cutoffs: self.inspect_failed_requested.emit(list(selected))
-        )
-
-        add_reset_failed_action(
-            menu,
-            keys=cutoffs,
-            statuses=statuses,
-            emit_reset=self.reset_failed_requested.emit,
-        )
-
-        menu.exec(self._cutoff_table.viewport().mapToGlobal(position))
-
-    def _confirm_and_cancel(self, cutoffs: Sequence[float]) -> None:
-        phrase = count_phrase(len(cutoffs), ("calculation", "calculations"))
-        # Looked up on the module so tests can replace the modal dialog.
-        if workflow_table_utils.confirm_destructive(
-            self,
-            "Cancel calculations",
-            f"Cancel {phrase}?",
-            "",
-            f"Cancel {phrase}",
-            "Keep running",
-        ):
-            self.cancel_requested.emit(list(cutoffs))
 
     def set_runtime_states(self, states: Mapping[float, SweepPointRunState]) -> None:
         """Update row status/energy display using project job/result state."""
@@ -1365,7 +1327,7 @@ class CutoffConvergenceWidget(QWidget):
         if config is None:
             return
 
-        selected_cutoffs = tuple(dict.fromkeys(self._selected_or_current_cutoffs()))
+        selected_cutoffs = tuple(dict.fromkeys(self._selected_or_all_cutoffs()))
         if not selected_cutoffs:
             QMessageBox.information(
                 self,
@@ -1383,7 +1345,7 @@ class CutoffConvergenceWidget(QWidget):
         if config is None:
             return
 
-        selected_cutoffs = tuple(dict.fromkeys(self._selected_or_current_cutoffs()))
+        selected_cutoffs = tuple(dict.fromkeys(self._selected_or_all_cutoffs()))
         if not selected_cutoffs:
             QMessageBox.information(
                 self,

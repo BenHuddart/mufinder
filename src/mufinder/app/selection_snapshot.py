@@ -50,6 +50,10 @@ class _SnapshotMixin:
         super().__init__(*args, **kwargs)
         self.selection_snapshot_rows: tuple[int, ...] = ()
         self.selection_snapshot_key: object = None
+        #: Whether this control acts on the whole selection when its row is
+        #: part of a multi-row selection. Set False on a control that only ever
+        #: acts on its own row, so it is not highlighted as a multi-row target.
+        self.propagates_to_selection: bool = True
         self._pre_focus_rows: tuple[int, ...] = ()
 
     # -- keeping the selection across focus changes --------------------------

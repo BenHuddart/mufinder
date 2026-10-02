@@ -8,6 +8,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QMessageBox, QPushButton, QToolButton
 
 import mufinder.app.convergence_widget as convergence_widget_module
+from tests.support.reset_menu import install_fake_menu, open_reset_menu
 from mufinder.app import workflow_table_utils
 from mufinder.app.convergence_types import ConvergenceConfig, CutoffRunState
 from mufinder.app.convergence_widget import ConvergenceWidget, CutoffRangeDialog
@@ -588,24 +589,20 @@ def test_convergence_widget_cluster_run_emits_signal_for_current_row(qapp) -> No
     assert submitted == [[300.0]]
 
 
-def test_convergence_widget_selected_or_current_cutoffs_prefers_selection_and_current(
-    qapp, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_convergence_widget_run_targets_selection_else_every_row(qapp) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget._add_cutoff(360.0)
 
     widget._cutoff_table.selectRow(1)
-    assert widget._selected_or_current_cutoffs() == (360.0,)
+    assert widget._selected_or_all_cutoffs() == (360.0,)
 
+    # With nothing selected the run buttons read "Run All ...": the current
+    # cell is not a hidden target.
     widget._cutoff_table.clearSelection()
     widget._cutoff_table.setCurrentCell(0, widget._CUTOFF_COLUMN)
-    assert widget._selected_or_current_cutoffs() == (300.0,)
-
-    single = ConvergenceWidget()
-    single._add_cutoff(420.0)
-    monkeypatch.setattr(single._cutoff_table, "currentRow", lambda: -1)
-    assert single._selected_or_current_cutoffs() == (420.0,)
+    widget._cutoff_table.clearSelection()
+    assert widget._selected_or_all_cutoffs() == (300.0, 360.0)
 
 
 def test_convergence_widget_remove_selected_or_current_cutoffs_uses_selection(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -764,104 +761,34 @@ def test_convergence_widget_context_menu_emits_submit_for_ready_rows(
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget.set_runtime_states({300.0: CutoffRunState(status="ready")})
+    emitted: list[object] = []
+    widget.submit_local_requested.connect(lambda payload: emitted.append(payload))
+    install_fake_menu(monkeypatch)
 
-    submitted: list[object] = []
-    widget.submit_local_requested.connect(lambda payload: submitted.append(payload))
+    menu = open_reset_menu(widget._cutoff_table)
+    action = menu.action("Run Local")
+    assert action is not None and action.enabled
+    action.triggered.emit()
 
-    class _FakeSignal:
-        def __init__(self) -> None:
-            self._callbacks = []
-
-        def connect(self, callback) -> None:
-            self._callbacks.append(callback)
-
-        def emit(self) -> None:
-            for callback in self._callbacks:
-                callback(False)
-
-    class _FakeAction:
-        def __init__(self, text: str) -> None:
-            self.text = text
-            self.enabled = True
-            self.triggered = _FakeSignal()
-
-        def setEnabled(self, enabled: bool) -> None:
-            self.enabled = enabled
-
-    class _FakeMenu:
-        def __init__(self, *_args, **_kwargs) -> None:
-            self.actions: list[_FakeAction] = []
-
-        def addAction(self, text: str) -> _FakeAction:
-            action = _FakeAction(text)
-            self.actions.append(action)
-            return action
-
-        def exec(self, *_args, **_kwargs) -> None:
-            for action in self.actions:
-                if action.text == "Submit Local Calculation" and action.enabled:
-                    action.triggered.emit()
-                    return
-
-    monkeypatch.setattr(convergence_widget_module, "QMenu", _FakeMenu)
-
-    widget._open_cutoff_context_menu(QPoint(10, 10))
-
-    assert submitted == [[300.0]]
+    assert emitted == [[300.0]]
 
 
 def test_convergence_widget_context_menu_submit_enabled_for_not_generated_rows(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A row with no runtime state displays "not generated". The always-enabled
-    # Run buttons already submit such rows (the controller materializes them),
-    # so the context-menu Submit action must agree and stay enabled.
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
+    widget.set_runtime_states({300.0: CutoffRunState(status="not generated")})
+    emitted: list[object] = []
+    widget.submit_cluster_requested.connect(lambda payload: emitted.append(payload))
+    install_fake_menu(monkeypatch)
 
-    submitted: list[object] = []
-    widget.submit_local_requested.connect(lambda payload: submitted.append(payload))
+    menu = open_reset_menu(widget._cutoff_table)
+    action = menu.action("Run on Cluster")
+    assert action is not None and action.enabled
+    action.triggered.emit()
 
-    class _FakeSignal:
-        def __init__(self) -> None:
-            self._callbacks = []
-
-        def connect(self, callback) -> None:
-            self._callbacks.append(callback)
-
-        def emit(self) -> None:
-            for callback in self._callbacks:
-                callback(False)
-
-    class _FakeAction:
-        def __init__(self, text: str) -> None:
-            self.text = text
-            self.enabled = True
-            self.triggered = _FakeSignal()
-
-        def setEnabled(self, enabled: bool) -> None:
-            self.enabled = enabled
-
-    class _FakeMenu:
-        def __init__(self, *_args, **_kwargs) -> None:
-            self.actions: list[_FakeAction] = []
-
-        def addAction(self, text: str) -> _FakeAction:
-            action = _FakeAction(text)
-            self.actions.append(action)
-            return action
-
-        def exec(self, *_args, **_kwargs) -> None:
-            for action in self.actions:
-                if action.text == "Submit Local Calculation" and action.enabled:
-                    action.triggered.emit()
-                    return
-
-    monkeypatch.setattr(convergence_widget_module, "QMenu", _FakeMenu)
-
-    widget._open_cutoff_context_menu(QPoint(10, 10))
-
-    assert submitted == [[300.0]]
+    assert emitted == [[300.0]]
 
 
 def test_convergence_widget_context_menu_emits_inspect_for_failed_rows(
@@ -870,50 +797,16 @@ def test_convergence_widget_context_menu_emits_inspect_for_failed_rows(
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget.set_runtime_states({300.0: CutoffRunState(status="failed")})
+    emitted: list[object] = []
+    widget.inspect_failed_requested.connect(lambda payload: emitted.append(payload))
+    install_fake_menu(monkeypatch)
 
-    inspected: list[object] = []
-    widget.inspect_failed_requested.connect(lambda payload: inspected.append(payload))
+    menu = open_reset_menu(widget._cutoff_table)
+    action = menu.action("Inspect Failure")
+    assert action is not None and action.enabled
+    action.triggered.emit()
 
-    class _FakeSignal:
-        def __init__(self) -> None:
-            self._callbacks = []
-
-        def connect(self, callback) -> None:
-            self._callbacks.append(callback)
-
-        def emit(self) -> None:
-            for callback in self._callbacks:
-                callback(False)
-
-    class _FakeAction:
-        def __init__(self, text: str) -> None:
-            self.text = text
-            self.enabled = True
-            self.triggered = _FakeSignal()
-
-        def setEnabled(self, enabled: bool) -> None:
-            self.enabled = enabled
-
-    class _FakeMenu:
-        def __init__(self, *_args, **_kwargs) -> None:
-            self.actions: list[_FakeAction] = []
-
-        def addAction(self, text: str) -> _FakeAction:
-            action = _FakeAction(text)
-            self.actions.append(action)
-            return action
-
-        def exec(self, *_args, **_kwargs) -> None:
-            for action in self.actions:
-                if action.text == "Inspect Failure Files" and action.enabled:
-                    action.triggered.emit()
-                    return
-
-    monkeypatch.setattr(convergence_widget_module, "QMenu", _FakeMenu)
-
-    widget._open_cutoff_context_menu(QPoint(10, 10))
-
-    assert inspected == [[300.0]]
+    assert emitted == [[300.0]]
 
 
 def test_convergence_widget_context_menu_emits_reset_for_failed_rows(
@@ -922,50 +815,14 @@ def test_convergence_widget_context_menu_emits_reset_for_failed_rows(
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget.set_runtime_states({300.0: CutoffRunState(status="failed")})
+    emitted: list[object] = []
+    widget.reset_failed_requested.connect(lambda payload: emitted.append(payload))
+    install_fake_menu(monkeypatch)
 
-    reset_payloads: list[object] = []
-    widget.reset_failed_requested.connect(lambda payload: reset_payloads.append(payload))
+    # The fake menu's exec() clicks an enabled reset action, as a user would.
+    open_reset_menu(widget._cutoff_table)
 
-    class _FakeSignal:
-        def __init__(self) -> None:
-            self._callbacks = []
-
-        def connect(self, callback) -> None:
-            self._callbacks.append(callback)
-
-        def emit(self) -> None:
-            for callback in self._callbacks:
-                callback(False)
-
-    class _FakeAction:
-        def __init__(self, text: str) -> None:
-            self.text = text
-            self.enabled = True
-            self.triggered = _FakeSignal()
-
-        def setEnabled(self, enabled: bool) -> None:
-            self.enabled = enabled
-
-    class _FakeMenu:
-        def __init__(self, *_args, **_kwargs) -> None:
-            self.actions: list[_FakeAction] = []
-
-        def addAction(self, text: str) -> _FakeAction:
-            action = _FakeAction(text)
-            self.actions.append(action)
-            return action
-
-        def exec(self, *_args, **_kwargs) -> None:
-            for action in self.actions:
-                if action.text == "Reset Failed Jobs..." and action.enabled:
-                    action.triggered.emit()
-                    return
-
-    monkeypatch.setattr(convergence_widget_module, "QMenu", _FakeMenu)
-
-    widget._open_cutoff_context_menu(QPoint(10, 10))
-
-    assert reset_payloads == [[300.0]]
+    assert emitted == [[300.0]]
 
 
 def test_convergence_widget_context_menu_emits_reset_for_cancelled_rows(
@@ -974,50 +831,14 @@ def test_convergence_widget_context_menu_emits_reset_for_cancelled_rows(
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget.set_runtime_states({300.0: CutoffRunState(status="cancelled")})
+    emitted: list[object] = []
+    widget.reset_failed_requested.connect(lambda payload: emitted.append(payload))
+    install_fake_menu(monkeypatch)
 
-    reset_payloads: list[object] = []
-    widget.reset_failed_requested.connect(lambda payload: reset_payloads.append(payload))
+    # The fake menu's exec() clicks an enabled reset action, as a user would.
+    open_reset_menu(widget._cutoff_table)
 
-    class _FakeSignal:
-        def __init__(self) -> None:
-            self._callbacks = []
-
-        def connect(self, callback) -> None:
-            self._callbacks.append(callback)
-
-        def emit(self) -> None:
-            for callback in self._callbacks:
-                callback(False)
-
-    class _FakeAction:
-        def __init__(self, text: str) -> None:
-            self.text = text
-            self.enabled = True
-            self.triggered = _FakeSignal()
-
-        def setEnabled(self, enabled: bool) -> None:
-            self.enabled = enabled
-
-    class _FakeMenu:
-        def __init__(self, *_args, **_kwargs) -> None:
-            self.actions: list[_FakeAction] = []
-
-        def addAction(self, text: str) -> _FakeAction:
-            action = _FakeAction(text)
-            self.actions.append(action)
-            return action
-
-        def exec(self, *_args, **_kwargs) -> None:
-            for action in self.actions:
-                if action.text == "Reset Failed Jobs..." and action.enabled:
-                    action.triggered.emit()
-                    return
-
-    monkeypatch.setattr(convergence_widget_module, "QMenu", _FakeMenu)
-
-    widget._open_cutoff_context_menu(QPoint(10, 10))
-
-    assert reset_payloads == [[300.0]]
+    assert emitted == [[300.0]]
 
 
 def test_convergence_widget_enables_examine_button_for_completed_results(qapp) -> None:
@@ -1126,6 +947,11 @@ def test_convergence_widget_context_cancel_is_confirmed(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    widget._add_cutoff(360.0)
+    widget.set_runtime_states(
+        {300.0: CutoffRunState(status="running"), 360.0: CutoffRunState(status="queued")}
+    )
     cancelled: list[object] = []
     widget.cancel_requested.connect(cancelled.append)
     prompts: list[tuple[str, ...]] = []
@@ -1135,11 +961,13 @@ def test_convergence_widget_context_cancel_is_confirmed(
         "confirm_destructive",
         lambda _parent, *prompt: prompts.append(prompt) or answers.pop(0),
     )
+    install_fake_menu(monkeypatch)
+    widget._cutoff_table.selectAll()
 
-    widget._confirm_and_cancel((300.0, 360.0))
+    open_reset_menu(widget._cutoff_table).action("Cancel").triggered.emit()
     assert cancelled == []
 
-    widget._confirm_and_cancel((300.0, 360.0))
+    open_reset_menu(widget._cutoff_table).action("Cancel").triggered.emit()
     assert cancelled == [[300.0, 360.0]]
     assert prompts[0] == (
         "Cancel calculations",
@@ -1148,3 +976,27 @@ def test_convergence_widget_context_cancel_is_confirmed(
         "Cancel 2 calculations",
         "Keep running",
     )
+
+
+def test_convergence_widget_context_menu_has_the_shared_order(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    install_fake_menu(monkeypatch)
+
+    menu = open_reset_menu(widget._cutoff_table)
+
+    assert [action.text for action in menu.actions] == [
+        "Run Local",
+        "Run on Cluster",
+        "Cancel",
+        "Inspect Failure",
+        "Reset Failed Jobs...",
+        "Configure...",
+        "Remove",
+    ]
+    enabled = {action.text for action in menu.actions if action.enabled}
+    assert enabled == {"Run Local", "Run on Cluster", "Configure...", "Remove"}
+
+

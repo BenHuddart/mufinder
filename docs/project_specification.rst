@@ -77,15 +77,23 @@ The local CASTEP execution path must satisfy the following requirements:
    - shared job dashboard rows once jobs have entered the submission/queue lifecycle
 
 - The cutoff convergence panel must expose a dedicated run action that persists
-   the current convergence configuration and submits the selected/current cutoff rows,
-   replacing any separate pre-generation step.
+   the current convergence configuration and submits the selected cutoff rows, or every
+   row when none is selected, replacing any separate pre-generation step. The action's
+   label must state which of the two it will do.
 
 - Workflow row tables for relaxation and convergence jobs must support
    removing the current row or selected rows via Delete and Backspace,
    not just via pointer-driven controls.
 
 - Shared job dashboard controls must be exposed as per-row action buttons,
-  rather than requiring a context menu.
+  rather than requiring a context menu. A context menu may offer the same actions
+  for the selection in addition.
+
+- Text inside table rows must not change with the selection. Selection counts, hints
+  and scope must be shown outside the rows so tables stay usable on a small screen.
+
+- Every workflow job table must offer the same right-click row menu, in the same order,
+  omitting only the actions that table does not have.
 
 - A control embedded in a table row must act on the whole selection when its
   row is part of a multi-row selection, after a prompt offering "all selected

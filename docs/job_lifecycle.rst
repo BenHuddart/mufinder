@@ -655,8 +655,8 @@ Every workflow table has a per-row reset
 A failed job's recovery must not depend on the jobs dashboard: the dashboard row
 is easy to lose track of in a long project, and it disappears entirely once the
 job is dismissed. Every workflow table therefore offers the same recovery action
-on the row itself, via a right-click context menu carrying a single
-``Reset Failed Jobs...`` entry.
+on the row itself, via the ``Reset Failed Jobs...`` entry of the shared
+right-click row menu.
 
 The shared implementation lives in ``mufinder.app.workflow_table_utils``:
 
@@ -675,16 +675,21 @@ The shared implementation lives in ``mufinder.app.workflow_table_utils``:
 - ``bind_reset_failed_context_menu`` / ``open_reset_failed_context_menu`` —
   install and open the menu. Right-clicking a row outside the current selection
   retargets the selection first, so the action always describes the row under
-  the cursor. Each widget supplies only a ``key_for_row`` (its own submission
+  the cursor. Each widget supplies a ``key_for_row`` (its own submission
   key: a cutoff, a k-point grid, a label, a charge-state-qualified key, or a
   path key) and a ``status_for_row``.
-- ``RESET_FAILED_TABLE_TOOLTIP`` — the discoverability stamp. A single-entry
-  menu that is greyed out except on failed rows is invisible on its own: a user
-  with a stuck row has no reason to right-click. ``bind_reset_failed_context_menu``
-  therefore sets this tooltip on every table it binds, unless the widget already
-  set a tooltip of its own. Per-item tooltips are unaffected and still take
-  precedence where a widget sets them. The energy-barriers diffusion-path table
-  additionally carries the hint in its visible hint label.
+- ``standard_row_actions`` — builds the rest of the shared menu around the reset
+  entry (``Run Local``, ``Run on Cluster``, ``Cancel``, ``Inspect Failure``
+  above it; ``Configure...``, ``Remove`` below), passed to the bind call as
+  ``leading_actions`` / ``additional_actions``. A table leaves out an action by
+  not supplying its callback, and a table with no failed-job reset (Quantum
+  Corrections) passes ``emit_reset=None``.
+- ``RESET_FAILED_TABLE_TOOLTIP`` — the fallback discoverability stamp, set by
+  ``bind_reset_failed_context_menu`` on a table that has no tooltip of its own.
+  The workflow tables set their own tooltip naming the whole menu. Per-item
+  tooltips are unaffected and still take precedence where a widget sets them.
+  The energy-barriers diffusion-path table additionally carries the hint in its
+  visible hint label.
 
 ``MainWindow`` connects each widget's ``reset_failed_requested`` signal to a
 thin ``_on_reset_failed_from_*`` handler that resolves the keys through the

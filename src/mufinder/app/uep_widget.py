@@ -37,10 +37,15 @@ from mufinder.app.workflow_parameters import (
     seed_xc_functional_default,
 )
 from mufinder.app.workflow_table_utils import (
-    confirm_row_removal,
+    REMOVE_SELECTED_TEXT,
+    SelectionFeedback,
     bind_delete_shortcuts,
     bind_reset_failed_context_menu,
+    confirm_row_removal,
     create_workflow_table,
+    multi_row_outcome_text,
+    show_status_message,
+    standard_row_actions,
     style_workflow_configure_button,
     workflow_row_status_text,
 )
@@ -204,8 +209,13 @@ class UEPWidget(QWidget):
         self._add_row_button = QPushButton("Add Job")
         self._batch_configure_button = QPushButton("Configure Selected Parameters...")
         self._batch_configure_button.setEnabled(False)
-        self._run_local_button = QPushButton("Run Local Calculations")
-        self._run_cluster_button = QPushButton("Run on Cluster")
+        self._remove_selected_button = QPushButton(REMOVE_SELECTED_TEXT)
+        self._selection_count_label = QLabel("")
+        style_hint_text(self._selection_count_label)
+        # SelectionFeedback sets the run buttons' text ("Run All ..." / "Run
+        # Selected ...") from the selection.
+        self._run_local_button = QPushButton()
+        self._run_cluster_button = QPushButton()
 
         self._specs = self._build_parameter_specs()
         self._specs_by_name = {spec.name: spec for spec in self._specs}
@@ -258,15 +268,23 @@ class UEPWidget(QWidget):
         table_layout.setContentsMargins(10, 8, 10, 8)
         table_layout.addWidget(self._table)
 
+        # Two rows, as in the relaxation tables: one row cannot hold the
+        # selection controls, the job-name prefix and both run buttons at
+        # laptop width without crushing the prefix field.
         control_row = QHBoxLayout()
         control_row.addWidget(self._add_row_button)
-        control_row.addWidget(self._batch_configure_button)
         control_row.addStretch(1)
-        control_row.addWidget(QLabel("Job name prefix"))
-        control_row.addWidget(self._name_prefix, 1)
-        control_row.addWidget(self._run_local_button)
-        control_row.addWidget(self._run_cluster_button)
+        control_row.addWidget(self._selection_count_label)
+        control_row.addWidget(self._remove_selected_button)
+        control_row.addWidget(self._batch_configure_button)
         table_layout.addLayout(control_row)
+
+        run_row = QHBoxLayout()
+        run_row.addWidget(QLabel("Job name prefix"))
+        run_row.addWidget(self._name_prefix, 1)
+        run_row.addWidget(self._run_local_button)
+        run_row.addWidget(self._run_cluster_button)
+        table_layout.addLayout(run_row)
         layout.addWidget(table_group, 1)
 
     def _connect_signals(self) -> None:
@@ -274,12 +292,37 @@ class UEPWidget(QWidget):
         self._batch_configure_button.clicked.connect(self._on_batch_configure_clicked)
         self._run_local_button.clicked.connect(self._emit_submit_local)
         self._run_cluster_button.clicked.connect(self._emit_submit_cluster)
+        self._remove_selected_button.clicked.connect(self._delete_selected_rows)
         self._table.itemSelectionChanged.connect(self._refresh_batch_button_state)
+        self._table.setToolTip(
+            "Right-click selected rows to run, cancel, inspect, reset, configure, or remove them."
+        )
+        # A right-click makes the rows under it the selection, so the menu's
+        # run/configure/remove entries reuse the selection-based handlers.
+        leading_actions, trailing_actions = standard_row_actions(
+            status_for_row=self._row_status,
+            run_local=lambda _rows: self._emit_submit_local(),
+            run_cluster=lambda _rows: self._emit_submit_cluster(),
+            cancel=lambda rows: self.cancel_requested.emit(self._labels_at_rows(rows)),
+            inspect=lambda rows: self.inspect_failed_requested.emit(self._labels_at_rows(rows)),
+            configure=lambda _rows: self._on_batch_configure_clicked(),
+            remove=lambda _rows: self._delete_selected_rows(),
+            confirm_parent=self,
+        )
         bind_reset_failed_context_menu(
             self._table,
             key_for_row=self._label_at_row,
             status_for_row=self._row_status,
             emit_reset=self.reset_failed_requested.emit,
+            leading_actions=leading_actions,
+            additional_actions=trailing_actions,
+        )
+        self._selection_feedback = SelectionFeedback(
+            self._table,
+            count_label=self._selection_count_label,
+            run_local_button=self._run_local_button,
+            run_cluster_button=self._run_cluster_button,
+            selection_buttons=(self._remove_selected_button,),
         )
         self._name_prefix.textChanged.connect(lambda *_: self._emit_state())
         self._source_structure_combo.currentIndexChanged.connect(self._on_source_structure_changed)
@@ -525,6 +568,8 @@ class UEPWidget(QWidget):
 
         wizard_button = SelectionSnapshotPushButton("Open Wizard", self._table)
         wizard_button.selection_snapshot_key = row_id
+        # The wizard runs on one row at a time, so it is never a multi-row target.
+        wizard_button.propagates_to_selection = False
         wizard_button.clicked.connect(
             lambda _checked=False, rid=row_id, btn=wizard_button: self._dispatch_row_action(btn, rid, "wizard")
         )
@@ -572,6 +617,11 @@ class UEPWidget(QWidget):
             self._set_combo_to_supercell(combo, self._row_supercells.get(row_id))
             combo.blockSignals(previous)
             return
+        if len(target_row_ids) > 1:
+            show_status_message(
+                self,
+                multi_row_outcome_text("Supercell set on", len(target_row_ids), len(snapshot_keys)),
+            )
         for target_row_id in target_row_ids:
             self._row_supercells[target_row_id] = matrix
         self._refresh_table_rows()
@@ -914,6 +964,9 @@ class UEPWidget(QWidget):
             return
         self.configure_requested.emit(config)
         self.submit_cluster_requested.emit(labels)
+
+    def _labels_at_rows(self, rows: Sequence[int]) -> list[str]:
+        return [label for row in rows if (label := self._label_at_row(row))]
 
     def _label_at_row(self, row: int) -> str | None:
         item = self._table.item(row, self._LABEL_COLUMN)
