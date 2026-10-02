@@ -963,8 +963,14 @@ def test_help_loop_runs_queries_side_by_side_and_prints_them_in_order(
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the remote help loop is a POSIX shell script")
-def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path) -> None:
-    """Regression: on Redwood four queries sharing one CPU were slower than four in turn."""
+@pytest.mark.parametrize("pkill", ["real", "finds_nothing", "missing"])
+def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path, pkill: str) -> None:
+    """Regression: on Redwood four queries sharing one CPU were slower than four in turn.
+
+    The login node runs this loop under ``set -e``, so abandoning the trial
+    group must survive a ``pkill`` that finds nothing to kill or is not
+    installed.
+    """
 
     if not subprocess.run(["date", "+%s%N"], capture_output=True, text=True).stdout.strip().isdigit():
         pytest.skip("this platform's date has no nanosecond clock, so the loop does not calibrate")
@@ -994,7 +1000,26 @@ def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path) -
     names = [f"KEY_{index}" for index in range(13)]
     command = generator_module._help_loop_command(shlex.quote(str(executable)), names)
 
-    completed = subprocess.run(["/bin/bash", "-c", command], capture_output=True, text=True, check=True)
+    env = dict(os.environ)
+    if pkill != "real":
+        tools = tmp_path / "tools"
+        tools.mkdir()
+        if pkill == "finds_nothing":
+            (tools / "pkill").write_text("#!/bin/bash\nexit 1\n", encoding="utf-8")
+            (tools / "pkill").chmod(0o755)
+            env["PATH"] = f"{tools}:{env['PATH']}"
+        else:
+            for name in ("bash", "cat", "date", "sleep", "mktemp", "rm", "ls", "wc", "awk", "touch", "grep"):
+                (tools / name).symlink_to(shutil.which(name))
+            env["PATH"] = str(tools)
+
+    completed = subprocess.run(
+        ["/bin/bash", "-c", f"set -e\n{command}"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+    )
 
     assert [(name, doc) for name, doc, _tail, _status in _sections(completed.stdout)] == [
         (name, f"help for {name}") for name in names
@@ -1012,11 +1037,110 @@ def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path) -
     assert abandoned_after >= single * 3
     # One alone, the abandoned group of four, then all twelve one at a time:
     # the abandoned queries are described again, and nothing is lost.
-    peaks = [int(line) for line in peak.read_text(encoding="utf-8").split()]
-    assert peaks.count(4) == 4
-    assert peaks.count(1) == 13
-    # Nothing is left behind in the scratch directories.
-    assert not list(active.iterdir())
+    if pkill == "real":
+        peaks = [int(line) for line in peak.read_text(encoding="utf-8").split()]
+        assert peaks.count(4) == 4
+        assert peaks.count(1) == 13
+        # Nothing is left behind in the scratch directories.
+        assert not list(active.iterdir())
+
+
+def _write_real_timeout(directory: Path) -> None:
+    """Provide a working ``timeout`` (absent on macOS): exit 124 when the limit passes."""
+
+    command = directory / "timeout"
+    command.write_text(
+        "#!/bin/bash\n"
+        "limit=$1; shift\n"
+        '"$@" & pid=$!\n'
+        '( sleep "$limit"; kill -TERM "$pid" 2>/dev/null ) & watcher=$!\n'
+        "wait $pid; status=$?\n"
+        "kill $watcher 2>/dev/null\n"
+        'if [ "$status" -eq 143 ]; then exit 124; fi\n'
+        "exit $status\n",
+        encoding="utf-8",
+    )
+    command.chmod(0o755)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the remote help loop is a POSIX shell script")
+def test_help_loop_gives_up_on_a_castep_that_stops_responding(tmp_path: Path) -> None:
+    """A binary that answers --version and then hangs must not hold the job to its walltime."""
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_real_timeout(bin_dir)
+    started = tmp_path / "started.log"
+    executable = tmp_path / "castep"
+    executable.write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = "--version" ]; then echo " CASTEP version: 25.12 "; exit 0; fi\n'
+        f'echo "$2" >> {str(started)!r}\n'
+        'if [ "$2" = "KEY_0" ]; then echo "help for $2"; exit 0; fi\n'
+        "exec sleep 30\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    names = [f"KEY_{index}" for index in range(40)]
+    command = generator_module._help_loop_command(shlex.quote(str(executable)), names)
+
+    completed = subprocess.run(
+        ["/bin/bash", "-c", command],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "MUFINDER_QUERY_TIMEOUT": "0.3",
+            "MUFINDER_PARALLEL": "1",
+        },
+        timeout=60,
+    )
+
+    assert completed.returncode == 75
+    assert "mufinder: CASTEP stopped responding: 3 queries were cut off after 0.3 s each" in completed.stderr
+    # It stopped after three hung queries instead of working through all forty.
+    assert started.read_text(encoding="utf-8").split() == ["KEY_0", "KEY_1", "KEY_2", "KEY_3"]
+    statuses = [status for _name, _doc, _tail, status in _sections(completed.stdout)]
+    assert statuses == ["0", "124", "124", "124"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the scheduler runner is a POSIX shell script")
+def test_scheduler_job_moves_on_from_a_strategy_that_stops_responding(tmp_path: Path, monkeypatch) -> None:
+    """Bare CASTEP passes the probe, then hangs; the launcher path still delivers."""
+
+    real = _write_fake_castep(tmp_path / "castep")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_real_timeout(bin_dir)
+    flaky = bin_dir / "castep.mpi"
+    flaky.write_text(
+        "#!/bin/bash\n"
+        f'if [ -n "$LAUNCHED" ] || [ "$1" = "--version" ]; then exec {str(real)!r} "$@"; fi\n'
+        "exec sleep 30\n",
+        encoding="utf-8",
+    )
+    flaky.chmod(0o755)
+    launcher = bin_dir / "site_launch"
+    launcher.write_text('#!/bin/bash\nshift 2\nLAUNCHED=1 exec "$@"\n', encoding="utf-8")
+    launcher.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("MUFINDER_QUERY_TIMEOUT", "0.3")
+    template = tmp_path / "hardcoded.sh"
+    template.write_text(
+        "#!/bin/bash\n#SBATCH -p short\n\nsite_launch -n $num_processes castep.mpi $seed_name\n",
+        encoding="utf-8",
+    )
+    config = _scheduler_config(castep_executable="castep.mpi", template_script_path=str(template), keyword_shell_init="")
+
+    _script, dump = _run_scheduler_script(tmp_path, config)
+
+    _assert_complete_dump(dump)
+    job_log = (tmp_path / "work dir" / "keyword_generation.log").read_text(encoding="utf-8")
+    tried = [line.removeprefix("mufinder: trying ") for line in job_log.splitlines() if line.startswith("mufinder: trying ")]
+    assert tried == ["the bare CASTEP executable", "a single job step"]
+    # The hung listing was cut off, leaving the bare strategy nothing to describe.
+    assert "mufinder: CASTEP listed no keywords" in job_log
 
 
 def _sections(text: str) -> list[tuple[str, str, str, str]]:
@@ -1261,7 +1385,10 @@ def test_scheduler_job_uses_the_launcher_as_little_as_the_cluster_allows(
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the scheduler runner is a POSIX shell script")
-def test_scheduler_job_without_a_usable_template_falls_back_to_a_generic_script(tmp_path: Path) -> None:
+def test_scheduler_job_without_a_usable_template_falls_back_to_a_generic_script(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     executable = _write_fake_castep(tmp_path / "castep")
     no_run_line = tmp_path / "odd.sh"
     no_run_line.write_text("#!/bin/bash\n#SBATCH -p short\necho hello\n", encoding="utf-8")
@@ -1285,13 +1412,32 @@ def test_scheduler_job_without_a_usable_template_falls_back_to_a_generic_script(
         )
         assert "export MUFINDER_TEST=1" in script
 
+    # With no template to read a launcher from, Slurm's own is the fallback
+    # for an MPI build that will not start bare.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    picky = bin_dir / "castep.mpi"
+    picky.write_text(
+        f'#!/bin/bash\nif [ -z "$LAUNCHED" ]; then echo "MPI_Init failed" >&2; exit 1; fi\nexec {str(executable)!r} "$@"\n',
+        encoding="utf-8",
+    )
+    picky.chmod(0o755)
+    srun = bin_dir / "srun"
+    srun.write_text('#!/bin/bash\nshift 2\nLAUNCHED=1 exec "$@"\n', encoding="utf-8")
+    srun.chmod(0o755)
+    _write_timeout(bin_dir)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     config = _scheduler_config(
-        castep_executable=str(executable),
+        castep_executable="castep.mpi",
         template_script_path=str(no_run_line),
         keyword_shell_init="",
     )
-    _script, dump = _run_scheduler_script(tmp_path, config)
+    script, dump = _run_scheduler_script(tmp_path, config)
+    assert "mufinder_try 'a single job step' srun -n 1 bash mufinder_help_loop.sh castep.mpi; then" in script
     _assert_complete_dump(dump)
+    job_log = (tmp_path / "work dir" / "keyword_generation.log").read_text(encoding="utf-8")
+    assert "mufinder: trying a single job step" in job_log
+    assert "mufinder: trying the bare CASTEP executable" not in job_log
 
 
 def test_login_node_setup_is_inferred_from_the_job_template(tmp_path: Path) -> None:

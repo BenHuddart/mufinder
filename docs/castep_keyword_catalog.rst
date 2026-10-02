@@ -135,10 +135,12 @@ cluster does not have to be described twice.
   3. the launcher for every query, which mirrors how real jobs run and always
      applies.
 
-  The first two are attempted only when ``timeout`` is available, so a binary
-  that hangs cannot stall the job, and each is kept only if its dump is complete
-  and at least nine queries in ten succeeded; otherwise the next one replaces
-  it. ``keyword_generation.log`` in the job directory records which were tried.
+  The first two are attempted only when ``timeout`` is available, and each is
+  kept only if its dump is complete and at least nine queries in ten succeeded;
+  otherwise the next one replaces it. ``timeout`` also bounds every query (two
+  minutes), in both modes: a binary that answers once and then hangs on a later
+  start costs a strategy a few minutes, because the loop gives up after three
+  queries have been cut off, rather than holding the job to its walltime. ``keyword_generation.log`` in the job directory records which were tried.
   While the job runs, the dialog shows how many keywords have been described.
 - ``addqueue`` clusters are handled differently, because ``addqueue`` starts
   the job script with ``srun --mpi=pmix``: the script is already a task of an
@@ -162,10 +164,10 @@ cluster does not have to be described twice.
 
 ``Keyword shell init`` is therefore optional: it adds commands to those read
 from the template, and replaces the inferred setup on the login node. A cluster
-with no usable template (none configured, or no run line found) gets a generic
-script with the scheduler defaults, which is also what ``addqueue`` clusters
-use, submitted with the cluster's queue name and memory settings and
-``mpirun -np 1`` as the launcher.
+with no usable template (the file is missing, or no run line was found) gets a
+generic script with the scheduler defaults and ``srun -n 1`` as the fallback
+launcher. ``addqueue`` clusters use the same generic script, submitted with the
+cluster's queue name and memory settings and ``mpirun -np 1`` as the launcher.
 
 Two things cannot be inferred: whether the site allows CASTEP on its login
 node, which is why the scheduler is the default, and whether a bare MPI binary

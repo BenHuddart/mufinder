@@ -110,6 +110,12 @@ _MPI_JOB_ENVIRONMENT_RE = (
 #: Seconds allowed for the standalone attempt on an ``addqueue`` cluster before
 #: it is abandoned for the launcher-per-query fallback.
 _STANDALONE_ATTEMPT_SECONDS = 900
+#: Seconds one ``-help`` query may take before it is cut off, how many cut-off
+#: queries are tolerated before a run gives up, and the exit status it gives up
+#: with. A query normally takes well under three seconds.
+_QUERY_TIMEOUT_SECONDS = 120
+_QUERY_TIMEOUTS_TOLERATED = 3
+_STOPPED_RESPONDING_EXIT_STATUS = 75
 #: Open MPI settings that keep a single process off the network fabric, and
 #: make it give up the CPU while it waits rather than spin, so that queries
 #: sharing a core do not starve each other.
@@ -428,11 +434,30 @@ def _timing_lines(castep_command: str) -> list[str]:
     ]
 
 
+def _query_guard_lines() -> list[str]:
+    """Return shell that sets ``$mufinder_guard``, the time limit on one query.
+
+    A binary can answer ``--version`` and then hang in ``MPI_Init`` on a later
+    start. Without a limit that would hold a strategy, and so the job, until
+    the walltime. Every query is run under ``timeout`` where it exists, and the
+    loop gives up once several have been cut off.
+    """
+
+    return [
+        'mufinder_guard=""',
+        "if command -v timeout >/dev/null 2>&1; then",
+        f'  mufinder_guard="timeout ${{MUFINDER_QUERY_TIMEOUT:-{_QUERY_TIMEOUT_SECONDS}}}"',
+        "fi",
+        "mufinder_timeouts=0",
+    ]
+
+
 def _help_loop_command(
     castep_command: str,
     keywords: list[str] | None = None,
     *,
     record_timing: bool = False,
+    command_applies_guard: bool = False,
 ) -> str:
     """Return shell that prints every keyword description between marker lines.
 
@@ -456,7 +481,12 @@ def _help_loop_command(
             CASTEP for the list itself, for a scheduler job that runs unattended.
         record_timing: Write the cost of one query to stderr first (the job log,
             for a scheduler job).
+        command_applies_guard: ``castep_command`` is a shell function that puts
+            ``$mufinder_guard`` in front of CASTEP itself. Otherwise the guard
+            is placed in front of ``castep_command`` here.
     """
+
+    guard = "" if command_applies_guard else "$mufinder_guard "
 
     if keywords is None:
         source = f"$({castep_command} -help all 2>&1 | awk {shlex.quote(_AWK_KEYWORD_NAMES)})"
@@ -464,6 +494,7 @@ def _help_loop_command(
         source = " ".join(shlex.quote(name) for name in keywords)
     return "\n".join(
         [
+            *_query_guard_lines(),
             *_fast_start_lines(castep_command),
             *(_timing_lines(castep_command) if record_timing else ()),
             "mufinder_scratch=$(mktemp -d)",
@@ -475,6 +506,7 @@ def _help_loop_command(
             '[ "$mufinder_parallel" -gt 1 ] || mufinder_calibrate=0',
             "mufinder_round=0",
             f"set -- {source}",
+            'if [ "$#" -eq 0 ]; then echo "mufinder: CASTEP listed no keywords" >&2; fi',
             'while [ "$#" -gt 0 ]; do',
             # While calibrating, the first round is a single query and the
             # second a full group, so the two can be compared.
@@ -492,7 +524,7 @@ def _help_loop_command(
             "  for keyword in $chunk; do",
             "    (",
             "      status=0",
-            f'      {castep_command} -help "$keyword" > "$mufinder_scratch/$keyword.out" 2>&1 || status=$?',
+            f'      {guard}{castep_command} -help "$keyword" > "$mufinder_scratch/$keyword.out" 2>&1 || status=$?',
             '      printf \'%s\' "$status" > "$mufinder_scratch/$keyword.status"',
             "    ) &",
             '    pids="$pids $!"',
@@ -514,8 +546,10 @@ def _help_loop_command(
             '        echo "mufinder: $count queries at once had not finished after $((mufinder_elapsed / 1000000)) ms'
             ' against $((mufinder_single / 1000000)) ms for one; running one at a time" >&2',
             "        for pid in $pids; do",
-            '          pkill -TERM -P "$pid" 2>/dev/null',
-            '          kill "$pid" 2>/dev/null',
+            # Either may find nothing left to kill, or be missing; neither
+            # is an error, and the caller may be running under `set -e`.
+            '          pkill -TERM -P "$pid" 2>/dev/null || true',
+            '          kill "$pid" 2>/dev/null || true',
             "        done",
             # Anything that outlives the kill keeps writing into the old
             # scratch directory, away from the queries that are run again.
@@ -531,7 +565,7 @@ def _help_loop_command(
             "  fi",
             # Only this round's queries: an abandoned one that survived being
             # killed must not hold the loop up.
-            "  wait $pids",
+            "  wait $pids || true",
             '  if [ "$mufinder_calibrate" = 1 ]; then',
             "    mufinder_elapsed=$(( $(mufinder_now) - mufinder_started ))",
             '    if [ "$mufinder_round" = 0 ]; then',
@@ -548,9 +582,19 @@ def _help_loop_command(
             "  for keyword in $chunk; do",
             f"    printf '{_HELP_BEGIN_MARKER} %s@@\\n' \"$keyword\"",
             '    cat "$mufinder_scratch/$keyword.out"',
-            f"    printf '\\n{_HELP_END_MARKER} %s %s@@\\n' \"$keyword\" "
-            '"$(cat "$mufinder_scratch/$keyword.status")"',
+            '    query_status=$(cat "$mufinder_scratch/$keyword.status")',
+            f"    printf '\\n{_HELP_END_MARKER} %s %s@@\\n' \"$keyword\" \"$query_status\"",
+            # 124 is how `timeout` reports that it cut the query off.
+            '    if [ -n "$mufinder_guard" ] && [ "$query_status" = 124 ]; then',
+            "      mufinder_timeouts=$((mufinder_timeouts + 1))",
+            "    fi",
             "  done",
+            f'  if [ "$mufinder_timeouts" -ge {_QUERY_TIMEOUTS_TOLERATED} ]; then',
+            '    echo "mufinder: CASTEP stopped responding: $mufinder_timeouts queries were cut off after'
+            f' ${{MUFINDER_QUERY_TIMEOUT:-{_QUERY_TIMEOUT_SECONDS}}} s each" >&2',
+            '    rm -rf "$mufinder_scratch" ${mufinder_abandoned:+"$mufinder_abandoned"}',
+            f"    exit {_STOPPED_RESPONDING_EXIT_STATUS}",
+            "  fi",
             "done",
             'rm -rf "$mufinder_scratch" ${mufinder_abandoned:+"$mufinder_abandoned"}',
         ]
@@ -650,12 +694,13 @@ def _job_help_loop_script() -> str:
             '    unset "$name"',
             "  done",
             "fi",
-            'mufinder_castep() { "${MUFINDER_CASTEP[@]}" "$@"; }',
+            # $mufinder_guard is empty until the help loop sets the time limit.
+            'mufinder_castep() { $mufinder_guard "${MUFINDER_CASTEP[@]}" "$@"; }',
             'MUFINDER_CASTEP=("$@")',
             f"printf '{_VERSION_BEGIN_MARKER}\\n'",
             "mufinder_castep --version 2>&1 || true",
             f"printf '\\n{_VERSION_END_MARKER}\\n'",
-            _help_loop_command("mufinder_castep", record_timing=True),
+            _help_loop_command("mufinder_castep", record_timing=True, command_applies_guard=True),
             f"printf '{_DUMP_COMPLETE_MARKER}\\n'",
         ]
     )
@@ -682,10 +727,12 @@ def _job_strategy_lines(
     3. the launcher for every query, which mirrors how real jobs run and is the
        fallback that always applies.
 
-    The first two are attempted only when ``timeout`` exists, so that a binary
-    which hangs instead of failing cannot stall the job, and each is kept only
-    if its dump is complete and at least nine queries in ten succeeded.
-    Otherwise the next strategy overwrites the dump.
+    The first two are attempted only when ``timeout`` exists: it bounds the
+    probe, and inside the loop it bounds every query, so a binary that hangs
+    instead of failing costs a strategy a few minutes rather than the job its
+    walltime (see :func:`_query_guard_lines`). Each is kept only if its dump is
+    complete and at least nine queries in ten succeeded. Otherwise the next
+    strategy overwrites the dump.
 
     ``inside_launcher_step`` rules all of that out. ``addqueue`` does not run
     the job script as a batch script: it starts it with ``srun --mpi=pmix``, so
@@ -804,7 +851,12 @@ def _scheduler_runner_script(
                 ]
             )
         launcher_text = _keyword_castep_launcher(config)
-        launcher = tuple(shlex.split(launcher_text)) if launcher_text else ()
+        if is_slurm:
+            # With no template to read a launcher from, offer Slurm's own as
+            # the fallback for an MPI build that will not start bare.
+            launcher = ("srun", "-n", "1")
+        else:
+            launcher = tuple(shlex.split(launcher_text)) if launcher_text else ()
         executable = config.castep_executable.strip()
 
     lines.append(f"cd {shlex.quote(remote_directory)}")
