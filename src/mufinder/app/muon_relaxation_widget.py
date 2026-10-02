@@ -913,9 +913,12 @@ class MuonRelaxationWidget(QWidget):
             snapshot_keys=[k for k in snapshot_keys if k is not None],
             eligibility=self._row_supercell_is_editable,
             parent=self,
-            title="Apply supercell to selected rows?",
-            message="Apply this supercell choice to all selected editable relaxation rows?",
+            action="Set this supercell on",
         )
+        if not target_row_ids:
+            # Cancelled: put the combo back to the row's stored supercell.
+            self._refresh_row(row, table=table)
+            return
         for target_row_id in target_row_ids:
             self._row_supercells[target_row_id] = matrix
             self._row_parameter_values[target_row_id] = self._strip_implicit_row_defaults(
@@ -947,10 +950,10 @@ class MuonRelaxationWidget(QWidget):
                 snapshot_keys=[k for k in snapshot_keys if k is not None],
                 eligibility=lambda rid: True,
                 parent=self,
-                title="Configure selected rows?",
-                message="Open a shared parameter dialog for all selected relaxation rows?",
+                action="Configure parameters for",
             )
-            self._open_row_parameter_dialog(target_row_ids)
+            if target_row_ids:
+                self._open_row_parameter_dialog(target_row_ids)
         elif kind == "remove":
             target_row_ids = resolve_target_keys(
                 widget,
@@ -958,10 +961,10 @@ class MuonRelaxationWidget(QWidget):
                 snapshot_keys=[k for k in snapshot_keys if k is not None],
                 eligibility=lambda rid: True,
                 parent=self,
-                title="Remove selected rows?",
-                message="Remove all selected relaxation rows?",
+                action="Remove",
             )
-            self._remove_rows_by_id(target_row_ids)
+            if target_row_ids:
+                self._remove_rows_by_id(target_row_ids)
 
     def _row_supercell_is_editable(self, row_id: int) -> bool:
         location = self._row_location_for_id(row_id)

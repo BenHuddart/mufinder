@@ -751,8 +751,7 @@ class KPointConvergenceWidget(QWidget):
             snapshot_keys=[g for g in snapshot_keys if g is not None],
             eligibility=lambda g: True,
             parent=self,
-            title="Configure parameters for selected grids?",
-            message="Open a shared parameter dialog for all selected k-point grid rows?",
+            action="Configure parameters for",
         )
         if grids:
             self._open_grid_parameter_dialog(grids)
@@ -868,8 +867,7 @@ class KPointConvergenceWidget(QWidget):
             snapshot_keys=[g for g in snapshot_keys if g is not None],
             eligibility=lambda g: True,
             parent=self,
-            title="Remove selected grids?",
-            message="Remove all selected k-point grid rows?",
+            action="Remove",
         )
         rows = tuple(
             r

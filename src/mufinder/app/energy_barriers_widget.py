@@ -1177,19 +1177,19 @@ def _fill_source_table(
             configured=row.configured,
             locked=workflow_row_is_locked(row.status),
         )
-        configure_button.clicked.connect(
-            lambda _checked=False, key=row.key, btn=configure_button: configure_requested(
-                list(resolve_target_keys(
-                    btn,
-                    clicked_key=key,
-                    snapshot_keys=[key_by_row[r] for r in btn.selection_snapshot_rows if r in key_by_row],
-                    eligibility=lambda k: True,
-                    parent=table,
-                    title="Configure Energy Barriers",
-                    message=None,
-                ))
+        def _on_configure_clicked(_checked: bool = False, key=row.key, btn=configure_button) -> None:
+            keys = resolve_target_keys(
+                btn,
+                clicked_key=key,
+                snapshot_keys=[key_by_row[r] for r in btn.selection_snapshot_rows if r in key_by_row],
+                eligibility=lambda k: True,
+                parent=table,
+                action="Configure parameters for",
             )
-        )
+            if keys:
+                configure_requested(list(keys))
+
+        configure_button.clicked.connect(_on_configure_clicked)
         table.setCellWidget(row_index, 6, configure_button)
 
         view_button = QPushButton("View...", table)

@@ -87,6 +87,12 @@ The local CASTEP execution path must satisfy the following requirements:
 - Shared job dashboard controls must be exposed as per-row action buttons,
   rather than requiring a context menu.
 
+- A control embedded in a table row must act on the whole selection when its
+  row is part of a multi-row selection, after a prompt offering "all selected
+  rows", "this row only" and "cancel". A control on a row outside the
+  selection must first move the selection to that row and then act on it
+  alone. Controls that are inherently single-row must not prompt.
+
 - Local execution must run in background process management to avoid UI
    blocking.
 

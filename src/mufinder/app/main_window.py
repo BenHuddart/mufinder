@@ -4942,13 +4942,13 @@ class MainWindow(QMainWindow):
                 return self._can_retry_retrieval(job)
             return job.status in eligible_statuses[kind]
 
-        titles = {
-            "resubmit": "Resubmit jobs",
-            "retry_retrieval": "Retry retrieval",
-            "cancel": "Cancel jobs",
-            "inspect": "Inspect jobs",
-            "reset": "Reset jobs",
-            "dismiss": "Dismiss jobs",
+        actions = {
+            "resubmit": "Resubmit",
+            "retry_retrieval": "Retry retrieval for",
+            "cancel": "Cancel",
+            "inspect": "Inspect",
+            "reset": "Reset",
+            "dismiss": "Dismiss",
         }
 
         target_ids = resolve_target_keys(
@@ -4957,9 +4957,11 @@ class MainWindow(QMainWindow):
             snapshot_keys=snapshot_keys,
             eligibility=eligibility,
             parent=self,
-            title=titles[kind],
-            message=None,
+            action=actions[kind],
+            noun=("job", "jobs"),
         )
+        if not target_ids:
+            return
 
         handlers = {
             "resubmit": self._on_resubmit_from_dashboard,
