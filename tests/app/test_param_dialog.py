@@ -867,3 +867,29 @@ def test_parameter_dialog_validation_ignores_untouched_mixed_parameters(qapp, mo
 
     assert dialog.validate() == []
     assert "xc_functional" not in seen[0]
+
+
+def test_parameter_dialog_resetting_the_inactive_member_of_a_mixed_pair_keeps_it_mixed(qapp) -> None:
+    dialog = _mixed_dialog("basis_precision")
+    inactive = next(
+        name for name in ("basis_precision", "cut_off_energy") if dialog._in_inactive_exclusive_choice(name)
+    )
+
+    dialog._reset_parameter(inactive)
+
+    assert dialog.untouched_mixed_names() == {"basis_precision", "cut_off_energy"}
+    collected = dialog.collect_values()
+    assert "basis_precision" not in collected
+    assert "cut_off_energy" not in collected
+
+
+def test_parameter_dialog_resetting_the_active_member_of_a_mixed_pair_applies_it(qapp) -> None:
+    dialog = _mixed_dialog("basis_precision")
+    active = next(
+        name for name in ("basis_precision", "cut_off_energy") if not dialog._in_inactive_exclusive_choice(name)
+    )
+
+    dialog._reset_parameter(active)
+
+    assert dialog.untouched_mixed_names() == set()
+    assert active in dialog.collect_values()

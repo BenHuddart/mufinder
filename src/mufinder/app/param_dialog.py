@@ -768,8 +768,12 @@ class ParameterDialog(QDialog):
 
         self._values[name] = row.editor.value()
         # Resetting is a deliberate choice of the default for every row, even
-        # when the editor already showed it and so emitted no change.
-        self._mark_edited(name)
+        # when the editor already showed it and so emitted no change. The
+        # inactive member of an either/or pair is the exception: its value is
+        # not collected, so resetting it chooses nothing, and treating it as a
+        # choice would write the pair's active member to every row.
+        if not self._in_inactive_exclusive_choice(name):
+            self._mark_edited(name)
 
     def _build_exclusive_groups(self, visible_names: list[str]) -> None:
         editable_names = [name for name in visible_names if not self._is_locked_name(name)]
