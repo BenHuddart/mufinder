@@ -32,6 +32,9 @@ from mufinder.app.theme import status_brush, style_hint_text, style_section_subt
 from mufinder.app.uep_types import SupercellMatrix, UepConfig, UepRunState, UepSourceRow
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.workflow_parameters import (
+    merge_batch_advanced,
+    merge_batch_values,
+    mixed_parameter_names,
     kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     seed_xc_functional_default,
@@ -766,18 +769,25 @@ class UEPWidget(QWidget):
         for row_id in row_ids:
             names.update(self._row_added_advanced.get(row_id, set()))
         dialog.set_advanced_names(names)
+        effective_by_row = {row_id: self._effective_params_for_row(row_id) for row_id in row_ids}
+        dialog.set_mixed_names(mixed_parameter_names(effective_by_row.values()))
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         if read_only:
             return
+        # Parameters that differ between the rows and were left alone keep each
+        # row's own value; everything else follows the dialog.
         collected = self._sanitize_parameter_mapping(dialog.collect_values())
+        advanced = set(dialog.advanced_names())
+        untouched = dialog.untouched_mixed_names()
         for row_id in row_ids:
-            row_values = dict(self._effective_params_for_row(row_id))
-            row_values.update(collected)
+            row_values = merge_batch_values(collected, effective_by_row[row_id], untouched)
             row_values["write_formatted_density"] = True
             row_values["task"] = "SINGLEPOINT"
             self._row_parameter_values[row_id] = row_values
-            self._row_added_advanced.setdefault(row_id, set()).update(dialog.advanced_names())
+            self._row_added_advanced[row_id] = merge_batch_advanced(
+                advanced, self._row_added_advanced.get(row_id, set()), untouched
+            )
         self._emit_state()
 
     def _on_batch_configure_clicked(self) -> None:
@@ -812,18 +822,25 @@ class UEPWidget(QWidget):
         for row_id in row_ids:
             names.update(self._row_added_advanced.get(row_id, set()))
         dialog.set_advanced_names(names)
+        effective_by_row = {row_id: self._effective_params_for_row(row_id) for row_id in row_ids}
+        dialog.set_mixed_names(mixed_parameter_names(effective_by_row.values()))
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         if read_only:
             return
+        # Parameters that differ between the rows and were left alone keep each
+        # row's own value; everything else follows the dialog.
         collected = self._sanitize_parameter_mapping(dialog.collect_values())
+        advanced = set(dialog.advanced_names())
+        untouched = dialog.untouched_mixed_names()
         for row_id in row_ids:
-            row_values = dict(self._effective_params_for_row(row_id))
-            row_values.update(collected)
+            row_values = merge_batch_values(collected, effective_by_row[row_id], untouched)
             row_values["write_formatted_density"] = True
             row_values["task"] = "SINGLEPOINT"
             self._row_parameter_values[row_id] = row_values
-            self._row_added_advanced.setdefault(row_id, set()).update(dialog.advanced_names())
+            self._row_added_advanced[row_id] = merge_batch_advanced(
+                advanced, self._row_added_advanced.get(row_id, set()), untouched
+            )
         self._emit_state()
 
     def _common_params_for_rows(self, row_ids: tuple[int, ...]) -> dict[str, object]:

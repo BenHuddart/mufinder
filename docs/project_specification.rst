@@ -95,6 +95,11 @@ The local CASTEP execution path must satisfy the following requirements:
 - Every workflow job table must offer the same right-click row menu, in the same order,
   omitting only the actions that table does not have.
 
+- Editing the parameters of several rows in one dialog must not change a parameter the
+  user did not touch. Parameters whose values differ between the rows must be marked as
+  such, must keep each row's own value unless edited, and must apply to every row once
+  edited.
+
 - An action on a selection that mixes rows it applies to with rows it does not must act
   on the applicable rows and report how many it left out, before the action where the
   control can show it (menu entries, prompts) and afterwards otherwise (the status bar

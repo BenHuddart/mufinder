@@ -35,6 +35,9 @@ from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.workflow_parameters import (
+    merge_batch_advanced,
+    merge_batch_values,
+    mixed_parameter_names,
     kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     seed_xc_functional_default,
@@ -815,16 +818,25 @@ class KPointConvergenceWidget(QWidget):
         )
         dialog.set_values(self._common_parameter_values_for_grids(grids), preferred_exclusive=kpoint_hint)
         dialog.set_advanced_names(self._advanced_names_for_grids(grids))
+        effective_by_grid = {g: self._effective_params_for_grid(g) for g in grids}
+        dialog.set_mixed_names(mixed_parameter_names(effective_by_grid.values()))
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if read_only:
             return
 
+        # Parameters that differ between the grids and were left alone keep
+        # each grid's own value; everything else follows the dialog.
         values = self._sanitize_parameter_mapping(dialog.collect_values())
         advanced_names = set(dialog.advanced_names())
+        untouched = dialog.untouched_mixed_names()
         for grid in grids:
-            self._set_grid_parameter_values(grid, values, advanced_names)
+            self._set_grid_parameter_values(
+                grid,
+                merge_batch_values(values, effective_by_grid[grid], untouched),
+                merge_batch_advanced(advanced_names, self._added_advanced.get(grid, set()), untouched),
+            )
 
         self._refresh_all_rows()
         self._emit_state()

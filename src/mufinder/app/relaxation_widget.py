@@ -46,6 +46,9 @@ from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_adapter import suggested_grid_for_row
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.workflow_parameters import (
+    merge_batch_advanced,
+    merge_batch_values,
+    mixed_parameter_names,
     kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     seed_xc_functional_default,
@@ -1230,17 +1233,27 @@ class PristineRelaxationWidget(QWidget):
         )
         dialog.set_values(self._common_params_for_rows(row_ids), preferred_exclusive=kpoint_hint)
         dialog.set_advanced_names(self._advanced_names_for_rows(row_ids))
+        effective_by_row = {row_id: self._effective_params_for_row(row_id) for row_id in row_ids}
+        dialog.set_mixed_names(mixed_parameter_names(effective_by_row.values()))
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if read_only:
             return
 
+        # Parameters that differ between the rows and were left alone keep each
+        # row's own value; everything else follows the dialog.
         values = self._sanitize_parameter_mapping(dialog.collect_values())
         advanced = set(dialog.advanced_names())
+        untouched = dialog.untouched_mixed_names()
         for row_id in row_ids:
-            self._row_parameter_values[row_id] = self._strip_implicit_row_defaults(row_id, values)
-            self._row_added_advanced[row_id] = set(advanced)
+            self._row_parameter_values[row_id] = self._strip_implicit_row_defaults(
+                row_id,
+                merge_batch_values(values, effective_by_row[row_id], untouched),
+            )
+            self._row_added_advanced[row_id] = merge_batch_advanced(
+                advanced, self._row_added_advanced.get(row_id, set()), untouched
+            )
 
         self._refresh_all_rows()
         self._emit_state()

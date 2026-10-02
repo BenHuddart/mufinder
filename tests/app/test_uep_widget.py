@@ -721,3 +721,31 @@ def test_uep_row_menu_uses_the_shared_core(qapp, monkeypatch) -> None:
         "Configure...",
         "Remove",
     ]
+
+
+def test_uep_batch_configure_keeps_each_rows_own_differing_values(qapp, monkeypatch) -> None:
+    from PySide6.QtWidgets import QDialog
+
+    widget = UEPWidget()
+    widget._add_row()
+    widget._add_row()
+    first_id, second_id = widget._row_id_at(0), widget._row_id_at(1)
+    assert "max_scf_cycles" in widget._specs_by_name
+    for row_id, cycles in ((first_id, 80), (second_id, 120)):
+        widget._row_parameter_values[row_id] = {
+            **widget._effective_params_for_row(row_id),
+            "max_scf_cycles": cycles,
+        }
+    mixed: list[set[str]] = []
+
+    def _fake_exec(dialog) -> int:
+        mixed.append(dialog.untouched_mixed_names())
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(uep_widget_module.ParameterDialog, "exec", _fake_exec)
+
+    widget._configure_rows((first_id, second_id))
+
+    assert mixed == [{"max_scf_cycles"}]
+    assert widget._row_parameter_values[first_id]["max_scf_cycles"] == 80
+    assert widget._row_parameter_values[second_id]["max_scf_cycles"] == 120

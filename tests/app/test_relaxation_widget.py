@@ -1469,3 +1469,31 @@ def test_relaxation_row_menu_acts_on_the_eligible_rows_of_a_mixed_selection(
     # The fake menu's exec() already clicked the enabled reset entry.
     assert reset == [[failed]]
     assert cancelled == [[running]]
+
+
+def test_relaxation_batch_configure_keeps_each_rows_own_differing_values(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = PristineRelaxationWidget()
+    widget._add_row()
+    widget._add_row()
+    first_id, second_id = widget._row_id_at(0), widget._row_id_at(1)
+    assert "max_scf_cycles" in widget._specs_by_name
+    widget._row_parameter_values[first_id] = {"max_scf_cycles": 80}
+    widget._row_parameter_values[second_id] = {"max_scf_cycles": 120}
+    other_xc = "PBE" if widget._default_params.get("xc_functional") != "PBE" else "LDA"
+    mixed: list[set[str]] = []
+
+    def _fake_exec(dialog) -> int:
+        mixed.append(dialog.untouched_mixed_names())
+        dialog._rows["xc_functional"].editor.set_value(other_xc)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(relaxation_widget_module.ParameterDialog, "exec", _fake_exec)
+
+    widget._open_row_parameter_dialog((first_id, second_id))
+
+    assert mixed == [{"max_scf_cycles"}]
+    first, second = (widget._row_parameter_values[row_id] for row_id in (first_id, second_id))
+    assert (first["max_scf_cycles"], second["max_scf_cycles"]) == (80, 120)
+    assert first["xc_functional"] == second["xc_functional"] == other_xc

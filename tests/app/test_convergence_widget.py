@@ -1000,3 +1000,75 @@ def test_convergence_widget_context_menu_has_the_shared_order(
     assert enabled == {"Run Local", "Run on Cluster", "Configure...", "Remove"}
 
 
+
+
+def _two_cutoffs_with_different_scf_cycles() -> ConvergenceWidget:
+    widget = ConvergenceWidget()
+    widget._add_cutoff(300.0)
+    widget._add_cutoff(360.0)
+    for cutoff, cycles in ((300.0, 80), (360.0, 120)):
+        widget._set_cutoff_parameter_values(
+            cutoff, {**widget._default_params, "max_scf_cycles": cycles}, set()
+        )
+    return widget
+
+
+def _accept_after(monkeypatch: pytest.MonkeyPatch, edit) -> list[set[str]]:
+    """Make the parameter dialog apply ``edit`` and accept, recording its mixed names."""
+
+    mixed: list[set[str]] = []
+
+    def _fake_exec(dialog) -> int:
+        mixed.append(dialog.untouched_mixed_names())
+        edit(dialog)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", _fake_exec)
+    return mixed
+
+
+def test_convergence_batch_configure_keeps_differing_values_when_another_field_is_edited(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = _two_cutoffs_with_different_scf_cycles()
+    other_xc = "PBE" if widget._default_params["xc_functional"] != "PBE" else "LDA"
+    mixed = _accept_after(
+        monkeypatch,
+        lambda dialog: dialog._rows["xc_functional"].editor.set_value(other_xc),
+    )
+
+    widget._open_cutoff_parameter_dialog((300.0, 360.0))
+
+    assert mixed == [{"max_scf_cycles"}]
+    # The edited field went to both cutoffs; the mixed one was left on each.
+    assert widget._effective_params_for_cutoff(300.0)["xc_functional"] == other_xc
+    assert widget._effective_params_for_cutoff(360.0)["xc_functional"] == other_xc
+    assert widget._effective_params_for_cutoff(300.0)["max_scf_cycles"] == 80
+    assert widget._effective_params_for_cutoff(360.0)["max_scf_cycles"] == 120
+
+
+def test_convergence_batch_configure_writes_an_edited_mixed_value_to_every_cutoff(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = _two_cutoffs_with_different_scf_cycles()
+    _accept_after(
+        monkeypatch,
+        lambda dialog: dialog._rows["max_scf_cycles"].editor.set_value(150),
+    )
+
+    widget._open_cutoff_parameter_dialog((300.0, 360.0))
+
+    assert widget._effective_params_for_cutoff(300.0)["max_scf_cycles"] == 150
+    assert widget._effective_params_for_cutoff(360.0)["max_scf_cycles"] == 150
+
+
+def test_convergence_batch_configure_accepted_unchanged_changes_nothing(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = _two_cutoffs_with_different_scf_cycles()
+    before = {c: widget._effective_params_for_cutoff(c) for c in (300.0, 360.0)}
+    _accept_after(monkeypatch, lambda dialog: None)
+
+    widget._open_cutoff_parameter_dialog((300.0, 360.0))
+
+    assert {c: widget._effective_params_for_cutoff(c) for c in (300.0, 360.0)} == before

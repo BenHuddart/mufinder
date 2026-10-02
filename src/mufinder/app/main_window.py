@@ -210,6 +210,9 @@ from mufinder.app.workflow_dialogs import (
     QuantumCorrectionsConfigDialog,
 )
 from mufinder.app.workflow_parameters import (
+    merge_batch_advanced,
+    merge_batch_values,
+    mixed_parameter_names,
     build_workflow_parameter_surface,
     kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
@@ -5671,6 +5674,39 @@ class MainWindow(QMainWindow):
         if payload["parameter_values"] or payload["added_advanced"] or extras:
             return payload
         return None
+
+    def _batch_row_payload(
+        self,
+        definition,
+        key: str,
+        payload: dict[str, object] | None,
+        untouched_mixed: set[str],
+    ) -> dict[str, object] | None:
+        """Return the configuration to store for one row of a batch edit.
+
+        ``payload`` is what the dialog produced for every row. Parameters that
+        differed between the rows and were left alone are taken from the row's
+        own stored configuration instead: a row that set one explicitly keeps
+        it, and a row that did not keeps deriving it from its source defaults.
+        """
+
+        if not untouched_mixed:
+            return payload
+        row_params, row_advanced, _extras = self._workflow_row_configuration(definition, key)
+        merged = dict(payload or {})
+        collected = merged.get("parameter_values")
+        merged["parameter_values"] = merge_batch_values(
+            collected if isinstance(collected, dict) else {},
+            self._normalized_parameter_values(dict(row_params)) or {},
+            untouched_mixed,
+        )
+        merged["added_advanced"] = sorted(
+            merge_batch_advanced(merged.get("added_advanced", ()), row_advanced, untouched_mixed)
+        )
+        has_extras = any(name not in {"parameter_values", "added_advanced"} for name in merged)
+        if not (merged["parameter_values"] or merged["added_advanced"] or has_extras):
+            return None
+        return merged
 
     def _quantum_runtime_configuration(self, definition, key: str) -> tuple[dict[str, object], str]:
         params, _advanced, extras = self._quantum_row_configuration_with_source_defaults(definition, key)
@@ -14685,6 +14721,7 @@ class MainWindow(QMainWindow):
             dialog.setWindowTitle("Configure Quantum Corrections Parameters")
         dialog.set_values(common_values, preferred_exclusive=kpoint_exclusive_hint(values_by_key))
         dialog.set_advanced_names(tuple(sorted(advanced_names)))
+        dialog.set_mixed_names(mixed_parameter_names(values_by_key))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if read_only:
@@ -14701,8 +14738,13 @@ class MainWindow(QMainWindow):
         definition = self._ensure_quantum_corrections_definition(key_list)
         if definition is None:
             return
+        untouched = dialog.untouched_mixed_names()
         for key in key_list:
-            self._store_workflow_row_configuration(definition, key, dialog_payload)
+            self._store_workflow_row_configuration(
+                definition,
+                key,
+                self._batch_row_payload(definition, key, dialog_payload, untouched),
+            )
         self._refresh_quantum_corrections_view()
         self._persist_document_ui_state(
             failure_message="Quantum Corrections configuration was updated, but autosave failed."
@@ -14793,6 +14835,7 @@ class MainWindow(QMainWindow):
         )
         dialog.set_values(common_values, preferred_exclusive=kpoint_exclusive_hint(values_by_key))
         dialog.set_advanced_names(tuple(sorted(advanced_names)))
+        dialog.set_mixed_names(mixed_parameter_names(values_by_key))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if read_only:
@@ -14805,8 +14848,13 @@ class MainWindow(QMainWindow):
         definition = self._ensure_energy_barrier_neb_definition([candidate.key for candidate in candidates])
         if definition is None:
             return
+        untouched = dialog.untouched_mixed_names()
         for candidate in candidates:
-            self._store_workflow_row_configuration(definition, candidate.key, row_payload)
+            self._store_workflow_row_configuration(
+                definition,
+                candidate.key,
+                self._batch_row_payload(definition, candidate.key, row_payload, untouched),
+            )
         self._refresh_energy_barriers_view()
         self._persist_document_ui_state(
             failure_message="Energy Barriers NEB configuration was updated, but autosave failed."
