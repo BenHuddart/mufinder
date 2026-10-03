@@ -134,7 +134,42 @@ def _stop_qt_threads(app: QApplication) -> None:
             continue
 
 
-def _cleanup_qt_application(app: QApplication, *, quit_app: bool = False) -> None:
+# The test module whose objects are currently frozen out of garbage collection (see
+# ``_collect_garbage``); ``None`` means nothing is frozen.
+_gc_frozen_module: object = None
+
+
+def _collect_garbage(module: object = None) -> None:
+    """Collect reference cycles left by a test, scanning only what is new since the last test.
+
+    A full ``gc.collect()`` walks every tracked object: around 200k once Qt, VTK, SciPy and
+    matplotlib are imported, and more as the session grows. Paid after each of ~4000 tests,
+    that was close to half of the suite's run time. Instead, the survivors of each collection
+    are frozen into the permanent generation, so the next collection only examines objects
+    allocated since, which is what the test that just ran created.
+
+    A frozen object is never collected, so a cycle that outlives one test and becomes garbage
+    in a later one would be missed. Passing the test's module bounds that: the first teardown
+    in each new module (and any call without a module) unfreezes everything and does a full
+    collection.
+    """
+
+    global _gc_frozen_module
+    if module is None or module != _gc_frozen_module:
+        gc.unfreeze()
+        _gc_frozen_module = None
+    gc.collect()
+    if module is not None:
+        gc.freeze()
+        _gc_frozen_module = module
+
+
+def _cleanup_qt_application(
+    app: QApplication,
+    *,
+    quit_app: bool = False,
+    gc_module: object = None,
+) -> None:
     """Close, delete, and flush leaked widgets from the shared QApplication."""
 
     cleanup_theme_runtime(app)
@@ -150,7 +185,7 @@ def _cleanup_qt_application(app: QApplication, *, quit_app: bool = False) -> Non
         except (RuntimeError, SystemError):
             continue
     _drain_qt_deferred_deletes(app)
-    gc.collect()
+    _collect_garbage(gc_module)
     if quit_app:
         app.quit()
         app.processEvents()
@@ -171,7 +206,7 @@ def qapp() -> Generator[QApplication, None, None]:
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_qt_state_per_test() -> Iterator[None]:
+def _cleanup_qt_state_per_test(request: pytest.FixtureRequest) -> Iterator[None]:
     """Ensure Qt widgets and filters from one test do not leak into the next."""
 
     yield
@@ -180,7 +215,7 @@ def _cleanup_qt_state_per_test() -> Iterator[None]:
     if app is None:
         return
 
-    _cleanup_qt_application(app)
+    _cleanup_qt_application(app, gc_module=request.node.path)
 
 
 @pytest.fixture(autouse=True)

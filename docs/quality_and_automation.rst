@@ -55,6 +55,31 @@ The hook records pytest's final exit status, flushes stdout/stderr, and exits
 the process deterministically so CI and local runs report stable outcomes
 without post-run crashes.
 
+Test-suite performance
+----------------------
+
+CI runs on 2-vCPU runners, so the suite's total CPU time sets the length of
+every CI run. Keep these in place when changing the test setup:
+
+- **Incremental garbage collection between tests.** The autouse per-test Qt
+  cleanup in ``tests/conftest.py`` runs ``gc.collect()`` after each test so
+  leaked widgets are destroyed before the next one starts. A full collection
+  walks every tracked object (around 200k once Qt, VTK, SciPy and matplotlib
+  are imported), and paying that after every test was close to half of the
+  suite's run time. ``_collect_garbage`` therefore freezes each collection's
+  survivors with ``gc.freeze()``, so the next collection only scans what the
+  next test allocated. The first teardown in each new test module unfreezes
+  everything and does a full collection, so a reference cycle that outlives one
+  test is still reclaimed.
+- **``sys.monitoring`` coverage.** ``[tool.coverage.run]`` sets
+  ``core = "sysmon"``, which measures line coverage with much less overhead
+  than the default C tracer on Python 3.12+. Enabling branch coverage would
+  silently fall back to the slower tracer on Python 3.12 and 3.13.
+- **Slow-test report.** CI passes ``--durations=25``, so the slowest test
+  phases are listed at the end of every CI log. Check that list when CI time
+  creeps up; locally, ``python -m pytest -n 4 --no-cov --durations=25`` gives
+  the same report.
+
 GUI-responsiveness trace logging
 ---------------------------------
 
