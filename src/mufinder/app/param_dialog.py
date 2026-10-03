@@ -57,6 +57,9 @@ class _DialogRow:
     radio: QRadioButton | None
     locked: bool
     advanced: bool
+    # The widgets the search filter shows or hides. A remove button the row
+    # cannot use is left out so it stays hidden.
+    cells: tuple[QWidget, ...] = ()
 
 
 class _AdvancedSelectionDialog(QDialog):
@@ -245,7 +248,9 @@ class ParameterDialog(QDialog):
         search_row.addWidget(QLabel("Search"))
         self._search_input = QLineEdit(self)
         self._search_input.setPlaceholderText("Filter by name, alias, description, or category")
-        self._search_input.textChanged.connect(lambda *_: self._rebuild_rows())
+        # The search only hides rows; every parameter stays in the dialog's
+        # state, so hidden values are still collected and validated.
+        self._search_input.textChanged.connect(lambda *_: self._apply_search_filter())
         search_row.addWidget(self._search_input, 1)
         root.addLayout(search_row)
 
@@ -380,8 +385,8 @@ class ParameterDialog(QDialog):
     def collect_values(self) -> dict[str, Any]:
         """Collect structured values for currently active rows.
 
-        A mixed parameter the user did not touch is left out (see
-        :meth:`set_mixed_names`).
+        Rows hidden by the search filter are still collected. A mixed parameter
+        the user did not touch is left out (see :meth:`set_mixed_names`).
         """
 
         values: dict[str, Any] = {"task": self._task}
@@ -499,6 +504,12 @@ class ParameterDialog(QDialog):
         return blocked
 
     def _visible_names(self) -> list[str]:
+        """Return the parameters the dialog holds a row for, in display order.
+
+        Independent of the search filter, which only hides rows (see
+        :meth:`_displayed_names`).
+        """
+
         names: list[str] = []
         for name in self._specs_by_name:
             if name in self._blocked_names:
@@ -537,12 +548,24 @@ class ParameterDialog(QDialog):
                 continue
             names.append(name)
 
-        query = self._search_input.text().strip().lower()
-        if query:
-            names = [name for name in names if self._matches_search(self._specs_by_name[name], query)]
-
         names.sort(key=lambda item: self._order.get(item, 10_000))
         return names
+
+    def _row_matches_search(self, name: str) -> bool:
+        query = self._search_input.text().strip().lower()
+        return not query or self._matches_search(self._specs_by_name[name], query)
+
+    def _displayed_names(self) -> list[str]:
+        """Return the rows currently shown, i.e. those matching the search."""
+
+        return [name for name in self._rows if self._row_matches_search(name)]
+
+    def _apply_search_filter(self) -> None:
+        # Hidden grid rows collapse to no height, so filtered rows leave no gap.
+        for name, row in self._rows.items():
+            shown = self._row_matches_search(name)
+            for widget in row.cells:
+                widget.setVisible(shown)
 
     def _group_key_for_name(self, name: str) -> tuple[str, ...] | None:
         for group_key, names in self._exclusive_groups.items():
@@ -729,9 +752,11 @@ class ParameterDialog(QDialog):
                 radio=radio,
                 locked=locked,
                 advanced=self._is_advanced_name(name),
+                cells=(label_widget, value_widget, reset_button, info_button, *((remove_button,) if can_remove else ())),
             )
 
         self._table_layout.setRowStretch(len(visible_names) + 1, 1)
+        self._apply_search_filter()
         self._refresh_add_button_state()
 
     def _show_help(self, spec: KeywordSpec) -> None:

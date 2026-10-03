@@ -371,7 +371,64 @@ def test_parameter_dialog_search_filters_by_description_and_aliases(qapp) -> Non
     dialog._on_task_changed()
     dialog._search_input.setText("geometry optimizer")
 
-    assert set(dialog._rows) == {"geom_method"}
+    assert dialog._displayed_names() == ["geom_method"]
+    # Filtered rows are hidden, not dropped from the dialog.
+    assert {"geom_method", "xc_functional", "basis_precision"} <= set(dialog._rows)
+    assert dialog._rows["xc_functional"].editor.isHidden()  # type: ignore[union-attr]
+    assert not dialog._rows["geom_method"].editor.isHidden()  # type: ignore[union-attr]
+
+    dialog._search_input.setText("")
+
+    assert dialog._displayed_names() == list(dialog._rows)
+    assert not dialog._rows["xc_functional"].editor.isHidden()  # type: ignore[union-attr]
+
+
+def test_parameter_dialog_search_keeps_hidden_values_and_validation(qapp, monkeypatch) -> None:
+    # Regression: pressing OK with a search active used to collect only the
+    # rows on screen, so the caller stored a configuration missing every
+    # hidden parameter.
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        param_dialog_module,
+        "validate_gui_values",
+        lambda values, _specs, task: seen.append(dict(values)) or ["checked"],
+    )
+    dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint")
+    dialog.set_values({"xc_functional": "LDA"})
+    collected = dialog.collect_values()
+    errors = dialog.validate()
+
+    dialog._search_input.setText("zzzz-no-match")
+
+    assert dialog._displayed_names() == []
+    assert dialog.collect_values() == collected
+    assert collected["xc_functional"] == "LDA"
+    assert dialog.validate() == errors
+    assert seen[-1] == seen[0] == collected
+
+
+def test_parameter_dialog_search_matching_one_exclusive_member_keeps_the_group(qapp) -> None:
+    dialog = ParameterDialog(specs=_dialog_specs(), workflow_stage="convergence_kpoint")
+    dialog.set_advanced_names({"basis_precision", "cut_off_energy"})
+    dialog.set_values({"cut_off_energy": ValueWithUnit(420.0, "eV")})
+    dialog._rows["basis_precision"].radio.setChecked(True)  # type: ignore[union-attr]
+    groups = dict(dialog._exclusive_groups)
+    collected = dialog.collect_values()
+    assert collected["basis_precision"] == "FINE"
+    assert "cut_off_energy" not in collected
+
+    dialog._search_input.setText("cut_off")
+
+    assert dialog._displayed_names() == ["cut_off_energy"]
+    assert dialog._exclusive_groups == groups
+    assert dialog._in_inactive_exclusive_choice("cut_off_energy")
+    assert not dialog._rows["cut_off_energy"].radio.isChecked()  # type: ignore[union-attr]
+    assert dialog.collect_values() == collected
+
+    dialog._search_input.setText("")
+
+    assert dialog._rows["basis_precision"].radio.isChecked()  # type: ignore[union-attr]
+    assert dialog.collect_values() == collected
 
 
 def test_parameter_dialog_updates_task_visibility_and_prunes_incompatible_values(qapp) -> None:
