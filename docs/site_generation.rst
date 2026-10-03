@@ -194,6 +194,9 @@ charge from the row's charge-state tab.  Project-default cutoff and k-point
 settings are inherited unless a row has an explicit compatible override.
 Supercell rows automatically receive an equivalent-density
 ``KPOINT_MP_GRID`` suggestion when a project default grid is available.
+Muonium is open-shell, so muonium rows run spin-polarised by default and their
+dialog opens with ``Spin Polarized`` ticked; unticking it turns spin
+polarisation off for that row. Positive-muon rows default to unticked.
 
 Input files are materialized on submission, not when rows are first staged.
 The generated seed name is the charge prefix plus a filesystem-safe version of

@@ -1050,3 +1050,88 @@ def test_muon_relaxation_shared_controls_follow_the_table_on_show(qapp) -> None:
     assert widget._selection_count_label.text() == ""
     assert widget._run_local_button.text() == "Run All Locally"
     assert not widget._remove_selected_button.isEnabled()
+
+
+def _expanded_spin_polarized(widget: MuonRelaxationWidget) -> object:
+    from mufinder.app.relaxation_adapter import expand_muon_relaxation_jobs
+    from mufinder.domain.models import Structure
+
+    config = widget._build_config_or_warn()
+    assert config is not None
+    expansion = expand_muon_relaxation_jobs(
+        host_structure=Structure(
+            label="Si",
+            lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+            species=["Si", "Si"],
+            fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        ),
+        config=config,
+        project_cutoff_energy=600.0,
+        project_kpoint_grid=(4, 4, 4),
+        project_kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+    )
+    (job,) = expansion.jobs
+    return {keyword.name: keyword.value for keyword in job.param_file.keywords}.get("spin_polarized")
+
+
+def _staged_muonium_row(widget: MuonRelaxationWidget) -> int:
+    widget.add_staged_sites(
+        [{"id": str(uuid4()), "label": "Mu Site", "fractional_position": [0.1, 0.2, 0.3]}],
+        charge_states=(MUONIUM_CHARGE_STATE,),
+    )
+    row_id = widget._row_id_at(0, table=widget._tables_by_charge_state[MUONIUM_CHARGE_STATE])
+    assert row_id is not None
+    return row_id
+
+
+def _save_dialog(monkeypatch, widget: MuonRelaxationWidget, row_id: int, *, spin_polarized: bool | None = None) -> bool:
+    """Accept the real dialog, optionally setting Spin Polarized; return what it first showed."""
+
+    shown: list[bool] = []
+
+    def _accept(dialog: ParameterDialog) -> QDialog.DialogCode:
+        editor = dialog._rows["spin_polarized"].editor
+        shown.append(editor.value())
+        if spin_polarized is not None:
+            editor.set_value(spin_polarized)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(muon_relaxation_widget_module.ParameterDialog, "exec", _accept)
+    widget._open_row_parameter_dialog((row_id,))
+    return shown[0]
+
+
+def test_muonium_row_dialog_shows_spin_polarised_and_saving_it_unchanged_keeps_it(
+    qapp, monkeypatch
+) -> None:
+    widget = MuonRelaxationWidget()
+    row_id = _staged_muonium_row(widget)
+    assert _expanded_spin_polarized(widget) is True
+
+    assert _save_dialog(monkeypatch, widget, row_id) is True
+    assert _expanded_spin_polarized(widget) is True
+
+
+def test_muonium_row_spin_polarisation_can_be_turned_off_in_the_dialog(qapp, monkeypatch) -> None:
+    widget = MuonRelaxationWidget()
+    row_id = _staged_muonium_row(widget)
+
+    _save_dialog(monkeypatch, widget, row_id, spin_polarized=False)
+
+    assert widget._row_parameter_values[row_id]["spin_polarized"] is False
+    assert _expanded_spin_polarized(widget) is False
+    # ...and the dialog reopens showing the user's choice.
+    assert _save_dialog(monkeypatch, widget, row_id) is False
+
+
+def test_muonium_row_keeps_an_explicit_spin_polarized_through_normalisation(qapp) -> None:
+    # A row saved before the dialog showed muonium as spin-polarised may hold an
+    # explicit True; stripping it would change the row signature and drop a
+    # completed run back to "ready".
+    widget = MuonRelaxationWidget()
+    row_id = _staged_muonium_row(widget)
+    widget._row_parameter_values[row_id] = {"spin_polarized": True}
+
+    widget._normalize_all_row_parameter_values()
+
+    assert widget._row_parameter_values[row_id] == {"spin_polarized": True}
