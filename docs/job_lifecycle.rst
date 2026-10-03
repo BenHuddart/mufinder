@@ -57,6 +57,18 @@ the remote inputs and outputs only: the scheduler submit script is regenerated
 on every submission, so an updated walltime, core count, or memory request
 takes effect on resubmission.
 
+Dashboard rows are listed in the order their jobs were created, and that order
+survives closing and reopening the project. Each job records ``created_at``
+when it is added to the project; unlike ``submitted_at`` it never changes, so
+resubmitting, resetting, or continuing a job does not move its row. Loading a
+project sorts jobs by ``(created_at, id)``; the job files themselves are named
+by random UUID, so their on-disk order means nothing. Jobs created in quick
+succession get strictly increasing timestamps (``next_job_created_at``), so a
+batch keeps its order even on a coarse system clock. Jobs saved before the
+field existed get it backfilled on load, from their first appearance in the
+provenance log (keeping a batch's submission order) or else their earliest
+lifecycle timestamp, and the next save persists it.
+
 Pressing Delete or Backspace with dashboard rows selected applies the action
 that fits each job's state: running jobs are cancelled, failed, stopped and
 cancelled jobs are reset, and any other job has its records deleted. One

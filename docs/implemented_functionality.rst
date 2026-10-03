@@ -1039,6 +1039,8 @@ Submission entry points include:
   singlepoint with no phonon job.
 - Delete/Backspace keyboard removal for the current cutoff row or a selected set of rows.
 - Per-row action buttons in the shared job dashboard table after a job has entered the queue/submission lifecycle.
+- Job dashboard rows listed in job creation order, which is kept when the project is
+  closed and reopened.
 - Failed/cancelled-job resubmit, failed/stopped cluster-job retry-retrieval,
   failed-job inspection, reset, and terminal-job dismiss actions in the shared
   job dashboard.
