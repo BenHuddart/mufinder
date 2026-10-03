@@ -85,6 +85,11 @@ The local CASTEP execution path must satisfy the following requirements:
    removing the current row or selected rows via Delete and Backspace,
    not just via pointer-driven controls.
 
+- Shared job dashboard rows must appear in the order their jobs were created,
+  and that order must be the same after the project is closed and reopened.
+  Changing a job's state, including resubmitting or resetting it, must not move
+  its row.
+
 - Shared job dashboard controls must be exposed as per-row action buttons,
   rather than requiring a context menu. A context menu may offer the same actions
   for the selection in addition.

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -117,6 +118,9 @@ class Job:
     calc_type: str = ""
     status: JobStatus = JobStatus.DEFINED
     execution_target: str = "local"
+    # When the job was added to the project. Unlike ``submitted_at`` it never
+    # changes, so it defines the job's stable position in the dashboard.
+    created_at: datetime = field(default_factory=utc_now)
     submitted_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -129,6 +133,22 @@ class Job:
     last_status_source: str | None = None
     last_status_message: str | None = None
     dismissed_at: datetime | None = None
+
+
+def next_job_created_at(existing_jobs: Iterable[Job]) -> datetime:
+    """Return a creation timestamp later than every job in ``existing_jobs``.
+
+    Jobs created in a tight loop (a batch submission) can read the same clock
+    value, especially on Windows where the system clock is coarse. Bumping past
+    the latest existing timestamp keeps creation order strictly increasing, so
+    sorting by ``created_at`` reproduces it exactly after a reload.
+    """
+
+    now = utc_now()
+    latest = max((job.created_at for job in existing_jobs), default=None)
+    if latest is not None and now <= latest:
+        return latest + timedelta(microseconds=1)
+    return now
 
 
 @dataclass(slots=True)

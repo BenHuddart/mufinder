@@ -125,6 +125,19 @@ Compatibility ledger
        in existing projects, so it requires a schema-version bump with a
        migration entry and an update to the persistence codec, the dashboard
        visibility filter, and the workflow-row projection.
+   * - ``created_at`` job field
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - Persisted creation timestamp that fixes a job's position in the
+       dashboard across reloads (``load_project`` sorts jobs by
+       ``(created_at, id)``). Job files written before the field existed are
+       backfilled on load by ``ProjectService._legacy_job_created_at``: the
+       job's first provenance mention (plus its position within a batch
+       record), else its earliest lifecycle timestamp, else the load time so
+       it sorts last. Backfilled jobs are left out of the dirty-tracking cache
+       so the next save persists the value.
+     - The field is current job data, not deprecated. The backfill is the
+       shim: keep it until the next saved-project schema version bump, whose
+       migration can stamp ``created_at`` on every job file that lacks it.
    * - ``castep/keywords_json_path`` setting pointing outside the
        application-data directory
      - ``mufinder.castep_setup`` / application settings (``QSettings``)

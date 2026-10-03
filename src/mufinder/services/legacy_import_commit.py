@@ -70,6 +70,7 @@ from mufinder.domain.models import (
     ProvenanceRecord,
     Result,
     Structure,
+    next_job_created_at,
     utc_now,
 )
 from mufinder.science.site_generation import lattice_frac_to_cart
@@ -621,6 +622,7 @@ def commit_legacy_import(
             calc_type=muon_relaxation_calc_type(charge_state),
             status=JobStatus.COMPLETED,
             execution_target="local",
+            created_at=next_job_created_at(document.jobs.values()),
             tags=[
                 WorkflowStage.MUON_RELAXATION.value,
                 muon_relaxation_calc_type(charge_state),

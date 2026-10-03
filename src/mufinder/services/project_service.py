@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import logging
 from pathlib import Path
@@ -25,6 +25,7 @@ from mufinder.domain.models import (
     ProvenanceRecord,
     Result,
     Structure,
+    next_job_created_at,
     utc_now,
 )
 from mufinder.persistence.codec import parse_datetime, parse_uuid, to_jsonable
@@ -53,6 +54,11 @@ _IDENTITY_SUPERCELL_MATRIX = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
 _GENERATED_SITE_STATUS = "generated"
 _LEGACY_GENERATED_SITE_STATUSES = {_GENERATED_SITE_STATUS, "candidate"}
 _STAGEABLE_SITE_STATUSES = {*_LEGACY_GENERATED_SITE_STATUSES, "staged"}
+
+
+def _as_aware_utc(stamp: datetime) -> datetime:
+    """Treat a naive timestamp as UTC so it can be compared with aware ones."""
+    return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=UTC)
 
 
 def _normalized_xc_functional(value: object) -> str | None:
@@ -299,8 +305,15 @@ class ProjectService:
             entity.id: entity
             for entity in (self._comparison_table_from_dict(p) for p in store.load_entities("comparison_tables"))
         }
-        jobs = {entity.id: entity for entity in (self._job_from_dict(p) for p in store.load_entities("jobs"))}
         provenance = [self._provenance_from_dict(p) for p in store.load_provenance()]
+        job_payloads = store.load_entities("jobs")
+        jobs = self._jobs_in_creation_order(job_payloads, provenance)
+        # Jobs saved before ``created_at`` existed carry a backfilled value that
+        # is not on disk yet; leaving them out of the cache makes the next save
+        # write it, so later loads use the persisted value.
+        backfilled_job_keys = {
+            ("jobs", payload["id"]) for payload in job_payloads if payload.get("created_at") is None
+        }
         ui_state = store.read_json(store.state_path) if store.state_path.exists() else {}
 
         document = ProjectDocument(
@@ -329,6 +342,8 @@ class ProjectService:
         root_key = self._resolved_root(project_root)
         for entity_type, entities in self._entity_groups(document):
             for entity_id, entity in entities:
+                if (entity_type, entity_id) in backfilled_job_keys:
+                    continue
                 self._content_hashes[(root_key, entity_type, entity_id)] = self._payload_hash(
                     to_jsonable(entity)
                 )
@@ -1477,6 +1492,7 @@ class ProjectService:
             calc_type=calc_type,
             status=JobStatus.DEFINED,
             execution_target=execution_target,
+            created_at=next_job_created_at(document.jobs.values()),
             tags=[workflow_stage.value, calc_type],
         )
         document.jobs[job.id] = job
@@ -3350,6 +3366,77 @@ class ProjectService:
             created_at=parse_datetime(payload.get("created_at")) or utc_now(),
         )
 
+    def _jobs_in_creation_order(
+        self,
+        payloads: list[dict[str, Any]],
+        provenance: Sequence[ProvenanceRecord],
+    ) -> dict[UUID, Job]:
+        """Build the ``jobs`` mapping from job payloads, ordered by creation.
+
+        Job files are read back sorted by filename, which is the job's random
+        UUID, so the on-disk order carries no meaning. Sorting by
+        ``(created_at, id)`` restores the order the jobs were created in, which
+        is the order the dashboard shows them in during a session.
+
+        Payloads saved before ``created_at`` existed get it backfilled by
+        :meth:`_legacy_job_created_at`; the next save persists the value.
+        """
+
+        jobs = [self._job_from_dict(payload) for payload in payloads]
+        legacy_ids = {job.id for job, payload in zip(jobs, payloads) if payload.get("created_at") is None}
+        if legacy_ids:
+            first_mentioned = self._job_first_mentions(legacy_ids, provenance)
+            for job in jobs:
+                if job.id in legacy_ids:
+                    job.created_at = self._legacy_job_created_at(job, first_mentioned.get(job.id))
+        jobs.sort(key=lambda job: (job.created_at, str(job.id)))
+        return {job.id: job for job in jobs}
+
+    @staticmethod
+    def _job_first_mentions(
+        job_ids: set[UUID],
+        provenance: Sequence[ProvenanceRecord],
+    ) -> dict[UUID, datetime]:
+        """Return when each job in ``job_ids`` first appears in provenance.
+
+        The provenance log is append-only, so its records are chronological.
+        A batch ``submit_jobs`` record lists its jobs in submission order under
+        one timestamp; each job's position in that list is added as
+        microseconds so the batch keeps its order instead of tying.
+        """
+
+        first_mentioned: dict[UUID, datetime] = {}
+        for record in provenance:
+            mentioned = [*record.output_entity_ids, *record.input_entity_ids]
+            if record.job_id is not None:
+                mentioned.append(record.job_id)
+            for position, entity_id in enumerate(mentioned):
+                if entity_id in job_ids and entity_id not in first_mentioned:
+                    first_mentioned[entity_id] = _as_aware_utc(record.timestamp) + timedelta(
+                        microseconds=position
+                    )
+        return first_mentioned
+
+    @staticmethod
+    def _legacy_job_created_at(job: Job, first_mentioned: datetime | None) -> datetime:
+        """Estimate ``created_at`` for a job saved before the field existed.
+
+        Prefers the job's first provenance mention, then its earliest lifecycle
+        timestamp. A job with neither (never submitted, no provenance) sorts
+        after every dated job; ties fall back to the job id, which is stable.
+        """
+
+        if first_mentioned is not None:
+            return first_mentioned
+        lifecycle = [
+            _as_aware_utc(stamp)
+            for stamp in (job.submitted_at, job.started_at, job.completed_at, job.dismissed_at)
+            if stamp is not None
+        ]
+        if lifecycle:
+            return min(lifecycle)
+        return job.created_at
+
     def _job_from_dict(self, payload: dict[str, Any]) -> Job:
         raw_num_processes = payload.get("num_processes")
         num_processes = None
@@ -3367,6 +3454,7 @@ class ProjectService:
             calc_type=payload.get("calc_type", ""),
             status=JobStatus(payload["status"]),
             execution_target=payload.get("execution_target", "local"),
+            created_at=_as_aware_utc(parse_datetime(payload.get("created_at")) or utc_now()),
             submitted_at=parse_datetime(payload.get("submitted_at")),
             started_at=parse_datetime(payload.get("started_at")),
             completed_at=parse_datetime(payload.get("completed_at")),
