@@ -101,7 +101,7 @@ class MuonSite:
     source_generation_batch_id: UUID | None = None
     source_structure_id: UUID | None = None
     relaxation_run_id: UUID | None = None
-    relative_energy_eV: float | None = None
+    total_energy_eV: float | None = None
     host_displacement_max: float | None = None
     cluster_id: UUID | None = None
     symmetry_label: str | None = None

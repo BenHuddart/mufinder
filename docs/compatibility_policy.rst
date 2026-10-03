@@ -62,6 +62,16 @@ Compatibility ledger
        configured is reinterpreted.
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that drops task-only rows from ``convergence_form``.
+   * - ``relative_energy_eV`` muon-site key
+     - ``ProjectService._site_total_energy_from_payload``
+     - ``MuonSite`` stored the source relaxation's absolute final total energy
+       under the misleading name ``relative_energy_eV``. The field is now
+       ``total_energy_eV`` and new saves write only that key; a project saved
+       before the rename is read through the old key, which holds the same
+       value. Relative energies are computed for display and never stored on
+       the site.
+     - Read-side repair. Keep until a saved-project schema version bump
+       includes a migration that renames the key in stored sites.
    * - ``recommended_cutoff_*`` project fields
      - ``Project`` / project manifest
      - Persisted project defaults used by current cutoff, k-point, relaxation,

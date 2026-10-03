@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import numpy as np
+import pytest
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QDockWidget, QFrame, QHeaderView, QLabel, QMessageBox, QTabWidget, QToolButton, QTreeWidgetItem
 
@@ -666,7 +667,7 @@ def test_main_window_materializes_quantum_singlepoint_jobs_from_relaxed_sources(
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
-    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
     source_dir = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / source_job.label
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -749,7 +750,7 @@ def test_main_window_materializes_quantum_phonon_continuation_after_singlepoint(
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
-    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
     source_dir = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / source_job.label
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -840,7 +841,7 @@ def test_main_window_applies_quantum_row_configuration_to_materialized_job(qapp,
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
-    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
     source_dir = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / source_job.label
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -989,7 +990,7 @@ def test_main_window_quantum_corrections_uses_numeric_suffixes_for_duplicate_sit
         run.result_id = result.id
         doc.runs[run.id] = run
         doc.results[result.id] = result
-        site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0 - index)
+        site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0 - index)
         doc.sites[site.id] = site
 
         source_dir = doc.project_root / "files" / WorkflowStage.MUON_RELAXATION.value / source_job.label
@@ -1069,7 +1070,7 @@ def test_main_window_materialize_quantum_corrections_repairs_stale_suffixed_job_
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
-    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
 
     definition = window._ensure_quantum_corrections_definition([str(site.id)])
@@ -1127,7 +1128,7 @@ def test_main_window_quantum_corrections_allows_editing_eligible_site_name(qapp,
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
-    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
 
     window._refresh_quantum_corrections_view()
@@ -1215,8 +1216,8 @@ def test_main_window_applies_energy_barrier_row_configuration_and_opens_path_pre
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1342,8 +1343,8 @@ def test_main_window_energy_barrier_paths_persist_when_endpoint_selection_change
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1455,8 +1456,8 @@ def test_main_window_energy_barrier_defaults_apply_equivalent_density_kpoints_fo
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1545,8 +1546,8 @@ def test_main_window_energy_barriers_view_loads_with_existing_state(qapp, tmp_pa
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1652,8 +1653,8 @@ def test_main_window_energy_barrier_strips_legacy_tss_params_from_stored_config(
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1781,8 +1782,8 @@ def test_main_window_neb_inherits_kpoints_from_reactant_relaxation_cell_file(qap
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -1865,7 +1866,7 @@ def test_main_window_generates_same_site_energy_barrier_paths(qapp, tmp_path: Pa
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
-    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
 
     window._on_generate_energy_barrier_paths(str(site.id), str(site.id), "")
@@ -1949,8 +1950,8 @@ def test_main_window_generates_energy_barrier_paths_with_user_max_length(qapp, t
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -2032,8 +2033,8 @@ def test_main_window_removes_energy_barrier_generated_path(qapp, tmp_path: Path)
     doc.runs[run_b.id] = run_b
     doc.results[result_a.id] = result_a
     doc.results[result_b.id] = result_b
-    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, relative_energy_eV=-1.0)
-    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, relative_energy_eV=-0.9)
+    site_a = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run_a.id, total_energy_eV=-1.0)
+    site_b = MuonSite(label="siteB", status="relaxed", relaxation_run_id=run_b.id, total_energy_eV=-0.9)
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
@@ -3353,4 +3354,89 @@ def test_main_window_missing_farmed_ts_names_the_farmed_file(
 
     assert len(failures) == 1
     assert "_farm001.ts" in failures[0]
+    window.close()
+
+
+def _add_relaxed_quantum_source(
+    doc,
+    *,
+    label: str,
+    charge_calc_type: str,
+    species: list[str],
+    total_energy: float,
+) -> MuonSite:
+    """Add one eligible relaxed muon source whose site stores the absolute total energy."""
+
+    positions = [[0.1 * index, 0.0, 0.0] for index in range(len(species) - 1)] + [[0.25, 0.25, 0.25]]
+    relaxed = Structure(
+        label=f"{label} relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=list(species),
+        fractional_positions=positions,
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed.id] = relaxed
+    job = Job(
+        label=f"relax-{label}",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type=charge_calc_type,
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[job.id] = job
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=job.calc_type,
+        data={"total_energy": total_energy},
+        derived_structure_ids=[relaxed.id],
+    )
+    run.result_id = result.id
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    site = MuonSite(label=label, status="relaxed", relaxation_run_id=run.id, total_energy_eV=total_energy)
+    doc.sites[site.id] = site
+    return site
+
+
+def test_main_window_quantum_sources_show_energy_relative_to_comparable_minimum(qapp, tmp_path: Path) -> None:
+    """The dE column offsets each site by the lowest site with the same charge state and cell.
+
+    ``MuonSite.total_energy_eV`` stores the absolute total energy, so two
+    positive-muon sites in the same cell must read 0 and their difference,
+    while a muonium site and a positive-muon site in a larger cell are each the
+    zero of their own group rather than being compared across charge or cell.
+    """
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_relative_energy.mufinder", "Quantum dE")
+    window._document = doc
+    positive = "castep_positivemuon_relaxation"
+    low = _add_relaxed_quantum_source(doc, label="low", charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-100.0)
+    high = _add_relaxed_quantum_source(doc, label="high", charge_calc_type=positive, species=["Si", "H:mu"], total_energy=-99.75)
+    muonium = _add_relaxed_quantum_source(
+        doc, label="mu0", charge_calc_type="castep_muonium_relaxation", species=["Si", "H:mu"], total_energy=-250.0
+    )
+    supercell = _add_relaxed_quantum_source(
+        doc, label="big", charge_calc_type=positive, species=["Si", "Si", "H:mu"], total_energy=-300.0
+    )
+
+    relative = window._quantum_source_relative_energies()
+
+    assert relative[str(low.id)] == pytest.approx(0.0)
+    assert relative[str(high.id)] == pytest.approx(0.25)
+    assert relative[str(muonium.id)] == pytest.approx(0.0)
+    assert relative[str(supercell.id)] == pytest.approx(0.0)
+
+    window._refresh_quantum_corrections_view()
+    table = window._quantum_corrections_view._sources_table
+    assert table.horizontalHeaderItem(2).text() == "dE (eV)"
+    shown = {table.item(row, 0).text(): table.item(row, 2).text() for row in range(table.rowCount())}
+    assert shown == {"low": "0.00000", "high": "0.25000", "mu0": "0.00000", "big": "0.00000"}
+
+    endpoint_labels = {row.label: row.relative_energy for row in window._energy_barrier_endpoint_rows()}
+    assert endpoint_labels["high"] == "dE 0.25000 eV"
+    assert endpoint_labels["low"] == "dE 0.00000 eV"
+
     window.close()

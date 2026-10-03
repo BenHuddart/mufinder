@@ -44,7 +44,7 @@ def _source() -> QuantumPhononSource:
         source_relaxation_run_id=uuid4(),
         source_relaxation_job_id=uuid4(),
         charge_state="positive_muon",
-        relative_energy_eV=-10.0,
+        total_energy_eV=-10.0,
     )
 
 
@@ -56,7 +56,7 @@ def _muonium_source() -> QuantumPhononSource:
         source_relaxation_run_id=uuid4(),
         source_relaxation_job_id=uuid4(),
         charge_state="muonium",
-        relative_energy_eV=-10.0,
+        total_energy_eV=-10.0,
     )
 
 

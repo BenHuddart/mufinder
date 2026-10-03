@@ -229,7 +229,7 @@ def _quantum_source(*, muonium: bool) -> QuantumPhononSource:
         source_relaxation_run_id=_RUN_A,
         source_relaxation_job_id=_JOB_A,
         charge_state="muonium" if muonium else "positive_muon",
-        relative_energy_eV=-10.0,
+        total_energy_eV=-10.0,
     )
 
 

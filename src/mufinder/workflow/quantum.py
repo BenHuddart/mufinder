@@ -66,7 +66,7 @@ class QuantumPhononSource:
     source_relaxation_run_id: UUID
     source_relaxation_job_id: UUID | None = None
     charge_state: str | None = None
-    relative_energy_eV: float | None = None
+    total_energy_eV: float | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
 
 

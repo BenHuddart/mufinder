@@ -3480,12 +3480,24 @@ class ProjectService:
             source_generation_batch_id=parse_uuid(payload.get("source_generation_batch_id")),
             source_structure_id=parse_uuid(payload.get("source_structure_id")),
             relaxation_run_id=parse_uuid(payload.get("relaxation_run_id")),
-            relative_energy_eV=payload.get("relative_energy_eV"),
+            total_energy_eV=self._site_total_energy_from_payload(payload),
             host_displacement_max=payload.get("host_displacement_max"),
             cluster_id=parse_uuid(payload.get("cluster_id")),
             symmetry_label=payload.get("symmetry_label"),
             properties=payload.get("properties", {}),
         )
+
+    @staticmethod
+    def _site_total_energy_from_payload(payload: dict[str, Any]) -> float | None:
+        """Read a site's relaxation total energy, accepting the pre-rename key.
+
+        Projects saved before the field was renamed stored the same absolute
+        total energy under ``relative_energy_eV``; see the compatibility ledger.
+        """
+
+        if "total_energy_eV" in payload:
+            return payload["total_energy_eV"]
+        return payload.get("relative_energy_eV")
 
     @staticmethod
     def _site_status_from_payload(payload: dict[str, Any]) -> str:
