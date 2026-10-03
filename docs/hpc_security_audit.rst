@@ -31,3 +31,13 @@ Findings
 Deferred Items
 --------------
 - None for the straightforward hardening tasks in this pass.
+
+Later changes
+-------------
+This page records the 2026-04-07 audit and is not re-audited automatically.
+Since then, cluster keyword generation has become a shell loop run on the
+cluster (see :doc:`castep_keyword_catalog`). That script removes only the
+scratch directories it creates with ``mktemp -d``, using ``rm -rf`` inside the
+remote shell; the SFTP-based deletion above still covers job directories
+(``SSHConnection.rmtree`` in ``mufinder.services.ssh_client``). The job-label rule
+lives in ``mufinder.services.cluster_security``.

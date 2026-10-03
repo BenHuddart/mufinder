@@ -1,10 +1,34 @@
 Magnetic Fields
 ===============
 
-The ``Magnetic Fields`` workflow builds magnetic structures and prepares local
-field calculations at candidate muon stopping sites. The current implementation
-starts with the magnetic-structure builder and the calculation back end needed
-for commensurate and incommensurate field workflows.
+The ``Magnetic Fields`` workflow builds magnetic structures and calculates
+local fields at candidate muon stopping sites. It needs a loaded host structure
+and, for anything beyond a custom position, completed UEP or
+structural-relaxation clustering results to supply muon sites.
+
+A typical pass through the page is:
+
+1. click ``Edit Magnetic Structure...`` in the ``Magnetic Structure`` card to
+   open the ``Magnetic Structure Builder`` and define the magnetic model (see
+   `Builder UI`_); optionally enter a ``Hyperfine coupling`` in ``Å⁻³``,
+   ``T/μB``, or ``MHz/μB`` for the contact term;
+2. choose a demagnetizing-field shape in the ``Demagnetizing Field`` card (see
+   `Demagnetizing-Field Setup`_);
+3. click ``Select Muon Site...`` in the ``Muon Site`` card (see
+   `Muon-Site Selection`_), and tick ``Include equivalent sites`` to calculate
+   all symmetry-equivalent positions of that site;
+4. review ``Calculation Settings...`` and click ``Calculate Dipolar Field``.
+   Results appear in the table below (``Site``, ``Bx (T)``, ``By (T)``,
+   ``Bz (T)``, ``|B| (T)``, ``Result``); for an incommensurate result, select
+   its row and click ``Open Distribution Plot`` to view the field-magnitude
+   histogram, which ``Export Data...`` saves to a file;
+5. optionally run ``Dipolar Tensor...`` or ``Nuclear Relaxation...`` from the
+   same ``Calculation`` card.
+
+The save button in the page header stores the current magnetic structure and
+form settings as a named magnetic-field workspace. Saved workspaces appear as
+children of ``Magnetic Fields`` in the project tree, can be renamed from their
+page title, and can be deleted from their own page.
 
 Magnetic Structure Representation
 ---------------------------------
@@ -65,9 +89,9 @@ Builder UI
 ----------
 
 The ``Magnetic Fields`` workflow page summarizes the accepted magnetic
-structure and opens the ``Magnetic Structure Builder`` dialog. The builder owns
-the component table, supercell controls, atom selection, and live structure
-viewer:
+structure and its ``Edit Magnetic Structure...`` button opens the ``Magnetic
+Structure Builder`` dialog. The builder owns the component table, ``Preview
+Supercell`` controls, atom selection, and live structure viewer:
 
 - selecting no rows previews the full magnetic structure;
 - selecting one or more rows previews only those components;
@@ -77,11 +101,11 @@ viewer:
   metadata into the new propagation-vector model;
 - ``Add Component`` creates a new propagation-vector component using a preset
   for collinear, spin-density-wave, helix, cycloid, or conical textures;
-- ``Add Texture`` creates one grouped multi-q texture assignment, currently
+- ``Add Texture...`` creates one grouped multi-q texture assignment, currently
   supporting square and hexagonal skyrmion lattices as well as custom Fourier
   texture terms;
 - ``Remove`` deletes selected components;
-- ``Edit`` reopens the selected component in the same preset-aware dialog so
+- ``Edit...`` reopens the selected component in the same preset-aware dialog so
   its label, target, q vector, phase, and texture parameters can be changed;
 - both ``Delete`` and ``Backspace`` remove selected rows.
 
@@ -179,26 +203,31 @@ distorted-structure reference. The available dialog sources are:
 
 Structural-relaxation cluster representatives can expose a distorted relaxed
 structure. When that structure is available, the dialog enables the
-``Include muon-induced displacements`` option so the future dipolar-field
-calculation can apply ion-displacement corrections for nearby magnetic ions.
+``Include muon-induced displacements when available`` option. The dipolar-field
+calculation does not yet apply ion-displacement corrections; the distorted
+structure is currently used only by the ``Nuclear Relaxation...`` distortion
+correction (see `Nuclear Relaxation`_).
 
 Calculation
 -----------
 
-The page can now dispatch the selected magnetic structure and selected muon
+``Calculate Dipolar Field`` sends the selected magnetic structure and muon
 site to the magnetic-field calculation helpers. Commensurate magnetic
 structures produce finite vector field results. Incommensurate structures
-produce sampled field-distribution summaries. The calculation settings expose:
+produce sampled field-distribution summaries. The ``Calculation Settings...``
+dialog exposes:
 
-- the number of unit-cell repeats included along ``a``, ``b``, and ``c`` for the
-  ``muesr`` lattice summation, defaulting to ``100 x 100 x 100``;
-- ``Lookup angles per q``, which sets the angular lookup resolution for each
-  incommensurate Fourier component;
-- ``Distribution samples``, which caps or targets the number of sampled fields
-  used for the final incommensurate distribution;
-- the incommensurate phase-space sampling method, with ``Auto``, ``Grid``, and
-  ``Monte Carlo`` options;
-- the number of histogram bins used when summarising field magnitudes.
+- ``Cells along`` ``a``, ``b``, and ``c``: the number of unit-cell repeats
+  included in the ``muesr`` lattice summation, defaulting to
+  ``100 x 100 x 100``;
+- ``Lookup angles per q`` (default 4096), which sets the angular lookup
+  resolution for each incommensurate Fourier component;
+- ``Distribution samples`` (default 200,000), which caps or targets the number
+  of sampled fields used for the final incommensurate distribution;
+- ``Sampling method``, the incommensurate phase-space sampling method, with
+  ``Auto`` (default), ``Grid``, and ``Monte Carlo`` options;
+- ``Histogram bins`` (default 512), the number of bins used when summarising
+  field magnitudes.
 
 The sampling method affects only incommensurate field distributions. It does not
 simulate muon spectra or time-dependent polarisation functions. ``muesr``/``muLFC``
@@ -209,7 +238,8 @@ Demagnetizing-Field Setup
 -------------------------
 
 The ``Demagnetizing Field`` card offers quick choices for the common limiting
-cases and an ``Advanced...`` window for shape-specific tensors:
+cases and an ``Advanced shape`` option, configured through the ``Advanced...``
+button, for shape-specific tensors:
 
 ``None``
    No demagnetizing-field correction is added.
@@ -222,8 +252,8 @@ cases and an ``Advanced...`` window for shape-specific tensors:
    and 0 along the in-plane directions. The current simple card uses the
    crystal ``c`` axis as the plate normal.
 
-``Advanced...``
-   Opens a dedicated shape window. The first implemented advanced shapes are
+``Advanced shape``
+   ``Advanced...`` opens a dedicated shape window. The first implemented advanced shapes are
    ellipsoids and finite rectangular prisms. The window reports the tensor used
    by the calculation and renders the selected sample with a PyVista preview,
    including crystal-axis and magnetisation-direction arrows.
@@ -235,9 +265,10 @@ integral. The principal axes are currently aligned with MuFinder's crystal-axis
 frame.
 
 The advanced rectangular-prism mode ports mag2spectra's analytical
-Joseph-Schlomann rectangular-prism tensor and averages it over midpoint samples
-inside the prism. This avoids the resolution loss that a single cubic Fourier
-grid would suffer for very thin plates or long needles. ``Fourier grid`` is
+Joseph–Schlömann rectangular-prism tensor (R. I. Joseph and E. Schlömann,
+J. Appl. Phys. **36**, 1579 (1965), DOI: ``10.1063/1.1703091``) and averages it
+over midpoint samples inside the prism. This avoids the resolution loss that a
+single cubic Fourier grid would suffer for very thin plates or long needles. ``Fourier grid`` is
 kept as the user-facing resolution control for the midpoint average; increasing
 it improves the estimate but increases cost.
 
@@ -326,7 +357,8 @@ the longitudinal width is
 :math:`\sigma_\parallel^2 = \gamma_\mu^2 \langle B_z^2 \rangle`, with
 :math:`z` along the initial muon polarisation. The orientational (powder)
 average of both single-crystal widths therefore equals the ZF polycrystal
-width of Hayano et al., Phys. Rev. B **20**, 850 (1979), so single-crystal and
+width of R. S. Hayano *et al.*, Phys. Rev. B **20**, 850 (1979), DOI:
+``10.1103/PhysRevB.20.850``, so single-crystal and
 polycrystal results share one normalization.
 
 If the selected muon site comes from a structural-relaxation cluster and the
@@ -462,14 +494,16 @@ chosen ``phase_sampling`` mode, the active ``independent_q_indices``, the
 ``phase_sample_count`` actually used, and the histogram settings. These fields
 are intended to make convergence checks and later result persistence auditable.
 
-Optional contributions include:
+Beyond the dipolar sum, the field calculation includes:
 
-- Lorentz field;
-- demagnetizing field for commensurate finite-field calculations and
+- the Lorentz field (always included in field calculations);
+- the contact hyperfine term, when a ``Hyperfine coupling`` is entered;
+- the demagnetizing field for commensurate finite-field calculations and
   incommensurate sampled distributions, exposed as none, sphere, infinite plate,
-  advanced ellipsoid, or advanced rectangular prism;
-- dipolar tensor calculation from selected magnetic-ion positions;
-- muon-induced distortion corrections.
+  advanced ellipsoid, or advanced rectangular prism.
+
+Dipolar tensors from selected magnetic-ion positions and muon-induced distortion
+corrections (nuclear relaxation only) are available through their own dialogs.
 
 Dependency Handling
 -------------------
@@ -488,9 +522,13 @@ that current ``muesr`` releases still use internally.
 Current Scope
 -------------
 
-The first implemented slice includes the propagation-vector data model, the
-magnetic-structure builder dialog, vector-moment preview, guarded field-engine
-wrappers, equivalent-site expansion, and focused regression tests.
+The implemented workflow covers the propagation-vector data model, the
+magnetic-structure builder and multi-q texture dialogs, commensurate local
+fields, incommensurate field distributions, dipolar tensors, demagnetizing
+corrections, and nuclear dipolar linewidths. It stops at field-level results:
+MuFinder does not simulate muon spectra or polarisation functions, and the
+dipolar-field calculation does not yet apply muon-induced displacement
+corrections.
 
 The longer phased plan is tracked in
 ``docs/magnetic_field_functionality_plan.md``.

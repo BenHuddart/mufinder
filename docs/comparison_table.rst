@@ -4,8 +4,8 @@ Generate Comparison Table
 Overview
 --------
 
-The ``Generate Comparison Table`` feature in ``Pristine Relaxation`` compares
-one experimental host structure against one or more completed pristine-relaxation
+The ``Generate Comparison Table...`` feature in ``Pristine Relaxation`` compares
+the project's active (experimental) host structure against one or more completed pristine-relaxation
 DFT structures. The comparison is not a direct row-by-row text diff of imported
 files. It is a supercell-aware structural analysis pipeline that:
 
@@ -14,26 +14,32 @@ files. It is a supercell-aware structural analysis pipeline that:
 3. evaluates lattice, displacement, bonding, topology, and symmetry metrics,
 4. reports a heuristic overall similarity score alongside the raw metrics.
 
-Each generated table is saved as a child subtab under ``Pristine Relaxation``
-and persists across project save/load. The per-metric ``Info`` buttons in the
+Each generated table is saved as a child item under ``Pristine Relaxation`` in
+the project tree and persists across project save/load. The per-metric ``Info`` buttons in the
 table expose a condensed version of the same method note documented here.
 
 User Flow
 ---------
 
+Prerequisites: a loaded host structure and at least one completed
+pristine-relaxation job (MuFinder reports which is missing otherwise).
+
 1. Open ``Pristine Relaxation``.
-2. Click ``Generate Comparison Table``.
-3. Select one or more completed pristine-relaxation jobs.
-4. Provide a table label and confirm.
-5. Inspect the generated comparison subtab.
+2. Click ``Generate Comparison Table...``.
+3. In the dialog, tick ``Include`` for one or more completed pristine-relaxation
+   jobs. Each row shows the job's ``Label``, ``Supercell``, ``Status``,
+   ``Total Energy (eV)``, and relaxed ``a``/``b``/``c`` lengths.
+4. Edit the ``Comparison table label`` if needed (it defaults to
+   ``Comparison <N>``) and click ``OK``.
+5. MuFinder opens the new table, listed under ``Pristine Relaxation`` in the
+   project tree.
 
 The title shown at the top of an existing comparison table remains editable
-after creation. Editing the title updates the comparison-table subtab label in
-the project tree and is saved with the project.
+after creation. Editing the title updates the table's label in the project tree
+and is saved with the project.
 
-A table can be deleted either from the top-right ``Delete`` button in the
-comparison view or from the project-tree context action
-``Delete Comparison Table``.
+A table is deleted with the ``Remove`` button at the top right of the
+comparison view, after a confirmation prompt.
 
 Table Layout
 ------------

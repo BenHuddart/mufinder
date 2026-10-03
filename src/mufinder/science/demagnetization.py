@@ -130,7 +130,7 @@ def magnetometric_rectangular_prism_tensor(
 ) -> np.ndarray:
     """Estimate the magnetometric demagnetizing tensor for a rectangular prism.
 
-    Rectangular prisms use the Joseph-Schlomann analytic tensor averaged over
+    Rectangular prisms use the Joseph-Schlömann analytic tensor averaged over
     midpoint samples inside the prism. This is more robust than a cubic Fourier
     shape grid for high-aspect-ratio plates and needles.
     """

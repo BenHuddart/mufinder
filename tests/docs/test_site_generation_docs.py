@@ -19,7 +19,7 @@ def test_site_generation_docs_cover_random_count_and_spacing_modes() -> None:
     assert "accepted-site progress" in normalized
     assert "progress maximum" in normalized
     assert "rather than presenting the prediction as a target" in normalized
-    assert "disabled ``muon-muon separation`` field" in normalized
+    assert "disabled ``muon-muon separation (å)`` field" in normalized
     assert "N_{\\mathrm{expected}}" in text
     assert "10.1016/j.cpc.2022.108488" in text
 

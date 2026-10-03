@@ -3,10 +3,22 @@ Structural Relaxation Analysis
 
 The structural relaxation analysis workspace collects completed muon geometry
 optimisation results and treats their final muon positions as an analysis set.
-Create a workspace from the Relaxations tab with **Create Analysis Workspace
-from Selection**. MuFinder asks for a workspace name, records whether the
-workspace is for positive muon or muonium calculations, and only allows later
-additions from the same charge-state family.
+The usual order of work is:
+
+1. In ``Muon Sites -> Relaxations``, select completed, converged rows from one
+   charge-state tab and click **Create Analysis Workspace from Selection**.
+   MuFinder asks for a workspace name (default ``positive muon analysis`` or
+   ``muonium analysis``), records whether the workspace is for positive muon or
+   muonium calculations, and only allows later additions from the same
+   charge-state family. Selecting rows from both charge states is refused.
+2. The workspace opens as a tab in ``Muon Sites -> Analysis``. Use
+   **Add Structure to Analysis** to add further completed relaxations; the
+   workspace name can be edited in its ``Workspace`` field.
+3. Click **Clustering...**, choose a method, and click **Apply Clustering**
+   (see `Clustering`_).
+4. Optionally inspect distortions with **Analyse Displacements**, and click
+   **Pin to Summary** to copy the distinct sites to the ``Muon Sites`` summary
+   page.
 
 Workspaces are stored in the project file under the saved UI state. They are
 therefore restored after a manual project save and load, but they are not
@@ -56,23 +68,25 @@ outlier behind the representative site.
 Clustering
 ----------
 
-The **Clustering** dialog provides three methods.
+The **Clustering...** button opens the ``Clustering - <workspace>`` dialog,
+which provides three methods, selected with ``Method``. Click
+**Apply Clustering** to store the result on the workspace.
 
 **Connected Components**
    MuFinder builds a graph in which each relaxed muon endpoint is a node. Two
    nodes are connected when their shortest symmetry-aware periodic distance is
-   below the chosen distance tolerance in Å. Clusters are the connected
+   below the chosen ``Distance tolerance (Å)``. Clusters are the connected
    components of that graph. This follows the graph-style treatment described
    for relaxed sites in the MuFinder paper.
 
 **Hierarchical**
    Hierarchical clustering uses the same Soprano and pymuon-suite inspired
    feature representation used by the UEP batch-search workflow. The free
-   parameter is the dendrogram threshold.
+   parameter is the dendrogram threshold, ``Hierarchical t``.
 
 **K-means**
    K-means clustering also reuses the UEP batch-search feature representation.
-   The free parameter is the requested number of clusters.
+   The free parameter is the requested number of clusters, ``Clusters k``.
 
 For connected components, the dialog shows the graph of subclusters and a plot
 of number of clusters against tolerance. Each manual tolerance evaluation adds a
@@ -86,9 +100,9 @@ and the maximum and mean fitted distances used to justify the assignment.
 Displacement Analysis
 ---------------------
 
-**Analyse Displacements** opens a site-level displacement view after clustering
-has been applied. Choose one clustered muon site and a comparison host
-structure. The comparison structure may be the imported host or a completed
+**Analyse Displacements** opens a site-level displacement view; clustering is
+not required. Choose one relaxed muon site from the workspace (``Muon site``)
+and a comparison host structure (``Comparison host``). The comparison structure may be the imported host or a completed
 pristine relaxation, provided the pristine relaxation was not run as a free-cell
 relaxation. Free-cell pristine relaxations are disabled in the selector because
 cell-shape changes make ion-by-ion displacement interpretation ambiguous.
@@ -111,17 +125,18 @@ inequivalent candidate stopping sites for each charge state. It has one card for
 **Positive muon** and one for **Muonium**, shown side by side.
 
 To populate a card, open a clustered analysis workspace and choose **Pin to
-summary**. MuFinder copies the workspace's distinct clustered sites into the card
+Summary**. MuFinder copies the workspace's distinct clustered sites into the card
 for the matching charge state, ranked by relative energy (lowest first), and
 shows each site's relative energy, representative fractional position, and
 Wyckoff label. A 3D preview renders the host structure with the pinned muon
-sites. Pinning requires that clustering has been run; the button reports if there
-is nothing to summarise yet. Use **Unpin** to clear a card.
+sites. Pinning requires that clustering has been run and that the workspace was
+built on the active host structure; the button reports if there is nothing to
+summarise yet or the host does not match. Use **Unpin** to clear a card.
 
 You can navigate from the summary straight into the live analysis:
 
-* **Open in Analysis** jumps to the workspace the card was pinned from. When a
-  card is empty, this button instead reads **Go to Analysis** and takes you to
+* **Open in Analysis →** jumps to the workspace the card was pinned from. When a
+  card is empty, this button instead reads **Go to Analysis →** and takes you to
   the Analysis tab so you can create and cluster a workspace.
 * **Clicking a site row** in the ranked table, or **clicking a muon** in the 3D
   preview, opens the source workspace and reveals that specific cluster.
@@ -154,7 +169,7 @@ skip entirely without touching atom parsing.
   completed relaxation added to the workspace - regardless of whether
   clustering has been applied. Use this when you want the full set of raw
   relaxation endpoints rather than a clustered summary.
-* In the **Muon Sites Summary** page, each card's **Export CIF...** button
+* On the **Muon Sites** summary page, each card's **Export CIF…** button
   exports only the pinned, distinct clustered sites (one representative per
   cluster), matching what the card's table and 3D preview show.
 
@@ -176,10 +191,12 @@ Sources
 This workflow acknowledges and follows the methods described in:
 
 * B. M. Huddart et al., "MuFinder: A program to determine and analyse muon
-  stopping sites", 2022. The connected-components clustering visualisation and
+  stopping sites", *Computer Physics Communications* **280**, 108488 (2022),
+  DOI ``10.1016/j.cpc.2022.108488``. The connected-components clustering visualisation and
   radial displacement plot are based on the approaches shown in that work.
-* L. Liborio et al., "Computational prediction of muon stopping sites using ab
-  initio random structure searching (AIRSS)", 2018. The workspace follows the
+* L. Liborio, S. Sturniolo, and D. Jochym, "Computational prediction of muon
+  stopping sites using ab initio random structure searching (AIRSS)",
+  *J. Chem. Phys.* **148**, 134114 (2018), DOI ``10.1063/1.5024450``. The workspace follows the
   AIRSS-style practice of clustering relaxed muonated structures and selecting
   representative low-energy structures.
 * The pymuon-suite project, especially the ``pm-muairss`` clustering workflow,
