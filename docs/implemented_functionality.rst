@@ -794,6 +794,14 @@ grid.
   source relaxation's own ``.param`` file, alongside its cutoff and k-point
   grid, so a follow-on calculation matches the structure it starts from even
   if the project default has since changed.
+- They take their default ``Spin Polarized`` setting from the source
+  relaxation in the same way, as CASTEP ran it: the ``.param`` file's
+  ``SPIN_POLARIZED`` (either spelling) when present, otherwise on when the
+  run's net ``SPIN`` or any per-atom ``SPIN=`` token in its ``.cell`` is
+  non-zero. A follow-on calculation therefore stays on the same spin-polarised
+  or non-spin-polarised energy surface as the relaxation it starts from. When
+  the source ``.param`` cannot be read, a muonium source still defaults to
+  spin-polarised, matching how its relaxation was written.
 - Projects saved before this feature have no project functional; workflows
   keep their previous schema-default functional until one is chosen.
 - Setting, changing, or clearing any of the three defaults is recorded in

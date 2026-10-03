@@ -17,6 +17,7 @@ from mufinder.castep_io.param_parser import (
     parse_param_observations,
     parse_param_text,
     parse_param_value,
+    run_is_spin_polarized,
 )
 from mufinder.castep_io.schema import get_keyword_spec
 from mufinder.castep_io.types import ValueWithUnit
@@ -240,3 +241,21 @@ class TestParseParamValue:
 
     def test_empty_value_is_none(self) -> None:
         assert parse_param_value("", None) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "atomic_spins", "expected"),
+    [
+        pytest.param("SPIN_POLARIZED : TRUE", None, True, id="explicit-true"),
+        pytest.param("spin_polarised : false", (0.0, 2.0), False, id="explicit-false-beats-atomic-spins"),
+        pytest.param("SPIN : -2", None, True, id="negative-net-spin"),
+        pytest.param("SPIN : 0", None, False, id="zero-net-spin"),
+        pytest.param("TASK : SINGLEPOINT", (0.0, 2.0), True, id="atomic-spins"),
+        pytest.param("TASK : SINGLEPOINT", (0.0, 0.0), False, id="zero-atomic-spins"),
+        pytest.param("TASK : SINGLEPOINT", None, False, id="nothing"),
+    ],
+)
+def test_run_is_spin_polarized_follows_castep_defaults(
+    text: str, atomic_spins: tuple[float, ...] | None, expected: bool
+) -> None:
+    assert run_is_spin_polarized(parse_param_assignments(text), atomic_spins) is expected

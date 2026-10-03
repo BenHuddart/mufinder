@@ -564,7 +564,7 @@ KEYWORD_OVERRIDES: dict[str, dict[str, dict[str, object]]] = {
         },
         "spin": {
             "label": "Initial Spin",
-            "description": "Numeric spin control value.",
+            "description": "Net spin of the cell; must equal the sum of the per-atom SPIN= values.",
             "category": "electronic",
             "widget_hint": "spinbox_float",
             "advanced_workflows": ALL_WORKFLOWS,

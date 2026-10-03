@@ -196,6 +196,77 @@ def test_follow_on_rows_inherit_the_source_relaxation_functional(
     window.close()
 
 
+_SPIN_SOURCE_CELL = (
+    "%BLOCK LATTICE_CART\n2.87 0 0\n0 2.87 0\n0 0 2.87\n%ENDBLOCK LATTICE_CART\n"
+    "%BLOCK POSITIONS_FRAC\nFe 0 0 0{spin}\nFe 0.5 0.5 0.5{spin}\n%ENDBLOCK POSITIONS_FRAC\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("param_lines", "cell_spin", "expected"),
+    [
+        pytest.param("SPIN_POLARISED : TRUE\n", "", True, id="explicit-english-spelling"),
+        pytest.param("SPIN_POLARIZED : FALSE\n", " SPIN=2", False, id="explicit-false-wins"),
+        pytest.param("", " SPIN=2", True, id="implied-by-atomic-spins"),
+        pytest.param("SPIN : -2\n", "", True, id="implied-by-net-spin"),
+        pytest.param("", "", False, id="not-spin-polarised"),
+    ],
+)
+def test_follow_on_rows_inherit_the_source_relaxation_spin_treatment(
+    qapp,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    param_lines: str,
+    cell_spin: str,
+    expected: bool,
+) -> None:
+    window = MainWindow()
+    job = Job(label="relax_site_1")
+    output_dir = tmp_path / job.label
+    output_dir.mkdir()
+    (output_dir / f"{job.label}.param").write_text(
+        "TASK : GEOMETRYOPTIMIZATION\n" + param_lines, encoding="utf-8"
+    )
+    (output_dir / f"{job.label}.cell").write_text(
+        _SPIN_SOURCE_CELL.format(spin=cell_spin), encoding="utf-8"
+    )
+    monkeypatch.setattr(window, "_job_output_directory", lambda _job: output_dir)
+
+    values = window._quantum_source_default_parameter_values(SimpleNamespace(job=job))
+
+    assert values["spin_polarized"] is expected
+    window.close()
+
+
+@pytest.mark.parametrize(
+    ("charge_state", "expected"),
+    [
+        (main_window_module.MUONIUM_CHARGE_STATE, {"spin_polarized": True}),
+        (main_window_module.POSITIVE_MUON_CHARGE_STATE, {}),
+    ],
+)
+def test_unreadable_source_param_defaults_only_muonium_to_spin_polarised(
+    qapp,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    charge_state: str,
+    expected: dict[str, object],
+) -> None:
+    window = MainWindow()
+    job = Job(
+        label="relax_site_1",
+        calc_type=main_window_module.muon_relaxation_calc_type(charge_state),
+    )
+    output_dir = tmp_path / job.label
+    output_dir.mkdir()
+    monkeypatch.setattr(window, "_job_output_directory", lambda _job: output_dir)
+
+    values = window._quantum_source_default_parameter_values(SimpleNamespace(job=job))
+
+    assert values == expected
+    window.close()
+
+
 def test_manually_edited_cutoff_and_grid_replace_adopted_defaults(qapp, tmp_path: Path) -> None:
     window, doc = _window_with_cutoff_sweep(
         tmp_path, shared_params={"task": "SINGLEPOINT", "xc_functional": "PBE"}
