@@ -750,8 +750,11 @@ def test_relaxation_clustering_dialog_shows_only_active_method_controls(qapp) ->
 
     assert dialog._tolerance_label.text() == "Distance tolerance (Å)"
     assert dialog._wyckoff_tolerance_label.text() == "Wyckoff tolerance (Å)"
-    assert dialog._scan_button.parentWidget().objectName() == "connectedToleranceScanPanel"
-    assert isinstance(dialog._scan_button.parentWidget(), QFrame)
+    # The scan button shares the scan plot's corner overlay with its pop-out button.
+    scan_panel = dialog._scan_frame.parentWidget()
+    assert scan_panel.objectName() == "connectedToleranceScanPanel"
+    assert isinstance(scan_panel, QFrame)
+    assert dialog._scan_frame.isAncestorOf(dialog._scan_button)
     assert not dialog._tolerance_label.isHidden()
     assert not dialog._tolerance_input.isHidden()
     assert dialog._hierarchical_label.isHidden()

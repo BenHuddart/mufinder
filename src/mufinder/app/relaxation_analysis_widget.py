@@ -48,7 +48,7 @@ from mufinder.app.atomic_structure_viewer import (
     viewer_atom_style_for_species,
 )
 from mufinder.app.decimal_input import DecimalLineEdit
-from mufinder.app.plot_canvas import create_plot_canvas
+from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     current_palette,
@@ -773,9 +773,11 @@ class RelaxationClusteringDialog(QDialog):
         scan_layout = QGridLayout(scan_panel)
         scan_layout.setContentsMargins(12, 12, 12, 12)
         scan_layout.setSpacing(0)
-        scan_layout.addWidget(self._scan_canvas, 0, 0)
-        scan_layout.addWidget(self._scan_button, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
-        connected_layout.addWidget(self._graph_canvas, 3)
+        self._scan_frame = PlotFrame(self._scan_canvas, title="Tolerance scan", parent=scan_panel)
+        self._scan_frame.add_overlay_widget(self._scan_button)
+        scan_layout.addWidget(self._scan_frame, 0, 0)
+        self._graph_frame = PlotFrame(self._graph_canvas, title="Connected components", parent=self._connected_panel)
+        connected_layout.addWidget(self._graph_frame, 3)
         connected_layout.addWidget(scan_panel, 2)
         self._soprano_panel = QWidget(left)
         soprano_layout = QVBoxLayout(self._soprano_panel)
@@ -786,7 +788,8 @@ class RelaxationClusteringDialog(QDialog):
         self._hier_toolbar.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
         self._hier_toolbar.setObjectName("uepClusteringDendrogramToolbar")
         soprano_layout.addWidget(self._hier_toolbar)
-        soprano_layout.addWidget(self._left_canvas, 1)
+        self._left_frame = PlotFrame(self._left_canvas, title="Clustering plot", parent=self._soprano_panel)
+        soprano_layout.addWidget(self._left_frame, 1)
         left_layout.addWidget(self._connected_panel, 1)
         left_layout.addWidget(self._soprano_panel, 1)
 
@@ -1388,7 +1391,8 @@ class DisplacementAnalysisDialog(QDialog):
         right = QWidget(splitter)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.addWidget(self._canvas, 1)
+        self._plot_frame = PlotFrame(self._canvas, title="Displacements", parent=right)
+        right_layout.addWidget(self._plot_frame, 1)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)

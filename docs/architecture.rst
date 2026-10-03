@@ -355,6 +355,14 @@ Rules for plot widgets:
   layout engine can fit a label longer than its axis;
 - place a legend outside the axes only through the axes' own ``legend`` call,
   so constrained layout reserves room for it.
+- put a plot that shares a dialog or tab with other content in a
+  ``PlotFrame`` (also in ``mufinder.app.plot_canvas``), with a short title. Its
+  corner button opens the plot in a separate resizable window with zoom, pan
+  and save; the window borrows the live canvas, so the plot keeps updating and
+  stays interactive, and it returns when the window or dialog closes. A dialog
+  whose only content is its plot needs no frame. Extra controls that belong on
+  the plot go in the frame's overlay (``add_overlay_widget``) so they do not
+  cover the pop-out button;
 - size markers and labels that must fit inside the plot (such as the
   relaxation clustering graph's nodes) in data units, as patches, rather than
   in points: a point-sized marker keeps its size as the canvas shrinks and
@@ -366,7 +374,8 @@ directly (the set may only shrink). ``tests/app/test_plot_canvas_layout.py``
 opens each plot dialog at its minimum size and at small-laptop window sizes and
 fails if any tick label, axis label, title or legend extends past its canvas,
 or if a canvas is squeezed below its minimum size. Add a new plot dialog to its
-``PLOT_DIALOGS`` table.
+``PLOT_DIALOGS`` table; ``tests/app/test_plot_frame.py`` then also checks that
+each of its plots can be popped out.
 
 Project defaults surface
 ------------------------

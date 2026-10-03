@@ -123,7 +123,7 @@ Shared CASTEP parameters must appear first in workflow configuration dialogs, in
 
 ## Embedded plots
 
-Build matplotlib plots with `mufinder.app.plot_canvas.create_plot_canvas` (constrained layout plus a minimum canvas size). Never use `subplots_adjust` margins or turn a figure's layout engine off on small windows: tick and axis labels get clipped, minus signs included. Add every new plot dialog to `PLOT_DIALOGS` in `tests/app/test_plot_canvas_layout.py`. See `docs/architecture.rst` (Plot canvas policy).
+Build matplotlib plots with `mufinder.app.plot_canvas.create_plot_canvas` (constrained layout plus a minimum canvas size), and wrap a plot that shares a dialog with other content in a `PlotFrame` so it can be popped out. Never use `subplots_adjust` margins or turn a figure's layout engine off on small windows: tick and axis labels get clipped, minus signs included. Add every new plot dialog to `PLOT_DIALOGS` in `tests/app/test_plot_canvas_layout.py`. See `docs/architecture.rst` (Plot canvas policy).
 
 ## Compatibility aliases
 

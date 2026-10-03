@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.plot_canvas import PlotFrame
 from mufinder.app.theme import (
     current_palette,
     make_empty_state_label,
@@ -27,6 +28,8 @@ from mufinder.app.theme import (
     style_section_title,
 )
 
+
+_PINNED_PLOT_TITLES = {"cutoff": "Cut-off convergence", "kpoint": "k-point convergence"}
 
 class _PinnedPlotWidget(QWidget):
     """Render either a pinned convergence plot or an instructional placeholder."""
@@ -52,14 +55,17 @@ class _PinnedPlotWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._placeholder, stretch=1)
-        layout.addWidget(self._canvas, stretch=1)
+        self._canvas_frame = PlotFrame(self._canvas, title=_PINNED_PLOT_TITLES.get(sweep_kind, "Convergence"), parent=self)
+        layout.addWidget(self._canvas_frame, stretch=1)
 
         self.show_placeholder("Open the analysis tool and adopt a result to pin a convergence plot here.")
 
     def show_placeholder(self, message: str) -> None:
         self._placeholder.setText(message)
         self._placeholder.show()
+        self._canvas_frame.show_here()
         self._canvas.hide()
+        self._canvas_frame.hide()
         self._figure.clear()
         self._canvas.draw_idle()
 
@@ -163,6 +169,7 @@ class _PinnedPlotWidget(QWidget):
             stress_threshold=stress_threshold,
         )
         self._placeholder.hide()
+        self._canvas_frame.show()
         self._canvas.show()
 
     def _apply_axis_theme(self, axis) -> None:

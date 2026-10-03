@@ -161,6 +161,8 @@ def _semantic_icon(name: str) -> QIcon:
         _draw_pin_icon(painter, ink, accent)
     elif name == "delete":
         _draw_delete_icon(painter, ink, paper)
+    elif name == "pop_out":
+        _draw_pop_out_icon(painter, ink, accent)
     else:
         painter.end()
         return QIcon()
@@ -260,6 +262,27 @@ def _draw_pin_icon(painter: QPainter, ink: QColor, accent: QColor) -> None:
     painter.setPen(QPen(ink, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
     painter.drawLine(7.2, 10.8, 3.8, 14.2)
     painter.drawLine(9.0, 12.0, 11.2, 15.4)
+
+
+def _draw_pop_out_icon(painter: QPainter, ink: QColor, accent: QColor) -> None:
+    """A window corner with an arrow leaving it: "open in a separate window"."""
+
+    painter.setPen(QPen(ink, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    frame = QPainterPath()
+    frame.moveTo(8.0, 3.5)
+    frame.lineTo(4.5, 3.5)
+    frame.quadTo(3.5, 3.5, 3.5, 4.5)
+    frame.lineTo(3.5, 13.5)
+    frame.quadTo(3.5, 14.5, 4.5, 14.5)
+    frame.lineTo(13.5, 14.5)
+    frame.quadTo(14.5, 14.5, 14.5, 13.5)
+    frame.lineTo(14.5, 10.0)
+    painter.drawPath(frame)
+    painter.setPen(QPen(accent, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.drawLine(8.5, 9.5, 14.5, 3.5)
+    painter.drawLine(10.5, 3.5, 14.5, 3.5)
+    painter.drawLine(14.5, 3.5, 14.5, 7.5)
 
 
 def _draw_delete_icon(painter: QPainter, ink: QColor, paper: QColor) -> None:

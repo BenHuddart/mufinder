@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIEWER_RADIUS_ANG
 from mufinder.app.decimal_input import DecimalLineEdit
-from mufinder.app.plot_canvas import create_plot_canvas
+from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamp_to_screen, clamped_size
 from mufinder.app.theme import current_palette, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.domain.models import Structure
@@ -422,7 +422,8 @@ class UepClusteringDialog(QDialog):
             if action.isSeparator():
                 self._hier_toolbar.removeAction(action)
         left_layout.addWidget(self._hier_toolbar)
-        left_layout.addWidget(self._left_canvas, 1)
+        self._left_frame = PlotFrame(self._left_canvas, title="Clustering plot", parent=left_panel)
+        left_layout.addWidget(self._left_frame, 1)
 
         right_panel = QWidget(splitter)
         right_panel.setMinimumWidth(0)
@@ -452,7 +453,8 @@ class UepClusteringDialog(QDialog):
         bubble_title = QLabel("Cluster Energy Spread", bubble_card)
         bubble_title.setObjectName("uepIsosurfaceLegendTitle")
         bubble_layout.addWidget(bubble_title)
-        bubble_layout.addWidget(self._bubble_canvas, 1)
+        self._bubble_frame = PlotFrame(self._bubble_canvas, title="Cluster energy spread", parent=bubble_card)
+        bubble_layout.addWidget(self._bubble_frame, 1)
         self._bubble_note_label = QLabel("", bubble_card)
         self._bubble_note_label.setWordWrap(True)
         style_hint_text(self._bubble_note_label)
