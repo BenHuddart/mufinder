@@ -9,24 +9,46 @@ you to recreate the same matrix in several places.
 Opening the editor
 ------------------
 
-Open ``Supercell Editor`` from the project navigator, from the host-structure
-panel, or from workflow controls labelled ``Manage Supercells...``.
+Load a host structure first: the editor builds supercells from the active
+host. Then open the editor in one of three ways:
 
-When the editor is opened from a workflow row or simulation-cell selector,
-``Use Selected`` returns the highlighted saved supercell to that workflow. The
+- select ``Supercell Editor`` in the project navigator and click
+  ``Open Supercell Editor``;
+- click ``Supercell Editor...`` in the ``Host Structure`` panel;
+- choose ``Manage Supercells...`` from a workflow's simulation-cell selector
+  or row ``Supercell`` drop-down.
+
+When the editor is opened from a workflow row or simulation-cell selector, a
+``Use Selected`` button is shown; it returns the highlighted saved supercell to
+that workflow (saving the current matrix first if nothing is selected). The
 workflow selector refreshes immediately after the editor closes.
+
+The ``Saved Supercells`` table on the left lists each saved cell with its
+``Name``, ``Matrix``, ``Atoms`` count, and ``Usage`` (the configured
+calculations and active workflow selections that refer to it).
 
 Creating and saving supercells
 ------------------------------
 
-The editor provides two matrix entry modes:
+Click ``New`` to start from the unit-cell matrix. The editor provides two
+matrix entry modes:
 
-- simple diagonal mode with ``Nx``, ``Ny``, and ``Nz`` values
-- advanced full ``3x3`` integer matrix mode
+- simple diagonal mode with ``Nx``, ``Ny``, and ``Nz`` values (1 to 64 each)
+- advanced full ``3x3`` integer matrix mode, enabled with the
+  ``Advanced 3x3 matrix`` checkbox
 
 The preview updates the generated structure and propagated spin arrows before
-the supercell is saved. Give the supercell a clear name, then choose ``Save``.
-Use ``Save As`` to create another saved copy from the current matrix and name.
+the supercell is saved, and the status line reports the resulting atom count.
+Give the supercell a clear name, then choose ``Save``. Use ``Save As`` to
+create another saved copy from the current matrix and name.
+
+``Suggest…`` proposes diagonal supercells for the active host. It lists cells
+whose minimum periodic-image distance (the shortest lattice translation of the
+supercell, not simply the shortest edge) is at least 8 Å, each one improving
+on the cheaper options above it, and marks as ``(Recommended)`` the cheapest
+cell that reaches the 10 Å rule of thumb while staying under 200 atoms (the
+dialog warns when no such cell exists). ``Use This Supercell`` loads the
+highlighted matrix into the editor; it is not saved until you choose ``Save``.
 
 Editing saved supercells
 ------------------------
@@ -43,7 +65,7 @@ their generated input structures reproducible.
 Deleting saved supercells
 -------------------------
 
-Unused saved supercells can be deleted from the editor. Deletion is disabled
+Unused saved supercells can be deleted with ``Delete``. Deletion is disabled
 for supercells already used by configured calculations. If a deleted supercell
 was only an active workflow selection, MuFinder clears that selection back to
 the single unit cell.

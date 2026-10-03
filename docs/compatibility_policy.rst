@@ -204,6 +204,47 @@ Compatibility ledger
      - Public import alias. Keep until a major release or one minor release
        after ``expand_muon_site_jobs`` has shipped as the documented
        replacement.
+   * - ``candidate`` muon-site status
+     - ``MuonSite.status`` / site entity files; read by
+       ``ProjectService._site_status_from_payload`` and
+       ``MuonGenerationWidget._display_site_status``
+     - Older projects stored freshly generated sites as ``candidate``. Loading
+       maps the value to ``generated``, the display shows it as
+       ``generated``, and ``ProjectService`` still treats ``candidate`` as a
+       generated, stageable status (``_LEGACY_GENERATED_SITE_STATUSES``).
+     - Keep until the next saved-project schema version bump, whose migration
+       can rewrite ``candidate`` to ``generated`` in every site file.
+   * - ``converged_cutoff`` key in convergence-examiner result snapshots
+     - Examiner UI state; written and read by
+       ``ConvergenceExaminerDialog._serialize_result`` /
+       ``_deserialize_result``
+     - Cutoff-only snapshots stored the converged value as
+       ``converged_cutoff``. Snapshots now write ``converged_value`` and still
+       write ``converged_cutoff`` alongside it; loading falls back to
+       ``converged_cutoff`` when ``converged_value`` is absent.
+     - Keep until the next saved-project schema version bump, whose migration
+       can rename the key to ``converged_value``.
+   * - ``ConvergenceResult.converged_cutoff``
+     - ``mufinder.science.convergence_analysis``
+     - Read-only property alias for ``converged_value`` kept for cutoff-only
+       callers, alongside ``recommended_cutoff``.
+     - Public science helper. Retire together with ``recommended_cutoff``.
+   * - ``RelaxationExpansion`` / ``UepExpansion`` and
+       ``AdapterExpansion.kpoint_messages``
+     - ``mufinder.app.relaxation_adapter`` / ``mufinder.app.uep_adapter`` /
+       ``mufinder.app.adapter_common``
+     - The per-workflow expansion classes became aliases of the shared
+       ``AdapterExpansion`` when adapter template building was deduplicated,
+       and its former ``kpoint_messages`` field is now a property returning
+       ``messages``. Not persisted.
+     - Public import alias. Keep until a major release or one minor release
+       after ``AdapterExpansion`` has shipped as the documented replacement.
+   * - ``workflow_tick_icon``
+     - ``mufinder.app.icons``
+     - Legacy boolean wrapper over ``workflow_stage_icon``. Nothing in
+       ``src`` calls it; only ``tests/app/test_icons.py`` exercises it.
+     - Public helper alias under the public-import-alias rule below; it can be
+       removed together with its test.
 
 Rules for new shims
 -------------------

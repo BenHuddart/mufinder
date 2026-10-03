@@ -10546,7 +10546,7 @@ class MainWindow(QMainWindow):
         label = muon_charge_state_label(charge_state)
         return (
             f"No {label} analysis is pinned yet. Use “Go to Analysis” to cluster the "
-            f"relaxed {label} sites, then choose “Pin to summary” to bring the distinct "
+            f"relaxed {label} sites, then choose “Pin to Summary” to bring the distinct "
             "sites here."
         )
 

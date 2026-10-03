@@ -9,7 +9,34 @@ can be used as inputs for Quantum Corrections and Energy Barriers calculations.
 Scope is deliberately narrow: **muon structural relaxations only**. Convergence
 sweeps, pristine relaxations, UEP, and dipolar-field data are out of scope.
 
-Status: design agreed and fully implemented (see Phasing).
+Status: implemented (see Phasing). A few parts of the design below are not
+yet built; they are listed under `Implementation status`_ and flagged where they
+appear.
+
+Using the importer
+------------------
+
+1. Open the project and make sure it has an active host structure that matches
+   the legacy calculations. The import refuses to start without one.
+2. Choose ``File > Import Legacy Relaxations...`` and select the legacy working
+   folder (the one containing ``input/``, ``run/``, and ``results/``).
+   MuFinder scans it on a background thread and reports progress in the status
+   bar.
+3. Review the ``Import Legacy Relaxations`` dialog. Each detected run is listed
+   with ``Import``, ``Site``, ``Charge``, ``Status``, ``Supercell``,
+   ``Energy (eV)``, and ``Notes`` columns. Converged runs are pre-ticked; runs
+   that cannot be imported are shown unticked and disabled, with the reason in
+   ``Notes``. ``Select converged`` and ``Select none`` adjust the ticks, and a
+   summary above the table reports parameter disagreements and undetermined
+   charge states.
+4. Click ``OK``. The imported runs appear as read-only ``Legacy Site <N>`` rows in
+   the ``Structural Relaxations`` table (``Muon Sites > Relaxations``) and can
+   be used as sources in Quantum Corrections and as endpoints in Energy
+   Barriers.
+
+To undo an import, choose ``File > Remove Imported Relaxations...``, pick the
+import batch, and confirm. Removal is refused while any downstream calculation,
+comparison table, or analysis workspace still references the imported sites.
 
 Research data boundary
 ----------------------
@@ -157,6 +184,8 @@ document. They re-read them from disk::
 
     kpoint_mp_grid  <-  parse_cell_file(<jobdir>/<seed>.cell)
     cut_off_energy  <-  <jobdir>/<seed>.param
+    xc_functional   <-  <jobdir>/<seed>.param
+    spin_polarized  <-  <jobdir>/<seed>.param (and SPIN= tokens in the .cell)
 
 NEB inherits the same way, via the reactant endpoint. For dataset A a verbatim
 copy of the legacy files would supply **neither** value: the input ``.cell``
@@ -181,14 +210,17 @@ Decisions
    * - Seed files on disk
      - Normalise from the ``.castep`` record; archive byte-exact originals.
    * - Host structure
-     - Require a matching host; offer to adopt the legacy CIF when the project
-       has none.
+     - Require a matching host. (Offering to adopt the legacy CIF when the
+       project has none is not implemented: the import refuses until a host is
+       loaded.)
    * - Removing an imported row
      - Cascade-check references, then delete row, job, run, result, structure,
        site and files together.
    * - Failed or unconverged legacy runs
-     - The wizard lists all runs, pre-ticks converged ones, and allows importing
-       the rest as ``FAILED``.
+     - The wizard lists all runs and pre-ticks converged ones. A run whose
+       CASTEP calculation did not complete is blocked; a completed but
+       unconverged run can be ticked and is imported as ``COMPLETED`` with
+       ``convergence_achieved`` false. Nothing is imported as ``FAILED``.
    * - No active definition
      - The import creates one and makes it active.
    * - Legacy site 0
@@ -227,10 +259,12 @@ Per imported site, one five-entity chain satisfying the eligibility contract.
    a completed job is never reattached, so the value is inert.
 
 ``CalculationRun``
-   ``COMPLETED``, with ``definition_id``, ``job_id`` and ``result_id`` set,
-   ``convergence_achieved`` from the geometry-optimisation success marker,
-   ``started_at`` from the ``.castep`` run banner, and ``completed_at`` from the
-   file modification time.
+   ``COMPLETED``, with ``job_id`` and ``result_id`` set and
+   ``convergence_achieved`` from the geometry-optimisation success marker.
+   *Design only:* ``definition_id`` set, ``started_at`` from the ``.castep``
+   run banner, and ``completed_at`` from the file modification time; the
+   importer currently leaves ``definition_id`` and ``started_at`` unset and
+   stamps ``completed_at`` with the import time.
 
 ``Result``
    The payload is **not** only the muon-relaxation controller's contribution.
@@ -256,7 +290,10 @@ Per imported site, one five-entity chain satisfying the eligibility contract.
 
    ``total_energy`` in particular is what the table's Total Energy column reads
    and what the completed-source list sorts on. Omitting it fails the
-   verification checklist below.
+   verification checklist below. The importer currently writes ``completed``,
+   ``total_energy`` and ``geom_converged`` from the standard half, plus the full
+   controller contribution and the import marker; the remaining standard keys
+   are not yet populated.
 
 ``Structure``
    The relaxed cell. ``origin`` **must** stay ``"muon_relaxation"`` and
@@ -595,8 +632,11 @@ cell, and a positional test would need the host tiled and matched atom-by-atom
 for no additional protection here. Scanning without host species skips both
 checks, so a host-less scan stays possible.
 
-On failure, refuse with a readable difference report. When the project has no
-host structure, offer to import the legacy folder's CIF as the host.
+On failure, refuse with a readable difference report. The design also calls for
+offering to import the legacy folder's CIF as the host when the project has
+none; that is **not implemented**. The shipped action refuses before the folder
+picker opens when there is no active host (see Phasing, step 6), and the scanner
+only records whether a CIF exists.
 
 **There may be no CIF to adopt.** Dataset A contains only the input, run and
 results directories, with no CIF at all, so the adoption path does not exist for
@@ -678,7 +718,9 @@ inputs. The available source is the converged Mulliken moments in the
 than input spins, which is if anything the better seed for a downstream phonon
 job. Populate the structure's atomic spins from them when the run was
 spin-polarised, and record in provenance that they are Mulliken-derived rather
-than user-specified.
+than user-specified. *Not yet wired:* the structure builder supports Mulliken
+spins (``atomic_spins_source = "castep_mulliken"``), but the commit currently
+passes none.
 
 **Muonium remains a special case.** The quantum workflow raises if a muonium
 muon carries no seeded moment, because an odd-electron cell with zero net moment
@@ -702,15 +744,18 @@ A new ``import_legacy_relaxations`` action, plus a journal entry builder. The
 journal maps action names to builders and renders nothing for an unmapped action,
 so the builder is required rather than optional.
 
-Recorded: source folder, per-file SHA-256, host-match verdict, inferred supercell
-matrix, detected charge states, each recovered keyword value **and its source
-file**, every conflict found, the set of runs offered versus imported, the
-keyword catalog source and CASTEP version, and the application version doing the
-import.
+Recorded in the provenance record: the batch id, source folder, keyword catalog
+origin, and per imported site its index, seed name, label, charge state, CASTEP
+version, inferred supercell matrix, the source file of each recovered keyword,
+every conflict found, unmapped observations, warnings and copied files; plus the
+selected runs that were skipped and why. Per-file SHA-256 digests are written to
+the manifest in ``legacy_source/`` rather than to the provenance record. The
+design's host-match verdict and application version are not recorded.
 
-Idempotency key: the source folder, the seed name, and the ``.castep`` digest. A
-repeat import offers to skip or re-import as new rather than duplicating
-silently.
+*Design only:* an idempotency key (source folder, seed name, ``.castep``
+digest) so that a repeat import offers to skip or re-import as new. This is
+**not implemented**; importing the same folder again creates new entities, with
+labels de-duplicated by suffix.
 
 Removal
 -------
@@ -912,6 +957,23 @@ Phasing
    alone. Plan ids are resolved before the user confirms, so if something changed
    underneath, removing nothing beats deleting a job MuFinder itself ran.
 
+Implementation status
+---------------------
+
+The shipped importer follows this design except for the following, each flagged
+where it appears above:
+
+- no offer to adopt the legacy folder's CIF as the host; the import requires an
+  active host structure;
+- unconverged runs are imported as ``COMPLETED`` (with
+  ``convergence_achieved`` false), never as ``FAILED``;
+- ``CalculationRun.definition_id`` is not set, ``started_at`` is not recovered
+  from the run banner, and ``completed_at`` is the import time;
+- only part of the standard result payload is populated;
+- Mulliken moments are not yet copied onto the imported structure, and a
+  recovered ``HUBBARD_U`` block is not recorded in provenance;
+- there is no idempotency check for repeat imports.
+
 Verification checklist
 ----------------------
 
@@ -939,12 +1001,14 @@ Verification checklist
   a batch parameter edit.
 - The imported flag survives a reconfigure: change an unrelated native row,
   re-register the definition, and confirm imported rows are still gated.
-- A run imported as failed cannot be dismissed and then resubmitted, and no reset
-  path can delete its ``.castep``, relaxed output cell, or archive. Assert the
-  files still exist afterwards.
+- An imported job cannot be dismissed and then resubmitted, and no reset path
+  can delete its ``.castep``, relaxed output cell, or archive. Assert the files
+  still exist afterwards. (The importer never creates ``FAILED`` jobs, but the
+  gates key on the ``imported`` tag and hold for any status.)
 - A label collision with an existing native row does not overwrite either
   mapping.
-- Re-importing the same folder does not duplicate entities.
+- Re-importing the same folder does not duplicate entities. *(Not yet
+  implemented; see Provenance.)*
 - Removal is refused while a phonon, NEB, comparison table, or relaxation
   analysis workspace references the site.
 - Round trip: save, close and reopen the project; imported rows, their statuses

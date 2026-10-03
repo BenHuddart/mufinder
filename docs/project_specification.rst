@@ -122,12 +122,13 @@ The local CASTEP execution path must satisfy the following requirements:
 - Multi-job submission must support sequential and parallel modes, with
    user-controlled concurrency.
 
-- Job lifecycle state updates must be reflected in project job records and UI:
-
-   - ready
-   - queued
-   - running
-   - finished (completed, failed, cancelled)
+- Job lifecycle state updates must be reflected in project job records and UI.
+   Job records move through ``defined``, ``submitting``, ``queued``,
+   ``running`` and ``retrieving`` to a terminal ``completed``, ``failed``,
+   ``stopped`` or ``cancelled`` state (``JobStatus`` in
+   ``mufinder.domain.enums``); workflow rows show a ``defined`` job whose
+   inputs are configured as ``ready``. :doc:`job_lifecycle` is the
+   authoritative transition contract.
 
 - Configuring a cutoff sweep must persist the configuration snapshot without
   generating CASTEP input files until the user submits selected ready rows.

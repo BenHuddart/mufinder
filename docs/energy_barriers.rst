@@ -44,15 +44,19 @@ The intended user flow is:
 
 - complete structural relaxation for the two sites of interest;
 - choose the initial and final relaxed structures in the ``Paths`` tab;
-- optionally set ``Max path length`` to cap the allowed hop length for that
-  generation pass;
+- optionally set ``Max path length (Å)`` to cap the allowed hop length for
+  that generation pass (leave it blank, shown as ``Auto``, to use MuFinder's
+  automatic cutoff);
 - click ``Generate Paths`` to enumerate symmetry-distinct muon paths for that
   ordered pair only, including symmetry-equivalent hops of the same relaxed
   site when the same endpoint is selected twice;
 - optionally inspect a path with ``View...`` before submission;
-- remove generated paths that are no longer relevant with ``Remove Selected
-  Paths`` or the ``Delete`` / ``Backspace`` shortcuts;
-- configure and run one or more NEB jobs, locally or on the cluster;
+- remove generated paths that are no longer relevant with ``Remove Selected``,
+  the row menu's ``Remove`` entry, or the ``Delete`` / ``Backspace`` shortcuts;
+- configure the selected paths with ``Configure Selected Parameters...`` (or
+  the row menu's ``Configure...``), then build and run the NEB jobs with
+  ``Run All Locally`` / ``Run All on Cluster`` (the buttons read ``Run
+  Selected ...`` when rows are selected);
 - inspect completed NEB paths in the ``NEB Analysis`` tab with the
   reaction-coordinate plot, image stepper, and synchronized structure viewer.
 
@@ -75,9 +79,15 @@ structures to enumerate distinct muon paths. The current implementation:
 If no valid symmetry-distinct path can be constructed, the workflow does not
 generate a row.
 
-The ``Diffusion Paths`` table shows each generated path's endpoints, charge
-state, and length, its configured task-farm count in the ``Farms`` column
-(``Off`` when farming is disabled), and its NEB job status.
+The ``Diffusion Paths`` table shows each generated path's endpoints
+(``Reactant`` and ``Product``), ``Charge``, and ``Path Length``, its configured
+task-farm count in the ``Farms`` column (``Off`` when farming is disabled), its
+NEB job ``Status``, a per-row ``Configure...`` button in the ``Parameters``
+column (it reads ``Configured...`` once the row has custom settings or its job
+has been built), and a ``View...`` button.
+Right-clicking selected rows offers the shared row actions (``Run Local``,
+``Run on Cluster``, ``Cancel``, ``Inspect Failure``, ``Reset Failed
+Jobs...``, ``Configure...``, ``Remove``).
 
 Generated path rows remain in the table after the endpoint selectors change,
 so previously generated hops stay available for inspection and submission
@@ -115,22 +125,32 @@ emphasizes:
 - precision and cutoff controls;
 - electronic energy tolerance;
 - Monkhorst-Pack grid;
-- NEB spring, tangent, method, climbing-image, and normalization controls;
-- transition-state force, displacement, and energy tolerances;
+- the NEB image count (``TSSEARCH_MAX_PATH_POINTS``, default 11; an even
+  value is rounded up to the next odd number);
+- NEB spring constant, tangent mode, method, maximum iterations, and
+  normalization controls;
+- the transition-state force tolerance (``TSSEARCH_FORCE_TOL``), shown in
+  eV/Å with CASTEP's own 0.05 eV/Å default pre-filled;
 - the CASTEP task-farm count (see `Task farming`_).
+
+``TASK``, ``TSSEARCH_METHOD``, and ``TSSEARCH_NEB_CLIMBING`` (``TRUE``) are
+locked by the workflow and cannot be edited.
 
 The dialog also exposes the workflow-supported advanced parameter surface via
 the searchable ``Add Parameter`` flow so expert users can opt into additional
 CASTEP controls without overwhelming the default view.
 
-When the project defines default convergence settings, the NEB workflow
-inherits ``CUT_OFF_ENERGY`` and ``KPOINT_MP_GRID`` from the project
-automatically. Row-level configuration remains authoritative, so a specific
-path can still override those defaults without affecting the rest of the
-project. When the selected path uses a supercell-sized relaxed endpoint,
-MuFinder remaps the inherited k-point grid to preserve equivalent
-reciprocal-space sampling density relative to the project's recommended
-reference lattice.
+Default values are layered. The project's convergence defaults
+(``CUT_OFF_ENERGY`` and ``KPOINT_MP_GRID``) apply first; when the selected
+path uses a supercell-sized relaxed endpoint, MuFinder remaps the inherited
+k-point grid to preserve equivalent reciprocal-space sampling density relative
+to the project's recommended reference lattice. The settings of the reactant
+endpoint's relaxation then override them where its output ``.cell`` and
+``.param`` are available: its k-point grid, cut-off energy, exchange-correlation
+functional, and spin treatment, so the band is computed on the same numerical
+footing as the structures it connects. Row-level configuration remains
+authoritative, so a specific path can still override any of these without
+affecting the rest of the project.
 
 Task farming
 ------------
@@ -160,8 +180,9 @@ Two rules govern the choice, and they differ in severity:
 The relationship to the image count is an efficiency question only. Because
 climbing-image NEB requires an odd ``TSSEARCH_MAX_PATH_POINTS``, a perfectly
 balanced split needs an odd farm count that divides it. At MuFinder's default of
-11 images, 2, 3, 4 or 6 farms all keep the busiest farm at 4 images or fewer
-(92% balance), while 5 farms wastes over a quarter of the allocation. The
+11 images, 2, 3, 4 or 6 farms all reach 92% balance (11 of the 12 farm-image
+slots per sweep are busy), while 5 farms wastes over a quarter of the
+allocation. The
 configuration dialog shows the resulting split and balance live, so a poor
 pairing is visible before submission. The image count itself is left entirely to
 the user — it is a physical resolution choice, not a scheduling one.

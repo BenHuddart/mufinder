@@ -1,170 +1,262 @@
 Quantum Corrections
 ===================
 
-Quantum Corrections estimates muon zero-point and phonon-derived correlation
-metrics from CASTEP Gamma-point phonon calculations. The workflow is designed
-for relaxed MuFinder muon sites, not for unrelaxed candidate generation output.
+Quantum Corrections estimates the muon's zero-point energy (ZPE) and
+phonon-derived correlation metrics from CASTEP Gamma-point phonon calculations.
+It is a follow-on workflow: its inputs are muon sites that MuFinder has already
+relaxed, not unrelaxed candidates from site generation.
 
 Scientific intent
 -----------------
 
 This workflow is aimed at the regime where the muon already has a well-defined,
 locally relaxed stopping site and the next question is how strongly local
-vibrational motion modifies that picture. MuFinder therefore focuses on
-Gamma-point phonons of the relaxed defect cell and extracts the modes with the
-largest muon participation. The resulting zero-point estimate is a local,
-harmonic approximation to the muon's vibrational ground-state contribution, and
-the witness metrics summarize how strongly the muon motion is correlated with
-the host modes retained in that reduced description.
+vibrational motion modifies that picture. MuFinder therefore computes
+Gamma-point phonons of the relaxed defect cell and extracts the three modes
+with the largest muon participation. The resulting zero-point estimate is a
+local, harmonic approximation to the muon's vibrational ground-state
+contribution, and the witness metrics summarize how strongly the muon motion is
+correlated with the host modes in that reduced description.
 
-Using the workflow page
------------------------
+Because the estimate is harmonic and Gamma-only, Quantum Corrections is best
+used as a comparative tool between already-relaxed sites or charge states,
+rather than as a standalone predictor of absolute quantum energies. See
+`Scope and limitations`_.
 
-The Quantum Corrections page is split into two user-facing sections:
-
-- ``Quantum Phonon Jobs`` lists eligible relaxed muon sites and their current
-  Quantum Corrections stage.
-- ``Completed Results`` lists completed phonon jobs with the parsed ZPE,
-  Gamma-point phonon eigenvalues, witness summary, a ``Status`` column (the
-  producing job's status, coloured with the same per-status palette as the
-  ``Quantum Phonon Jobs`` table), and an analysis launcher.
-
-Typical use is:
-
-1. finish the structural muon relaxation workflow and confirm the site is in a
-   relaxed state;
-2. open Quantum Corrections and select one or more eligible rows;
-3. use ``Configure...`` to edit the shared electronic settings and the
-   stage-2 phonon/task-farming controls for that row;
-4. submit the selected rows locally or on the cluster to run the required
-   stage-1 singlepoint calculation (with nothing selected the run buttons read
-   ``Run All ...`` and submit every row);
-5. once stage 1 completes, submit the row again to launch the stage-2 phonon
-   continuation;
-6. review the completed result table once the ``.phonon`` file has been parsed;
-7. use ``Launch Analysis`` to open the detailed phonon-analysis window for a
-   completed job.
-
-The page is intentionally row-driven. Each eligible relaxed site becomes its
-own two-stage job candidate, so you can tune settings per site without
-changing other sources in the same project. The ``Site`` column remains
-editable, so you can rename the relaxed-site label in place before configuring
-or submitting jobs. The source table also shows:
-
-- ``dE (eV)``, the site's relaxed total energy relative to the lowest-energy
-  eligible site with the same charge state and cell composition (sites in
-  different charge states or supercells are not comparable, so each such group
-  has its own zero); rows are ordered by charge state and then by ``dE``;
-- ``Displacements`` as ``3 x atom count`` for the relaxed defect cell;
-- ``Stage`` as ``singlepoint`` or ``phonon``;
-- ``Farms`` as the configured stage-2 task-farm count.
-
-The displacement count is a practical planning aid for the phonon stage,
-because it approximates the number of finite-displacement calculations that
-will be required and therefore helps decide whether a larger farm count is
-worth using.
-
-After the stage-1 singlepoint completes, MuFinder freezes the shared
-electronic and phonon-method parameters for that row so the stage-2
-continuation remains traceable to the completed singlepoint inputs. Only the
-stage-2 farm count remains editable in the ``phonon / ready`` gap before a
-phonon job is materialized. If you need to change the shared parameters after
-stage 1, use ``Reset to Stage 1`` from the workflow page to clear the staged
-Quantum Corrections job records and rerun the singlepoint.
-
-Configuration UI
+Before you start
 ----------------
 
-The row configuration dialog intentionally starts with the controls most users
-are likely to need across the two stages:
+Quantum Corrections needs:
 
-- ``PHONON_METHOD``;
-- ``BASIS_PRECISION`` or ``CUT_OFF_ENERGY`` depending on the chosen parameter
-  combination;
-- ``ELEC_ENERGY_TOL``;
-- ``KPOINT_MP_GRID``;
-- ``Stage 2 farms``;
-- pseudopotential family metadata for DFPT compatibility checks.
+- **Relaxed muon sites.** Run the structural relaxations under
+  ``Muon Sites > Relaxations`` and let them complete. Every site whose
+  relaxation completed successfully appears automatically on the Quantum
+  Corrections page (see `Source eligibility`_). Relaxations brought in through
+  :doc:`legacy_import` are eligible too.
+- **A decision about which sites matter.** The page lists *every* eligible
+  relaxed site, ordered by relative energy, and a phonon calculation is
+  expensive (roughly three displacements per atom with finite displacement).
+  Use ``Muon Sites > Analysis`` (:doc:`structural_relaxation_analysis`) to group
+  the relaxed sites into distinct stopping sites first, then run Quantum
+  Corrections on one representative of each site you want to compare, not on
+  every row.
+- **A working CASTEP setup.** Configure a local CASTEP executable or a cluster
+  under ``Setup``, and load a keyword catalog (:doc:`castep_keyword_catalog`).
 
-Additional workflow-supported CASTEP parameters remain available through the
-``Add Parameter`` dialog, which provides search by keyword name, alias,
-description, and category. MuFinder keeps workflow-controlled values such as
-the stage-specific ``TASK`` setting locked in the dialog.
+Running the workflow
+--------------------
 
-When the originating relaxed-site job inputs are available, Quantum Corrections
-inherits ``CUT_OFF_ENERGY`` and ``KPOINT_MP_GRID`` from that specific source
-relaxation by default. Per-row configuration still takes precedence, so you can
-override those values for an individual relaxed site without changing the
-underlying source settings.
+Each relaxed site runs as a **two-stage job**: a stage-1 singlepoint, then a
+stage-2 phonon calculation that continues from the singlepoint's checkpoint.
+You submit each stage yourself; MuFinder does not chain them automatically.
 
-Implemented Phase 1 scope
--------------------------
+1. **Open the page.** Select ``Quantum Corrections`` in the workflow navigator.
+   The ``Quantum Phonon Jobs`` table lists the eligible relaxed sites with
+   ``Stage`` = ``singlepoint`` and ``Status`` = ``ready``.
+2. **Configure before the first submission.** Click a row's ``Configure...``
+   button, or select several rows and click ``Configure Selected
+   Parameters...``. Check the electronic settings (inherited from the source
+   relaxation, see `Configuration dialog`_), choose the ``Phonon Method``, set
+   ``Pseudopotentials`` to the family you use, and set ``Stage 2 farms`` if you
+   want task farming. These settings apply to both stages and are **frozen once
+   stage 1 has been submitted**, so get them right now.
+3. **Submit stage 1.** Select the rows and click ``Run Selected Locally`` or
+   ``Run Selected on Cluster``. With nothing selected the buttons read
+   ``Run All Locally`` / ``Run All on Cluster`` and submit every ready row. The
+   row's ``Status`` then follows the job through the queue.
+4. **Submit stage 2 on the same target.** When the singlepoint completes the
+   row changes to ``Stage`` = ``phonon`` with ``Status`` = ``ready`` and the
+   ``Farms`` column fills in. You can still change ``Stage 2 farms`` at this
+   point (nothing else). Select the row and submit it again **to the same
+   execution target as stage 1** — the same local machine, or the same
+   cluster. The phonon run is a CASTEP continuation and needs the stage-1
+   ``.check`` file, which exists only where the singlepoint ran; MuFinder does
+   not download checkpoint files from a cluster, so switching between local and
+   cluster (or between clusters) leaves the continuation without its
+   checkpoint and the CASTEP run fails.
+5. **Review the result.** When the phonon job completes and its ``.phonon``
+   file parses, a row appears under ``Completed Results`` with the muon ZPE,
+   the Gamma-point eigenvalues, and the ``w1`` witness. Check the jobs
+   dashboard for warnings, in particular the muon-mass warning (see
+   `Muon mass across the two stages`_).
+6. **Open the analysis.** Click ``Launch Analysis`` on a completed result to
+   inspect the modes, the single-particle solver, and atom-pair coupling (see
+   `Phonon analysis window`_).
+7. **Compare sites.** Repeat for the other distinct sites or charge states and
+   compare their ZPEs and witnesses.
 
-The implemented core supports:
+**Changing your mind or recovering from a failure.** Once stage 1 has been
+submitted the shared parameters are locked so the stage-2 continuation stays
+traceable to the singlepoint it continues. To change them, or to retry a row
+whose singlepoint or phonon job failed, was stopped, or was cancelled, select
+the row and click ``Reset to Stage 1`` (also on the right-click menu). After a
+confirmation, MuFinder deletes both staged job records and the row's output
+directory and returns the row to ``singlepoint`` / ``ready``. Rows whose job is
+still running cannot be reset.
 
-- stage-aware Quantum Corrections rows that always run a singlepoint job
-  before exposing the phonon continuation;
-- CASTEP ``.phonon`` parsing for phonon headers, Gamma q-points, frequencies,
-  atom masses, and complex eigenvectors.
-- Selection of the three Gamma modes with the largest ``H:mu`` participation.
-- Muon ZPE from the selected modes using ``1/2 h c nu`` with frequencies in
-  ``cm-1``.
-- Covariance and normalized correlation tensors for one-based CASTEP atom
-  indices.
-- Legacy-style ``w1`` and ``w2`` entanglement witnesses.
-- MuFinder ``JobSpec`` expansion for a stage-1 singlepoint job with
-  ``TASK : SINGLEPOINT`` and a stage-2 continuation job with ``TASK : PHONON``,
-  ``CONTINUATION : DEFAULT``, explicit ``PHONON_METHOD``, and
-  ``PHONON_KPOINT_MP_GRID 1 1 1``. **Both** stages write ``SPECIES_MASS`` and
-  ``SPECIES_GAMMA`` for ``H:mu`` (see `Muon mass across the two stages`_).
-- Stage-2 task farming through ``NUM_FARMS`` when the configured farm count is
-  greater than one.
-- Project-page submission of selected eligible sites through the shared local
-  and cluster CASTEP runners.
-- Local and cluster result handling that treats ``.phonon`` as an expected
-  output for quantum phonon jobs and prefers ``*_farm001.castep`` when task
-  farming is active.
-- A completed-result ``Launch Analysis`` action that opens the parsed phonon
-  data in an interactive window for the selected job.
+The workflow page
+-----------------
+
+``Quantum Phonon Jobs`` (``Eligible relaxed sites``) has one row per eligible
+relaxed site:
+
+``Site``
+   The relaxed site's label. Double-click to rename it; the new label is also
+   used by Energy Barriers.
+``Charge``
+   The charge state of the source relaxation: ``positive muon`` or
+   ``muonium``.
+``dE (eV)``
+   The site's relaxed total energy relative to the lowest-energy eligible site
+   with the same charge state and cell composition. Energies from different
+   charge states or supercells are not comparable, so each such group has its
+   own zero. Rows are ordered by charge state, then by ``dE``.
+``Displacements``
+   ``3 x atom count`` for the relaxed defect cell — an approximate count of the
+   finite-displacement calculations the phonon stage needs, and therefore a
+   guide to choosing ``Stage 2 farms``.
+``Source Job``
+   The muon relaxation the row was built from.
+``Stage``
+   ``singlepoint`` or ``phonon``.
+``Farms``
+   The stage-2 farm count; shown once the row reaches the phonon stage.
+``Status``
+   The current stage's job status.
+``Parameters``
+   ``Configure...`` (``Configured...`` once custom values are stored, or once
+   the row is locked).
+
+Right-click selected rows to run, cancel, inspect a failure, configure, or
+reset them to stage 1. There is no ``Remove``: rows are derived from completed
+relaxations.
+
+``Completed Results`` (``Completed phonon analyses``) has one row per completed
+phonon job: ``Job``, ``ZPE`` (total muon ZPE of the three selected modes, eV),
+``Eigenvalues (cm⁻¹)`` (every Gamma-point mode as ``index:frequency``), ``w1``,
+``Status`` (the producing job's status, coloured like the jobs table), and an
+``Analysis`` column with the ``Launch Analysis`` button.
+
+Configuration dialog
+--------------------
+
+The row configuration dialog follows the shared workflow layout: the common
+rows ``Basis Precision`` / ``Cutoff Energy``, ``SCF Energy Tolerance``, and
+``K-Point MP Grid`` come first, followed by the Quantum Corrections rows:
+
+- ``Phonon Method`` — ``FINITEDISPLACEMENT`` (default), ``DFPT``, or
+  ``LINEARRESPONSE`` (see `CASTEP phonon methods`_);
+- ``Pseudopotentials`` — ``Unknown / not set``, ``Norm-conserving``, or
+  ``Ultrasoft``; MuFinder uses this only for the DFPT compatibility check;
+- ``Stage 2 farms`` — the ``NUM_FARMS`` value for the phonon stage; ``1``
+  disables task farming.
+
+The ``Task`` row is shown locked: MuFinder writes ``SINGLEPOINT`` for stage 1
+and ``PHONON`` for stage 2. Further CASTEP parameters supported for this
+workflow (for example ``NONSCF_EIGENVALUE_TOL``) can be added with
+``Add Parameter``, which searches keyword names, aliases, descriptions, and
+categories.
+
+**Defaults.** When the source relaxation's input files are still on disk, each
+row inherits that relaxation's ``CUT_OFF_ENERGY``, ``KPOINT_MP_GRID``,
+``XC_FUNCTIONAL``, and spin treatment (``SPIN_POLARIZED``), so the phonon
+calculation stays comparable with the relaxation that produced the geometry.
+``SCF Energy Tolerance`` defaults to ``1e-9 eV``, tighter than for other
+workflows, because phonon forces need a well-converged ground state. Values you
+set in the dialog override the inherited defaults for that row only.
+
+**Several rows at once.** With more than one row selected, values that differ
+between rows are marked as mixed and are left untouched unless you edit them.
+
+**When the dialog is editable.**
+
+.. list-table::
+   :header-rows: 1
+
+   * - Row state
+     - What you can change
+   * - ``singlepoint`` / ``ready``
+     - Everything.
+   * - ``phonon`` / ``ready`` (stage 1 complete, stage 2 not yet generated)
+     - ``Stage 2 farms`` only.
+   * - Anything else
+     - Nothing; the dialog opens read-only as ``Inspect Quantum Corrections
+       Parameters`` so the stored inputs stay traceable to the submitted job.
+
+What MuFinder writes
+--------------------
+
+Both stages share one seed directory under
+``files/quantum_corrections/<seed>/`` in the project, so the continuation finds
+the stage-1 checkpoint.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Stage 1 (singlepoint)
+     - Stage 2 (phonon continuation)
+   * - ``TASK : SINGLEPOINT``
+     - ``TASK : PHONON``, ``CONTINUATION : DEFAULT``, ``PHONON_METHOD``
+   * -
+     - ``PHONON_KPOINT_MP_GRID 1 1 1`` (Gamma only, always)
+   * -
+     - ``NONSCF_EIGENVALUE_TOL`` = the smaller of ``ELEC_ENERGY_TOL`` and
+       ``1e-9 eV``
+   * -
+     - ``NUM_FARMS`` when ``Stage 2 farms`` is greater than 1
+   * - ``SPECIES_MASS`` and ``SPECIES_GAMMA`` for ``H:mu``
+     - ``SPECIES_MASS`` and ``SPECIES_GAMMA`` for ``H:mu``
+   * - ``CHARGE`` (``1`` for a positive muon, ``0`` for muonium)
+     - ``CHARGE`` (same)
+
+For a muonium source both stages also default to ``SPIN_POLARIZED : TRUE`` and
+seed a spin of +1 on the muon, as the muon relaxation does.
 
 Source eligibility
 ------------------
 
-Quantum Corrections inputs must come from completed MuFinder structural muon
-relaxations. A source is eligible only when:
+A relaxed site is listed only when:
 
-- the ``MuonSite`` status is ``relaxed``;
-- the site has a completed relaxation run;
-- the source job belongs to ``WorkflowStage.MUON_RELAXATION``;
-- the source job completed successfully;
-- the run produced a parsed relaxed structure;
-- that structure has ``origin == "muon_relaxation"`` and muon-relaxation
-  provenance metadata;
-- the relaxed structure contains exactly the muon species used for analysis,
-  currently ``H:mu`` by default.
+- the ``MuonSite`` status is ``relaxed`` and the site records its relaxation run;
+- that run, and the job that produced it, completed successfully;
+- the job belongs to ``WorkflowStage.MUON_RELAXATION``;
+- the run produced a parsed relaxed structure with
+  ``origin == "muon_relaxation"`` and muon-relaxation provenance;
+- the relaxed structure contains an ``H:mu`` atom.
 
 UEP candidates, generated sites, failed relaxations, pristine relaxations, and
-manual sites without structural-relaxation provenance are rejected because their
-ionic coordinates have not been validated for a phonon calculation.
+manual sites without structural-relaxation provenance are excluded because
+their ionic coordinates have not been relaxed for a phonon calculation. The
+check is :func:`mufinder.workflow.quantum.quantum_source_eligibility`.
 
 CASTEP phonon methods
 ---------------------
 
-MuFinder always configures Quantum Corrections phonons at Gamma only via
-``PHONON_KPOINT_MP_GRID 1 1 1``. CASTEP offers two useful method families:
+MuFinder always runs Quantum Corrections phonons at Gamma only via
+``PHONON_KPOINT_MP_GRID 1 1 1``. CASTEP offers two method families:
 
-Finite displacement
-  Recommended default. It reuses finite-displacement forces and is the broadest
-  compatibility choice for MuFinder, including systems where linear response is
-  unavailable.
+Finite displacement (``FINITEDISPLACEMENT``)
+  MuFinder's default, and the recommended choice. It works with ultrasoft
+  pseudopotentials and with the methods DFPT does not support. (CASTEP's own
+  default is DFPT; MuFinder always writes ``PHONON_METHOD`` explicitly.)
 
-DFPT / linear response
-  Advanced option. CASTEP documentation states that DFPT phonons are not
-  implemented for ultrasoft pseudopotentials and are also restricted for several
-  advanced methods including Hubbard U, exact exchange/hybrids, spin-orbit
-  coupling, and some dispersion combinations. MuFinder therefore blocks DFPT
-  when it knows ultrasoft pseudopotentials are in use and warns when the
-  pseudopotential family is unknown.
+DFPT / linear response (``DFPT``, ``LINEARRESPONSE``)
+  Advanced option. The CASTEP documentation states that DFPT phonons are not
+  available with ultrasoft pseudopotentials, DFT+U, meta-GGA or hybrid
+  functionals, non-collinear magnetism or spin-orbit coupling, or the newer
+  dispersion corrections.
+
+MuFinder checks only the pseudopotential family:
+
+- with ``Pseudopotentials`` set to ``Ultrasoft``, a DFPT or linear-response
+  phonon job is not generated, and the submission ends with a ``No ready jobs``
+  message;
+- with ``Unknown / not set``, the job is generated and a reminder to verify
+  norm-conserving pseudopotentials is recorded in the job's provenance.
+
+It does not detect Hubbard U, hybrid functionals, spin-orbit coupling, or
+dispersion corrections in your parameters; if you use any of these, choose
+finite displacement.
 
 Muon mass across the two stages
 -------------------------------
@@ -201,104 +293,118 @@ Two guards protect against a run made at the wrong mass:
 Neither guard can repair an affected run: the row has to be reset to stage 1 and
 both stages rerun.
 
-Task farming
-------------
+Task farming and execution targets
+----------------------------------
 
-Quantum Corrections phonons are submitted as continuations of the completed
-singlepoint stage. When the row's stage-2 farm count is greater than one,
-MuFinder writes ``NUM_FARMS`` into the phonon ``.param`` file and keeps the
-singlepoint and phonon stages in the same seed directory so CASTEP can reuse
-the continuation files directly.
+When ``Stage 2 farms`` is greater than one, MuFinder writes ``NUM_FARMS`` into
+the phonon ``.param`` file so CASTEP spreads the displacement calculations over
+that many farms. The ``Displacements`` column is a guide to a sensible value.
+With task farming active MuFinder reads ``<seed>_farm001.castep`` as the
+primary output.
 
-For cluster runs, MuFinder reuses the completed stage-1 remote directory only
-when the phonon stage is submitted to the same cluster. In that continuation
-case MuFinder uploads refreshed ``.cell``, ``.param``, and ``run.sh`` files
-without asking to delete the remote directory first, preserving the singlepoint
-outputs and checkpoints already present there.
+For cluster runs, MuFinder reuses the completed stage-1 remote directory when
+the phonon stage is submitted to the same cluster. It uploads refreshed
+``.cell``, ``.param``, and ``run.sh`` files without asking to delete the remote
+directory first, preserving the singlepoint outputs and the ``.check`` file
+already there. Submitting stage 2 anywhere else starts from a directory without
+the checkpoint (see step 4 of `Running the workflow`_).
 
 Outputs and interpretation
 --------------------------
 
-Completed quantum phonon results persist:
+Each completed phonon job stores a result with:
 
-- the source relaxed site and source relaxation provenance;
-- the CASTEP ``.phonon`` file path;
-- whether the parsed output is Gamma-only;
-- Gamma-point phonon eigenvalues for each mode in ``cm-1``;
-- selected mode indices, frequencies, muon participation, and per-mode ZPE;
-- total selected-mode muon ZPE in eV;
-- ``w1`` and optional warnings for unstable selected modes.
+- the source relaxed site, relaxation run, and relaxation job;
+- the path of the CASTEP ``.phonon`` file and whether it is Gamma-only;
+- every Gamma-point eigenvalue in ``cm-1``;
+- the three selected modes: index, frequency, muon participation, and ZPE;
+- the total muon ZPE of those modes in eV;
+- the ``w1`` witness;
+- warnings, when the muon mass is wrong or a selected mode has a non-positive
+  frequency.
 
-Rows remain inspectable after submission. Once a job has moved beyond the ready
-state, the parameter dialog becomes read-only so the stored job inputs remain
-traceable to the actual calculation that was submitted.
+The quantities are defined as follows (``e`` is the normalized phonon
+eigenvector written in the ``.phonon`` file):
+
+- **Muon participation** of mode *n*: ``|e_mu,n|^2``, the squared norm of the
+  muon's three eigenvector components.
+- **Selected modes**: the three Gamma modes with the largest muon participation,
+  listed in order of frequency.
+- **Muon ZPE**: ``sum (1/2) h c nu_n`` over the selected modes, with ``nu_n``
+  in ``cm-1``. A selected mode with a non-positive frequency contributes zero
+  and raises a warning: an imaginary muon mode means the relaxed geometry is not
+  a true minimum, and the ZPE should not be trusted.
+- **w1**: ``-sqrt(3 - P)``, where ``P`` is the summed participation of the three
+  selected modes. It is ``0`` when the muon's motion is fully contained in three
+  modes, and becomes more negative as muon motion is shared with more host
+  modes.
+
+The ZPE is a harmonic, Gamma-point estimate for a local defect, not a full
+anharmonic many-body treatment; compare it between sites computed with the
+same settings rather than reading it as an absolute value.
 
 Phonon analysis window
 ----------------------
 
-The completed-result ``Launch Analysis`` action opens a dedicated analysis
-window for that phonon job. The window reparses the stored CASTEP ``.phonon``
-file, so the detailed analysis remains tied to the archived calculation output
-rather than to transient table state.
+``Launch Analysis`` opens a window for one completed phonon job. It reparses the
+stored ``.phonon`` file, so the analysis is tied to the archived CASTEP output
+rather than to table state. If CASTEP used the wrong muon mass, a warning banner
+appears above the tabs.
 
-The ``Phonon Modes`` tab lists every Gamma-point phonon eigenmode for the
-muonated structure and embeds a synchronized 3D structure viewer. Selecting a
-mode updates the viewer immediately. The amplitude control is defined as the
-largest displayed atomic displacement in angstrom, so a value of ``0.20``
-means the longest mode arrow reaches ``0.20 Å`` in the static preview. When
-animation is enabled, the structure oscillates sinusoidally around the
-equilibrium geometry while the full-amplitude mode vectors remain available as
-fixed reference arrows. Playback controls allow the user to start or pause the
-animation, reset the phase to equilibrium, adjust the cycle time, and hide or
-show the vector overlays.
+``Phonon Modes``
+   Lists every Gamma-point mode with its frequency, muon participation, and the
+   muon's displacement direction (the participation of the three selected
+   muon-dominated modes is highlighted), next to a 3D structure viewer. Selecting a mode updates the
+   viewer. ``Amplitude (Å)`` (default ``1.00``) sets the largest displayed atomic
+   displacement. ``Play animation`` oscillates the structure about equilibrium
+   with the period set by ``Cycle time (s)``; ``Reset`` returns to the
+   equilibrium phase; ``Show vectors`` (off by default) overlays the
+   full-amplitude mode vectors as fixed reference arrows.
 
-The ``Adiabatic Solver`` tab exposes the current Gomilsek-style single-particle
-adiabatic solver for the three selected muon-dominated Gamma modes. MuFinder
-builds a harmonic one-dimensional effective potential for each selected mode,
-solves the finite-difference ground state, and plots the potential, ground-state
-energy marker, and probability-density overlay. The plot can be switched between
-linear energy and square-root energy scaling to mimic the inspection style used
-for shallow effective potentials.
+``Adiabatic Solver``
+   For each of the three selected modes, builds the one-dimensional harmonic
+   potential ``V(q) = (1/2) m_mu omega^2 q^2`` along the muon's direction in that
+   mode (host atoms fixed, effective mass = muon mass), solves the
+   finite-difference Schrödinger equation over ``±Range (Å)`` (default
+   ``2.0``), and reports the ground-state energy (``ZPE (eV)``) and the RMS
+   width of the probability density (``Width (Å)``). Because the potential is
+   harmonic, the solver's ZPE reproduces ``(1/2) hbar omega`` for each mode; the
+   value of the tab is the width and the plot of potential, ground-state
+   level, and probability density. ``Energy scale`` switches the plot between
+   ``Energy`` and ``Sqrt energy``, which keeps shallow wells legible.
 
-The ``Muon Coupling`` tab calculates the legacy phonon covariance and normalized
-correlation tensors for any selected pair of CASTEP atom indices. It also reports
-the ``w2`` witness for the same pair, complementing the completed-results
-table's project-level ``w1`` summary.
+``Muon Coupling``
+   Pick ``Atom A`` and ``Atom B`` by their one-based CASTEP index (Atom A
+   defaults to the muon) and click ``Calculate``. MuFinder shows the zero-point
+   displacement covariance tensor ``C_ab`` (Å²) and the normalized correlation
+   tensor ``rho_ab``, built from the Gamma-point modes at zero temperature, and
+   the pairwise witness ``w2 = -|Tr C_ab| / sqrt(Tr C_aa Tr C_bb)``. ``w2`` lies
+   between ``-1`` and ``0``; values closer to ``-1`` mean the two atoms'
+   zero-point motions are more strongly correlated. It complements the
+   result table's ``w1``.
 
-The ZPE value is a harmonic, Gamma-point estimate based on the selected
-muon-dominated modes. It should be interpreted as a local-defect approximation,
-not as a full anharmonic many-body quantum treatment.
+The ``?`` buttons in the ``Adiabatic Solver`` and ``Muon Coupling`` tabs show
+the equations used.
 
-In practice, this means Quantum Corrections is best used as a comparative tool
-between already-relaxed candidate sites or charge states, rather than as a
-standalone predictor of absolute quantum free energies.
+Scope and limitations
+---------------------
 
-Gomilsek single-particle approximations
----------------------------------------
-
-The single-particle analysis foundation is available for Gomilsek-style
-effective potentials:
-
-- use the three selected muon-dominated phonon directions as default 1D scan
-  axes;
-- support weakly-bound adiabatic scans where the muon is displaced and host
-  nuclei remain fixed, with ``m_eff = m_mu``;
-- support imported strongly-bound line-scan data where host nuclei follow the
-  muon displacement and direction-dependent effective masses are calculated
-  from finite differences of the nuclear motion;
-- solve the 1D finite-difference Schrodinger equation on each effective
-  potential to obtain ground-state ZPE, wavefunction, probability density,
-  width, and harmonic reference diagnostics;
-- plot effective potentials with a square-root-linear energy option, harmonic
-  reference, wavefunction/probability overlay, ZPE markers, and inflection
-  points.
-
-PIMD remains out of scope for MuFinder.
+- Phonons are computed at Gamma only, in the harmonic approximation.
+- The ``Adiabatic Solver`` tab uses harmonic, phonon-derived potentials. The
+  science layer also provides a general solver for tabulated 1D potentials
+  (:func:`~mufinder.science.quantum_adiabatic.solve_single_particle_ground_state`)
+  and the strongly-bound effective mass ``m_mu + sum_i m_i |dR_i/dx_mu|^2``
+  (:func:`~mufinder.science.quantum_adiabatic.effective_mass_from_relaxed_scan`),
+  following the single-particle approximations of Gomilšek *et al.*, but
+  MuFinder does not yet generate or import the line-scan calculations that
+  would feed them, so anharmonic potentials are not available from the UI.
+- Path-integral molecular dynamics (PIMD) is out of scope for MuFinder.
 
 References
 ----------
 
-- CASTEP phonon documentation:
+- CASTEP documentation, *Running phonon calculations*:
   https://castep-docs.github.io/castep-docs/documentation/Phonons/Castep_Phonons/Running-phonon-calculations/
-- Gomilsek et al., ``Many-body quantum muon effects and quadrupolar coupling
-  in solids``.
+- M. Gomilšek, F. L. Pratt, S. P. Cottrell, S. J. Clark, and T. Lancaster,
+  *Many-body quantum muon effects and quadrupolar coupling in solids*,
+  Commun. Phys. **6**, 142 (2023), DOI: ``10.1038/s42005-023-01260-7``.

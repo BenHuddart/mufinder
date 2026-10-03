@@ -14,24 +14,28 @@ Package layers
 
 ``mufinder.castep_io``
    CASTEP parsing, writing, schema metadata, presets, and validation. It owns
-   CASTEP syntax details and should not depend on UI, services, workflow
-   orchestration, or scientific algorithms.
+   CASTEP syntax details and should not depend on UI, persistence, services,
+   workflow orchestration, or scientific algorithms.
 
 ``mufinder.persistence``
    JSON storage and codec helpers. Persistence may serialize domain objects but
-   must not reach into UI, services, workflow expansion, or science modules.
+   must not reach into UI, CASTEP I/O, services, workflow expansion, or science
+   modules.
 
 ``mufinder.science``
    Numerical and crystallographic algorithms, including site generation,
    structural comparison, UEP analysis, magnetic structures, magnetic fields,
    and demagnetizing tensors. Science code may use domain records and CASTEP
    parsing helpers where those are part of scientific inputs, but it must remain
-   UI-free and service-free.
+   UI-free and service-free, and it must not import ``persistence`` or
+   ``workflow``.
 
 ``mufinder.workflow``
    Pure workflow expansion and rendering contracts. This layer turns resolved
    workflow state into ``JobSpec`` objects and rendered input files without
-   owning project mutation, runner state, or widgets. Each workflow is exposed
+   owning project mutation, runner state, or widgets. It may use ``domain``,
+   ``castep_io``, and ``persistence`` codec helpers, but not ``science``,
+   ``services``, or ``app``. Each workflow is exposed
    as a keyword-only ``expand_*`` function returning ``list[JobSpec]`` that
    layers ``InputTemplate`` parameters in ``MERGE_PRECEDENCE_ORDER``; see
    ``mufinder.workflow.base`` for the contract. Every ``expand_*`` function
@@ -84,9 +88,21 @@ Disallowed examples:
 - ``mufinder.services`` importing ``mufinder.app`` dialogs
 - ``mufinder.domain`` importing any outer MuFinder package
 
-These boundaries are enforced by ``tests/test_agent_harness.py``. If a future
-feature genuinely requires a new dependency direction, update this document and
-the structural test in the same change.
+These boundaries are enforced by ``tests/test_agent_harness.py``
+(``FORBIDDEN_LAYER_IMPORTS``). If a future feature genuinely requires a new
+dependency direction, update this document and the structural test in the same
+change.
+
+A few top-level modules sit outside the seven layers and are not checked by
+the structural test: ``mufinder.main`` (application entry point),
+``mufinder.branding`` (Qt icons), ``mufinder.assets`` / ``mufinder.data``
+(packaged resources, including the starter ``keyword_catalog.yaml``),
+``mufinder._version``, ``mufinder.castep_setup`` (saved CASTEP setup and
+keyword-catalog management, used by the app), and ``mufinder.cluster_setup``
+(the ``ClusterConfig`` record and its ``QSettings`` persistence, used by
+services and the app). ``castep_setup`` and ``cluster_setup`` depend on
+``PySide6.QtCore`` but not on widgets; keep new code out of this top level
+unless it is genuinely cross-cutting configuration.
 
 Refactoring policy
 ------------------
@@ -238,7 +254,7 @@ previously accreted on ``MainWindow``.
   inline for the same no-failure-channel reason (den_fmt is a plain
   existence check outside the artifact carrier), while only the flag assignment
   moves into ``build_result``. ``QuantumCorrectionsController`` is the two-stage
-  (singlepoint → phonon) migration and the richest of the six: its
+  (singlepoint → phonon) migration and the richest of the first six: its
   ``materialize`` dispatches each selected relaxed source to its current stage,
   building singlepoint *and* phonon configs in one pass and writing the two
   per-stage job-id mappings (``singlepoint_job_ids_by_label`` /

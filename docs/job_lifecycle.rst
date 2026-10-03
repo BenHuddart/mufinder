@@ -8,12 +8,14 @@ for the services that drive job execution.
 User-facing summary
 -------------------
 
-MuFinder jobs move through the dashboard as calculations are submitted,
-monitored, and finished:
+MuFinder jobs move through the ``Job Dashboard`` (the dock panel at the bottom
+of the main window) as calculations are submitted, monitored, and finished:
 
 ``defined``
    The job has been created but has not entered the dashboard execution
-   lifecycle yet. Submit it from the workflow table that created it.
+   lifecycle yet. Submit it from the workflow table that created it (``Run All
+   Locally`` / ``Run All on Cluster``, the ``Run Selected ...`` variants, or the
+   row menu's ``Run Local`` / ``Run on Cluster``).
 
 ``submitting``
    MuFinder is handing the job to a local process or a cluster scheduler.
@@ -33,20 +35,29 @@ monitored, and finished:
 
 ``failed``
    The process, scheduler, retrieval, or parser reported a failure. Failed jobs
-   remain in the dashboard so their diagnostics can be inspected. They can be
-   resubmitted or reset.
+   remain in the dashboard so their diagnostics can be inspected with
+   ``Inspect``. They can be resubmitted or reset.
 
 ``stopped``
    A cluster calculation appears to have stopped before producing a successful
    CASTEP completion marker, usually because of walltime or scheduler limits.
-   Stopped jobs remain in the dashboard for inspection and reset.
+   Local jobs that were still active when MuFinder closed, and jobs stopped by
+   the active-job watchdog, also end up here. Stopped jobs remain in the
+   dashboard for inspection and reset.
 
 ``cancelled``
    The user requested cancellation for a queued or running job. Cancelled jobs
    remain in the dashboard and can be resubmitted or reset.
 
 The dashboard shows jobs that still need attention: active jobs, failed jobs,
-stopped jobs, and cancelled jobs. Completed jobs disappear after successful
+stopped jobs, and cancelled jobs. Each row lists the job's ``Label``,
+``Workflow``, ``Calc Type``, ``Status``, ``Last Checked``, ``Cluster``,
+``Remote Job ID``, ``Runtime``, and ``Processes``, followed by per-row
+``Resubmit``, ``Retry retrieval``, ``Cancel``, ``Inspect``, ``Reset``, and
+``Dismiss`` buttons that are enabled only when they apply (see the action rules
+under "Main-window integration" below). Right-clicking selected rows offers the
+same actions, each acting on the selected jobs it applies to, plus
+``Delete...``. Completed jobs disappear after successful
 result handling, and terminal jobs that have been ``Dismiss``-ed are hidden
 without losing their records. ``Resubmit`` is available for failed and
 cancelled jobs. Cluster resubmission reuses existing remote files when the job
@@ -69,9 +80,11 @@ field existed get it backfilled on load, from their first appearance in the
 provenance log (keeping a batch's submission order) or else their earliest
 lifecycle timestamp, and the next save persists it.
 
-Pressing Delete or Backspace with dashboard rows selected applies the action
-that fits each job's state: running jobs are cancelled, failed, stopped and
-cancelled jobs are reset, and any other job has its records deleted. One
+Pressing Delete or Backspace (or choosing ``Delete...``) with dashboard rows
+selected applies the action that fits each job's state: active jobs
+(``submitting``, ``queued``, ``running``, ``retrieving``) are cancelled,
+failed, stopped and cancelled jobs are reset, and any other job has its records
+deleted. One
 summary dialog lists those actions with their counts before anything happens
 and offers to clean the output directories of the jobs being reset; cancelling
 it leaves every selected job untouched. Imported jobs cannot be reset and are
@@ -114,11 +127,11 @@ The persisted job state is stored on ``mufinder.domain.models.Job`` using the
    * - ``retrieving``
      - ``stopped``, ``completed``, ``failed``, ``cancelled``
    * - ``stopped``
-     - ``submitting``, ``cancelled``
+     - ``submitting``, ``retrieving``, ``cancelled``
    * - ``completed``
      - none (validated); ``defined`` via ``prepare_job_continuation``
    * - ``failed``
-     - ``submitting``, ``cancelled``
+     - ``submitting``, ``retrieving``, ``cancelled``
    * - ``cancelled``
      - ``submitting``
 
@@ -688,7 +701,7 @@ The shared implementation lives in ``mufinder.app.workflow_table_utils``:
 - ``RESETTABLE_ROW_STATUSES`` — the gate, ``{failed, stopped, cancelled}``,
   matching what ``ProjectService.reset_failed_job`` accepts. A *dismissed*
   terminal job is deliberately excluded: after ``effective_row_status`` its row
-  already reads ``"ready"`` and its recovery path is the row's own ``Submit``
+  already reads ``"ready"`` and its recovery path is the table's own run actions
   (see :ref:`dismissed-rows-stay-resubmittable`).
 - ``resettable_keys`` — picks, from the selected rows, the ones a reset applies
   to: status in ``RESETTABLE_ROW_STATUSES`` and a non-``None`` ``key_for_row``.
@@ -739,7 +752,7 @@ has staged a job and has no job still running — either the phonon job exists a
 is not active, or the row is still on stage 1 with a singlepoint job that has
 finished, which includes a failed, stopped, or cancelled one. That last case is
 the escape hatch; without it a stage-1 failure with no phonon job showed
-``"failed"`` (so ``Submit`` was disabled) *and* was refused by the reset, leaving
+``"failed"`` (so it could not be run) *and* was refused by the reset, leaving
 the row permanently stuck.
 
 .. _dismissed-rows-stay-resubmittable:
@@ -751,7 +764,7 @@ Dismissing a terminal job removes the only generic ``Resubmit``/``Reset``
 controls it had, but its workflow table row still points at it through the
 definition's persistent label→job-id mapping. Left alone, that row would project
 ``"failed"`` — not a member of ``READY_WORKFLOW_ROW_STATUSES`` — and its
-``Submit`` would stay disabled forever, with no way back to ``defined``. The
+run actions would skip it forever, with no way back to ``defined``. The
 row's own ``Reset Failed Jobs...`` action cannot rescue it either: that action
 gates on the displayed status, and a dismissed row no longer reads as failed.
 
