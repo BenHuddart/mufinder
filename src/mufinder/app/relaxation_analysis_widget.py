@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from ase.data import atomic_numbers
 from ase.data.colors import jmol_colors
 from matplotlib import colormaps, colors as mcolors
+from matplotlib.collections import PolyCollection
 from matplotlib.font_manager import FontProperties
 from matplotlib.patches import Circle, PathPatch
 from matplotlib.textpath import TextPath
@@ -370,6 +371,141 @@ GRAPH_NODE_GID = "relaxation-graph-node"
 # Label digit height, and the widest a label may be, relative to the node radius.
 _GRAPH_LABEL_HEIGHT_FRACTION = 0.85
 _GRAPH_LABEL_WIDTH_FRACTION = 1.5
+# Space between neighbouring components (and between rows of components),
+# measured between the outermost node edges. It is wider than the gap between
+# connected nodes (1.5 - 2 x 0.45 = 0.6) so components still read as separate.
+_GRAPH_COMPONENT_GAP = 1.0
+# Edges are filled strips in data units, so they thin out with the nodes on a
+# small canvas instead of keeping a fixed point width. Width relative to the
+# node radius, wider for sparse components than for dense ones.
+_GRAPH_EDGE_WIDTH_FRACTION = 0.26
+_GRAPH_DENSE_EDGE_WIDTH_FRACTION = 0.14
+# Edges of dense components are translucent so crossings stay legible.
+_GRAPH_DENSE_EDGE_ALPHA = 0.55
+# A component is dense when it has more than this many edges per node.
+_GRAPH_DENSE_EDGES_PER_NODE = 2.5
+# Largest drawn node radius, in points (about 1.4x the old fixed marker). A small
+# graph on a large canvas stops growing here and is centred, rather than turning
+# into a few huge discs.
+GRAPH_NODE_MAX_RADIUS_PT = 22.0
+# Autoscale margin around the outermost nodes, as a fraction of the graph extent.
+_GRAPH_MARGIN_FRACTION = 0.03
+
+
+@dataclass(frozen=True, slots=True)
+class _GraphComponentLayout:
+    """One connected component laid out around its own centre, in data units."""
+
+    members: tuple[int, ...]
+    points: np.ndarray
+    width: float
+    height: float
+
+
+def _graph_component_layout(members: Sequence[int], points: np.ndarray) -> _GraphComponentLayout:
+    centred = points - np.mean(points, axis=0) if len(points) else np.empty((0, 2), dtype=float)
+    span = np.ptp(centred, axis=0) if len(centred) else np.zeros(2, dtype=float)
+    padding = 2.0 * _GRAPH_NODE_MAX_RADIUS
+    return _GraphComponentLayout(
+        members=tuple(int(member) for member in members),
+        points=centred,
+        width=float(span[0]) + padding,
+        height=float(span[1]) + padding,
+    )
+
+
+def _shelf_rows(components: Sequence[_GraphComponentLayout], row_limit: float) -> list[list[_GraphComponentLayout]]:
+    """Split ``components`` (in order) into rows no wider than ``row_limit``."""
+
+    rows: list[list[_GraphComponentLayout]] = []
+    current: list[_GraphComponentLayout] = []
+    current_width = 0.0
+    for component in components:
+        projected = component.width if not current else current_width + _GRAPH_COMPONENT_GAP + component.width
+        if current and projected > row_limit + 1e-9:
+            rows.append(current)
+            current = [component]
+            current_width = component.width
+        else:
+            current.append(component)
+            current_width = projected
+    if current:
+        rows.append(current)
+    return rows
+
+
+def _rows_extent(rows: Sequence[Sequence[_GraphComponentLayout]]) -> tuple[float, float]:
+    width = max(
+        sum(component.width for component in row) + _GRAPH_COMPONENT_GAP * (len(row) - 1)
+        for row in rows
+    )
+    height = sum(max(component.height for component in row) for row in rows)
+    return width, height + _GRAPH_COMPONENT_GAP * (len(rows) - 1)
+
+
+def pack_graph_components(
+    components: Sequence[_GraphComponentLayout],
+    target_aspect: float,
+) -> dict[int, tuple[float, float]]:
+    """Arrange components in rows that best fill a ``target_aspect`` (width / height) area.
+
+    Components keep their order (matching the cluster summary table) and are
+    placed in rows. Every row width a run of consecutive components can make
+    is tried as the row limit, and the arrangement that lets the graph be drawn
+    largest in the target area wins, so a wide canvas gets few long rows and a
+    tall one gets more, shorter rows. Returns node positions centred on the
+    origin.
+    """
+
+    if not components:
+        return {}
+    aspect = target_aspect if np.isfinite(target_aspect) and target_aspect > 0.0 else 1.6
+    widths = [component.width for component in components]
+    candidates = {max(widths)}
+    for start in range(len(components)):
+        run = 0.0
+        for stop in range(start, len(components)):
+            run += widths[stop] + (_GRAPH_COMPONENT_GAP if stop > start else 0.0)
+            candidates.add(run)
+    best_rows: list[list[_GraphComponentLayout]] = []
+    best_scale = -1.0
+    for limit in sorted(candidate for candidate in candidates if candidate >= max(widths) - 1e-9):
+        rows = _shelf_rows(components, limit)
+        width, height = _rows_extent(rows)
+        # Scale at which this arrangement fits an area ``aspect`` wide and 1 high.
+        scale = min(aspect / width, 1.0 / height)
+        if scale > best_scale + 1e-12:
+            best_scale = scale
+            best_rows = rows
+
+    total_width, total_height = _rows_extent(best_rows)
+    positions: dict[int, tuple[float, float]] = {}
+    top = 0.5 * total_height
+    for row in best_rows:
+        row_width = sum(component.width for component in row) + _GRAPH_COMPONENT_GAP * (len(row) - 1)
+        row_height = max(component.height for component in row)
+        x = -0.5 * row_width
+        centre_y = top - 0.5 * row_height
+        for component in row:
+            centre_x = x + 0.5 * component.width
+            for member, point in zip(component.members, component.points, strict=True):
+                positions[member] = (float(centre_x + point[0]), float(centre_y + point[1]))
+            x += component.width + _GRAPH_COMPONENT_GAP
+        top -= row_height + _GRAPH_COMPONENT_GAP
+    return positions
+
+
+def _graph_edge_strip(start: Sequence[float], end: Sequence[float], half_width: float) -> np.ndarray:
+    """Return the four corners of a straight edge ``2 * half_width`` wide, in data units."""
+
+    start_point = np.asarray(start, dtype=float)
+    end_point = np.asarray(end, dtype=float)
+    direction = end_point - start_point
+    length = float(np.linalg.norm(direction))
+    if length <= 1e-12:
+        return np.repeat(start_point[np.newaxis, :], 4, axis=0)
+    normal = np.array([-direction[1], direction[0]]) / length * half_width
+    return np.array([start_point + normal, end_point + normal, end_point - normal, start_point - normal])
 
 
 def _graph_node_radius(points: np.ndarray) -> float:
@@ -522,6 +658,8 @@ class RelaxationClusteringDialog(QDialog):
         )
 
         self._graph_figure, self._graph_canvas = create_plot_canvas(figsize=(5.6, 3.0), transparent=True)
+        self._graph_layouts: tuple[ConnectedComponentsResult, list[_GraphComponentLayout]] | None = None
+        self._graph_canvas.mpl_connect("resize_event", self._on_graph_canvas_resized)
         self._scan_figure, self._scan_canvas = create_plot_canvas(
             figsize=(5.6, 2.4),
             facecolor=current_palette().bg_surface,
@@ -898,58 +1036,23 @@ class RelaxationClusteringDialog(QDialog):
         return positions * max(1.95 / largest_span, _GRAPH_NODE_SPACING / typical_gap)
 
     @classmethod
-    def _connected_graph_positions(cls, result: ConnectedComponentsResult) -> dict[int, tuple[float, float]]:
+    def _graph_component_layouts(cls, result: ConnectedComponentsResult) -> list[_GraphComponentLayout]:
         adjacency = np.asarray(result.adjacency_matrix, dtype=int)
-        component_layouts: list[tuple[list[int], np.ndarray, float, float]] = []
-        for cluster in result.clusters:
-            members = list(cluster.member_indexes)
-            layout = cls._spring_component_layout(members, adjacency)
-            if layout.size:
-                layout -= np.mean(layout, axis=0)
-            span = np.ptp(layout, axis=0) if len(layout) else np.zeros(2, dtype=float)
-            width = max(float(span[0]) + 1.55, 1.55)
-            height = max(float(span[1]) + 1.55, 1.55)
-            component_layouts.append((members, layout, width, height))
+        return [
+            _graph_component_layout(
+                cluster.member_indexes,
+                cls._spring_component_layout(list(cluster.member_indexes), adjacency),
+            )
+            for cluster in result.clusters
+        ]
 
-        if not component_layouts:
-            return {}
-
-        target_width = max(4.8, min(12.0, np.sqrt(sum(width * height for _, _, width, height in component_layouts)) * 1.85))
-        rows: list[list[tuple[list[int], np.ndarray, float, float]]] = []
-        current: list[tuple[list[int], np.ndarray, float, float]] = []
-        current_width = 0.0
-        gap = 1.25
-        for component in component_layouts:
-            width = component[2]
-            projected = width if not current else current_width + gap + width
-            if current and projected > target_width:
-                rows.append(current)
-                current = [component]
-                current_width = width
-            else:
-                current.append(component)
-                current_width = projected
-        if current:
-            rows.append(current)
-
-        positions: dict[int, tuple[float, float]] = {}
-        y_offset = 0.0
-        row_gap = 1.65
-        for row in rows:
-            row_width = sum(component[2] for component in row) + gap * max(len(row) - 1, 0)
-            row_height = max(component[3] for component in row)
-            x_offset = -0.5 * row_width
-            for members, layout, width, _height in row:
-                center_x = x_offset + 0.5 * width
-                for member, point in zip(members, layout, strict=False):
-                    positions[int(member)] = (float(center_x + point[0]), float(y_offset + point[1]))
-                x_offset += width + gap
-            y_offset -= row_height + row_gap
-        if positions:
-            all_points = np.asarray(list(positions.values()), dtype=float)
-            centre = np.mean(all_points, axis=0)
-            positions = {index: (float(x - centre[0]), float(y - centre[1])) for index, (x, y) in positions.items()}
-        return positions
+    @classmethod
+    def _connected_graph_positions(
+        cls,
+        result: ConnectedComponentsResult,
+        target_aspect: float = 1.6,
+    ) -> dict[int, tuple[float, float]]:
+        return pack_graph_components(cls._graph_component_layouts(result), target_aspect)
 
     @staticmethod
     def _apply_convergence_axis_theme(axis) -> None:
@@ -963,7 +1066,48 @@ class RelaxationClusteringDialog(QDialog):
             spine.set_color(palette.border)
         axis.grid(True, color=palette.border, alpha=0.35)
 
-    def _render_connected(self, result: ConnectedComponentsResult) -> None:
+    def _graph_target_aspect(self) -> float:
+        box = self._graph_figure.bbox
+        return float(box.width) / float(box.height) if box.height > 0 else 1.6
+
+    def _on_graph_canvas_resized(self, _event) -> None:
+        """Redraw the graph for the new canvas size.
+
+        The packing follows the canvas shape and the node-size cap follows its
+        size. Only the cheap packing and patch building are redone; the spring
+        layout of each component is cached with its clustering result.
+        """
+
+        if self._graph_layouts is None or self._method() != _METHOD_CONNECTED:
+            return
+        self._draw_connected_graph()
+
+    def _cap_graph_node_size(self, axis, centres: Sequence[tuple[float, float]], radius: float) -> None:
+        """Widen the view so nodes are drawn no larger than ``GRAPH_NODE_MAX_RADIUS_PT``.
+
+        Below the cap the axes autoscale, so the graph fills the canvas.
+        """
+
+        box = self._graph_figure.bbox
+        if not centres or box.width <= 0 or box.height <= 0:
+            return
+        points = np.asarray(centres, dtype=float)
+        low = points.min(axis=0) - radius
+        high = points.max(axis=0) + radius
+        span = np.maximum(high - low, 1e-9) * (1.0 + 2.0 * _GRAPH_MARGIN_FRACTION)
+        pixels_per_unit = min(box.width / span[0], box.height / span[1])
+        max_radius_px = GRAPH_NODE_MAX_RADIUS_PT * self._graph_figure.dpi / 72.0
+        if pixels_per_unit * radius <= max_radius_px:
+            return
+        capped = max_radius_px / radius
+        centre = 0.5 * (low + high)
+        axis.set_xlim(centre[0] - 0.5 * box.width / capped, centre[0] + 0.5 * box.width / capped)
+        axis.set_ylim(centre[1] - 0.5 * box.height / capped, centre[1] + 0.5 * box.height / capped)
+
+    def _draw_connected_graph(self) -> None:
+        if self._graph_layouts is None:
+            return
+        result, layouts = self._graph_layouts
         colors = _cluster_color_map(result.cluster_labels)
         self._graph_figure.clear()
         self._graph_figure.patch.set_alpha(0.0)
@@ -971,24 +1115,34 @@ class RelaxationClusteringDialog(QDialog):
         axis.set_facecolor("none")
         labels = np.asarray(result.cluster_labels, dtype=int)
         adjacency = np.asarray(result.adjacency_matrix, dtype=int)
-        positions = self._connected_graph_positions(result)
-        for i in range(len(labels)):
-            for j in range(i + 1, len(labels)):
-                if adjacency[i, j] <= 0:
-                    continue
-                x1, y1 = positions.get(i, (0.0, 0.0))
-                x2, y2 = positions.get(j, (0.0, 0.0))
-                edge_color = colors.get(int(labels[i]), current_palette().accent)
-                axis.plot(
-                    [x1, x2],
-                    [y1, y2],
-                    color=edge_color,
-                    linewidth=3.2,
-                    solid_capstyle="round",
-                    zorder=1,
-                )
+        positions = pack_graph_components(layouts, self._graph_target_aspect())
         centres = [positions.get(index, (float(index), 0.0)) for index in range(len(labels))]
         radius = _graph_node_radius(np.asarray(centres, dtype=float).reshape(-1, 2))
+
+        for layout in layouts:
+            members = layout.members
+            edges = [
+                (left, right)
+                for position, left in enumerate(members)
+                for right in members[position + 1 :]
+                if adjacency[left, right] > 0
+            ]
+            if not edges:
+                continue
+            dense = len(edges) > _GRAPH_DENSE_EDGES_PER_NODE * len(members)
+            half_width = 0.5 * radius * (_GRAPH_DENSE_EDGE_WIDTH_FRACTION if dense else _GRAPH_EDGE_WIDTH_FRACTION)
+            color = colors.get(int(labels[members[0]]), current_palette().accent)
+            axis.add_collection(
+                PolyCollection(
+                    [_graph_edge_strip(centres[left], centres[right], half_width) for left, right in edges],
+                    facecolors=color,
+                    edgecolors="none",
+                    linewidths=0.0,
+                    alpha=_GRAPH_DENSE_EDGE_ALPHA if dense else 1.0,
+                    zorder=1,
+                )
+            )
+
         for index, (label, centre) in enumerate(zip(labels, centres, strict=True)):
             color = colors.get(int(label), current_palette().accent)
             # add_patch grows the data limits by the whole circle, so autoscaling
@@ -1008,9 +1162,14 @@ class RelaxationClusteringDialog(QDialog):
             )
             axis.add_patch(_graph_node_label(str(index + 1), centre, radius))
         axis.set_aspect("equal", adjustable="datalim")
-        axis.margins(0.06)
+        axis.margins(_GRAPH_MARGIN_FRACTION)
+        self._cap_graph_node_size(axis, centres, radius)
         axis.axis("off")
         self._graph_canvas.draw_idle()
+
+    def _render_connected(self, result: ConnectedComponentsResult) -> None:
+        self._graph_layouts = (result, self._graph_component_layouts(result))
+        self._draw_connected_graph()
 
         self._scan_figure.clear()
         self._scan_figure.set_facecolor(current_palette().bg_surface)

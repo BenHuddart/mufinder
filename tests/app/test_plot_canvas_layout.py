@@ -25,6 +25,7 @@ from mufinder.app.magnetic_field_widget import MagneticFieldDistributionDialog
 from mufinder.app.plot_canvas import DEFAULT_MINIMUM_CANVAS_SIZE, create_plot_canvas
 from mufinder.app.relaxation_analysis_widget import (
     GRAPH_NODE_GID,
+    GRAPH_NODE_MAX_RADIUS_PT,
     DisplacementAnalysisDialog,
     RelaxationClusteringDialog,
 )
@@ -335,6 +336,43 @@ def test_connected_graph_nodes_stay_inside_the_axes_and_apart(qapp, fractions) -
             # dialog's absolute minimum a twelve-node chain may get smaller, but must not collapse.
             minimum_radius_px = 5.0 if at_minimum else 8.0
             assert radius_px >= minimum_radius_px, f"{where}: nodes shrank to {radius_px:.1f} px"
+            # ...and a small graph on a big canvas stops growing at the cap.
+            max_radius_px = GRAPH_NODE_MAX_RADIUS_PT * canvas.figure.dpi / 72.0
+            assert radius_px <= max_radius_px + _OVERFLOW_TOLERANCE_PX, f"{where}: nodes grew to {radius_px:.1f} px"
+            # The graph uses the canvas: unless the node-size cap holds it back, it fills
+            # most of one dimension and at least half of the other.
+            if radius_px < max_radius_px - _OVERFLOW_TOLERANCE_PX:
+                fill = sorted(
+                    (
+                        (max(e.x1 for e in extents) - min(e.x0 for e in extents)) / axes.bbox.width,
+                        (max(e.y1 for e in extents) - min(e.y0 for e in extents)) / axes.bbox.height,
+                    )
+                )
+                assert fill[1] >= 0.85, f"{where}: graph fills only {fill[1]:.2f} of the canvas"
+                if fractions is _SPREAD_SITE_FRACTIONS:
+                    assert fill[0] >= 0.5, f"{where}: graph fills only {fill[0]:.2f} across"
+    finally:
+        dialog.close()
+
+
+def test_connected_graph_repacks_its_components_when_the_canvas_changes_shape(qapp) -> None:
+    dialog = _relaxation_clustering(0)
+    try:
+        dialog.show()
+        row_counts = {}
+        for size in (QSize(1150, 620), QSize(1100, 1000)):
+            dialog.resize(size)
+            for _ in range(4):
+                qapp.processEvents()
+            canvas = dialog._graph_canvas
+            canvas.draw()
+            nodes = [patch for patch in canvas.figure.axes[0].patches if patch.get_gid() == GRAPH_NODE_GID]
+            aspect = canvas.figure.bbox.width / canvas.figure.bbox.height
+            row_counts[round(aspect, 1)] = len({round(node.center[1], 6) for node in nodes})
+        (wide_aspect, wide_rows), (tall_aspect, tall_rows) = sorted(row_counts.items(), reverse=True)
+        assert wide_aspect > tall_aspect
+        # A wide canvas gets fewer, longer rows of components than a squarer one.
+        assert wide_rows < tall_rows
     finally:
         dialog.close()
 
