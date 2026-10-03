@@ -38,9 +38,9 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.math_label import MathLabel
+from mufinder.app.plot_canvas import PlotFrame
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
-    body_font_family,
     current_palette,
     style_hint_text,
     style_section_title,
@@ -318,7 +318,8 @@ class QuantumPhononAnalysisDialog(QDialog):
         splitter.addWidget(self._single_particle_table)
         self._figure = Figure(figsize=(6.0, 4.0), tight_layout=True)
         self._canvas = FigureCanvas(self._figure)
-        splitter.addWidget(self._canvas)
+        self._plot_frame = PlotFrame(self._canvas, title="Single-particle plot")
+        splitter.addWidget(self._plot_frame)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([480, 760])
         layout.addWidget(splitter, 1)

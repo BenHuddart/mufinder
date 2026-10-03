@@ -48,7 +48,7 @@ from mufinder.app.atomic_structure_viewer import (
     viewer_atom_style_for_species,
 )
 from mufinder.app.decimal_input import DecimalLineEdit
-from mufinder.app.plot_canvas import create_plot_canvas
+from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     current_palette,
@@ -773,9 +773,11 @@ class RelaxationClusteringDialog(QDialog):
         scan_layout = QGridLayout(scan_panel)
         scan_layout.setContentsMargins(12, 12, 12, 12)
         scan_layout.setSpacing(0)
-        scan_layout.addWidget(self._scan_canvas, 0, 0)
-        scan_layout.addWidget(self._scan_button, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
-        connected_layout.addWidget(self._graph_canvas, 3)
+        self._scan_frame = PlotFrame(self._scan_canvas, title="Tolerance scan", parent=scan_panel)
+        self._scan_frame.add_overlay_widget(self._scan_button)
+        scan_layout.addWidget(self._scan_frame, 0, 0)
+        self._graph_frame = PlotFrame(self._graph_canvas, title="Connected components", parent=self._connected_panel)
+        connected_layout.addWidget(self._graph_frame, 3)
         connected_layout.addWidget(scan_panel, 2)
         self._soprano_panel = QWidget(left)
         soprano_layout = QVBoxLayout(self._soprano_panel)
@@ -786,7 +788,8 @@ class RelaxationClusteringDialog(QDialog):
         self._hier_toolbar.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
         self._hier_toolbar.setObjectName("uepClusteringDendrogramToolbar")
         soprano_layout.addWidget(self._hier_toolbar)
-        soprano_layout.addWidget(self._left_canvas, 1)
+        self._left_frame = PlotFrame(self._left_canvas, title="Clustering plot", parent=self._soprano_panel)
+        soprano_layout.addWidget(self._left_frame, 1)
         left_layout.addWidget(self._connected_panel, 1)
         left_layout.addWidget(self._soprano_panel, 1)
 
@@ -1088,21 +1091,32 @@ class RelaxationClusteringDialog(QDialog):
         Below the cap the axes autoscale, so the graph fills the canvas.
         """
 
-        box = self._graph_figure.bbox
-        if not centres or box.width <= 0 or box.height <= 0:
+        figure = self._graph_figure
+        # The axes get the figure minus constrained layout's padding on each side;
+        # sizing against the whole figure would leave capped nodes a pixel or two
+        # short of the cap.
+        engine = figure.get_layout_engine()
+        pads = engine.get() if engine is not None and hasattr(engine, "get") else {}
+        width = figure.bbox.width - 2.0 * float(pads.get("w_pad", 0.0)) * figure.dpi
+        height = figure.bbox.height - 2.0 * float(pads.get("h_pad", 0.0)) * figure.dpi
+        if not centres or width <= 0 or height <= 0:
             return
         points = np.asarray(centres, dtype=float)
         low = points.min(axis=0) - radius
         high = points.max(axis=0) + radius
         span = np.maximum(high - low, 1e-9) * (1.0 + 2.0 * _GRAPH_MARGIN_FRACTION)
-        pixels_per_unit = min(box.width / span[0], box.height / span[1])
-        max_radius_px = GRAPH_NODE_MAX_RADIUS_PT * self._graph_figure.dpi / 72.0
+        pixels_per_unit = min(width / span[0], height / span[1])
+        max_radius_px = GRAPH_NODE_MAX_RADIUS_PT * figure.dpi / 72.0
         if pixels_per_unit * radius <= max_radius_px:
             return
         capped = max_radius_px / radius
         centre = 0.5 * (low + high)
-        axis.set_xlim(centre[0] - 0.5 * box.width / capped, centre[0] + 0.5 * box.width / capped)
-        axis.set_ylim(centre[1] - 0.5 * box.height / capped, centre[1] + 0.5 * box.height / capped)
+        axis.set_xlim(centre[0] - 0.5 * width / capped, centre[0] + 0.5 * width / capped)
+        axis.set_ylim(centre[1] - 0.5 * height / capped, centre[1] + 0.5 * height / capped)
+        # Both limits are now fixed, so keep the aspect by adjusting the axes box
+        # (it already matches these limits); "datalim" would have to override one
+        # of them and logs a warning on every redraw.
+        axis.set_aspect("equal", adjustable="box")
 
     def _draw_connected_graph(self) -> None:
         if self._graph_layouts is None:
@@ -1388,7 +1402,8 @@ class DisplacementAnalysisDialog(QDialog):
         right = QWidget(splitter)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.addWidget(self._canvas, 1)
+        self._plot_frame = PlotFrame(self._canvas, title="Displacements", parent=right)
+        right_layout.addWidget(self._plot_frame, 1)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)

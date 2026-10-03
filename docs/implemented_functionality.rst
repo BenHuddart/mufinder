@@ -50,6 +50,14 @@ inheriting each platform's native look:
   layout that sizes its margins from the rendered labels, and has a minimum
   size below which a splitter cannot squeeze it (see
   ``docs/architecture.rst``, "Plot canvas policy").
+- Plots that share a window with other content (the relaxation clustering and
+  displacement plots, the UEP clustering plots, the quantum single-particle plot
+  and the pinned convergence plots) have a pop-out button in their top-right
+  corner. It opens the plot in a separate resizable window with zoom, pan and
+  save, while the original spot shows a "Show here" button. The plot keeps
+  updating and stays interactive while popped out (the dialog's own zoom/pan
+  buttons for that plot pause meanwhile), and returns when its window is closed
+  (or Escape is pressed in it) or when the dialog closes.
 - On Linux Wayland sessions the entrypoint forces the Qt ``xcb`` platform
   before the ``QApplication`` is created
   (``mufinder.main._force_x11_platform_on_wayland``). The 3D viewers embed VTK
