@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from mufinder.domain.models import Structure
+from mufinder.science import relaxation_analysis
 from mufinder.science.relaxation_analysis import (
     RelaxedMuonSite,
     RelaxationClusterSummary,
@@ -337,6 +338,39 @@ def test_wyckoff_assignment_reports_unavailable_symmetry_for_unknown_species() -
     assert "species" in assignments[0].match.warnings[0]
 
 
+def test_tolerance_scan_measures_symmetry_distances_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    host = _host_structure()
+    sites = [
+        _site("a", (0.100, 0.100, 0.100), -10.0),
+        _site("b", (0.112, 0.104, 0.100), -9.9),
+        _site("c", (0.800, 0.800, 0.800), -9.0),
+    ]
+    calls: list[int] = []
+    real = relaxation_analysis.symmetry_distance_matrix
+
+    def counting(ordered_sites, host_structure, *, symprec):
+        calls.append(len(ordered_sites))
+        return real(ordered_sites, host_structure, symprec=symprec)
+
+    monkeypatch.setattr(relaxation_analysis, "symmetry_distance_matrix", counting)
+
+    scan = scan_connected_component_tolerances(sites, host, start_ang=0.0, stop_ang=0.4, points=5)
+
+    assert calls == [3]
+    # Each row agrees with clustering at that tolerance on its own.
+    for tolerance, count in scan:
+        assert count == len(cluster_connected_components(sites, host, tolerance_ang=tolerance).clusters)
+
+
+def test_symmetry_distance_falls_back_to_direct_distance_without_equivalents(monkeypatch: pytest.MonkeyPatch) -> None:
+    host = _host_structure()
+    sites = [_site("a", (0.1, 0.1, 0.1), -10.0), _site("b", (0.9, 0.1, 0.1), -9.0)]
+    monkeypatch.setattr(relaxation_analysis, "symmetry_equivalent_positions", lambda *args, **kwargs: [])
+
+    matrix = relaxation_analysis.symmetry_distance_matrix(sites, host)
+
+    expected = relaxation_analysis._pbc_distance((0.1, 0.1, 0.1), (0.9, 0.1, 0.1), host.lattice_vectors)
+    assert matrix == ((0.0, expected), (expected, 0.0))
 def test_grouped_relative_energies_offsets_each_group_by_its_own_minimum() -> None:
     relative = grouped_relative_energies(
         {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import math
 import random
 from collections.abc import Callable
@@ -130,19 +131,107 @@ def _pbc_distance(
     return math.sqrt(delta_cart[0] ** 2 + delta_cart[1] ** 2 + delta_cart[2] ** 2)
 
 
+def _pbc_distance_matrix(
+    left: Sequence[Sequence[float]] | np.ndarray,
+    right: Sequence[Sequence[float]] | np.ndarray,
+    lattice: Sequence[Sequence[float]] | np.ndarray,
+) -> np.ndarray:
+    """Return ``_pbc_distance(right[j], left[i], lattice)`` for every pair, by broadcasting.
+
+    The Cartesian components are bit-for-bit those of the scalar helpers; only the
+    final norm may differ from theirs in the last bit or so (see ``_near_minimum_indexes``).
+    """
+
+    left_array = np.asarray(left, dtype=float).reshape(-1, 3)
+    right_array = np.asarray(right, dtype=float).reshape(-1, 3)
+    vectors = np.asarray(lattice, dtype=float)
+    delta = right_array[None, :, :] - left_array[:, None, :]
+    delta = delta - np.round(delta)
+    # Same term order as ``lattice_frac_to_cart`` so values agree with ``_pbc_distance``.
+    cartesian = (
+        delta[..., 0, None] * vectors[0]
+        + delta[..., 1, None] * vectors[1]
+        + delta[..., 2, None] * vectors[2]
+    )
+    return np.linalg.norm(cartesian, axis=-1)
+
+
+# Broadcast norms can differ from a scalar helper's by a few ulp, so anything this close
+# (relatively) to a decision boundary is re-measured with the scalar helper itself.
+_NEAR_TIE_RTOL = 1e-9
+
+
+def _near_minimum_indexes(distances: np.ndarray) -> np.ndarray:
+    """Indexes of broadcast ``distances`` that could hold the scalar helper's minimum."""
+
+    minimum = float(distances.min())
+    return np.flatnonzero(distances <= minimum + minimum * _NEAR_TIE_RTOL)
+
+
+def _greedy_unique_indexes(within_tolerance: np.ndarray) -> list[int]:
+    """Indexes kept by a first-wins scan that drops anything within tolerance of a kept entry.
+
+    ``within_tolerance[i, j]`` says whether entry ``j`` lies within tolerance of entry ``i``.
+    """
+
+    covered = np.zeros(within_tolerance.shape[0], dtype=bool)
+    kept: list[int] = []
+    for index in range(within_tolerance.shape[0]):
+        if covered[index]:
+            continue
+        kept.append(index)
+        covered |= within_tolerance[index]
+    return kept
+
+
 def _deduplicate_fractional_positions(
     positions: Sequence[Sequence[float]],
     lattice_vectors: Sequence[Sequence[float]],
     *,
     tolerance_ang: float = 1e-5,
 ) -> list[list[float]]:
-    unique: list[list[float]] = []
-    for position in positions:
-        wrapped = _wrap_fractional(position)
-        if any(_pbc_distance(wrapped, existing, lattice_vectors) <= tolerance_ang for existing in unique):
-            continue
-        unique.append(wrapped)
-    return unique
+    """Wrap ``positions`` and keep each one not within ``tolerance_ang`` of an earlier kept one."""
+
+    tolerance = float(tolerance_ang)
+    wrapped = [_wrap_fractional(position) for position in positions]
+    if tolerance >= 0.0:
+        # Dropping exact repeats first cannot change the result: a repeat is always within
+        # tolerance of whatever kept entry covered (or was) its first occurrence.
+        wrapped = [list(position) for position in dict.fromkeys(tuple(position) for position in wrapped)]
+    if not wrapped:
+        return []
+    distances = _pbc_distance_matrix(wrapped, wrapped, lattice_vectors)
+    within = distances <= tolerance
+    for left, right in np.argwhere(np.abs(distances - tolerance) <= abs(tolerance) * _NEAR_TIE_RTOL):
+        # The scan compares each new position against the kept ones: ``_pbc_distance(new, kept)``.
+        within[left, right] = _pbc_distance(wrapped[right], wrapped[left], lattice_vectors) <= tolerance
+    return [wrapped[index] for index in _greedy_unique_indexes(within)]
+
+
+@lru_cache(maxsize=32)
+def _cached_symmetry_operations(
+    lattice: tuple[tuple[float, ...], ...],
+    positions: tuple[tuple[float, ...], ...],
+    numbers: tuple[int, ...],
+    symprec: float,
+) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]] | None:
+    """Run spglib once per host; the arrays are read-only because callers share them."""
+
+    symmetry = get_crystal_symmetry(
+        (
+            np.asarray(lattice, dtype=float),
+            np.asarray(positions, dtype=float),
+            np.asarray(numbers, dtype=int),
+        ),
+        symprec=symprec,
+    )
+    if symmetry is None:
+        return None
+    rotations = tuple(np.asarray(rotation, dtype=float) for rotation in symmetry.get("rotations", []))
+    translations = tuple(np.asarray(translation, dtype=float) for translation in symmetry.get("translations", []))
+    for array in (*rotations, *translations):
+        array.setflags(write=False)
+    return rotations, translations
 
 
 def _symmetry_operations(
@@ -156,20 +245,16 @@ def _symmetry_operations(
     numbers = _species_to_numbers(host_species)
     if numbers is None or len(numbers) != len(host_positions_frac):
         return None
-    symmetry = get_crystal_symmetry(
-        (
-            np.asarray(lattice, dtype=float),
-            np.asarray(host_positions_frac, dtype=float),
-            np.asarray(numbers, dtype=int),
-        ),
-        symprec=float(symprec),
+    operations = _cached_symmetry_operations(
+        tuple(tuple(row) for row in lattice),
+        tuple(tuple(float(value) for value in position) for position in host_positions_frac),
+        tuple(numbers),
+        float(symprec),
     )
-    if symmetry is None:
+    if operations is None:
         return None
-    return (
-        [np.asarray(rotation, dtype=float) for rotation in symmetry.get("rotations", [])],
-        [np.asarray(translation, dtype=float) for translation in symmetry.get("translations", [])],
-    )
+    rotations, translations = operations
+    return list(rotations), list(translations)
 
 
 def _equivalent_positions_from_operations(
@@ -233,7 +318,10 @@ def closest_symmetry_equivalent_position(
         host_positions_frac=host_positions_frac,
         symprec=symprec,
     )
-    return min(equivalents, key=lambda equivalent: _pbc_distance(equivalent, anchor, lattice))
+    candidates = _near_minimum_indexes(_pbc_distance_matrix([anchor], equivalents, lattice)[0])
+    # Ascending candidates keep ``min``'s first-wins tie-break over the full list.
+    best = min(candidates.tolist(), key=lambda index: _pbc_distance(equivalents[index], anchor, lattice))
+    return equivalents[best]
 
 
 def _symmetry_multiplicity(
@@ -384,46 +472,91 @@ def estimate_muon_muon_separation_for_count(
     return max(0.1, high)
 
 
-def _is_valid_candidate(
-    candidate_frac: Sequence[float],
-    host_positions_frac: Sequence[Sequence[float]],
-    existing_muon_positions_frac: Sequence[Sequence[float]],
+# Bounds the broadcast matrices (references x points) so large orbits against many
+# accepted positions stay within a few megabytes.
+_DISTANCE_CHECK_BLOCK = 65536
+
+
+def _any_closer_than(
+    points: np.ndarray,
+    references: np.ndarray,
     lattice_vectors: Sequence[Sequence[float]],
+    limit: float,
+) -> bool:
+    """Whether ``_pbc_distance(point, reference) < limit`` for any pair, decided exactly as that helper would."""
+
+    if len(points) == 0 or len(references) == 0:
+        return False
+    margin = abs(limit) * _NEAR_TIE_RTOL
+    block = max(1, _DISTANCE_CHECK_BLOCK // len(references))
+    for start in range(0, len(points), block):
+        chunk = points[start : start + block]
+        distances = _pbc_distance_matrix(references, chunk, lattice_vectors)
+        if np.any(distances < limit - margin):
+            return True
+        for reference_index, point_index in np.argwhere(np.abs(distances - limit) <= margin):
+            # ``tolist`` hands the scalar helper Python floats, as the generators always did.
+            point = chunk[point_index].tolist()
+            if _pbc_distance(point, references[reference_index].tolist(), lattice_vectors) < limit:
+                return True
+    return False
+
+
+def _identity_leads(operations: tuple[list[np.ndarray], list[np.ndarray]] | None) -> bool:
+    """Whether the first operation is the identity, so every orbit starts with the position itself."""
+
+    if operations is None:
+        return False
+    rotations, translations = operations
+    if not rotations or not translations:
+        return False
+    return bool(np.array_equal(rotations[0], np.eye(3)) and not np.any(translations[0]))
+
+
+def _valid_candidate_orbit(
+    candidate_frac: list[float],
+    *,
+    lattice_vectors: Sequence[Sequence[float]],
+    operations: tuple[list[np.ndarray], list[np.ndarray]] | None,
+    identity_leads: bool,
+    host_positions: np.ndarray,
+    accepted_positions: np.ndarray,
     min_muon_atom: float,
     min_muon_muon: float,
-) -> bool:
-    # "Muon-muon" spacing here is between alternative one-muon starting
-    # positions, used to reduce duplicate relaxations to the same final site.
-    for host_frac in host_positions_frac:
-        if _pbc_distance(candidate_frac, host_frac, lattice_vectors) < min_muon_atom:
-            return False
+) -> list[list[float]] | None:
+    """Return the candidate's orbit when every image satisfies both spacings, otherwise ``None``.
 
-    for muon_frac in existing_muon_positions_frac:
-        if _pbc_distance(candidate_frac, muon_frac, lattice_vectors) < min_muon_muon:
-            return False
+    ``candidate_frac`` must already lie in ``[0, 1)``.  "Muon-muon" spacing is between
+    alternative one-muon starting positions, used to reduce duplicate relaxations to the
+    same final site.
+    """
 
-    return True
+    def violates(points: np.ndarray) -> bool:
+        return _any_closer_than(points, host_positions, lattice_vectors, min_muon_atom) or _any_closer_than(
+            points, accepted_positions, lattice_vectors, min_muon_muon
+        )
+
+    # With the identity first, the orbit's first (always kept) image is exactly ``candidate_frac``,
+    # so a candidate that fails on its own fails as an orbit: reject before building the orbit.
+    if identity_leads and violates(np.asarray([candidate_frac], dtype=float)):
+        return None
+    orbit = (
+        _equivalent_positions_from_operations(candidate_frac, lattice_vectors=lattice_vectors, operations=operations)
+        if operations is not None
+        else [_wrap_fractional(candidate_frac)]
+    )
+    if violates(np.asarray(orbit, dtype=float).reshape(-1, 3)):
+        return None
+    return orbit
 
 
-def _is_valid_candidate_orbit(
-    candidate_orbit_frac: Sequence[Sequence[float]],
-    host_positions_frac: Sequence[Sequence[float]],
-    existing_muon_positions_frac: Sequence[Sequence[float]],
-    lattice_vectors: Sequence[Sequence[float]],
-    min_muon_atom: float,
-    min_muon_muon: float,
-) -> bool:
-    for candidate_frac in candidate_orbit_frac:
-        if not _is_valid_candidate(
-            candidate_frac,
-            host_positions_frac,
-            existing_muon_positions_frac,
-            lattice_vectors,
-            min_muon_atom=min_muon_atom,
-            min_muon_muon=min_muon_muon,
-        ):
-            return False
-    return True
+def _host_position_array(host_positions_frac: Sequence[Sequence[float]]) -> np.ndarray:
+    hosts = np.asarray(host_positions_frac, dtype=float)
+    if hosts.size == 0:
+        return hosts.reshape(0, 3)
+    if hosts.ndim != 2 or hosts.shape[1] != 3:
+        raise SiteGenerationError("Host positions must be fractional (x, y, z) triples.")
+    return hosts
 
 
 def _sample_unit_sphere_direction(rng: random.Random) -> list[float]:
@@ -503,7 +636,9 @@ def generate_random_sites(
         else None
     )
 
-    accepted_frac: list[list[float]] = []
+    host_positions = _host_position_array(host_positions_frac)
+    identity_leads = _identity_leads(operations)
+    accepted_positions = np.empty((0, 3), dtype=float)
     accepted_points: list[GeneratedPoint] = []
     if progress_callback is not None:
         progress_callback(0, count)
@@ -512,26 +647,20 @@ def generate_random_sites(
     while len(accepted_points) < count and attempts < max_attempts:
         attempts += 1
         candidate_frac = [rng.random(), rng.random(), rng.random()]
-        candidate_orbit = (
-            _equivalent_positions_from_operations(
-                candidate_frac,
-                lattice_vectors=lattice,
-                operations=operations,
-            )
-            if operations is not None
-            else [_wrap_fractional(candidate_frac)]
-        )
-        if not _is_valid_candidate_orbit(
-            candidate_orbit,
-            host_positions_frac,
-            accepted_frac,
-            lattice,
+        candidate_orbit = _valid_candidate_orbit(
+            candidate_frac,
+            lattice_vectors=lattice,
+            operations=operations,
+            identity_leads=identity_leads,
+            host_positions=host_positions,
+            accepted_positions=accepted_positions,
             min_muon_atom=min_muon_atom,
             min_muon_muon=min_muon_muon,
-        ):
+        )
+        if candidate_orbit is None:
             continue
 
-        accepted_frac.extend(candidate_orbit)
+        accepted_positions = np.concatenate([accepted_positions, np.asarray(candidate_orbit, dtype=float)])
         accepted_points.append(
             GeneratedPoint(
                 fractional=_wrap_fractional(candidate_frac),
@@ -594,7 +723,9 @@ def generate_random_sites_by_distance(
         else None
     )
 
-    accepted_frac: list[list[float]] = []
+    host_positions = _host_position_array(host_positions_frac)
+    identity_leads = _identity_leads(operations)
+    accepted_positions = np.empty((0, 3), dtype=float)
     accepted_points: list[GeneratedPoint] = []
     progress_total = max(1, int(expected_count or 1))
     if progress_callback is not None:
@@ -604,26 +735,20 @@ def generate_random_sites_by_distance(
     while attempts < max_attempts:
         attempts += 1
         candidate_frac = [rng.random(), rng.random(), rng.random()]
-        candidate_orbit = (
-            _equivalent_positions_from_operations(
-                candidate_frac,
-                lattice_vectors=lattice,
-                operations=operations,
-            )
-            if operations is not None
-            else [_wrap_fractional(candidate_frac)]
-        )
-        if not _is_valid_candidate_orbit(
-            candidate_orbit,
-            host_positions_frac,
-            accepted_frac,
-            lattice,
+        candidate_orbit = _valid_candidate_orbit(
+            candidate_frac,
+            lattice_vectors=lattice,
+            operations=operations,
+            identity_leads=identity_leads,
+            host_positions=host_positions,
+            accepted_positions=accepted_positions,
             min_muon_atom=min_muon_atom,
             min_muon_muon=min_muon_muon,
-        ):
+        )
+        if candidate_orbit is None:
             continue
 
-        accepted_frac.extend(candidate_orbit)
+        accepted_positions = np.concatenate([accepted_positions, np.asarray(candidate_orbit, dtype=float)])
         accepted_points.append(
             GeneratedPoint(
                 fractional=_wrap_fractional(candidate_frac),
