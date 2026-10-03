@@ -167,11 +167,15 @@ def _uep_clustering(state: dict[str, object]) -> QDialog:
 
 def _field_distribution() -> QDialog:
     class _Distribution:
-        label = "site 1"
-        histogram_bin_centres_tesla = np.linspace(0.0, 0.2, 40)
+        site_label = "site 1"
+        histogram_centres_T = np.linspace(0.0, 0.2, 40)
         histogram_counts = 100.0 * np.exp(-(((np.linspace(0.0, 0.2, 40) - 0.1) / 0.03) ** 2))
 
-    return MagneticFieldDistributionDialog(_Distribution())
+    dialog = MagneticFieldDistributionDialog(_Distribution())
+    # Guard the fixture itself: a stub the dialog cannot read renders only the
+    # "No distribution samples" placeholder, which has no axes to clip.
+    assert dialog._figure.axes[0].lines, "field-distribution fixture drew no histogram"
+    return dialog
 
 
 def _convergence_examiner() -> QDialog:
