@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.layout_engine import ConstrainedLayoutEngine
+from matplotlib.patches import PathPatch
 from matplotlib.transforms import Bbox
 import numpy as np
 from PySide6.QtCore import QSize, Qt
@@ -22,7 +23,12 @@ from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
 from mufinder.app.convergence_types import CutoffRunState
 from mufinder.app.magnetic_field_widget import MagneticFieldDistributionDialog
 from mufinder.app.plot_canvas import DEFAULT_MINIMUM_CANVAS_SIZE, create_plot_canvas
-from mufinder.app.relaxation_analysis_widget import DisplacementAnalysisDialog, RelaxationClusteringDialog
+from mufinder.app.relaxation_analysis_widget import (
+    GRAPH_NODE_GID,
+    GRAPH_NODE_MAX_RADIUS_PT,
+    DisplacementAnalysisDialog,
+    RelaxationClusteringDialog,
+)
 from mufinder.app.uep_clustering_dialog import UepClusteringDialog
 from mufinder.domain.models import Structure
 from mufinder.science.relaxation_analysis import RelaxedMuonSite
@@ -61,18 +67,30 @@ def _relaxed_site(host: Structure, fractional: tuple[float, float, float], energ
     )
 
 
-def _relaxation_clustering(method_index: int) -> QDialog:
+_SPREAD_SITE_FRACTIONS = (
+    (0.10, 0.10, 0.10),
+    (0.12, 0.10, 0.10),
+    (0.30, 0.30, 0.30),
+    (0.32, 0.30, 0.31),
+    (0.60, 0.20, 0.40),
+    (0.61, 0.21, 0.40),
+    (0.80, 0.80, 0.10),
+    (0.25, 0.75, 0.50),
+)
+# Twelve sites 0.2 A apart form one long connected component at the default
+# 0.25 A tolerance, plus two isolated sites: a dense graph for the node checks.
+_CHAIN_SITE_FRACTIONS = (
+    *((0.10 + 0.04 * step, 0.50, 0.50) for step in range(12)),
+    (0.80, 0.10, 0.10),
+    (0.20, 0.90, 0.90),
+)
+
+
+def _relaxation_clustering(
+    method_index: int,
+    fractions: tuple[tuple[float, float, float], ...] = _SPREAD_SITE_FRACTIONS,
+) -> QDialog:
     host = _cubic_host()
-    fractions = [
-        (0.10, 0.10, 0.10),
-        (0.12, 0.10, 0.10),
-        (0.30, 0.30, 0.30),
-        (0.32, 0.30, 0.31),
-        (0.60, 0.20, 0.40),
-        (0.61, 0.21, 0.40),
-        (0.80, 0.80, 0.10),
-        (0.25, 0.75, 0.50),
-    ]
     sites = [_relaxed_site(host, fraction, -10.0 + 0.05 * index) for index, fraction in enumerate(fractions)]
     dialog = RelaxationClusteringDialog(workspace={"name": "Workspace"}, host_structure=host, sites=sites)
     dialog._method_combo.setCurrentIndex(method_index)
@@ -264,6 +282,97 @@ def test_plot_dialog_keeps_axis_decorations_inside_canvas_on_small_screens(qapp,
                 assert canvas.height() >= canvas.minimumHeight(), f"{where}: squeezed below its minimum height"
                 overflow = _decoration_overflow_px(canvas)
                 assert not overflow, f"{where}: labels clipped by {overflow} px"
+    finally:
+        dialog.close()
+
+
+@pytest.mark.parametrize(
+    "fractions",
+    [_SPREAD_SITE_FRACTIONS, _CHAIN_SITE_FRACTIONS],
+    ids=["spread-components", "long-chain"],
+)
+def test_connected_graph_nodes_stay_inside_the_axes_and_apart(qapp, fractions) -> None:
+    """Graph nodes scale with the canvas instead of spilling past it or overlapping.
+
+    Fixed-size markers (980 pt^2 with an 18 pt label) used to be cut off at the
+    axes edge and to run into each other once the dialog was small.
+    """
+
+    dialog = _relaxation_clustering(0, fractions)
+    try:
+        dialog.show()
+        qapp.processEvents()
+        for size in (dialog.minimumSize(), *SMALL_SCREEN_SIZES, QSize(1600, 1000)):
+            dialog.resize(size)
+            for _ in range(4):
+                qapp.processEvents()
+            at_minimum = size == dialog.minimumSize()
+            canvas = dialog._graph_canvas
+            canvas.draw()
+            renderer = canvas.get_renderer()
+            axes = canvas.figure.axes[0]
+            circles = [patch for patch in axes.patches if patch.get_gid() == GRAPH_NODE_GID]
+            labels = [patch for patch in axes.patches if isinstance(patch, PathPatch)]
+            where = f"{len(fractions)} sites at {dialog.width()}x{dialog.height()}"
+            assert len(circles) == len(labels) == len(fractions), where
+            # Node borders are filled discs, not strokes, so nothing reaches past the radius.
+            assert all(circle.get_linewidth() == 0.0 for circle in circles), where
+
+            inner = axes.bbox.padded(_OVERFLOW_TOLERANCE_PX)
+            extents = [circle.get_window_extent(renderer) for circle in circles]
+            for extent in extents:
+                assert inner.x0 <= extent.x0 and extent.x1 <= inner.x1, f"{where}: node cut off horizontally"
+                assert inner.y0 <= extent.y0 and extent.y1 <= inner.y1, f"{where}: node cut off vertically"
+            for label, extent in zip(labels, extents, strict=True):
+                label_extent = label.get_window_extent(renderer)
+                assert extent.x0 < label_extent.x0 and label_extent.x1 < extent.x1, f"{where}: label wider than node"
+                assert extent.y0 < label_extent.y0 and label_extent.y1 < extent.y1, f"{where}: label taller than node"
+            centres = np.array([[(e.x0 + e.x1) / 2.0, (e.y0 + e.y1) / 2.0] for e in extents])
+            radius_px = extents[0].width / 2.0
+            gaps = np.linalg.norm(centres[:, np.newaxis, :] - centres[np.newaxis, :, :], axis=2)
+            np.fill_diagonal(gaps, np.inf)
+            assert gaps.min() > 2.0 * radius_px + 2.0, f"{where}: nodes overlap"
+            # Nodes stay large enough to read their numbers on real laptop windows. At the
+            # dialog's absolute minimum a twelve-node chain may get smaller, but must not collapse.
+            minimum_radius_px = 5.0 if at_minimum else 8.0
+            assert radius_px >= minimum_radius_px, f"{where}: nodes shrank to {radius_px:.1f} px"
+            # ...and a small graph on a big canvas stops growing at the cap.
+            max_radius_px = GRAPH_NODE_MAX_RADIUS_PT * canvas.figure.dpi / 72.0
+            assert radius_px <= max_radius_px + _OVERFLOW_TOLERANCE_PX, f"{where}: nodes grew to {radius_px:.1f} px"
+            # The graph uses the canvas: unless the node-size cap holds it back, it fills
+            # most of one dimension and at least half of the other.
+            if radius_px < max_radius_px - _OVERFLOW_TOLERANCE_PX:
+                fill = sorted(
+                    (
+                        (max(e.x1 for e in extents) - min(e.x0 for e in extents)) / axes.bbox.width,
+                        (max(e.y1 for e in extents) - min(e.y0 for e in extents)) / axes.bbox.height,
+                    )
+                )
+                assert fill[1] >= 0.85, f"{where}: graph fills only {fill[1]:.2f} of the canvas"
+                if fractions is _SPREAD_SITE_FRACTIONS:
+                    assert fill[0] >= 0.5, f"{where}: graph fills only {fill[0]:.2f} across"
+    finally:
+        dialog.close()
+
+
+def test_connected_graph_repacks_its_components_when_the_canvas_changes_shape(qapp) -> None:
+    dialog = _relaxation_clustering(0)
+    try:
+        dialog.show()
+        row_counts = {}
+        for size in (QSize(1150, 620), QSize(1100, 1000)):
+            dialog.resize(size)
+            for _ in range(4):
+                qapp.processEvents()
+            canvas = dialog._graph_canvas
+            canvas.draw()
+            nodes = [patch for patch in canvas.figure.axes[0].patches if patch.get_gid() == GRAPH_NODE_GID]
+            aspect = canvas.figure.bbox.width / canvas.figure.bbox.height
+            row_counts[round(aspect, 1)] = len({round(node.center[1], 6) for node in nodes})
+        (wide_aspect, wide_rows), (tall_aspect, tall_rows) = sorted(row_counts.items(), reverse=True)
+        assert wide_aspect > tall_aspect
+        # A wide canvas gets fewer, longer rows of components than a squarer one.
+        assert wide_rows < tall_rows
     finally:
         dialog.close()
 

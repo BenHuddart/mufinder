@@ -355,6 +355,10 @@ Rules for plot widgets:
   layout engine can fit a label longer than its axis;
 - place a legend outside the axes only through the axes' own ``legend`` call,
   so constrained layout reserves room for it.
+- size markers and labels that must fit inside the plot (such as the
+  relaxation clustering graph's nodes) in data units, as patches, rather than
+  in points: a point-sized marker keeps its size as the canvas shrinks and
+  spills past the axes.
 
 ``tests/test_agent_harness.py`` rejects ``subplots_adjust`` anywhere in
 ``mufinder.app`` and pins the modules that still build a ``FigureCanvasQTAgg``

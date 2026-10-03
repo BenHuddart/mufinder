@@ -206,6 +206,21 @@ The host-structure panel now includes:
   more when its cluster summary table needs it to show the Wyckoff assignments
   in full; the plot takes the rest. The split follows window resizes until the
   user drags the handle.
+- The relaxation clustering window's connected-components graph sizes its
+  nodes, their border rings, their numbers and its edges in data units, so the
+  graph scales with its canvas: every node stays inside the plot and nodes never
+  overlap, however small the window. Node size follows the closest pair of
+  nodes, and large components are spread so neighbouring nodes keep a
+  consistent gap instead of being squeezed into a fixed box.
+- The graph uses the space it has: components are packed into rows chosen to
+  fit the canvas's shape (few long rows on a wide canvas, more short rows on a
+  tall one), kept in cluster order, with gaps tied to the node size. The packing
+  is redone when the window is resized. Nodes stop growing at about 22 pt in
+  radius, so a small graph on a large window stays readable rather than turning
+  into a few huge discs.
+- Edges thin out with the nodes. Components with more than 2.5 edges per node
+  draw thinner, translucent edges, so the edges of a dense component can still
+  be told apart.
 - A project-level supercell editor with simple diagonal controls, optional
   advanced full 3x3 matrix entry, naming, preview, save, edit, delete, and
   workflow selection support.
@@ -589,6 +604,16 @@ Current clustering behavior includes:
 - On a small window the clustering window reflows only its controls: the
   dendrogram or PCA plot stays beside the structure view and energy-spread
   plot, so it keeps a usable size instead of being stacked into a thin strip.
+- The clustering window's geometry, splitter sizes and camera are saved with the
+  UEP analysis state once a move, resize, splitter drag or view change settles
+  (after about a quarter of a second), not on every intermediate event, so
+  dragging stays responsive however large the potential grid is. Method,
+  tolerance, cluster-count and result changes are saved immediately.
+- The UEP analysis state saved on each change leaves out the full-cell
+  potential grid, which is stored once as the job's grid result, and keeps each
+  isosurface mesh once, serialized only when the mesh changes. Projects that
+  stored the grid in the analysis state move it into the grid result when the
+  analysis is next opened.
 - Batch-tab cluster tables that reflect the most recent separate clustering run
   while preserving cluster-representative promotion.
 
