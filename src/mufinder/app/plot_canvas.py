@@ -42,6 +42,22 @@ DEFAULT_MINIMUM_CANVAS_SIZE: tuple[int, int] = (220, 160)
 POP_OUT_WINDOW_SIZE: tuple[int, int] = (960, 680)
 """Default size of a popped-out plot window, clamped to the screen."""
 
+POP_OUT_WINDOW_FLAGS = (
+    Qt.WindowType.Dialog
+    | Qt.WindowType.WindowTitleHint
+    | Qt.WindowType.WindowSystemMenuHint
+    | Qt.WindowType.WindowMinMaxButtonsHint
+    | Qt.WindowType.WindowCloseButtonHint
+)
+"""Window type of a popped-out plot: a dialog-type window that keeps its frame buttons.
+
+Several plots live in dialogs run with ``exec()``. While a modal dialog runs,
+macOS keeps an ordinary child window (``Qt.Window``) behind the dialog and will
+not bring it forward; a dialog-type child is shown above its modal parent and
+can be used alongside it. On every platform the window then stays in front of
+the dialog that owns the plot instead of disappearing behind it.
+"""
+
 
 def create_plot_canvas(
     *,
@@ -86,7 +102,7 @@ class _PlotWindow(QWidget):
     """Separate resizable window showing a borrowed plot canvas with a navigation toolbar."""
 
     def __init__(self, canvas: FigureCanvasQTAgg, *, title: str, owner: PlotFrame) -> None:
-        super().__init__(owner, Qt.WindowType.Window)
+        super().__init__(owner, POP_OUT_WINDOW_FLAGS)
         self.setObjectName("plotPopOutWindow")
         self.setWindowTitle(title)
         self._owner = owner

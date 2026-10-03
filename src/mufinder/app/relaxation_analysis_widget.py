@@ -1091,21 +1091,32 @@ class RelaxationClusteringDialog(QDialog):
         Below the cap the axes autoscale, so the graph fills the canvas.
         """
 
-        box = self._graph_figure.bbox
-        if not centres or box.width <= 0 or box.height <= 0:
+        figure = self._graph_figure
+        # The axes get the figure minus constrained layout's padding on each side;
+        # sizing against the whole figure would leave capped nodes a pixel or two
+        # short of the cap.
+        engine = figure.get_layout_engine()
+        pads = engine.get() if engine is not None and hasattr(engine, "get") else {}
+        width = figure.bbox.width - 2.0 * float(pads.get("w_pad", 0.0)) * figure.dpi
+        height = figure.bbox.height - 2.0 * float(pads.get("h_pad", 0.0)) * figure.dpi
+        if not centres or width <= 0 or height <= 0:
             return
         points = np.asarray(centres, dtype=float)
         low = points.min(axis=0) - radius
         high = points.max(axis=0) + radius
         span = np.maximum(high - low, 1e-9) * (1.0 + 2.0 * _GRAPH_MARGIN_FRACTION)
-        pixels_per_unit = min(box.width / span[0], box.height / span[1])
-        max_radius_px = GRAPH_NODE_MAX_RADIUS_PT * self._graph_figure.dpi / 72.0
+        pixels_per_unit = min(width / span[0], height / span[1])
+        max_radius_px = GRAPH_NODE_MAX_RADIUS_PT * figure.dpi / 72.0
         if pixels_per_unit * radius <= max_radius_px:
             return
         capped = max_radius_px / radius
         centre = 0.5 * (low + high)
-        axis.set_xlim(centre[0] - 0.5 * box.width / capped, centre[0] + 0.5 * box.width / capped)
-        axis.set_ylim(centre[1] - 0.5 * box.height / capped, centre[1] + 0.5 * box.height / capped)
+        axis.set_xlim(centre[0] - 0.5 * width / capped, centre[0] + 0.5 * width / capped)
+        axis.set_ylim(centre[1] - 0.5 * height / capped, centre[1] + 0.5 * height / capped)
+        # Both limits are now fixed, so keep the aspect by adjusting the axes box
+        # (it already matches these limits); "datalim" would have to override one
+        # of them and logs a warning on every redraw.
+        axis.set_aspect("equal", adjustable="box")
 
     def _draw_connected_graph(self) -> None:
         if self._graph_layouts is None:

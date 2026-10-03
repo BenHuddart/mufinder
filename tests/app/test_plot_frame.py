@@ -6,8 +6,8 @@ from pathlib import Path
 import sys
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from PySide6.QtCore import QPoint
-from PySide6.QtWidgets import QDialog, QPushButton, QVBoxLayout
+from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QVBoxLayout
 import pytest
 import shiboken6
 
@@ -74,6 +74,49 @@ def test_pop_out_moves_the_live_canvas_into_its_own_window(qapp, host) -> None:
     assert placeholder is not None and placeholder.isVisible()
     assert placeholder.parentWidget().minimumSize() == host.canvas.minimumSize()
     assert host.frame.pop_out_button.isHidden()
+
+
+def test_pop_out_window_is_a_resizable_dialog_type_window(qapp, host) -> None:
+    """A plain ``Qt.Window`` child stays stuck behind a modal dialog on macOS.
+
+    The relaxation clustering and displacement dialogs run with ``exec()``; a
+    dialog-type child window is shown above its modal parent and can be used.
+    """
+
+    host.frame.pop_out()
+    window = host.frame.popped_out_window
+
+    assert window.windowType() == Qt.WindowType.Dialog
+    flags = window.windowFlags()
+    for hint in (
+        Qt.WindowType.WindowMinimizeButtonHint,
+        Qt.WindowType.WindowMaximizeButtonHint,
+        Qt.WindowType.WindowCloseButtonHint,
+    ):
+        assert flags & hint, hint
+    assert window.windowModality() == Qt.WindowModality.NonModal
+
+
+def test_pop_out_window_can_be_used_while_its_dialog_runs_modally(qapp) -> None:
+    dialog = _HostDialog()
+    seen = []
+
+    def interact() -> None:
+        dialog.frame.pop_out()
+        window = dialog.frame.popped_out_window
+        # Qt does not block a window whose (transient) parent is the modal dialog.
+        seen.append((window.isVisible(), window.windowType(), QApplication.modalWindow() is dialog.windowHandle()))
+        window.toolbar.zoom()
+        seen.append(dialog.canvas.toolbar is window.toolbar)
+        window.close()
+        dialog.reject()
+
+    QTimer.singleShot(0, interact)
+    dialog.exec()
+
+    assert seen == [(True, Qt.WindowType.Dialog, True), True]
+    assert not dialog.frame.is_popped_out()
+    assert dialog.canvas.widgetlock.available(None)
 
 
 def test_pop_out_window_offers_navigation_without_layout_editing(qapp, host) -> None:

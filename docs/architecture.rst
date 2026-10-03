@@ -359,7 +359,10 @@ Rules for plot widgets:
   ``PlotFrame`` (also in ``mufinder.app.plot_canvas``), with a short title. Its
   corner button opens the plot in a separate resizable window with zoom, pan
   and save; the window borrows the live canvas, so the plot keeps updating and
-  stays interactive, and it returns when the window or dialog closes. A dialog
+  stays interactive, and it returns when the window or dialog closes. The
+  window is a dialog-type window (``POP_OUT_WINDOW_FLAGS``): many plot dialogs
+  run with ``exec()``, and while a modal dialog runs macOS keeps an ordinary
+  ``Qt.Window`` child behind it and will not bring it forward. A dialog
   whose only content is its plot needs no frame. Extra controls that belong on
   the plot go in the frame's overlay (``add_overlay_widget``) so they do not
   cover the pop-out button;
