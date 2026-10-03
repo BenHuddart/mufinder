@@ -418,7 +418,7 @@ Relaxation staging:
 - parsed results must persist selected muon-dominated modes, per-mode and total ZPE, witness metrics, output files, and source relaxation provenance
 - completed result rows must provide a `Launch Analysis` action that opens an interactive phonon-analysis window for the selected job
 - the analysis window must expose a `Phonon Modes` tab that lists all Gamma-point modes, highlights the selected muon-dominated subset, synchronizes one selected mode to a muonated-structure viewer, and supports amplitude-controlled playback animation with play/pause, reset, cycle-time, and vector-visibility controls
-- the analysis window must expose the single-particle adiabatic solver for selected muon-dominated Gamma modes, support Gomilsek-style energy plots including square-root energy scaling, and calculate covariance/correlation tensors plus pairwise `w2` witnesses
+- the analysis window must expose the single-particle adiabatic solver for selected muon-dominated Gamma modes, support Gomilšek-style energy plots including square-root energy scaling, and calculate covariance/correlation tensors plus pairwise `w2` witnesses
 - PIMD is out of scope
 
 ### 12.7 Energy Barriers
