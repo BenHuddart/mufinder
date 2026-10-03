@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QDialog, QPushButton, QSizePolicy
+from PySide6.QtWidgets import QDialog, QPushButton, QSizePolicy, QWidget
 
 from mufinder.app.theme import current_palette
 from mufinder.app.uep_clustering_dialog import cluster_color_map
@@ -78,6 +78,36 @@ def _run_isosurface_threads_inline(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("mufinder.app.uep_wizard._IsosurfaceGridThread.start", _start_inline)
     monkeypatch.setattr("mufinder.app.uep_wizard._IsosurfaceMeshThread.start", _start_inline)
+
+
+def test_uep_analysis_dialog_shows_no_unlaid_widgets_over_the_tab_bar(qapp) -> None:
+    # The summary, probe, line and plane pages are no longer tabs. Left visible
+    # they were drawn at the default 100x30 geometry over the first tab.
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+    dialog.show()
+    qapp.processEvents()
+
+    layout = dialog.layout()
+    laid_out = {layout.itemAt(index).widget() for index in range(layout.count())}
+    stray = [
+        child
+        for child in dialog.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly)
+        if child.isVisible() and not child.isWindow() and child not in laid_out
+    ]
+
+    assert stray == []
+    assert dialog._probe_output.isVisible() is False
+    dialog._probe_point.set_values((0.25, 0.25, 0.25))
+    dialog._run_probe()
+    assert "Total potential" in dialog._probe_output.toPlainText()
+    dialog.close()
 
 
 def test_uep_analysis_dialog_shrinks_for_small_screens(qapp) -> None:

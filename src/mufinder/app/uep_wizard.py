@@ -1693,6 +1693,12 @@ class UepAnalysisDialog(QDialog):
         self._tabs.addTab(self._batch_tab, "Batch Search")
         self._tabs.addTab(self._isosurface_tab, "Isosurfaces")
         self._tabs.addTab(self._slices_tab, "Slices")
+        # The summary, probe, line and plane pages are no longer tabs; their
+        # widgets only carry saved analysis state. Left visible they sat
+        # outside any layout at the default 100x30 geometry, stacked above the
+        # tab bar and covering the first tab.
+        for retired_page in (self._summary_tab, self._probe_tab, self._line_tab, self._plane_tab):
+            retired_page.hide()
         self._tabs.currentChanged.connect(lambda _index: self._emit_state_changed())
         self._apply_tab_branding()
 
