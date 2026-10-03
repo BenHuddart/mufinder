@@ -59,6 +59,17 @@ Each candidate is labelled by generating its full symmetry orbit and asking
 positions are rejected by checking whether the candidate orbit overlaps any host
 atom within the occupancy tolerance.
 
+The candidate special positions come from projecting the cluster onto the
+fixed-point locus of every symmetry operation and of every pair of operations,
+which is several thousand pairs for a high-symmetry cubic host. To keep the
+clustering dialog responsive, MuFinder skips pairs that cannot produce a
+solution, screens the rest in one vectorised pass, and projects exactly only
+the pairs that can land within range of the cluster. It then asks ``spglib``
+to label candidates in rank order, so only the winning candidate is usually
+labelled. None of this changes which site is chosen. Host symmetry operations
+and per-cluster assignments are cached, so switching clustering methods reuses
+the assignments of clusters that did not change.
+
 The **Wyckoff tolerance (Å)** control in the clustering dialog sets the maximum
 allowed distance from every anchored cluster member to the selected Wyckoff
 orbit. If no unoccupied special position satisfies this all-members rule,
@@ -91,7 +102,12 @@ which provides three methods, selected with ``Method``. Click
 For connected components, the dialog shows the graph of subclusters and a plot
 of number of clusters against tolerance. Each manual tolerance evaluation adds a
 point to the plot. **Scan Tolerances** evaluates a regular tolerance grid so a
-stable plateau in the cluster-count curve can be chosen deliberately.
+stable plateau in the cluster-count curve can be chosen deliberately. The
+symmetry-aware distances do not depend on the tolerance, so the scan measures
+them once and reuses them at every grid point. Host symmetry operations are
+cached per host, and each site's symmetry-equivalent positions are compared in
+one vectorised pass. Near ties are re-measured exactly, so the distances,
+cluster counts, and anchored positions match a site-by-site evaluation.
 
 The clustering summary table also reports the selected Wyckoff assignment for
 each cluster. Tooltips include the detected space group, site-symmetry symbol,

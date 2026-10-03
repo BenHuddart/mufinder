@@ -11,6 +11,8 @@ import numpy as np
 from mufinder.domain.models import Structure
 from mufinder.science.atom_matching import match_structures
 from mufinder.science.site_generation import (
+    _near_minimum_indexes,
+    _pbc_distance_matrix,
     closest_symmetry_equivalent_position,
     lattice_frac_to_cart,
     symmetry_equivalent_positions,
@@ -221,17 +223,21 @@ def symmetry_distance_matrix(
         )
         for site in sites
     ]
-    for left_index, left in enumerate(sites):
-        for right_index in range(left_index + 1, count):
-            distances = [
-                _pbc_distance(left.folded_fractional_position, equivalent, lattice)
-                for equivalent in equivalents_by_index[right_index]
-            ]
-            distance = min(distances) if distances else _pbc_distance(
-                left.folded_fractional_position,
-                sites[right_index].folded_fractional_position,
-                lattice,
-            )
+    positions = [site.folded_fractional_position for site in sites]
+    for right_index in range(1, count):
+        equivalents = equivalents_by_index[right_index]
+        # Every earlier site against every equivalent of this one, in one broadcast.
+        screened = _pbc_distance_matrix(positions[:right_index], equivalents, lattice) if equivalents else None
+        for left_index in range(right_index):
+            left = positions[left_index]
+            if screened is None:
+                distance = _pbc_distance(left, positions[right_index], lattice)
+            else:
+                # Re-measure the near-minimal equivalents with ``_pbc_distance`` so the value is bit-identical.
+                distance = min(
+                    _pbc_distance(left, equivalents[index], lattice)
+                    for index in _near_minimum_indexes(screened[left_index]).tolist()
+                )
             matrix[left_index, right_index] = distance
             matrix[right_index, left_index] = distance
     return tuple(tuple(float(value) for value in row) for row in matrix.tolist())
@@ -324,6 +330,14 @@ def _cluster_summaries(
     )
 
 
+def _adjacency_within(distances: np.ndarray, tolerance_ang: float) -> np.ndarray:
+    count = int(distances.shape[0])
+    adjacency = np.zeros((count, count), dtype=int)
+    if count:
+        adjacency = ((distances < float(tolerance_ang)) & (~np.eye(count, dtype=bool))).astype(int)
+    return adjacency
+
+
 def cluster_connected_components(
     sites: Sequence[RelaxedMuonSite],
     host_structure: Structure,
@@ -341,9 +355,7 @@ def cluster_connected_components(
         symmetry_distance_matrix(ordered_sites, host_structure, symprec=symprec),
         dtype=float,
     )
-    adjacency = np.zeros((count, count), dtype=int)
-    if count:
-        adjacency = ((distances < float(tolerance_ang)) & (~np.eye(count, dtype=bool))).astype(int)
+    adjacency = _adjacency_within(distances, tolerance_ang)
     raw_components = _connected_components(adjacency)
     labels = np.zeros(count, dtype=int)
     for raw_index, members in enumerate(raw_components, start=1):
@@ -383,15 +395,17 @@ def scan_connected_component_tolerances(
     if start < 0.0 or stop < 0.0 or stop < start:
         raise RelaxationAnalysisError("Tolerance scan bounds must be non-negative and increasing.")
     tolerances = np.linspace(start, stop, int(points))
+    ordered_sites = normalize_site_energies(sites)
+    # The symmetry distances do not depend on the tolerance, so measure them once for the whole scan.
+    distances = np.asarray(
+        symmetry_distance_matrix(ordered_sites, host_structure, symprec=symprec),
+        dtype=float,
+    )
     rows: list[tuple[float, int]] = []
     for tolerance in tolerances:
-        result = cluster_connected_components(
-            sites,
-            host_structure,
-            tolerance_ang=float(tolerance),
-            symprec=symprec,
-        )
-        rows.append((float(tolerance), len(result.clusters)))
+        # One cluster per connected component, exactly as ``cluster_connected_components`` counts them.
+        components = _connected_components(_adjacency_within(distances, float(tolerance)))
+        rows.append((float(tolerance), len(components)))
     return tuple(rows)
 
 

@@ -70,6 +70,15 @@ generated starts in different supercells.  Because the attempt limit is the stop
 criterion, the exact number of accepted candidates is an output of the method
 rather than an input.
 
+Each trial is first checked on its own. Host atoms and accepted orbits are
+both symmetry-invariant, so a trial position that fails its own distance checks
+fails as an orbit too. MuFinder therefore builds the symmetry-equivalent orbit
+only for the few trials that pass. The distance checks run as vectorised passes
+against all host atoms and accepted positions. Comparisons that land within
+rounding error of a distance limit are re-measured exactly. A seeded run
+therefore accepts the same positions as a position-by-position check. This keeps
+the default 20000-attempt budget practical even for high-symmetry supercells.
+
 Number-of-positions mode
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
