@@ -10,6 +10,10 @@ from uuid import UUID, uuid4
 from ase.data import atomic_numbers
 from ase.data.colors import jmol_colors
 from matplotlib import colormaps, colors as mcolors
+from matplotlib.font_manager import FontProperties
+from matplotlib.patches import Circle, PathPatch
+from matplotlib.textpath import TextPath
+from matplotlib.transforms import Affine2D
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -21,7 +25,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGridLayout,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -349,6 +352,59 @@ def _cluster_color_map(labels: Sequence[int]) -> dict[int, str]:
 def _lightened_cluster_color(color: str) -> str:
     rgb = np.asarray(mcolors.to_rgb(color), dtype=float)
     return mcolors.to_hex((0.28 * rgb) + 0.72)
+
+
+# Connected-components graph nodes are drawn in data units, not points, so they
+# scale with the canvas: fixed-size markers spilled past the axes and overlapped
+# once the dialog was small. Connected pairs sit 1.5 units apart in the layout,
+# and neighbouring nodes of a larger component are typically that far apart.
+_GRAPH_NODE_SPACING = 1.5
+_GRAPH_NODE_MAX_RADIUS = 0.45
+# Radius as a share of the closest node-to-node distance, so neighbours never touch.
+_GRAPH_NODE_GAP_FRACTION = 0.42
+# Width of the coloured node border relative to the node radius. The border is
+# a disc behind the fill, not a stroke, so it scales with the node too.
+_GRAPH_NODE_BORDER_FRACTION = 0.18
+# Matplotlib ``gid`` marking a node's outer (border) disc.
+GRAPH_NODE_GID = "relaxation-graph-node"
+# Label digit height, and the widest a label may be, relative to the node radius.
+_GRAPH_LABEL_HEIGHT_FRACTION = 0.85
+_GRAPH_LABEL_WIDTH_FRACTION = 1.5
+
+
+def _graph_node_radius(points: np.ndarray) -> float:
+    """Return a node radius (data units) that keeps every pair of nodes apart."""
+
+    if len(points) < 2:
+        return _GRAPH_NODE_MAX_RADIUS
+    distances = np.linalg.norm(points[:, np.newaxis, :] - points[np.newaxis, :, :], axis=2)
+    np.fill_diagonal(distances, np.inf)
+    closest = float(np.min(distances))
+    if not np.isfinite(closest) or closest <= 0.0:
+        return _GRAPH_NODE_MAX_RADIUS
+    return min(_GRAPH_NODE_MAX_RADIUS, _GRAPH_NODE_GAP_FRACTION * closest)
+
+
+def _graph_node_label(text: str, centre: tuple[float, float], radius: float) -> PathPatch:
+    """Return ``text`` as a filled outline centred on a node, sized in data units.
+
+    A text outline scales with the axes like the node circle does, whereas a
+    ``Text`` artist keeps a fixed point size however small the canvas gets.
+    """
+
+    path = TextPath((0.0, 0.0), text, size=1.0, prop=FontProperties(family="serif"))
+    extents = path.get_extents()
+    scale = min(
+        _GRAPH_LABEL_HEIGHT_FRACTION * radius / max(extents.height, 1e-9),
+        _GRAPH_LABEL_WIDTH_FRACTION * radius / max(extents.width, 1e-9),
+    )
+    transform = (
+        Affine2D()
+        .translate(-0.5 * (extents.x0 + extents.x1), -0.5 * (extents.y0 + extents.y1))
+        .scale(scale)
+        .translate(*centre)
+    )
+    return PathPatch(transform.transform_path(path), facecolor="#111111", edgecolor="none", zorder=4)
 
 
 def _viewer_species_color(species: str) -> str:
@@ -795,7 +851,7 @@ class RelaxationClusteringDialog(QDialog):
         if count == 1:
             return np.zeros((1, 2), dtype=float)
         if count == 2:
-            return np.asarray([[-0.75, 0.0], [0.75, 0.0]], dtype=float)
+            return np.asarray([[-0.5 * _GRAPH_NODE_SPACING, 0.0], [0.5 * _GRAPH_NODE_SPACING, 0.0]], dtype=float)
 
         angles = np.linspace(0.0, 2.0 * np.pi, count, endpoint=False)
         positions = np.column_stack((np.cos(angles), np.sin(angles))).astype(float)
@@ -830,7 +886,16 @@ class RelaxationClusteringDialog(QDialog):
             positions = positions @ vh.T
         span = np.ptp(positions, axis=0)
         largest_span = max(float(np.max(span)), 1e-6)
-        return positions * (1.95 / largest_span)
+        # Fit small components to a 1.95-unit box as before, but keep the typical
+        # gap between neighbouring nodes at the 1.5 units a connected pair gets:
+        # a long chain crammed into that box left neighbours ~0.2 units apart,
+        # so its nodes had to shrink to a few pixels. The median nearest-neighbour
+        # gap is used because the spring layout spaces chain ends more tightly;
+        # _graph_node_radius still keeps the closest pair from touching.
+        distances = np.linalg.norm(positions[:, np.newaxis, :] - positions[np.newaxis, :, :], axis=2)
+        np.fill_diagonal(distances, np.inf)
+        typical_gap = max(float(np.median(np.min(distances, axis=1))), 1e-6)
+        return positions * max(1.95 / largest_span, _GRAPH_NODE_SPACING / typical_gap)
 
     @classmethod
     def _connected_graph_positions(cls, result: ConnectedComponentsResult) -> dict[int, tuple[float, float]]:
@@ -922,31 +987,28 @@ class RelaxationClusteringDialog(QDialog):
                     solid_capstyle="round",
                     zorder=1,
                 )
-        for index, label in enumerate(labels):
-            x, y = positions.get(index, (float(index), 0.0))
+        centres = [positions.get(index, (float(index), 0.0)) for index in range(len(labels))]
+        radius = _graph_node_radius(np.asarray(centres, dtype=float).reshape(-1, 2))
+        for index, (label, centre) in enumerate(zip(labels, centres, strict=True)):
             color = colors.get(int(label), current_palette().accent)
-            axis.scatter(
-                [x],
-                [y],
-                s=980,
-                facecolors=_lightened_cluster_color(color),
-                edgecolors=color,
-                linewidths=3.0,
-                zorder=2,
+            # add_patch grows the data limits by the whole circle, so autoscaling
+            # keeps every node inside the axes at any canvas size.
+            border = Circle(centre, radius, facecolor=color, edgecolor="none", linewidth=0.0, zorder=2)
+            border.set_gid(GRAPH_NODE_GID)
+            axis.add_patch(border)
+            axis.add_patch(
+                Circle(
+                    centre,
+                    radius * (1.0 - _GRAPH_NODE_BORDER_FRACTION),
+                    facecolor=_lightened_cluster_color(color),
+                    edgecolor="none",
+                    linewidth=0.0,
+                    zorder=3,
+                )
             )
-            axis.text(
-                x,
-                y,
-                str(index + 1),
-                color="#111111",
-                ha="center",
-                va="center",
-                fontsize=18,
-                fontfamily="serif",
-                zorder=3,
-            )
+            axis.add_patch(_graph_node_label(str(index + 1), centre, radius))
         axis.set_aspect("equal", adjustable="datalim")
-        axis.margins(0.18)
+        axis.margins(0.06)
         axis.axis("off")
         self._graph_canvas.draw_idle()
 

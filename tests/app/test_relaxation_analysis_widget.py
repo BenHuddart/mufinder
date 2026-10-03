@@ -8,10 +8,12 @@ from uuid import uuid4
 from ase.data import atomic_numbers, covalent_radii
 from ase.data.colors import jmol_colors
 from matplotlib import colors as mcolors
+from matplotlib.patches import Circle, PathPatch
 import numpy as np
 from PySide6.QtWidgets import QCheckBox, QFrame, QSplitter, QTabWidget, QTreeWidget
 
 from mufinder.app.relaxation_analysis_widget import (
+    GRAPH_NODE_GID,
     CompletedRelaxationAnalysisSource,
     DisplacementAnalysisDialog,
     RelaxationAnalysisJobDialog,
@@ -234,17 +236,19 @@ def test_relaxation_connected_graph_uses_paper_style_nodes_and_edges(qapp) -> No
     )
 
     axis = dialog._graph_figure.axes[0]
-    node_collections = [
-        collection
-        for collection in axis.collections
-        if hasattr(collection, "get_offsets") and len(collection.get_offsets()) == 1
-    ]
+    nodes = [patch for patch in axis.patches if patch.get_gid() == GRAPH_NODE_GID]
+    fills = [patch for patch in axis.patches if isinstance(patch, Circle) and patch.get_gid() != GRAPH_NODE_GID]
+    node_labels = [patch for patch in axis.patches if isinstance(patch, PathPatch)]
 
     assert axis.get_title() == ""
     assert dialog._graph_figure.get_facecolor()[3] == 0.0
     assert axis.get_facecolor()[3] == 0.0
-    assert len(node_collections) == 4
-    assert all(float(collection.get_linewidths()[0]) >= 3.0 for collection in node_collections)
+    assert len(nodes) == len(fills) == len(node_labels) == 4
+    # Nodes share one radius, sized in data units so they scale with the canvas,
+    # and a lighter fill inside leaves a thick coloured border ring.
+    assert len({round(node.get_radius(), 9) for node in nodes}) == 1
+    assert all(isinstance(node, Circle) for node in nodes)
+    assert all(0.7 < fill.get_radius() / nodes[0].get_radius() < 0.9 for fill in fills)
     assert any(float(line.get_linewidth()) >= 3.0 for line in axis.lines)
 
     dialog.close()

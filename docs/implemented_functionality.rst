@@ -206,6 +206,12 @@ The host-structure panel now includes:
   more when its cluster summary table needs it to show the Wyckoff assignments
   in full; the plot takes the rest. The split follows window resizes until the
   user drags the handle.
+- The relaxation clustering window's connected-components graph sizes its
+  nodes, their border rings and their numbers in data units, so the graph
+  scales with its canvas: every node stays inside the plot and nodes never
+  overlap, however small the window. Node size follows the closest pair of
+  nodes, and large components are spread so neighbouring nodes keep a
+  consistent gap instead of being squeezed into a fixed box.
 - A project-level supercell editor with simple diagonal controls, optional
   advanced full 3x3 matrix entry, naming, preview, save, edit, delete, and
   workflow selection support.
