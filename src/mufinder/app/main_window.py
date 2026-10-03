@@ -249,7 +249,7 @@ from mufinder.app.workflow_controllers.quantum_corrections import (
 )
 from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.castep_io.param_parser import parse_param_assignments, parse_param_value
+from mufinder.castep_io.param_parser import parse_param_assignments, parse_param_value, run_is_spin_polarized
 from mufinder.castep_io.ts_parser import (
     TransitionStateImage,
     TransitionStateParseError,
@@ -5552,6 +5552,7 @@ class MainWindow(QMainWindow):
 
         seed_name = self._job_seed_name(candidate.job)
         cell_path = output_dir / f"{seed_name}.cell"
+        parsed_cell = None
         if cell_path.is_file():
             try:
                 parsed_cell = parse_cell_file(cell_path)
@@ -5561,11 +5562,13 @@ class MainWindow(QMainWindow):
                 values["kpoint_mp_grid"] = tuple(int(component) for component in parsed_cell.cell_file.kpoint_mp_grid)
 
         param_path = output_dir / f"{seed_name}.param"
+        assignments: dict[str, object] | None = None
         if param_path.is_file():
             try:
                 assignments = self._parse_param_scalar_assignments(param_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
-                assignments = {}
+                assignments = None
+        if assignments is not None:
             cutoff = assignments.get("cut_off_energy")
             if cutoff is not None:
                 values["cut_off_energy"] = cutoff
@@ -5574,6 +5577,17 @@ class MainWindow(QMainWindow):
             xc_functional = assignments.get("xc_functional")
             if xc_functional is not None:
                 values["xc_functional"] = xc_functional
+            # ...and the same spin treatment.
+            values["spin_polarized"] = run_is_spin_polarized(
+                assignments,
+                parsed_cell.atomic_spins if parsed_cell is not None else None,
+            )
+        elif self._charge_state_for_job(candidate.job) == MUONIUM_CHARGE_STATE:
+            # Without the source's .param, fall back to the default a muonium
+            # relaxation is written with (see relaxation_adapter). The value
+            # also seeds the always-shown Spin Polarized checkbox, which would
+            # otherwise save an unticked box over the workflow's own default.
+            values["spin_polarized"] = True
         return values
 
     def _quantum_row_configuration_with_source_defaults(

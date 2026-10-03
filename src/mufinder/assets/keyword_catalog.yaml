@@ -582,7 +582,7 @@ keywords:
       category: electronic
       widget_hint: checkbox
       default_value: false
-      advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+      advanced_workflows: [convergence_cutoff, convergence_kpoint, pristine_relaxation, uep, muon_generation, muon_relaxation, site_analysis, magnetic_field, quantum_corrections, energy_barriers]
 
   - name: SPIN_POLARISED
     canonical_name: spin_polarised
@@ -606,13 +606,13 @@ keywords:
     mutually_exclusive_with: []
     requires: []
     example: SPIN : 2
-    notes: Stored as a numeric scalar.
+    notes: Net spin of the whole cell, in units of hbar/2. MuFinder sets spins per atom with inline `SPIN=<value>` tokens on `POSITIONS_FRAC` rows, from which CASTEP derives the net spin, and CASTEP stops with an error when an explicit `SPIN` disagrees with their sum. It is therefore not offered in any workflow's parameter dialog from the starter catalog; with a local `castep_keywords.json` it can still be added like any other CASTEP keyword.
     gui:
       label: Initial Spin
       category: electronic
       widget_hint: spinbox_float
       default_value: 0.0
-      advanced_workflows: [convergence_cutoff, convergence_kpoint, muon_relaxation]
+      advanced_workflows: []
 
   - name: SMEARING_WIDTH
     canonical_name: smearing_width

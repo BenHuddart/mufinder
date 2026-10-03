@@ -22,6 +22,12 @@ generates, but not to read everything CASTEP writes back:
   every workflow that parses an output cell (UEP, pristine relaxation, muon
   relaxation). With a catalog loaded the same file parses.
 - Parameter dialogs offer only the starter subset of CASTEP parameters.
+  ``Spin Polarized`` is in that subset for every workflow. ``SPIN`` (``Initial
+  Spin``, the net spin of the whole cell) is not offered: MuFinder sets spins
+  per atom with ``SPIN=`` tokens, CASTEP derives the net spin from them, and an
+  explicit ``SPIN`` that disagrees with their sum stops the run. With a catalog
+  loaded it can still be added from a dialog's advanced-parameter picker like
+  any other keyword.
 - Legacy-import parameter recovery is less complete (see :doc:`legacy_import`).
 
 Which catalog is used

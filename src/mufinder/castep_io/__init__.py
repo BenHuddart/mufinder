@@ -25,6 +25,7 @@ from .param_parser import (
     parse_param_observations,
     parse_param_text,
     parse_param_value,
+    run_is_spin_polarized,
 )
 from .param_writer import write_param
 from .run_parameters import (
@@ -112,6 +113,7 @@ __all__ = [
     "parse_param_observations",
     "parse_param_text",
     "parse_param_value",
+    "run_is_spin_polarized",
     "parse_run_parameters",
     "parse_run_parameters_text",
     "parse_cell_file",

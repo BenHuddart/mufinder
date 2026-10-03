@@ -315,3 +315,24 @@ def test_cell_writer_follows_serialization_order_after_runtime_refresh(
     reordered_lattice = next(i for i, line in enumerate(reordered_lines) if line == "%BLOCK LATTICE_CART")
     reordered_grid = next(i for i, line in enumerate(reordered_lines) if line.startswith("KPOINT_MP_GRID"))
     assert reordered_grid < reordered_lattice
+
+
+def test_starter_catalog_offers_spin_polarized_but_not_net_spin_in_every_workflow() -> None:
+    from mufinder.castep_io.catalog_overrides import ALL_WORKFLOWS, KEYWORD_OVERRIDES, KNOWN_WORKFLOWS
+    from mufinder.castep_io.gui_metadata import keyword_visible_in_workflow
+
+    _cell, param_specs, _source_names = schema_module._build_starter_schema()
+
+    for workflow in KNOWN_WORKFLOWS:
+        assert keyword_visible_in_workflow(
+            param_specs["spin_polarized"], workflow_stage=workflow, include_advanced=True
+        ), workflow
+        # SPIN is the net spin of the cell; MuFinder sets spins per atom instead,
+        # and CASTEP stops when an explicit SPIN disagrees with their sum.
+        assert not keyword_visible_in_workflow(
+            param_specs["spin"], workflow_stage=workflow, include_advanced=True
+        ), workflow
+    # With a full castep_keywords.json, SPIN stays addable but is never a default row.
+    spin_override = KEYWORD_OVERRIDES["param"]["spin"]
+    assert spin_override["advanced_workflows"] == ALL_WORKFLOWS
+    assert not spin_override.get("basic_workflows")

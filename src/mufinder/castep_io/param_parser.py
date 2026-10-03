@@ -25,6 +25,7 @@ instead of silently dropping them.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 import shlex
@@ -447,6 +448,28 @@ def parse_param_file(path: str | Path, *, strict: bool = True) -> ParsedParam:
     return parse_param_text(text, strict=strict)
 
 
+def run_is_spin_polarized(
+    param_assignments: Mapping[str, object],
+    atomic_spins: Sequence[float] | None = None,
+) -> bool:
+    """Return whether CASTEP treats a run with these inputs as spin-polarised.
+
+    ``param_assignments`` is the :func:`parse_param_assignments` mapping and
+    ``atomic_spins`` the per-atom ``SPIN=`` values of the run's ``.cell``. An
+    explicit ``SPIN_POLARIZED`` (either spelling) decides. Without one, CASTEP
+    turns spin polarisation on by itself when the net ``SPIN`` is non-zero or
+    any atom carries a non-zero ``SPIN=`` token.
+    """
+
+    explicit = param_assignments.get("spin_polarized")
+    if isinstance(explicit, bool):
+        return explicit
+    net_spin = param_assignments.get("spin")
+    if isinstance(net_spin, (int, float)) and not isinstance(net_spin, bool) and abs(float(net_spin)) > 1e-12:
+        return True
+    return any(abs(float(value)) > 1e-12 for value in atomic_spins or ())
+
+
 __all__ = [
     "ParamObservation",
     "canonical_enum_value",
@@ -457,4 +480,5 @@ __all__ = [
     "parse_param_observations",
     "parse_param_text",
     "parse_param_value",
+    "run_is_spin_polarized",
 ]
