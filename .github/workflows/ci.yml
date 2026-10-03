@@ -22,6 +22,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Prepare runtime directories
         run: |
@@ -47,7 +49,7 @@ jobs:
           python -m pip install -e ".[dev,scientific-backends]"
 
       - name: Run full test suite
-        run: python -m pytest -n auto --dist load
+        run: python -m pytest -n auto --dist load --durations=25
 
   docs:
     runs-on: ubuntu-latest
@@ -59,6 +61,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Prepare runtime directories
         run: |
