@@ -5593,3 +5593,133 @@ def test_energy_barriers_controller_materialize_ignores_num_farms_parameter_row(
     )
     assert "NUM_FARMS : 3" in param_text
     assert "NUM_FARMS : 7" not in param_text
+
+
+def _stage_two_target_controller(
+    service: ProjectService,
+    tmp_path: Path,
+    *,
+    stage_one_targets: list[str],
+    infos: list[tuple[str, str]],
+    local: _RecordingBackend | None = None,
+    cluster: _RecordingBackend | None = None,
+):
+    """Build a controller whose rows are all ready for stage 2.
+
+    Row ``i`` (sites ``siteA``, ``siteB``) has a completed stage-1 singlepoint
+    that ran on ``stage_one_targets[i]``. Materialize is stubbed to hand back one
+    defined phonon job per row, so an allowed submission reaches the backend.
+    """
+
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    keys = list(candidates)[: len(stage_one_targets)]
+    singlepoints: dict[str, Job] = {}
+    for key, stage_one in zip(keys, stage_one_targets, strict=True):
+        singlepoint = _quantum_job(service, document, f"quantum_singlepoint_{key}", QUANTUM_SINGLEPOINT_CALC_TYPE)
+        singlepoint.status = JobStatus.COMPLETED
+        singlepoint.execution_target = stage_one
+        singlepoints[key] = singlepoint
+    ready = _FakeQuantumStageState(stage=QUANTUM_STAGE_PHONON, status="ready")
+    deps = _stub_quantum_deps(
+        active_quantum_corrections_definition=lambda: definition,
+        quantum_source_candidate_by_key=lambda key: candidates.get(key),
+        quantum_stage_state=lambda _definition, _candidate: ready,
+        build_quantum_corrections_states=lambda: {key: ready for key in keys},
+        singlepoint_job_for_quantum_source_key=lambda _definition, key: singlepoints.get(key),
+    )
+    context = _make_context(
+        document=document,
+        project_service=service,
+        definition_output_directory=lambda _definition: output_root,
+        local_backend=local,
+        cluster_backend=cluster,
+        infos=infos,
+    )
+    controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
+    phonon_jobs = {
+        key: _quantum_job(service, document, f"quantum_phonon_{key}", QUANTUM_PHONON_CALC_TYPE) for key in keys
+    }
+    controller.materialize = lambda values: [phonon_jobs[str(value)] for value in values]  # type: ignore[assignment]
+    return controller, keys
+
+
+def test_quantum_controller_refuses_local_stage_two_after_a_cluster_singlepoint(tmp_path: Path) -> None:
+    """The stage-1 checkpoint is never downloaded, so a local continuation would fail."""
+
+    infos: list[tuple[str, str]] = []
+    local = _RecordingBackend()
+    controller, keys = _stage_two_target_controller(
+        ProjectService(), tmp_path, stage_one_targets=["archer2"], infos=infos, local=local
+    )
+
+    controller.submit(keys, target="local")
+
+    assert local.calls == []
+    assert len(infos) == 1
+    title, message = infos[0]
+    assert title == "Phonon stage must run where stage 1 ran"
+    assert "siteA (stage 1 ran on archer2)" in message
+
+
+def test_quantum_controller_refuses_cluster_stage_two_after_a_local_singlepoint(tmp_path: Path) -> None:
+    infos: list[tuple[str, str]] = []
+    cluster = _RecordingBackend()
+    controller, keys = _stage_two_target_controller(
+        ProjectService(), tmp_path, stage_one_targets=["local"], infos=infos, cluster=cluster
+    )
+
+    controller.submit(keys, target="cluster")
+
+    assert cluster.calls == []
+    assert len(infos) == 1
+    assert "ran on this computer" in infos[0][1]
+    assert "siteA" in infos[0][1]
+
+
+def test_quantum_controller_refuses_stage_two_rows_from_different_clusters(tmp_path: Path) -> None:
+    """One cluster submission cannot reach two checkpoints on two clusters."""
+
+    infos: list[tuple[str, str]] = []
+    cluster = _RecordingBackend()
+    controller, keys = _stage_two_target_controller(
+        ProjectService(), tmp_path, stage_one_targets=["archer2", "young"], infos=infos, cluster=cluster
+    )
+
+    controller.submit(keys, target="cluster")
+
+    assert cluster.calls == []
+    assert infos[0][0] == "Submit each cluster's rows separately"
+    assert "archer2: siteA" in infos[0][1]
+    assert "young: siteB" in infos[0][1]
+
+
+def test_quantum_controller_preselects_the_stage_one_cluster_for_stage_two(tmp_path: Path) -> None:
+    infos: list[tuple[str, str]] = []
+    cluster = _RecordingBackend()
+    controller, keys = _stage_two_target_controller(
+        ProjectService(), tmp_path, stage_one_targets=["archer2", "archer2"], infos=infos, cluster=cluster
+    )
+
+    controller.submit(keys, target="cluster")
+
+    assert infos == []
+    assert len(cluster.calls) == 1
+    jobs, kwargs = cluster.calls[0]
+    assert len(jobs) == 2
+    assert kwargs["default_cluster_name"] == "archer2"
+    # The preselection does not leak into the next submission.
+    assert controller.submission_groups(jobs) == [(jobs, {})]
+
+
+def test_quantum_controller_runs_local_stage_two_after_a_local_singlepoint(tmp_path: Path) -> None:
+    infos: list[tuple[str, str]] = []
+    local = _RecordingBackend()
+    controller, keys = _stage_two_target_controller(
+        ProjectService(), tmp_path, stage_one_targets=["local"], infos=infos, local=local
+    )
+
+    controller.submit(keys, target="local")
+
+    assert infos == []
+    assert len(local.calls) == 1
+    assert local.calls[0][1] == {}

@@ -415,6 +415,7 @@ Relaxation staging:
 - `.phonon` files are expected outputs for quantum phonon jobs and must be retrieved from cluster runs
 - when task farming is active, local and cluster retrieval must accept `*_farm001.castep` as the primary CASTEP output alongside the usual phonon artifacts
 - same-cluster stage-2 submissions must be able to reuse the completed stage-1 remote directory without prompting for directory deletion, while still uploading refreshed inputs and submission scripts
+- a stage-2 phonon job must run on the execution target of its stage-1 singlepoint (the stage-1 `.check` is never transferred): submissions to a different target, or a cluster submission spanning stage-1 runs on several clusters, must be refused with an explanation, and cluster submissions must preselect the stage-1 cluster
 - parsed results must persist selected muon-dominated modes, per-mode and total ZPE, witness metrics, output files, and source relaxation provenance
 - completed result rows must provide a `Launch Analysis` action that opens an interactive phonon-analysis window for the selected job
 - the analysis window must expose a `Phonon Modes` tab that lists all Gamma-point modes, highlights the selected muon-dominated subset, synchronizes one selected mode to a muonated-structure viewer, and supports amplitude-controlled playback animation with play/pause, reset, cycle-time, and vector-visibility controls

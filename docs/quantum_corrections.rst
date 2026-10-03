@@ -70,10 +70,15 @@ You submit each stage yourself; MuFinder does not chain them automatically.
    point (nothing else). Select the row and submit it again **to the same
    execution target as stage 1** — the same local machine, or the same
    cluster. The phonon run is a CASTEP continuation and needs the stage-1
-   ``.check`` file, which exists only where the singlepoint ran; MuFinder does
-   not download checkpoint files from a cluster, so switching between local and
-   cluster (or between clusters) leaves the continuation without its
-   checkpoint and the CASTEP run fails.
+   ``.check`` file, which exists only where the singlepoint ran: MuFinder
+   neither downloads checkpoint files from a cluster nor uploads them to one.
+   MuFinder therefore refuses, with an explanation, a stage-2 row sent to the
+   other kind of target, and a cluster submission of stage-2 rows whose
+   singlepoints ran on different clusters (submit each cluster's rows
+   separately). ``Run Selected on Cluster`` opens the submission dialog with
+   the stage-1 cluster already selected; if you pick another cluster there,
+   the phonon job is not submitted. To move a row to a different target, use
+   ``Reset to Stage 1`` and rerun both stages there.
 5. **Review the result.** When the phonon job completes and its ``.phonon``
    file parses, a row appears under ``Completed Results`` with the muon ZPE,
    the Gamma-point eigenvalues, and the ``w1`` witness. Check the jobs
@@ -306,8 +311,11 @@ For cluster runs, MuFinder reuses the completed stage-1 remote directory when
 the phonon stage is submitted to the same cluster. It uploads refreshed
 ``.cell``, ``.param``, and ``run.sh`` files without asking to delete the remote
 directory first, preserving the singlepoint outputs and the ``.check`` file
-already there. Submitting stage 2 anywhere else starts from a directory without
-the checkpoint (see step 4 of `Running the workflow`_).
+already there. A phonon job is never submitted anywhere else: the Quantum
+Corrections page refuses the row before any dialog opens, and the local and
+cluster submission backends refuse it again on every other route, such as the
+jobs dashboard or choosing a different cluster in the submission dialog (see
+step 4 of `Running the workflow`_).
 
 Outputs and interpretation
 --------------------------
