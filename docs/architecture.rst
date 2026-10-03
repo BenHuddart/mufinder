@@ -359,7 +359,11 @@ Rules for plot widgets:
   ``PlotFrame`` (also in ``mufinder.app.plot_canvas``), with a short title. Its
   corner button opens the plot in a separate resizable window with zoom, pan
   and save; the window borrows the live canvas, so the plot keeps updating and
-  stays interactive, and it returns when the window or dialog closes. The
+  stays interactive, and it returns when the window or dialog closes. While
+  it is out, any navigation toolbar the dialog had on that canvas is switched
+  out of pan/zoom and disabled, so only one set of tools drives the canvas, and
+  drag handlers of their own (like the UEP dendrogram cut line) should stand
+  down whenever the canvas's ``widgetlock`` is held. The
   window is a dialog-type window (``POP_OUT_WINDOW_FLAGS``): many plot dialogs
   run with ``exec()``, and while a modal dialog runs macOS keeps an ordinary
   ``Qt.Window`` child behind it and will not bring it forward. A dialog

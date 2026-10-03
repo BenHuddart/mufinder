@@ -736,14 +736,22 @@ class UepClusteringDialog(QDialog):
             return
         self._left_canvas.draw_idle()
 
-    def _hier_toolbar_is_active(self) -> bool:
+    def _navigation_mode_active(self) -> bool:
+        """Return whether a pan or zoom tool currently owns drags on the dendrogram.
+
+        That is the dialog's toolbar, or a pop-out window's toolbar while the
+        plot is popped out: an active mode takes the canvas's widget lock.
+        """
+
+        if self._left_canvas.widgetlock.locked():
+            return True
         return bool(str(getattr(self._hier_toolbar, "mode", "")).strip())
 
     def _event_near_hier_cut_line(self, event) -> bool:
         axis = self._hier_axis
         if self._method_key() != "hier" or axis is None or self._hier_cut_line_artist is None:
             return False
-        if self._hier_toolbar_is_active():
+        if self._navigation_mode_active():
             return False
         if getattr(event, "inaxes", None) is not axis:
             return False

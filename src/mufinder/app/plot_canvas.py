@@ -88,6 +88,16 @@ def create_plot_canvas(
     return figure, canvas
 
 
+def _leave_navigation_mode(toolbar: object) -> None:
+    """Switch a matplotlib navigation toolbar out of pan or zoom mode, releasing its canvas lock."""
+
+    mode = getattr(getattr(toolbar, "mode", None), "name", "")
+    if mode == "PAN":
+        toolbar.pan()
+    elif mode == "ZOOM":
+        toolbar.zoom()
+
+
 class _PlotWindowToolbar(NavigationToolbar2QT):
     """Matplotlib's toolbar without "Configure subplots" and "Edit axes".
 
@@ -110,6 +120,17 @@ class _PlotWindow(QWidget):
         # NavigationToolbar2 makes itself the canvas's toolbar; remember the one
         # the dialog installed (e.g. the dendrogram's pan/zoom bar) to put back.
         self._previous_toolbar = canvas.toolbar
+        # Only one set of navigation tools drives the canvas at a time: a pan or
+        # zoom mode left on in the dialog would hold the canvas's widget lock (so
+        # the window's tools would silently do nothing) and its drags would mix
+        # with the window's. Switch it off and disable that toolbar until the
+        # plot goes back.
+        _leave_navigation_mode(self._previous_toolbar)
+        self._previous_toolbar_was_enabled = (
+            self._previous_toolbar.isEnabled() if isinstance(self._previous_toolbar, QWidget) else None
+        )
+        if isinstance(self._previous_toolbar, QWidget):
+            self._previous_toolbar.setEnabled(False)
         self._toolbar = _PlotWindowToolbar(canvas, self)
         self._toolbar.setObjectName("plotPopOutToolbar")
         layout = QVBoxLayout(self)
@@ -131,13 +152,12 @@ class _PlotWindow(QWidget):
         """Detach the toolbar from the canvas and hand the canvas back."""
 
         toolbar = self._toolbar
-        if toolbar.mode.name == "PAN":
-            toolbar.pan()
-        elif toolbar.mode.name == "ZOOM":
-            toolbar.zoom()
+        _leave_navigation_mode(toolbar)
         for connection in (toolbar._id_press, toolbar._id_release, toolbar._id_drag):
             self._canvas.mpl_disconnect(connection)
         self._canvas.toolbar = self._previous_toolbar
+        if isinstance(self._previous_toolbar, QWidget) and self._previous_toolbar_was_enabled is not None:
+            self._previous_toolbar.setEnabled(self._previous_toolbar_was_enabled)
         self.layout().removeWidget(self._canvas)
         return self._canvas
 

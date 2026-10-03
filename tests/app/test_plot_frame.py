@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QVBoxLayout
 import pytest
@@ -129,6 +129,40 @@ def test_pop_out_window_offers_navigation_without_layout_editing(qapp, host) -> 
     # Configuring subplots would replace the constrained layout with fixed margins.
     assert not actions & {"Subplots", "Customize"}
     assert host.canvas.toolbar is toolbar
+
+
+def test_pop_out_takes_over_from_an_active_dialog_toolbar(qapp) -> None:
+    """A dialog toolbar left in pan mode must not lock the window's tools out."""
+
+    dialog = QDialog()
+    figure, canvas = create_plot_canvas(figsize=(4.0, 3.0), facecolor="#ffffff")
+    figure.add_subplot(111).plot([0, 1], [0, 1])
+    layout = QVBoxLayout(dialog)
+    dialog_toolbar = NavigationToolbar2QT(canvas, dialog)
+    layout.addWidget(dialog_toolbar)
+    frame = PlotFrame(canvas, title="Test plot", parent=dialog)
+    layout.addWidget(frame)
+    dialog.show()
+    _settle(qapp)
+    dialog_toolbar.pan()
+    assert not canvas.widgetlock.available(None)
+
+    frame.pop_out()
+    window = frame.popped_out_window
+
+    assert dialog_toolbar.mode.name == "NONE"
+    assert not dialog_toolbar.isEnabled()
+    window.toolbar.zoom()
+    assert window.toolbar.mode.name == "ZOOM"
+
+    frame.show_here()
+    assert canvas.toolbar is dialog_toolbar
+    assert dialog_toolbar.isEnabled()
+    assert canvas.widgetlock.available(None)
+    dialog_toolbar.pan()
+    assert dialog_toolbar.mode.name == "PAN"
+    dialog_toolbar.pan()
+    dialog.close()
 
 
 def test_popping_out_twice_raises_the_same_window(qapp, host) -> None:

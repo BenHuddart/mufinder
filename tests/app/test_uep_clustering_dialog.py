@@ -422,3 +422,42 @@ def test_uep_clustering_dialog_has_no_unlaid_label_over_the_viewer_toolbar(qapp)
         if label.isVisibleTo(dialog) and label.text().startswith(("Showing", "Relaxed muon sites are colored"))
     ]
     dialog.close()
+
+
+def test_uep_clustering_cut_line_ignores_drags_while_a_popped_out_plot_pans(qapp, monkeypatch) -> None:
+    """A pop-out window's Pan/Zoom owns the drag; the cut line must not move with it."""
+
+    host = _host_structure()
+    dialog = UepClusteringDialog(
+        source_job_label="uep_source_row1",
+        source_structure=host,
+        viewer_host_structure=host,
+        optimizations=_optimizations(),
+    )
+    dialog.show()
+    qapp.processEvents()
+    monkeypatch.setattr(dialog, "refresh_clustering", lambda *args, **kwargs: None)
+
+    dialog._left_frame.pop_out()
+    window = dialog._left_frame.popped_out_window
+    # The dialog's own dendrogram toolbar is paused while the plot is popped out.
+    assert not dialog._hier_toolbar.isEnabled()
+    window.toolbar.pan()
+    assert window.toolbar.mode.name == "PAN"
+
+    axis = dialog._hier_axis
+    start_t = dialog._current_hier_t()
+    x_centre = 0.5 * sum(axis.get_xlim())
+    start_x, start_y = axis.transData.transform((x_centre, start_t))
+    target_t = min(start_t + 0.08, dialog._hierarchical_distance_max)
+    drag_x, drag_y = axis.transData.transform((x_centre, target_t))
+    dialog._on_left_canvas_button_press(
+        SimpleNamespace(button=1, inaxes=axis, x=float(start_x), y=float(start_y), ydata=float(start_t))
+    )
+    dialog._on_left_canvas_motion(SimpleNamespace(inaxes=axis, x=float(drag_x), y=float(drag_y), ydata=float(target_t)))
+
+    assert dialog._hier_t_input.value() == pytest.approx(start_t, rel=0.0, abs=1e-9)
+
+    dialog._left_frame.show_here()
+    assert dialog._hier_toolbar.isEnabled()
+    dialog.close()
