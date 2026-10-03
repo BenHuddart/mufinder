@@ -613,11 +613,62 @@ class RelaxationClusteringDialog(QDialog):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
+        self._main_splitter = splitter
+        self._main_splitter_user_sized = False
+        # splitterMoved fires only for drags, never for setSizes().
+        splitter.splitterMoved.connect(self._on_main_splitter_moved)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         buttons.addButton(self._apply_button, QDialogButtonBox.ButtonRole.ApplyRole)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _summary_table_natural_width(self) -> int:
+        """Return the width the cluster summary table needs to show every column in full."""
+
+        table = self._summary_table
+        header = table.horizontalHeader()
+        width = 0
+        for column in range(table.columnCount()):
+            if table.isColumnHidden(column):
+                continue
+            if header.sectionResizeMode(column) == QHeaderView.ResizeMode.Stretch:
+                width += max(header.sectionSizeHint(column), table.sizeHintForColumn(column))
+            else:
+                width += table.columnWidth(column)
+        if table.verticalHeader().isVisible():
+            width += table.verticalHeader().width()
+        return width + 2 * table.frameWidth() + table.verticalScrollBar().sizeHint().width()
+
+    def _apply_default_split(self) -> None:
+        """Split the plot and viewer panes until the user drags the handle.
+
+        The right pane gets half the width, or more when its summary table
+        needs it (so Wyckoff assignments are not truncated); the plot pane
+        always keeps its minimum width.
+        """
+
+        splitter = self._main_splitter
+        if self._main_splitter_user_sized or splitter.count() < 2:
+            return
+        total = splitter.width() - splitter.handleWidth()
+        if total <= 0:
+            return
+        plot_minimum = splitter.widget(0).minimumSizeHint().width()
+        right = max(total // 2, self._summary_table_natural_width())
+        right = max(min(right, total - plot_minimum), 1)
+        splitter.setSizes([total - right, right])
+
+    def _on_main_splitter_moved(self, _position: int, _index: int) -> None:
+        self._main_splitter_user_sized = True
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().showEvent(event)
+        QTimer.singleShot(0, self._apply_default_split)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._apply_default_split)
 
     def _restore_controls(self) -> None:
         state = self._clustering_state()

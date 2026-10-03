@@ -421,11 +421,6 @@ class UepClusteringDialog(QDialog):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(8)
 
-        self._structure_summary_label = QLabel(
-            "Relaxed muon sites are colored by their current cluster assignment.",
-            right_panel,
-        )
-
         viewer_panel = QWidget(right_panel)
         viewer_layout = QVBoxLayout(viewer_panel)
         viewer_layout.setContentsMargins(0, 0, 0, 0)
@@ -996,7 +991,6 @@ class UepClusteringDialog(QDialog):
             f"Showing {len(self._optimizations)} relaxed site{'s' if len(self._optimizations) != 1 else ''} "
             "colored by the active cluster assignment."
         )
-        self._structure_summary_label.setText(summary_text)
         self._structure_viewer.setToolTip(summary_text)
 
     def refresh_clustering(self, *, emit_signals: bool = True) -> None:
