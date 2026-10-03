@@ -604,6 +604,16 @@ Current clustering behavior includes:
 - On a small window the clustering window reflows only its controls: the
   dendrogram or PCA plot stays beside the structure view and energy-spread
   plot, so it keeps a usable size instead of being stacked into a thin strip.
+- The clustering window's geometry, splitter sizes and camera are saved with the
+  UEP analysis state once a move, resize, splitter drag or view change settles
+  (after about a quarter of a second), not on every intermediate event, so
+  dragging stays responsive however large the potential grid is. Method,
+  tolerance, cluster-count and result changes are saved immediately.
+- The UEP analysis state saved on each change leaves out the full-cell
+  potential grid, which is stored once as the job's grid result, and keeps each
+  isosurface mesh once, serialized only when the mesh changes. Projects that
+  stored the grid in the analysis state move it into the grid result when the
+  analysis is next opened.
 - Batch-tab cluster tables that reflect the most recent separate clustering run
   while preserving cluster-representative promotion.
 

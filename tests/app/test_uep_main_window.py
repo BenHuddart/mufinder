@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
+import numpy as np
 import pytest
 from PySide6.QtWidgets import QDialog, QMessageBox
 
@@ -219,8 +220,9 @@ def test_main_window_open_uep_analysis_launches_dialog(qapp, tmp_path: Path, mon
     window.close()
 
 
-def test_main_window_open_uep_analysis_loads_persisted_potential_grid(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    window = MainWindow()
+def _completed_uep_job_with_grid(window: MainWindow, tmp_path: Path):
+    """Attach a project with one completed UEP source job and return (doc, job, run, grid)."""
+
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_grid_launch.mufinder", "UEPGridLaunch")
     host = _host_structure()
@@ -262,13 +264,10 @@ def test_main_window_open_uep_analysis_loads_persisted_potential_grid(qapp, tmp_
             )
         )
     )
-    result = Result(
-        calculation_run_id=run.id,
-        result_type=window._UEP_POTENTIAL_GRID_RESULT_TYPE,
-        data=main_window_module.serialize_potential_grid(grid),
-    )
-    doc.results[result.id] = result
+    return doc, job, run, grid
 
+
+def _capture_uep_analysis_dialog(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     captured: dict[str, object] = {}
 
     class _FakeDialog:
@@ -297,9 +296,57 @@ def test_main_window_open_uep_analysis_loads_persisted_potential_grid(qapp, tmp_
             return {}
 
     monkeypatch.setattr(main_window_module, "UepAnalysisDialog", _FakeDialog)
+    return captured
+
+
+def test_main_window_open_uep_analysis_loads_persisted_potential_grid(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = MainWindow()
+    doc, _job, run, grid = _completed_uep_job_with_grid(window, tmp_path)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=window._UEP_POTENTIAL_GRID_RESULT_TYPE,
+        data=main_window_module.serialize_potential_grid(grid),
+    )
+    doc.results[result.id] = result
+    captured = _capture_uep_analysis_dialog(monkeypatch)
+
     window._on_open_uep_analysis_requested("row_1")
 
     assert captured["initial_potential_grid"] is not None
+    window.close()
+
+
+@pytest.mark.parametrize("has_grid_result", [False, True])
+def test_main_window_open_uep_analysis_moves_legacy_state_grid_into_result(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, has_grid_result: bool
+) -> None:
+    # Older UEP UI state repeated the potential grid; opening the analysis keeps
+    # exactly one copy, as the grid result, and strips it from the UI state.
+    window = MainWindow()
+    doc, job, run, grid = _completed_uep_job_with_grid(window, tmp_path)
+    payload = main_window_module.serialize_potential_grid(grid)
+    if has_grid_result:
+        existing = Result(
+            calculation_run_id=run.id,
+            result_type=window._UEP_POTENTIAL_GRID_RESULT_TYPE,
+            data=payload,
+        )
+        doc.results[existing.id] = existing
+    doc.ui_state[window._UEP_ANALYSIS_STATES_KEY] = {str(job.id): {"gw_factor": 5.0, "potential_grid": payload}}
+    captured = _capture_uep_analysis_dialog(monkeypatch)
+
+    window._on_open_uep_analysis_requested("row_1")
+
+    grid_results = [
+        result for result in doc.results.values() if result.result_type == window._UEP_POTENTIAL_GRID_RESULT_TYPE
+    ]
+    assert len(grid_results) == 1
+    assert grid_results[0].calculation_run_id == run.id
+    loaded = captured["initial_potential_grid"]
+    assert loaded is not None
+    assert np.allclose(loaded.potential_total_ev, grid.potential_total_ev)
+    assert captured["initial_state"] == {"gw_factor": 5.0}
+    assert doc.ui_state[window._UEP_ANALYSIS_STATES_KEY][str(job.id)] == {"gw_factor": 5.0}
     window.close()
 
 

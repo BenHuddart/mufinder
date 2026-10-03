@@ -7,11 +7,13 @@ from uuid import uuid4
 
 import numpy as np
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QSizePolicy
+from PySide6.QtCore import QPoint, QSize, Qt
+from PySide6.QtGui import QMoveEvent, QResizeEvent
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QLabel, QSizePolicy
 
 from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
-from mufinder.app.uep_clustering_dialog import UepClusteringDialog
+from mufinder.app.uep_clustering_dialog import _GEOMETRY_STATE_EMIT_DELAY_MS, UepClusteringDialog
 from mufinder.domain.models import Structure
 from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult, relaxed_site_number_map
 
@@ -298,6 +300,66 @@ def test_uep_clustering_dialog_close_shuts_down_structure_viewer(qapp, monkeypat
     qapp.processEvents()
 
     assert calls == ["shutdown"]
+
+
+def test_uep_clustering_dialog_survives_move_and_resize_while_building_viewer(qapp, monkeypatch) -> None:
+    # On Windows the viewer's VTK interactor calls winId() mid-build, which
+    # creates the dialog's native window and delivers move/resize events before
+    # the splitters exist. Replay that ordering on every platform.
+    import mufinder.app.uep_clustering_dialog as dialog_module
+
+    real_viewer = dialog_module.AtomicStructureViewer
+
+    def _viewer_sending_native_events(parent):
+        dialog = parent.window()
+        QApplication.sendEvent(dialog, QMoveEvent(QPoint(40, 40), QPoint(0, 0)))
+        QApplication.sendEvent(dialog, QResizeEvent(QSize(900, 700), QSize(640, 480)))
+        return real_viewer(parent)
+
+    monkeypatch.setattr(dialog_module, "AtomicStructureViewer", _viewer_sending_native_events)
+
+    host = _host_structure()
+    snapshots: list[dict[str, object]] = []
+    dialog = UepClusteringDialog(
+        source_job_label="uep_source_row1",
+        source_structure=host,
+        viewer_host_structure=host,
+        optimizations=_optimizations(),
+    )
+    dialog.state_changed.connect(snapshots.append)
+    QApplication.sendEvent(dialog, QMoveEvent(QPoint(80, 80), QPoint(40, 40)))
+    QTest.qWait(_GEOMETRY_STATE_EMIT_DELAY_MS + 150)
+
+    assert snapshots and "right_splitter_sizes" in snapshots[-1]
+    dialog.close()
+
+
+def test_uep_clustering_dialog_coalesces_geometry_state_emissions(qapp) -> None:
+    # Each emission makes the UEP wizard re-serialize its whole state, so a
+    # window or splitter drag must not emit once per event.
+    host = _host_structure()
+    dialog = UepClusteringDialog(
+        source_job_label="uep_source_row1",
+        source_structure=host,
+        viewer_host_structure=host,
+        optimizations=_optimizations(),
+    )
+    snapshots: list[dict[str, object]] = []
+    dialog.state_changed.connect(snapshots.append)
+
+    for step in range(20):
+        QApplication.sendEvent(dialog, QMoveEvent(QPoint(step, step), QPoint(step - 1, step - 1)))
+        QApplication.sendEvent(dialog, QResizeEvent(QSize(900 + step, 700), QSize(899 + step, 700)))
+        dialog._main_splitter.splitterMoved.emit(300 + step, 1)
+        dialog._structure_viewer.view_state_changed.emit()
+    assert snapshots == []
+
+    QTest.qWait(_GEOMETRY_STATE_EMIT_DELAY_MS + 150)
+    assert len(snapshots) == 1
+
+    dialog._method_combo.setCurrentIndex(1)
+    assert len(snapshots) >= 2, "semantic changes still emit immediately"
+    dialog.close()
 
 
 def test_uep_clustering_dialog_dragging_cut_line_updates_entry_and_refreshes_on_release(qapp, monkeypatch) -> None:
