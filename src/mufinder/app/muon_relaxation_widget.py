@@ -1108,6 +1108,10 @@ class MuonRelaxationWidget(QWidget):
         # seeding path (_common_params_for_rows) layers the other half in
         # as a UX-only hint.
         values = dict(self._default_params)
+        if self._row_charge_states.get(row_id) == MUONIUM_CHARGE_STATE:
+            # relaxation_adapter runs muonium spin-polarised unless the row
+            # says otherwise, so show that rather than the unticked default.
+            values["spin_polarized"] = True
         row_values = self._row_parameter_values.get(row_id, {})
         values.update(row_values)
         self._drop_conflicts_with_explicit_values(values, explicit_names=set(row_values))
@@ -1124,6 +1128,13 @@ class MuonRelaxationWidget(QWidget):
 
     def _implicit_params_for_row(self, row_id: int) -> dict[str, object]:
         implicit = dict(self._default_params)
+        if self._row_charge_states.get(row_id) == MUONIUM_CHARGE_STATE:
+            # Never strip a muonium row's spin_polarized: an explicit False is
+            # the only way to turn off relaxation_adapter's spin-polarised
+            # default, and an explicit True stored before that default was
+            # shown must survive normalisation, or the row's signature stops
+            # matching its definition and a completed run reverts to "ready".
+            implicit.pop("spin_polarized", None)
         implicit["task"] = infer_task(_WORKFLOW_STAGE)
         suggested = self._suggested_grid_for_row(row_id)
         if suggested is not None:
