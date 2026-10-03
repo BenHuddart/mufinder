@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -13031,4 +13032,142 @@ def test_main_window_batch_row_payload_keeps_a_rows_own_untouched_mixed_values(q
     }
     # With nothing untouched the dialog's payload is stored as it is.
     assert window._batch_row_payload(definition, "explicit", payload, set()) is payload
+    window.close()
+
+
+def _quantum_phonon_job_after_cluster_singlepoint(window: MainWindow, tmp_path: Path) -> Job:
+    """Seed a ready quantum phonon job whose stage-1 singlepoint ran on ``alpha``."""
+
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_stage_two_target.mufinder", "QuantumStageTwoTarget")
+    window._document = doc
+    relaxed_structure = Structure(
+        label="site relaxed",
+        origin="muon_relaxation",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "H:mu"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
+    )
+    doc.structures[relaxed_structure.id] = relaxed_structure
+    source_job = Job(
+        label="mu-site",
+        workflow_stage=WorkflowStage.MUON_RELAXATION,
+        calc_type="castep_positivemuon_relaxation",
+        status=JobStatus.COMPLETED,
+    )
+    doc.jobs[source_job.id] = source_job
+    run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+    result = Result(
+        calculation_run_id=run.id,
+        result_type=source_job.calc_type,
+        data={"total_energy": -1.0},
+        derived_structure_ids=[relaxed_structure.id],
+    )
+    run.result_id = result.id
+    doc.runs[run.id] = run
+    doc.results[result.id] = result
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
+    doc.sites[site.id] = site
+
+    definition = window._ensure_quantum_corrections_definition([str(site.id)])
+    assert definition is not None
+    definition.parameters["job_seed_names_by_label"] = {str(site.id): "quantum_siteA"}
+    singlepoint_job = service.add_job(
+        doc,
+        label="quantum_singlepoint_siteA",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
+    )
+    singlepoint_job.status = JobStatus.COMPLETED
+    singlepoint_job.execution_target = "alpha"
+    singlepoint_job.remote_directory = "/remote/work/quantum_siteA"
+    definition.parameters["singlepoint_job_ids_by_label"] = {str(site.id): str(singlepoint_job.id)}
+    phonon_job = service.add_job(
+        doc,
+        label="quantum_phonon_siteA",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_PHONON_CALC_TYPE,
+    )
+    definition.parameters["phonon_job_ids_by_label"] = {str(site.id): str(phonon_job.id)}
+    definition.parameters["job_ids_by_label"] = definition.parameters["phonon_job_ids_by_label"]
+    return phonon_job
+
+
+def test_main_window_cluster_submission_refuses_phonon_job_on_a_different_cluster(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Picking another cluster in the dialog must not cold-start a continuation.
+
+    The stage-1 checkpoint lives in ``alpha``'s directory, so a phonon job sent to
+    ``beta`` would start without it and CASTEP would fail; it is refused before
+    MuFinder connects, and the message names the cluster that holds it.
+    """
+
+    window = MainWindow()
+    phonon_job = _quantum_phonon_job_after_cluster_singlepoint(window, tmp_path)
+    beta = dataclasses.replace(_CONTINUATION_CLUSTER, name="beta", hostname="beta.example")
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 1
+
+        def config(self):
+            return SimpleNamespace(
+                cluster_name="beta",
+                working_directory="/remote/work",
+                username="alice",
+                job_name_prefix="quantum",
+                num_processes=16,
+                walltime="01:00:00",
+            )
+
+        def password(self) -> str:
+            return ""
+
+    infos: list[str] = []
+    monkeypatch.setattr(main_window_module, "ClusterSubmissionDialog", _FakeDialog)
+    monkeypatch.setattr(main_window_module, "load_cluster_configs", lambda _settings: [beta])
+    monkeypatch.setattr(main_window_module, "load_cluster_config", lambda _settings, _name: beta)
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "connect_to_cluster",
+        lambda *_args, **_kwargs: pytest.fail("a refused submission must not connect"),
+    )
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda _parent, _title, text: infos.append(text))
+
+    window._submit_jobs_on_cluster([phonon_job])
+
+    assert phonon_job.status == JobStatus.DEFINED
+    assert len(infos) == 1
+    assert "not submitted to beta" in infos[0]
+    assert "quantum_phonon_siteA (stage 1 ran on alpha)" in infos[0]
+    window.close()
+
+
+def test_main_window_local_submission_refuses_phonon_job_after_a_cluster_singlepoint(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dashboard route bypasses the Quantum Corrections page, so the backend guards too."""
+
+    window = MainWindow()
+    phonon_job = _quantum_phonon_job_after_cluster_singlepoint(window, tmp_path)
+    infos: list[str] = []
+    monkeypatch.setattr(main_window_module.QMessageBox, "information", lambda _parent, _title, text: infos.append(text))
+    monkeypatch.setattr(
+        main_window_module,
+        "load_castep_setup",
+        lambda _settings: pytest.fail("a refused local submission must stop before CASTEP setup"),
+    )
+
+    window._submit_jobs_locally([phonon_job])
+
+    assert phonon_job.status == JobStatus.DEFINED
+    assert len(infos) == 1
+    assert "quantum_phonon_siteA (stage 1 ran on alpha)" in infos[0]
     window.close()

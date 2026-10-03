@@ -6834,6 +6834,24 @@ class MainWindow(QMainWindow):
                     return definition, str(key)
         return None, None
 
+    def _quantum_stage_one_target(self, job: Job) -> str | None:
+        """Return where a quantum phonon job's stage-1 singlepoint ran.
+
+        ``None`` when ``job`` is not a quantum phonon job or its completed
+        singlepoint cannot be found; otherwise the singlepoint's
+        ``execution_target`` (``"local"`` or a cluster name).
+        """
+
+        if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
+            return None
+        definition, key = self._quantum_definition_and_key_for_job(job)
+        if definition is None or key is None:
+            return None
+        source_job = self._singlepoint_job_for_quantum_source_key(definition, key)
+        if source_job is None or source_job.status != JobStatus.COMPLETED:
+            return None
+        return (source_job.execution_target or "").strip() or "local"
+
     def _quantum_continuation_remote_target(self, job: Job, *, cluster_name: str) -> str:
         if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
             return ""
@@ -6867,6 +6885,28 @@ class MainWindow(QMainWindow):
                 no_eligible_message,
             )
             return
+
+        # A quantum phonon job continues from its stage-1 checkpoint, which never
+        # leaves the cluster that ran the singlepoint. The Quantum Corrections page
+        # refuses these up front; this catches every other route (the dashboard).
+        stranded = [
+            (job, stage_one)
+            for job in eligible_jobs
+            if (stage_one := self._quantum_stage_one_target(job)) is not None
+            and stage_one.casefold() != "local"
+        ]
+        if stranded:
+            stranded_ids = {job.id for job, _stage_one in stranded}
+            eligible_jobs = [job for job in eligible_jobs if job.id not in stranded_ids]
+            QMessageBox.information(
+                self,
+                "Phonon stage must run where stage 1 ran",
+                "These phonon jobs were not run on this computer because their stage-1 "
+                "checkpoint (.check) is only on the cluster that ran the singlepoint:\n\n"
+                + "\n".join(f"  - {job.label} (stage 1 ran on {stage_one})" for job, stage_one in stranded),
+            )
+            if not eligible_jobs:
+                return
 
         setup = load_castep_setup(self._settings)
         if not setup.executable_path:
@@ -7004,6 +7044,33 @@ class MainWindow(QMainWindow):
         runtime_username = submission.username.strip()
         if runtime_username and runtime_username != selected_cluster.username:
             selected_cluster = replace(selected_cluster, username=runtime_username)
+
+        # A quantum phonon job must continue in the remote directory holding its
+        # stage-1 checkpoint. Submitted anywhere else it would start cold in a
+        # fresh directory and CASTEP would fail for want of the .check file, so
+        # refuse it here, after the dialog, where a different cluster may have
+        # been picked than the one the Quantum Corrections page preselected.
+        stranded = [
+            (job, stage_one)
+            for job in eligible_jobs
+            if (stage_one := self._quantum_stage_one_target(job)) is not None
+            and not self._quantum_continuation_remote_target(job, cluster_name=selected_cluster.name)
+        ]
+        if stranded:
+            stranded_ids = {job.id for job, _stage_one in stranded}
+            eligible_jobs = [job for job in eligible_jobs if job.id not in stranded_ids]
+            QMessageBox.information(
+                self,
+                "Phonon stage must run where stage 1 ran",
+                f"These phonon jobs were not submitted to {selected_cluster.name} because "
+                "their stage-1 checkpoint (.check) is not in a directory there:\n\n"
+                + "\n".join(
+                    f"  - {job.label} (stage 1 ran {'on this computer' if stage_one.casefold() == 'local' else 'on ' + stage_one})"
+                    for job, stage_one in stranded
+                ),
+            )
+            if not eligible_jobs:
+                return
 
         seed_name_by_job = {job.id: self._job_seed_name(job) for job in eligible_jobs}
         invalid_labels = self._cluster_runner.invalid_remote_job_labels(list(seed_name_by_job.values()))

@@ -36,8 +36,13 @@ continuation. This is the richest migration onto
 - **Task farming is NOT this controller's concern.** The stage-2 phonon jobs are
   task-farmed, but that is applied by ``MainWindow._submit_jobs_locally`` in the
   shared submit backend (``task_farming_for_job=self._task_farming_for_job``,
-  which filters by job) for *all* workflows. This controller uses the base
-  single-group :meth:`submission_groups` default and does not touch task farming.
+  which filters by job) for *all* workflows. This controller's single-group
+  :meth:`submission_groups` only adds a preselected cluster and does not touch
+  task farming.
+- **Stage-2 target guard.** :meth:`QuantumCorrectionsController.submit` refuses a
+  stage-2 phonon row sent to a target that does not hold its stage-1 checkpoint
+  (local after a cluster singlepoint, a cluster after a local one, or rows whose
+  singlepoints ran on different clusters) and preselects the stage-1 cluster.
 
 Both quantum calc types are registered on :attr:`calc_types` so
 :meth:`handles_job` is coherent across the two-stage pair; the singlepoint branch
@@ -56,6 +61,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
@@ -120,6 +126,17 @@ def _format_relative_energy(value: float | None) -> str:
     """Format a source's energy relative to its comparable minimum for the ``dE (eV)`` column."""
 
     return "" if value is None else f"{float(value):.5f}"
+
+
+def _is_local_target(target: str | None) -> bool:
+    """Return whether a job's ``execution_target`` names this computer.
+
+    Matches the local semantics used elsewhere for job reattachment: blank or
+    ``"local"`` (case-insensitively).
+    """
+
+    value = (target or "").strip()
+    return not value or value.casefold() == "local"
 
 
 def _cell_declares_species_mass(cell_path: Path) -> bool:
@@ -219,13 +236,14 @@ class QuantumCorrectionsController(WorkflowJobController):
         super().__init__(context)
         self._deps = deps
         self._view = view
+        self._preferred_cluster_name: str | None = None
 
     # --- submission contract ---
     #
     # normalize=str and the base-default ``is_ready`` (workflow_row_state_is_ready)
     # exactly mirror the former ``_on_submit_*_from_quantum_corrections`` handlers.
-    # There is no submission_groups override: task farming is applied by the shared
-    # submit backend, not here.
+    # submission_groups only preselects the stage-1 cluster (see ``submit``); task
+    # farming is applied by the shared submit backend, not here.
 
     def normalize(self, value: object) -> str:
         return str(value)
@@ -299,6 +317,140 @@ class QuantumCorrectionsController(WorkflowJobController):
                 continue
             missing.append(self._deps.quantum_source_label(candidate))
         return missing
+
+    def submit(
+        self, values: list[object], *, target: Literal["local", "cluster"]
+    ) -> None:
+        """Refuse stage-2 rows sent to a target without their stage-1 checkpoint.
+
+        The phonon stage is a CASTEP continuation of the stage-1 singlepoint and
+        reads its ``.check`` file, which exists only where the singlepoint ran:
+        MuFinder neither downloads checkpoints from a cluster nor uploads them to
+        one. A stage-2 row is therefore refused, with an explanation, when it is
+        sent locally after a cluster singlepoint or to a cluster after a local
+        one. A cluster submission goes to a single cluster, so stage-2 rows whose
+        singlepoints ran on different clusters are refused too; otherwise the
+        submission dialog opens with the stage-1 cluster preselected. The
+        cluster backend still refuses a phonon job if a different cluster is
+        picked in that dialog.
+        """
+
+        refusal = self._stage_two_target_refusal(values, target=target)
+        if refusal is not None:
+            title, message = refusal
+            self._context.show_info(title, message)
+            return
+        self._preferred_cluster_name = (
+            self._stage_two_cluster_name(values) if target == "cluster" else None
+        )
+        try:
+            super().submit(values, target=target)
+        finally:
+            self._preferred_cluster_name = None
+
+    def submission_groups(
+        self, jobs: list[Job]
+    ) -> list[tuple[list[Job], dict[str, object]]]:
+        """Preselect the stage-1 cluster for a cluster submission of stage-2 rows."""
+
+        if self._preferred_cluster_name:
+            return [(jobs, {"default_cluster_name": self._preferred_cluster_name})]
+        return [(jobs, {})]
+
+    def _stage_two_stage_one_targets(self, keys: list[object]) -> list[tuple[str, str]]:
+        """Return ``(label, stage-1 execution target)`` for each selected stage-2 row.
+
+        Only rows that could be submitted now count: a phonon-stage row that is
+        ready, or whose phonon job is still ``defined``. Rows already running or
+        finished are left to the shared submission plan, which skips them.
+        """
+
+        definition = self._deps.active_quantum_corrections_definition()
+        if definition is None:
+            return []
+        rows: list[tuple[str, str]] = []
+        for key in [str(value) for value in keys]:
+            candidate = self._deps.quantum_source_candidate_by_key(key)
+            if candidate is None:
+                continue
+            stage_state = self._deps.quantum_stage_state(definition, candidate)
+            if getattr(stage_state, "stage", None) != QUANTUM_STAGE_PHONON:
+                continue
+            current_job = getattr(stage_state, "current_job", None)
+            if getattr(stage_state, "status", None) != "ready" and (
+                current_job is None or current_job.status != JobStatus.DEFINED
+            ):
+                continue
+            singlepoint = self._deps.singlepoint_job_for_quantum_source_key(
+                definition, key
+            )
+            if singlepoint is None:
+                continue
+            rows.append(
+                (
+                    self._deps.quantum_source_label(candidate),
+                    (singlepoint.execution_target or "").strip(),
+                )
+            )
+        return rows
+
+    def _stage_two_cluster_name(self, keys: list[object]) -> str | None:
+        clusters = {
+            stage_one
+            for _label, stage_one in self._stage_two_stage_one_targets(keys)
+            if not _is_local_target(stage_one)
+        }
+        return next(iter(clusters)) if len(clusters) == 1 else None
+
+    def _stage_two_target_refusal(
+        self, keys: list[object], *, target: Literal["local", "cluster"]
+    ) -> tuple[str, str] | None:
+        """Return ``(title, message)`` when stage-2 rows cannot run on ``target``."""
+
+        rows = self._stage_two_stage_one_targets(keys)
+        if target == "local":
+            remote = [(label, stage_one) for label, stage_one in rows if not _is_local_target(stage_one)]
+            if not remote:
+                return None
+            listing = "\n".join(f"  - {label} (stage 1 ran on {cluster})" for label, cluster in remote)
+            return (
+                "Phonon stage must run where stage 1 ran",
+                "These rows cannot run their phonon continuation on this computer:\n\n"
+                f"{listing}\n\n"
+                "The phonon stage continues from the stage-1 checkpoint (.check), which "
+                "is only on the cluster that ran the singlepoint; MuFinder does not "
+                "download checkpoint files. Submit these rows on that cluster, or reset "
+                "them to stage 1 to rerun both stages here.",
+            )
+
+        local = [label for label, stage_one in rows if _is_local_target(stage_one)]
+        if local:
+            listing = "\n".join(f"  - {label}" for label in local)
+            return (
+                "Phonon stage must run where stage 1 ran",
+                "These rows cannot run their phonon continuation on a cluster:\n\n"
+                f"{listing}\n\n"
+                "Their stage-1 singlepoint ran on this computer, so its checkpoint "
+                "(.check) is only here; MuFinder does not upload checkpoint files. "
+                "Run these rows locally, or reset them to stage 1 to rerun both stages "
+                "on a cluster.",
+            )
+        by_cluster: dict[str, list[str]] = {}
+        for label, stage_one in rows:
+            by_cluster.setdefault(stage_one, []).append(label)
+        if len(by_cluster) <= 1:
+            return None
+        listing = "\n".join(
+            f"  - {cluster}: {', '.join(labels)}" for cluster, labels in sorted(by_cluster.items())
+        )
+        return (
+            "Submit each cluster's rows separately",
+            "The selected rows' stage-1 singlepoints ran on different clusters:\n\n"
+            f"{listing}\n\n"
+            "Each phonon continuation must run on the cluster that holds its "
+            "checkpoint, and a cluster submission goes to one cluster. Select the rows "
+            "for one cluster at a time.",
+        )
 
     def build_states(self) -> Mapping[str, object]:
         return self._deps.build_quantum_corrections_states()
