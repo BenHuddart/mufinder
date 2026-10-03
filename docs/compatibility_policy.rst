@@ -138,6 +138,25 @@ Compatibility ledger
      - The field is current job data, not deprecated. The backfill is the
        shim: keep it until the next saved-project schema version bump, whose
        migration can stamp ``created_at`` on every job file that lacks it.
+   * - ``potential_grid`` key in UEP analysis UI state
+     - ``uep_analysis_states`` UI state; read by
+       ``MainWindow._migrate_legacy_uep_state_potential_grid`` and
+       ``UepAnalysisDialog._restore_initial_state``
+     - Older UEP analysis snapshots repeated the full potential grid, which is
+       also persisted as the job's ``uep_potential_grid`` result. Snapshots no
+       longer write it. Opening the analysis moves a grid found only in UI
+       state into that result and strips the key; the wizard still restores
+       from the key when no grid result is supplied.
+     - Keep until the next saved-project schema version bump, whose migration
+       can move the key into a ``uep_potential_grid`` result and drop it.
+   * - Top-level ``isosurface_mesh`` key in UEP analysis UI state
+     - ``uep_analysis_states`` UI state; read by
+       ``UepAnalysisDialog._restore_initial_state``
+     - Single-isosurface snapshots stored the mesh at the top level. Snapshots
+       now keep every mesh only under ``isosurface_layers``; the key is still
+       read when a snapshot has no ``isosurface_layers``.
+     - Keep until the next saved-project schema version bump, whose migration
+       can wrap the key into a one-entry ``isosurface_layers`` list.
    * - ``castep/keywords_json_path`` setting pointing outside the
        application-data directory
      - ``mufinder.castep_setup`` / application settings (``QSettings``)

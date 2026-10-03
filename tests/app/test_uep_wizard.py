@@ -1265,6 +1265,7 @@ def test_uep_wizard_restores_isosurface_overlay(qapp) -> None:
     snapshot = first.state_snapshot()
     first.close()
 
+    # As MainWindow does, hand the grid back from its persisted result.
     restored = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -1272,6 +1273,7 @@ def test_uep_wizard_restores_isosurface_overlay(qapp) -> None:
         den_fmt_path=_fixture_path("Si2.den_fmt"),
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
+        initial_potential_grid=grid,
         initial_state=snapshot,
     )
 
@@ -1918,10 +1920,10 @@ def test_uep_wizard_zero_minimum_snapshot_restores_raw_and_shifted_grid(qapp) ->
     first._isosurface_zero_minimum.setChecked(True)
 
     snapshot = first.state_snapshot()
-    raw_payload = snapshot["potential_grid"]
     assert snapshot["isosurface_zero_minimum"] is True
-    assert isinstance(raw_payload, dict)
-    assert float(np.asarray(raw_payload["potential_total_ev"], dtype=float).min()) == pytest.approx(raw_minimum)
+    # The raw grid is persisted once, as its own result, and handed back
+    # through ``initial_potential_grid``; the per-change UI state omits it.
+    assert "potential_grid" not in snapshot
     first.close()
 
     restored = UepAnalysisDialog(
@@ -1931,6 +1933,7 @@ def test_uep_wizard_zero_minimum_snapshot_restores_raw_and_shifted_grid(qapp) ->
         den_fmt_path=_fixture_path("Si2.den_fmt"),
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
+        initial_potential_grid=grid,
         initial_state=snapshot,
     )
 
@@ -1943,6 +1946,79 @@ def test_uep_wizard_zero_minimum_snapshot_restores_raw_and_shifted_grid(qapp) ->
     assert restored._active_isosurface_layer().mesh.level_ev == pytest.approx(raw_level - raw_minimum)
     assert restored._isosurface_min_label.text() == "0.00 eV"
     restored.close()
+
+
+def test_uep_wizard_restores_legacy_state_grid_and_single_isosurface_mesh(qapp) -> None:
+    # Projects saved before the state snapshot dropped its "potential_grid" and
+    # top-level "isosurface_mesh" copies still restore from them.
+    baseline = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+    grid = potential_grid(baseline._field)
+    level = float(grid.potential_total_ev.min()) + 0.4 * float(np.ptp(grid.potential_total_ev))
+    mesh = extract_isosurface(grid, level_ev=level)
+    baseline.close()
+
+    restored = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+        initial_state={
+            "potential_grid": serialize_potential_grid(grid),
+            "isosurface_mesh": {
+                "level_ev": mesh.level_ev,
+                "minimum_potential_ev": mesh.minimum_potential_ev,
+                "maximum_potential_ev": mesh.maximum_potential_ev,
+                "vertices_ang": [list(vertex) for vertex in mesh.vertices_ang],
+                "faces": [list(face) for face in mesh.faces],
+            },
+        },
+    )
+
+    assert restored._potential_grid_raw_cache is not None
+    assert np.allclose(restored._potential_grid_raw_cache.potential_total_ev, grid.potential_total_ev)
+    restored_mesh = restored._active_isosurface_layer().mesh
+    assert restored_mesh is not None
+    assert restored_mesh.level_ev == pytest.approx(level)
+    assert len(restored_mesh.faces) == len(mesh.faces)
+    snapshot = restored.state_snapshot()
+    assert "potential_grid" not in snapshot and "isosurface_mesh" not in snapshot
+    assert snapshot["isosurface_layers"][0]["mesh"]["level_ev"] == pytest.approx(level)
+    restored.close()
+
+
+def test_uep_wizard_state_snapshot_reuses_serialized_isosurface_mesh(qapp) -> None:
+    dialog = UepAnalysisDialog(
+        source_job_label="uep_source_row1",
+        source_structure_id="11111111-1111-1111-1111-111111111111",
+        source_structure=_source_structure_with_spins(),
+        den_fmt_path=_fixture_path("Si2.den_fmt"),
+        castep_path=_fixture_path("Si2.castep"),
+        cell_path=_fixture_path("Si2.cell"),
+    )
+    grid = potential_grid(dialog._field)
+    dialog._apply_potential_grid_cache(grid)
+    low, high = float(grid.potential_total_ev.min()), float(grid.potential_total_ev.max())
+    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=low + 0.4 * (high - low)))
+
+    first = dialog.state_snapshot()["isosurface_layers"][0]["mesh"]
+    assert first is not None
+    assert dialog.state_snapshot()["isosurface_layers"][0]["mesh"] is first
+
+    dialog._render_isosurface_mesh(extract_isosurface(grid, level_ev=low + 0.6 * (high - low)))
+    second = dialog.state_snapshot()["isosurface_layers"][0]["mesh"]
+    assert second is not first
+    assert second["level_ev"] == pytest.approx(low + 0.6 * (high - low))
+    assert len(dialog._serialized_mesh_cache) == 1
+    dialog.close()
 
 
 def test_uep_wizard_viewer_uses_source_structure_spins(qapp) -> None:
@@ -2403,7 +2479,8 @@ def test_uep_wizard_restores_slice_state_and_hide_atoms(qapp) -> None:
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
     )
-    dialog._apply_potential_grid_cache(potential_grid(dialog._field))
+    grid = potential_grid(dialog._field)
+    dialog._apply_potential_grid_cache(grid)
     plane = _slice_plane_for_dialog(dialog)
 
     dialog._slice_planes = [_SlicePlaneState(label="Plane 1", plane=plane)]
@@ -2412,6 +2489,7 @@ def test_uep_wizard_restores_slice_state_and_hide_atoms(qapp) -> None:
     snapshot = dialog.state_snapshot()
     dialog.close()
 
+    # As MainWindow does, hand the grid back from its persisted result.
     restored = UepAnalysisDialog(
         source_job_label="uep_source_row1",
         source_structure_id="11111111-1111-1111-1111-111111111111",
@@ -2419,6 +2497,7 @@ def test_uep_wizard_restores_slice_state_and_hide_atoms(qapp) -> None:
         den_fmt_path=_fixture_path("Si2.den_fmt"),
         castep_path=_fixture_path("Si2.castep"),
         cell_path=_fixture_path("Si2.cell"),
+        initial_potential_grid=grid,
         initial_state=snapshot,
     )
 

@@ -10,8 +10,23 @@ from typing import Any
 from uuid import UUID
 
 
+_JSON_SCALAR_TYPES = frozenset({str, int, float, bool, type(None)})
+
+
 def to_jsonable(value: Any) -> Any:
     """Recursively convert Python objects to JSON-safe values."""
+    # Fast path for the exact built-in containers and scalars: UI state can hold
+    # hundreds of thousands of floats (isosurface meshes, slice samples), and
+    # running every one through the checks below dominated its serialization.
+    # Exact type matches keep IntEnum/StrEnum and container subclasses on the
+    # general path.
+    kind = type(value)
+    if kind in _JSON_SCALAR_TYPES:
+        return value
+    if kind is list or kind is tuple:
+        return [item if type(item) in _JSON_SCALAR_TYPES else to_jsonable(item) for item in value]
+    if kind is dict:
+        return {str(k): v if type(v) in _JSON_SCALAR_TYPES else to_jsonable(v) for k, v in value.items()}
     if is_dataclass(value):
         return to_jsonable(asdict(value))
     if isinstance(value, dict):

@@ -594,6 +594,11 @@ Current clustering behavior includes:
   (after about a quarter of a second), not on every intermediate event, so
   dragging stays responsive however large the potential grid is. Method,
   tolerance, cluster-count and result changes are saved immediately.
+- The UEP analysis state saved on each change leaves out the full-cell
+  potential grid, which is stored once as the job's grid result, and keeps each
+  isosurface mesh once, serialized only when the mesh changes. Projects that
+  stored the grid in the analysis state move it into the grid result when the
+  analysis is next opened.
 - Batch-tab cluster tables that reflect the most recent separate clustering run
   while preserving cluster-representative promotion.
 
