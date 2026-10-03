@@ -269,6 +269,11 @@ class UepClusteringDialog(QDialog):
         self._site_number_map = relaxed_site_number_map(self._optimizations)
         self._restoring_state = False
         self._shutting_down = False
+        # The structure viewer's VTK interactor calls winId() while _build_ui is
+        # still running. On Windows that creates the dialog's native window and
+        # delivers move/resize events synchronously, before the splitters the
+        # state snapshot reads exist.
+        self._ui_built = False
         self._prepared = prepare_uep_clustering_dataset(
             self._optimizations,
             source_structure=source_structure,
@@ -304,6 +309,7 @@ class UepClusteringDialog(QDialog):
         self._pending_right_splitter_sizes: list[int] | None = None
 
         self._build_ui()
+        self._ui_built = True
         self._restore_initial_state(initial_state)
         self._apply_responsive_layout()
         self.refresh_clustering(emit_signals=False)
@@ -638,7 +644,7 @@ class UepClusteringDialog(QDialog):
         self._structure_viewer._render()
 
     def _emit_state_changed(self) -> None:
-        if self._restoring_state or self._shutting_down:
+        if not self._ui_built or self._restoring_state or self._shutting_down:
             return
         self.state_changed.emit(self.state_snapshot())
 
@@ -1128,6 +1134,8 @@ class UepClusteringDialog(QDialog):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().resizeEvent(event)
+        if not self._ui_built:
+            return
         self._apply_responsive_layout()
         self._emit_state_changed()
 
