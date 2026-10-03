@@ -8,7 +8,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QSizePolicy
+from PySide6.QtWidgets import QLabel, QSizePolicy
 
 from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
 from mufinder.app.uep_clustering_dialog import UepClusteringDialog
@@ -394,4 +394,31 @@ def test_uep_clustering_dialog_dendrogram_labels_use_global_energy_rank(qapp, mo
 
     expected_labels = [str(relaxed_site_number_map(optimizations)[index]) for index in range(len(optimizations))]
     assert captured["labels"] == expected_labels
+    dialog.close()
+
+
+def test_uep_clustering_dialog_has_no_unlaid_label_over_the_viewer_toolbar(qapp) -> None:
+    """The structure summary lives in the viewer tooltip, not a stray label.
+
+    A label parented to the right panel but never added to its layout used to
+    paint at the panel's top-left corner, on top of the viewer's Cell/Bonds
+    checkboxes.
+    """
+
+    host = _host_structure()
+    dialog = UepClusteringDialog(
+        source_job_label="uep_source_row1",
+        source_structure=host,
+        viewer_host_structure=host,
+        optimizations=_optimizations(),
+    )
+    dialog.show()
+    qapp.processEvents()
+
+    assert "Showing 4 relaxed sites" in dialog._structure_viewer.toolTip()
+    assert not [
+        label
+        for label in dialog.findChildren(QLabel)
+        if label.isVisibleTo(dialog) and label.text().startswith(("Showing", "Relaxed muon sites are colored"))
+    ]
     dialog.close()

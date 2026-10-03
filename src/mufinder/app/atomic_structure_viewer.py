@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
+    QLayoutItem,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -207,6 +209,136 @@ class _WrappingHintLabel(QLabel):
         }:
             self._sync_minimum_height()
             self.updateGeometry()
+
+
+class _ElidingLabel(QLabel):
+    """Single-line label that elides with an ellipsis instead of widening its parent.
+
+    A plain ``QLabel`` reports its whole text as its minimum width, so a long
+    selection summary would stop every dialog holding the viewer from shrinking.
+    ``text()`` still returns the full text; callers put it in the tooltip too.
+    """
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API naming.
+        return QSize(0, super().minimumSizeHint().height())
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        rect = self.contentsRect()
+        text = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, rect.width())
+        painter = QPainter(self)
+        self.style().drawItemText(
+            painter,
+            rect,
+            int(self.alignment()),
+            self.palette(),
+            self.isEnabled(),
+            text,
+            self.foregroundRole(),
+        )
+
+
+class _WrappingRowLayout(QLayout):
+    """Lay items out left to right, wrapping onto further lines when the width runs out.
+
+    The minimum width is the widest single item, so a parent can shrink the row
+    that far and the items move onto extra lines instead of being clipped. The
+    last item on a line takes the rest of that line when it expands
+    horizontally, so a right-aligned control inside it stays at the edge.
+    """
+
+    def __init__(self, parent: QWidget | None = None, *, spacing: int = 6) -> None:
+        super().__init__(parent)
+        self._items: list[QLayoutItem] = []
+        self._item_spacing = spacing
+
+    def addItem(self, item: QLayoutItem) -> None:  # noqa: N802 - Qt API naming.
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int) -> QLayoutItem | None:  # noqa: N802 - Qt API naming.
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int) -> QLayoutItem | None:  # noqa: N802 - Qt API naming.
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self) -> Qt.Orientation:  # noqa: N802 - Qt API naming.
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt API naming.
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt API naming.
+        return self._arrange(QRect(0, 0, width, 0), apply=False)
+
+    def setGeometry(self, rect: QRect) -> None:  # noqa: N802 - Qt API naming.
+        super().setGeometry(rect)
+        self._arrange(rect, apply=True)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API naming.
+        visible = [item.sizeHint() for item in self._items if not item.isEmpty()]
+        width = sum(hint.width() for hint in visible) + self._item_spacing * max(len(visible) - 1, 0)
+        height = max((hint.height() for hint in visible), default=0)
+        margins = self.contentsMargins()
+        return QSize(width + margins.left() + margins.right(), height + margins.top() + margins.bottom())
+
+    def minimumSize(self) -> QSize:  # noqa: N802 - Qt API naming.
+        size = QSize()
+        for item in self._items:
+            if not item.isEmpty():
+                size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        return size + QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
+
+    def _arrange(self, rect: QRect, *, apply: bool) -> int:
+        """Place the items inside ``rect`` (when ``apply``) and return the height used."""
+
+        margins = self.contentsMargins()
+        area = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
+        lines: list[list[tuple[QLayoutItem, int]]] = []
+        line: list[tuple[QLayoutItem, int]] = []
+        line_width = 0
+        for item in self._items:
+            if item.isEmpty():
+                continue
+            width = min(item.sizeHint().width(), max(area.width(), item.minimumSize().width()))
+            needed = width if not line else line_width + self._item_spacing + width
+            if line and needed > area.width():
+                lines.append(line)
+                line = []
+                needed = width
+            line.append((item, width))
+            line_width = needed
+        if line:
+            lines.append(line)
+
+        y = area.y()
+        for line_index, line_items in enumerate(lines):
+            if line_index:
+                y += self._item_spacing
+            line_height = max(item.sizeHint().height() for item, _width in line_items)
+            if apply:
+                x = area.x()
+                for position, (item, width) in enumerate(line_items):
+                    is_last = position == len(line_items) - 1
+                    if is_last and item.expandingDirections() & Qt.Orientation.Horizontal:
+                        width = max(width, area.right() + 1 - x)
+                    item.setGeometry(QRect(x, y, width, line_height))
+                    x += width + self._item_spacing
+            y += line_height
+        return y - rect.y() + margins.bottom()
+
+
+def _compact_text_button_width(button: QPushButton) -> int:
+    """Return a width that fits a one- or two-character push button.
+
+    Qt styles give every text push button a minimum of about 80 px, which made
+    the a/b/c view buttons alone take 240 px of the viewer's toolbar.
+    """
+
+    return button.fontMetrics().horizontalAdvance(button.text()) + 28
+
 
 def _set_axis_box_aspect_from_spans(axis, spans: np.ndarray) -> None:
     span_x, span_y, span_z = np.maximum(np.asarray(spans, dtype=float), 1e-6)
@@ -1626,6 +1758,9 @@ class AtomicStructureViewer(QWidget):
         self._view_x_button.setToolTip("Look along the a lattice vector.")
         self._view_y_button.setToolTip("Look along the b lattice vector.")
         self._view_z_button.setToolTip("Look along the c lattice vector.")
+        for button in (self._view_x_button, self._view_y_button, self._view_z_button):
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            button.setFixedWidth(_compact_text_button_width(button))
         self._reset_view_button = QPushButton("Reset View")
         self._reset_view_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._reset_view_button.setMinimumWidth(self._reset_view_button.sizeHint().width() + 8)
@@ -1637,7 +1772,7 @@ class AtomicStructureViewer(QWidget):
         self._interaction_hint.setWordWrap(True)
         self._interaction_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         style_hint_text(self._interaction_hint)
-        self._selection_label = QLabel("Selected atom: -")
+        self._selection_label = _ElidingLabel("Selected atom: -")
         self._selection_label.setWordWrap(False)
         self._selection_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         selection_height = self._selection_label.sizeHint().height()
@@ -1812,21 +1947,37 @@ class AtomicStructureViewer(QWidget):
         layout.setContentsMargins(0, 0, 0, 4)
         layout.setSpacing(6)
 
-        controls = QHBoxLayout()
-        controls.setContentsMargins(0, 0, 0, 0)
-        controls.setSpacing(6)
-        controls.addWidget(self._show_cell)
-        controls.addSpacing(4)
-        controls.addWidget(self._show_bonds)
-        controls.addSpacing(4)
-        controls.addWidget(self._show_spins)
-        controls.addSpacing(8)
-        controls.addWidget(QLabel("Along:"))
-        controls.addWidget(self._view_x_button)
-        controls.addWidget(self._view_y_button)
-        controls.addWidget(self._view_z_button)
-        controls.addStretch(1)
-        controls.addWidget(self._reset_view_button)
+        # Two groups that share a line when the viewer is wide and wrap onto two
+        # lines when it is narrow, so the viewer can sit in a narrow splitter
+        # pane without clipping its controls.
+        display_group = QWidget(self)
+        display_group.setObjectName("atomicViewerDisplayControls")
+        display_layout = QHBoxLayout(display_group)
+        display_layout.setContentsMargins(0, 0, 0, 0)
+        display_layout.setSpacing(6)
+        display_layout.addWidget(self._show_cell)
+        display_layout.addSpacing(4)
+        display_layout.addWidget(self._show_bonds)
+        display_layout.addSpacing(4)
+        display_layout.addWidget(self._show_spins)
+
+        orientation_group = QWidget(self)
+        orientation_group.setObjectName("atomicViewerOrientationControls")
+        orientation_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        orientation_layout = QHBoxLayout(orientation_group)
+        orientation_layout.setContentsMargins(0, 0, 0, 0)
+        orientation_layout.setSpacing(6)
+        orientation_layout.addWidget(QLabel("Along:", orientation_group))
+        orientation_layout.addWidget(self._view_x_button)
+        orientation_layout.addWidget(self._view_y_button)
+        orientation_layout.addWidget(self._view_z_button)
+        orientation_layout.addStretch(1)
+        orientation_layout.addWidget(self._reset_view_button)
+
+        controls = _WrappingRowLayout(spacing=12)
+        controls.addWidget(display_group)
+        controls.addWidget(orientation_group)
+        self._controls_layout = controls
 
         layout.addLayout(controls)
         layout.addWidget(self._interaction_hint)

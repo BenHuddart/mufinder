@@ -195,6 +195,17 @@ The host-structure panel now includes:
 - Viewer fitting accounts for full atom sphere extents (not just atom centers), preventing unnecessary clipping at left/right boundaries.
 - Crystallographic axis triad rendered below the main viewer to maximize primary structure viewport area, with viewer and triad colours refreshed from the active light/dark palette.
 - Left-clicking empty space in the viewer clears the current atom selection.
+- The viewer's controls fit narrow panes: the display toggles (Cell, Bonds,
+  Spins) and the orientation controls (Along a/b/c, Reset View) share one line
+  when there is room and wrap onto two lines when there is not, and the a/b/c
+  buttons are compact. A long selection summary is shortened with an ellipsis
+  (the full text is in its tooltip) instead of widening the viewer. The viewer
+  can shrink to about 260 px, down from 610 px, so plots beside it in the
+  analysis dialogs get the width they need.
+- In the relaxation clustering window the viewer pane gets half the width, or
+  more when its cluster summary table needs it to show the Wyckoff assignments
+  in full; the plot takes the rest. The split follows window resizes until the
+  user drags the handle.
 - A project-level supercell editor with simple diagonal controls, optional
   advanced full 3x3 matrix entry, naming, preview, save, edit, delete, and
   workflow selection support.
