@@ -708,6 +708,10 @@ The application now includes a metadata-driven CASTEP parameter entry framework 
 
 - Job-type-aware parameter visibility driven from CASTEP keyword metadata.
 - Basic and advanced progressive disclosure for parameter entry.
+- A search box that filters which parameter rows are shown. It only hides
+  rows: pressing ``OK`` with a search active still validates and saves every
+  parameter in the dialog, including hidden ones and either/or pairs where
+  only one member matches the search.
 - Typed widgets by parameter kind (dropdowns, checkboxes, numeric controls, triplets, unit-aware float inputs).
 - Parameter-level help dialogs sourced from keyword metadata.
 - Structured form output mapped to ``InputTemplate``/``JobPatch`` compatible data rather than raw text.
