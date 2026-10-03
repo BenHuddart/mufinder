@@ -14,6 +14,7 @@ from mufinder.science.relaxation_analysis import (
     anchored_sites,
     cluster_connected_components,
     folded_muon_position_from_structure,
+    grouped_relative_energies,
     normalize_site_energies,
     scan_connected_component_tolerances,
 )
@@ -334,3 +335,34 @@ def test_wyckoff_assignment_reports_unavailable_symmetry_for_unknown_species() -
 
     assert assignments[0].match.matched is False
     assert "species" in assignments[0].match.warnings[0]
+
+
+def test_grouped_relative_energies_offsets_each_group_by_its_own_minimum() -> None:
+    relative = grouped_relative_energies(
+        {
+            "a": ("positive_muon", -10.0),
+            "b": ("positive_muon", -9.75),
+            "c": ("muonium", -12.0),
+            "d": ("muonium", -11.5),
+        }
+    )
+
+    assert relative == {
+        "a": pytest.approx(0.0),
+        "b": pytest.approx(0.25),
+        "c": pytest.approx(0.0),
+        "d": pytest.approx(0.5),
+    }
+
+
+def test_grouped_relative_energies_maps_missing_and_non_finite_energies_to_none() -> None:
+    relative = grouped_relative_energies(
+        {
+            "a": ("g", -1.0),
+            "missing": ("g", None),
+            "nan": ("g", float("nan")),
+            "lonely": ("empty", None),
+        }
+    )
+
+    assert relative == {"a": pytest.approx(0.0), "missing": None, "nan": None, "lonely": None}

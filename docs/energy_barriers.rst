@@ -30,8 +30,10 @@ smaller laptop screens while still separating path generation from NEB
 analysis:
 
 ``Paths``
-  Select the initial and final relaxed endpoints, generate symmetry-distinct
-  paths for that pair, preview a path inside the shared structure viewer, and
+  Select the initial and final relaxed endpoints (each entry shows the site's
+  ``dE`` relative to the lowest-energy relaxed site with the same charge state
+  and cell, as in Quantum Corrections), generate symmetry-distinct paths for
+  that pair, preview a path inside the shared structure viewer, and
   configure, delete, or build the NEB job for each generated path.
 
 ``NEB Analysis``

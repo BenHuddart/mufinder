@@ -130,7 +130,7 @@ class QuantumCorrectionsWidget(QWidget):
         style_hint_text(source_hint)
         sources_layout.addWidget(source_hint)
         self._sources_table = create_workflow_table(
-            ("Site", "Charge", "Relative Energy", "Displacements", "Source Job", "Stage", "Farms", "Status", "Parameters"),
+            ("Site", "Charge", "dE (eV)", "Displacements", "Source Job", "Stage", "Farms", "Status", "Parameters"),
             resize_to_contents_columns=(8,),
         )
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)

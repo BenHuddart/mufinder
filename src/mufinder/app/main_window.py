@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -286,7 +287,7 @@ from mufinder.science.energy_barriers import (
 )
 from mufinder.science.kpoint_grids import equivalent_grid_for_supercell
 from mufinder.science.quantum_phonons import PhononParseError
-from mufinder.science.relaxation_analysis import folded_muon_position_from_structure
+from mufinder.science.relaxation_analysis import folded_muon_position_from_structure, grouped_relative_energies
 from mufinder.science.site_generation import SiteGenerationError, lattice_cart_to_frac
 from mufinder.science.supercell import build_supercell_structure
 from mufinder.science.uep import UepError, UepPotentialGrid, deserialize_potential_grid, serialize_potential_grid
@@ -441,6 +442,12 @@ def _format_energy(value: object) -> str:
         return f"{float(value):.6g} eV"
     except (TypeError, ValueError):
         return ""
+
+
+def _format_relative_energy(value: float | None) -> str:
+    """Format a site energy relative to its comparable minimum, as in the Muon Sites summary."""
+
+    return "" if value is None else f"dE {float(value):.5f} eV"
 
 
 def _neb_barrier_summaries(data: Mapping[str, object]) -> tuple[str, str, str]:
@@ -6736,7 +6743,7 @@ class MainWindow(QMainWindow):
             if site.relaxation_run_id not in run_id_set:
                 continue
             site.relaxation_run_id = None
-            site.relative_energy_eV = None
+            site.total_energy_eV = None
             if site.status == "relaxed":
                 site.status = "staged"
 
@@ -8363,6 +8370,9 @@ class MainWindow(QMainWindow):
             eligible_quantum_source_candidates=(
                 lambda: self._eligible_quantum_source_candidates()
             ),
+            quantum_source_relative_energies=(
+                lambda: self._quantum_source_relative_energies()
+            ),
             quantum_source_candidate_by_key=(
                 lambda key: self._quantum_source_candidate_by_key(key)
             ),
@@ -8821,7 +8831,36 @@ class MainWindow(QMainWindow):
                     structure=relaxed_structure,
                 )
             )
-        return sorted(candidates, key=lambda item: (item.site.relative_energy_eV is None, item.site.relative_energy_eV or 0.0, item.site.label))
+        relative = self._quantum_source_relative_energies(candidates)
+
+        def order(item: _QuantumSourceCandidate) -> tuple[object, ...]:
+            energy = relative.get(item.key)
+            charge_state = self._charge_state_for_job(item.job) or ""
+            return (charge_state, energy is None, energy or 0.0, item.site.label)
+
+        return sorted(candidates, key=order)
+
+    def _quantum_source_relative_energies(
+        self,
+        candidates: list[_QuantumSourceCandidate] | None = None,
+    ) -> dict[str, float | None]:
+        """Return each relaxed source's energy relative to its comparable minimum.
+
+        ``MuonSite.total_energy_eV`` holds the relaxation's absolute final
+        total energy, which is only comparable between relaxations of the same
+        cell in the same charge state. Sources are therefore grouped by charge
+        state and cell composition (which separates different supercells), and
+        each is reported relative to the lowest-energy source in its group.
+        """
+
+        if candidates is None:
+            candidates = self._eligible_quantum_source_candidates()
+        entries: dict[str, tuple[object, float | None]] = {}
+        for candidate in candidates:
+            composition = tuple(sorted(Counter(candidate.structure.species).items()))
+            group = (self._charge_state_for_job(candidate.job), composition)
+            entries[candidate.key] = (group, candidate.site.total_energy_eV)
+        return grouped_relative_energies(entries)
 
     def _quantum_source_candidate_by_key(self, key: str) -> _QuantumSourceCandidate | None:
         for candidate in self._eligible_quantum_source_candidates():
@@ -8876,14 +8915,16 @@ class MainWindow(QMainWindow):
 
     def _energy_barrier_endpoint_rows(self) -> list[EnergyBarrierEndpointRow]:
         rows: list[EnergyBarrierEndpointRow] = []
-        for candidate in self._eligible_quantum_source_candidates():
+        candidates = self._eligible_quantum_source_candidates()
+        relative = self._quantum_source_relative_energies(candidates)
+        for candidate in candidates:
             rows.append(
                 EnergyBarrierEndpointRow(
                     key=candidate.key,
                     label=candidate.site.label or candidate.job.label or candidate.structure.label,
                     charge_state=self._charge_state_label_for_job(candidate.job),
                     source_job=candidate.job.label,
-                    relative_energy=_format_energy(candidate.site.relative_energy_eV) or "",
+                    relative_energy=_format_relative_energy(relative.get(candidate.key)),
                 )
             )
         return rows

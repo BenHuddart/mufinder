@@ -51,6 +51,10 @@ changing other sources in the same project. The ``Site`` column remains
 editable, so you can rename the relaxed-site label in place before configuring
 or submitting jobs. The source table also shows:
 
+- ``dE (eV)``, the site's relaxed total energy relative to the lowest-energy
+  eligible site with the same charge state and cell composition (sites in
+  different charge states or supercells are not comparable, so each such group
+  has its own zero); rows are ordered by charge state and then by ``dE``;
 - ``Displacements`` as ``3 x atom count`` for the relaxed defect cell;
 - ``Stage`` as ``singlepoint`` or ``phonon``;
 - ``Farms`` as the configured stage-2 task-farm count.

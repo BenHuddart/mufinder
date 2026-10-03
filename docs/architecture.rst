@@ -223,7 +223,7 @@ previously accreted on ``MainWindow``.
   ``.build_result`` carries the richest result logic so far: in addition to the
   lattice payload and the derived structure, it contributes the muon's final
   fractional position in supercell and folded host coordinates, and mutates the
-  source muon site (``status``/``relaxation_run_id``/``relative_energy_eV``) — a
+  source muon site (``status``/``relaxation_run_id``/``total_energy_eV``) — a
   sanctioned document side effect per the ``ControllerResult`` contract. Because
   ``ControllerResult`` has no failure channel, failure-detection prologues that
   must abort a job before any result is built (the ``geom_converged`` guard, the

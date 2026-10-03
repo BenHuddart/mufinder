@@ -665,7 +665,7 @@ def commit_legacy_import(
             ),
             generation_method="imported_legacy",
             source_structure_id=host_structure.id,
-            relative_energy_eV=run.total_energy,
+            total_energy_eV=run.total_energy,
             properties={"import_batch_id": str(batch), "legacy_site_index": run.site_index},
         )
 

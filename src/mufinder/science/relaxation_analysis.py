@@ -164,6 +164,34 @@ def _minimum_energy(sites: Sequence[RelaxedMuonSite]) -> float | None:
     return min(finite) if finite else None
 
 
+def grouped_relative_energies(
+    entries: Mapping[str, tuple[object, float | None]],
+) -> dict[str, float | None]:
+    """Return each entry's energy relative to the lowest energy in its group.
+
+    ``entries`` maps a key to ``(group, total_energy_ev)``. Total energies are
+    only comparable between calculations on the same cell with the same charge,
+    so callers group by whatever makes two energies comparable; a key whose
+    energy is missing or non-finite maps to ``None``, as does every key in a
+    group with no finite energy.
+    """
+
+    minima: dict[object, float] = {}
+    for group, energy in entries.values():
+        if energy is None or not np.isfinite(float(energy)):
+            continue
+        current = minima.get(group)
+        if current is None or float(energy) < current:
+            minima[group] = float(energy)
+    relative: dict[str, float | None] = {}
+    for key, (group, energy) in entries.items():
+        if energy is None or not np.isfinite(float(energy)) or group not in minima:
+            relative[key] = None
+        else:
+            relative[key] = float(energy) - minima[group]
+    return relative
+
+
 def normalize_site_energies(sites: Sequence[RelaxedMuonSite]) -> tuple[RelaxedMuonSite, ...]:
     """Return sites sorted by increasing total energy with relative energies set."""
 

@@ -60,7 +60,7 @@ def _source(label: str = "site1", charge_state: str | None = "positive_muon") ->
         source_relaxation_run_id=_RUN_ID,
         source_relaxation_job_id=_JOB_ID,
         charge_state=charge_state,
-        relative_energy_eV=-10.0,
+        total_energy_eV=-10.0,
     )
 
 
