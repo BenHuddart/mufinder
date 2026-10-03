@@ -9,8 +9,6 @@ from typing import Any
 from uuid import UUID
 
 import numpy as np
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
 from matplotlib.ticker import ScalarFormatter
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QDoubleValidator, QKeySequence, QPainter, QPen, QPolygonF
@@ -54,6 +52,7 @@ from mufinder.app.atomic_structure_viewer import (
     _shutdown_pyvista_widget,
 )
 from mufinder.app.icons import icon
+from mufinder.app.plot_canvas import create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     current_palette,
@@ -2990,9 +2989,11 @@ class MagneticFieldDistributionDialog(QDialog):
         self.resize(760, 520)
 
         palette = current_palette()
-        self._figure = Figure(figsize=(7.2, 4.6), facecolor=palette.bg_surface, constrained_layout=True)
-        self._canvas = FigureCanvasQTAgg(self._figure)
-        self._canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._figure, self._canvas = create_plot_canvas(
+            figsize=(7.2, 4.6),
+            facecolor=palette.bg_surface,
+            minimum_size=(400, 280),
+        )
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         self._export_button = buttons.addButton("Export Data...", QDialogButtonBox.ButtonRole.ActionRole)
