@@ -8,10 +8,17 @@ from uuid import uuid4
 from ase.data import atomic_numbers, covalent_radii
 from ase.data.colors import jmol_colors
 from matplotlib import colors as mcolors
+from matplotlib.collections import PolyCollection
+from matplotlib.patches import Circle, PathPatch
 import numpy as np
 from PySide6.QtWidgets import QCheckBox, QFrame, QSplitter, QTabWidget, QTreeWidget
 
 from mufinder.app.relaxation_analysis_widget import (
+    GRAPH_NODE_GID,
+    _GRAPH_COMPONENT_GAP,
+    _graph_component_layout,
+    _graph_edge_strip,
+    pack_graph_components,
     CompletedRelaxationAnalysisSource,
     DisplacementAnalysisDialog,
     RelaxationAnalysisJobDialog,
@@ -234,18 +241,27 @@ def test_relaxation_connected_graph_uses_paper_style_nodes_and_edges(qapp) -> No
     )
 
     axis = dialog._graph_figure.axes[0]
-    node_collections = [
-        collection
-        for collection in axis.collections
-        if hasattr(collection, "get_offsets") and len(collection.get_offsets()) == 1
-    ]
+    nodes = [patch for patch in axis.patches if patch.get_gid() == GRAPH_NODE_GID]
+    fills = [patch for patch in axis.patches if isinstance(patch, Circle) and patch.get_gid() != GRAPH_NODE_GID]
+    node_labels = [patch for patch in axis.patches if isinstance(patch, PathPatch)]
 
     assert axis.get_title() == ""
     assert dialog._graph_figure.get_facecolor()[3] == 0.0
     assert axis.get_facecolor()[3] == 0.0
-    assert len(node_collections) == 4
-    assert all(float(collection.get_linewidths()[0]) >= 3.0 for collection in node_collections)
-    assert any(float(line.get_linewidth()) >= 3.0 for line in axis.lines)
+    assert len(nodes) == len(fills) == len(node_labels) == 4
+    # Nodes share one radius, sized in data units so they scale with the canvas,
+    # and a lighter fill inside leaves a thick coloured border ring.
+    assert len({round(node.get_radius(), 9) for node in nodes}) == 1
+    assert all(isinstance(node, Circle) for node in nodes)
+    assert all(0.7 < fill.get_radius() / nodes[0].get_radius() < 0.9 for fill in fills)
+    # Edges are filled strips in data units (so they thin with the nodes), one per
+    # connected pair, and opaque for a sparse component like this one.
+    result, _layouts = dialog._graph_layouts
+    edge_count = int(np.triu(np.asarray(result.adjacency_matrix), k=1).sum())
+    edge_collections = [collection for collection in axis.collections if isinstance(collection, PolyCollection)]
+    assert edge_count > 0
+    assert sum(len(collection.get_paths()) for collection in edge_collections) == edge_count
+    assert all(collection.get_alpha() in (None, 1.0) for collection in edge_collections)
 
     dialog.close()
 
@@ -760,4 +776,139 @@ def test_relaxation_clustering_dialog_shows_only_active_method_controls(qapp) ->
     assert dialog._hier_toolbar.isHidden()
     assert dialog._hierarchical_label.isHidden()
 
+    dialog.close()
+
+
+def _square_components(count: int, *, nodes: int = 1, first_node: int = 0) -> list:
+    """Return ``count`` components of ``nodes`` nodes each, numbered from ``first_node``."""
+
+    components = []
+    for index in range(count):
+        members = list(range(first_node + index * nodes, first_node + (index + 1) * nodes))
+        points = np.array([[1.5 * offset, 0.0] for offset in range(nodes)], dtype=float)
+        components.append(_graph_component_layout(members, points))
+    return components
+
+
+def _rows(positions: dict[int, tuple[float, float]], components) -> list[list[int]]:
+    """Group component indexes by the row (y) their first node sits on, top row first."""
+
+    by_row: dict[float, list[int]] = {}
+    for index, component in enumerate(components):
+        by_row.setdefault(round(positions[component.members[0]][1], 6), []).append(index)
+    return [by_row[y] for y in sorted(by_row, reverse=True)]
+
+
+def test_pack_graph_components_matches_rows_to_the_target_shape() -> None:
+    components = _square_components(6)
+
+    wide = _rows(pack_graph_components(components, 6.0), components)
+    landscape = _rows(pack_graph_components(components, 1.6), components)
+    tall = _rows(pack_graph_components(components, 0.2), components)
+
+    assert wide == [[0, 1, 2, 3, 4, 5]]
+    assert landscape == [[0, 1, 2], [3, 4, 5]]
+    assert tall == [[0], [1], [2], [3], [4], [5]]
+
+
+def test_pack_graph_components_keeps_component_order_and_shape() -> None:
+    components = _square_components(5, nodes=3)
+    positions = pack_graph_components(components, 1.0)
+
+    # Reading the rows top to bottom, left to right, gives the components in order.
+    reading_order = [
+        index
+        for row in _rows(positions, components)
+        for index in sorted(row, key=lambda item: positions[components[item].members[0]][0])
+    ]
+    assert reading_order == list(range(5))
+    for component in components:
+        placed = np.array([positions[member] for member in component.members])
+        # Each component is only translated, never rotated or rescaled.
+        assert np.allclose(placed - placed[0], component.points - component.points[0])
+
+
+def test_pack_graph_components_never_overlaps_components() -> None:
+    components = _square_components(4, nodes=2) + _square_components(3, nodes=4, first_node=8)
+    for target_aspect in (0.3, 1.0, 1.6, 4.0):
+        positions = pack_graph_components(components, target_aspect)
+        boxes = []
+        for component in components:
+            placed = np.array([positions[member] for member in component.members])
+            centre = 0.5 * (placed.min(axis=0) + placed.max(axis=0))
+            half = 0.5 * np.array([component.width, component.height])
+            boxes.append((centre - half, centre + half))
+        for first in range(len(boxes)):
+            for second in range(first + 1, len(boxes)):
+                (low_a, high_a), (low_b, high_b) = boxes[first], boxes[second]
+                separated = (
+                    high_a[0] + _GRAPH_COMPONENT_GAP <= low_b[0] + 1e-9
+                    or high_b[0] + _GRAPH_COMPONENT_GAP <= low_a[0] + 1e-9
+                    or high_a[1] + _GRAPH_COMPONENT_GAP <= low_b[1] + 1e-9
+                    or high_b[1] + _GRAPH_COMPONENT_GAP <= low_a[1] + 1e-9
+                )
+                assert separated, f"components {first} and {second} overlap at aspect {target_aspect}"
+
+
+def test_pack_graph_components_draws_larger_than_one_row_or_one_column() -> None:
+    components = _square_components(3, nodes=4) + _square_components(4, first_node=12)
+    target_aspect = 1.4
+
+    def drawn_scale(positions: dict[int, tuple[float, float]]) -> float:
+        points = np.array(list(positions.values()))
+        span = points.max(axis=0) - points.min(axis=0) + 0.9
+        return min(target_aspect / span[0], 1.0 / span[1])
+
+    chosen = drawn_scale(pack_graph_components(components, target_aspect))
+    one_row = drawn_scale(pack_graph_components(components, 1e6))
+    one_column = drawn_scale(pack_graph_components(components, 1e-6))
+    assert chosen >= one_row and chosen >= one_column
+    assert chosen > 1.2 * min(one_row, one_column)
+
+
+def test_graph_edge_strip_is_a_rectangle_of_the_requested_width() -> None:
+    strip = _graph_edge_strip((0.0, 0.0), (3.0, 4.0), 0.1)
+
+    assert strip.shape == (4, 2)
+    assert np.isclose(np.linalg.norm(strip[0] - strip[3]), 0.2)
+    assert np.isclose(np.linalg.norm(strip[0] - strip[1]), 5.0)
+
+
+def test_relaxation_connected_graph_makes_dense_component_edges_thin_and_translucent(qapp) -> None:
+    host = _host_structure()
+    # Eight sites within 0.25 A of each other: every pair is connected (28 edges).
+    sites = [
+        _relaxed_site(host, (0.100 + 0.008 * (index % 4), 0.100 + 0.008 * (index // 4), 0.100), -10.0 + 0.01 * index)
+        for index in range(8)
+    ]
+    # A separate connected pair, at a general position so no symmetry image of it
+    # falls near the dense cluster in this body-centred host.
+    sites.extend(
+        [
+            _relaxed_site(host, (0.300, 0.050, 0.400), -9.0),
+            _relaxed_site(host, (0.340, 0.050, 0.400), -9.0),
+        ]
+    )
+    dialog = RelaxationClusteringDialog(
+        workspace={"name": "Workspace"},
+        host_structure=host,
+        sites=sites,
+    )
+
+    axis = dialog._graph_figure.axes[0]
+    edge_collections = sorted(
+        (collection for collection in axis.collections if isinstance(collection, PolyCollection)),
+        key=lambda collection: len(collection.get_paths()),
+    )
+    sparse, dense = edge_collections
+
+    def strip_width(collection) -> float:
+        corners = collection.get_paths()[0].vertices
+        return float(np.linalg.norm(corners[0] - corners[3]))
+
+    assert len(dense.get_paths()) == 28
+    assert len(sparse.get_paths()) == 1
+    assert 0.0 < dense.get_alpha() < 1.0
+    assert sparse.get_alpha() in (None, 1.0)
+    assert strip_width(dense) < strip_width(sparse)
     dialog.close()
