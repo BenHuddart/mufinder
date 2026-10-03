@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from itertools import combinations
 import math
 
+import numpy as np
 import pytest
 
+from mufinder.science import site_generation
 from mufinder.science.site_generation import (
     SiteGenerationError,
     closest_symmetry_equivalent_position,
@@ -308,4 +311,142 @@ def test_generate_attached_element_sites_raises_when_requested_count_cannot_be_m
             muons_per_atom=1,
             bond_distance=0.5,
             min_muon_atom=0.8,
+        )
+
+
+_CUBIC = [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]]
+
+
+def test_deduplication_tolerance_is_inclusive_at_the_exact_pair_distance() -> None:
+    first, second = [0.1, 0.2, 0.3], [0.1 + 3e-7, 0.2 - 1e-7, 0.3 + 2e-7]
+    pair_distance = site_generation._pbc_distance(second, first, _CUBIC)
+
+    def deduplicate(tolerance: float) -> list[list[float]]:
+        return site_generation._deduplicate_fractional_positions([first, second], _CUBIC, tolerance_ang=tolerance)
+
+    # Broadcast norms can be an ulp off, so decisions this close are re-measured with ``_pbc_distance``.
+    assert deduplicate(pair_distance) == [first]
+    assert deduplicate(math.nextafter(pair_distance, 0.0)) == [first, second]
+    assert deduplicate(math.nextafter(pair_distance, 1.0)) == [first]
+    assert site_generation._deduplicate_fractional_positions([], _CUBIC) == []
+
+
+def test_deduplication_keeps_first_occurrence_and_drops_exact_repeats() -> None:
+    positions = [[1.25, -0.5, 0.0], [0.5, 0.5, 0.5], [0.25, 0.5, 0.0], [0.5, 0.5, 0.5 + 1e-7]]
+
+    unique = site_generation._deduplicate_fractional_positions(positions, _CUBIC)
+
+    assert unique == [[0.25, 0.5, 0.0], [0.5, 0.5, 0.5]]
+
+
+def test_host_symmetry_is_detected_once_per_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    site_generation._cached_symmetry_operations.cache_clear()
+    calls: list[float] = []
+    real = site_generation.get_crystal_symmetry
+
+    def counting(cell, *, symprec):
+        calls.append(symprec)
+        return real(cell, symprec=symprec)
+
+    monkeypatch.setattr(site_generation, "get_crystal_symmetry", counting)
+    host = {"lattice_vectors": _CUBIC, "host_species": ["Si", "Si"], "host_positions_frac": [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]}
+    try:
+        first = symmetry_equivalent_positions([0.1, 0.1, 0.1], **host)
+        second = symmetry_equivalent_positions([0.3, 0.2, 0.1], **host)
+        operations = site_generation._symmetry_operations(**host)
+    finally:
+        site_generation._cached_symmetry_operations.cache_clear()
+
+    assert len(first) == 16
+    assert len(second) == 96
+    assert calls == [1e-5]
+    assert operations is not None
+    # Shared cached arrays must not be writable by callers.
+    assert all(not rotation.flags.writeable for rotation in operations[0])
+
+
+def test_symmetry_equivalents_fall_back_to_input_when_spglib_finds_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    site_generation._cached_symmetry_operations.cache_clear()
+    monkeypatch.setattr(site_generation, "get_crystal_symmetry", lambda cell, *, symprec: None)
+    try:
+        equivalents = symmetry_equivalent_positions(
+            [1.1, -0.2, 0.3],
+            lattice_vectors=_CUBIC,
+            host_species=["Si"],
+            host_positions_frac=[[0.0, 0.0, 0.0]],
+        )
+    finally:
+        site_generation._cached_symmetry_operations.cache_clear()
+
+    assert equivalents == [pytest.approx([0.1, 0.8, 0.3])]
+
+
+def test_broadcast_spacing_check_decides_exactly_at_the_limit() -> None:
+    point, reference = [0.1, 0.2, 0.3], [0.4, 0.45, 0.9]
+    limit = site_generation._pbc_distance(point, reference, _CUBIC)
+    points, references = np.asarray([point]), np.asarray([reference])
+
+    # ``_pbc_distance(point, reference) < limit`` decides, so the exact distance is not "closer".
+    assert site_generation._any_closer_than(points, references, _CUBIC, limit) is False
+    assert site_generation._any_closer_than(points, references, _CUBIC, math.nextafter(limit, 10.0)) is True
+    assert site_generation._any_closer_than(points, np.empty((0, 3)), _CUBIC, limit) is False
+
+
+def test_broadcast_spacing_check_scans_large_inputs_in_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(site_generation, "_DISTANCE_CHECK_BLOCK", 4)
+    references = np.asarray([[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]])
+    far = np.asarray([[0.25, 0.25, 0.0]] * 9)
+    near = np.vstack([far, [[0.51, 0.5, 0.5]]])
+
+    assert site_generation._any_closer_than(far, references, _CUBIC, 1.0) is False
+    assert site_generation._any_closer_than(near, references, _CUBIC, 1.0) is True
+
+
+def test_identity_leads_requires_identity_rotation_and_zero_translation() -> None:
+    identity, mirror = np.eye(3), np.diag([-1.0, 1.0, 1.0])
+    zero, shift = np.zeros(3), np.asarray([0.5, 0.0, 0.0])
+
+    assert site_generation._identity_leads(([identity, mirror], [zero, shift])) is True
+    assert site_generation._identity_leads(([mirror, identity], [zero, zero])) is False
+    assert site_generation._identity_leads(([identity], [shift])) is False
+    assert site_generation._identity_leads(([], [])) is False
+    assert site_generation._identity_leads(None) is False
+
+
+def test_random_generation_checks_whole_orbits_when_identity_is_not_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    host = {"lattice_vectors": _CUBIC, "host_species": ["Si", "Si"], "host_positions_frac": [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]}
+    real = site_generation._symmetry_operations
+
+    def identity_last(**kwargs):
+        rotations, translations = real(**kwargs)
+        return rotations[::-1], translations[::-1]
+
+    monkeypatch.setattr(site_generation, "_symmetry_operations", identity_last)
+
+    points, _attempts = generate_random_sites_by_distance(
+        **host, min_muon_muon=0.8, min_muon_atom=1.0, max_attempts=300, seed=3, include_symmetry_equivalents=True
+    )
+
+    assert points
+    orbits = [
+        site_generation._equivalent_positions_from_operations(
+            point.fractional, lattice_vectors=_CUBIC, operations=identity_last(**host)
+        )
+        for point in points
+    ]
+    for orbit in orbits:
+        for image in orbit:
+            assert all(_pbc_distance(image, atom, _CUBIC) >= 1.0 for atom in host["host_positions_frac"])
+    for first, second in combinations(range(len(orbits)), 2):
+        assert all(_pbc_distance(a, b, _CUBIC) >= 0.8 for a in orbits[first] for b in orbits[second])
+
+
+def test_random_generation_rejects_malformed_host_positions() -> None:
+    with pytest.raises(SiteGenerationError, match="triples"):
+        generate_random_sites(
+            lattice_vectors=_CUBIC,
+            host_positions_frac=[[0.0, 0.0], [0.5, 0.5]],
+            count=1,
+            min_muon_muon=0.8,
+            min_muon_atom=1.0,
         )
