@@ -10,8 +10,6 @@ from uuid import UUID, uuid4
 from ase.data import atomic_numbers
 from ase.data.colors import jmol_colors
 from matplotlib import colormaps, colors as mcolors
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -46,6 +44,7 @@ from mufinder.app.atomic_structure_viewer import (
     viewer_atom_style_for_species,
 )
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.plot_canvas import create_plot_canvas
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import (
     current_palette,
@@ -466,18 +465,15 @@ class RelaxationClusteringDialog(QDialog):
             (self._clustering_state()).get("tolerance_scan", [])
         )
 
-        self._graph_figure = Figure(figsize=(5.6, 3.0), facecolor="none")
-        self._graph_figure.patch.set_alpha(0.0)
-        self._graph_figure.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
-        self._graph_canvas = FigureCanvasQTAgg(self._graph_figure)
-        self._graph_canvas.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self._graph_canvas.setStyleSheet("background: transparent;")
-        self._scan_figure = Figure(figsize=(5.6, 2.4), facecolor=current_palette().bg_surface)
-        self._scan_figure.subplots_adjust(left=0.14, right=0.98, top=0.90, bottom=0.24)
-        self._scan_canvas = FigureCanvasQTAgg(self._scan_figure)
-        self._left_figure = Figure(figsize=(6.2, 5.2), facecolor=current_palette().bg_surface)
-        self._left_figure.subplots_adjust(left=0.12, right=0.98, top=0.96, bottom=0.12)
-        self._left_canvas = FigureCanvasQTAgg(self._left_figure)
+        self._graph_figure, self._graph_canvas = create_plot_canvas(figsize=(5.6, 3.0), transparent=True)
+        self._scan_figure, self._scan_canvas = create_plot_canvas(
+            figsize=(5.6, 2.4),
+            facecolor=current_palette().bg_surface,
+        )
+        self._left_figure, self._left_canvas = create_plot_canvas(
+            figsize=(6.2, 5.2),
+            facecolor=current_palette().bg_surface,
+        )
         # Create the viewer WITHOUT a parent so its native VTK/OpenGL render
         # windows are realized lazily, on first show, at their final laid-out
         # position. Passing ``self`` here realizes the HWNDs under the dialog at
@@ -1089,12 +1085,7 @@ class DisplacementAnalysisDialog(QDialog):
         # laid-out position on first show, not under the dialog at the origin.
         # See RelaxationClusteringDialog for the Windows reparent-desync rationale.
         self._viewer = AtomicStructureViewer()
-        self._figure = Figure(figsize=(5.6, 4.0), facecolor="none")
-        self._figure.patch.set_alpha(0.0)
-        self._figure.subplots_adjust(left=0.14, right=0.82, top=0.94, bottom=0.16)
-        self._canvas = FigureCanvasQTAgg(self._figure)
-        self._canvas.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self._canvas.setStyleSheet("background: transparent;")
+        self._figure, self._canvas = create_plot_canvas(figsize=(5.6, 4.0), transparent=True)
         self._build_ui()
         self._populate()
         self._connect()
