@@ -47,6 +47,10 @@ _COMPACT_LAYOUT_MAX_WIDTH = 1180
 _COMPACT_LAYOUT_MAX_HEIGHT = 760
 _LEFT_CANVAS_MINIMUM_SIZE = (240, 200)
 _BUBBLE_CANVAS_MINIMUM_SIZE = (220, 150)
+# Window moves/resizes, splitter drags and camera changes arrive many times a
+# second. Each emitted snapshot makes the UEP wizard rebuild and re-serialize its
+# whole state (potential grid included), so these emit once the gesture settles.
+_GEOMETRY_STATE_EMIT_DELAY_MS = 250
 
 
 def cluster_color_map(cluster_labels: Iterable[int]) -> dict[int, str]:
@@ -269,6 +273,15 @@ class UepClusteringDialog(QDialog):
         self._site_number_map = relaxed_site_number_map(self._optimizations)
         self._restoring_state = False
         self._shutting_down = False
+        # The structure viewer's VTK interactor calls winId() while _build_ui is
+        # still running. On Windows that creates the dialog's native window and
+        # delivers move/resize events synchronously, before the splitters the
+        # state snapshot reads exist.
+        self._ui_built = False
+        self._geometry_state_timer = QTimer(self)
+        self._geometry_state_timer.setSingleShot(True)
+        self._geometry_state_timer.setInterval(_GEOMETRY_STATE_EMIT_DELAY_MS)
+        self._geometry_state_timer.timeout.connect(self._emit_state_changed)
         self._prepared = prepare_uep_clustering_dataset(
             self._optimizations,
             source_structure=source_structure,
@@ -304,6 +317,7 @@ class UepClusteringDialog(QDialog):
         self._pending_right_splitter_sizes: list[int] | None = None
 
         self._build_ui()
+        self._ui_built = True
         self._restore_initial_state(initial_state)
         self._apply_responsive_layout()
         self.refresh_clustering(emit_signals=False)
@@ -474,7 +488,7 @@ class UepClusteringDialog(QDialog):
             if self._right_splitter.is_programmatic_sizing()
             else self._right_splitter.mark_user_sized()
         )
-        self._right_splitter.splitterMoved.connect(lambda *_args: self._emit_state_changed())
+        self._right_splitter.splitterMoved.connect(lambda *_args: self._schedule_geometry_state_changed())
         right_layout.addWidget(right_splitter, 1)
 
         splitter.addWidget(left_panel)
@@ -487,10 +501,10 @@ class UepClusteringDialog(QDialog):
             if self._main_splitter.is_programmatic_sizing()
             else self._main_splitter.mark_user_sized()
         )
-        self._main_splitter.splitterMoved.connect(lambda *_args: self._emit_state_changed())
+        self._main_splitter.splitterMoved.connect(lambda *_args: self._schedule_geometry_state_changed())
         layout.addWidget(splitter, 1)
 
-        self._structure_viewer.view_state_changed.connect(self._emit_state_changed)
+        self._structure_viewer.view_state_changed.connect(self._schedule_geometry_state_changed)
         self._sync_method_controls()
 
     def _prepared_max_hier_distance(self) -> float:
@@ -640,9 +654,17 @@ class UepClusteringDialog(QDialog):
         self._structure_viewer._render()
 
     def _emit_state_changed(self) -> None:
-        if self._restoring_state or self._shutting_down:
+        self._geometry_state_timer.stop()
+        if not self._ui_built or self._restoring_state or self._shutting_down:
             return
         self.state_changed.emit(self.state_snapshot())
+
+    def _schedule_geometry_state_changed(self) -> None:
+        """Coalesce rapid layout and camera changes into one state emission."""
+
+        if not self._ui_built or self._restoring_state or self._shutting_down:
+            return
+        self._geometry_state_timer.start()
 
     def _apply_responsive_layout(self) -> None:
         # Compact mode only reflows the controls card. The plot panels stay
@@ -1134,16 +1156,19 @@ class UepClusteringDialog(QDialog):
         if self._shutting_down:
             return
         self._shutting_down = True
+        self._geometry_state_timer.stop()
         self._structure_viewer.shutdown()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().resizeEvent(event)
+        if not self._ui_built:
+            return
         self._apply_responsive_layout()
-        self._emit_state_changed()
+        self._schedule_geometry_state_changed()
 
     def moveEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().moveEvent(event)
-        self._emit_state_changed()
+        self._schedule_geometry_state_changed()
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().showEvent(event)

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import IntEnum, StrEnum
 from pathlib import Path
+from typing import NamedTuple
+from uuid import uuid4
 
 from mufinder.persistence.codec import parse_datetime, parse_uuid, to_jsonable
 from mufinder.persistence.json_store import ProjectStore
@@ -30,6 +34,40 @@ def test_codec_helpers_cover_branching() -> None:
     assert parse_datetime(encoded["dt"]) == now
     assert parse_datetime(None) is None
     assert parse_uuid(None) is None
+
+
+def test_to_jsonable_fast_path_keeps_enum_and_container_subclass_conversion() -> None:
+    class _Level(IntEnum):
+        HIGH = 2
+
+    class _Kind(StrEnum):
+        MESH = "mesh"
+
+    class _Row(NamedTuple):
+        x: float
+        y: float
+
+    class _Mapping(OrderedDict):
+        pass
+
+    ident = uuid4()
+    payload = {
+        "floats": [[0.5, 1.5, 2.5], (3.0, 4.0, 5.0)],
+        "enums": [_Level.HIGH, _Kind.MESH],
+        "row": _Row(1.0, 2.0),
+        "mapping": _Mapping([(1, ident)]),
+        "nested": {"dc": [_Mini(7)], "none": None, "flag": True},
+    }
+
+    encoded = to_jsonable(payload)
+
+    assert encoded["floats"] == [[0.5, 1.5, 2.5], [3.0, 4.0, 5.0]]
+    assert type(encoded["floats"][1]) is list
+    assert encoded["enums"] == [2, "mesh"]
+    assert type(encoded["enums"][0]) is int and type(encoded["enums"][1]) is str
+    assert encoded["row"] == [1.0, 2.0]
+    assert encoded["mapping"] == {"1": str(ident)}
+    assert encoded["nested"] == {"dc": [{"value": 7}], "none": None, "flag": True}
 
 
 def test_project_store_entity_and_provenance_io(tmp_path: Path) -> None:

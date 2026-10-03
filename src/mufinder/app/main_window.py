@@ -15352,6 +15352,7 @@ class MainWindow(QMainWindow):
             initial_state = persisted_states.get(str(job.id), {})
             if not isinstance(initial_state, dict):
                 initial_state = {}
+            initial_state = self._migrate_legacy_uep_state_potential_grid(job.id, initial_state)
             dialog = UepAnalysisDialog(
                 source_job_label=job.label,
                 source_structure_id=source_structure_id,
@@ -15377,6 +15378,26 @@ class MainWindow(QMainWindow):
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+
+    def _migrate_legacy_uep_state_potential_grid(self, job_id: UUID, state: dict) -> dict:
+        """Move a potential grid saved inside the UEP UI state into its own result.
+
+        Older snapshots repeated the grid in ``ui_state`` on every change. The
+        wizard no longer writes it there, so the next state change would drop
+        the only copy for a project that never stored the grid result.
+        """
+
+        if self._document is None or "potential_grid" not in state:
+            return state
+        if self._uep_potential_grid_result_for_job(job_id) is None:
+            self._on_uep_potential_grid_ready(job_id, state.get("potential_grid"))
+            if self._uep_potential_grid_result_for_job(job_id) is None:
+                return state
+        migrated = {key: value for key, value in state.items() if key != "potential_grid"}
+        states = self._document.ui_state.get(self._UEP_ANALYSIS_STATES_KEY, {})
+        if isinstance(states, dict) and str(job_id) in states:
+            self._document.ui_state[self._UEP_ANALYSIS_STATES_KEY] = {**states, str(job_id): migrated}
+        return migrated
 
     def _on_uep_potential_grid_ready(self, job_id: UUID, payload: object) -> None:
         if self._document is None:

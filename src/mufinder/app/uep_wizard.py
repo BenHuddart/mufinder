@@ -1632,6 +1632,9 @@ class UepAnalysisDialog(QDialog):
         self._potential_grid_zero_shift_ev = 0.0
         self._viewer_host_structure = self._build_viewer_host_structure()
         self._isosurface_layers: list[_IsosurfaceLayerState] = [_IsosurfaceLayerState(label="Isosurface 1", key=self._new_isosurface_layer_key())]
+        # Serialized isosurface meshes keyed by mesh identity. Meshes are frozen,
+        # so a payload stays valid for as long as its layer keeps that mesh.
+        self._serialized_mesh_cache: dict[int, tuple[UepIsosurfaceMesh, dict[str, object]]] = {}
         self._active_isosurface_index = 0
         self._slice_planes: list[_SlicePlaneState] = []
         self._isosurface_viewer_muons: list[_ManagedViewerMuonState] = []
@@ -1690,6 +1693,12 @@ class UepAnalysisDialog(QDialog):
         self._tabs.addTab(self._batch_tab, "Batch Search")
         self._tabs.addTab(self._isosurface_tab, "Isosurfaces")
         self._tabs.addTab(self._slices_tab, "Slices")
+        # The summary, probe, line and plane pages are no longer tabs; their
+        # widgets only carry saved analysis state. Left visible they sat
+        # outside any layout at the default 100x30 geometry, stacked above the
+        # tab bar and covering the first tab.
+        for retired_page in (self._summary_tab, self._probe_tab, self._line_tab, self._plane_tab):
+            retired_page.hide()
         self._tabs.currentChanged.connect(lambda _index: self._emit_state_changed())
         self._apply_tab_branding()
 
@@ -5415,17 +5424,7 @@ class UepAnalysisDialog(QDialog):
                     "status_text": layer.status_text,
                     "status_kind": layer.status_kind,
                     "managed_muon_key": layer.managed_muon_key,
-                    "mesh": (
-                        None
-                        if layer.mesh is None
-                        else {
-                            "level_ev": float(layer.mesh.level_ev),
-                            "minimum_potential_ev": float(layer.mesh.minimum_potential_ev),
-                            "maximum_potential_ev": float(layer.mesh.maximum_potential_ev),
-                            "vertices_ang": [list(vertex) for vertex in layer.mesh.vertices_ang],
-                            "faces": [list(face) for face in layer.mesh.faces],
-                        }
-                    ),
+                    "mesh": self._serialized_isosurface_mesh(layer.mesh),
                 }
                 for layer in self._isosurface_layers
             ],
@@ -5437,22 +5436,9 @@ class UepAnalysisDialog(QDialog):
             "isosurface_status_kind": self._isosurface_status_kind,
             "isosurface_viewer_muons": [self._serialize_managed_viewer_muon(entry) for entry in self._isosurface_viewer_muons],
             "isosurface_selected_muon_keys": list(self._isosurface_selected_muon_keys),
-            "isosurface_mesh": (
-                None
-                if active_layer.mesh is None
-                else {
-                    "level_ev": float(active_layer.mesh.level_ev),
-                    "minimum_potential_ev": float(active_layer.mesh.minimum_potential_ev),
-                    "maximum_potential_ev": float(active_layer.mesh.maximum_potential_ev),
-                    "vertices_ang": [list(vertex) for vertex in active_layer.mesh.vertices_ang],
-                    "faces": [list(face) for face in active_layer.mesh.faces],
-                }
-            ),
-            "potential_grid": (
-                None
-                if self._potential_grid_raw_cache is None
-                else serialize_potential_grid(self._potential_grid_raw_cache)
-            ),
+            # The active mesh lives in "isosurface_layers" and the potential grid
+            # is persisted once through ``potential_grid_ready``; repeating them
+            # here made every state change re-serialize both.
             "slice_saturation_bounds": (
                 None
                 if self._slice_saturation_bounds is None
@@ -5524,6 +5510,25 @@ class UepAnalysisDialog(QDialog):
                 else self._clustering_dialog.state_snapshot()
             ),
         }
+
+    def _serialized_isosurface_mesh(self, mesh: UepIsosurfaceMesh | None) -> dict[str, object] | None:
+        if mesh is None:
+            return None
+        cached = self._serialized_mesh_cache.get(id(mesh))
+        if cached is not None and cached[0] is mesh:
+            return cached[1]
+        live_ids = {id(layer.mesh) for layer in self._isosurface_layers if layer.mesh is not None}
+        for stale_id in [key for key in self._serialized_mesh_cache if key not in live_ids]:
+            del self._serialized_mesh_cache[stale_id]
+        payload: dict[str, object] = {
+            "level_ev": float(mesh.level_ev),
+            "minimum_potential_ev": float(mesh.minimum_potential_ev),
+            "maximum_potential_ev": float(mesh.maximum_potential_ev),
+            "vertices_ang": [list(vertex) for vertex in mesh.vertices_ang],
+            "faces": [list(face) for face in mesh.faces],
+        }
+        self._serialized_mesh_cache[id(mesh)] = (mesh, payload)
+        return payload
 
     def _emit_state_changed(self) -> None:
         if self._shutting_down:
