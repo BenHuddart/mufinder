@@ -12,6 +12,55 @@ Domain
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.domain.charge_states
+   :members:
+   :undoc-members:
+
+CASTEP I/O
+----------
+
+.. automodule:: mufinder.castep_io
+
+.. automodule:: mufinder.castep_io.types
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.schema
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.validators
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.cell_parser
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.param_parser
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.cell_writer
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.param_writer
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.output_parser
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.ts_parser
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.run_parameters
+   :members:
+   :undoc-members:
+
 Persistence
 -----------
 
@@ -27,6 +76,30 @@ Services
 --------
 
 .. automodule:: mufinder.services.project_service
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.runner_protocol
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.job_artifacts
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.script_template
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.legacy_import
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.legacy_import_commit
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.legacy_import_removal
    :members:
    :undoc-members:
 
@@ -69,6 +142,26 @@ Science
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.science.supercell
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.science.convergence_analysis
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.science.quantum_phonons
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.science.quantum_adiabatic
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.science.energy_barriers
+   :members:
+   :undoc-members:
+
 Workflow
 --------
 
@@ -96,6 +189,26 @@ Workflow
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.workflow.base
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.workflow.relaxation
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.workflow.quantum
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.workflow.energy_barriers
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.workflow.renderer
+   :members:
+   :undoc-members:
+
 UI
 --
 
@@ -112,5 +225,29 @@ UI
    :undoc-members:
 
 .. automodule:: mufinder.app.muon_relaxation_widget
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.app.adapter_common
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.app.workflow_submission
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.app.workflow_controllers.base
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.app.plot_canvas
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.app.workflow_parameters
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.app.legacy_import_dialog
    :members:
    :undoc-members:

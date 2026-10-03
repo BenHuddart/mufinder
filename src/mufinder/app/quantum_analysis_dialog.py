@@ -930,18 +930,18 @@ def _correlation_help_definition() -> dict[str, object]:
         "paragraphs": (
             "The covariance matrix estimates how zero-point displacements of two atoms are coupled by the parsed Gamma-point phonon modes. MuFinder reports the tensor for the selected one-based CASTEP atom indices.",
             "The correlation matrix normalizes each covariance component by the corresponding auto-covariances, so values are dimensionless and easier to compare across atom pairs.",
-            "The w2 witness follows the legacy MuFinder pairwise witness calculation and is intended as a comparative diagnostic rather than a standalone proof of many-body quantum behavior.",
+            "The w2 witness is minus the magnitude of the pair-covariance trace, normalized by the geometric mean of the two auto-covariance traces. It lies between -1 and 0, with values closer to -1 indicating more strongly correlated zero-point motion, and is intended as a comparative diagnostic rather than a standalone proof of many-body quantum behavior.",
         ),
         "equations": (
             r"C_{ab}^{ij}=\sum_n \frac{\hbar}{2\omega_n\sqrt{m_am_b}} e_{an}^i e_{bn}^{j*}",
             r"\rho_{ab}^{ij}=\frac{C_{ab}^{ij}}{\sqrt{C_{aa}^{ii}C_{bb}^{jj}}}",
-            r"w_2=\lambda_{\min}\left(C_{aa}C_{bb}-C_{ab}C_{ab}^{T}\right)",
+            r"w_2=-\frac{\left|\mathrm{Tr}\,C_{ab}\right|}{\sqrt{\mathrm{Tr}\,C_{aa}\,\mathrm{Tr}\,C_{bb}}}",
         ),
         "symbols": (
             (r"C_{ab}", "Covariance tensor between atoms a and b, reported in Å squared."),
             (r"\rho_{ab}", "Normalized correlation tensor between atoms a and b."),
             (r"e_{an}^i", "Cartesian phonon eigenvector component for atom a in mode n."),
-            (r"w_2", "Pairwise entanglement-witness diagnostic from the legacy MuFinder analysis."),
+            (r"w_2", "Pairwise witness: the normalized covariance trace, from -1 (strongly correlated) to 0."),
         ),
     }
 

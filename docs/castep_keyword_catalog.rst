@@ -97,8 +97,8 @@ generation target in ``Setup > CASTEP`` (shown once a cluster is selected, and
 remembered for that cluster) and as ``Generate keywords using`` in
 ``Setup > HPC Clusters``; both edit the same per-cluster setting:
 
-- **Scheduler job** (the default) uploads one shell script, submits it, and
-  reads back the dump it wrote. It is the safe choice where running CASTEP on a
+- **Scheduler job** (the default, listed as ``Scheduler job (recommended)``)
+  uploads one shell script, submits it, and reads back the dump it wrote. It is the safe choice where running CASTEP on a
   login node is forbidden or discouraged. Queue polling backs off from 2 to 15
   seconds. The script ends the dump with a completion marker; a dump without it
   (a job that hit its walltime, say) is reported as a failure rather than
@@ -168,7 +168,8 @@ cluster does not have to be described twice.
 - On the login node the template's setup commands are run as well, and the
   launcher is not used.
 
-``Keyword shell init`` is therefore optional: it adds commands to those read
+The ``Keyword shell init (optional)`` setting in ``Setup > HPC Clusters`` is
+therefore rarely needed: it adds commands to those read
 from the template, and replaces the inferred setup on the login node. A cluster
 with no usable template (the file is missing, or no run line was found) gets a
 generic script with the scheduler defaults and ``srun -n 1`` as the fallback
@@ -249,8 +250,9 @@ Running without a catalog is allowed, never blocked, but it is made visible by
 - A permanent status-bar indicator shows the catalog's CASTEP version, or
   ``⚠ CASTEP keywords: limited built-in set``. Clicking it opens CASTEP setup.
   It also flags a configured catalog that was skipped.
-- At startup, with no catalog, a prompt explains what is missing and offers to
-  open CASTEP setup. It can be dismissed permanently.
+- At startup, with no catalog, a prompt explains what is missing and offers
+  ``Open CASTEP Setup…``. Ticking ``Don't show this again`` dismisses it
+  permanently.
 - Before a local or cluster submission, with no catalog, a warning offers to
   open CASTEP setup, submit anyway, or cancel. Choosing to submit anyway
   silences the warning for the rest of the session.

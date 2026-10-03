@@ -35,11 +35,13 @@ far below 1, so it never advances a genuinely non-integer ratio. The fix is
 tested by `test_grid_from_spacing_round_trips_lif_high_n` (N=2 through N=13).
 
 **Where these values surface in the GUI**: results-pane "Recommended
-k-point grid: ... (spacing X 1/Ang)" line; secondary axis labels on
-convergence plots; chart annotations on the overview page; "Use spacing"
-toggle defaults in the relaxation, muon-relaxation, and UEP workflow
-configure-parameters dialogs. All four use the same `spacing_from_grid`
-value.
+k-point grid: ... (spacing X 1/Ang)" line; per-grid spacing annotations on the
+examiner and overview plots; "Use spacing" toggle defaults in the relaxation,
+muon-relaxation, and UEP workflow configure-parameters dialogs. All three use
+the same `spacing_from_grid` value. The examiner's secondary spacing axis is
+different: its ticks are round spacing values placed with
+`kpoint_count_for_spacing` (`_regular_spacing_ticks`), not per-grid
+`spacing_from_grid` values.
 
 **What is NOT round-trip-safe**: a grid not in the sweep (e.g. a manually
 entered one off CASTEP's curve, or a converged grid persisted before the
@@ -166,24 +168,23 @@ values where the upper bound actually differs.
 
 ## Follow-up fixes (also merged)
 
-### Fix 2: `_compute_spacings` — frozen n=1 direction guard
+### Fix 2: `_compute_spacings` — plateau guard
 
 `src/mufinder/app/convergence_examiner.py::ConvergenceExaminerDialog._compute_spacings`
 
 For cells with a very short direct axis in one direction and a very long axis in
-another (e.g. a thin slab), the level-by-level sweep can produce grids where
-one direction is frozen at `n_i = 1` while the others grow. Once the
-`n_i = 1` direction's contribution `|b_i|/(2π)` exceeds those of all other
-directions, the spacing reported by `max_i(|b_i|/(2π·N_i))` stops changing —
-every subsequent grid shows the same value, creating a non-decreasing series
-that misleads the user about convergence.
+another (e.g. a thin slab), successive grids can report the same spacing while
+other axes keep growing, because one axis dominates the bound. A run of
+identical spacings misleads the user about convergence.
 
-**Fix**: in `_compute_spacings`, after computing the spacing for a grid, skip
-the entry if a frozen n=1 direction achieves the max. The overview log and
-convergence plot simply show no spacing annotation for those grids rather than
-a misleading constant value.
-
-Condition: `max_i{n_i=1}(|b_i|/(2π)) ≥ spacing × (1 − ε)`.
+The guard was first written for the Stage 1 formula, skipping a grid when a
+frozen `n_i = 1` direction attained `max_i(|b_i|/(2π·N_i))`. With Stage 2 the
+current guard is simpler: `_compute_spacings` walks the grids in order, skips
+`(1, 1, 1)` (for which `spacing_from_grid` raises), and skips any grid whose
+spacing equals the previous annotated spacing (`math.isclose`,
+`rel_tol=1e-9`), so the annotation series stays strictly decreasing. The
+overview log and convergence plot show no spacing annotation for skipped grids
+rather than a misleading repeated value.
 
 ### Fix 4: spacing-driven sweep generator
 
@@ -302,7 +303,8 @@ about these trade-offs in a future session.
 
 | Path | Role |
 |---|---|
-| `src/mufinder/science/kpoint_grids.py` | `spacing_from_grid`, `grid_from_spacing`, `kpoint_count_for_spacing` |
-| `src/mufinder/app/convergence_examiner.py` | `_compute_spacings` (uses `spacing_from_grid`); `_regular_spacing_ticks` (uses `kpoint_count_for_spacing`) |
+| `src/mufinder/science/kpoint_grids.py` | `spacing_from_grid`, `grid_from_spacing`, `generate_kpoint_grids`, `kpoint_count_for_spacing`, `equivalent_grid_for_supercell` |
+| `src/mufinder/app/convergence_examiner.py` | `_compute_spacings` (uses `spacing_from_grid`); `recompute_spacings_in_snapshot`; `_regular_spacing_ticks` (uses `kpoint_count_for_spacing`) |
+| `src/mufinder/app/relaxation_widget.py`, `muon_relaxation_widget.py`, `uep_widget.py` | "Use spacing" toggle defaults (use `spacing_from_grid`) |
 | `tests/science/test_kpoint_grids.py` | Unit tests including AlF₃ and LiF sanity checks added with this fix |
 | `E:\CASTEP-22.11\Source\Fundamental\cell.f90` | CASTEP source — `cell_kpoints_spacing_wrapped` ≈ line 20698 |

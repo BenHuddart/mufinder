@@ -16,7 +16,7 @@ Local commands
 --------------
 
 Install development dependencies (the ``scientific-backends`` extra is
-required by the test suite):
+required by the test suite; ``make install-dev`` installs only ``.[dev]``):
 
 .. code-block:: bash
 
@@ -154,9 +154,22 @@ boundaries, or shared architecture:
 
 The harness tests currently verify:
 
-- ``AGENTS.md`` remains a short route map and points to durable docs.
-- The Sphinx index includes the agent harness and architecture documents.
-- Lower package layers do not import higher package layers.
+- ``AGENTS.md`` remains a short route map (at most 80 lines) and points to
+  durable docs.
+- The Sphinx index includes the agent harness, architecture, quality, and
+  compatibility documents, and ``docs/architecture.rst`` names every layer
+  package.
+- Lower package layers do not import higher package layers
+  (``FORBIDDEN_LAYER_IMPORTS``).
+- The ``_on_submit_*`` / ``_materialize_*`` handlers on ``MainWindow`` match
+  the pinned set exactly; the set may only shrink (see
+  :doc:`architecture`, Workflow controllers).
+- No module in ``mufinder.app`` calls ``subplots_adjust``, and the app modules
+  that build a ``FigureCanvasQTAgg`` directly rather than through
+  ``create_plot_canvas`` match a pinned set that may only shrink (see
+  :doc:`architecture`, Plot canvas policy).
+- ``.github/PULL_REQUEST_TEMPLATE.md`` keeps its section headings, and both
+  ``CLAUDE.md`` and ``AGENTS.md`` still point to it.
 - Source, test, and docs trees do not track Python bytecode artifacts that can
   confuse packaging and review.
 
@@ -181,7 +194,18 @@ continuous integration and tag-driven publishing:
   dispatched manually against an existing tag). It derives the version from the
   tag, builds the Windows and macOS binaries, and publishes the GitHub release.
   Bump the version and stamp ``CHANGELOG.md`` locally with
-  ``semantic-release version`` before pushing the tag.
+  ``semantic-release version`` (for example
+  ``uvx "python-semantic-release>=10.5,<11" version``) before pushing the tag.
+  Branch protection blocks pushing that version-bump commit to ``main``, so it
+  goes through a ``release/vX.Y.Z`` pull request first; ``CLAUDE.md`` lists the
+  exact command sequence.
+
+- ``Pages`` rebuilds this Sphinx site (with ``-W``) on every push to ``main``
+  and deploys it to GitHub Pages.
+
+- ``Claude Code`` (``.github/workflows/claude.yml``) runs the Claude Code agent
+  when an issue, pull-request comment, or review mentions ``@claude``. It is
+  not a quality gate.
 
 Merges should be blocked when either gate fails.
 

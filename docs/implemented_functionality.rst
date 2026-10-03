@@ -6,7 +6,12 @@ Application shell
 
 The current application provides:
 
-- Project create/open/save actions from the main window.
+- Project create/open/save actions from the ``File`` menu (``New Project``,
+  ``Open Project``, ``Open Recent``, ``Save Project``), plus
+  ``Import Legacy Relaxations...`` and ``Remove Imported Relaxations...`` (see
+  :doc:`legacy_import`).
+- A ``Setup`` menu with ``CASTEP...`` and ``HPC Clusters...`` configuration,
+  and ``View -> Appearance`` with ``Light``, ``Dark``, and ``System`` themes.
 - A project navigator with staged workflow sections.
 - A project-wide job dashboard dock.
 - Persisted per-project UI state.
@@ -97,8 +102,10 @@ save:
   and results is autosaved so active work is not lost if MuFinder needs to
   rebuild the project view.
 - Analysis-session state stays in session memory until the user explicitly
-  chooses ``Save Project`` (or accepts the save prompt when closing a modified
-  project).
+  chooses ``Save Project`` (or answers ``Yes`` to the ``Save project?`` prompt
+  shown whenever a project window is closed). Opening a different project
+  flushes the autosave but does not prompt, so unsaved analysis-session state
+  is discarded; save first.
 - This manual-save bucket includes exploratory UI state such as UEP wizard tab
   choices, clustering-window state, viewer camera/orientation, bond and spin
   visibility, and slice/isosurface display settings.
@@ -120,8 +127,8 @@ The repository now includes an agent-legible development harness:
 Journal view
 ------------
 
-The project navigator now includes a ``Journal`` page on the existing
-``provenance_log`` route.
+The project navigator includes a ``Journal`` page (internal route
+``provenance_log``); see :doc:`journal` for details.
 
 Current Journal behavior includes:
 
@@ -142,11 +149,13 @@ Current Journal coverage includes:
 
 - structure import
 - convergence / pristine-relaxation / UEP configuration snapshots
-- adopted project defaults
-- candidate-site generation and UEP promotion
-- calculation submission milestones
+- adopted, manually entered, and cleared project defaults, including the
+  default XC functional
+- candidate-site generation (and partial generation) and UEP promotion
+- calculation submission milestones and continuation runs
 - terminal calculation outcomes (completed, failed, stopped, cancelled, reset)
 - comparison-table creation
+- legacy-relaxation import and removal of imported relaxations
 
 Current Journal limitations:
 
@@ -168,7 +177,8 @@ Host-structure loading currently supports:
 
 Import behavior currently includes:
 
-- Parsing via ASE-backed readers.
+- Parsing CIF/MCIF files via ASE-backed readers and ``.cell`` files with
+  MuFinder's own CASTEP cell parser.
 - Copying source files into project ``imports/`` for provenance.
 - Setting imported structure as active host structure by default.
 - Capturing import provenance records.
@@ -192,24 +202,25 @@ Host-structure visualization and magnetic editing
 
 The host-structure panel now includes:
 
+- An ``Active host structure:`` selector for switching between imported host structures.
 - A resizable side-by-side splitter layout with atom table on the left and 3D structure viewer on the right.
 - A compact two-row current-structure summary block (label/source/atom count/species) to preserve horizontal room for the viewer.
 - Orthographic-only viewing (perspective toggle removed).
-- Per-atom editable spin values in units of ``hbar/2`` via an inline table column.
+- Per-atom editable spin values in units of ``hbar/2`` via the ``Spin (hbar/2)`` table column.
 - Propagation-vector entry controls in reciprocal-lattice units.
 - 3D spin-arrow rendering in the structure viewer using fully 3D shafts/cones, centered on atom spheres with signed color mapping for up/down moments.
 - Spin rendering disabled by default, with automatic enablement when any edited/imported spin value is non-zero.
 - Atom transparency automatically applied when spin rendering is enabled.
 - Viewer fitting accounts for full atom sphere extents (not just atom centers), preventing unnecessary clipping at left/right boundaries.
-- Crystallographic axis triad rendered below the main viewer to maximize primary structure viewport area, with viewer and triad colours refreshed from the active light/dark palette.
+- Crystallographic axis triad rendered in a narrow column at the bottom-left of the main viewer to maximize primary structure viewport area, with viewer and triad colours refreshed from the active light/dark palette.
 - Left-clicking empty space in the viewer clears the current atom selection.
 - The viewer's controls fit narrow panes: the display toggles (Cell, Bonds,
   Spins) and the orientation controls (Along a/b/c, Reset View) share one line
   when there is room and wrap onto two lines when there is not, and the a/b/c
   buttons are compact. A long selection summary is shortened with an ellipsis
   (the full text is in its tooltip) instead of widening the viewer. The viewer
-  can shrink to about 260 px, down from 610 px, so plots beside it in the
-  analysis dialogs get the width they need.
+  no longer needs about 610 px of width and fits in roughly 300 px, so plots
+  beside it in the analysis dialogs get the width they need.
 - In the relaxation clustering window the viewer pane gets half the width, or
   more when its cluster summary table needs it to show the Wyckoff assignments
   in full; the plot takes the rest. The split follows window resizes until the
@@ -230,8 +241,9 @@ The host-structure panel now includes:
   draw thinner, translucent edges, so the edges of a dense component can still
   be told apart.
 - A project-level supercell editor with simple diagonal controls, optional
-  advanced full 3x3 matrix entry, naming, preview, save, edit, delete, and
-  workflow selection support.
+  advanced full 3x3 matrix entry, naming, preview, save, edit, delete,
+  minimum-image-distance supercell suggestions, and workflow selection support
+  (see :doc:`supercells`).
 - A PyVista/VTK structure-viewer backend with camera-preserving overlay updates for bonds, spins, slice planes, point markers, and UEP isosurfaces.
 
 Magnetic-field and nuclear-relaxation analysis
@@ -239,7 +251,9 @@ Magnetic-field and nuclear-relaxation analysis
 
 The Magnetic Fields workflow currently includes:
 
-- propagation-vector magnetic-structure editing and preview;
+- propagation-vector magnetic-structure editing and preview, including
+  ``Build From Host Spins`` and component textures (hexagonal and square
+  skyrmions, custom Fourier textures);
 - commensurate dipolar-field calculations and incommensurate field-distribution
   sampling, including independent multi-q phase sampling with Auto, Grid, and
   Monte Carlo controls, active phase dimensions derived from the used
@@ -250,70 +264,30 @@ The Magnetic Fields workflow currently includes:
   preview for advanced shapes, analytic rectangular-prism tensor averaging, and
   per-phase correction for incommensurate distributions;
 - dipolar tensor calculations for selected magnetic ions;
-- selected muon-site reuse from UEP and structural-relaxation clustering;
+- selected muon-site reuse from UEP and structural-relaxation clustering, or a
+  ``Custom fractional position``;
 - native nuclear second-moment relaxation calculations for ZF/TF and
   single-crystal/polycrystal modes;
 - bundled natural-abundance isotope data for reproducible nuclear relaxation;
 - optional muon-induced distortion corrections when a selected
   structural-relaxation cluster site has a derived distorted structure.
 
+See :doc:`magnetic_fields` for the workflow.
+
 Quantum Corrections
 -------------------
 
-The Quantum Corrections workflow now has a project page and implemented core
-phonon analysis support.
+The Quantum Corrections workflow lists structurally relaxed MuFinder muon sites
+that are eligible phonon sources and runs a two-stage CASTEP calculation for
+each: a ``TASK : SINGLEPOINT`` stage with explicit ``H:mu`` mass/gamma cell
+blocks, then a Gamma-only ``TASK : PHONON`` continuation (finite displacement by
+default, with optional ``NUM_FARMS`` task farming). Completed phonon results are
+parsed from the ``.phonon`` file into muon zero-point energies, covariance and
+correlation tensors, ``w1``/``w2`` witnesses, and single-particle effective
+potentials, which can be inspected in an interactive analysis window.
 
-Current behavior includes:
-
-- listing structurally relaxed MuFinder muon sites that are eligible phonon
-  sources;
-- showing per-row displacement counts, current stage, and stage-2 farm-count
-  metadata directly in the source table;
-- rejecting generated, UEP-only, pristine-relaxation, failed, and
-  provenance-free sources;
-- running Quantum Corrections as a two-stage workflow: a required
-  singlepoint job first, then a manual phonon continuation step once the
-  singlepoint has completed;
-- locking shared Quantum Corrections parameters after the completed
-  singlepoint so only the stage-2 farm count remains editable before phonon
-  submission, with an explicit workflow action to reset a row back to stage 1;
-- expanding stage-1 CASTEP ``JobSpec`` objects with ``TASK : SINGLEPOINT``
-  and explicit ``H:mu`` mass/gamma cell blocks, so the muon mass reaches the
-  checkpoint the stage-2 continuation restores its model from;
-- expanding Gamma-only stage-2 CASTEP phonon ``JobSpec`` objects with
-  ``TASK : PHONON``, ``CONTINUATION : DEFAULT``, ``PHONON_METHOD``,
-  ``PHONON_KPOINT_MP_GRID 1 1 1``, optional ``NUM_FARMS``, and the same explicit
-  ``H:mu`` mass/gamma cell blocks;
-- refusing a stage-2 phonon continuation whose stage-1 cell declares no
-  ``SPECIES_MASS``, and warning on any completed phonon run whose ``.phonon``
-  header reports a mass other than the muon mass for ``H:mu`` (job warning,
-  result payload, and a banner in the analysis window);
-- submitting selected eligible sites through the shared local and cluster
-  CASTEP job runners;
-- reusing same-cluster stage-1 remote directories for stage-2 continuation
-  submissions without prompting to delete the directory first;
-- finite displacement as the default phonon method, with DFPT/linear-response
-  compatibility checks for known pseudopotential restrictions;
-- parsing CASTEP ``.phonon`` files into typed q-point, atom, frequency, and
-  eigenvector data;
-- selecting the three Gamma modes with largest muon participation;
-- calculating per-mode and total muon ZPE, covariance/correlation tensors, and
-  legacy-style ``w1``/``w2`` witnesses;
-- solving one-dimensional single-particle effective potentials for
-  Gomilsek-style weakly-bound and imported strongly-bound adiabatic analyses;
-- launching an interactive analysis window from each completed phonon result,
-  with single-particle mode plots, square-root energy scaling, covariance and
-  correlation tensor inspection, and pairwise ``w2`` evaluation;
-- retrieving ``.phonon`` files from cluster jobs and listing them with other
-  job outputs, while accepting task-farmed ``*_farm001.castep`` outputs as the
-  primary CASTEP text output when present;
-- persisting completed quantum phonon analysis summaries into ``Result``
-  entities.
-- exposing a curated parameter dialog with searchable advanced CASTEP controls
-  for each row, including stage-2 ``num_farms`` configuration.
-
-See :doc:`quantum_corrections` for method assumptions and the planned
-Gomilsek-style single-particle approximation layer.
+See :doc:`quantum_corrections` for the workflow, eligibility rules, and method
+assumptions.
 
 Energy Barriers
 ---------------
@@ -375,14 +349,16 @@ Current behavior includes:
   supercell,
 - returning a selected saved supercell to workflow tabs opened in
   ``Manage Supercells...`` mode,
-- a **Suggest…** button that computes the smallest diagonal scaling
-  ``(n₁, n₂, n₃)`` whose minimum muon–image distance — the shortest
-  non-zero lattice translation over all ``(m₁, m₂, m₃) ∈ {-1,0,1}³``,
-  not simply the shortest cell edge — reaches ≥ 10 Å; when that cell has
-  ≥ 200 atoms an affordable largest-cell-under-200-atoms alternative is
-  also offered; the confirmed scaling is written into the editor matrix
-  controls, and the simple-mode diagonal range has been raised to 64 to
-  accommodate small or anisotropic primitive cells.
+- a **Suggest…** button that lists diagonal scalings ``(n₁, n₂, n₃)`` whose
+  minimum muon–image distance — the shortest non-zero lattice translation over
+  all ``(m₁, m₂, m₃) ∈ {-1,0,1}³``, not simply the shortest cell edge — is at
+  least 8 Å, keeping only cells that improve on every cheaper option (columns
+  ``Scaling``, ``Atoms``, ``Min image (Å)``, ``≥ 10 Å``). It highlights as
+  ``(Recommended)`` the cheapest cell under 200 atoms that reaches 10 Å, or
+  otherwise the best cell under 200 atoms with a warning; when the primitive
+  cell already has 200 or more atoms no search is run. ``Use This Supercell``
+  writes the chosen scaling into the editor matrix controls. The simple-mode
+  diagonal range is 1–64 to accommodate small or anisotropic primitive cells.
 
 Existing configured calculations remain reproducible because their
 ``CalculationDefinition.input_structure_ids`` continue to point at the original
@@ -393,9 +369,9 @@ Workflow-scoped simulation-cell selection
 
 Simulation-cell selection is now workflow-scoped rather than project-global for calculation input generation.
 
-Current UI support (convergence workflow) includes:
+Current UI support includes:
 
-- A ``Simulation Cell`` section in the cutoff-convergence panel.
+- A ``Simulation Cell`` section in the cutoff- and k-point-convergence panels.
 - A summary status label describing the active simulation-cell source.
 - A dropdown with:
 
@@ -405,6 +381,9 @@ Current UI support (convergence workflow) includes:
 - ``Manage Supercells...`` action to open the project supercell editor and
   select or create a saved structure snapshot.
 - ``Use Unit Cell`` action that returns the current workflow selection to host unit-cell mode without deleting saved assets.
+- A per-row ``Supercell`` dropdown (``Unit cell``, saved supercells, and
+  ``Manage Supercells...``) in the pristine-relaxation, muon-relaxation, and
+  UEP tables.
 
 Cross-workflow reuse behavior includes:
 
@@ -513,8 +492,8 @@ Error handling currently includes:
 - UI surfacing of structure import failures.
 
 UEP cluster candidates are added from the muon-generation workflow rather than
-directly from the UEP wizard. The UEP stage remains responsible for probing,
-batch optimization, zero-point estimates, clustering, and visualization; the
+directly from the UEP wizard. The UEP stage remains responsible for batch
+optimization, zero-point estimates, clustering, and visualization; the
 generation stage is where selected cluster representatives become initial
 positions for full structural relaxation.
 Cluster representatives use the optimized position of the lowest-energy member
@@ -553,14 +532,16 @@ symmetry-inequivalent candidate stopping sites. The page includes:
   overlaid as ``H:mu`` atoms.
 - A ``Pin to Summary`` action added to each structural-relaxation analysis
   workspace that snapshots the workspace's distinct clustered sites into the
-  matching charge-state card. Pinning requires that clustering has been run.
+  matching charge-state card. Pinning requires that clustering has been run,
+  that the workspace's host is the active host, and that its charge state is
+  supported.
 - Navigation from the summary back into the live analysis: an
-  ``Open in Analysis`` button jumps to the source workspace, while clicking a
+  ``Open in Analysis →`` button jumps to the source workspace, while clicking a
   site row or a muon in the 3D preview reveals that specific cluster. When the
   pinned snapshot's source workspace or cluster no longer exists, MuFinder
   opens the Analysis tab and reports that the pinned analysis has changed.
 - An adaptive, always-enabled card action rather than a disabled control: it
-  reads ``Open in Analysis`` when a card is populated and ``Go to Analysis``
+  reads ``Open in Analysis →`` when a card is populated and ``Go to Analysis →``
   when empty, so an unpinned card still routes the user to the Analysis tab.
 - An ``Unpin`` action that clears a charge state's pinned snapshot.
 - Safe placeholder fallback when nothing is pinned, or when a persisted snapshot
@@ -580,9 +561,11 @@ symmetry-inequivalent candidate stopping sites. The page includes:
   standalone ``_mufinder_muon_site_label`` / ``_mufinder_relative_energy_eV`` /
   ``_mufinder_wyckoff_label`` loop that a reader can freely skip. The file is
   written in P1 with every atom listed explicitly, since muon sites generally
-  break the host's symmetry. The action stays disabled until a card
+  break the host's symmetry. A ``Muon sites coincide with host atoms`` warning
+  is shown when a muon is written within 0.5 Å of a host atom. The action stays
+  disabled until a card
   is populated. Each structural-relaxation analysis workspace also has its own
-  ``Export CIF…`` action (see :doc:`structural_relaxation_analysis`), which
+  ``Export CIF...`` action (see :doc:`structural_relaxation_analysis`), which
   exports every relaxed muon position in the workspace rather than only cluster
   representatives.
 
@@ -592,7 +575,7 @@ has been removed in favour of this summary page.
 UEP clustering analysis
 -----------------------
 
-The UEP analysis dialog now separates relaxed-site generation from clustering.
+The UEP analysis dialog separates relaxed-site generation from clustering.
 
 Current clustering behavior includes:
 
@@ -600,7 +583,8 @@ Current clustering behavior includes:
   muon sites.
 - A separate ``Calculate ZPE`` action that evaluates and stores harmonic
   zero-point energies for the successfully optimized sites in eV.
-- A separate non-modal clustering window launched from the batch-search log.
+- A separate non-modal clustering window launched with the ``Clustering``
+  button in the ``Batch Search`` tab's ``Sampling`` card.
 - Hierarchical clustering exploration through a dendrogram with a live
   tolerance control.
 - K-means clustering exploration through a PCA projection of the normalized
@@ -660,31 +644,36 @@ share one rule for controls embedded in a row: highlighted rows are what is
 affected.
 
 - A control on a row that is part of a multi-row selection targets the
-  selection. MuFinder asks first, with three choices: apply to all selected
-  rows, apply to this row only, or cancel. Cancelling changes nothing, and a
-  dropdown returns to the value it showed before.
+  selection. When at least two selected rows can take the action, MuFinder
+  asks first, with three choices: apply to all selected (or eligible) rows,
+  apply to this row only, or cancel. Cancelling changes nothing, and a
+  dropdown returns to the value it showed before. When only one selected row
+  can take it, the clicked row is acted on without a prompt.
 - A control on a row outside the selection first makes that row the selection,
   then acts on it alone, without a prompt.
 - The prompt uses the same wording in every table. It names the action and the
   number of rows, and when some selected rows cannot take the action (for
   example rows locked because their job has been queued) it states how many
   will be skipped.
-- After the prompt is answered the table selection is set to the rows the
-  action applied to.
+- After the prompt is answered the table selection is set to the selected
+  rows (``All``) or the clicked row (``This ... only``); cancelling restores the
+  previous selection.
 - Controls that propagate: the ``Supercell`` and ``Fix Cell`` dropdowns, the
   per-row ``Configure`` and remove buttons, and every Job Dashboard action
   button.
 - Controls that only make sense for one row (``Open Wizard`` in the UEP table,
-  ``View`` in the Energy Barriers table) always act on their own row and never
+  ``View...`` in the Energy Barriers table) always act on their own row and never
   prompt.
 
 Actions that remove, cancel, reset, dismiss or delete are always confirmed,
 whichever way they are triggered (row control, button below the table,
 right-click menu, or Delete/Backspace):
 
-- Removing rows asks once for the whole batch, stating the number of rows, how
-  many already have a submitted job, and how many jobs are still queued or
-  running and will be cancelled. This includes rows that were never submitted.
+- Removing rows asks once for the whole batch, stating the number of rows and
+  how many already have a submitted job (the cutoff table also states how many
+  jobs are still queued or running and will be cancelled). This includes rows
+  that were never submitted. Relaxation removals may then ask what to do with
+  each job's output files (delete or archive, with an apply-to-all choice).
 - For a row control on a multi-row selection the three-way prompt is the
   confirmation, so the user is not asked twice. The exception is removing
   cutoff rows whose job is still queued or running: that prompt does not
@@ -693,9 +682,10 @@ right-click menu, or Delete/Backspace):
   or ``Dismiss`` in a workflow table's or the dashboard's right-click menu, ask
   before acting.
   ``Reset`` already asks its clean-up question, which can be cancelled.
-- The safe choice is the default button and the one Escape selects, and the
-  buttons are labelled with the action (``Remove 3 rows``, ``Keep running``)
-  rather than Yes/No.
+- In the dedicated confirmations the safe choice is the default button and the
+  one Escape selects, and the buttons are labelled with the action
+  (``Remove 3 rows``, ``Keep running``) rather than Yes/No. In the three-way
+  row-control prompt the default button is the all-selected choice.
 - Delete/Backspace in the Job Dashboard shows one summary of everything the key
   will do to the selection (cancel running jobs, reset failed jobs, delete
   finished job records), with the option to clean the reset jobs' output
@@ -719,7 +709,7 @@ inside the rows (tables have to stay usable on a small laptop screen):
 - The button row below each table offers the same set: ``Configure Selected
   Parameters...``, ``Remove Selected``, and the two run buttons. Quantum
   Corrections has no ``Remove Selected`` because its rows are derived from
-  completed relaxations.
+  completed relaxations, and adds a ``Reset to Stage 1`` button.
 
 Right-clicking selected rows opens the same menu in every workflow table, in
 this order: ``Run Local``, ``Run on Cluster``, ``Cancel``, ``Inspect Failure``,
@@ -770,7 +760,7 @@ The application now includes a metadata-driven CASTEP parameter entry framework 
 - Structured form output mapped to ``InputTemplate``/``JobPatch`` compatible data rather than raw text.
 
 Configuring several rows at once (``Configure Selected Parameters...``, a
-row's ``Configure`` on a multi-row selection, or ``Configure...`` in the row
+row's ``Configure...`` button on a multi-row selection, or ``Configure...`` in the row
 menu) opens one parameter dialog for all of them:
 
 - A parameter the rows agree on is shown with that value. A parameter on which
@@ -789,9 +779,10 @@ menu) opens one parameter dialog for all of them:
 
 This applies in the cutoff and k-point convergence, pristine and muon
 relaxation, UEP, Energy Barriers and Quantum Corrections tables. The farm count
-and pseudopotential family in the Energy Barriers and Quantum Corrections
-dialogs are not parameters in this sense: for a mixed selection they open at a
-single value, which is written to every selected row on ``OK``.
+in the Energy Barriers and Quantum Corrections dialogs, and the pseudopotential
+family in the Quantum Corrections dialog, are not parameters in this sense: for
+a mixed selection they open at a single value (the family at ``unknown``),
+which is written to every selected row on ``OK``.
 
 Project defaults
 ----------------
@@ -843,9 +834,9 @@ grid.
   every workflow parameter dialog, including new convergence sweeps, and is
   applied to generated jobs alongside the default cutoff and k-point grid. A
   row configured with its own functional keeps it.
-- Quantum Corrections and NEB rows take their default functional from the
-  source relaxation's own ``.param`` file, alongside its cutoff and k-point
-  grid, so a follow-on calculation matches the structure it starts from even
+- Quantum Corrections and NEB rows take their default functional and cutoff
+  from the source relaxation's own ``.param`` file, and its k-point grid from
+  the source ``.cell`` file, so a follow-on calculation matches the structure it starts from even
   if the project default has since changed.
 - They take their default ``Spin Polarized`` setting from the source
   relaxation in the same way, as CASTEP ran it: the ``.param`` file's
@@ -864,11 +855,13 @@ grid.
 Convergence overview workflow page
 ----------------------------------
 
+See :doc:`convergence_testing` for a step-by-step guide to the convergence workflow.
+
 The parent ``Convergence Testing`` workflow now opens a dedicated overview page with:
 
 - A short explanation that both plane-wave cutoff energy and reciprocal-space sampling must be converged before later workflows are trusted.
 - Two horizontally arranged notebook-style cards, one for cutoff convergence and one for k-point convergence.
-- Dotted pinned-plot regions that visually distinguish adopted analysis snapshots from live editing views.
+- Dashed-border pinned-plot regions that visually distinguish adopted analysis snapshots from live editing views.
 - Per-card action buttons that jump directly into the corresponding child workflow page.
 - Summary rows for the stored project default, the functional it was converged with, the method, and the criteria.
 - Read-only pinned plots that update only when a user adopts a project default from the corresponding analysis dialog.
@@ -882,21 +875,22 @@ The convergence stage now includes a cutoff convergence panel with:
 
 - Manual cutoff list entry and editable table-based review.
 - Range generation from start/stop/step controls.
-- An ``Examine Cutoff Convergence`` action placed directly below the cutoff table at the bottom-right of the sweep section.
+- An ``Examine Cutoff Convergence`` action at the bottom-right of the sweep section, below the table's row-action controls.
 - Shared CASTEP parameter form applied by default to all cutoffs.
 - Optional subset-specific parameter overrides by selecting cutoff rows.
 - Structured validation and persistence of cutoff configurations before runtime materialization.
 - Reload-time restoration that rebuilds cutoff rows from persisted form state, with fallback to the active convergence definition when UI state is incomplete.
 - Regenerated cutoff lists are treated as fresh ``ready`` rows and do not inherit stale runtime/status result columns from prior active definitions.
 - ``ready`` row status for configured cutoffs as soon as convergence form parameters are saved.
-- Cutoff-energy cells locked from direct editing once a row has been queued for execution or has progressed through runtime states.
+- Cutoff-energy cells locked from direct editing once a row has been queued for execution or has progressed through runtime states (``cancelled`` rows stay editable).
 - A dedicated convergence-examiner dialog with configurable thresholds and energy-method selection.
 - Supported energy methods include Delta-threshold (successive per-atom energy differences), derivative-based analysis (``dE/dE_cutoff``), and asymptotic extrapolation toward ``E_inf`` with fit-quality safeguards.
 - Force convergence analysis using delta-threshold checks on successive ``max_force`` values.
 - Optional max-stress convergence analysis (delta-threshold over ``max_stress`` values, default
-  threshold ``0.1 GPa`` to mirror ``GEOM_STRESS_TOL``). Exposed in the examiner via an
-  ``Include stress`` tickbox that is hard-disabled until every completed sweep row reports a
-  stress (i.e. every job was run with ``CALCULATE_STRESS=true``). When enabled, max stress is
+  threshold ``0.1 GPa`` to mirror ``GEOM_STRESS_TOL``). Exposed in the examiner via a
+  ``Stress threshold (GPa)`` tickbox that is disabled until at least two sweep rows have
+  completed and every completed row reports a stress (i.e. every job was run with
+  ``CALCULATE_STRESS=true``). When enabled, max stress is
   plotted on a secondary y-axis sharing the force subplot, and the stress converged value
   participates in the combined ``recommended_value`` alongside energy and force.
 - ``CALCULATE_STRESS`` exposed as a per-workflow ``flag`` parameter in both the cutoff and
@@ -904,6 +898,7 @@ The convergence stage now includes a cutoff convergence panel with:
 - Method help text available directly in the examiner dialog via an info action.
 - Persisted examiner state (selected method, thresholds, text output, and plot inputs) so results and plots can be reopened without recomputation.
 - The shared ``Project defaults`` strip in the panel header (see `Project defaults`_); the method and criteria used to determine the default cutoff are in its tooltip and details dialog.
+- The examiner's ``Set as Project Default Cutoff`` button adopts its recommendation (``Set as Project Default K-Point Grid`` in the k-point examiner).
 - Adopting an examiner recommendation persists the project default cutoff energy, the convergence-method metadata used to determine it, and the XC functional the sweep was run with.
 - Adopting an examiner recommendation also freezes a parent-overview pinned snapshot keyed to the active host structure, selected simulation cell, adopted default value, and plot payload.
 
@@ -946,7 +941,7 @@ Pristine-relaxation workflow GUI
 The optional ``Pristine Relaxation`` stage now includes:
 
 - A table-driven multi-job configuration with explicit per-row labels.
-- Per-row supercell selection via the supercell preview dialog (unit cell or custom 3x3 matrix).
+- Per-row supercell selection from a ``Supercell`` dropdown listing ``Unit cell``, the project's saved supercells, and ``Manage Supercells...`` (which opens the :doc:`supercells`).
 - Per-row ``FIX_ALL_CELL`` control with deterministic CASTEP ``FIX_ALL_CELL`` serialization.
 - Per-row parameter configuration through the shared workflow-aware CASTEP parameter dialog.
 - Project-default propagation of XC functional, cutoff energy and k-point grid into generated pristine-relaxation jobs.
@@ -970,10 +965,10 @@ The ``Pristine Relaxation`` stage now includes a ``Generate Comparison Table`` f
 - support for selecting one or more DFT jobs against the active experimental host structure,
 - generation of a persisted comparison-table subtab under ``Pristine Relaxation`` in the project tree,
 - inline editing of comparison-table titles after creation, with the project-tree subtab label kept in sync,
-- deletion from either a top-right ``Remove`` button in the comparison view or a project-tree context menu,
+- deletion with the top-right ``Remove`` button in the comparison view,
 - metric rows with per-metric ``Info`` dialogs,
 - a collapsible ``DFT Parameter Differences`` section that shows only parameter values that differ across selected DFT jobs,
-- CSV export of rendered comparison data.
+- CSV export of rendered comparison data (``Export CSV...``).
 
 Comparison science currently includes:
 
@@ -1050,8 +1045,11 @@ action's cleanup behavior.
 Local CASTEP execution
 ----------------------
 
-The application now supports local CASTEP submission from UI tables for cutoff
-configurations that have been saved into the ``ready`` state.
+The application supports local CASTEP submission from every workflow job
+table (convergence, pristine and muon relaxation, UEP, Energy Barriers, and
+Quantum Corrections) for rows in the ``ready`` state. Multi-core local runs
+need a configured or discovered ``mpirun``; without one, cores per job are
+limited to 1.
 
 Setup integration includes:
 
@@ -1088,8 +1086,8 @@ Setup integration includes:
 
 Submission entry points include:
 
-- Dedicated run actions in the cutoff convergence panel, operating on the
-  selected rows, or on every row when nothing is selected (the buttons read
+- Run actions under each workflow table, operating on the selected rows, or
+  on every row when nothing is selected (the buttons read
   ``Run Selected Locally`` or ``Run All Locally`` accordingly).
 - The shared right-click row menu on every workflow table (see "Multi-row
   selection in job tables"), including ``Reset Failed Jobs...`` on the cutoff
@@ -1113,8 +1111,10 @@ Submission controls include:
 - Parallel execution for multi-job submission with user-selected
 	maximum concurrency.
 - Core-count guidance from local logical CPU count.
-- Oversubscription warnings when requested concurrency exceeds
-	logical CPU availability.
+- Oversubscription warnings when cores per job multiplied by the requested
+	concurrency exceeds logical CPU availability.
+- A task-farming check that blocks ``OK`` when a row's farm count exceeds
+	the cores per job.
 
 Runtime behavior includes:
 
@@ -1199,18 +1199,23 @@ stuck-row prevention measures.
 Failure diagnostics include:
 
 - Failed-job inspection in the shared dashboard.
-- ``.err`` file discovery in job output directories.
-- Context-style excerpts around failure lines in ``.err`` files.
+- Error-file discovery in job output directories: ``<seed>.err``,
+  ``<seed>.NNNN.err``, and scheduler ``slurm-*.out`` files.
+- Context-style excerpts around failure lines in those files.
 
 Status transitions for local execution include:
 
-- ``ready`` -> ``submitting`` -> ``queued`` -> ``running`` -> ``completed``
+- ``ready`` -> ``submitting`` -> ``running`` -> ``completed`` (passing through
+  ``queued`` only when the parallel-concurrency limit is already full)
 - ``ready``/``submitting``/``queued``/``running`` -> ``cancelled``
 - ``submitting``/``queued``/``running`` -> ``failed``
 
 Status transitions across local and cluster execution now also include:
 
-- ``running``/``retrieving`` -> ``stopped`` (for walltime/time-limit stops)
+- ``running``/``retrieving`` -> ``stopped`` (for cluster walltime/time-limit
+  stops); local jobs reach ``stopped`` only through project-open
+  reconciliation or the active-job watchdog, which can also stop
+  ``submitting`` and ``queued`` jobs
 - ``failed``/``stopped``/``cancelled`` -> ``defined`` via reset for resubmission
 - ``failed``/``cancelled`` -> ``submitting`` via dashboard resubmission
 - ``failed``/``stopped`` -> ``retrieving`` via dashboard retry-retrieval
@@ -1222,7 +1227,9 @@ Output handling includes:
 - Structured extraction of:
 
 	- completion/failure markers
-	- final total energy with preference for ``NB est. 0K energy`` when available
+	- final total energy, preferring (in order) the finite-basis-corrected total
+	  energy, the dispersion-corrected ``NB est. 0K`` energy, and the
+	  ``NB est. 0K energy`` when present
 	- enthalpy (where available)
 	- force and stress blocks (latest block)
 	- maximum force magnitude and maximum stress component magnitude
@@ -1239,15 +1246,18 @@ Output handling includes:
 Remote HPC execution
 --------------------
 
-The application now supports remote cluster submission for convergence jobs.
+The application supports remote cluster submission from every workflow job
+table.
 
 Cluster setup and authentication includes:
 
 - Global persisted cluster profiles via Setup -> HPC Clusters, including built-in
 	SCARF and Redwood presets.
 - Configurable hostname, username, queue system, default working directory,
-	cores-per-node, default walltime, submission-script template path, CASTEP
-	executable path, default queue/partition, and default memory-per-process.
+	cores-per-node, default walltime, and CASTEP executable path, plus a
+	submission-script template path for SLURM profiles and a default
+	queue/partition and ``Default memory per core (GB)`` for ``addqueue``
+	profiles.
 - An optional default per-CPU memory request for SLURM profiles, used to
 	pre-seed the submission dialog. It is off by default, so an existing profile
 	keeps generating batch scripts with no memory directive.
@@ -1276,7 +1286,7 @@ Cluster setup and authentication includes:
 
 Remote submission and monitoring includes:
 
-- A dedicated cluster run action in the convergence panel (``Run All on Cluster`` / ``Run Selected on Cluster``).
+- A cluster run action under each workflow table (``Run All on Cluster`` / ``Run Selected on Cluster``).
 - Cluster selection and runtime override dialog at submission time.
 - Upload of generated ``.cell`` / ``.param`` inputs and scheduler-aware submission.
 - SLURM submission through ``sbatch`` with populated templates and capture of
@@ -1288,8 +1298,8 @@ Remote submission and monitoring includes:
 	enough headroom to avoid the cgroup out-of-memory killer. Leaving it unset
 	emits no directive at all, so existing scripts are unchanged. See
 	:doc:`job_lifecycle` for the unit handling and template-precedence rules.
-- Redwood submission through ``addqueue`` with exposed runtime controls for
-	queue/partition, memory per process, and comment.
+- Redwood submission through ``addqueue`` with exposed runtime controls
+	``Queue or partition``, ``Memory per core (GB)``, and ``Submission note``.
 - Jump-host submissions show separate credential fields for the gateway and the
 	target cluster, so Redwood/Glamdring users can enter Physics/bastion and
 	Glamdring passwords independently.
@@ -1298,7 +1308,8 @@ Remote submission and monitoring includes:
 	showing manual password prompts.
 - addqueue submission uses sbatch-compatible response mode to keep scheduler
 	job-id parsing stable.
-- Dashboard columns for execution target (cluster/local) and remote job id.
+- Dashboard columns for the execution target (``Cluster``, which reads
+	``local`` for local jobs) and remote job id, and a live ``Runtime`` column.
 - Dashboard column for per-job process count used at submission time.
 - Connection state indicator and manual queue refresh action.
 - Manual queue refresh retries disconnected sessions by attempting reconnect for
@@ -1333,12 +1344,13 @@ under "Continuing a relaxation from its checkpoint":
 - ``CheckpointProbeStatus`` (``found``/``absent``/``unavailable``) and
   ``CheckpointProbeResult`` (built via the ``found()``/``absent()``/
   ``unavailable(reason)`` constructors) give the three-way result its
-  vocabulary: not connected, a missing remote directory, and SSH/transport
-  errors all map to ``unavailable`` with a reason rather than blocking the
-  dialog from opening.
+  vocabulary: not connected, no remote directory recorded on the job, and
+  SSH/transport errors all map to ``unavailable`` with a reason rather than
+  blocking the dialog from opening. A recorded remote directory that no longer
+  exists on the cluster reports ``absent``.
 - Local jobs use a plain ``pathlib.Path`` check for ``{seed}.check`` in the
-  local job directory instead, which can only ever report
-  ``found``/``absent``.
+  local job directory instead, reporting ``found``/``absent`` (or
+  ``unavailable`` when the job's output directory cannot be resolved).
 
 Remote lifecycle and retrieval includes:
 

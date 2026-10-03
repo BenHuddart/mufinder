@@ -59,8 +59,12 @@ Executable guardrails
 The harness is intentionally checked by tests:
 
 - ``tests/test_agent_harness.py`` verifies that ``AGENTS.md`` remains a short
-  map, required docs are indexed, package import boundaries are respected, and
-  source files do not accidentally keep local ``__pycache__`` artifacts.
+  map, required docs are indexed, package import boundaries are respected, no
+  new per-workflow submit/materialize handlers appear on ``MainWindow``, app
+  plots avoid ``subplots_adjust`` and do not add new direct
+  ``FigureCanvasQTAgg`` construction, the pull-request template stays
+  discoverable, and tracked source, test, and docs trees contain no Python
+  bytecode artifacts (see :doc:`quality_and_automation` for the full list).
 - Feature-specific tests continue to live next to the relevant domain, service,
   app, docs, or packaging area.
 

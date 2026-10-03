@@ -1,7 +1,7 @@
 UEP Workflow
 ============
 
-MuFinder now includes a dedicated ``UEP`` workflow stage for preparing CASTEP
+MuFinder includes a dedicated ``UEP`` workflow stage for preparing CASTEP
 single-point source calculations and for producing the host charge density
 needed by the unperturbed electrostatic potential method.
 
@@ -14,11 +14,10 @@ The UEP workflow in MuFinder is based on the method described in:
   stopping sites: A novel take on the unperturbed electrostatic potential
   method``, *Journal of Chemical Physics* **153**, 044111 (2020).
   DOI: ``10.1063/5.0012381``.
-- Simone Sturniolo, Zainab Salman, Tim Lancaster, Alex Morelock,
-  R. De Renzi, Sean R. Giblin, G. B. G. Stenning, R. F. Kiefl, Simon J. Blundell,
-  and John S. Lord, ``Computational prediction of muon stopping sites using ab
-  initio random structure searching (AIRSS)``, *Journal of Chemical Physics*
-  **148**, 134114 (2018). DOI: ``10.1063/1.5024450``.
+- Leandro Liborio, Simone Sturniolo, and Dominik Jochym, ``Computational
+  prediction of muon stopping sites using ab initio random structure searching
+  (AIRSS)``, *Journal of Chemical Physics* **148**, 134114 (2018).
+  DOI: ``10.1063/1.5024450``.
 
 MuFinder implements this workflow in its own codebase rather than wrapping
 ``pymuonsuite``, but the same core physical picture is used:
@@ -32,9 +31,9 @@ MuFinder implements this workflow in its own codebase rather than wrapping
 - The electronic contribution is taken from a single CASTEP formatted density,
   so the workflow requires only one host calculation before analysis begins.
 - The ionic contribution is approximated with Gaussian charge distributions.
-  MuFinder exposes the same ``gw_factor`` concept described in the paper, where
-  the Gaussian width is based on the pseudopotential core radius divided by the
-  chosen scaling factor.
+  MuFinder exposes the same ``gw_factor`` concept described in the paper (the
+  ``Gaussian width factor`` control), where the Gaussian width is based on the
+  pseudopotential core radius divided by the chosen scaling factor.
 - Stationary points are identified through gradients and Hessians of the total
   electrostatic potential.
 - The Hessian eigenvalues distinguish minima from saddles and maxima and are
@@ -86,9 +85,9 @@ muon stopping sites:
   MuFinder complements symmetry intuition with gradients, Hessians, and direct
   optimization of candidate positions.
 
-MuFinder therefore exposes both direct point-probe tools and random-start batch
-searches so users can inspect local stability rather than relying on symmetry
-arguments alone.
+MuFinder therefore uses random-start batch searches, which optimize each start
+and classify the resulting stationary point from its Hessian, so users can
+inspect local stability rather than relying on symmetry arguments alone.
 
 Method Caveats
 --------------
@@ -101,7 +100,8 @@ systems than for insulating hosts with strong local bonding.
 
 MuFinder therefore validates and documents the following caveats:
 
-- the host cell must be neutral;
+- the host cell must be neutral (a charged ``.castep`` cell, or a density that
+  does not integrate to a neutral cell, is rejected);
 - the workflow requires CASTEP-style plane-wave density input;
 - the workflow currently expects ultrasoft-pseudopotential-style ionic metadata;
 - if ionic metadata cannot be recovered from the ``.castep`` output, MuFinder
@@ -129,25 +129,34 @@ Workflow Shape
 --------------
 
 The UEP stage is deliberately aligned with the existing MuFinder workflow
-pattern:
+pattern. Open ``UEP`` in the project navigator, then:
 
-1. Configure one or more labelled CASTEP source jobs.
-2. Submit and track those jobs through the shared dashboard.
-3. Reuse the completed source calculation as the basis for UEP analysis.
+1. Pick the source structure in the ``Source Structure`` group (the active
+   host by default).
+2. Click ``Add Job`` to add a row to ``UEP Source Jobs``, choose its
+   ``Supercell`` (``Unit cell`` or a saved supercell; ``Manage
+   Supercells...`` opens the :doc:`supercells`), and adjust CASTEP settings
+   with ``Configure...`` if needed.
+3. Submit the rows with the local or cluster run buttons and track them through
+   the shared job dashboard.
+4. When a row is ``completed``, click ``Open Wizard`` in its ``Analysis``
+   column to start the UEP analysis described below.
+
+The ``3D Potential`` column reads ``Saved`` once a full-cell potential grid has
+been calculated and stored for that job, and ``Not calculated`` for a completed
+job without one.
 
 Wizard Analysis Coverage
 ------------------------
 
-Completed UEP source jobs open a dedicated analysis wizard. The current
-MuFinder implementation includes:
+Completed UEP source jobs open a dedicated analysis window,
+``UEP Analysis - <job label>``, with three tabs: ``Batch Search``,
+``Isosurfaces``, and ``Slices``. The source files are validated when the
+window opens. The current MuFinder implementation includes:
 
-- source validation and theory/help text;
-- direct point probes giving total, electronic, and ionic potential
-  contributions together with gradients, Hessians, and stationary-point
-  classification;
-- line and plane sampling for electrostatic-potential analysis;
-- full-cell 3D potential grids shared between the isosurface and slice views,
-  including zero-minimum shifting and XSF export;
+- full-cell 3D potential grids (``Calculate Cell Potential Grid``) shared
+  between the isosurface and slice views, including zero-minimum shifting
+  (``Set minimum potential to zero``) and XSF export (``Export XSF...``);
 - responsive isosurface visualization from the cached full-cell potential grid;
 - interactive 2D slice planes defined from one selected atom plus a normal,
   three selected atoms, or a best-fit plane through four or more selected
@@ -156,14 +165,21 @@ MuFinder implementation includes:
   planes can be defined directly from the host structure;
 - slice saturation controls and a colorbar that marks when clipped display
   limits exclude lower or higher physical potentials from the visible range;
-- random-start batch searches that generate and relax candidate starts first,
+- random-start batch searches (``Run Batch Search``; defaults: 12
+  ``Random starts``, 0.8 Å minimum muon-muon and 1.0 Å minimum muon-atom
+  distance, 5000 ``Max attempts``, ``Optimization tolerance (eV)`` 1e-5,
+  ``Optimizer max steps`` 100) that generate and relax candidate starts first,
   followed by an optional ``Calculate ZPE`` pass for the optimized sites and a
-  separate clustering window for exploring the relaxed sites;
+  separate clustering window, opened with ``Clustering``, for exploring the
+  relaxed sites;
+- muon markers that can be added to the isosurface and slice viewers with
+  ``Add / remove muon``, either from clustered batch-search results or from
+  custom fractional coordinates;
 - a separate clustering window with hierarchical dendrogram exploration of the
   Soprano-backed feature space and a k-means PCA view with live cluster-count
   updates;
-- exposure of clustered batch-search results to the separate ``Muon Site
-  Generation`` tab, where selected UEP rows can be committed as candidate
+- exposure of clustered batch-search results to the ``Muon Sites ->
+  Generation`` page, where selected UEP rows can be committed as candidate
   muon-site inputs for structural relaxation.
 
 Saving Analysis Sessions
@@ -191,7 +207,7 @@ Using UEP Clusters for Relaxation Starts
 
 UEP analysis no longer writes generated muon sites directly from the wizard.
 After running a batch search and clustering the optimized points, users should
-return to ``Generation`` and choose the ``UEP clusters`` method. That
+open ``Muon Sites -> Generation`` and choose the ``UEP clusters`` method. That
 table lists one saved representative per cluster from the UEP analysis state,
 including source job, cluster size, stationary classification, classical energy
 ``E (eV)``, and fractional coordinates.
@@ -214,7 +230,7 @@ with each created site, and protects against adding the same UEP cluster row
 twice.
 
 Before staging the generated sites for CASTEP relaxation, users can also use
-``Cluster Positions`` in the ``Generation`` tab to rewrite selected generated
+``Cluster Positions...`` in the ``Generation`` tab to rewrite selected generated
 rows to the symmetry-equivalent representatives closest to a chosen fractional
 anchor. This is useful when several generated starts correspond to the same
 physical UEP site but sit in different symmetry-equivalent parts of the unit
@@ -265,8 +281,7 @@ References
   stopping sites: A novel take on the unperturbed electrostatic potential
   method``, *J. Chem. Phys.* **153**, 044111 (2020),
   DOI ``10.1063/5.0012381``.
-- Simone Sturniolo, Zainab Salman, Tim Lancaster, Alex Morelock,
-  R. De Renzi, Sean R. Giblin, G. B. G. Stenning, R. F. Kiefl, Simon J. Blundell,
-  and John S. Lord, ``Computational prediction of muon stopping sites using ab
-  initio random structure searching (AIRSS)``, *J. Chem. Phys.* **148**, 134114
-  (2018), DOI ``10.1063/1.5024450``.
+- Leandro Liborio, Simone Sturniolo, and Dominik Jochym, ``Computational
+  prediction of muon stopping sites using ab initio random structure searching
+  (AIRSS)``, *J. Chem. Phys.* **148**, 134114 (2018),
+  DOI ``10.1063/1.5024450``.

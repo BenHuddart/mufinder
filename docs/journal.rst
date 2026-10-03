@@ -2,7 +2,8 @@ Journal
 =======
 
 MuFinder's ``Journal`` is the user-facing view of the project's structured
-provenance stream.
+provenance stream. Open it from the ``Journal`` entry at the bottom of the
+project navigator, or from the ``Journal`` signpost on the project-home map.
 
 What the Journal includes
 -------------------------
@@ -15,11 +16,18 @@ useful for reconstructing what happened during a project, including:
 - adopted project defaults, including the functional a cutoff or k-point
   default was converged with, any change to the project default XC
   functional, and defaults entered or cleared by hand
-- muon candidate generation and UEP promotion
-- calculation submission milestones
+- muon candidate generation (with an ``Attention`` entry when fewer sites were
+  generated than requested) and UEP promotion
+- calculation submission milestones and continuation runs
 - terminal calculation outcomes such as completed, failed, stopped, cancelled,
   and reset
 - comparison-table creation
+- import of legacy relaxations run outside MuFinder, and removal of imported
+  relaxations
+
+Each entry carries a stamp: ``Milestone``, ``Completed``, ``Attention``, or
+``Failed``. Entries tied to a workflow also name it (for example
+``Cutoff Convergence`` or ``Muon Relaxations``).
 
 Entries are grouped by local calendar day and use human-readable date headers.
 The Journal intentionally does not show precise clock times.
@@ -40,13 +48,15 @@ It intentionally omits:
 Export formats
 --------------
 
-The Journal can be exported from the GUI in two formats:
+Choose a format in the ``Export format`` selector and click ``Export...``.
+Two formats are available:
 
-- plain text ``.txt`` files
-- Markdown ``.md`` files
+- ``Plain text (.txt)``
+- ``Markdown (.md)``
 
-The default filename format is ``<project-name>-journal`` with the extension
-for the selected format.
+The suggested filename is ``<project-name>-journal`` with the extension for the
+selected format; characters other than letters, digits, ``-`` and ``_`` in the
+project name are replaced by underscores.
 
 Known limitations
 -----------------
