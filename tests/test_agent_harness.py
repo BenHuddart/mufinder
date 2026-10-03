@@ -96,6 +96,20 @@ PINNED_MAIN_WINDOW_SUBMIT_HANDLERS = frozenset(
 )
 
 
+# App modules that still build their matplotlib canvas directly instead of
+# through ``mufinder.app.plot_canvas.create_plot_canvas``. Each of these already
+# uses constrained or tight layout (or, for the UEP slice colourbar, manual axes
+# with no tick labels), so they are not clipping today. The set may only shrink:
+# a new embedded plot must use the shared helper.
+PINNED_DIRECT_FIGURE_CANVAS_MODULES = frozenset(
+    {
+        "convergence_examiner.py",
+        "convergence_overview_widget.py",
+        "quantum_analysis_dialog.py",
+        "uep_wizard.py",
+    }
+)
+
 def _python_files(package: str) -> list[Path]:
     return sorted((SOURCE_ROOT / package).rglob("*.py"))
 
@@ -117,6 +131,15 @@ def _main_window_submit_handler_methods() -> set[str]:
         and (member.name.startswith("_on_submit_") or member.name.startswith("_materialize_"))
     }
 
+
+def _imports_figure_canvas(path: Path) -> bool:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return any(
+        isinstance(node, ast.ImportFrom)
+        and (node.module or "").startswith("matplotlib.backends.backend_qt")
+        and any(alias.name == "FigureCanvasQTAgg" for alias in node.names)
+        for node in ast.walk(tree)
+    )
 
 def _mufinder_import_layers(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -200,6 +223,45 @@ def test_main_window_submit_handlers_do_not_grow() -> None:
         "when a workflow migrates onto a controller."
     )
 
+
+def test_app_figures_do_not_use_fractional_subplot_margins() -> None:
+    """Forbid ``subplots_adjust`` margins in widgets; they clip labels when small.
+
+    A figure-fraction margin reserves a share of the canvas while tick and axis
+    labels need fixed pixels, so a small dialog cuts them off (minus signs
+    included). Use ``mufinder.app.plot_canvas.create_plot_canvas``, whose
+    constrained layout sizes margins from the rendered labels.
+    """
+
+    offenders = sorted(
+        str(path.relative_to(PROJECT_ROOT))
+        for path in _python_files("app")
+        if "subplots_adjust(" in path.read_text(encoding="utf-8")
+    )
+    assert not offenders, (
+        f"subplots_adjust() margins found in {offenders}. Build the figure with "
+        "mufinder.app.plot_canvas.create_plot_canvas instead."
+    )
+
+
+def test_direct_figure_canvas_modules_do_not_grow() -> None:
+    """Ratchet the app modules that build a matplotlib canvas without the helper."""
+
+    actual = {
+        path.name
+        for path in _python_files("app")
+        if path.name != "plot_canvas.py" and _imports_figure_canvas(path)
+    }
+    new_modules = sorted(actual - PINNED_DIRECT_FIGURE_CANVAS_MODULES)
+    assert not new_modules, (
+        f"{new_modules} build a FigureCanvasQTAgg directly. Use "
+        "mufinder.app.plot_canvas.create_plot_canvas so the plot keeps its labels visible."
+    )
+    migrated_modules = sorted(PINNED_DIRECT_FIGURE_CANVAS_MODULES - actual)
+    assert not migrated_modules, (
+        f"{migrated_modules} no longer build a canvas directly. Shrink "
+        "PINNED_DIRECT_FIGURE_CANVAS_MODULES."
+    )
 
 def test_pull_request_template_is_discoverable_by_agents() -> None:
     """Guard the PR template and the pointers agents rely on to find it.

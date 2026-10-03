@@ -141,7 +141,14 @@ def test_uep_clustering_dialog_kmeans_view_projects_centroids(qapp) -> None:
     dialog.close()
 
 
-def test_uep_clustering_dialog_compact_layout_stacks_panels_vertically(qapp) -> None:
+def test_uep_clustering_dialog_compact_layout_keeps_plots_side_by_side(qapp) -> None:
+    """Compact mode reflows only the controls; the dendrogram keeps a usable height.
+
+    Stacking the plot panels vertically on a small screen used to leave the
+    dendrogram about 10 px tall once the viewer and energy-spread card took
+    their minimum heights.
+    """
+
     host = _host_structure()
     dialog = UepClusteringDialog(
         source_job_label="uep_source_row1",
@@ -153,14 +160,18 @@ def test_uep_clustering_dialog_compact_layout_stacks_panels_vertically(qapp) -> 
     dialog.show()
     qapp.processEvents()
     dialog.resize(960, 700)
-    qapp.processEvents()
+    for _ in range(4):
+        qapp.processEvents()
 
-    assert dialog._main_splitter.orientation() == Qt.Orientation.Vertical
+    assert dialog._main_splitter.orientation() == Qt.Orientation.Horizontal
     assert dialog._controls_layout.itemAtPosition(1, 0) is not None
     assert dialog._controls_layout.itemAtPosition(2, 0) is not None
     assert dialog._right_splitter.orientation() == Qt.Orientation.Vertical
     assert 0.4 <= _split_ratio(dialog._right_splitter.sizes()) <= 0.6
+    assert dialog._left_canvas.height() >= 200
     assert dialog._bubble_canvas.minimumHeight() >= 150
+    assert dialog._left_figure.get_layout_engine() is not None
+    assert dialog._bubble_figure.get_layout_engine() is not None
     dialog.close()
 
 

@@ -121,6 +121,10 @@ Delete-key actions in Qt widgets must bind **both** `QKeySequence.StandardKey.De
 
 Shared CASTEP parameters must appear first in workflow configuration dialogs, in this stable order: `basis_precision`, `cut_off_energy`, `elec_energy_tol`, `kpoint_mp_grid`. Workflow-specific rows follow. Use the shared helper in `mufinder.app.workflow_parameters` rather than encoding a local ordering rule in individual widgets.
 
+## Embedded plots
+
+Build matplotlib plots with `mufinder.app.plot_canvas.create_plot_canvas` (constrained layout plus a minimum canvas size). Never use `subplots_adjust` margins or turn a figure's layout engine off on small windows: tick and axis labels get clipped, minus signs included. Add every new plot dialog to `PLOT_DIALOGS` in `tests/app/test_plot_canvas_layout.py`. See `docs/architecture.rst` (Plot canvas policy).
+
 ## Compatibility aliases
 
 Before removing or renaming any persisted field, import alias, or public helper, check `docs/compatibility_policy.rst`. Every new shim needs a ledger entry there, including the schema version or migration event that will allow removal.

@@ -329,6 +329,41 @@ When adding a new workflow parameter surface, use the shared helper in
 ``mufinder.app.workflow_parameters`` instead of encoding another local ordering
 rule in an individual widget.
 
+Plot canvas policy
+------------------
+
+Embedded matplotlib plots are created through
+``mufinder.app.plot_canvas.create_plot_canvas``, which returns a figure with
+constrained layout and a canvas with a minimum size. Margins set as figure
+fractions (``Figure.subplots_adjust``) reserve a fixed *share* of the canvas,
+while tick and axis labels need a fixed number of *pixels*. On a small screen (a
+13" laptop, or Windows at 125-150 % scaling) the dialogs open near their
+minimum size, the share falls below what the labels need, and Qt clips them.
+That includes the minus signs of negative tick values, so a clipped axis can
+show the wrong sign. Constrained layout recomputes the margins from the
+rendered labels on every resize, and the minimum canvas size stops a splitter
+or box layout from squeezing a plot into an unreadable strip.
+
+Rules for plot widgets:
+
+- build new figures with ``create_plot_canvas``; pass a larger
+  ``minimum_size`` when a plot needs more room (the magnetic field distribution
+  uses 400x280), never a smaller one;
+- do not call ``subplots_adjust``, and do not switch a figure's layout engine
+  off on small windows; that is exactly when the layout engine is needed;
+- keep axis labels short enough to fit the plot at its minimum size, since no
+  layout engine can fit a label longer than its axis;
+- place a legend outside the axes only through the axes' own ``legend`` call,
+  so constrained layout reserves room for it.
+
+``tests/test_agent_harness.py`` rejects ``subplots_adjust`` anywhere in
+``mufinder.app`` and pins the modules that still build a ``FigureCanvasQTAgg``
+directly (the set may only shrink). ``tests/app/test_plot_canvas_layout.py``
+opens each plot dialog at its minimum size and at small-laptop window sizes and
+fails if any tick label, axis label, title or legend extends past its canvas,
+or if a canvas is squeezed below its minimum size. Add a new plot dialog to its
+``PLOT_DIALOGS`` table.
+
 Project defaults surface
 ------------------------
 

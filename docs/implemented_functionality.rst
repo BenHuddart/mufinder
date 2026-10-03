@@ -44,6 +44,12 @@ inheriting each platform's native look:
   banner (``ProjectHomeTrailWidget._sign_title_pixel_size``), so the labels
   stay proportionate and legible from small laptops to large/high-DPI displays
   instead of shrinking as the map grows.
+- Embedded plots keep their tick labels, axis labels, titles and legends
+  inside the plot area at every window size, including the minimum sizes that
+  analysis dialogs open at on small laptops. Each plot uses a constrained
+  layout that sizes its margins from the rendered labels, and has a minimum
+  size below which a splitter cannot squeeze it (see
+  ``docs/architecture.rst``, "Plot canvas policy").
 - On Linux Wayland sessions the entrypoint forces the Qt ``xcb`` platform
   before the ``QApplication`` is created
   (``mufinder.main._force_x11_platform_on_wayland``). The 3D viewers embed VTK
@@ -569,6 +575,9 @@ Current clustering behavior includes:
   cluster assignment.
 - A shared cluster-summary bubble plot showing energy spread against average
   cluster energy relative to the global minimum.
+- On a small window the clustering window reflows only its controls: the
+  dendrogram or PCA plot stays beside the structure view and energy-spread
+  plot, so it keeps a usable size instead of being stacked into a thin strip.
 - Batch-tab cluster tables that reflect the most recent separate clustering run
   while preserving cluster-representative promotion.
 

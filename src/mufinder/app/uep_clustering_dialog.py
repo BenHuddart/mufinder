@@ -7,8 +7,7 @@ from copy import deepcopy
 from dataclasses import asdict
 
 from matplotlib import colormaps, colors as mcolors
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-from matplotlib.figure import Figure
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT
 import numpy as np
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
@@ -28,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer, MUON_VIEWER_RADIUS_ANG
 from mufinder.app.decimal_input import DecimalLineEdit
+from mufinder.app.plot_canvas import create_plot_canvas
 from mufinder.app.screen_utils import clamp_to_screen, clamped_size
 from mufinder.app.theme import current_palette, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.domain.models import Structure
@@ -45,6 +45,8 @@ _HIER_CUT_LINE_GRAB_PIXELS = 8.0
 _HIER_CUT_LINE_DRAG_PIXELS = 4.0
 _COMPACT_LAYOUT_MAX_WIDTH = 1180
 _COMPACT_LAYOUT_MAX_HEIGHT = 760
+_LEFT_CANVAS_MINIMUM_SIZE = (240, 200)
+_BUBBLE_CANVAS_MINIMUM_SIZE = (220, 150)
 
 
 def cluster_color_map(cluster_labels: Iterable[int]) -> dict[int, str]:
@@ -279,14 +281,22 @@ class UepClusteringDialog(QDialog):
         self._hier_line_press_event: tuple[float, float] | None = None
         self._hier_line_dragging = False
 
-        self._left_figure = Figure(figsize=(6.4, 5.0), facecolor=current_palette().bg_surface, constrained_layout=True)
-        self._left_canvas = FigureCanvasQTAgg(self._left_figure)
+        # Constrained layout at every size: the dendrogram and energy-spread
+        # axes need fixed-pixel room for their tick and axis labels, which a
+        # fractional margin cannot guarantee once the dialog is small.
+        self._left_figure, self._left_canvas = create_plot_canvas(
+            figsize=(6.4, 5.0),
+            facecolor=current_palette().bg_surface,
+            minimum_size=_LEFT_CANVAS_MINIMUM_SIZE,
+        )
         self._left_canvas.mpl_connect("button_press_event", self._on_left_canvas_button_press)
         self._left_canvas.mpl_connect("motion_notify_event", self._on_left_canvas_motion)
         self._left_canvas.mpl_connect("button_release_event", self._on_left_canvas_button_release)
-        self._bubble_figure = Figure(figsize=(5.6, 3.2), facecolor=current_palette().bg_surface, constrained_layout=True)
-        self._bubble_canvas = FigureCanvasQTAgg(self._bubble_figure)
-        self._compact_layout_active = False
+        self._bubble_figure, self._bubble_canvas = create_plot_canvas(
+            figsize=(5.6, 3.2),
+            facecolor=current_palette().bg_surface,
+            minimum_size=_BUBBLE_CANVAS_MINIMUM_SIZE,
+        )
         self._geometry_restored = False
         self._responsive_layout_initialized = False
         self._has_restored_splitter_state = False
@@ -447,7 +457,6 @@ class UepClusteringDialog(QDialog):
         bubble_title = QLabel("Cluster Energy Spread", bubble_card)
         bubble_title.setObjectName("uepIsosurfaceLegendTitle")
         bubble_layout.addWidget(bubble_title)
-        self._bubble_canvas.setMinimumHeight(150)
         bubble_layout.addWidget(self._bubble_canvas, 1)
         self._bubble_note_label = QLabel("", bubble_card)
         self._bubble_note_label.setWordWrap(True)
@@ -541,13 +550,9 @@ class UepClusteringDialog(QDialog):
         self._apply_responsive_layout()
 
     def _set_default_splitter_balance(self) -> None:
-        main_total = (
-            self._main_splitter.height()
-            if self._main_splitter.orientation() == Qt.Orientation.Vertical
-            else self._main_splitter.width()
-        )
+        main_total = self._main_splitter.width()
         if main_total <= 0:
-            main_total = self.height() if self._main_splitter.orientation() == Qt.Orientation.Vertical else self.width()
+            main_total = self.width()
         main_first = max(int(main_total // 2), 1)
         self._pending_main_splitter_sizes = [main_first, max(int(main_total - main_first), 1)]
         self._main_splitter.setSizes(self._pending_main_splitter_sizes)
@@ -643,11 +648,11 @@ class UepClusteringDialog(QDialog):
         self.state_changed.emit(self.state_snapshot())
 
     def _apply_responsive_layout(self) -> None:
+        # Compact mode only reflows the controls card. The plot panels stay
+        # side by side: stacking them vertically left the dendrogram a few
+        # pixels tall once the viewer and energy-spread card took their minimum
+        # heights.
         compact = (self.width() <= _COMPACT_LAYOUT_MAX_WIDTH) or (self.height() <= _COMPACT_LAYOUT_MAX_HEIGHT)
-        layout_changed = compact != self._compact_layout_active
-        self._compact_layout_active = compact
-        self._left_figure.set_layout_engine("none" if compact else "constrained")
-        self._bubble_figure.set_layout_engine("none" if compact else "constrained")
 
         self._controls_layout.removeWidget(self._hier_controls)
         self._controls_layout.removeWidget(self._kmeans_controls)
@@ -676,9 +681,6 @@ class UepClusteringDialog(QDialog):
             self._controls_layout.setContentsMargins(12, 10, 12, 10)
             self._controls_layout.setHorizontalSpacing(10)
             self._controls_layout.setVerticalSpacing(6)
-            self._main_splitter.setOrientation(Qt.Orientation.Vertical)
-            if layout_changed or (not self._responsive_layout_initialized and not self._has_restored_splitter_state):
-                self._set_default_splitter_balance()
         else:
             self._controls_layout.addWidget(
                 self._hier_controls,
@@ -704,9 +706,8 @@ class UepClusteringDialog(QDialog):
             self._controls_layout.setContentsMargins(16, 14, 16, 14)
             self._controls_layout.setHorizontalSpacing(12)
             self._controls_layout.setVerticalSpacing(8)
-            self._main_splitter.setOrientation(Qt.Orientation.Horizontal)
-            if layout_changed or (not self._responsive_layout_initialized and not self._has_restored_splitter_state):
-                self._set_default_splitter_balance()
+        if not self._responsive_layout_initialized and not self._has_restored_splitter_state:
+            self._set_default_splitter_balance()
         self._responsive_layout_initialized = True
 
     def _on_method_changed(self, _index: int) -> None:
@@ -969,8 +970,10 @@ class UepClusteringDialog(QDialog):
                 zorder=4,
             )
             axis.text(x_value, y_value, f" {cluster.cluster_index}", color=current_palette().text_primary, va="center")
-        axis.set_xlabel("Average energy relative to global minimum (eV)")
-        axis.set_ylabel("Energy std. dev. (eV)")
+        # Short labels: the card title already says "Cluster Energy Spread", and
+        # on a small screen the plot is only about 150 px tall and 390 px wide.
+        axis.set_xlabel("Mean energy above minimum (eV)")
+        axis.set_ylabel("Std. dev. (eV)")
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
         axis.spines["left"].set_color(current_palette().border)
