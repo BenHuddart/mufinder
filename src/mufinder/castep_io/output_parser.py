@@ -60,6 +60,7 @@ _ASE_STRESS_LINE_RE = re.compile(
 )
 _LATTICE_HEADER_RE = re.compile(r"\b(?:real\s+)?lattice\b|\bunit\s+cell\b", re.IGNORECASE)
 _RUN_STARTED_RE = re.compile(r"^\s*Run started:", re.IGNORECASE)
+_STRESS_REQUESTED_RE = re.compile(r"^\s*stress\s+calculation\s*:\s*on\b", re.IGNORECASE)
 
 
 def _is_force_header(line: str) -> bool:
@@ -127,6 +128,16 @@ def parse_castep_output(path: Path) -> CastepResult:
     The remaining numeric fields (energies, forces, stress, lattice) take the
     *last* match in the file, which for an appended output is the last restart
     that reported one.
+
+    **Completion.** A run is complete only once CASTEP has written its closing
+    timing summary (``Total time``). Lines such as ``Final energy`` and
+    ``NB est. 0K energy`` are not completion markers: CASTEP writes them after
+    every SCF solve, *before* the forces and stress tensor, so an output cut off
+    mid-way through the stress calculation (walltime, out of memory, a node
+    failure, or a file read while the job is still running) would otherwise
+    read as a finished run with no stress. As a second guard, a restart whose
+    parameter echo reports ``stress calculation : on`` is incomplete unless that
+    restart printed a stress tensor.
     """
 
     output_path = Path(path)
@@ -165,6 +176,8 @@ def parse_castep_output(path: Path) -> CastepResult:
 
     error_message = _find_error_message(final_run_lines)
     completed = _is_complete(final_run_text, error_message)
+    if completed and _stress_requested(final_run_lines) and not _parse_last_stress_block(final_run_lines):
+        completed = False
 
     return CastepResult(
         completed=completed,
@@ -454,6 +467,12 @@ def _last_run_segment(lines: list[str]) -> list[str]:
     return lines[boundaries[-1] :]
 
 
+def _stress_requested(lines: list[str]) -> bool:
+    """Return whether the parameter echo in ``lines`` says a stress calculation is on."""
+
+    return any(_STRESS_REQUESTED_RE.search(line) for line in lines)
+
+
 def _find_error_message(lines: list[str]) -> str | None:
     for line in lines:
         trimmed = line.strip()
@@ -469,13 +488,14 @@ def _is_complete(text: str, error_message: str | None) -> bool:
     if error_message is not None:
         return False
 
+    # Only markers CASTEP writes once the whole run has finished. "Final
+    # energy", "NB est. 0K energy" and "Geometry optimization completed
+    # successfully" are deliberately absent: each is printed before the final
+    # forces and stress tensor, so a run cut off after them is not complete.
     completion_markers = (
         "Total time",
         "Calculation complete",
-        "Geometry optimization completed successfully",
         "Total wall time",
-        "Final energy",
-        "NB est. 0K energy",
     )
     lowered = text.lower()
     return any(marker.lower() in lowered for marker in completion_markers)

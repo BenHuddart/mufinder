@@ -56,6 +56,109 @@ def test_parse_castep_output_handles_truncated_file(tmp_path: Path) -> None:
     assert parsed.error_message is None
 
 
+_STRESS_ON_HEADER = (
+    " Run started: Fri, 02 Oct 2026 10:00:00 +0100\n"
+    " ***************************** General Parameters ******************************\n"
+    " type of calculation                            : single point energy\n"
+    " stress calculation                             : on\n"
+)
+_ENERGY_AND_FORCES = (
+    "Final energy, E             =  -1363.109714972     eV\n"
+    "Final free energy (E-TS)    =  -1363.109714972     eV\n"
+    "NB est. 0K energy (E-0.5TS)      =  -1363.109714972     eV\n"
+    "\n"
+    " ******************************** Symmetrised Forces ********************************\n"
+    " * Si              1      0.00000      0.00000      0.00000 *\n"
+    " ************************************************************************************\n"
+    "\n"
+)
+_STRESS_BLOCK = (
+    " *********** Symmetrised Stress Tensor ***********\n"
+    " *  x      1.000         0.100         0.000     *\n"
+    " *  y      0.100         2.000         0.000     *\n"
+    " *  z      0.000         0.000         3.000     *\n"
+    " *************************************************\n"
+    "\n"
+)
+
+
+def test_output_cut_off_during_stress_calculation_is_not_complete(tmp_path: Path) -> None:
+    # Regression: "Final energy" is written before the forces and the stress
+    # tensor, so a run killed (or read) mid-way through the stress calculation
+    # must not be reported as a finished job.
+    output = tmp_path / "stress_cut_off.castep"
+    output.write_text(_STRESS_ON_HEADER + _ENERGY_AND_FORCES, encoding="utf-8")
+
+    parsed = parse_castep_output(output)
+
+    assert parsed.completed is False
+    assert parsed.error_message is None
+    assert parsed.total_energy == pytest.approx(-1363.109714972)
+    assert parsed.max_stress is None
+
+
+def test_final_energy_without_closing_summary_is_not_complete(tmp_path: Path) -> None:
+    output = tmp_path / "no_summary.castep"
+    output.write_text(_ENERGY_AND_FORCES, encoding="utf-8")
+
+    assert parse_castep_output(output).completed is False
+
+
+def test_geometry_success_line_without_closing_summary_is_not_complete(tmp_path: Path) -> None:
+    # The success banner precedes the final energy, forces and stress.
+    output = tmp_path / "geom_no_summary.castep"
+    output.write_text(
+        "LBFGS: Geometry optimization completed successfully.\n" + _ENERGY_AND_FORCES,
+        encoding="utf-8",
+    )
+
+    parsed = parse_castep_output(output)
+
+    assert parsed.completed is False
+    assert parsed.geom_converged is True
+
+
+def test_stress_run_with_stress_tensor_and_summary_is_complete(tmp_path: Path) -> None:
+    output = tmp_path / "stress_complete.castep"
+    output.write_text(
+        _STRESS_ON_HEADER + _ENERGY_AND_FORCES + _STRESS_BLOCK + "Total time          =     32.92 s\n",
+        encoding="utf-8",
+    )
+
+    parsed = parse_castep_output(output)
+
+    assert parsed.completed is True
+    assert parsed.max_stress == pytest.approx(3.0)
+
+
+def test_stress_run_missing_stress_tensor_is_not_complete_even_with_summary(tmp_path: Path) -> None:
+    output = tmp_path / "stress_missing.castep"
+    output.write_text(
+        _STRESS_ON_HEADER + _ENERGY_AND_FORCES + "Total time          =     32.92 s\n",
+        encoding="utf-8",
+    )
+
+    assert parse_castep_output(output).completed is False
+
+
+def test_stress_tensor_from_an_earlier_restart_does_not_complete_a_later_one(tmp_path: Path) -> None:
+    # The latest restart requested stress but stopped before printing it; the
+    # earlier restart's tensor must not stand in for it.
+    output = tmp_path / "stress_restart.castep"
+    output.write_text(
+        _STRESS_ON_HEADER
+        + _ENERGY_AND_FORCES
+        + _STRESS_BLOCK
+        + "Total time          =     32.92 s\n"
+        + _STRESS_ON_HEADER
+        + _ENERGY_AND_FORCES
+        + "Total time          =     12.00 s\n",
+        encoding="utf-8",
+    )
+
+    assert parse_castep_output(output).completed is False
+
+
 def test_parse_castep_output_reads_max_force_line_without_force_block(tmp_path: Path) -> None:
     output = tmp_path / "max_force_only.castep"
     output.write_text(

@@ -299,6 +299,19 @@ so a continued job's output holds every restart. ``completed``,
 ``num_scf_cycles`` (a ``max()``) and ``warnings`` span the whole file. See the
 ``parse_castep_output`` docstring for the full split.
 
+*What counts as completion.* A run is ``completed`` only once its last restart
+reaches CASTEP's closing timing summary (``Total time``). ``Final energy``,
+``NB est. 0K energy`` and ``Geometry optimization completed successfully`` do
+not count: CASTEP prints each of them before the final forces and stress tensor.
+Treating them as completion meant that a run killed while computing the stress
+tensor counted as finished. That happens on a walltime or memory limit, a node
+failure, or a transient ``squeue`` omission while the job is still running.
+Such a run reached the convergence analysis with no stress. When the last
+restart's parameter echo reports ``stress calculation : on``, that restart must
+also have printed a stress tensor. An earlier restart's tensor does not count.
+A cut-off output now resolves to ``failed`` with "CASTEP did not report
+successful completion" and can be continued or resubmitted.
+
 State authority and runner contract
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

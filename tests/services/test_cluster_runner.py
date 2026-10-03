@@ -515,6 +515,46 @@ def test_cluster_runner_retrieve_incomplete_output_marks_failed(
     assert statuses[-1] == JobStatus.FAILED.value
 
 
+def test_cluster_runner_missing_job_cut_off_during_stress_is_not_completed(
+    qapp, tmp_path: Path
+) -> None:
+    # Regression: a job that vanished from the queue (walltime, OOM, or a
+    # transient squeue omission) while CASTEP was computing the stress tensor
+    # has "Final energy" in its output but no stress and no closing summary.
+    # It must not reach the analysis as a completed run.
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+    runner._ssh.remote_files["/remote/job/seed.castep"] = (
+        b" Run started: Fri, 02 Oct 2026 10:00:00 +0100\n"
+        b" stress calculation                             : on\n"
+        b"Final energy, E             =  -1363.109714972     eV\n"
+        b"NB est. 0K energy (E-0.5TS)      =  -1363.109714972     eV\n"
+        b" ******************************** Symmetrised Forces ********************************\n"
+        b" * Si              1      0.00000      0.00000      0.00000 *\n"
+        b" ************************************************************************************\n"
+    )
+
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="121",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+    )
+
+    finished: list[object] = []
+    statuses: list[str] = []
+    runner.job_finished.connect(lambda _jid, parsed, _artifacts: finished.append(parsed))
+    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
+
+    runner._retrieve_results(entry, missing_from_queue=True)
+
+    assert finished == []
+    assert JobStatus.COMPLETED.value not in statuses
+    assert statuses[-1] == JobStatus.FAILED.value
+
+
 def test_cluster_runner_retrieve_downloads_numbered_error_files(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
