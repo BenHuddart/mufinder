@@ -38,8 +38,9 @@ from mufinder.science.convergence_analysis import (
     apply_kpoint_label_to_stress_result,
     delta_threshold_stress,
     recommended_value,
+    unconverged_criteria,
 )
-from mufinder.science.kpoint_grids import kpoint_count_for_spacing, spacing_from_grid
+from mufinder.science.kpoint_grids import format_kpoint_grid, kpoint_count_for_spacing, spacing_from_grid
 
 
 _STRESS_DISABLED_TOOLTIP = (
@@ -103,9 +104,13 @@ class ConvergenceExaminerDialog(QDialog):
         point_labels: Mapping[float, str] | None = None,
         lattice_vectors: Sequence[Sequence[float]] | None = None,
         initial_state: Mapping[str, object] | None = None,
+        notes: Sequence[str] = (),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        # Caller-supplied caveats about the sweep data (for example grids left out
+        # because they share a k-point count), repeated in every results summary.
+        self._notes = tuple(str(note) for note in notes if str(note).strip())
         if sweep_kind not in {"cutoff", "kpoint"}:
             raise ValueError("sweep_kind must be 'cutoff' or 'kpoint'.")
 
@@ -721,13 +726,14 @@ class ConvergenceExaminerDialog(QDialog):
             f"Energy datapoints available: {len(energy_cutoffs)}",
             f"Force datapoints available: {len(force_cutoffs)}",
             f"Stress datapoints available: {len(stress_cutoffs)}",
-            f"Host atoms used for per-atom normalization: {self._num_atoms}",
+            f"Simulation-cell atoms used for per-atom normalization: {self._num_atoms}",
         ]
 
         if len(energy_cutoffs) < 2 or len(force_cutoffs) < 2:
             lines.append("Need at least two completed rows with both energy and max-force values to run analysis.")
         elif self._num_atoms <= 0:
-            lines.append("Host structure atom count must be positive before analysis can run.")
+            lines.append("Simulation-cell atom count must be positive before analysis can run.")
+        lines.extend(self._note_lines())
 
         self._results.setPlainText("\n".join(lines))
 
@@ -1004,17 +1010,27 @@ class ConvergenceExaminerDialog(QDialog):
 
         if self._recommended_value is not None:
             self._adopt_button.setEnabled(True)
-            if self._sweep_kind == "cutoff":
-                self._adopt_button.setText(
-                    f"Set {self._recommended_value:.8g} eV as Project Default Cutoff"
-                )
-            else:
-                label = self._point_labels.get(
-                    float(self._recommended_value),
-                    f"{self._recommended_value:.8g} k-points",
-                )
-                self._adopt_button.setText(f"Set {label} as Project Default K-Point Grid")
+            self._adopt_button.setText(self._adopt_button_text())
             self._emit_state_changed()
+
+    def _note_lines(self) -> list[str]:
+        if not self._notes:
+            return []
+        return ["", "Notes:", *(f"- {note}" for note in self._notes)]
+
+    def _recommended_point_text(self) -> str:
+        """Return the recommended k-point grid as ``4 x 4 x 4`` (or a count fallback)."""
+
+        value = float(self._recommended_value)  # type: ignore[arg-type]
+        grid = self._point_grids.get(value)
+        if grid is not None:
+            return format_kpoint_grid(grid)
+        return self._point_labels.get(value, f"{value:.8g} k-points")
+
+    def _adopt_button_text(self) -> str:
+        if self._sweep_kind == "cutoff":
+            return f"Set {self._recommended_value:.8g} eV as Project Default Cutoff"
+        return f"Set {self._recommended_point_text()} as Project Default K-Point Grid"
 
     def _show_method_info(self) -> None:
         method = self._selected_method()
@@ -1140,10 +1156,7 @@ class ConvergenceExaminerDialog(QDialog):
             if self._sweep_kind == "cutoff":
                 lines.extend(["", f"Recommended cutoff: {self._recommended_value:.8g} eV"])
             else:
-                label = self._point_labels.get(
-                    float(self._recommended_value),
-                    f"{self._recommended_value:.8g} k-points",
-                )
+                label = self._recommended_point_text()
                 recommended_line = f"Recommended k-point grid: {label}"
                 grid = self._point_grids.get(float(self._recommended_value))
                 spacing = self._point_spacings.get(float(self._recommended_value))
@@ -1151,7 +1164,22 @@ class ConvergenceExaminerDialog(QDialog):
                     recommended_line += f" (spacing {spacing:.4g} 1/Ang)"
                 lines.extend(["", recommended_line])
         else:
-            lines.extend(["", "No combined convergence recommendation available yet."])
+            unconverged = unconverged_criteria(energy_result, force_result, stress_result)
+            if unconverged:
+                setting = "cutoffs" if self._sweep_kind == "cutoff" else "denser k-point grids"
+                lines.extend(
+                    [
+                        "",
+                        "No recommendation: the "
+                        + " and ".join(unconverged)
+                        + (" criterion" if len(unconverged) == 1 else " criteria")
+                        + " did not converge within the sweep. Extend the sweep to larger "
+                        + f"{setting}, or relax the threshold, and analyse again.",
+                    ]
+                )
+            else:
+                lines.extend(["", "No combined convergence recommendation available yet."])
+        lines.extend(self._note_lines())
 
         self._results.setPlainText("\n".join(lines))
         self._last_plot_data = {
@@ -1183,16 +1211,7 @@ class ConvergenceExaminerDialog(QDialog):
             )
         else:
             self._adopt_button.setEnabled(True)
-            if self._sweep_kind == "cutoff":
-                self._adopt_button.setText(
-                    f"Set {self._recommended_value:.8g} eV as Project Default Cutoff"
-                )
-            else:
-                label = self._point_labels.get(
-                    float(self._recommended_value),
-                    f"{self._recommended_value:.8g} k-points",
-                )
-                self._adopt_button.setText(f"Set {label} as Project Default K-Point Grid")
+            self._adopt_button.setText(self._adopt_button_text())
 
         self._emit_state_changed()
 

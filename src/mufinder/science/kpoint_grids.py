@@ -161,6 +161,36 @@ def format_kpoint_grid(grid: tuple[int, int, int]) -> str:
     return f"{int(grid[0])} x {int(grid[1])} x {int(grid[2])}"
 
 
+def most_uniform_grid(
+    lattice_vectors: Sequence[Sequence[float]],
+    grids: Sequence[tuple[int, int, int]],
+) -> tuple[int, int, int]:
+    """Return the grid whose per-axis k-point spacings are closest to equal.
+
+    Each axis is sampled at spacing ``|b_i| / (2*pi*n_i)``; the most uniform grid
+    has the smallest ratio of its largest to its smallest axis spacing, which is
+    the shape ``generate_kpoint_grids`` produces for the cell. Used to choose
+    between grids with the same k-point count, which cannot share a point on a
+    count-based convergence axis. Ties keep the earlier grid.
+    """
+
+    if not grids:
+        raise ValueError("At least one grid is required.")
+    magnitudes = [_norm(vector) for vector in reciprocal_lattice_vectors(lattice_vectors)]
+
+    def anisotropy(grid: tuple[int, int, int]) -> float:
+        spacings = [magnitude / (2.0 * math.pi * max(1, int(n))) for magnitude, n in zip(magnitudes, grid, strict=True)]
+        return max(spacings) / min(spacings)
+
+    best = grids[0]
+    best_score = anisotropy(best)
+    for grid in grids[1:]:
+        score = anisotropy(grid)
+        if score < best_score - 1e-12:
+            best, best_score = grid, score
+    return best
+
+
 def lattice_matches(
     lhs: Sequence[Sequence[float]],
     rhs: Sequence[Sequence[float]],

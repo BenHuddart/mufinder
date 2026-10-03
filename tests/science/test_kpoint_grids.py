@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from mufinder.science.kpoint_grids import (
+    most_uniform_grid,
     equivalent_grid_for_supercell,
     format_kpoint_grid,
     generate_kpoint_grids,
@@ -289,3 +290,20 @@ def test_kpoint_count_for_spacing_agrees_with_grid_from_spacing_at_castep_bounda
     assert kpoint_count_for_spacing(lattice, 0.25) == pytest.approx(
         float(grid[0] * grid[1] * grid[2])
     )
+
+
+def test_most_uniform_grid_prefers_fewer_kpoints_along_the_long_axis() -> None:
+    lattice = [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 6.0]]
+
+    assert most_uniform_grid(lattice, [(2, 2, 4), (4, 2, 2)]) == (4, 2, 2)
+
+
+def test_most_uniform_grid_keeps_the_earlier_grid_on_a_tie() -> None:
+    cubic = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+
+    assert most_uniform_grid(cubic, [(2, 2, 4), (4, 2, 2)]) == (2, 2, 4)
+
+
+def test_most_uniform_grid_requires_a_grid() -> None:
+    with pytest.raises(ValueError):
+        most_uniform_grid([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [])

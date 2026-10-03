@@ -19,6 +19,7 @@ from mufinder.science.convergence_analysis import (
     derivative_energy,
     recommended_cutoff,
     recommended_value,
+    unconverged_criteria,
 )
 
 
@@ -249,12 +250,32 @@ def test_recommended_value_includes_stress_when_converged() -> None:
     assert recommended_value(energy, force, stress) == pytest.approx(600.0)
 
 
-def test_recommended_value_ignores_unconverged_stress() -> None:
+def test_recommended_value_requires_an_included_stress_to_converge() -> None:
+    """Stress, once included, is a criterion like the others: unconverged means no recommendation."""
+
     energy = ConvergenceResult(converged=True, method="delta-threshold", details="", converged_value=400.0)
     force = ConvergenceResult(converged=True, method="force-delta-threshold", details="", converged_value=500.0)
     stress = ConvergenceResult(converged=False, method="stress-delta-threshold", details="", converged_value=None)
 
-    assert recommended_value(energy, force, stress) == pytest.approx(500.0)
+    assert recommended_value(energy, force, stress) is None
+    assert unconverged_criteria(energy, force, stress) == ("stress",)
+
+
+def test_recommended_value_requires_force_to_converge() -> None:
+    """A converged energy alone must not produce an adoptable recommendation."""
+
+    energy = ConvergenceResult(converged=True, method="delta-threshold", details="", converged_value=500.0)
+    force = ConvergenceResult(converged=False, method="force-delta-threshold", details="", converged_value=None)
+
+    assert recommended_value(energy, force) is None
+    assert unconverged_criteria(energy, force) == ("force",)
+
+
+def test_unconverged_criteria_is_empty_when_all_supplied_criteria_converged() -> None:
+    energy = ConvergenceResult(converged=True, method="delta-threshold", details="", converged_value=400.0)
+    force = ConvergenceResult(converged=True, method="force-delta-threshold", details="", converged_value=500.0)
+
+    assert unconverged_criteria(energy, force) == ()
 
 
 def test_recommended_value_backward_compatible_without_stress() -> None:

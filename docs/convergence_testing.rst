@@ -334,13 +334,13 @@ consecutive pairs.
 - **Stress (optional).** The same test on the maximum stress, in GPa.
 
 The recommendation (``Recommended cutoff`` or ``Recommended k-point grid``) is
-the largest of the converged values. A criterion that does **not** converge is
-left out rather than blocking the recommendation, so if, for example, the
-energy converges but the force does not, the recommendation is the energy's
-value alone. Always read the ``Energy result`` and ``Force result`` lines
-before adopting. If no criterion converges the dialog reports *No combined
-convergence recommendation available yet.*: extend the sweep and run the new
-points.
+the largest of the converged values, so the adopted setting satisfies every
+criterion. Every criterion in use must converge: energy, force, and stress
+when it is included. If any does not converge within the sweep there is no
+recommendation, the adopt button stays disabled, and the results say which
+criterion failed, for example *No recommendation: the force criterion did not
+converge within the sweep.* Extend the sweep to larger cutoffs or denser grids,
+or relax the threshold, and analyse again.
 
 Because each test stops at the first small difference, a single accidentally
 small step can trigger it. Check on the plot that the energy and force stay
@@ -357,12 +357,13 @@ Adopting a result as a project default
 --------------------------------------
 
 After a successful analysis the adopt button names the value, for example
-``Set 500 eV as Project Default Cutoff`` or ``Set Grid: 4 x 4 x 4 as Project
+``Set 500 eV as Project Default Cutoff`` or ``Set 4 x 4 x 4 as Project
 Default K-Point Grid``. Clicking it:
 
 - sets the project default cutoff or grid, and records the energy method, the
   thresholds, the simulation cell, and the XC functional the sweep was run
-  with;
+  with; a grid is stored together with the lattice of the cell it was
+  converged on, so later workflows can rescale it to their own cells;
 - makes that functional the project default functional. If it differs from
   the current project functional MuFinder first asks *Change project
   functional?*; answering ``No`` adopts nothing. If the sweep's rows used
@@ -403,12 +404,10 @@ The pristine-relaxation, muon-relaxation, and UEP parameter dialogs show
 rows with a radio button each; only the selected one is written. When you
 select ``K-Point MP Spacing``, MuFinder pre-fills it with the spacing that
 reproduces the project default grid (the same value as in the examiner's
-recommendation line), provided it knows which cell the grid belongs to. A grid
-typed into the ``Project Defaults`` dialog is recorded against the host unit
-cell, so the spacing is pre-filled. A grid adopted from the examiner is
-currently not recorded against a cell, so the field is not pre-filled from it;
-type in the spacing from the examiner's ``Recommended k-point grid`` line
-instead. No spacing is pre-filled for a ``1 x 1 x 1`` default.
+recommendation line). A grid adopted from the examiner is recorded against
+the cell the sweep ran on, and a grid typed into the ``Project Defaults``
+dialog against the host unit cell, so the spacing is pre-filled in both cases.
+No spacing is pre-filled for a ``1 x 1 x 1`` default.
 
 Limitations
 -----------
@@ -419,21 +418,19 @@ Limitations
   adopted pair is still converged if either changes substantially.
 - Every point is a single-point calculation on the unrelaxed cell; there is no
   muon in the cell.
-- The examiner always normalizes energies by the number of atoms in the host
-  unit cell, even when the sweep ran on a saved supercell. For a supercell
-  sweep the per-atom differences are therefore larger, by the supercell's
-  size factor, than the true per-atom values, which makes the energy test
-  stricter.
-- The spacings shown in the k-point examiner and on the overview plot are
-  always computed from the host unit cell's lattice, so they do not apply to a
-  k-point sweep run on a supercell.
-- When the pristine-relaxation, UEP, and muon-relaxation workflows rescale an
-  adopted grid for a supercell row, they treat it as a grid for the host unit
-  cell. A grid converged on a supercell is therefore rescaled incorrectly;
-  converge the k-point grid on the unit cell if you intend to reuse it on
-  supercells.
-- The k-point examiner identifies grids by their number of k-points. If two
-  grids in the sweep have the same product ``a x b x c`` (possible with grids
-  entered by hand), only one of them is analysed.
+- The examiner normalizes energies by the number of atoms in the cell the
+  sweep ran on, and the k-point examiner (and the overview plot, which reuses
+  its analysis) computes spacings from that cell's lattice, whether it is the
+  unit cell or a saved supercell.
+- The pristine-relaxation, UEP, and muon-relaxation workflows rescale an
+  adopted grid from the cell it was converged on to each row's cell at
+  equivalent k-point density. A unit-cell row uses the grid exactly, unless the
+  grid was converged on a supercell of that unit cell, in which case it is
+  rescaled too. Each adjustment is reported when the jobs are generated.
+- The k-point examiner places grids by their number of k-points, so two grids
+  with the same product ``a x b x c`` (possible with grids entered by hand)
+  cannot both be examined. It keeps one, preferring a grid with a completed
+  result and then the one that samples the cell most uniformly, and names the
+  grid it left out under ``Notes`` in the results.
 - Convergence is judged from successive differences only; there is no
   check that later points stay within the threshold.

@@ -11,6 +11,7 @@ from mufinder.app.adapter_common import (
     STRUCTURE_CONTROLLED_CELL_KEYWORDS,
     AdapterExpansion,
     build_input_template,
+    reference_is_supercell_of,
     rescale_kpoint_grid,
     row_values_has_keyword,
     template_has_explicit_kpoints,
@@ -440,7 +441,7 @@ def suggested_grid_for_row(
     if reference_grid is None:
         return None
 
-    if _is_identity_supercell(row_matrix):
+    if _is_identity_supercell(row_matrix) and not reference_is_supercell_of(reference_lattice, host_lattice):
         return reference_grid
 
     row_lattice = [

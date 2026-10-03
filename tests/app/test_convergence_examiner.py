@@ -694,3 +694,48 @@ def test_recompute_spacings_in_snapshot_falls_back_without_point_labels() -> Non
     # No point_labels → unchanged (but a copy, not the same object).
     assert result["plot_data"]["point_spacings"] == {"300.0": 0.5}
     assert result is not snapshot
+
+
+def test_convergence_examiner_withholds_recommendation_when_force_has_not_converged(qapp) -> None:
+    """A converged energy alone must not be offered for adoption."""
+
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.90),
+            400.0: _completed_state(-10.0001, 0.60),
+            500.0: _completed_state(-10.0002, 0.30),
+        },
+        num_atoms=2,
+    )
+
+    dialog._method_combo.setCurrentText("Delta-Threshold")
+    dialog._run_analysis()
+
+    text = dialog._results.toPlainText()
+    assert "Recommended cutoff" not in text
+    assert "No recommendation: the force criterion did not converge within the sweep" in text
+    assert dialog._adopt_button.isEnabled() is False
+
+
+def test_convergence_examiner_kpoint_adopt_label_names_the_grid_once(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            8.0: _completed_state(-10.0, 0.30),
+            27.0: _completed_state(-10.01, 0.20),
+            64.0: _completed_state(-10.0105, 0.19),
+        },
+        num_atoms=2,
+        sweep_kind="kpoint",
+        point_labels={8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3", 64.0: "Grid: 4 x 4 x 4"},
+        notes=("2 x 4 x 1 left out: same k-point count (8) as 2 x 2 x 2.",),
+    )
+
+    assert "Notes:\n- 2 x 4 x 1 left out" in dialog._results.toPlainText()
+    dialog._run_analysis()
+
+    text = dialog._adopt_button.text()
+    assert text.startswith("Set ") and text.endswith(" as Project Default K-Point Grid")
+    assert "Grid:" not in text
+    results = dialog._results.toPlainText()
+    assert "Recommended k-point grid: Grid:" not in results
+    assert "2 x 4 x 1 left out" in results

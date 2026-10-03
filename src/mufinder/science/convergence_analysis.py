@@ -577,18 +577,32 @@ def recommended_value(
 ) -> float | None:
     """Return the combined recommendation from energy, force and (optionally) stress.
 
-    When ``stress_result`` is supplied it is treated as a co-equal criterion: the
-    returned value is the maximum converged value among all supplied results.
+    Every supplied criterion must have converged: the recommendation is the
+    largest of their converged values, so the adopted setting satisfies all of
+    them. When any supplied criterion did not converge within the sweep there is
+    no recommendation (see :func:`unconverged_criteria` for which). A stress
+    result is a criterion only when supplied; ``None`` means stress is not used.
     """
     results: tuple[ConvergenceResult | None, ...] = (energy_result, force_result, stress_result)
-    candidates = [
-        result.converged_value
-        for result in results
-        if result is not None and result.converged and result.converged_value is not None
-    ]
-    if not candidates:
+    supplied = [result for result in results if result is not None]
+    if unconverged_criteria(energy_result, force_result, stress_result):
         return None
-    return max(float(value) for value in candidates)
+    return max(float(result.converged_value) for result in supplied)  # type: ignore[arg-type]
+
+
+def unconverged_criteria(
+    energy_result: ConvergenceResult,
+    force_result: ConvergenceResult,
+    stress_result: ConvergenceResult | None = None,
+) -> tuple[str, ...]:
+    """Return the names of the supplied criteria that did not converge, in order."""
+
+    named = (("energy", energy_result), ("force", force_result), ("stress", stress_result))
+    return tuple(
+        name
+        for name, result in named
+        if result is not None and not (result.converged and result.converged_value is not None)
+    )
 
 
 def recommended_cutoff(
