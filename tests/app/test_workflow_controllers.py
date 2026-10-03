@@ -3572,7 +3572,7 @@ def test_muon_controller_build_result_records_position_structure_and_site_mutati
     # linked to this run with the job's total energy.
     assert site.status == "relaxed"
     assert site.relaxation_run_id == run.id
-    assert site.relative_energy_eV == pytest.approx(-12.0)
+    assert site.total_energy_eV == pytest.approx(-12.0)
 
 
 _MUON_OUT_CELL_TEXT_CONTINUED = """
@@ -3616,7 +3616,7 @@ def test_muon_controller_recompletion_updates_structure_and_site_to_new_run(
     tmp_path: Path,
 ) -> None:
     """A continued muon job's re-completion refreshes the same derived structure
-    and re-points the site's ``relaxation_run_id``/``relative_energy_eV`` at the
+    and re-points the site's ``relaxation_run_id``/``total_energy_eV`` at the
     new run, so the site and the structure never describe different runs."""
 
     from mufinder.domain.models import MuonSite, Result
@@ -3692,7 +3692,7 @@ def test_muon_controller_recompletion_updates_structure_and_site_to_new_run(
     assert site.status == "relaxed"
     assert site.relaxation_run_id == run_two.id
     assert site.relaxation_run_id != run_one.id
-    assert site.relative_energy_eV == pytest.approx(-12.5)
+    assert site.total_energy_eV == pytest.approx(-12.5)
     assert service.validate_document(document) == []
 
 
@@ -4260,6 +4260,7 @@ def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
         active_quantum_corrections_definition=lambda: None,
         ensure_quantum_corrections_definition=lambda _keys: None,
         eligible_quantum_source_candidates=lambda: [],
+        quantum_source_relative_energies=lambda: {},
         quantum_source_candidate_by_key=lambda _key: None,
         quantum_stage_state=lambda _definition, _candidate: _FakeQuantumStageState(
             stage=QUANTUM_STAGE_SINGLEPOINT, status="ready"
@@ -4558,7 +4559,7 @@ def _seed_quantum_two_stage_document(service: ProjectService, tmp_path: Path):
         source_job.status = JobStatus.COMPLETED
         run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
         document.runs[run.id] = run
-        site = MuonSite(label=label, status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+        site = MuonSite(label=label, status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
         document.sites[site.id] = site
         site_ids.append(site.id)
         structure_ids.append(relaxed.id)

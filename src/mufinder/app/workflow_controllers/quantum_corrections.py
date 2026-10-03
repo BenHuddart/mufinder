@@ -116,6 +116,12 @@ def _format_phonon_eigenvalues(value: object) -> str:
     return ", ".join(entries)
 
 
+def _format_relative_energy(value: float | None) -> str:
+    """Format a source's energy relative to its comparable minimum for the ``dE (eV)`` column."""
+
+    return "" if value is None else f"{float(value):.5f}"
+
+
 def _cell_declares_species_mass(cell_path: Path) -> bool:
     """Return whether a written ``.cell`` file carries a ``SPECIES_MASS`` block.
 
@@ -157,6 +163,7 @@ class QuantumCorrectionsDeps:
         [list[str]], CalculationDefinition | None
     ]
     eligible_quantum_source_candidates: Callable[[], list[object]]
+    quantum_source_relative_energies: Callable[[], Mapping[str, float | None]]
     quantum_source_candidate_by_key: Callable[[str], object | None]
     quantum_stage_state: Callable[[CalculationDefinition | None, object], object]
     build_quantum_corrections_states: Callable[[], Mapping[str, object]]
@@ -348,7 +355,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                     source_relaxation_run_id=candidate.run.id,
                     source_relaxation_job_id=candidate.job.id,
                     charge_state=self._deps.charge_state_for_job(candidate.job),
-                    relative_energy_eV=candidate.site.relative_energy_eV,
+                    total_energy_eV=candidate.site.total_energy_eV,
                 ),
                 method=method,
                 pseudopotential_family=str(pseudopotential_family),
@@ -549,6 +556,7 @@ class QuantumCorrectionsController(WorkflowJobController):
 
         source_rows: list[QuantumSourceRow] = []
         quantum_states = self._deps.build_quantum_corrections_states()
+        relative_energies = self._deps.quantum_source_relative_energies()
         definition = self._deps.active_quantum_corrections_definition()
         for candidate in self._deps.eligible_quantum_source_candidates():
             state = quantum_states.get(candidate.key)
@@ -561,8 +569,8 @@ class QuantumCorrectionsController(WorkflowJobController):
                     key=candidate.key,
                     label=candidate.site.label or candidate.job.label,
                     charge_state=self._deps.charge_state_label_for_job(candidate.job),
-                    relative_energy=self._deps.format_energy(
-                        candidate.site.relative_energy_eV
+                    relative_energy=_format_relative_energy(
+                        relative_energies.get(candidate.key)
                     ),
                     displacements=str(3 * len(candidate.structure.species)),
                     source_job=candidate.job.label,

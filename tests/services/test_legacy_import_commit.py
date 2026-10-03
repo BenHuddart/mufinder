@@ -192,7 +192,7 @@ class TestEntities:
         site = document.sites[outcome.imported[0].site_id]
         assert site.status == "relaxed"
         assert site.generation_method == "imported_legacy"
-        assert site.relative_energy_eV == pytest.approx(-1234.5678)
+        assert site.total_energy_eV == pytest.approx(-1234.5678)
         assert site.source_structure_id == host_structure.id
 
     def test_labels_do_not_collide_with_existing_rows(

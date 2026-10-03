@@ -428,6 +428,27 @@ def test_load_project_normalizes_legacy_candidate_status(tmp_path: Path) -> None
     assert loaded.sites[site.id].status == "generated"
 
 
+def test_load_project_reads_site_total_energy_saved_under_legacy_key(tmp_path: Path) -> None:
+    """A site saved before the rename stored its total energy as ``relative_energy_eV``."""
+
+    service = ProjectService()
+    root = tmp_path / "legacy_site_energy.mufinder"
+    doc = service.create_project(root, "LegacySiteEnergy")
+    site = MuonSite(label="Legacy", status="relaxed", total_energy_eV=-1234.5)
+    doc.sites[site.id] = site
+    service.save_project(doc)
+
+    site_file = root / "entities" / "sites" / f"{site.id}.json"
+    text = site_file.read_text(encoding="utf-8")
+    assert '"total_energy_eV": -1234.5' in text
+    assert "relative_energy_eV" not in text
+    site_file.write_text(text.replace('"total_energy_eV"', '"relative_energy_eV"'), encoding="utf-8")
+
+    loaded = service.load_project(root)
+
+    assert loaded.sites[site.id].total_energy_eV == -1234.5
+
+
 def test_integrity_validation_detects_missing_references(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "integrity.mufinder", "Integrity")

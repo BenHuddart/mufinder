@@ -3295,7 +3295,7 @@ def test_main_window_submit_jobs_on_cluster_reuses_quantum_continuation_director
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
-    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
 
     definition = window._ensure_quantum_corrections_definition([str(site.id)])
@@ -7055,7 +7055,7 @@ def test_main_window_reset_quantum_corrections_to_stage_one_clears_shared_job_st
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
-    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
 
     definition = window._ensure_quantum_corrections_definition([str(site.id)])
@@ -10047,7 +10047,7 @@ def test_muon_relaxation_remove_row_archives_associated_files_and_job(
     doc.results[result.id] = result
     site.status = "relaxed"
     site.relaxation_run_id = run.id
-    site.relative_energy_eV = -1.0
+    site.total_energy_eV = -1.0
     job_dir = doc.project_root / "files" / "muon_relaxation" / "positivemuon" / "positivemuon_Site_1"
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / "positivemuon_Site_1.cell").write_text("cell", encoding="utf-8")
@@ -10071,7 +10071,7 @@ def test_muon_relaxation_remove_row_archives_associated_files_and_job(
     assert run.id not in doc.runs
     assert result.id not in doc.results
     assert site.relaxation_run_id is None
-    assert site.relative_energy_eV is None
+    assert site.total_energy_eV is None
     assert site.status == "generated"
     assert definition.id not in doc.calculations
     assert service.validate_document(doc) == []
@@ -11579,7 +11579,7 @@ def _stage_quantum_row_with_singlepoint(
     run.result_id = result.id
     doc.runs[run.id] = run
     doc.results[result.id] = result
-    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, relative_energy_eV=-1.0)
+    site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
 
     definition = window._ensure_quantum_corrections_definition([str(site.id)])

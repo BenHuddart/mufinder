@@ -106,11 +106,11 @@ relaxed site:
 ``Charge``
    The charge state of the source relaxation: ``positive muon`` or
    ``muonium``.
-``Relative Energy``
-   The final total energy of the source relaxation, in eV. Despite the column
-   name this is not offset to the lowest site; rows are sorted lowest energy
-   first, and energies are only comparable between sites with the same charge
-   state and settings.
+``dE (eV)``
+   The site's relaxed total energy relative to the lowest-energy eligible site
+   with the same charge state and cell composition. Energies from different
+   charge states or supercells are not comparable, so each such group has its
+   own zero. Rows are ordered by charge state, then by ``dE``.
 ``Displacements``
    ``3 x atom count`` for the relaxed defect cell — an approximate count of the
    finite-displacement calculations the phonon stage needs, and therefore a

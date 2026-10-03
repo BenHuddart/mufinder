@@ -237,7 +237,7 @@ Per imported site, one five-entity chain satisfying the eligibility contract.
    ``status = "relaxed"``, ``generation_method = "imported_legacy"``,
    ``source_structure_id`` the active host, ``fractional_position`` taken from
    the **input** cell's ``H:mu`` folded to host coordinates,
-   ``cartesian_position`` derived from it, and ``relative_energy_eV`` the
+   ``cartesian_position`` derived from it, and ``total_energy_eV`` the
    absolute total energy from the ``.castep`` — matching what the native
    completion path stores, despite the field name.
 
