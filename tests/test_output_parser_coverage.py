@@ -54,7 +54,9 @@ def test_wall_time_falls_back_to_hms_when_no_seconds_value(tmp_path: Path) -> No
 
     # 1*3600 + 2*60 + 3.5
     assert parsed.wall_time == pytest.approx(3723.5)
-    assert parsed.completed is True
+    # "Final energy" precedes the forces and stress, so without the closing
+    # "Total time" summary the run is not complete.
+    assert parsed.completed is False
 
 
 def test_ase_style_force_block_with_constrained_token(tmp_path: Path) -> None:
