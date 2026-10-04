@@ -9,8 +9,14 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import FailureReason, JobStatus
 from mufinder.domain.models import CalculationRun, Job, Result, utc_now
+from mufinder.services.failure_diagnosis import (
+    FailureDiagnosis,
+    diagnose_failure,
+    failure_reason_summary,
+    find_failure_log_files,
+)
 from mufinder.services.job_monitoring import is_cluster_job
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
@@ -245,7 +251,7 @@ class JobExecutionController:
                 )
             except Exception as exc:  # noqa: BLE001
                 failed_messages.append(f"- {job.label}: {exc}")
-                self.fail_job(job.id, str(exc))
+                self.fail_job(job.id, str(exc), reason=FailureReason.SUBMISSION)
                 journal_changed = True
                 continue
             if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING}:
@@ -348,7 +354,7 @@ class JobExecutionController:
         job = prepared.job
         run = prepared.run
         try:
-            self._project_service.fail_job(job, message)
+            self._project_service.fail_job(job, message, reason=FailureReason.SUBMISSION)
         except ValueError:
             pass
         run.status = JobStatus.FAILED
@@ -556,8 +562,13 @@ class JobExecutionController:
         *,
         source: str | None = None,
         status_message: str | None = None,
+        reason: FailureReason | None = None,
     ) -> LifecycleUpdate:
         """Mark a job as failed and record a terminal provenance event.
+
+        ``reason`` records a cause the caller already knows (a rejected
+        submission). Otherwise the cause is diagnosed from ``message`` and the
+        job's scheduler/CASTEP logs (see :meth:`diagnose_failure`).
 
         ``source``/``status_message`` override the monitor-metadata stamp.
         When ``None`` (the shared local/cluster ``job_failed`` path), the
@@ -579,8 +590,10 @@ class JobExecutionController:
             JobStatus.RUNNING,
             JobStatus.RETRIEVING,
         }:
+            if reason is None:
+                reason = self.diagnose_failure(job, message).reason
             try:
-                self._project_service.fail_job(job, message)
+                self._project_service.fail_job(job, message, reason=reason)
             except ValueError:
                 pass
 
@@ -603,6 +616,23 @@ class JobExecutionController:
         self._active_run_by_job.pop(job_id, None)
         self._record_terminal_event("job_failed", job, error_message=message)
         return LifecycleUpdate(job=job, changed=True, journal_changed=True)
+
+    def diagnose_failure(self, job: Job, message: str | None) -> FailureDiagnosis:
+        """Classify why ``job`` failed from ``message`` and its output-directory logs.
+
+        Logs older than the job's submission are ignored, so a continuation in
+        a reused directory is not blamed on the previous run's errors.
+        """
+
+        output_dir = self._job_output_directory(job)
+        log_files = (
+            []
+            if output_dir is None
+            else find_failure_log_files(
+                output_dir, [job.label, self._job_seed_name(job)], job.remote_job_id
+            )
+        )
+        return diagnose_failure(message, log_files, not_before=job.submitted_at)
 
     def cancel_job(self, job_id: UUID) -> LifecycleUpdate:
         """Mark a job as cancelled and record a terminal provenance event."""
@@ -657,7 +687,14 @@ class JobExecutionController:
             elif mapped == JobStatus.RETRIEVING and job.status == JobStatus.RUNNING:
                 self._project_service.mark_job_retrieving(job)
             elif mapped == JobStatus.STOPPED and job.status in {JobStatus.RUNNING, JobStatus.RETRIEVING}:
-                self._project_service.stop_job(job, "Job stopped before successful completion.")
+                # The cluster runner reports ``stopped`` only for a walltime
+                # stop: the scheduler's TIMEOUT state, or a time-limit kill in
+                # the scheduler log of a run with incomplete output.
+                self._project_service.stop_job(
+                    job,
+                    failure_reason_summary(FailureReason.WALLTIME),
+                    reason=FailureReason.WALLTIME,
+                )
             else:
                 return LifecycleUpdate(job=job)
         except ValueError:
@@ -748,7 +785,7 @@ class JobExecutionController:
             return LifecycleUpdate(job=job)
 
         try:
-            self._project_service.stop_job(job, message)
+            self._project_service.stop_job(job, message, reason=FailureReason.INTERRUPTED)
         except ValueError:
             return LifecycleUpdate(job=job)
 

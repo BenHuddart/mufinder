@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun
 from mufinder.services.project_service import (
     ORPHANED_LOCAL_JOB_STOP_MESSAGE,
@@ -78,6 +78,7 @@ def test_active_local_job_is_stopped_with_exact_message(tmp_path, status) -> Non
     assert reconciled == [job]
     assert job.status == JobStatus.STOPPED
     assert job.error_message == ORPHANED_LOCAL_JOB_STOP_MESSAGE
+    assert job.failure_reason == FailureReason.INTERRUPTED
     assert job.completed_at is not None
     # The in-flight run is closed out to keep run/job status consistent.
     assert run.status == JobStatus.STOPPED

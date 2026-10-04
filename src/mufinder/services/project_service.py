@@ -14,7 +14,7 @@ from typing import Any
 from uuid import UUID
 
 from mufinder._version import current_version
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
+from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -67,6 +67,17 @@ def _normalized_xc_functional(value: object) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     return value.strip().upper()
+
+
+def _failure_reason_from_payload(value: object) -> FailureReason | None:
+    """Parse a persisted failure reason; unknown or missing values load as ``None``."""
+
+    if not isinstance(value, str):
+        return None
+    try:
+        return FailureReason(value)
+    except ValueError:
+        return None
 
 #: Terminal job statuses a job can be recovered from without losing its record:
 #: :meth:`ProjectService.reset_failed_job` accepts exactly these, and
@@ -635,6 +646,8 @@ class ProjectService:
                 parameters["derived_structure_count"] = len(result.derived_structure_ids)
         if error_message:
             parameters["error_message"] = error_message
+        if job.failure_reason is not None and action in {"job_failed", "job_stopped"}:
+            parameters["failure_reason"] = job.failure_reason.value
 
         output_entity_ids: list[UUID] = [job.id]
         if result is not None:
@@ -2239,6 +2252,7 @@ class ProjectService:
         job.started_at = None
         job.completed_at = None
         job.error_message = None
+        job.failure_reason = None
 
     def mark_job_queued(self, job: Job, remote_job_id: str | None = None) -> None:
         """Mark an in-flight submission as queued."""
@@ -2259,26 +2273,42 @@ class ProjectService:
         job.status = JobStatus.COMPLETED
         job.completed_at = utc_now()
         job.error_message = None
+        job.failure_reason = None
 
-    def stop_job(self, job: Job, message: str | None = None) -> None:
+    def stop_job(
+        self,
+        job: Job,
+        message: str | None = None,
+        *,
+        reason: FailureReason | None = None,
+    ) -> None:
         """Mark a running or retrieving job as stopped (for example walltime reached)."""
         self._assert_transition(job.status, JobStatus.STOPPED)
         job.status = JobStatus.STOPPED
         job.completed_at = utc_now()
         job.error_message = message
+        job.failure_reason = reason
 
-    def fail_job(self, job: Job, message: str) -> None:
-        """Mark a job as failed with an error message."""
+    def fail_job(
+        self,
+        job: Job,
+        message: str,
+        *,
+        reason: FailureReason | None = None,
+    ) -> None:
+        """Mark a job as failed with an error message and its classified cause."""
         self._assert_transition(job.status, JobStatus.FAILED)
         job.status = JobStatus.FAILED
         job.completed_at = utc_now()
         job.error_message = message
+        job.failure_reason = reason
 
     def cancel_job(self, job: Job) -> None:
         """Cancel a non-terminal job."""
         self._assert_transition(job.status, JobStatus.CANCELLED)
         job.status = JobStatus.CANCELLED
         job.completed_at = utc_now()
+        job.failure_reason = None
 
     def reset_failed_job(self, job: Job) -> None:
         """Reset a failed, stopped, or cancelled job to defined for resubmission."""
@@ -2294,6 +2324,7 @@ class ProjectService:
         job.remote_directory = None
         job.num_processes = None
         job.error_message = None
+        job.failure_reason = None
         job.last_checked_at = None
         job.last_status_source = None
         job.last_status_message = None
@@ -2335,6 +2366,7 @@ class ProjectService:
         job.remote_job_id = None
         job.num_processes = None
         job.error_message = None
+        job.failure_reason = None
         job.last_checked_at = None
         job.last_status_source = None
         job.last_status_message = None
@@ -2363,6 +2395,7 @@ class ProjectService:
         self._assert_transition(job.status, JobStatus.RETRIEVING)
         job.status = JobStatus.RETRIEVING
         job.error_message = None
+        job.failure_reason = None
 
     def dismiss_job(self, job: Job) -> None:
         """Hide a terminal job from the active dashboard without deleting it.
@@ -2415,7 +2448,7 @@ class ProjectService:
             if target and target.casefold() != "local":
                 continue
 
-            self.stop_job(job, ORPHANED_LOCAL_JOB_STOP_MESSAGE)
+            self.stop_job(job, ORPHANED_LOCAL_JOB_STOP_MESSAGE, reason=FailureReason.INTERRUPTED)
             # Monitor metadata is bookkeeping, not a status transition: record
             # that reconciliation was the last observer of this job.
             job.last_checked_at = utc_now()
@@ -3463,6 +3496,7 @@ class ProjectService:
             num_processes=num_processes,
             tags=payload.get("tags", []),
             error_message=payload.get("error_message"),
+            failure_reason=_failure_reason_from_payload(payload.get("failure_reason")),
             last_checked_at=parse_datetime(payload.get("last_checked_at")),
             last_status_source=payload.get("last_status_source"),
             last_status_message=payload.get("last_status_message"),

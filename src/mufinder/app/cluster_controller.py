@@ -492,7 +492,11 @@ class ClusterController(QObject):
     def submit_batch(self, items: list[dict[str, Any]]) -> None:
         """Submit a batch of prepared jobs on the worker thread.
 
-        Each item is ``{"job_id", "label", "submit_kwargs", "remote_dir_to_delete"}``.
+        Each item is ``{"job_id", "label", "submit_kwargs", "remote_dir_to_delete"}``,
+        optionally with ``"delete_only_if_finished"``: the scheduler id of the
+        run that used ``remote_dir_to_delete``. The directory is then deleted
+        only once the scheduler confirms that run is no longer queued or
+        running; otherwise the item fails without deleting anything.
         Emits :attr:`submit_batch_progress` before each job, :attr:`job_submit_finished`
         with the result of each, and :attr:`submit_batch_finished` once (even when
         cancelled or on error).
@@ -517,6 +521,12 @@ class ClusterController(QObject):
                 try:
                     delete_dir = item.get("remote_dir_to_delete")
                     if delete_dir:
+                        previous_run = item.get("delete_only_if_finished")
+                        if previous_run and self._runner.scheduler_job_is_active(previous_run):
+                            raise RuntimeError(
+                                f"scheduler job {previous_run} is still queued or running, "
+                                f"so its directory {delete_dir} was not deleted"
+                            )
                         self._runner.remove_remote_directory(delete_dir)
                     remote_job_id = self._runner.submit(**item["submit_kwargs"])
                 except Exception as exc:  # noqa: BLE001 - reported per job to the GUI

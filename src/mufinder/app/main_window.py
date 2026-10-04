@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import logging
@@ -80,7 +80,7 @@ from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_clus
 from mufinder.castep_io.gui_metadata import make_block_section, make_keyword_assignment, normalize_gui_value
 from mufinder.castep_io.schema import KeywordSpec, canonical_keyword_name, get_keyword_spec
 from mufinder.domain.constants import IMPORTED_JOB_TAG
-from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
+from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     MANUAL_DEFAULT_METHOD,
     CalculationRun,
@@ -167,6 +167,11 @@ from mufinder.app.relaxation_analysis_widget import (
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.continue_relaxation_dialog import ContinueRelaxationDialog
+from mufinder.app.resubmit_choice_dialog import (
+    ResubmitCandidate,
+    ResubmitChoiceDialog,
+    ResubmitMode,
+)
 from mufinder.app.muon_sites_summary_widget import MuonSitesSummaryWidget
 from mufinder.app.uep_adapter import expand_uep_jobs
 from mufinder.app.uep_types import UepConfig, UepSourceRow
@@ -265,6 +270,13 @@ from mufinder.services.job_execution_controller import (
     JobExecutionController,
     PreparedClusterSubmission,
 )
+from mufinder.services.failure_diagnosis import (
+    FailureDiagnosis,
+    failure_reason_label,
+    failure_reason_summary,
+    find_failure_log_files,
+    read_log_tail,
+)
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
 from mufinder.services.job_monitoring import job_staleness
 from mufinder.services.job_watchdog import StuckJobWatchdog
@@ -317,7 +329,9 @@ from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamT
 
 _LOG = logging.getLogger(__name__)
 
-_RESUBMITTABLE_JOB_STATES = {JobStatus.FAILED, JobStatus.CANCELLED}
+# Stopped jobs (walltime, orphaned) are resubmittable like failed ones: the
+# submit script is regenerated, so a longer walltime takes effect.
+_RESUBMITTABLE_JOB_STATES = {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
 # Stage-1 singlepoint statuses from which a Quantum Corrections row may be rewound
 # to stage 1 while no phonon job exists. ``COMPLETED`` is the "redo stage 1 with
 # different parameters" case; the three terminal-recoverable statuses are the
@@ -3998,8 +4012,8 @@ class MainWindow(QMainWindow):
         self._jobs_table.setItem(row, self._JOB_WORKFLOW_COLUMN, QTableWidgetItem(job.workflow_stage.value))
         self._jobs_table.setItem(row, self._JOB_CALC_TYPE_COLUMN, QTableWidgetItem(job.calc_type))
 
-        status_item = QTableWidgetItem(job.status.value)
-        status_item.setForeground(self._status_brush(job.status.value))
+        status_item = QTableWidgetItem()
+        self._apply_job_status_cell(status_item, job)
         self._jobs_table.setItem(row, self._JOB_STATUS_COLUMN, status_item)
 
         last_checked_item = QTableWidgetItem()
@@ -4047,8 +4061,7 @@ class MainWindow(QMainWindow):
 
         status_item = self._jobs_table.item(row, self._JOB_STATUS_COLUMN)
         if status_item is not None:
-            status_item.setText(job.status.value)
-            status_item.setForeground(self._status_brush(job.status.value))
+            self._apply_job_status_cell(status_item, job)
 
         last_checked_item = self._jobs_table.item(row, self._JOB_LAST_CHECKED_COLUMN)
         if last_checked_item is not None:
@@ -4180,6 +4193,51 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _status_brush(status_value: str):
         return status_brush(status_value)
+
+    @classmethod
+    def _apply_job_status_cell(cls, item: QTableWidgetItem, job: Job) -> None:
+        """Show the job status, with the failure cause for failed/stopped jobs.
+
+        The cell reads e.g. ``stopped · walltime``; its tooltip explains the
+        cause and repeats the recorded failure message, so the reason is
+        visible without opening Inspect.
+        """
+
+        text = job.status.value
+        tooltip = ""
+        if job.status in {JobStatus.FAILED, JobStatus.STOPPED}:
+            label = failure_reason_label(job.failure_reason)
+            if label:
+                text = f"{text} · {label}"
+            tooltip = cls._failure_tooltip(job)
+        if item.text() != text:
+            item.setText(text)
+        if item.toolTip() != tooltip:
+            item.setToolTip(tooltip)
+        item.setForeground(cls._status_brush(job.status.value))
+
+    _WALLTIME_NEXT_STEP = "Resubmit to run it again, with a longer walltime if needed."
+    _RELAXATION_WALLTIME_NEXT_STEP = (
+        "Resubmit to continue from its checkpoint or start again, with a longer "
+        "walltime if needed."
+    )
+
+    @classmethod
+    def _failure_tooltip(cls, job: Job) -> str:
+        summary = failure_reason_summary(job.failure_reason)
+        message = (job.error_message or "").strip()
+        if job.failure_reason is None and message:
+            return f"{message}\n\nUse Inspect to see the job's logs."
+        parts = [summary]
+        if message and message != summary:
+            parts.append(message)
+        if job.failure_reason == FailureReason.WALLTIME:
+            parts.append(
+                cls._RELAXATION_WALLTIME_NEXT_STEP
+                if cls._job_resumes_from_checkpoint(job)
+                else cls._WALLTIME_NEXT_STEP
+            )
+        return "\n\n".join(parts)
 
     def _can_retry_retrieval(self, job: Job) -> bool:
         """Return True when the "Retry retrieval" action is eligible for a job.
@@ -4915,8 +4973,32 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "No resubmittable jobs",
-                "Only failed or cancelled jobs can be resubmitted from the job dashboard.",
+                "Only failed, stopped, or cancelled jobs can be resubmitted from the job dashboard.",
             )
+            return
+
+        refusals = self._fresh_start_refusals(
+            [job for job in selected if self._job_resumes_from_checkpoint(job)]
+        )
+        if refusals:
+            # Neither start these again nor continue them: their directory is
+            # not theirs alone, so starting again would delete another job's
+            # files and continuing would run in (and overwrite) them.
+            selected = [job for job in selected if job.id not in refusals]
+            QMessageBox.warning(
+                self,
+                "Some jobs were not resubmitted",
+                "These relaxations' folders are not theirs alone, so resubmitting them "
+                "would delete or overwrite another job's files. They were not "
+                "resubmitted:\n\n"
+                + "\n".join(refusals.values())
+                + "\n\nDismiss or reset them instead.",
+            )
+            if not selected:
+                return
+
+        fresh_start_job_ids = self._choose_relaxation_resubmit_mode(selected)
+        if fresh_start_job_ids is None:
             return
 
         local_jobs = [job for job in selected if job.execution_target == "local"]
@@ -4925,9 +5007,10 @@ class MainWindow(QMainWindow):
         if local_jobs:
             self._submit_jobs_locally(
                 local_jobs,
+                fresh_start_job_ids=fresh_start_job_ids,
                 eligible_statuses=_RESUBMITTABLE_JOB_STATES,
                 no_eligible_message=(
-                    "Selected jobs must be in the 'failed' or 'cancelled' state for local resubmission."
+                    "Selected jobs must be failed, stopped, or cancelled for local resubmission."
                 ),
                 success_message=lambda count: f"Resubmitted {count} local job(s)",
             )
@@ -4942,11 +5025,170 @@ class MainWindow(QMainWindow):
                 default_cluster_name=preferred,
                 eligible_statuses=_RESUBMITTABLE_JOB_STATES,
                 no_eligible_message=(
-                    "Selected jobs must be in the 'failed' or 'cancelled' state for cluster resubmission."
+                    "Selected jobs must be failed, stopped, or cancelled for cluster resubmission."
                 ),
                 reuse_existing_remote_files=True,
+                fresh_start_job_ids=fresh_start_job_ids,
                 success_message=lambda count, cluster: f"Resubmitted {count} cluster job(s) on {cluster}",
             )
+
+    @staticmethod
+    def _job_resumes_from_checkpoint(job: Job) -> bool:
+        """Return whether resubmitting ``job`` in place resumes from its checkpoint.
+
+        Relaxation inputs always carry ``CONTINUATION : DEFAULT``, so CASTEP
+        picks up a ``{seed}.check`` left in the run directory. Imported jobs are
+        excluded: their directories hold the only copy of the imported results.
+        """
+
+        return job.workflow_stage in {
+            WorkflowStage.PRISTINE_RELAXATION,
+            WorkflowStage.MUON_RELAXATION,
+        } and not job_is_imported(job)
+
+    def _choose_relaxation_resubmit_mode(self, jobs: Sequence[Job]) -> set[UUID] | None:
+        """Ask how resubmitted relaxations should treat their previous run.
+
+        Returns the ids of the jobs to start again from a clean directory (empty
+        when they continue, or when no relaxation is being resubmitted), or
+        ``None`` when the user cancels.
+        """
+
+        relaxations = [job for job in jobs if self._job_resumes_from_checkpoint(job)]
+        if not relaxations:
+            return set()
+
+        probes = self._checkpoint_probes(relaxations)
+        dialog = ResubmitChoiceDialog(
+            [
+                ResubmitCandidate(
+                    label=job.label,
+                    status=job.status,
+                    reason=job.failure_reason,
+                    checkpoint=probes[job.id].status,
+                )
+                for job in relaxations
+            ],
+            other_job_count=len(jobs) - len(relaxations),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        if dialog.mode() == ResubmitMode.START_AGAIN:
+            return {job.id for job in relaxations}
+        return set()
+
+    def _fresh_start_refusals(self, jobs: Sequence[Job]) -> dict[UUID, str]:
+        """Return, per job id, why starting that job again would be unsafe.
+
+        Start again deletes a job's local output directory and its remote
+        directory, so both must belong to that job alone (see
+        :meth:`_directory_ownership_refusals`). Reconfiguring a relaxation row
+        can leave an old failed job and its replacement sharing one directory,
+        which is the case this exists for.
+        """
+
+        return self._directory_ownership_refusals(jobs)
+
+    def _directory_ownership_refusals(
+        self,
+        jobs: Sequence[Job],
+        *,
+        shared_with: Collection[UUID] = (),
+        check_remote: bool = True,
+    ) -> dict[UUID, str]:
+        """Return, per job id, why deleting that job's directories would be unsafe.
+
+        A job is refused when its local directory is not strictly inside
+        ``<project>/files/<stage>/``, is not named after the job's seed, or is
+        used by another job (the same directory, or one inside it); and, with
+        ``check_remote``, when its remote directory is not named after the seed
+        or another job on the same cluster uses it or a directory inside it.
+        Jobs in ``shared_with`` may share a directory without causing a
+        refusal: they are being cleaned together (a Quantum Corrections
+        singlepoint and phonon pair share one seed directory by design).
+        """
+
+        if self._document is None or not jobs:
+            return {}
+        files_root = (self._document.project_root / "files").resolve()
+
+        def local_directory(job: Job) -> Path | None:
+            directory = self._job_output_directory(job)
+            return directory.resolve() if directory is not None else None
+
+        def remote_directory(job: Job) -> tuple[str, str] | None:
+            target = (job.execution_target or "").strip().casefold()
+            directory = (job.remote_directory or "").strip()
+            if not target or target == "local" or not directory:
+                return None
+            return target, posixpath.normpath(directory)
+
+        others = [
+            (other.id, local_directory(other), remote_directory(other))
+            for other in self._document.jobs.values()
+        ]
+        refusals: dict[UUID, str] = {}
+        for job in jobs:
+            seed = self._job_seed_name(job)
+            local = local_directory(job)
+            remote = remote_directory(job)
+            reason = ""
+            if local is not None:
+                if not local.is_relative_to(files_root) or len(local.relative_to(files_root).parts) < 2:
+                    reason = f"its output folder is outside the project's job folders ({local})"
+                elif local.name != seed:
+                    reason = f"its output folder is not named after the job ({local})"
+                elif any(
+                    other_id != job.id
+                    and other_id not in shared_with
+                    and other_local is not None
+                    and other_local.is_relative_to(local)
+                    for other_id, other_local, _other_remote in others
+                ):
+                    reason = f"another job uses the same output folder ({local})"
+            if not reason and check_remote and remote is not None:
+                cluster, path = remote
+                if posixpath.basename(path) != seed:
+                    reason = f"its cluster directory is not named after the job ({path})"
+                elif any(
+                    other_id != job.id
+                    and other_id not in shared_with
+                    and other_remote is not None
+                    and other_remote[0] == cluster
+                    and (other_remote[1] == path or other_remote[1].startswith(path.rstrip("/") + "/"))
+                    for other_id, _other_local, other_remote in others
+                ):
+                    reason = f"another job uses the same cluster directory ({path})"
+            if reason:
+                refusals[job.id] = f"- {job.label}: {reason}"
+        return refusals
+
+    def _clear_outputs_for_fresh_start(self, jobs: Sequence[Job]) -> tuple[list[Job], list[str]]:
+        """Empty each job's local output directory, keeping its ``.cell``/``.param``.
+
+        The same cleanup Reset offers. A job refused by
+        :meth:`_fresh_start_refusals`, or whose directory cannot be fully
+        cleaned, is left out of the returned list: submitting it would either
+        delete another job's files (its remote directory is deleted next) or
+        resume from a checkpoint the user asked to discard.
+        """
+
+        refusals = self._fresh_start_refusals(jobs)
+        cleaned: list[Job] = []
+        errors: list[str] = list(refusals.values())
+        for job in jobs:
+            if job.id in refusals:
+                continue
+            output_dir = self._job_output_directory(job)
+            if output_dir is not None and output_dir.is_dir():
+                try:
+                    self._clear_directory_contents(output_dir)
+                except OSError as exc:
+                    errors.append(f"- {job.label}: could not clear its previous output ({exc})")
+                    continue
+            cleaned.append(job)
+        return cleaned, errors
 
     def _on_retry_retrieval_from_dashboard(self, job_ids: list[UUID]) -> None:
         if self._document is None:
@@ -6940,7 +7182,15 @@ class MainWindow(QMainWindow):
         eligible_statuses: set[JobStatus] | None = None,
         no_eligible_message: str = "Selected jobs must be in the 'defined' state for local submission.",
         success_message: Callable[[int], str] | None = None,
+        fresh_start_job_ids: Collection[UUID] = (),
     ) -> None:
+        """Submit ``jobs`` to the local runner after the local submission dialog.
+
+        Jobs in ``fresh_start_job_ids`` (a relaxation the user chose to start
+        again) have their previous output cleared first, once the dialog is
+        accepted, so cancelling never deletes anything.
+        """
+
         if self._document is None or not jobs:
             return
 
@@ -6998,6 +7248,22 @@ class MainWindow(QMainWindow):
 
         config = dialog.config()
 
+        fresh_jobs = [job for job in eligible_jobs if job.id in fresh_start_job_ids]
+        if fresh_jobs:
+            cleaned, cleanup_errors = self._clear_outputs_for_fresh_start(fresh_jobs)
+            if cleanup_errors:
+                not_cleaned = {job.id for job in fresh_jobs} - {job.id for job in cleaned}
+                eligible_jobs = [job for job in eligible_jobs if job.id not in not_cleaned]
+                show_detailed_warning(
+                    self,
+                    "Previous output not cleared",
+                    "These jobs were not resubmitted because their previous output, "
+                    "including any checkpoint, could not be cleared:\n" + "\n".join(cleanup_errors),
+                    informative_text="Close any program using these files, then resubmit.",
+                )
+                if not eligible_jobs:
+                    return
+
         outcome = self._job_execution.submit_local_jobs(
             eligible_jobs,
             num_cores=config.num_cores,
@@ -7052,7 +7318,16 @@ class MainWindow(QMainWindow):
         no_eligible_message: str = "Selected jobs must be in the 'defined' state for cluster submission.",
         reuse_existing_remote_files: bool = False,
         success_message: Callable[[int, str], str] | None = None,
+        fresh_start_job_ids: Collection[UUID] = (),
     ) -> None:
+        """Submit ``jobs`` to a cluster chosen in the cluster submission dialog.
+
+        Jobs in ``fresh_start_job_ids`` start again: on their own cluster, their
+        remote directory is deleted and their inputs uploaded afresh, without the
+        overwrite prompt (the user already chose to discard the previous run),
+        and their local output is cleared as Reset would clear it.
+        """
+
         if self._document is None or not jobs:
             return
 
@@ -7197,7 +7472,30 @@ class MainWindow(QMainWindow):
         reuse_existing_files_by_job: dict[UUID, bool] = {}
         allow_existing_remote_directory_by_job: dict[UUID, bool] = {}
         targets_to_check: list[tuple[UUID, str]] = []
+        fresh_delete_job_ids: set[UUID] = set()
+        previous_remote_job_id_by_job: dict[UUID, str] = {}
         for job in eligible_jobs:
+            fresh_target = (
+                (job.remote_directory or "").strip()
+                if job.id in fresh_start_job_ids
+                and (job.execution_target or "").strip().casefold()
+                == selected_cluster.name.strip().casefold()
+                else ""
+            )
+            if fresh_target:
+                # Start again in the job's own directory: delete it and upload the
+                # inputs afresh, so no checkpoint or output of the previous run
+                # survives for CONTINUATION : DEFAULT to pick up.
+                remote_target_by_job[job.id] = fresh_target
+                reuse_existing_files_by_job[job.id] = False
+                allow_existing_remote_directory_by_job[job.id] = False
+                fresh_delete_job_ids.add(job.id)
+                # A stopped job may still be running (the watchdog stops jobs
+                # this session lost track of without cancelling them), so the
+                # worker deletes the directory only once the scheduler confirms
+                # the previous run has finished.
+                previous_remote_job_id_by_job[job.id] = (job.remote_job_id or "").strip()
+                continue
             allow_existing_remote_directory = False
             # A DEFINED job that still carries a remote directory is a continuation.
             # Only ProjectService.prepare_job_continuation produces that combination
@@ -7205,9 +7503,10 @@ class MainWindow(QMainWindow):
             # precisely so CASTEP resumes from the ``.check`` file already there. Reuse
             # the directory verbatim and upload fresh inputs into it.
             #
-            # This branch is evaluated first and cannot steal either path below.
+            # Apart from the start-again branch above, whose jobs are never DEFINED,
+            # this branch is evaluated first and cannot steal either path below.
             # ``reuse_existing_remote_files`` is passed only by the dashboard resubmit
-            # action, whose eligible statuses are {FAILED, CANCELLED}, so DEFINED jobs
+            # action, whose eligible statuses are {FAILED, STOPPED, CANCELLED}, so DEFINED jobs
             # never reach the loop on that call. The quantum branch needs a quantum
             # phonon calc type with a COMPLETED singlepoint source; a continued phonon
             # job would satisfy both, but its own preserved remote directory is the
@@ -7235,7 +7534,11 @@ class MainWindow(QMainWindow):
                 remote_target = continued_remote_target
                 allow_existing_remote_directory = True
             else:
-                remote_target = (job.remote_directory or "").strip() if reuse_existing_remote_files else ""
+                remote_target = (
+                    (job.remote_directory or "").strip()
+                    if reuse_existing_remote_files and job.id not in fresh_start_job_ids
+                    else ""
+                )
                 if not remote_target:
                     continuation_target = self._quantum_continuation_remote_target(
                         job, cluster_name=selected_cluster.name
@@ -7273,6 +7576,9 @@ class MainWindow(QMainWindow):
         decision_by_job: dict[UUID, str] = {}
         overwrite_mode: str | None = None
         for job in eligible_jobs:
+            if job.id in fresh_delete_job_ids:
+                decision_by_job[job.id] = "delete"
+                continue
             # Directories we deliberately submit into are never candidates for the
             # overwrite prompt, whatever another job in the batch resolved to: this
             # loop matches by target string, so without the guard a second job whose
@@ -7311,10 +7617,28 @@ class MainWindow(QMainWindow):
             for job_id, allowed in allow_existing_remote_directory_by_job.items()
             if allowed and remote_target_by_job.get(job_id)
         }
+        fresh_jobs = [
+            job
+            for job in eligible_jobs
+            if job.id in fresh_start_job_ids and decision_by_job.get(job.id) != "skip"
+        ]
+        not_cleaned_job_ids: set[UUID] = set()
+        if fresh_jobs:
+            cleaned, cleanup_errors = self._clear_outputs_for_fresh_start(fresh_jobs)
+            failed_submit.extend(cleanup_errors)
+            not_cleaned_job_ids = {job.id for job in fresh_jobs} - {job.id for job in cleaned}
         prepared_by_job: dict[UUID, PreparedClusterSubmission] = {}
         submit_items: list[dict[str, object]] = []
         for job in eligible_jobs:
-            if decision_by_job.get(job.id) == "skip":
+            if decision_by_job.get(job.id) == "skip" or job.id in not_cleaned_job_ids:
+                continue
+            if job.id in fresh_delete_job_ids and remote_target_by_job[job.id] in protected_remote_targets:
+                # Its directory cannot be deleted, so submitting would resume
+                # from the checkpoint the user chose to discard.
+                failed_submit.append(
+                    f"- {job.label}: another job in this submission is continuing in its "
+                    f"directory ({remote_target_by_job[job.id]}), so it was not started again"
+                )
                 continue
             output_dir = self._job_output_directory(job)
             if output_dir is None:
@@ -7365,6 +7689,7 @@ class MainWindow(QMainWindow):
                         and remote_target not in protected_remote_targets
                         else None
                     ),
+                    "delete_only_if_finished": previous_remote_job_id_by_job.get(job.id) or None,
                 }
             )
 
@@ -7834,7 +8159,11 @@ class MainWindow(QMainWindow):
             )
             return
 
-        sections = [self._failure_diagnostics_for_job(job) for job in failed_jobs]
+        diagnoses = [self._job_failure_diagnosis(job) for job in failed_jobs]
+        sections = [
+            self._failure_diagnostics_for_job(job, diagnosis)
+            for job, diagnosis in zip(failed_jobs, diagnoses, strict=True)
+        ]
         details = "\n\n".join(
             (
                 "=" * 80,
@@ -7845,7 +8174,7 @@ class MainWindow(QMainWindow):
         message = make_message_box_resizable(QMessageBox(self))
         message.setIcon(QMessageBox.Icon.Information)
         message.setWindowTitle("Failed job diagnostics")
-        message.setText(f"Failure details for {len(failed_jobs)} job(s).")
+        message.setText(self._failure_headline(failed_jobs, diagnoses))
         message.setInformativeText("Open details to inspect available error/log file content.")
         message.setDetailedText(details)
         message.exec()
@@ -7959,13 +8288,30 @@ class MainWindow(QMainWindow):
 
         cleanup_errors: list[str] = []
         reset_count = 0
+        # Never clean a directory another job still depends on: a Quantum
+        # Corrections phonon job shares its seed directory, and the stage-1
+        # checkpoint in it, with the completed singlepoint. Jobs reset together
+        # may share one; anything else keeps its directory and is reported.
+        cleanup_refusals = (
+            self._directory_ownership_refusals(
+                [job for job in jobs if not job_is_imported(job)],
+                # Imported jobs are skipped below, never cleaned, so a folder
+                # shared with one must not count as cleaned together.
+                shared_with={job.id for job in jobs if not job_is_imported(job)},
+                check_remote=False,
+            )
+            if cleanup_choice
+            else {}
+        )
         for job in jobs:
             if job_is_imported(job):
                 # Defensive: this core is shared with the resubmission path, and
                 # the directory cleanup below is irreversible.
                 continue
             cleaned_output_directory = False
-            if cleanup_choice:
+            if cleanup_choice and job.id in cleanup_refusals:
+                cleanup_errors.append(f"{cleanup_refusals[job.id]}; its folder was kept")
+            elif cleanup_choice:
                 output_dir = self._job_output_directory(job)
                 if output_dir is not None and output_dir.exists() and output_dir.is_dir():
                     try:
@@ -8058,32 +8404,50 @@ class MainWindow(QMainWindow):
         dialog from opening.
         """
 
-        seed_name = self._job_seed_name(job)
-        if (job.execution_target or "").strip().casefold() == "local":
-            output_dir = self._job_output_directory(job)
-            if output_dir is None:
-                return CheckpointProbeResult.unavailable("The job's output directory is unknown")
-            checkpoint_path = output_dir / f"{seed_name}.check"
-            return (
-                CheckpointProbeResult.found()
-                if checkpoint_path.exists()
-                else CheckpointProbeResult.absent()
-            )
+        return self._checkpoint_probes([job])[job.id]
 
-        if not self._is_cluster_connected_for_job(job):
-            return CheckpointProbeResult.unavailable(f"Not connected to {job.execution_target}")
+    def _checkpoint_probes(self, jobs: Sequence[Job]) -> dict[UUID, CheckpointProbeResult]:
+        """Probe several jobs' ``{seed}.check`` files, with one remote round trip.
 
-        remote_directory = (job.remote_directory or "").strip()
-        if not remote_directory:
-            return CheckpointProbeResult.unavailable("No remote directory recorded for this job")
+        Per job this is exactly :meth:`_continue_relaxation_checkpoint_probe`;
+        every probed cluster path goes into a single remote check, so a batch
+        resubmission waits once rather than once per job.
+        """
 
-        remote_path = posixpath.join(remote_directory, f"{seed_name}.check")
-        result = self._await_remote_file_check([(job.id, remote_path)])
-        errors = result.get("errors", {})
-        if job.id in errors:
-            return CheckpointProbeResult.unavailable(str(errors[job.id]))
-        existing = result.get("existing", [])
-        return CheckpointProbeResult.found() if remote_path in existing else CheckpointProbeResult.absent()
+        probes: dict[UUID, CheckpointProbeResult] = {}
+        remote_paths: dict[UUID, str] = {}
+        for job in jobs:
+            seed_name = self._job_seed_name(job)
+            if (job.execution_target or "").strip().casefold() == "local":
+                output_dir = self._job_output_directory(job)
+                if output_dir is None:
+                    probes[job.id] = CheckpointProbeResult.unavailable("The job's output directory is unknown")
+                elif (output_dir / f"{seed_name}.check").exists():
+                    probes[job.id] = CheckpointProbeResult.found()
+                else:
+                    probes[job.id] = CheckpointProbeResult.absent()
+                continue
+            if not self._is_cluster_connected_for_job(job):
+                probes[job.id] = CheckpointProbeResult.unavailable(f"Not connected to {job.execution_target}")
+                continue
+            remote_directory = (job.remote_directory or "").strip()
+            if not remote_directory:
+                probes[job.id] = CheckpointProbeResult.unavailable("No remote directory recorded for this job")
+                continue
+            remote_paths[job.id] = posixpath.join(remote_directory, f"{seed_name}.check")
+
+        if remote_paths:
+            result = self._await_remote_file_check(list(remote_paths.items()))
+            errors = result.get("errors", {})
+            existing = result.get("existing", [])
+            for job_id, remote_path in remote_paths.items():
+                if job_id in errors:
+                    probes[job_id] = CheckpointProbeResult.unavailable(str(errors[job_id]))
+                elif remote_path in existing:
+                    probes[job_id] = CheckpointProbeResult.found()
+                else:
+                    probes[job_id] = CheckpointProbeResult.absent()
+        return probes
 
     @staticmethod
     def _resolve_continue_relaxation_seed_values(
@@ -8730,12 +9094,43 @@ class MainWindow(QMainWindow):
             return
         submit(list(plan.jobs))
 
-    def _failure_diagnostics_for_job(self, job: Job) -> str:
+    _FAILURE_HEADLINE_LIMIT = 8
+
+    def _job_failure_diagnosis(self, job: Job) -> FailureDiagnosis:
+        """Diagnose ``job`` from its logs, keeping the cause recorded at failure time.
+
+        The fresh diagnosis supplies the evidence line, and covers jobs that
+        failed before causes were recorded. A recorded cause the logs cannot
+        show (an interrupted run, a rejected submission) is kept as is.
+        """
+
+        fresh = self._job_execution.diagnose_failure(job, job.error_message)
+        if job.failure_reason is None or fresh.reason == job.failure_reason:
+            return fresh
+        return FailureDiagnosis(reason=job.failure_reason)
+
+    @classmethod
+    def _failure_headline(cls, jobs: list[Job], diagnoses: list[FailureDiagnosis]) -> str:
+        lines = [
+            f"{job.label}: {diagnosis.summary}"
+            for job, diagnosis in zip(jobs[: cls._FAILURE_HEADLINE_LIMIT], diagnoses, strict=False)
+        ]
+        hidden = len(jobs) - len(lines)
+        if hidden > 0:
+            lines.append(f"…and {hidden} more job(s).")
+        return "\n".join(lines)
+
+    def _failure_diagnostics_for_job(self, job: Job, diagnosis: FailureDiagnosis | None = None) -> str:
+        if diagnosis is None:
+            diagnosis = self._job_failure_diagnosis(job)
         lines = [
             f"Job: {job.label}",
             f"Workflow: {job.workflow_stage.value}",
             f"Status: {job.status.value}",
+            f"Cause: {diagnosis.summary}",
         ]
+        if diagnosis.evidence:
+            lines.append(f"Evidence ({diagnosis.evidence_source}): {diagnosis.evidence}")
 
         if job.error_message:
             lines.append(f"Recorded failure message: {job.error_message}")
@@ -8760,39 +9155,9 @@ class MainWindow(QMainWindow):
         return "\n".join(lines)
 
     def _error_file_candidates(self, job: Job, output_dir: Path) -> list[Path]:
-        discovered: list[Path] = []
-        seed_names = list(dict.fromkeys([job.label, self._job_seed_name(job)]))
-        for seed_name in seed_names:
-            preferred = output_dir / f"{seed_name}.err"
-            if preferred.exists() and preferred.is_file():
-                discovered.append(preferred)
-
-        remote_job_id = (job.remote_job_id or "").strip()
-        if remote_job_id and re.fullmatch(r"[A-Za-z0-9_.-]+", remote_job_id):
-            for slurm_output in sorted(output_dir.glob(f"*-{remote_job_id}.out")):
-                if slurm_output.is_file():
-                    discovered.append(slurm_output)
-
-        numbered_patterns = [
-            re.compile(rf"{re.escape(seed_name)}\.\d+\.err$")
-            for seed_name in seed_names
-        ]
-        if not output_dir.exists() or not output_dir.is_dir():
-            return list(dict.fromkeys(discovered))
-        for candidate in sorted(output_dir.iterdir()):
-            if candidate.is_file() and any(pattern.fullmatch(candidate.name) for pattern in numbered_patterns):
-                discovered.append(candidate)
-
-        if discovered:
-            return list(dict.fromkeys(discovered))
-
-        fallback_patterns = ("*.err", "slurm-*.out")
-        if remote_job_id and re.fullmatch(r"[A-Za-z0-9_.-]+", remote_job_id):
-            fallback_patterns = (*fallback_patterns, f"*-{remote_job_id}.out")
-        fallback: list[Path] = []
-        for pattern in fallback_patterns:
-            fallback.extend(sorted(path for path in output_dir.glob(pattern) if path.is_file()))
-        return list(dict.fromkeys(fallback))
+        return find_failure_log_files(
+            output_dir, [job.label, self._job_seed_name(job)], job.remote_job_id
+        )
 
     _TAIL_READ_LIMIT_BYTES = 256 * 1024
 
@@ -8809,24 +9174,7 @@ class MainWindow(QMainWindow):
         """
 
         limit = cls._TAIL_READ_LIMIT_BYTES if max_bytes is None else max_bytes
-        with path.open("rb") as handle:
-            size = handle.seek(0, 2)
-            truncated = size > limit
-            if truncated:
-                handle.seek(size - limit)
-            else:
-                handle.seek(0)
-            raw = handle.read()
-
-        # ``read_text()`` applies universal-newline translation; replicate that
-        # here so small-file behavior is byte-for-byte identical to before.
-        text = raw.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
-        if not truncated:
-            return text
-
-        # The seek landed mid-line; drop the partial leading fragment.
-        _, _, remainder = text.partition("\n")
-        return "[... truncated] ...\n" + remainder
+        return read_log_tail(path, limit)
 
     @classmethod
     def _read_error_contexts(cls, path: Path, *, context_lines: int = 2, max_matches: int = 8) -> str:
@@ -8898,10 +9246,26 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _clear_directory_contents(directory: Path) -> None:
+        """Delete a job directory's contents except its ``.cell``/``.param`` inputs.
+
+        A job directory is named after the job's seed, so CASTEP's relaxed
+        ``{seed}-out.cell`` is recognised by exact name and deleted with the
+        rest of the run's output; every other ``.cell``/``.param`` is kept, so a
+        seed that itself ends in ``-out`` keeps its input. A symlink is removed
+        as a link, never followed into what it points at.
+        """
+
+        output_cell = f"{directory.name}-out.cell".casefold()
         for child in directory.iterdir():
-            if child.is_file() and child.suffix.lower() in {".cell", ".param"}:
+            if (
+                child.is_file()
+                and child.suffix.lower() in {".cell", ".param"}
+                and child.name.casefold() != output_cell
+            ):
                 continue
-            if child.is_dir():
+            if child.is_symlink():
+                child.unlink()
+            elif child.is_dir():
                 shutil.rmtree(child)
             else:
                 child.unlink()
@@ -15308,7 +15672,22 @@ class MainWindow(QMainWindow):
                 continue
             singlepoint_job = self._singlepoint_job_for_quantum_source_key(definition, key)
             phonon_job = self._phonon_job_for_quantum_source_key(definition, key)
-            output_dir = self._job_output_directory(phonon_job or singlepoint_job) if (phonon_job or singlepoint_job) else None
+            owner = phonon_job or singlepoint_job
+            output_dir = self._job_output_directory(owner) if owner is not None else None
+            refusal = (
+                self._directory_ownership_refusals(
+                    [owner],
+                    shared_with={job.id for job in (phonon_job, singlepoint_job) if job is not None},
+                    check_remote=False,
+                ).get(owner.id)
+                if owner is not None
+                else None
+            )
+            if refusal:
+                # The whole directory is deleted below, so it must hold only
+                # this row's two stages.
+                cleanup_errors.append(f"{refusal}; the row was not reset")
+                continue
             if output_dir is not None and output_dir.exists() and output_dir.is_dir():
                 try:
                     self._delete_path(output_dir)

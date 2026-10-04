@@ -1,7 +1,7 @@
 """Domain models for MuFinder."""
 
 from mufinder.domain.constants import MUON_GAMMA_RAD_S_T, MUON_MASS_AMU
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -20,6 +20,7 @@ __all__ = [
     "CalculationDefinition",
     "CalculationRun",
     "ComparisonTable",
+    "FailureReason",
     "Job",
     "JobStatus",
     "MuonSite",

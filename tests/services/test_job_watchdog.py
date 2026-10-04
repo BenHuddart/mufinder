@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.job_watchdog import (
@@ -311,6 +311,7 @@ def test_stop_stuck_job_stops_and_stamps_bookkeeping(tmp_path: Path) -> None:
     assert update.journal_changed is True
     assert job.status == JobStatus.STOPPED
     assert job.error_message == message
+    assert job.failure_reason == FailureReason.INTERRUPTED
     assert job.last_status_source == "watchdog"
     assert job.last_status_message == message
     assert job.last_checked_at is not None

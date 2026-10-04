@@ -187,3 +187,11 @@ def test_create_scheduler_factory() -> None:
 
     with pytest.raises(ValueError, match="Unsupported queue system"):
         create_scheduler("pbs")
+
+
+@pytest.mark.parametrize(
+    ("state", "name"),
+    [("OOM", "OUT_OF_MEMORY"), ("TO", "TIMEOUT"), ("NF", "NODE_FAIL"), ("F", "FAILED"), ("timeout", "TIMEOUT"), ("BF", "BF")],
+)
+def test_slurm_state_name_expands_short_codes(state: str, name: str) -> None:
+    assert SlurmScheduler().state_name(state) == name

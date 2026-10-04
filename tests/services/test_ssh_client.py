@@ -87,12 +87,21 @@ class _FakeSFTP:
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
         self.directories: set[str] = set()
+        # Symlink path -> target path.
+        self.links: dict[str, str] = {}
         self.chmod_calls: list[tuple[str, int]] = []
 
     def close(self) -> None:
         return
 
     def stat(self, path: str):
+        if path in self.links:
+            return self.stat(self.links[path])
+        return self.lstat(path)
+
+    def lstat(self, path: str):
+        if path in self.links:
+            return type("Attr", (), {"st_mode": 0o120777})()
         if path in self.directories:
             return type("Attr", (), {"st_mode": 0o040755})()
         if path in self.files:
@@ -103,11 +112,12 @@ class _FakeSFTP:
         self.directories.add(path)
 
     def listdir(self, path: str) -> list[str]:
+        path = self.links.get(path, path)
         prefix = path.rstrip("/") + "/"
         entries: list[str] = []
-        for file_path in self.files:
-            if file_path.startswith(prefix):
-                entries.append(file_path[len(prefix) :].split("/")[0])
+        for entry_path in (*self.files, *self.links):
+            if entry_path.startswith(prefix):
+                entries.append(entry_path[len(prefix) :].split("/")[0])
         return sorted(set(entries))
 
     def open(self, path: str, _mode: str):
@@ -123,7 +133,8 @@ class _FakeSFTP:
         self.chmod_calls.append((path, mode))
 
     def remove(self, path: str) -> None:
-        self.files.pop(path, None)
+        if self.links.pop(path, None) is None:
+            self.files.pop(path, None)
 
     def rmdir(self, path: str) -> None:
         self.directories.discard(path)
@@ -617,6 +628,64 @@ def test_ssh_connection_rmtree_uses_recursive_sftp_delete(
     assert "/remote/path" not in sftp.directories
     assert "/remote/path/dir" not in sftp.directories
     assert "/remote/path/dir/file.txt" not in sftp.files
+
+
+def test_ssh_connection_rmtree_removes_symlinks_without_following_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_paramiko = _FakeParamiko(
+        fail_key=False,
+        system_host_keys={"example.org": _FakeKey()},
+    )
+    monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: fake_paramiko))
+
+    connection = SSHConnection(_config("key"))
+    connection.connect()
+    sftp = fake_paramiko._client._sftp
+    sftp.directories.update({"/remote/job", "/shared/pseudos"})
+    sftp.files["/remote/job/seed.castep"] = b"output"
+    sftp.files["/shared/pseudos/H.usp"] = b"pseudopotential"
+    sftp.links["/remote/job/pseudos"] = "/shared/pseudos"
+
+    connection.rmtree("/remote/job")
+
+    assert "/remote/job" not in sftp.directories
+    assert "/remote/job/pseudos" not in sftp.links
+    assert "/remote/job/seed.castep" not in sftp.files
+    # The linked directory and its contents survive.
+    assert "/shared/pseudos" in sftp.directories
+    assert sftp.files["/shared/pseudos/H.usp"] == b"pseudopotential"
+
+
+def test_ssh_connection_rmtree_tolerates_entries_that_vanish_mid_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_paramiko = _FakeParamiko(
+        fail_key=False,
+        system_host_keys={"example.org": _FakeKey()},
+    )
+    monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: fake_paramiko))
+
+    connection = SSHConnection(_config("key"))
+    connection.connect()
+    sftp = fake_paramiko._client._sftp
+    sftp.directories.add("/remote/job")
+    sftp.files["/remote/job/seed.castep"] = b"output"
+    sftp.files["/remote/job/seed.check"] = b"checkpoint"
+    real_lstat = sftp.lstat
+
+    def _lstat(path: str):
+        if path == "/remote/job/seed.check":
+            sftp.files.pop(path, None)  # removed by something else just now
+            raise FileNotFoundError(path)
+        return real_lstat(path)
+
+    sftp.lstat = _lstat
+
+    connection.rmtree("/remote/job")
+
+    assert "/remote/job" not in sftp.directories
+    assert sftp.files == {}
 
 
 def test_ssh_connection_requires_active_connection_for_exec() -> None:

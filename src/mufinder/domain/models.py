@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from mufinder._version import current_version
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 
 
 def utc_now() -> datetime:
@@ -129,6 +129,9 @@ class Job:
     num_processes: int | None = None
     tags: list[str] = field(default_factory=list)
     error_message: str | None = None
+    # Classified cause of a failed or stopped job; ``None`` when no specific
+    # cause was identified (or the job has not failed).
+    failure_reason: FailureReason | None = None
     last_checked_at: datetime | None = None
     last_status_source: str | None = None
     last_status_message: str | None = None

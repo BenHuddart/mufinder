@@ -10,7 +10,7 @@ import pytest
 from ase import Atoms
 from ase.io import write as ase_write
 
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result, Structure, utc_now
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.science.site_generation import SiteGenerationError
@@ -2062,3 +2062,46 @@ def test_clear_recommended_defaults_removes_value_and_metadata(tmp_path: Path) -
     loaded = service.load_project(root)
     assert loaded.project.recommended_cutoff_energy is None
     assert loaded.project.recommended_kpoint_grid is None
+
+
+def test_failure_reason_is_recorded_cleared_and_persisted(tmp_path: Path) -> None:
+    service = ProjectService()
+    root = tmp_path / "failure_reason.mufinder"
+    doc = service.create_project(root, "FailureReason")
+    job = service.add_job(
+        doc,
+        label="Timeout",
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+    )
+    service.submit_job(job)
+    service.start_job(job)
+    service.stop_job(job, "walltime", reason=FailureReason.WALLTIME)
+    service.record_job_terminal_event(doc, action="job_stopped", job=job, error_message="walltime")
+
+    assert doc.provenance[-1].parameters["failure_reason"] == "walltime"
+    service.save_project(doc)
+    assert service.load_project(root).jobs[job.id].failure_reason == FailureReason.WALLTIME
+
+    service.submit_job(job)
+    assert job.failure_reason is None
+    service.start_job(job)
+    service.fail_job(job, "oom", reason=FailureReason.OUT_OF_MEMORY)
+    service.reset_failed_job(job)
+    assert job.failure_reason is None
+
+
+def test_failure_reason_loads_as_none_when_absent_or_unknown() -> None:
+    service = ProjectService()
+    base = {
+        "id": str(uuid4()),
+        "workflow_stage": WorkflowStage.CONVERGENCE_CUTOFF.value,
+        "status": JobStatus.FAILED.value,
+    }
+
+    assert service._job_from_dict(base).failure_reason is None
+    assert service._job_from_dict({**base, "failure_reason": "cosmic_ray"}).failure_reason is None
+    assert (
+        service._job_from_dict({**base, "failure_reason": "out_of_memory"}).failure_reason
+        == FailureReason.OUT_OF_MEMORY
+    )

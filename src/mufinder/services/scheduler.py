@@ -59,6 +59,11 @@ class Scheduler(ABC):
     def map_to_job_status(self, state: str) -> JobStatus:
         """Map scheduler state to domain job status."""
 
+    def state_name(self, state: str) -> str:
+        """Return the scheduler's full name for ``state`` (for messages and logs)."""
+
+        return state.strip().upper()
+
 
 class SlurmScheduler(Scheduler):
     """SLURM scheduler implementation via shell commands over SSH."""
@@ -211,6 +216,12 @@ class SlurmScheduler(Scheduler):
         if normalized in {"F", "NF", "OOM"}:
             return JobStatus.FAILED
         return JobStatus.RUNNING
+
+    def state_name(self, state: str) -> str:
+        """Return SLURM's long state name (``OOM`` -> ``OUT_OF_MEMORY``)."""
+
+        code = self._normalise_state(state)
+        return next((name for name, alias in self._STATE_ALIAS.items() if alias == code), code)
 
     def _normalise_state(self, state: str) -> str:
         key = state.strip().upper()

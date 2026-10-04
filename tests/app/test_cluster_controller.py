@@ -68,6 +68,7 @@ class _FakeRunner(QObject):
         self.exists_should_raise: set[str] = set()
         self.existing_files: set[str] | None = None
         self.file_exists_should_raise: set[str] = set()
+        self.active_scheduler_jobs: set[str] = set()
         self.on_submit = None
         self.connect_should_raise: Exception | None = None
         # When set, ``block_worker`` holds the worker thread inside a long op so a
@@ -111,6 +112,10 @@ class _FakeRunner(QObject):
     def remove_remote_directory(self, remote_directory: str) -> None:
         self.threads["rmtree"] = QThread.currentThread()
         self.calls.append(("rmtree", remote_directory))
+
+    def scheduler_job_is_active(self, remote_job_id: str) -> bool:
+        self.calls.append(("scheduler_check", remote_job_id))
+        return remote_job_id in self.active_scheduler_jobs
 
     def refresh_queue(self) -> None:
         self.threads["refresh"] = QThread.currentThread()
@@ -667,3 +672,36 @@ def test_real_runner_poll_timer_is_stopped_by_shutdown(qapp) -> None:
     ctrl.shutdown()
     assert ctrl._thread.isRunning() is False
     assert ctrl._runner._poll_timer.isActive() is False
+
+
+def test_run_submit_batch_deletes_a_finished_runs_directory(controller) -> None:
+    ctrl, fake = controller
+    results: list[tuple] = []
+    ctrl.job_submit_finished.connect(lambda jid, rid, err: results.append((jid, rid, err)))
+
+    ctrl._batch_cancelled = False
+    ctrl._run_submit_batch([{**_batch_item(0, delete="/old"), "delete_only_if_finished": "777"}])
+
+    assert ("scheduler_check", "777") in fake.calls
+    assert ("rmtree", "/old") in fake.calls
+    assert results == [("job-0", "JOB-1", "")]
+
+
+def test_run_submit_batch_refuses_to_delete_a_running_jobs_directory(controller) -> None:
+    ctrl, fake = controller
+    fake.active_scheduler_jobs = {"777"}
+    results: list[tuple] = []
+    ctrl.job_submit_finished.connect(lambda jid, rid, err: results.append((jid, rid, err)))
+
+    ctrl._batch_cancelled = False
+    ctrl._run_submit_batch([{**_batch_item(0, delete="/old"), "delete_only_if_finished": "777"}])
+
+    assert ("rmtree", "/old") not in fake.calls
+    assert not any(call[0] == "submit" for call in fake.calls)
+    assert results == [
+        (
+            "job-0",
+            None,
+            "scheduler job 777 is still queued or running, so its directory /old was not deleted",
+        )
+    ]
