@@ -8,6 +8,15 @@ from pathlib import Path
 import re
 
 
+#: Resolution of the force and stress tables CASTEP writes to ``.castep``, in
+#: its default units (``FORCE_UNIT : EV/ANG``, ``PRESSURE_UNIT : GPA``). CASTEP
+#: 26.11 prints each force component with ``f13.5`` (``firstd_output_forces``) and
+#: each stress component with ``f14.6`` (``firstd_output_stress``), both in
+#: ``Source/Functional/firstd.f90``. Differences finer than these cannot be read
+#: back from the output.
+CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG = 1e-5
+CASTEP_STRESS_PRINT_RESOLUTION_GPA = 1e-6
+
 _FLOAT_RE = r"[-+]?\d+(?:\.\d+)?(?:[Ee][-+]?\d+)?"
 _ENERGY_PATTERNS = (
     re.compile(rf"Total\s+energy[^\n=]*=\s*({_FLOAT_RE})\s*eV", re.IGNORECASE),

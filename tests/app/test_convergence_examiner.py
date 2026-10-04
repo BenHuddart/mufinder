@@ -776,12 +776,8 @@ def test_convergence_examiner_hover_survives_reanalysis(qapp) -> None:
     assert annotation.get_visible() is True
 
 
-def test_convergence_examiner_shows_the_clamped_threshold_it_analysed_with(qapp) -> None:
-    """A threshold typed below the minimum is used as the minimum, so show the minimum.
-
-    Otherwise tightening an already-minimal threshold left ``0.0001`` on screen
-    while the analysis ran with ``0.001`` and nothing visibly changed.
-    """
+def test_convergence_examiner_accepts_tight_thresholds_as_typed(qapp) -> None:
+    """Thresholds only need to be positive; there is no arbitrary floor."""
 
     dialog = ConvergenceExaminerDialog(
         {
@@ -792,9 +788,56 @@ def test_convergence_examiner_shows_the_clamped_threshold_it_analysed_with(qapp)
         num_atoms=2,
     )
     dialog._method_combo.setCurrentText("Delta-Threshold")
+    dialog._energy_threshold.setText("0.00001")
     dialog._force_threshold.setText("0.0001")
 
     dialog._run_analysis()
 
-    assert dialog._force_threshold.text() == "0.001"
-    assert "Force threshold: 0.001 eV/Ang" in dialog._results.toPlainText()
+    assert dialog._energy_threshold.text() == "0.00001"
+    assert dialog._force_threshold.text() == "0.0001"
+    text = dialog._results.toPlainText()
+    assert "Energy threshold: 1e-05 eV/atom" in text
+    assert "Force threshold: 0.0001 eV/Ang" in text
+    # 1e-4 eV/Ang is coarser than CASTEP's printed force precision: no note.
+    assert "finer than" not in text
+
+
+def test_convergence_examiner_notes_thresholds_finer_than_castep_prints(qapp) -> None:
+    """CASTEP prints forces to 1e-5 eV/Ang and stresses to 1e-6 GPa (firstd.f90)."""
+
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: CutoffRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=1.0),
+            400.0: CutoffRunState(status="completed", total_energy=-10.01, max_force=0.20, max_stress=0.6),
+            500.0: CutoffRunState(status="completed", total_energy=-10.0105, max_force=0.15, max_stress=0.4),
+        },
+        num_atoms=2,
+    )
+    dialog._method_combo.setCurrentText("Delta-Threshold")
+    dialog._include_stress.setChecked(True)
+    dialog._force_threshold.setText("0.000001")
+    dialog._stress_threshold.setText("0.0000001")
+
+    dialog._run_analysis()
+
+    text = dialog._results.toPlainText()
+    assert (
+        "The force threshold (1e-06 eV/Ang) is finer than the 1e-05 eV/Ang to which CASTEP prints forces"
+        in text
+    )
+    assert "The stress threshold (1e-07 GPa) is finer than the 1e-06 GPa to which CASTEP prints stresses" in text
+
+
+def test_convergence_examiner_raises_a_non_positive_threshold_to_the_smallest_positive_value(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.30),
+            400.0: _completed_state(-10.01, 0.20),
+        },
+        num_atoms=2,
+    )
+    dialog._force_threshold.setText("0")
+
+    dialog._run_analysis()
+
+    assert dialog._force_threshold.value() > 0.0

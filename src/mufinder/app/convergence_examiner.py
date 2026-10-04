@@ -31,6 +31,10 @@ from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import current_palette
+from mufinder.castep_io.output_parser import (
+    CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG,
+    CASTEP_STRESS_PRINT_RESOLUTION_GPA,
+)
 from mufinder.science.convergence_analysis import (
     ConvergenceResult,
     analyze_convergence,
@@ -41,6 +45,35 @@ from mufinder.science.convergence_analysis import (
     unconverged_criteria,
 )
 from mufinder.science.kpoint_grids import format_kpoint_grid, kpoint_count_for_spacing, spacing_from_grid
+
+
+#: Thresholds must be positive; this is the smallest value the fields accept,
+#: with enough decimals to type it.
+_THRESHOLD_DECIMALS = 12
+_MIN_THRESHOLD = 10.0 ** -_THRESHOLD_DECIMALS
+
+
+def _precision_notes(force_threshold: float, stress_threshold: float | None) -> list[str]:
+    """Explain thresholds finer than the precision CASTEP prints forces and stresses.
+
+    Such a threshold is accepted, but a criterion can then only be met by two
+    consecutive values that print identically.
+    """
+
+    notes: list[str] = []
+    if force_threshold < CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG:
+        notes.append(
+            f"The force threshold ({force_threshold:.6g} eV/Ang) is finer than the "
+            f"{CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG:g} eV/Ang to which CASTEP prints forces, "
+            "so it is met only when consecutive maximum forces print identically."
+        )
+    if stress_threshold is not None and stress_threshold < CASTEP_STRESS_PRINT_RESOLUTION_GPA:
+        notes.append(
+            f"The stress threshold ({stress_threshold:.6g} GPa) is finer than the "
+            f"{CASTEP_STRESS_PRINT_RESOLUTION_GPA:g} GPa to which CASTEP prints stresses, "
+            "so it is met only when consecutive maximum stresses print identically."
+        )
+    return notes
 
 
 _STRESS_DISABLED_TOOLTIP = (
@@ -158,15 +191,18 @@ class ConvergenceExaminerDialog(QDialog):
         self._stress_threshold_for_recommendation: float | None = None
         self._last_plot_data: dict[str, Any] | None = None
 
+        # Thresholds only need to be positive; the smallest representable step
+        # stands in for "greater than zero". See _precision_notes for when a
+        # threshold is finer than CASTEP prints the quantity.
         self._energy_threshold = DecimalLineEdit(self)
-        self._energy_threshold.setRange(0.0001, 1.0)
-        self._energy_threshold.setDecimals(6)
+        self._energy_threshold.setRange(_MIN_THRESHOLD, 1.0)
+        self._energy_threshold.setDecimals(_THRESHOLD_DECIMALS)
         self._energy_threshold.setSingleStep(0.001)
         self._energy_threshold.setValue(0.001)
 
         self._force_threshold = DecimalLineEdit(self)
-        self._force_threshold.setRange(0.001, 1.0)
-        self._force_threshold.setDecimals(6)
+        self._force_threshold.setRange(_MIN_THRESHOLD, 1.0)
+        self._force_threshold.setDecimals(_THRESHOLD_DECIMALS)
         self._force_threshold.setSingleStep(0.01)
         self._force_threshold.setValue(0.05)
 
@@ -178,8 +214,8 @@ class ConvergenceExaminerDialog(QDialog):
         self._include_stress.setAutoFillBackground(False)
         self._include_stress.setStyleSheet("QCheckBox { background: transparent; }")
         self._stress_threshold = DecimalLineEdit(self)
-        self._stress_threshold.setRange(0.0001, 100.0)
-        self._stress_threshold.setDecimals(6)
+        self._stress_threshold.setRange(_MIN_THRESHOLD, 100.0)
+        self._stress_threshold.setDecimals(_THRESHOLD_DECIMALS)
         self._stress_threshold.setSingleStep(0.05)
         self._stress_threshold.setValue(0.1)
         self._stress_threshold.setEnabled(False)
@@ -1028,10 +1064,11 @@ class ConvergenceExaminerDialog(QDialog):
             self._adopt_button.setText(self._adopt_button_text())
             self._emit_state_changed()
 
-    def _note_lines(self) -> list[str]:
-        if not self._notes:
+    def _note_lines(self, extra: Sequence[str] = ()) -> list[str]:
+        notes = [*self._notes, *extra]
+        if not notes:
             return []
-        return ["", "Notes:", *(f"- {note}" for note in self._notes)]
+        return ["", "Notes:", *(f"- {note}" for note in notes)]
 
     def _recommended_point_text(self) -> str:
         """Return the recommended k-point grid as ``4 x 4 x 4`` (or a count fallback)."""
@@ -1199,7 +1236,11 @@ class ConvergenceExaminerDialog(QDialog):
                 )
             else:
                 lines.extend(["", "No combined convergence recommendation available yet."])
-        lines.extend(self._note_lines())
+        lines.extend(
+            self._note_lines(
+                _precision_notes(force_threshold, stress_threshold if include_stress else None)
+            )
+        )
 
         self._results.setPlainText("\n".join(lines))
         self._last_plot_data = {
