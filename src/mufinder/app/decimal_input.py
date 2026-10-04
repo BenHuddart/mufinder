@@ -25,6 +25,7 @@ class DecimalLineEdit(QLineEdit):
         self._validator.setNotation(QDoubleValidator.Notation.ScientificNotation)
         self.setValidator(self._validator)
         self.textChanged.connect(self._on_text_changed)
+        self.editingFinished.connect(self._snap_to_range)
         self.setValue(0.0)
 
     def setRange(self, minimum: float, maximum: float) -> None:  # noqa: N802 - Qt API compatibility.
@@ -67,6 +68,20 @@ class DecimalLineEdit(QLineEdit):
             return
         self._last_value = value
         self.valueChanged.emit(value)
+
+    def _snap_to_range(self) -> None:
+        """Show the clamped value when an out-of-range number is left in the field.
+
+        ``value()`` already clamps, so without this the field could display, say,
+        ``0.0001`` while every reader used the minimum ``0.001``. Like a
+        ``QDoubleSpinBox``, the text is corrected when editing finishes. Blank or
+        unparsable text is left alone: some callers treat a blank field as unset.
+        """
+
+        parsed = self._parse(self.text())
+        if parsed is None or self._clamp(parsed) == parsed:
+            return
+        self.setValue(parsed)
 
     def _parse(self, text: str) -> float | None:
         stripped = text.strip()

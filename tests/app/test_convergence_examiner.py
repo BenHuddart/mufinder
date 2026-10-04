@@ -694,3 +694,154 @@ def test_recompute_spacings_in_snapshot_falls_back_without_point_labels() -> Non
     # No point_labels → unchanged (but a copy, not the same object).
     assert result["plot_data"]["point_spacings"] == {"300.0": 0.5}
     assert result is not snapshot
+
+
+def test_convergence_examiner_withholds_recommendation_when_force_has_not_converged(qapp) -> None:
+    """A converged energy alone must not be offered for adoption."""
+
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.90),
+            400.0: _completed_state(-10.0001, 0.60),
+            500.0: _completed_state(-10.0002, 0.30),
+        },
+        num_atoms=2,
+    )
+
+    dialog._method_combo.setCurrentText("Delta-Threshold")
+    dialog._run_analysis()
+
+    text = dialog._results.toPlainText()
+    assert "Recommended cutoff" not in text
+    assert "No recommendation: the force criterion did not converge within the sweep" in text
+    assert dialog._adopt_button.isEnabled() is False
+
+
+def test_convergence_examiner_kpoint_adopt_label_names_the_grid_once(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            8.0: _completed_state(-10.0, 0.30),
+            27.0: _completed_state(-10.01, 0.20),
+            64.0: _completed_state(-10.0105, 0.19),
+        },
+        num_atoms=2,
+        sweep_kind="kpoint",
+        point_labels={8.0: "Grid: 2 x 2 x 2", 27.0: "Grid: 3 x 3 x 3", 64.0: "Grid: 4 x 4 x 4"},
+        notes=("2 x 4 x 1 left out: same k-point count (8) as 2 x 2 x 2.",),
+    )
+
+    assert "Notes:\n- 2 x 4 x 1 left out" in dialog._results.toPlainText()
+    dialog._run_analysis()
+
+    text = dialog._adopt_button.text()
+    assert text.startswith("Set ") and text.endswith(" as Project Default K-Point Grid")
+    assert "Grid:" not in text
+    results = dialog._results.toPlainText()
+    assert "Recommended k-point grid: Grid:" not in results
+    assert "2 x 4 x 1 left out" in results
+
+
+def test_convergence_examiner_hover_survives_reanalysis(qapp) -> None:
+    """Re-analysing clears the figure; the next hover must not touch the old annotation.
+
+    ``Figure.clear`` detaches the cached hover annotation, and removing a
+    detached artist raises ``NotImplementedError`` on every mouse move.
+    """
+
+    from matplotlib.backend_bases import MouseEvent
+
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.30),
+            400.0: _completed_state(-10.01, 0.20),
+            500.0: _completed_state(-10.0105, 0.19),
+        },
+        num_atoms=2,
+    )
+    dialog._method_combo.setCurrentText("Delta-Threshold")
+
+    def hover() -> None:
+        dialog._canvas.draw()
+        x, y = dialog._force_ax.transData.transform((400.0, 0.20))
+        dialog._on_plot_hover(MouseEvent("motion_notify_event", dialog._canvas, x, y))
+
+    dialog._run_analysis()
+    hover()
+    dialog._run_analysis()
+    hover()
+
+    annotation = dialog._hover_annotation
+    assert annotation is not None
+    assert annotation.axes is dialog._force_ax
+    assert annotation.get_visible() is True
+
+
+def test_convergence_examiner_accepts_tight_thresholds_as_typed(qapp) -> None:
+    """Thresholds only need to be positive; there is no arbitrary floor."""
+
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.30),
+            400.0: _completed_state(-10.01, 0.20),
+            500.0: _completed_state(-10.0105, 0.15),
+        },
+        num_atoms=2,
+    )
+    dialog._method_combo.setCurrentText("Delta-Threshold")
+    dialog._energy_threshold.setText("0.00001")
+    dialog._force_threshold.setText("0.0001")
+
+    dialog._run_analysis()
+
+    assert dialog._energy_threshold.text() == "0.00001"
+    assert dialog._force_threshold.text() == "0.0001"
+    text = dialog._results.toPlainText()
+    assert "Energy threshold: 1e-05 eV/atom" in text
+    assert "Force threshold: 0.0001 eV/Ang" in text
+
+
+def test_convergence_examiner_floors_force_and_stress_at_castep_printed_precision(qapp) -> None:
+    """CASTEP prints forces to 1e-5 eV/Ang and stresses to 1e-6 GPa (firstd.f90).
+
+    A finer threshold could only be met by values that print identically, so the
+    fields stop at that precision and show the value the analysis used.
+    """
+
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: CutoffRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=1.0),
+            400.0: CutoffRunState(status="completed", total_energy=-10.01, max_force=0.20, max_stress=0.6),
+            500.0: CutoffRunState(status="completed", total_energy=-10.0105, max_force=0.15, max_stress=0.4),
+        },
+        num_atoms=2,
+    )
+    dialog._method_combo.setCurrentText("Delta-Threshold")
+    dialog._include_stress.setChecked(True)
+    dialog._force_threshold.setText("0.000001")
+    dialog._stress_threshold.setText("0.0000001")
+
+    dialog._run_analysis()
+
+    assert dialog._force_threshold.text() == "0.00001"
+    assert dialog._stress_threshold.text() == "0.000001"
+    text = dialog._results.toPlainText()
+    assert "Force threshold: 1e-05 eV/Ang" in text
+    assert "Stress threshold: 1e-06 GPa" in text
+    assert "0.00001 eV/Ang" in dialog._force_threshold.toolTip()
+
+
+def test_convergence_examiner_raises_a_non_positive_threshold_to_the_smallest_positive_value(qapp) -> None:
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.30),
+            400.0: _completed_state(-10.01, 0.20),
+        },
+        num_atoms=2,
+    )
+    dialog._energy_threshold.setText("0")
+    dialog._force_threshold.setText("0")
+
+    dialog._run_analysis()
+
+    assert dialog._energy_threshold.value() > 0.0
+    assert dialog._force_threshold.text() == "0.00001"

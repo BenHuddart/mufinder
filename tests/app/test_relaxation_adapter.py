@@ -250,6 +250,19 @@ def test_suggested_grid_for_row_returns_exact_project_grid_for_identity_referenc
     assert grid == (3, 3, 3)
 
 
+def test_suggested_grid_for_row_rescales_a_supercell_converged_grid_for_the_unit_cell() -> None:
+    """A grid converged on a 2x1x1 supercell is twice as dense along a on the unit cell."""
+
+    grid = suggested_grid_for_row(
+        host_lattice=[[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]],
+        row_matrix=None,
+        reference_lattice=[[6.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]],
+        reference_grid=(2, 3, 3),
+    )
+
+    assert grid == (4, 3, 3)
+
+
 def test_expand_muon_relaxation_jobs_forces_fixed_cell_and_charge() -> None:
     config = MuonRelaxationConfig(
         rows=(

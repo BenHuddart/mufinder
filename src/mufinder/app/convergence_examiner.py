@@ -31,6 +31,10 @@ from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.screen_utils import clamped_size
 from mufinder.app.theme import current_palette
+from mufinder.castep_io.output_parser import (
+    CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG,
+    CASTEP_STRESS_PRINT_RESOLUTION_GPA,
+)
 from mufinder.science.convergence_analysis import (
     ConvergenceResult,
     analyze_convergence,
@@ -38,8 +42,20 @@ from mufinder.science.convergence_analysis import (
     apply_kpoint_label_to_stress_result,
     delta_threshold_stress,
     recommended_value,
+    unconverged_criteria,
 )
-from mufinder.science.kpoint_grids import kpoint_count_for_spacing, spacing_from_grid
+from mufinder.science.kpoint_grids import format_kpoint_grid, kpoint_count_for_spacing, spacing_from_grid
+
+
+#: Smallest thresholds the fields accept. Forces and stresses cannot be compared
+#: more finely than CASTEP prints them, so their floors are that printed
+#: resolution; a finer threshold could only be met by values that print
+#: identically. Energies are printed to 13 significant figures, so the energy
+#: threshold only has to be positive.
+_THRESHOLD_DECIMALS = 12
+_MIN_ENERGY_THRESHOLD = 10.0 ** -_THRESHOLD_DECIMALS
+_MIN_FORCE_THRESHOLD = CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG
+_MIN_STRESS_THRESHOLD = CASTEP_STRESS_PRINT_RESOLUTION_GPA
 
 
 _STRESS_DISABLED_TOOLTIP = (
@@ -103,9 +119,13 @@ class ConvergenceExaminerDialog(QDialog):
         point_labels: Mapping[float, str] | None = None,
         lattice_vectors: Sequence[Sequence[float]] | None = None,
         initial_state: Mapping[str, object] | None = None,
+        notes: Sequence[str] = (),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        # Caller-supplied caveats about the sweep data (for example grids left out
+        # because they share a k-point count), repeated in every results summary.
+        self._notes = tuple(str(note) for note in notes if str(note).strip())
         if sweep_kind not in {"cutoff", "kpoint"}:
             raise ValueError("sweep_kind must be 'cutoff' or 'kpoint'.")
 
@@ -154,14 +174,14 @@ class ConvergenceExaminerDialog(QDialog):
         self._last_plot_data: dict[str, Any] | None = None
 
         self._energy_threshold = DecimalLineEdit(self)
-        self._energy_threshold.setRange(0.0001, 1.0)
-        self._energy_threshold.setDecimals(6)
+        self._energy_threshold.setRange(_MIN_ENERGY_THRESHOLD, 1.0)
+        self._energy_threshold.setDecimals(_THRESHOLD_DECIMALS)
         self._energy_threshold.setSingleStep(0.001)
         self._energy_threshold.setValue(0.001)
 
         self._force_threshold = DecimalLineEdit(self)
-        self._force_threshold.setRange(0.001, 1.0)
-        self._force_threshold.setDecimals(6)
+        self._force_threshold.setRange(_MIN_FORCE_THRESHOLD, 1.0)
+        self._force_threshold.setDecimals(_THRESHOLD_DECIMALS)
         self._force_threshold.setSingleStep(0.01)
         self._force_threshold.setValue(0.05)
 
@@ -173,8 +193,8 @@ class ConvergenceExaminerDialog(QDialog):
         self._include_stress.setAutoFillBackground(False)
         self._include_stress.setStyleSheet("QCheckBox { background: transparent; }")
         self._stress_threshold = DecimalLineEdit(self)
-        self._stress_threshold.setRange(0.0001, 100.0)
-        self._stress_threshold.setDecimals(6)
+        self._stress_threshold.setRange(_MIN_STRESS_THRESHOLD, 100.0)
+        self._stress_threshold.setDecimals(_THRESHOLD_DECIMALS)
         self._stress_threshold.setSingleStep(0.05)
         self._stress_threshold.setValue(0.1)
         self._stress_threshold.setEnabled(False)
@@ -238,7 +258,14 @@ class ConvergenceExaminerDialog(QDialog):
         criteria_form.addRow("Energy threshold (eV/atom)", self._energy_threshold)
         criteria_form.addRow("Force threshold (eV/Ang)", self._force_threshold)
         criteria_form.addRow(self._include_stress, self._stress_threshold)
-        self._stress_threshold.setToolTip("Stress convergence threshold (GPa). Mirrors GEOM_STRESS_TOL.")
+        self._force_threshold.setToolTip(
+            "Force convergence threshold (eV/Ang). The minimum is "
+            f"{_MIN_FORCE_THRESHOLD:.5f} eV/Ang, the precision CASTEP prints forces to."
+        )
+        self._stress_threshold.setToolTip(
+            "Stress convergence threshold (GPa). Mirrors GEOM_STRESS_TOL. The minimum is "
+            f"{_MIN_STRESS_THRESHOLD:.6f} GPa, the precision CASTEP prints stresses to."
+        )
         layout.addWidget(criteria_group)
 
         method_row = QHBoxLayout()
@@ -308,6 +335,17 @@ class ConvergenceExaminerDialog(QDialog):
         frame.set_alpha(0.95)
         for label in legend.get_texts():
             label.set_color(palette.text_primary)
+
+    def _clear_figure(self) -> None:
+        """Clear the figure and forget the hover annotation that lived on it.
+
+        ``Figure.clear`` detaches every artist, including a cached hover
+        annotation, which then can no longer be removed or redrawn; the next
+        hover creates a fresh one on the new axes.
+        """
+
+        self._figure.clear()
+        self._hover_annotation = None
 
     def _on_plot_leave(self, _event) -> None:
         if self._hover_annotation is not None:
@@ -429,7 +467,11 @@ class ConvergenceExaminerDialog(QDialog):
             self._hover_annotation.set_bbox(self._annotation_box_style())
             self._hover_annotation.set_color(self._annotation_text_color())
             if self._hover_annotation.axes is not anchor_ax:
-                self._hover_annotation.remove()
+                try:
+                    self._hover_annotation.remove()
+                except (NotImplementedError, ValueError):
+                    # Already detached from the figure; nothing to remove.
+                    pass
                 self._hover_annotation = anchor_ax.annotate(
                     nearest[2],
                     xy=(nearest[0], nearest[1]),
@@ -721,13 +763,14 @@ class ConvergenceExaminerDialog(QDialog):
             f"Energy datapoints available: {len(energy_cutoffs)}",
             f"Force datapoints available: {len(force_cutoffs)}",
             f"Stress datapoints available: {len(stress_cutoffs)}",
-            f"Host atoms used for per-atom normalization: {self._num_atoms}",
+            f"Simulation-cell atoms used for per-atom normalization: {self._num_atoms}",
         ]
 
         if len(energy_cutoffs) < 2 or len(force_cutoffs) < 2:
             lines.append("Need at least two completed rows with both energy and max-force values to run analysis.")
         elif self._num_atoms <= 0:
-            lines.append("Host structure atom count must be positive before analysis can run.")
+            lines.append("Simulation-cell atom count must be positive before analysis can run.")
+        lines.extend(self._note_lines())
 
         self._results.setPlainText("\n".join(lines))
 
@@ -737,7 +780,7 @@ class ConvergenceExaminerDialog(QDialog):
 
         palette = current_palette()
         self._figure.set_facecolor(palette.bg_surface)
-        self._figure.clear()
+        self._clear_figure()
         energy_ax = self._figure.add_subplot(2, 1, 1)
         force_ax = self._figure.add_subplot(2, 1, 2, sharex=energy_ax)
         self._energy_ax = energy_ax
@@ -1004,17 +1047,27 @@ class ConvergenceExaminerDialog(QDialog):
 
         if self._recommended_value is not None:
             self._adopt_button.setEnabled(True)
-            if self._sweep_kind == "cutoff":
-                self._adopt_button.setText(
-                    f"Set {self._recommended_value:.8g} eV as Project Default Cutoff"
-                )
-            else:
-                label = self._point_labels.get(
-                    float(self._recommended_value),
-                    f"{self._recommended_value:.8g} k-points",
-                )
-                self._adopt_button.setText(f"Set {label} as Project Default K-Point Grid")
+            self._adopt_button.setText(self._adopt_button_text())
             self._emit_state_changed()
+
+    def _note_lines(self) -> list[str]:
+        if not self._notes:
+            return []
+        return ["", "Notes:", *(f"- {note}" for note in self._notes)]
+
+    def _recommended_point_text(self) -> str:
+        """Return the recommended k-point grid as ``4 x 4 x 4`` (or a count fallback)."""
+
+        value = float(self._recommended_value)  # type: ignore[arg-type]
+        grid = self._point_grids.get(value)
+        if grid is not None:
+            return format_kpoint_grid(grid)
+        return self._point_labels.get(value, f"{value:.8g} k-points")
+
+    def _adopt_button_text(self) -> str:
+        if self._sweep_kind == "cutoff":
+            return f"Set {self._recommended_value:.8g} eV as Project Default Cutoff"
+        return f"Set {self._recommended_point_text()} as Project Default K-Point Grid"
 
     def _show_method_info(self) -> None:
         method = self._selected_method()
@@ -1022,6 +1075,11 @@ class ConvergenceExaminerDialog(QDialog):
         QMessageBox.information(self, "Energy method info", text)
 
     def _run_analysis(self) -> None:
+        # Show the thresholds actually used: a typed value outside a field's range
+        # is clamped when read, and clicking the button does not always end the
+        # edit (macOS buttons take no focus), so snap the text here as well.
+        for field in (self._energy_threshold, self._force_threshold, self._stress_threshold):
+            field.setValue(field.value())
         self._update_method_availability()
         if not self._run_button.isEnabled():
             self._write_initial_summary()
@@ -1140,10 +1198,7 @@ class ConvergenceExaminerDialog(QDialog):
             if self._sweep_kind == "cutoff":
                 lines.extend(["", f"Recommended cutoff: {self._recommended_value:.8g} eV"])
             else:
-                label = self._point_labels.get(
-                    float(self._recommended_value),
-                    f"{self._recommended_value:.8g} k-points",
-                )
+                label = self._recommended_point_text()
                 recommended_line = f"Recommended k-point grid: {label}"
                 grid = self._point_grids.get(float(self._recommended_value))
                 spacing = self._point_spacings.get(float(self._recommended_value))
@@ -1151,7 +1206,22 @@ class ConvergenceExaminerDialog(QDialog):
                     recommended_line += f" (spacing {spacing:.4g} 1/Ang)"
                 lines.extend(["", recommended_line])
         else:
-            lines.extend(["", "No combined convergence recommendation available yet."])
+            unconverged = unconverged_criteria(energy_result, force_result, stress_result)
+            if unconverged:
+                setting = "cutoffs" if self._sweep_kind == "cutoff" else "denser k-point grids"
+                lines.extend(
+                    [
+                        "",
+                        "No recommendation: the "
+                        + " and ".join(unconverged)
+                        + (" criterion" if len(unconverged) == 1 else " criteria")
+                        + " did not converge within the sweep. Extend the sweep to larger "
+                        + f"{setting}, or relax the threshold, and analyse again.",
+                    ]
+                )
+            else:
+                lines.extend(["", "No combined convergence recommendation available yet."])
+        lines.extend(self._note_lines())
 
         self._results.setPlainText("\n".join(lines))
         self._last_plot_data = {
@@ -1183,16 +1253,7 @@ class ConvergenceExaminerDialog(QDialog):
             )
         else:
             self._adopt_button.setEnabled(True)
-            if self._sweep_kind == "cutoff":
-                self._adopt_button.setText(
-                    f"Set {self._recommended_value:.8g} eV as Project Default Cutoff"
-                )
-            else:
-                label = self._point_labels.get(
-                    float(self._recommended_value),
-                    f"{self._recommended_value:.8g} k-points",
-                )
-                self._adopt_button.setText(f"Set {label} as Project Default K-Point Grid")
+            self._adopt_button.setText(self._adopt_button_text())
 
         self._emit_state_changed()
 
@@ -1224,7 +1285,7 @@ class ConvergenceExaminerDialog(QDialog):
                     axis.set_xscale("linear")
             except Exception:
                 pass
-        self._figure.clear()
+        self._clear_figure()
         energy_ax = self._figure.add_subplot(2, 1, 1)
         force_ax = self._figure.add_subplot(2, 1, 2, sharex=energy_ax)
         self._energy_ax = energy_ax

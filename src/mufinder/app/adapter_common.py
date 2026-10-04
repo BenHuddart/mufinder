@@ -27,6 +27,7 @@ from mufinder.castep_io.types import (
     SpeciesPotential,
 )
 from mufinder.science.kpoint_grids import equivalent_grid_for_supercell
+from mufinder.science.supercell_matching import detect_supercell_matrix_from_lattices
 from mufinder.workflow.types import (
     CellTemplate,
     InputTemplate,
@@ -304,6 +305,24 @@ def template_has_explicit_kpoints(template: InputTemplate) -> bool:
     )
 
 
+def reference_is_supercell_of(
+    reference_lattice: list[list[float]] | None,
+    lattice: list[list[float]],
+) -> bool:
+    """Return whether a project grid's reference cell is a genuine supercell of ``lattice``.
+
+    A project k-point grid converged on a saved supercell is recorded with that
+    supercell's lattice, so a unit-cell row must rescale it. A reference that is
+    merely a different unit cell (for example the host before it was replaced or
+    re-relaxed) is not an integer supercell, and the grid is used exactly.
+    """
+
+    if reference_lattice is None:
+        return False
+    detection = detect_supercell_matrix_from_lattices(lattice, reference_lattice)
+    return detection.is_supercell and detection.determinant > 1
+
+
 def rescale_kpoint_grid(
     *,
     project_kpoint_grid: tuple[int, int, int] | None,
@@ -315,11 +334,12 @@ def rescale_kpoint_grid(
 ) -> tuple[tuple[int, int, int] | None, str | None]:
     """Return the supercell-adjusted k-point grid and an optional UI message.
 
-    When the row uses the unit cell (or the project has no default grid) the
-    project grid passes through unchanged and no message is produced. For a
-    genuine supercell the grid is rescaled to an equivalent reciprocal-space
-    density and, if it actually changed, a message describing the adjustment is
-    returned.
+    With no project default grid there is nothing to return. A supercell row
+    rescales the grid from ``reference_lattice`` (the cell it was converged on)
+    to its own cell at equivalent reciprocal-space density. A unit-cell row uses
+    the grid exactly unless it was converged on a supercell of that unit cell
+    (see :func:`reference_is_supercell_of`), in which case it is rescaled too.
+    When the grid changed, a message describing the adjustment is returned.
 
     The message core (``K-point grid adjusted from AxBxC to DxExF for``) is
     shared; ``target_description`` supplies the trailing phrase so each adapter
@@ -331,7 +351,7 @@ def rescale_kpoint_grid(
     if project_kpoint_grid is None:
         return None, None
 
-    if is_identity_supercell:
+    if is_identity_supercell and not reference_is_supercell_of(reference_lattice, row_lattice):
         kpoint_grid = project_kpoint_grid
     else:
         kpoint_grid = equivalent_grid_for_supercell(
@@ -341,7 +361,7 @@ def rescale_kpoint_grid(
         )
 
     message = None
-    if has_supercell and kpoint_grid != project_kpoint_grid:
+    if kpoint_grid != project_kpoint_grid:
         message = (
             "K-point grid adjusted from "
             f"{project_kpoint_grid[0]}x{project_kpoint_grid[1]}x{project_kpoint_grid[2]} to "
