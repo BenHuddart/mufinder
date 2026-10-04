@@ -10,6 +10,8 @@ silently change the shared defaults out from under existing callers.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QPushButton, QTableWidgetItem
@@ -836,6 +838,27 @@ def test_selection_feedback_only_the_active_table_drives_shared_controls(qapp) -
     active["table"] = second
     for feedback in feedbacks:
         feedback.refresh()
+    assert widgets["count"].text() == "2 selected"
+
+
+def test_selection_feedback_survives_the_table_being_deleted(qapp, monkeypatch) -> None:
+    import shiboken6
+
+    # PySide reports an exception raised in a slot through sys.excepthook
+    # rather than propagating it, so capture it there.
+    slot_errors: list[BaseException] = []
+    monkeypatch.setattr(sys, "excepthook", lambda _type, value, _tb: slot_errors.append(value))
+    table, widgets = _feedback_table(qapp)
+    feedback = workflow_table_utils.SelectionFeedback(table, count_label=widgets["count"])
+    _select(table, [0, 1])
+
+    # Destroying the table tears its model down first, which emits
+    # ``modelReset`` while the table's C++ object is already gone (app quit).
+    shiboken6.delete(table)
+    assert not shiboken6.isValid(table)
+    feedback.refresh()
+
+    assert slot_errors == []
     assert widgets["count"].text() == "2 selected"
 
 

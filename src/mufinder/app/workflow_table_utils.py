@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Callable
 
+import shiboken6
 from PySide6.QtCore import QObject, Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -605,7 +606,8 @@ class SelectionFeedback(QObject):
       :data:`MULTI_ROW_TARGET_PROPERTY` while two or more rows are selected.
 
     Call :meth:`refresh` after rebuilding a table's cell widgets, since new
-    widgets start without the property.
+    widgets start without the property. Once the table has been deleted (as
+    when the app quits), :meth:`refresh` does nothing.
 
     Where several tables share one set of buttons (one table per tab), give
     each its own instance with ``is_active`` saying whether it is the table on
@@ -637,14 +639,22 @@ class SelectionFeedback(QObject):
 
         selection_model = table.selectionModel()
         if selection_model is not None:
-            selection_model.selectionChanged.connect(lambda *_: self.refresh())
+            selection_model.selectionChanged.connect(self._on_table_changed)
         model = table.model()
-        model.rowsInserted.connect(lambda *_: self.refresh())
-        model.rowsRemoved.connect(lambda *_: self.refresh())
-        model.modelReset.connect(lambda *_: self.refresh())
+        model.rowsInserted.connect(self._on_table_changed)
+        model.rowsRemoved.connect(self._on_table_changed)
+        model.modelReset.connect(self._on_table_changed)
+        self.refresh()
+
+    def _on_table_changed(self, *_args: object) -> None:
         self.refresh()
 
     def refresh(self) -> None:
+        # The table's model is an older child than this object, so while the
+        # table is being destroyed its model is torn down (emitting
+        # ``modelReset``) before this object is disconnected.
+        if not shiboken6.isValid(self._table):
+            return
         rows = set(_selected_table_rows(self._table))
         count = len(rows)
         self._refresh_row_controls(rows)
