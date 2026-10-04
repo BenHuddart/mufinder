@@ -13280,5 +13280,66 @@ def test_kpoint_examiner_points_keep_one_grid_per_count_and_explain_the_rest() -
     # A completed grid is kept over a uniform one with nothing to examine.
     assert labels[4.0] == "Grid: 4 x 1 x 1"
     assert len(notes) == 2
-    assert any(note.startswith("2 x 2 x 4 left out: same k-point count (16) as 4 x 2 x 2") for note in notes)
-    assert any(note.startswith("2 x 2 x 1 left out") for note in notes)
+    # Each note gives the reason that actually decided which grid was kept.
+    assert any(
+        note.startswith(
+            "2 x 2 x 4 left out: same k-point count (16) as 4 x 2 x 2, which is examined instead "
+            "because it samples the cell most uniformly."
+        )
+        for note in notes
+    )
+    assert any(
+        note.startswith(
+            "2 x 2 x 1 left out: same k-point count (4) as 4 x 1 x 1, which is examined instead "
+            "because it is the only one with a completed result."
+        )
+        for note in notes
+    )
+
+
+def test_main_window_kpoint_overview_recomputes_spacings_on_the_sweep_cell(qapp, tmp_path: Path) -> None:
+    """The overview refreshes stored spacings from the cell the snapshot was swept on."""
+
+    from mufinder.science.kpoint_grids import spacing_from_grid
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "kpoint_overview_supercell.mufinder", "KPointOverviewSupercell")
+    host = Structure(
+        label="Host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    supercell = Structure(
+        label="2x1x1",
+        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si", "Si"],
+        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+        parent_structure_id=host.id,
+    )
+    service.add_structure(doc, supercell)
+    doc.project.recommended_kpoint_grid = (4, 2, 2)
+    doc.ui_state[window._CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY] = {
+        "kpoint": {
+            "host_structure_id": str(host.id),
+            "simulation_cell_structure_id": str(supercell.id),
+            "default_value": [4, 2, 2],
+            "point_labels": {"16.0": "Grid: 4 x 2 x 2"},
+            "plot_data": {"cutoffs": [16.0], "energies": [-20.0], "point_spacings": {"16.0": 999.0}},
+        }
+    }
+    window._document = doc
+
+    snapshot = window._validated_kpoint_overview_snapshot()
+
+    assert snapshot is not None
+    assert snapshot["plot_data"]["point_spacings"][16.0] == pytest.approx(
+        spacing_from_grid(supercell.lattice_vectors, (4, 2, 2))
+    )
+    assert snapshot["plot_data"]["point_spacings"][16.0] != pytest.approx(
+        spacing_from_grid(host.lattice_vectors, (4, 2, 2))
+    )
+    window.close()

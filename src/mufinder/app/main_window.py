@@ -3198,20 +3198,37 @@ class MainWindow(QMainWindow):
         if current_grid is None or snapshot_grid != current_grid:
             return None
 
-        # Recompute point_spacings from the current host structure's lattice
-        # vectors so that stale values persisted with an older formula are
-        # always refreshed on load — even for projects adopted before the fix.
-        host_id = self._document.project.host_structure_id
-        host = self._document.structures.get(host_id) if host_id is not None else None
-        if host is not None:
+        # Recompute point_spacings so that stale values persisted with an older
+        # formula are always refreshed on load — even for projects adopted
+        # before the fix. Use the cell the sweep ran on (recorded with the
+        # snapshot), which may be a saved supercell; older snapshots without it
+        # fall back to the host.
+        cell = self._kpoint_snapshot_cell(snapshot)
+        if cell is not None:
             try:
                 snapshot = ConvergenceExaminerDialog.recompute_spacings_in_snapshot(
-                    snapshot, host.lattice_vectors
+                    snapshot, cell.lattice_vectors
                 )
             except Exception:
                 pass  # Safety: fall back to stored spacings on any unexpected error
 
         return snapshot
+
+    def _kpoint_snapshot_cell(self, snapshot: Mapping[str, object]) -> Structure | None:
+        """Return the structure a k-point overview snapshot's sweep ran on, else the host."""
+
+        if self._document is None:
+            return None
+        raw_cell_id = snapshot.get("simulation_cell_structure_id")
+        if isinstance(raw_cell_id, str) and raw_cell_id.strip():
+            try:
+                cell = self._document.structures.get(UUID(raw_cell_id.strip()))
+            except ValueError:
+                cell = None
+            if cell is not None:
+                return cell
+        host_id = self._document.project.host_structure_id
+        return self._document.structures.get(host_id) if host_id is not None else None
 
     def _cutoff_overview_summary_rows(self) -> list[tuple[str, str]]:
         if self._document is None:
@@ -11277,14 +11294,19 @@ class MainWindow(QMainWindow):
             kept = grids[0]
             if len(grids) > 1:
                 completed = [grid for grid in grids if states[grid].total_energy is not None]
-                pool = completed or grids
-                kept = most_uniform_grid(lattice_vectors, pool) if len(pool) > 1 else pool[0]
+                if len(completed) == 1:
+                    kept = completed[0]
+                    reason = "it is the only one with a completed result"
+                else:
+                    kept = most_uniform_grid(lattice_vectors, completed or grids)
+                    reason = "it samples the cell most uniformly" + (
+                        " of those with a completed result" if completed and len(completed) < len(grids) else ""
+                    )
                 excluded = ", ".join(format_kpoint_grid(grid) for grid in grids if grid != kept)
                 notes.append(
                     f"{excluded} left out: same k-point count ({count}) as {format_kpoint_grid(kept)}, "
-                    "which is examined instead because it samples the cell more uniformly"
-                    + (" and has completed" if completed else "")
-                    + ". Remove the extra grid from the sweep to examine it."
+                    f"which is examined instead because {reason}. "
+                    "Remove the extra grid from the sweep to examine it."
                 )
             counts_map[float(count)] = states[kept]
             labels[float(count)] = f"Grid: {format_kpoint_grid(kept)}"
