@@ -4284,6 +4284,7 @@ def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
         dedupe_jobs=lambda jobs: jobs,
         check_definition_host=lambda _definition: True,
         format_energy=_format_energy_stub,
+        confirm=lambda _title, _text: True,
     )
     base.update(overrides)
     return QuantumCorrectionsDeps(**base)
@@ -5723,3 +5724,160 @@ def test_quantum_controller_runs_local_stage_two_after_a_local_singlepoint(tmp_p
     assert infos == []
     assert len(local.calls) == 1
     assert local.calls[0][1] == {}
+
+
+_GUI_TO_METHOD = {
+    "FINITEDISPLACEMENT": "finite_displacement",
+    "DFPT": "dfpt",
+    "LINEARRESPONSE": "linear_response",
+}
+
+
+def _phonon_method_controller(
+    service: ProjectService,
+    tmp_path: Path,
+    *,
+    rows: dict[str, tuple[str, str, str]],
+    infos: list[tuple[str, str]],
+    questions: list[tuple[str, str]],
+    answer: bool,
+    local: _RecordingBackend,
+):
+    """Build a controller whose rows ``siteA``/``siteB`` are ready to submit.
+
+    ``rows`` maps a site label to ``(stage, GUI phonon method, pseudopotential
+    family)``; materialize hands back one defined job per row so an allowed
+    submission reaches the local backend.
+    """
+
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    by_label = {candidate.site.label: key for key, candidate in candidates.items()}
+    config = {by_label[label]: spec for label, spec in rows.items()}
+    keys = list(config)
+    deps = _stub_quantum_deps(
+        active_quantum_corrections_definition=lambda: definition,
+        quantum_source_candidate_by_key=lambda key: candidates.get(key),
+        quantum_stage_state=lambda _definition, candidate: _FakeQuantumStageState(
+            stage=config[candidate.key][0], status="ready"
+        ),
+        build_quantum_corrections_states=lambda: {
+            key: _FakeQuantumStageState(stage=config[key][0], status="ready") for key in keys
+        },
+        quantum_runtime_configuration=lambda _definition, key: (
+            {"phonon_method": config[key][1]},
+            config[key][2],
+        ),
+        quantum_method_from_gui_value=lambda value: _GUI_TO_METHOD[str(value).upper()],
+        confirm=lambda title, text: questions.append((title, text)) or answer,
+    )
+    context = _make_context(
+        document=document,
+        project_service=service,
+        definition_output_directory=lambda _definition: output_root,
+        local_backend=local,
+        infos=infos,
+    )
+    controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
+    jobs = {key: _quantum_job(service, document, f"quantum_{key}", QUANTUM_SINGLEPOINT_CALC_TYPE) for key in keys}
+    controller.materialize = lambda values: [jobs[str(value)] for value in values]  # type: ignore[assignment]
+    return controller, keys
+
+
+def test_quantum_controller_refuses_dfpt_with_ultrasoft_pseudopotentials_by_name(tmp_path: Path) -> None:
+    """The refusal names the rows instead of ending in a generic "No ready jobs"."""
+
+    infos: list[tuple[str, str]] = []
+    questions: list[tuple[str, str]] = []
+    local = _RecordingBackend()
+    controller, keys = _phonon_method_controller(
+        ProjectService(),
+        tmp_path,
+        rows={
+            "siteA": (QUANTUM_STAGE_SINGLEPOINT, "DFPT", "ultrasoft"),
+            "siteB": (QUANTUM_STAGE_PHONON, "LINEARRESPONSE", "ultrasoft"),
+        },
+        infos=infos,
+        questions=questions,
+        answer=True,
+        local=local,
+    )
+
+    controller.submit(keys, target="local")
+
+    assert local.calls == []
+    assert questions == []
+    assert len(infos) == 1
+    title, message = infos[0]
+    assert title == "Phonon method needs norm-conserving pseudopotentials"
+    assert "siteA (DFPT, stage 1)" in message
+    assert "siteB (LINEARRESPONSE, stage 2)" in message
+    assert "No ready jobs" not in title
+
+
+def test_quantum_controller_asks_before_dfpt_with_an_unknown_pseudopotential_family(tmp_path: Path) -> None:
+    infos: list[tuple[str, str]] = []
+    questions: list[tuple[str, str]] = []
+    local = _RecordingBackend()
+    controller, keys = _phonon_method_controller(
+        ProjectService(),
+        tmp_path,
+        rows={"siteA": (QUANTUM_STAGE_SINGLEPOINT, "DFPT", "unknown")},
+        infos=infos,
+        questions=questions,
+        answer=False,
+        local=local,
+    )
+
+    controller.submit(keys, target="local")
+
+    assert local.calls == []
+    assert infos == []
+    assert len(questions) == 1
+    title, message = questions[0]
+    assert title == "Check pseudopotentials for DFPT"
+    assert "siteA (DFPT, stage 1)" in message
+    assert "norm-conserving" in message
+
+
+def test_quantum_controller_submits_dfpt_with_an_unknown_family_once_confirmed(tmp_path: Path) -> None:
+    infos: list[tuple[str, str]] = []
+    questions: list[tuple[str, str]] = []
+    local = _RecordingBackend()
+    controller, keys = _phonon_method_controller(
+        ProjectService(),
+        tmp_path,
+        rows={"siteA": (QUANTUM_STAGE_SINGLEPOINT, "DFPT", "unknown")},
+        infos=infos,
+        questions=questions,
+        answer=True,
+        local=local,
+    )
+
+    controller.submit(keys, target="local")
+
+    assert len(questions) == 1
+    assert len(local.calls) == 1
+
+
+def test_quantum_controller_submits_finite_displacement_without_asking(tmp_path: Path) -> None:
+    infos: list[tuple[str, str]] = []
+    questions: list[tuple[str, str]] = []
+    local = _RecordingBackend()
+    controller, keys = _phonon_method_controller(
+        ProjectService(),
+        tmp_path,
+        rows={
+            "siteA": (QUANTUM_STAGE_SINGLEPOINT, "FINITEDISPLACEMENT", "ultrasoft"),
+            "siteB": (QUANTUM_STAGE_SINGLEPOINT, "DFPT", "norm_conserving"),
+        },
+        infos=infos,
+        questions=questions,
+        answer=False,
+        local=local,
+    )
+
+    controller.submit(keys, target="local")
+
+    assert infos == []
+    assert questions == []
+    assert len(local.calls) == 1

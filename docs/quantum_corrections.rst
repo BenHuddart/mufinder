@@ -251,13 +251,18 @@ DFPT / linear response (``DFPT``, ``LINEARRESPONSE``)
   functionals, non-collinear magnetism or spin-orbit coupling, or the newer
   dispersion corrections.
 
-MuFinder checks only the pseudopotential family:
+MuFinder checks only the pseudopotential family, when you submit a row at
+either stage (the method is fixed once stage 1 has been submitted, so a
+problem is caught before the singlepoint runs):
 
-- with ``Pseudopotentials`` set to ``Ultrasoft``, a DFPT or linear-response
-  phonon job is not generated, and the submission ends with a ``No ready jobs``
-  message;
-- with ``Unknown / not set``, the job is generated and a reminder to verify
-  norm-conserving pseudopotentials is recorded in the job's provenance.
+- with ``Pseudopotentials`` set to ``Ultrasoft``, a DFPT or linear-response row
+  is refused with a message naming the rows; change the row to
+  ``FINITEDISPLACEMENT`` (or reset a stage-2 row to stage 1 first), or set
+  ``Pseudopotentials`` to ``Norm-conserving`` if that is what you use;
+- with ``Unknown / not set``, MuFinder lists the DFPT rows and the methods
+  CASTEP's DFPT does not support, and asks whether to submit anyway (the
+  default answer is no). The reminder is also recorded in the job's
+  provenance.
 
 It does not detect Hubbard U, hybrid functionals, spin-orbit coupling, or
 dispersion corrections in your parameters; if you use any of these, choose
