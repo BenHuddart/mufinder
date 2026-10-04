@@ -82,6 +82,7 @@ from mufinder.workflow.quantum import (
     QuantumPhononSource,
     expand_quantum_phonon_jobs,
     expand_quantum_singlepoint_jobs,
+    phonon_method_compatibility,
 )
 from mufinder.workflow.types import InputTemplate, JobSpec
 
@@ -137,6 +138,44 @@ def _is_local_target(target: str | None) -> bool:
 
     value = (target or "").strip()
     return not value or value.casefold() == "local"
+
+
+_DFPT_LIMITATIONS = (
+    "CASTEP DFPT phonons need norm-conserving pseudopotentials and are not "
+    "available with DFT+U, meta-GGA or hybrid functionals, non-collinear "
+    "magnetism or spin-orbit coupling, or the newer dispersion corrections."
+)
+
+
+def _method_rows(rows: list[tuple[str, str, str]]) -> str:
+    return "\n".join(f"  - {label} ({method}, {stage})" for label, method, stage in rows)
+
+
+def _incompatible_method_message(rows: list[tuple[str, str, str]]) -> tuple[str, str]:
+    """Return the refusal for rows using DFPT or linear response with ultrasoft pseudopotentials."""
+
+    return (
+        "Phonon method needs norm-conserving pseudopotentials",
+        "These rows use a DFPT phonon method with ultrasoft pseudopotentials, which "
+        "CASTEP does not support:\n\n"
+        f"{_method_rows(rows)}\n\n"
+        "Configure a stage-1 row to use FINITEDISPLACEMENT, or set Pseudopotentials to "
+        "Norm-conserving if that is what the calculation uses. A stage-2 row's settings "
+        "are fixed by its completed singlepoint: reset it to stage 1 to change them.",
+    )
+
+
+def _unverified_method_question(rows: list[tuple[str, str, str]]) -> tuple[str, str]:
+    """Return the confirmation for rows using DFPT with an unknown pseudopotential family."""
+
+    return (
+        "Check pseudopotentials for DFPT",
+        "These rows use a DFPT phonon method, but their pseudopotential family is not "
+        "set, so MuFinder cannot check it:\n\n"
+        f"{_method_rows(rows)}\n\n"
+        f"{_DFPT_LIMITATIONS} The phonon method is fixed once stage 1 has been "
+        "submitted. Submit anyway?",
+    )
 
 
 def _cell_declares_species_mass(cell_path: Path) -> bool:
@@ -215,6 +254,9 @@ class QuantumCorrectionsDeps:
     dedupe_jobs: Callable[[list[Job]], list[Job]]
     check_definition_host: Callable[[CalculationDefinition | None], bool]
     format_energy: Callable[[object], str]
+    #: Ask a yes/no question (title, text); ``True`` means proceed. The safe
+    #: answer, "no", is the default.
+    confirm: Callable[[str, str], bool]
 
 
 class QuantumCorrectionsController(WorkflowJobController):
@@ -333,12 +375,25 @@ class QuantumCorrectionsController(WorkflowJobController):
         submission dialog opens with the stage-1 cluster preselected. The
         cluster backend still refuses a phonon job if a different cluster is
         picked in that dialog.
+
+        Before any of that, each submittable row's phonon method is checked
+        against its pseudopotential family (see :meth:`_phonon_method_issues`):
+        DFPT or linear response with ultrasoft pseudopotentials is refused with
+        an explanation naming the rows, and with an unknown family the user is
+        asked to confirm. Both checks cover stage-1 rows too, because the method
+        is frozen once the singlepoint has been submitted.
         """
 
+        incompatible, unverified = self._phonon_method_issues(values)
+        if incompatible:
+            self._context.show_info(*_incompatible_method_message(incompatible))
+            return
         refusal = self._stage_two_target_refusal(values, target=target)
         if refusal is not None:
             title, message = refusal
             self._context.show_info(title, message)
+            return
+        if unverified and not self._deps.confirm(*_unverified_method_question(unverified)):
             return
         self._preferred_cluster_name = (
             self._stage_two_cluster_name(values) if target == "cluster" else None
@@ -357,29 +412,80 @@ class QuantumCorrectionsController(WorkflowJobController):
             return [(jobs, {"default_cluster_name": self._preferred_cluster_name})]
         return [(jobs, {})]
 
-    def _stage_two_stage_one_targets(self, keys: list[object]) -> list[tuple[str, str]]:
-        """Return ``(label, stage-1 execution target)`` for each selected stage-2 row.
+    def _submittable_rows(
+        self, keys: list[object]
+    ) -> list[tuple[CalculationDefinition, str, object, object]]:
+        """Return ``(definition, key, candidate, stage state)`` for rows submittable now.
 
-        Only rows that could be submitted now count: a phonon-stage row that is
-        ready, or whose phonon job is still ``defined``. Rows already running or
-        finished are left to the shared submission plan, which skips them.
+        A row counts when its current stage is ready, or its current job is
+        still ``defined``. Rows already running or finished are left to the
+        shared submission plan, which skips them.
         """
 
         definition = self._deps.active_quantum_corrections_definition()
         if definition is None:
             return []
-        rows: list[tuple[str, str]] = []
+        rows: list[tuple[CalculationDefinition, str, object, object]] = []
         for key in [str(value) for value in keys]:
             candidate = self._deps.quantum_source_candidate_by_key(key)
             if candidate is None:
                 continue
             stage_state = self._deps.quantum_stage_state(definition, candidate)
-            if getattr(stage_state, "stage", None) != QUANTUM_STAGE_PHONON:
-                continue
             current_job = getattr(stage_state, "current_job", None)
             if getattr(stage_state, "status", None) != "ready" and (
                 current_job is None or current_job.status != JobStatus.DEFINED
             ):
+                continue
+            rows.append((definition, key, candidate, stage_state))
+        return rows
+
+    def _phonon_method_issues(
+        self, keys: list[object]
+    ) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+        """Split submittable rows' phonon methods into incompatible and unverified.
+
+        Each entry is ``(label, CASTEP method, stage)``. A method is incompatible
+        when :func:`~mufinder.workflow.quantum.phonon_method_compatibility`
+        rejects it for the row's pseudopotential family (DFPT or linear response
+        with ultrasoft pseudopotentials), and unverified when it is accepted with
+        a caveat (the family is not set).
+        """
+
+        incompatible: list[tuple[str, str, str]] = []
+        unverified: list[tuple[str, str, str]] = []
+        for definition, key, candidate, stage_state in self._submittable_rows(keys):
+            values, pseudopotential_family = self._deps.quantum_runtime_configuration(
+                definition, key
+            )
+            gui_method = str(values.get("phonon_method", "FINITEDISPLACEMENT")).strip().upper()
+            try:
+                method = self._deps.quantum_method_from_gui_value(gui_method)
+            except ValueError:
+                continue
+            compatible, message = phonon_method_compatibility(
+                method,  # type: ignore[arg-type]
+                pseudopotential_family=pseudopotential_family,  # type: ignore[arg-type]
+            )
+            entry = (
+                self._deps.quantum_source_label(candidate),
+                gui_method,
+                "stage 2" if getattr(stage_state, "stage", None) == QUANTUM_STAGE_PHONON else "stage 1",
+            )
+            if not compatible:
+                incompatible.append(entry)
+            elif message:
+                unverified.append(entry)
+        return incompatible, unverified
+
+    def _stage_two_stage_one_targets(self, keys: list[object]) -> list[tuple[str, str]]:
+        """Return ``(label, stage-1 execution target)`` for each selected stage-2 row.
+
+        Only rows that could be submitted now count (see :meth:`_submittable_rows`).
+        """
+
+        rows: list[tuple[str, str]] = []
+        for definition, key, candidate, stage_state in self._submittable_rows(keys):
+            if getattr(stage_state, "stage", None) != QUANTUM_STAGE_PHONON:
                 continue
             singlepoint = self._deps.singlepoint_job_for_quantum_source_key(
                 definition, key

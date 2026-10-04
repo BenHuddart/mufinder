@@ -410,7 +410,7 @@ Relaxation staging:
 - stage-1 generated inputs must write `TASK : SINGLEPOINT` and the explicit `H:mu` `SPECIES_MASS`/`SPECIES_GAMMA` cell blocks, because the stage-2 continuation restores species masses from the stage-1 checkpoint
 - CASTEP stage-2 phonon jobs are Gamma-point only and must write `TASK : PHONON`, `CONTINUATION : DEFAULT`, `PHONON_KPOINT_MP_GRID 1 1 1`, a selected `PHONON_METHOD`, and explicit `H:mu` mass/gamma cell blocks
 - stage-2 task farming is user-configurable per row through `num_farms`; when greater than one, generated inputs must include `NUM_FARMS`
-- finite displacement is the default method; DFPT/linear-response workflows must reject known ultrasoft pseudopotentials and warn for unknown pseudopotential family metadata
+- finite displacement is the default method; DFPT/linear-response workflows must reject known ultrasoft pseudopotentials and warn for unknown pseudopotential family metadata, both at submission of either stage, naming the affected rows (a refusal must not surface only as a generic no-ready-jobs message, and the unknown-family warning must ask for confirmation)
 - only completed stage-2 phonon jobs produce persisted Quantum Corrections result rows
 - `.phonon` files are expected outputs for quantum phonon jobs and must be retrieved from cluster runs
 - when task farming is active, local and cluster retrieval must accept `*_farm001.castep` as the primary CASTEP output alongside the usual phonon artifacts
