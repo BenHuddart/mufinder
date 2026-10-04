@@ -8295,7 +8295,9 @@ class MainWindow(QMainWindow):
         cleanup_refusals = (
             self._directory_ownership_refusals(
                 [job for job in jobs if not job_is_imported(job)],
-                shared_with={job.id for job in jobs},
+                # Imported jobs are skipped below, never cleaned, so a folder
+                # shared with one must not count as cleaned together.
+                shared_with={job.id for job in jobs if not job_is_imported(job)},
                 check_remote=False,
             )
             if cleanup_choice

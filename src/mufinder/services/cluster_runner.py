@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 import posixpath
@@ -759,6 +759,9 @@ class ClusterJobRunner(QObject):
 
         try:
             submitted_at = self._submission_marker_mtime(ssh, remote_param)
+            # Logs are (re)downloaded just below, so any local log older than
+            # this moment is a previous run's leftover in a reused directory.
+            logs_fetched_from = datetime.now(UTC)
             self._retrieve_error_files(entry)
             use_farm = farm_count > 1 and ssh.exists(remote_farm_castep)
             primary_remote = remote_farm_castep if use_farm else remote_castep
@@ -831,7 +834,7 @@ class ClusterJobRunner(QObject):
 
         if not parsed.completed:
             entry.terminal = True
-            if self._stopped_at_walltime(entry, parsed):
+            if self._stopped_at_walltime(entry, parsed, logs_fetched_from=logs_fetched_from):
                 self.status_changed.emit(entry.job_id, JobStatus.STOPPED.value)
                 return f"{prefix}output incomplete; stopped (walltime)"
             self.job_failed.emit(
@@ -964,18 +967,25 @@ class ClusterJobRunner(QObject):
         return names
 
     @staticmethod
-    def _stopped_at_walltime(entry: _TrackedClusterJob, parsed: CastepResult) -> bool:
+    def _stopped_at_walltime(
+        entry: _TrackedClusterJob,
+        parsed: CastepResult,
+        *,
+        logs_fetched_from: datetime | None = None,
+    ) -> bool:
         """Return whether an incomplete run was killed at the walltime limit.
 
         A walltime kill leaves no trace in the ``.castep`` file: the scheduler
         records it in its own log, which ``_retrieve_error_files`` has already
-        downloaded next to the output.
+        downloaded next to the output. Local logs older than
+        ``logs_fetched_from`` were not part of that download — a continuation
+        reuses its directory, so they can be an earlier run's — and are ignored.
         """
 
         log_files = find_failure_log_files(
             entry.local_output_dir, [entry.seed_name], entry.remote_job_id
         )
-        diagnosis = diagnose_failure(parsed.error_message, log_files)
+        diagnosis = diagnose_failure(parsed.error_message, log_files, not_before=logs_fetched_from)
         return diagnosis.reason == FailureReason.WALLTIME
 
     def _require_ssh(self) -> SSHConnection:

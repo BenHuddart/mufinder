@@ -190,3 +190,25 @@ def test_reset_to_stage_one_refuses_a_directory_shared_with_another_row(
     assert "another job uses the same output folder" in warnings[0]
     assert "the row was not reset" in warnings[0]
     window.close()
+
+
+def test_a_folder_shared_with_an_imported_job_is_never_cleaned(qapp, tmp_path: Path) -> None:
+    """Imported jobs are skipped by the cleanup, so they never count as cleaned together."""
+
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "imported_share.mufinder", "ImportedShare")
+    window._document = doc
+    native = _pristine_job(service, doc, JobStatus.FAILED)
+    imported = _pristine_job(service, doc, JobStatus.FAILED)
+    imported.tags.append(main_window_module.IMPORTED_JOB_TAG)
+    directory = _job_directory(doc)
+
+    reset_count, cleanup_errors = window._apply_failed_job_reset(
+        [native, imported], cleanup_choice=True, detach_convergence=False
+    )
+
+    assert reset_count == 1
+    assert sorted(path.name for path in directory.iterdir()) == ALL_FILES
+    assert f"- {SEED}: another job uses the same output folder" in cleanup_errors[0]
+    window.close()

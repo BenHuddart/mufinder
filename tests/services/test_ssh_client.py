@@ -657,6 +657,37 @@ def test_ssh_connection_rmtree_removes_symlinks_without_following_them(
     assert sftp.files["/shared/pseudos/H.usp"] == b"pseudopotential"
 
 
+def test_ssh_connection_rmtree_tolerates_entries_that_vanish_mid_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_paramiko = _FakeParamiko(
+        fail_key=False,
+        system_host_keys={"example.org": _FakeKey()},
+    )
+    monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: fake_paramiko))
+
+    connection = SSHConnection(_config("key"))
+    connection.connect()
+    sftp = fake_paramiko._client._sftp
+    sftp.directories.add("/remote/job")
+    sftp.files["/remote/job/seed.castep"] = b"output"
+    sftp.files["/remote/job/seed.check"] = b"checkpoint"
+    real_lstat = sftp.lstat
+
+    def _lstat(path: str):
+        if path == "/remote/job/seed.check":
+            sftp.files.pop(path, None)  # removed by something else just now
+            raise FileNotFoundError(path)
+        return real_lstat(path)
+
+    sftp.lstat = _lstat
+
+    connection.rmtree("/remote/job")
+
+    assert "/remote/job" not in sftp.directories
+    assert sftp.files == {}
+
+
 def test_ssh_connection_requires_active_connection_for_exec() -> None:
     connection = SSHConnection(_config("key"))
 

@@ -606,7 +606,12 @@ class SSHConnection:
         # ``lstat``, not ``stat``: a symlink is removed as a link and never
         # followed, so a link inside a job directory cannot lead the delete
         # into the (possibly shared) directory it points at.
-        if stat_module.S_ISDIR(sftp.lstat(remote_path).st_mode):
+        try:
+            mode = sftp.lstat(remote_path).st_mode
+        except FileNotFoundError:
+            # Already gone (removed by something else mid-delete): nothing to do.
+            return
+        if stat_module.S_ISDIR(mode):
             for entry in self.listdir(remote_path):
                 child = posixpath.join(remote_path, entry)
                 self._rmtree_via_sftp(sftp, child)

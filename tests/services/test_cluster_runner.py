@@ -2309,3 +2309,39 @@ def test_scheduler_job_is_active_reads_the_scheduler_state(qapp) -> None:
     assert runner.scheduler_job_is_active("3") is False
     # No longer listed by the scheduler: finished.
     assert runner.scheduler_job_is_active("4") is False
+
+
+def test_cluster_runner_ignores_an_earlier_runs_scheduler_log_when_classifying(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A continuation reuses its directory; the previous run's walltime log is not this run's."""
+
+    import os
+
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="201",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+    )
+    runner._ssh.remote_files["/remote/job/seed.castep"] = b"partial"
+    stale_log = tmp_path / "slurm-200.out"
+    stale_log.write_text("slurmstepd: error: *** JOB 200 CANCELLED DUE TO TIME LIMIT ***\n", encoding="utf-8")
+    an_hour_ago = stale_log.stat().st_mtime - 3600
+    os.utime(stale_log, (an_hour_ago, an_hour_ago))
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=False, error_message=None),
+    )
+
+    statuses: list[str] = []
+    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
+
+    runner._retrieve_results(entry)
+
+    assert statuses[-1] == JobStatus.FAILED.value
