@@ -84,10 +84,14 @@ class _FakeScheduler:
             "R": JobStatus.RUNNING,
             "CD": JobStatus.COMPLETED,
             "F": JobStatus.FAILED,
+            "OOM": JobStatus.FAILED,
             "TO": JobStatus.STOPPED,
             "CA": JobStatus.CANCELLED,
         }
         return mapping[state]
+
+    def state_name(self, state: str) -> str:
+        return {"F": "FAILED", "OOM": "OUT_OF_MEMORY", "TO": "TIMEOUT"}.get(state, state)
 
 
 class _RaisingScheduler(_FakeScheduler):
@@ -1124,18 +1128,111 @@ def test_cluster_runner_retrieve_incomplete_walltime_marks_stopped(
         local_output_dir=tmp_path,
     )
 
+    # A walltime kill leaves nothing in the .castep file; only the scheduler
+    # log (downloaded during retrieval) records it.
+    runner._ssh.remote_files["/remote/job/seed.castep"] = b"partial"
+    runner._ssh.remote_files["/remote/job/slurm-130.out"] = (
+        b"slurmstepd: error: *** JOB 130 ON node01 CANCELLED AT 2026-10-04T10:00:00 "
+        b"DUE TO TIME LIMIT ***\n"
+    )
     monkeypatch.setattr(
         cluster_runner_module,
         "parse_castep_output",
-        lambda _path: CastepResult(completed=False, error_message="wall time limit"),
+        lambda _path: CastepResult(completed=False, error_message=None),
     )
 
     statuses: list[str] = []
+    failures: list[str] = []
     runner.status_changed.connect(lambda _jid, status: statuses.append(status))
+    runner.job_failed.connect(lambda _jid, message: failures.append(message))
 
     runner._retrieve_results(entry)
 
     assert statuses[-1] == JobStatus.STOPPED.value
+    assert failures == []
+
+
+def test_cluster_runner_retrieve_incomplete_without_scheduler_evidence_fails(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A CASTEP error that merely mentions wall time is not a walltime stop."""
+
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    runner._scheduler = _FakeScheduler()
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="131",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+    )
+    runner._ssh.remote_files["/remote/job/seed.castep"] = b"partial"
+    monkeypatch.setattr(
+        cluster_runner_module,
+        "parse_castep_output",
+        lambda _path: CastepResult(completed=False, error_message="ERROR: wall clock estimate failed"),
+    )
+
+    statuses: list[str] = []
+    failures: list[str] = []
+    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
+    runner.job_failed.connect(lambda _jid, message: failures.append(message))
+
+    runner._retrieve_results(entry)
+
+    assert statuses[-1] == JobStatus.FAILED.value
+    assert failures == ["ERROR: wall clock estimate failed"]
+
+
+def test_cluster_runner_poll_names_the_scheduler_failure_state(qapp, tmp_path: Path) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+    job_id = uuid4()
+    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
+        job_id=job_id,
+        remote_job_id="140",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+    )
+    scheduler._states["140"] = "OOM"
+
+    failures: list[str] = []
+    runner.job_failed.connect(lambda _jid, message: failures.append(message))
+
+    runner._poll_queue()
+
+    assert failures == ["Scheduler reported the job as OUT_OF_MEMORY."]
+
+
+def test_cluster_runner_poll_timeout_downloads_scheduler_log(qapp, tmp_path: Path) -> None:
+    """A TIMEOUT stop downloads the scheduler log so the stop can be diagnosed."""
+
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+    job_id = uuid4()
+    runner._tracked_jobs[job_id] = cluster_runner_module._TrackedClusterJob(
+        job_id=job_id,
+        remote_job_id="150",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+    )
+    runner._ssh.remote_files["/remote/job/slurm-150.out"] = b"DUE TO TIME LIMIT"
+    scheduler._states["150"] = "TO"
+
+    statuses: list[str] = []
+    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
+
+    runner._poll_queue()
+
+    assert statuses == [JobStatus.STOPPED.value]
+    assert (tmp_path / "slurm-150.out").read_bytes() == b"DUE TO TIME LIMIT"
 
 
 def test_cluster_runner_connect_to_same_config_is_noop(
@@ -1343,8 +1440,6 @@ def test_cluster_runner_retrieve_parse_exception_marks_failed(
 
 def test_cluster_runner_helper_guards(qapp) -> None:
     runner = ClusterJobRunner()
-
-    assert runner._looks_like_walltime(CastepResult(completed=False, error_message=None)) is False
 
     with pytest.raises(ConnectionError, match="not active"):
         runner._require_ssh()
@@ -2199,3 +2294,18 @@ def test_checkpoint_probe_result_is_frozen() -> None:
     result = cluster_runner_module.CheckpointProbeResult.found()
     with pytest.raises(AttributeError):
         result.status = cluster_runner_module.CheckpointProbeStatus.ABSENT  # type: ignore[misc]
+
+
+def test_scheduler_job_is_active_reads_the_scheduler_state(qapp) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = _FakeSSH()
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+    scheduler._states.update({"1": "R", "2": "PD", "3": "TO", "4": "MISSING"})
+    scheduler.is_terminal = lambda state: state in {"CD", "F", "CA", "TO"}
+
+    assert runner.scheduler_job_is_active("1") is True
+    assert runner.scheduler_job_is_active("2") is True
+    assert runner.scheduler_job_is_active("3") is False
+    # No longer listed by the scheduler: finished.
+    assert runner.scheduler_job_is_active("4") is False

@@ -1037,10 +1037,14 @@ action's cleanup behavior.
 .. warning::
    The existing per-row ``Reset Failed Jobs...`` action's optional "clean
    directory" cleanup still deletes local ``.check`` and ``.castep`` files
-   from the job's output directory (it preserves only ``.cell``/``.param``).
-   ``Continue relaxation…`` is the path that preserves them: it never deletes
-   the run directory's contents, so it is the only supported way to resume a
-   terminal relaxation job from its checkpoint rather than restarting cold.
+   from the job's output directory (it preserves only the ``.cell``/``.param``
+   inputs; CASTEP's ``{seed}-out.cell`` is deleted with the other output). It
+   never cleans a folder another job still uses, such as the seed directory a
+   Quantum Corrections phonon job shares with its completed stage-1 singlepoint.
+   Resume from a checkpoint with ``Continue relaxation…``, or with the Job
+   Dashboard's ``Resubmit`` and its ``Continue from the checkpoint`` choice
+   (see :ref:`resubmit-continue-or-start-again`); neither deletes the run
+   directory's contents.
 
 Local CASTEP execution
 ----------------------
@@ -1100,9 +1104,18 @@ Submission entry points include:
 - Per-row action buttons in the shared job dashboard table after a job has entered the queue/submission lifecycle.
 - Job dashboard rows listed in job creation order, which is kept when the project is
   closed and reopened.
-- Failed/cancelled-job resubmit, failed/stopped cluster-job retry-retrieval,
+- Failed/stopped/cancelled-job resubmit, failed/stopped cluster-job retry-retrieval,
   failed-job inspection, reset, and terminal-job dismiss actions in the shared
   job dashboard.
+- Dashboard ``Resubmit`` of pristine or muon relaxations asks once per
+  selection whether to continue from the checkpoint or start again from a
+  cleaned directory, preselecting the choice the recorded failure causes
+  suggest (see :ref:`resubmit-continue-or-start-again`).
+- Failure causes on failed and stopped dashboard rows (``stopped · walltime``,
+  ``failed · memory``, ``failed · CASTEP`` …), classified from the
+  scheduler state and the job's scheduler and CASTEP logs, with an explanatory
+  tooltip and a one-line-per-job summary at the top of ``Inspect`` (see
+  :ref:`job-failure-reasons`).
 
 Submission controls include:
 
@@ -1140,7 +1153,7 @@ Runtime behavior includes:
 
 - Resetting failed jobs back to ``ready`` for rerun, with optional cleanup
 	of output files while preserving generated input files.
-- Resubmitting failed or cancelled dashboard jobs directly, reusing existing
+- Resubmitting failed, stopped, or cancelled dashboard jobs directly, reusing existing
 	remote files for continuation runs and replacing the stored remote scheduler
 	id with the new id.
 - Save-on-close prompting for open visible projects.

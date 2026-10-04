@@ -135,6 +135,17 @@ Compatibility ledger
        in existing projects, so it requires a schema-version bump with a
        migration entry and an update to the persistence codec, the dashboard
        visibility filter, and the workflow-row projection.
+   * - ``failure_reason`` job field
+     - ``Job`` (``mufinder.domain.models``) / job entity files
+     - Persisted cause of a failed or stopped job (a ``FailureReason`` value
+       such as ``walltime`` or ``out_of_memory``), shown beside the dashboard
+       status; see ``docs/job_lifecycle.rst`` (Why a job failed). Optional
+       with a ``None`` default, and an unknown value loads as ``None``, so
+       older projects load unchanged and their failures show the bare status.
+     - Current job data, not deprecated. Removing the field or renaming a
+       ``FailureReason`` value drops recorded causes from existing projects, so
+       it requires a schema-version bump with a migration entry and updates to
+       the persistence codec and dashboard rendering.
    * - ``created_at`` job field
      - ``Job`` (``mufinder.domain.models``) / job entity files
      - Persisted creation timestamp that fixes a job's position in the

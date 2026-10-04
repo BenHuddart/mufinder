@@ -39,11 +39,12 @@ of the main window) as calculations are submitted, monitored, and finished:
    ``Inspect``. They can be resubmitted or reset.
 
 ``stopped``
-   A cluster calculation appears to have stopped before producing a successful
-   CASTEP completion marker, usually because of walltime or scheduler limits.
-   Local jobs that were still active when MuFinder closed, and jobs stopped by
+   A cluster calculation reached its walltime limit before producing a
+   successful CASTEP completion marker: the scheduler reported ``TIMEOUT``, or
+   the scheduler log downloaded with an incomplete output records a time-limit
+   kill. Local jobs that were still active when MuFinder closed, and jobs stopped by
    the active-job watchdog, also end up here. Stopped jobs remain in the
-   dashboard for inspection and reset.
+   dashboard and can be inspected, resubmitted, or reset.
 
 ``cancelled``
    The user requested cancellation for a queued or running job. Cancelled jobs
@@ -59,14 +60,149 @@ under "Main-window integration" below). Right-clicking selected rows offers the
 same actions, each acting on the selected jobs it applies to, plus
 ``Delete...``. Completed jobs disappear after successful
 result handling, and terminal jobs that have been ``Dismiss``-ed are hidden
-without losing their records. ``Resubmit`` is available for failed and
-cancelled jobs. Cluster resubmission reuses existing remote files when the job
+without losing their records. ``Resubmit`` is available for failed, stopped,
+and cancelled jobs; relaxations ask first whether to continue from their
+checkpoint or start again (see :ref:`resubmit-continue-or-start-again`).
+Cluster resubmission reuses existing remote files when the job
 still records a remote directory, so continuation runs can start from the
 previous working directory, and failed or stopped cluster jobs that kept their
 remote metadata can ``Retry retrieval`` instead of resubmitting. Reuse covers
 the remote inputs and outputs only: the scheduler submit script is regenerated
 on every submission, so an updated walltime, core count, or memory request
 takes effect on resubmission.
+
+.. _job-failure-reasons:
+
+Why a job failed
+~~~~~~~~~~~~~~~~
+
+A failed or stopped row names its cause in the ``Status`` column, for example
+``stopped · walltime`` or ``failed · memory``. Hovering the cell shows a
+one-sentence explanation followed by the recorded failure message; a failure
+with no recognised cause shows ``failed`` and its message, and points to
+``Inspect``. ``Inspect`` opens with one line per job stating the cause, and its
+details start each job with ``Cause:`` and, when a log shows it, the
+``Evidence`` line and the file it came from, before the raw log excerpts.
+
+The cause is recorded on ``Job.failure_reason`` when the job fails or stops.
+``JobExecutionController.diagnose_failure`` reads the failure message and the
+job's logs in its local output directory — the scheduler's ``*-<id>.out`` and
+CASTEP's ``<seed>.err`` / ``<seed>[_farmNNN].NNNN.err``, which the cluster
+runner downloads before reporting the failure — and
+``mufinder.services.failure_diagnosis`` classifies them, highest priority first:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Label
+     - Recorded when
+   * - ``walltime``
+     - The scheduler log records a time-limit kill (SLURM's ``DUE TO TIME
+       LIMIT``, PBS's ``walltime … exceeded limit``) or the scheduler reported
+       ``TIMEOUT``.
+   * - ``memory``
+     - The scheduler log records an ``oom-kill`` event or an exceeded memory
+       limit, or the scheduler reported ``OUT_OF_MEMORY``.
+   * - ``node fail``
+     - The scheduler log records ``DUE TO NODE FAILURE``, or the scheduler
+       reported ``NODE_FAIL``.
+   * - ``CASTEP``
+     - A CASTEP ``.err`` file has content; its first line is the evidence.
+   * - ``no output``
+     - The output could not be downloaded or parsed, or the job left the queue
+       and its output never appeared.
+   * - ``orphaned``
+     - MuFinder was closed while a local job ran, or the active-job watchdog
+       stopped a job no runner was tracking.
+   * - ``submit``
+     - The local runner or the scheduler rejected the submission.
+
+A cluster job that stops is always recorded as ``walltime``: the cluster
+runner reports ``stopped`` only for the scheduler's ``TIMEOUT`` state or for a
+time-limit kill in the scheduler log of a run with incomplete output, so the
+cause is known even when the scheduler log could not be downloaded.
+
+A scheduler kill outranks a CASTEP error file, which outranks a retrieval
+failure, so a job killed at its walltime before CASTEP wrote any output is
+reported as ``walltime``, not ``no output``. Logs last modified before the job
+was submitted are ignored, so a continuation in a reused directory is not
+blamed on the previous run's errors. Jobs that failed before causes were
+recorded show ``failed`` alone; ``Inspect`` still diagnoses them from their
+logs. MuFinder never resubmits a failed job by itself: the cause tells the user
+whether to raise the walltime or memory request, continue from the checkpoint,
+or fix the input. A ``walltime`` row's tooltip ends with that next step:
+``Resubmit`` (continuing or starting again, for a relaxation), with a longer
+walltime if needed.
+
+.. _resubmit-continue-or-start-again:
+
+Resubmitting a relaxation: continue or start again
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every relaxation ``.param`` contains ``CONTINUATION : DEFAULT``, so a relaxation
+resubmitted into its own run directory resumes from the ``{seed}.check`` file
+the previous run left there, and starts from its initial structure when there
+is none. When ``Resubmit`` includes pristine or muon relaxations, MuFinder
+therefore asks once for the whole selection before the submission dialog:
+
+``Continue from the checkpoint``
+   Resubmits in place, keeping the previous run's output. The dialog says how
+   many of the relaxations have a checkpoint, have none (and will start from
+   their initial structure), or could not be checked (a cluster job while its
+   cluster is not connected).
+
+``Start again from the initial structure``
+   Deletes the previous run's output, checkpoint included, then runs the job's
+   inputs from the start. On the job's own cluster the remote directory is
+   deleted and the ``.cell``/``.param`` uploaded afresh, with no overwrite
+   prompt; locally the output directory is cleared exactly as Reset's cleanup
+   clears it (everything but the ``.cell``/``.param`` inputs, including
+   ``{seed}-out.cell``). The deletion happens only once the submission dialog
+   is accepted. A job whose local output cannot be cleared is not submitted,
+   since it would resume from a checkpoint the user asked to discard. While
+   ``Start again`` is selected, Enter cancels the dialog rather than
+   resubmitting.
+
+Starting again deletes only what belongs to the job:
+
+- **Its directories must be its own.** Before the choice is shown, a
+  relaxation is refused (neither started again nor continued, with a message
+  naming the reason) when its local output folder
+  is not strictly inside ``<project>/files/<stage>/`` or not named after the
+  job's seed, when its remote directory is not named after the seed, or when
+  another job uses the same local folder, the same remote directory on the same
+  cluster, or a directory inside either. Reconfiguring a relaxation row can
+  leave the old failed job and its replacement sharing one directory; without
+  this check, starting the old job again would delete the replacement's
+  output, and continuing it would run in the replacement's directory and
+  overwrite its checkpoint. Two jobs in one selection sharing a directory are
+  both refused. The same check runs again just before anything is deleted.
+- **The previous run must have finished.** A stopped job may still be running:
+  the active-job watchdog marks jobs this session lost track of as
+  ``stopped · orphaned`` without cancelling them. Before deleting a remote
+  directory, the submission worker asks the scheduler about the job's previous
+  scheduler id and refuses (the submission fails, nothing is deleted) while it
+  is still queued or running, or when the scheduler cannot be asked.
+- **Symlinks are removed, never followed**, both in the local clean and in the
+  remote delete, so a link inside a job directory cannot lead the delete into a
+  shared directory it points at.
+- **Only the exact ``{seed}-out.cell`` counts as output.** Every other
+  ``.cell``/``.param`` is kept, so a seed that itself ends in ``-out`` keeps its
+  input.
+- A job selected to start again whose remote directory another job in the same
+  submission is continuing in is dropped rather than submitted, since its
+  checkpoint would survive.
+
+The preselected choice follows the recorded causes. ``walltime``, ``memory``,
+``node fail``, and ``orphaned`` leave a healthy run that was cut short or
+under-resourced, so they default to continuing; a CASTEP error, a rejected
+submission, a cancellation, or no recorded cause defaults to starting again.
+Starting again deletes output, so a selection with mixed causes defaults to
+continuing if any of them favours it. Other jobs in the selection (convergence,
+UEP, Energy Barriers, Quantum Corrections) are resubmitted as before, and
+imported relaxations are never offered a fresh start. ``Continue relaxation…``
+in a relaxation table remains the way to change a row's parameters before
+resuming.
 
 Dashboard rows are listed in the order their jobs were created, and that order
 survives closing and reopening the project. Each job records ``created_at``
@@ -91,6 +227,18 @@ it leaves every selected job untouched. Imported jobs cannot be reset and are
 reported as left unchanged. A ``Cancel`` or ``Dismiss`` button on a single row
 asks for confirmation; on a multi-row selection the "all selected jobs / this
 job only / cancel" prompt serves as that confirmation.
+
+Reset's optional cleanup deletes everything in a job's output folder except its
+``.cell``/``.param`` inputs, so it applies the same ownership check as
+:ref:`starting a relaxation again <resubmit-continue-or-start-again>`, limited to
+the local folder (Reset never touches the cluster). The folder is kept, and the
+job reset without cleaning, when it is outside ``<project>/files/<stage>/``, is
+not named after the job, or is used by another job that is not being reset in
+the same action. This is what protects a Quantum Corrections row: its phonon job
+shares a seed directory, and the stage-1 checkpoint in it, with the singlepoint,
+so resetting a failed phonon job keeps that directory while resetting both
+stages together cleans it. The kept folders are listed in the "Directory
+cleanup issues" message.
 
 The pristine- and muon-relaxation tables additionally offer a per-row
 ``Continue relaxation…`` action for ``completed``, ``failed``, ``stopped``,
@@ -154,12 +302,18 @@ status guard instead; both are described below.
 - ``complete_job`` moves ``running`` or ``retrieving`` to ``completed``, stamps
   ``completed_at``, and clears ``error_message``.
 - ``stop_job`` moves an active job (``submitting``, ``queued``, ``running``, or
-  ``retrieving``) to ``stopped`` and records a message. The ``submitting`` and
+  ``retrieving``) to ``stopped`` and records a message and an optional
+  ``failure_reason`` (see :ref:`job-failure-reasons`). The ``submitting`` and
   ``queued`` source edges exist so orphaned local jobs left mid-submission when
   MuFinder closed can be reconciled on the next project open (see
   ``reconcile_orphaned_local_jobs`` below).
-- ``fail_job`` moves an in-flight job to ``failed`` and records a message.
-- ``cancel_job`` moves a cancellable job to ``cancelled``.
+- ``fail_job`` moves an in-flight job to ``failed`` and records a message and
+  an optional ``failure_reason``.
+- ``cancel_job`` moves a cancellable job to ``cancelled`` and clears
+  ``failure_reason``. Every transition out of ``failed``/``stopped``
+  (``submit_job``, ``complete_job``, ``reset_failed_job``,
+  ``prepare_job_continuation``, ``retry_job_retrieval``) clears it alongside
+  ``error_message``.
 - ``reset_failed_job`` moves ``failed``, ``stopped``, or ``cancelled`` back to
   ``defined`` and clears remote/process metadata (including the monitor
   metadata and any ``dismissed_at`` stamp).
@@ -664,7 +818,8 @@ whose last check is older than the ``services.job_monitoring`` threshold, and
 a tooltip carrying ``last_status_source`` / ``last_status_message`` / the
 staleness reason. Actions are enabled as follows:
 
-- ``Resubmit``: ``failed`` and ``cancelled``.
+- ``Resubmit``: ``failed``, ``stopped``, and ``cancelled`` (relaxations first ask
+  whether to continue or start again; see :ref:`resubmit-continue-or-start-again`).
 - ``Retry retrieval``: ``failed`` and ``stopped`` cluster jobs that still
   carry both a ``remote_job_id`` and ``remote_directory``, while the cluster
   runner is connected to that job's cluster. It re-attempts output retrieval

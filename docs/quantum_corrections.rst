@@ -97,7 +97,15 @@ whose singlepoint or phonon job failed, was stopped, or was cancelled, select
 the row and click ``Reset to Stage 1`` (also on the right-click menu). After a
 confirmation, MuFinder deletes both staged job records and the row's output
 directory and returns the row to ``singlepoint`` / ``ready``. Rows whose job is
-still running cannot be reset.
+still running cannot be reset. A row whose directory is also used by a job
+outside the row is not reset, and the message names that folder.
+
+The Job Dashboard's own ``Reset`` behaves differently for a failed phonon job:
+it returns just that job to ``defined``, and its optional directory cleanup
+leaves the shared seed directory alone, because the completed singlepoint's
+``.check`` checkpoint and ``.castep`` output in it are what the next stage-2 run
+continues from. The message lists the folder as kept. Use ``Reset to Stage 1``
+to start the row over from a clean directory.
 
 The workflow page
 -----------------

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
+from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
-from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import Result
+from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.models import Result, utc_now
 from mufinder.services.job_execution_controller import ClusterJobSubmission, JobExecutionController
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
@@ -390,6 +392,7 @@ def test_cluster_submission_failure_marks_job_failed_and_records_terminal_event(
     assert outcome.journal_changed is True
     assert job.status == JobStatus.FAILED
     assert job.error_message == "scheduler rejected job"
+    assert job.failure_reason == FailureReason.SUBMISSION
     assert run is not None
     assert run.status == JobStatus.FAILED
     assert controller.active_run_by_job == {}
@@ -428,10 +431,51 @@ def test_cluster_stopped_status_is_terminal_and_clears_active_run(tmp_path: Path
     assert update.changed is True
     assert update.journal_changed is True
     assert job.status == JobStatus.STOPPED
+    # The runner reports ``stopped`` only for walltime stops, so the cause is
+    # recorded even when no scheduler log could be downloaded.
+    assert job.failure_reason == FailureReason.WALLTIME
+    assert job.error_message == "The scheduler stopped the job when it reached its walltime limit."
     assert run is not None
     assert run.status == JobStatus.STOPPED
     assert controller.active_run_by_job == {}
     assert document.provenance[-1].action == "job_stopped"
+
+
+def test_fail_job_diagnoses_castep_error_files(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = _local_running_job(service, document, "castep-err")
+    (tmp_path / "castep-err.0001.err").write_text("Error in parameters: bad keyword\n", encoding="utf-8")
+
+    controller.fail_job(job.id, "CASTEP did not report successful completion.")
+
+    assert job.failure_reason == FailureReason.CASTEP_ERROR
+    assert job.error_message == "CASTEP did not report successful completion."
+
+
+def test_fail_job_ignores_logs_from_before_the_submission(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = _local_running_job(service, document, "continued")
+    job.submitted_at = utc_now()
+    stale = tmp_path / "continued.err"
+    stale.write_text("Error from the previous run\n", encoding="utf-8")
+    old = (job.submitted_at - timedelta(hours=1)).timestamp()
+    os.utime(stale, (old, old))
+
+    controller.fail_job(job.id, "process exited with code 1")
+
+    assert job.failure_reason is None
+
+
+def test_fail_job_keeps_an_explicit_reason(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job = _cluster_running_job(service, document, "explicit")
+
+    controller.fail_job(job.id, "Scheduler reported the job as TIMEOUT.", reason=FailureReason.SUBMISSION)
+
+    assert job.failure_reason == FailureReason.SUBMISSION
 
 
 # ---------------------------------------------------------------------------

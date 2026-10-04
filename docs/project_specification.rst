@@ -161,7 +161,7 @@ The local CASTEP execution path must satisfy the following requirements:
 
 - Failed and cancelled job management must be available from the shared dashboard UI:
 
-   - resubmit failed or cancelled jobs while reusing existing remote files so
+   - resubmit failed, stopped, or cancelled jobs while reusing existing remote files so
      continuation runs can start from the same working directory
    - update the dashboard row with the replacement remote scheduler id after
      successful resubmission

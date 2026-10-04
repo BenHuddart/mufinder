@@ -10,6 +10,7 @@ import importlib
 from pathlib import Path
 import posixpath
 import shlex
+import stat as stat_module
 from typing import Any
 
 from mufinder.cluster_setup import ClusterConfig
@@ -602,7 +603,10 @@ class SSHConnection:
         host_keys.add(lookup, trusted.algorithm, host_key)
 
     def _rmtree_via_sftp(self, sftp, remote_path: str) -> None:
-        if self.is_dir(remote_path):
+        # ``lstat``, not ``stat``: a symlink is removed as a link and never
+        # followed, so a link inside a job directory cannot lead the delete
+        # into the (possibly shared) directory it points at.
+        if stat_module.S_ISDIR(sftp.lstat(remote_path).st_mode):
             for entry in self.listdir(remote_path):
                 child = posixpath.join(remote_path, entry)
                 self._rmtree_via_sftp(sftp, child)

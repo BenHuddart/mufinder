@@ -3721,7 +3721,7 @@ def test_main_window_submit_jobs_on_cluster_dashboard_resubmit_still_reuses_file
 ) -> None:
     """The continuation branch must not capture the dashboard resubmit path.
 
-    Dashboard resubmission passes FAILED/CANCELLED jobs, which the continuation
+    Dashboard resubmission passes FAILED/STOPPED/CANCELLED jobs, which the continuation
     branch ignores, and keeps its own reuse-the-remote-inputs semantics.
     """
 
@@ -6753,7 +6753,7 @@ def test_main_window_dashboard_handlers_forward_selected_jobs(
 
     assert resubmitted
     assert resubmitted[0][0] == [job]
-    assert resubmitted[0][1]["eligible_statuses"] == {JobStatus.FAILED, JobStatus.CANCELLED}
+    assert resubmitted[0][1]["eligible_statuses"] == {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
     assert "cancelled" in resubmitted[0][1]["no_eligible_message"]
     window.close()
 
@@ -13342,4 +13342,175 @@ def test_main_window_kpoint_overview_recomputes_spacings_on_the_sweep_cell(qapp,
     assert snapshot["plot_data"]["point_spacings"][16.0] != pytest.approx(
         spacing_from_grid(host.lattice_vectors, (4, 2, 2))
     )
+    window.close()
+
+
+def _write_previous_run_output(job_dir: Path, label: str) -> None:
+    for name in (f"{label}.castep", f"{label}.check", f"{label}-out.cell", "slurm-55501.out"):
+        (job_dir / name).write_text("previous run\n", encoding="utf-8")
+
+
+def test_main_window_start_again_on_cluster_deletes_its_own_directory_without_prompting(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "start_again_cluster.mufinder", "StartAgainCluster")
+    window._document = doc
+
+    job = _add_cluster_input_job(service, doc, "relax_a")
+    job.execution_target = "alpha"
+    job.remote_directory = "/remote/work/relax_a"
+    job.remote_job_id = "55501"
+    job.status = JobStatus.STOPPED
+    job_dir = doc.project_root / "files" / "convergence_cutoff" / "relax_a"
+    _write_previous_run_output(job_dir, "relax_a")
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    scheduler_checks: list[str] = []
+    monkeypatch.setattr(
+        window._cluster_runner._runner,
+        "scheduler_job_is_active",
+        lambda remote_job_id: scheduler_checks.append(remote_job_id) or False,
+    )
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda *_args: pytest.fail("starting again was already confirmed"),
+    )
+
+    window._submit_jobs_on_cluster(
+        [job],
+        eligible_statuses={JobStatus.STOPPED},
+        reuse_existing_remote_files=True,
+        fresh_start_job_ids={job.id},
+    )
+
+    # The previous run is confirmed finished before its directory is deleted.
+    assert scheduler_checks == ["55501"]
+    assert recorded["checked"] == []
+    assert recorded["deleted"] == ["/remote/work/relax_a"]
+    assert len(recorded["submitted"]) == 1
+    submitted = recorded["submitted"][0]
+    assert submitted["remote_directory"] == "/remote/work/relax_a"
+    assert submitted["reuse_existing_files"] is False
+    assert sorted(path.name for path in job_dir.iterdir()) == ["relax_a.cell", "relax_a.param"]
+    window.close()
+
+
+def test_main_window_continue_on_cluster_keeps_the_previous_run(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "continue_cluster.mufinder", "ContinueCluster")
+    window._document = doc
+
+    job = _add_cluster_input_job(service, doc, "relax_b")
+    job.execution_target = "alpha"
+    job.remote_directory = "/remote/work/relax_b"
+    job.status = JobStatus.STOPPED
+    job_dir = doc.project_root / "files" / "convergence_cutoff" / "relax_b"
+    _write_previous_run_output(job_dir, "relax_b")
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+
+    window._submit_jobs_on_cluster(
+        [job],
+        eligible_statuses={JobStatus.STOPPED},
+        reuse_existing_remote_files=True,
+    )
+
+    assert recorded["deleted"] == []
+    assert recorded["submitted"][0]["reuse_existing_files"] is True
+    assert (job_dir / "relax_b.check").exists()
+    window.close()
+
+
+def test_main_window_start_again_locally_clears_the_previous_output(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "start_again_local.mufinder", "StartAgainLocal")
+    window._document = doc
+
+    job = _add_cluster_input_job(service, doc, "relax_c")
+    job.execution_target = "local"
+    job.status = JobStatus.STOPPED
+    job_dir = doc.project_root / "files" / "convergence_cutoff" / "relax_c"
+    _write_previous_run_output(job_dir, "relax_c")
+
+    monkeypatch.setattr(
+        main_window_module,
+        "load_castep_setup",
+        lambda _settings: CastepSetup(executable_path="/usr/bin/castep", mpirun_path=""),
+    )
+
+    class _FakeDialog:
+        DialogCode = SimpleNamespace(Accepted=1)
+
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 1
+
+        def config(self):
+            return SimpleNamespace(num_cores=1, parallel=False, max_concurrent=1)
+
+    monkeypatch.setattr(main_window_module, "LocalSubmissionDialog", _FakeDialog)
+    submit_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(window._local_runner, "submit", lambda **kwargs: submit_calls.append(kwargs))
+
+    window._submit_jobs_locally(
+        [job],
+        eligible_statuses={JobStatus.STOPPED},
+        fresh_start_job_ids={job.id},
+    )
+
+    assert len(submit_calls) == 1
+    assert sorted(path.name for path in job_dir.iterdir()) == ["relax_c.cell", "relax_c.param"]
+    window.close()
+
+
+def test_main_window_start_again_skips_a_job_whose_output_cannot_be_cleared(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = MainWindow()
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "start_again_locked.mufinder", "StartAgainLocked")
+    window._document = doc
+
+    job = _add_cluster_input_job(service, doc, "relax_d")
+    job.execution_target = "alpha"
+    job.remote_directory = "/remote/work/relax_d"
+    job.status = JobStatus.STOPPED
+
+    _patch_continuation_cluster_dialog(monkeypatch)
+    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        main_window_module, "show_detailed_warning", lambda _parent, _title, text, **_kw: warnings.append(text)
+    )
+
+    def _locked(_directory: Path) -> None:
+        raise PermissionError("file in use")
+
+    monkeypatch.setattr(MainWindow, "_clear_directory_contents", staticmethod(_locked))
+
+    window._submit_jobs_on_cluster(
+        [job],
+        eligible_statuses={JobStatus.STOPPED},
+        reuse_existing_remote_files=True,
+        fresh_start_job_ids={job.id},
+    )
+
+    # Submitting would resume from a checkpoint the user asked to discard.
+    assert recorded["submitted"] == []
+    assert recorded["deleted"] == []
+    assert job.status == JobStatus.STOPPED
+    assert "relax_d: could not clear its previous output (file in use)" in warnings[0]
     window.close()
