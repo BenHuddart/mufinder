@@ -8513,6 +8513,16 @@ class MainWindow(QMainWindow):
                 lambda definition: self._check_definition_host(definition)
             ),
             format_energy=lambda value: _format_energy(value),
+            confirm=lambda title, text: (
+                QMessageBox.question(
+                    self,
+                    title,
+                    text,
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                == QMessageBox.StandardButton.Yes
+            ),
         )
 
     def _build_energy_barriers_deps(self) -> EnergyBarriersDeps:
