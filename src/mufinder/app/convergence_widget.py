@@ -1336,7 +1336,7 @@ class CutoffConvergenceWidget(QWidget):
             cutoff_energies=cutoffs,
             shared_params=shared_params,
             overrides=overrides,
-            name_prefix=self._name_prefix.text().strip() or "convergence",
+            name_prefix=self._name_prefix.text().strip() or "cutoff_convergence",
         )
 
     def _emit_config(self) -> None:

@@ -13,6 +13,7 @@ import pytest
 from mufinder.app.adapter_common import (
     AdapterExpansion,
     build_input_template,
+    reference_is_supercell_of,
     rescale_kpoint_grid,
     row_values_has_keyword,
     template_has_explicit_kpoints,
@@ -154,3 +155,29 @@ def test_rescale_kpoint_grid_target_description_is_verbatim_trailer() -> None:
     )
     assert message is not None
     assert message.endswith("row 'src' (equivalent reciprocal-space density).")
+
+
+def test_rescale_kpoint_grid_rescales_unit_cell_rows_for_a_supercell_reference() -> None:
+    unit = [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]]
+    supercell = [[6.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]]
+
+    grid, message = rescale_kpoint_grid(
+        project_kpoint_grid=(2, 3, 3),
+        reference_lattice=supercell,
+        row_lattice=unit,
+        is_identity_supercell=True,
+        has_supercell=False,
+        target_description="unit cell (equivalent density).",
+    )
+
+    assert grid == (4, 3, 3)
+    assert message == "K-point grid adjusted from 2x3x3 to 4x3x3 for unit cell (equivalent density)."
+
+
+def test_reference_is_supercell_of_distinguishes_supercells_from_other_unit_cells() -> None:
+    unit = [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]]
+
+    assert reference_is_supercell_of([[6.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]], unit) is True
+    assert reference_is_supercell_of(unit, unit) is False
+    assert reference_is_supercell_of([[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]], unit) is False
+    assert reference_is_supercell_of(None, unit) is False

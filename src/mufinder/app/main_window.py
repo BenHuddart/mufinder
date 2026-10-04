@@ -285,7 +285,7 @@ from mufinder.science.energy_barriers import (
     MuonPath,
     enumerate_distinct_muon_paths,
 )
-from mufinder.science.kpoint_grids import equivalent_grid_for_supercell
+from mufinder.science.kpoint_grids import equivalent_grid_for_supercell, kpoint_count, most_uniform_grid
 from mufinder.science.quantum_phonons import PhononParseError
 from mufinder.science.relaxation_analysis import folded_muon_position_from_structure, grouped_relative_energies
 from mufinder.science.site_generation import SiteGenerationError, lattice_cart_to_frac
@@ -6249,9 +6249,10 @@ class MainWindow(QMainWindow):
         if not isinstance(persisted_state, dict):
             persisted_state = {}
 
+        cell = self._convergence_sweep_cell(self._active_convergence_definition()) or host
         dialog = ConvergenceExaminerDialog(
             self._convergence_controller.build_states(),
-            num_atoms=len(host.species),
+            num_atoms=len(cell.species),
             initial_state=persisted_state,
             parent=self,
         )
@@ -11204,13 +11205,9 @@ class MainWindow(QMainWindow):
             )
             return
 
+        cell = self._convergence_sweep_cell(self._active_kpoint_definition()) or host
         states = self._kpoint_convergence_controller.build_states()
-        counts_map: dict[float, SweepPointRunState] = {}
-        labels: dict[float, str] = {}
-        for grid, state in states.items():
-            count = float(int(grid[0]) * int(grid[1]) * int(grid[2]))
-            counts_map[count] = state
-            labels[count] = f"Grid: {grid[0]} x {grid[1]} x {grid[2]}"
+        counts_map, labels, notes = self._kpoint_examiner_points(states, cell.lattice_vectors)
 
         persisted_state = self._document.ui_state.get(self._KPOINT_EXAMINER_STATE_KEY, {})
         if not isinstance(persisted_state, dict):
@@ -11218,11 +11215,12 @@ class MainWindow(QMainWindow):
 
         dialog = ConvergenceExaminerDialog(
             counts_map,
-            num_atoms=len(host.species),
+            num_atoms=len(cell.species),
             sweep_kind="kpoint",
             point_labels=labels,
-            lattice_vectors=host.lattice_vectors,
+            lattice_vectors=cell.lattice_vectors,
             initial_state=persisted_state,
+            notes=notes,
             parent=self,
         )
         dialog.default_adopted.connect(
@@ -11231,6 +11229,56 @@ class MainWindow(QMainWindow):
         dialog.state_changed.connect(self._on_kpoint_examiner_state_changed)
         dialog.exec()
         self._on_kpoint_examiner_state_changed(dialog.state_snapshot())
+
+    def _convergence_sweep_cell(self, definition) -> Structure | None:
+        """Return the cell a convergence sweep ran on: its definition's input structure.
+
+        That is the unit cell or the saved supercell chosen under ``Simulation
+        Cell``. Per-atom energies and k-point spacings must use this cell, not the
+        host unit cell, or a supercell sweep is normalized by the wrong atom count
+        and its grids are related to the wrong lattice.
+        """
+
+        if self._document is None or definition is None or not definition.input_structure_ids:
+            return None
+        return self._document.structures.get(definition.input_structure_ids[0])
+
+    @staticmethod
+    def _kpoint_examiner_points(
+        states: Mapping[tuple[int, int, int], SweepPointRunState],
+        lattice_vectors: Sequence[Sequence[float]],
+    ) -> tuple[dict[float, SweepPointRunState], dict[float, str], list[str]]:
+        """Key k-point sweep states by k-point count for the examiner's axis.
+
+        Two different grids with the same count (only possible with hand-entered
+        grids) cannot share a point on that axis. One is kept per count: a grid
+        with a completed energy is preferred, then the most uniformly sampled one
+        for the cell (see :func:`~mufinder.science.kpoint_grids.most_uniform_grid`).
+        Each grid left out is described in the returned notes.
+        """
+
+        by_count: dict[int, list[tuple[int, int, int]]] = {}
+        for grid in states:
+            by_count.setdefault(kpoint_count(grid), []).append(tuple(int(n) for n in grid))  # type: ignore[arg-type]
+        counts_map: dict[float, SweepPointRunState] = {}
+        labels: dict[float, str] = {}
+        notes: list[str] = []
+        for count, grids in by_count.items():
+            kept = grids[0]
+            if len(grids) > 1:
+                completed = [grid for grid in grids if states[grid].total_energy is not None]
+                pool = completed or grids
+                kept = most_uniform_grid(lattice_vectors, pool) if len(pool) > 1 else pool[0]
+                excluded = ", ".join(format_kpoint_grid(grid) for grid in grids if grid != kept)
+                notes.append(
+                    f"{excluded} left out: same k-point count ({count}) as {format_kpoint_grid(kept)}, "
+                    "which is examined instead because it samples the cell more uniformly"
+                    + (" and has completed" if completed else "")
+                    + ". Remove the extra grid from the sweep to examine it."
+                )
+            counts_map[float(count)] = states[kept]
+            labels[float(count)] = f"Grid: {format_kpoint_grid(kept)}"
+        return counts_map, labels, notes
 
     def _on_kpoint_examiner_state_changed(self, state: dict) -> None:
         if self._document is None:
@@ -11275,10 +11323,19 @@ class MainWindow(QMainWindow):
         xc_functional = self._convergence_definition_xc_functional(active_definition)
         if not self._confirm_adopted_xc_functional(xc_functional):
             return
+        # The grid is only meaningful together with the lattice it was converged
+        # on: later workflows rescale it to their own cell with
+        # equivalent_grid_for_supercell, which needs this reference lattice.
+        reference_cell = self._convergence_sweep_cell(active_definition)
+        if reference_cell is None and self._document.project.host_structure_id is not None:
+            reference_cell = self._document.structures.get(self._document.project.host_structure_id)
 
         self._project_service.set_recommended_kpoint_grid(
             self._document,
             grid,
+            lattice_vectors=(
+                [list(row) for row in reference_cell.lattice_vectors] if reference_cell is not None else None
+            ),
             method=method,
             energy_threshold=energy_threshold,
             force_threshold=force_threshold,
