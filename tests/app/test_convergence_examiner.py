@@ -798,12 +798,14 @@ def test_convergence_examiner_accepts_tight_thresholds_as_typed(qapp) -> None:
     text = dialog._results.toPlainText()
     assert "Energy threshold: 1e-05 eV/atom" in text
     assert "Force threshold: 0.0001 eV/Ang" in text
-    # 1e-4 eV/Ang is coarser than CASTEP's printed force precision: no note.
-    assert "finer than" not in text
 
 
-def test_convergence_examiner_notes_thresholds_finer_than_castep_prints(qapp) -> None:
-    """CASTEP prints forces to 1e-5 eV/Ang and stresses to 1e-6 GPa (firstd.f90)."""
+def test_convergence_examiner_floors_force_and_stress_at_castep_printed_precision(qapp) -> None:
+    """CASTEP prints forces to 1e-5 eV/Ang and stresses to 1e-6 GPa (firstd.f90).
+
+    A finer threshold could only be met by values that print identically, so the
+    fields stop at that precision and show the value the analysis used.
+    """
 
     dialog = ConvergenceExaminerDialog(
         {
@@ -820,12 +822,12 @@ def test_convergence_examiner_notes_thresholds_finer_than_castep_prints(qapp) ->
 
     dialog._run_analysis()
 
+    assert dialog._force_threshold.text() == "0.00001"
+    assert dialog._stress_threshold.text() == "0.000001"
     text = dialog._results.toPlainText()
-    assert (
-        "The force threshold (1e-06 eV/Ang) is finer than the 1e-05 eV/Ang to which CASTEP prints forces"
-        in text
-    )
-    assert "The stress threshold (1e-07 GPa) is finer than the 1e-06 GPa to which CASTEP prints stresses" in text
+    assert "Force threshold: 1e-05 eV/Ang" in text
+    assert "Stress threshold: 1e-06 GPa" in text
+    assert "0.00001 eV/Ang" in dialog._force_threshold.toolTip()
 
 
 def test_convergence_examiner_raises_a_non_positive_threshold_to_the_smallest_positive_value(qapp) -> None:
@@ -836,8 +838,10 @@ def test_convergence_examiner_raises_a_non_positive_threshold_to_the_smallest_po
         },
         num_atoms=2,
     )
+    dialog._energy_threshold.setText("0")
     dialog._force_threshold.setText("0")
 
     dialog._run_analysis()
 
-    assert dialog._force_threshold.value() > 0.0
+    assert dialog._energy_threshold.value() > 0.0
+    assert dialog._force_threshold.text() == "0.00001"

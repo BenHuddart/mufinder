@@ -47,33 +47,15 @@ from mufinder.science.convergence_analysis import (
 from mufinder.science.kpoint_grids import format_kpoint_grid, kpoint_count_for_spacing, spacing_from_grid
 
 
-#: Thresholds must be positive; this is the smallest value the fields accept,
-#: with enough decimals to type it.
+#: Smallest thresholds the fields accept. Forces and stresses cannot be compared
+#: more finely than CASTEP prints them, so their floors are that printed
+#: resolution; a finer threshold could only be met by values that print
+#: identically. Energies are printed to 13 significant figures, so the energy
+#: threshold only has to be positive.
 _THRESHOLD_DECIMALS = 12
-_MIN_THRESHOLD = 10.0 ** -_THRESHOLD_DECIMALS
-
-
-def _precision_notes(force_threshold: float, stress_threshold: float | None) -> list[str]:
-    """Explain thresholds finer than the precision CASTEP prints forces and stresses.
-
-    Such a threshold is accepted, but a criterion can then only be met by two
-    consecutive values that print identically.
-    """
-
-    notes: list[str] = []
-    if force_threshold < CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG:
-        notes.append(
-            f"The force threshold ({force_threshold:.6g} eV/Ang) is finer than the "
-            f"{CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG:g} eV/Ang to which CASTEP prints forces, "
-            "so it is met only when consecutive maximum forces print identically."
-        )
-    if stress_threshold is not None and stress_threshold < CASTEP_STRESS_PRINT_RESOLUTION_GPA:
-        notes.append(
-            f"The stress threshold ({stress_threshold:.6g} GPa) is finer than the "
-            f"{CASTEP_STRESS_PRINT_RESOLUTION_GPA:g} GPa to which CASTEP prints stresses, "
-            "so it is met only when consecutive maximum stresses print identically."
-        )
-    return notes
+_MIN_ENERGY_THRESHOLD = 10.0 ** -_THRESHOLD_DECIMALS
+_MIN_FORCE_THRESHOLD = CASTEP_FORCE_PRINT_RESOLUTION_EV_ANG
+_MIN_STRESS_THRESHOLD = CASTEP_STRESS_PRINT_RESOLUTION_GPA
 
 
 _STRESS_DISABLED_TOOLTIP = (
@@ -191,17 +173,14 @@ class ConvergenceExaminerDialog(QDialog):
         self._stress_threshold_for_recommendation: float | None = None
         self._last_plot_data: dict[str, Any] | None = None
 
-        # Thresholds only need to be positive; the smallest representable step
-        # stands in for "greater than zero". See _precision_notes for when a
-        # threshold is finer than CASTEP prints the quantity.
         self._energy_threshold = DecimalLineEdit(self)
-        self._energy_threshold.setRange(_MIN_THRESHOLD, 1.0)
+        self._energy_threshold.setRange(_MIN_ENERGY_THRESHOLD, 1.0)
         self._energy_threshold.setDecimals(_THRESHOLD_DECIMALS)
         self._energy_threshold.setSingleStep(0.001)
         self._energy_threshold.setValue(0.001)
 
         self._force_threshold = DecimalLineEdit(self)
-        self._force_threshold.setRange(_MIN_THRESHOLD, 1.0)
+        self._force_threshold.setRange(_MIN_FORCE_THRESHOLD, 1.0)
         self._force_threshold.setDecimals(_THRESHOLD_DECIMALS)
         self._force_threshold.setSingleStep(0.01)
         self._force_threshold.setValue(0.05)
@@ -214,7 +193,7 @@ class ConvergenceExaminerDialog(QDialog):
         self._include_stress.setAutoFillBackground(False)
         self._include_stress.setStyleSheet("QCheckBox { background: transparent; }")
         self._stress_threshold = DecimalLineEdit(self)
-        self._stress_threshold.setRange(_MIN_THRESHOLD, 100.0)
+        self._stress_threshold.setRange(_MIN_STRESS_THRESHOLD, 100.0)
         self._stress_threshold.setDecimals(_THRESHOLD_DECIMALS)
         self._stress_threshold.setSingleStep(0.05)
         self._stress_threshold.setValue(0.1)
@@ -279,7 +258,14 @@ class ConvergenceExaminerDialog(QDialog):
         criteria_form.addRow("Energy threshold (eV/atom)", self._energy_threshold)
         criteria_form.addRow("Force threshold (eV/Ang)", self._force_threshold)
         criteria_form.addRow(self._include_stress, self._stress_threshold)
-        self._stress_threshold.setToolTip("Stress convergence threshold (GPa). Mirrors GEOM_STRESS_TOL.")
+        self._force_threshold.setToolTip(
+            "Force convergence threshold (eV/Ang). The minimum is "
+            f"{_MIN_FORCE_THRESHOLD:.5f} eV/Ang, the precision CASTEP prints forces to."
+        )
+        self._stress_threshold.setToolTip(
+            "Stress convergence threshold (GPa). Mirrors GEOM_STRESS_TOL. The minimum is "
+            f"{_MIN_STRESS_THRESHOLD:.6f} GPa, the precision CASTEP prints stresses to."
+        )
         layout.addWidget(criteria_group)
 
         method_row = QHBoxLayout()
@@ -1064,11 +1050,10 @@ class ConvergenceExaminerDialog(QDialog):
             self._adopt_button.setText(self._adopt_button_text())
             self._emit_state_changed()
 
-    def _note_lines(self, extra: Sequence[str] = ()) -> list[str]:
-        notes = [*self._notes, *extra]
-        if not notes:
+    def _note_lines(self) -> list[str]:
+        if not self._notes:
             return []
-        return ["", "Notes:", *(f"- {note}" for note in notes)]
+        return ["", "Notes:", *(f"- {note}" for note in self._notes)]
 
     def _recommended_point_text(self) -> str:
         """Return the recommended k-point grid as ``4 x 4 x 4`` (or a count fallback)."""
@@ -1236,11 +1221,7 @@ class ConvergenceExaminerDialog(QDialog):
                 )
             else:
                 lines.extend(["", "No combined convergence recommendation available yet."])
-        lines.extend(
-            self._note_lines(
-                _precision_notes(force_threshold, stress_threshold if include_stress else None)
-            )
-        )
+        lines.extend(self._note_lines())
 
         self._results.setPlainText("\n".join(lines))
         self._last_plot_data = {
