@@ -544,6 +544,17 @@ symmetry-inequivalent candidate stopping sites. The page includes:
   reads ``Open in Analysis →`` when a card is populated and ``Go to Analysis →``
   when empty, so an unpinned card still routes the user to the Analysis tab.
 - An ``Unpin`` action that clears a charge state's pinned snapshot.
+- A ``Delete Analysis...`` action in each structural-relaxation analysis
+  workspace header, and on the workspace's project-tree node under
+  ``Muon Sites -> Analysis`` via right-click, so a preliminary analysis can be
+  removed once a fuller set of relaxations is available. It asks for
+  confirmation, keeps the relaxations the workspace used, removes any summary
+  pin taken from that workspace, and autosaves the project (see
+  :doc:`structural_relaxation_analysis`). Each analysis workspace has its own
+  project-tree node, kept in step with the selected tab and the workspace name,
+  and marked complete once clustering has been applied. Saved magnetic field
+  workspace nodes offer a matching ``Delete Workspace...`` right-click action;
+  workflow-stage nodes have no context menu.
 - Safe placeholder fallback when nothing is pinned, or when a persisted snapshot
   no longer matches the current host structure.
 - Persisted summary snapshot state in

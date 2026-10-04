@@ -1561,6 +1561,8 @@ class RelaxationAnalysisWidget(QWidget):
     state_changed = Signal(list)
     add_sites_requested = Signal(str)
     pin_summary_requested = Signal(str)
+    delete_requested = Signal(str)
+    current_workspace_changed = Signal(str)
 
     _SITE_COLUMN = 0
     _CLUSTER_COLUMN = 1
@@ -1573,6 +1575,7 @@ class RelaxationAnalysisWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._restoring = False
+        self._rebuilding_tabs = False
         self._workspaces: list[dict[str, object]] = []
         self._sources_by_job_id: dict[UUID, CompletedRelaxationAnalysisSource] = {}
         self._structures_by_id: dict[UUID, Structure] = {}
@@ -1671,16 +1674,22 @@ class RelaxationAnalysisWidget(QWidget):
         current = self._workspace_tabs.currentWidget()
         if current is not None:
             current_id = current.property("workspace_id")
-        self._workspace_tabs.clear()
-        for workspace in self._workspaces:
-            tab = self._build_workspace_tab(workspace)
-            workspace_id = _workspace_id(workspace)
-            tab.setProperty("workspace_id", workspace_id)
-            self._workspace_tabs.addTab(tab, _workspace_name(workspace))
-        self._empty_label.setVisible(not self._workspaces)
-        self._workspace_tabs.setVisible(bool(self._workspaces))
-        if current_id:
-            self.focus_workspace(str(current_id))
+        # Clearing and re-adding tabs fires currentChanged for tabs that are
+        # only transiently current; silence it so listeners see real switches.
+        self._rebuilding_tabs = True
+        try:
+            self._workspace_tabs.clear()
+            for workspace in self._workspaces:
+                tab = self._build_workspace_tab(workspace)
+                workspace_id = _workspace_id(workspace)
+                tab.setProperty("workspace_id", workspace_id)
+                self._workspace_tabs.addTab(tab, _workspace_name(workspace))
+            self._empty_label.setVisible(not self._workspaces)
+            self._workspace_tabs.setVisible(bool(self._workspaces))
+            if current_id:
+                self.focus_workspace(str(current_id))
+        finally:
+            self._rebuilding_tabs = False
 
     def _workspace_sites(self, workspace: Mapping[str, object]) -> tuple[RelaxedMuonSite, ...]:
         host = self._host_structure
@@ -1771,6 +1780,15 @@ class RelaxationAnalysisWidget(QWidget):
         export_cif_button.clicked.connect(
             lambda _checked=False, wid=_workspace_id(workspace): self._export_workspace_cif(wid)
         )
+        delete_button = QPushButton("Delete Analysis...", header)
+        delete_button.setObjectName("analysisWorkspaceDeleteButton")
+        delete_button.setToolTip(
+            "Delete this analysis workspace and its clustering. The structural "
+            "relaxations it uses are kept."
+        )
+        delete_button.clicked.connect(
+            lambda _checked=False, wid=_workspace_id(workspace): self.delete_requested.emit(wid)
+        )
         show_shifted = QCheckBox("Show shifted positions", header)
         show_shifted.setStyleSheet("background: transparent;")
         show_shifted.setChecked(bool(workspace.get("show_shifted_positions", False)))
@@ -1780,6 +1798,7 @@ class RelaxationAnalysisWidget(QWidget):
         header_layout.addWidget(QLabel("Charge state", header), 0, 2)
         header_layout.addWidget(charge, 0, 3)
         header_layout.addWidget(show_shifted, 0, 4)
+        header_layout.addWidget(delete_button, 0, 5)
         header_layout.addWidget(add_button, 1, 1)
         header_layout.addWidget(cluster_button, 1, 2)
         header_layout.addWidget(displacement_button, 1, 3)
@@ -2019,8 +2038,19 @@ class RelaxationAnalysisWidget(QWidget):
         )
         dialog.exec()
 
+    def current_workspace_id(self) -> str | None:
+        current = self._workspace_tabs.currentWidget()
+        if current is None:
+            return None
+        workspace_id = current.property("workspace_id")
+        return str(workspace_id) if workspace_id else None
+
     def _on_current_tab_changed(self, _index: int) -> None:
-        pass
+        if self._rebuilding_tabs:
+            return
+        workspace_id = self.current_workspace_id()
+        if workspace_id is not None:
+            self.current_workspace_changed.emit(workspace_id)
 
     def _emit_state(self) -> None:
         if self._restoring:

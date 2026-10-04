@@ -1781,6 +1781,7 @@ class MainWindow(QMainWindow):
     _MAGNETIC_FIELD_FORM_KEY = "magnetic_field_form"
     _MAGNETIC_FIELD_WORKSPACES_KEY = "magnetic_field_workspaces"
     _MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX = "magnetic_fields/workspace/"
+    _RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX = "muon_analysis/workspace/"
     _CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY = "convergence_overview_snapshots"
     _MUON_SITES_SUMMARY_SNAPSHOTS_KEY = "muon_sites_summary_snapshots"
     _LAST_CLUSTER_SUBMISSION_CONFIG_KEY = "last_cluster_submission_config"
@@ -1883,6 +1884,8 @@ class MainWindow(QMainWindow):
         self._project_tree.setHeaderLabel("Project")
         self._project_tree.setHeaderHidden(True)
         self._project_tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
+        self._project_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._project_tree.customContextMenuRequested.connect(self._open_project_tree_context_menu)
 
         self._main_title = QLabel("Welcome to MuFinder")
         self._main_title.setObjectName("homeHeroTitle")
@@ -2134,6 +2137,10 @@ class MainWindow(QMainWindow):
         self._relaxation_analysis_view.state_changed.connect(self._on_relaxation_analysis_state_changed)
         self._relaxation_analysis_view.add_sites_requested.connect(self._on_relaxation_analysis_add_sites_requested)
         self._relaxation_analysis_view.pin_summary_requested.connect(self._on_muon_sites_pin_requested)
+        self._relaxation_analysis_view.delete_requested.connect(self._delete_relaxation_analysis_workspace)
+        self._relaxation_analysis_view.current_workspace_changed.connect(
+            self._on_relaxation_analysis_current_workspace_changed
+        )
         self._muon_sites_summary_view = MuonSitesSummaryWidget()
         self._muon_sites_summary_view.open_analysis_requested.connect(self._on_open_muon_analysis_requested)
         self._muon_sites_summary_view.open_analysis_root_requested.connect(
@@ -3541,6 +3548,26 @@ class MainWindow(QMainWindow):
         workspace_id = route[len(self._MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX) :].strip()
         return workspace_id or None
 
+    def _relaxation_analysis_workspace_route(self, workspace_id: str) -> str:
+        return f"{self._RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX}{workspace_id}"
+
+    def _relaxation_analysis_workspace_id_from_route(self, route: object) -> str | None:
+        if not isinstance(route, str) or not route.startswith(self._RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX):
+            return None
+        workspace_id = route[len(self._RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX) :].strip()
+        return workspace_id or None
+
+    @staticmethod
+    def _relaxation_analysis_workspace_clustered(document: ProjectDocument, workspace_id: str) -> bool:
+        workspaces = document.ui_state.get(_RELAXATION_ANALYSIS_STATE_KEY)
+        if not isinstance(workspaces, list):
+            return False
+        for workspace in workspaces:
+            if isinstance(workspace, dict) and str(workspace.get("id", "")) == workspace_id:
+                clustering = workspace.get("clustering")
+                return isinstance(clustering, dict) and clustering.get("result") is not None
+        return False
+
     @staticmethod
     def _magnetic_workspace_has_structure(workspace: Mapping[str, object]) -> bool:
         magnetic_structure = workspace.get("magnetic_structure")
@@ -3597,6 +3624,21 @@ class MainWindow(QMainWindow):
                 ),
             )
             for workspace in self._magnetic_field_workspaces_state()
+            if str(workspace.get("id", "")).strip()
+        )
+        analysis_workspaces = tuple(
+            WorkflowDefinition(
+                key=f"muon_analysis_workspace_{workspace['id']}",
+                title=str(workspace.get("name", "")).strip() or "Relaxation analysis",
+                route=self._relaxation_analysis_workspace_route(str(workspace["id"])),
+                completion_goal="Apply clustering to this analysis.",
+                completion_check=(
+                    lambda document, workspace_id=str(workspace["id"]): (
+                        self._relaxation_analysis_workspace_clustered(document, workspace_id)
+                    )
+                ),
+            )
+            for workspace in self._relaxation_analysis_workspaces()
             if str(workspace.get("id", "")).strip()
         )
 
@@ -3662,6 +3704,7 @@ class MainWindow(QMainWindow):
                         route="muon_analysis",
                         completion_goal="Create at least one structural-relaxation analysis workspace.",
                         completion_check=self._workflow_relaxation_analysis_complete,
+                        children=analysis_workspaces,
                     ),
                 ),
             ),
@@ -3778,6 +3821,10 @@ class MainWindow(QMainWindow):
                 child.setData(0, Qt.ItemDataRole.UserRole, self._comparison_route(table.id))
                 pristine_item.addChild(child)
             pristine_item.setExpanded(True)
+
+        analysis_item = self._find_tree_item_by_route("muon_analysis")
+        if analysis_item is not None and analysis_item.childCount():
+            analysis_item.setExpanded(True)
 
         for index in range(self._project_tree.topLevelItemCount()):
             item = self._project_tree.topLevelItem(index)
@@ -4533,6 +4580,9 @@ class MainWindow(QMainWindow):
         elif route == "muon_relaxations":
             target = self._muon_relaxation_view
         elif route == "muon_analysis":
+            target = self._relaxation_analysis_view
+        elif (analysis_workspace_id := self._relaxation_analysis_workspace_id_from_route(route)) is not None:
+            self._relaxation_analysis_view.focus_workspace(analysis_workspace_id)
             target = self._relaxation_analysis_view
         elif route == "muon_sites":
             self._refresh_muon_sites_summary()
@@ -10816,16 +10866,121 @@ class MainWindow(QMainWindow):
         self._set_relaxation_analysis_workspaces(workspaces)
         self._refresh_relaxation_analysis_context()
         self._populate_project_tree()
-        self._set_active_route("muon_analysis")
-        self._relaxation_analysis_view.focus_workspace(str(workspace["id"]))
+        self._set_active_route(self._relaxation_analysis_workspace_route(str(workspace["id"])))
         self.statusBar().showMessage(f"Created analysis workspace '{workspace['name']}'")
 
     def _on_relaxation_analysis_state_changed(self, workspaces: list) -> None:
         if self._document is None or self._shutting_down:
             return
         cleaned = [dict(workspace) for workspace in workspaces if isinstance(workspace, dict)]
+        previous_nodes = [(w.get("id"), w.get("name")) for w in self._relaxation_analysis_workspaces()]
         self._set_relaxation_analysis_workspaces(cleaned)
-        self._refresh_workflow_stage_icons()
+        if [(w.get("id"), w.get("name")) for w in cleaned] != previous_nodes:
+            # A rename changes the workspace's project-tree label.
+            self._populate_project_tree()
+        else:
+            self._refresh_workflow_stage_icons()
+
+    def _on_relaxation_analysis_current_workspace_changed(self, workspace_id: str) -> None:
+        # Keep the project tree on the workspace whose tab is showing, but only
+        # while the Analysis page is the one in view.
+        if self._main_stack.currentWidget() is not self._relaxation_analysis_view:
+            return
+        route = self._relaxation_analysis_workspace_route(str(workspace_id))
+        if self._active_route() != route:
+            self._set_active_route(route)
+
+    def _open_project_tree_context_menu(self, position) -> QMenu | None:
+        item = self._project_tree.itemAt(position)
+        if item is None:
+            return None
+        menu = self._project_tree_context_menu(item)
+        if menu is not None:
+            menu.exec(self._project_tree.viewport().mapToGlobal(position))
+        return menu
+
+    def _project_tree_context_menu(self, item: QTreeWidgetItem) -> QMenu | None:
+        """Build the right-click menu for a project-tree node, if it has one.
+
+        Only user-created workspace nodes (structural-relaxation analyses and
+        saved magnetic field workspaces) can be deleted from the tree; workflow
+        stages have no menu.
+        """
+
+        if self._document is None:
+            return None
+        route = item.data(0, Qt.ItemDataRole.UserRole)
+        menu = QMenu(self._project_tree)
+        if (analysis_id := self._relaxation_analysis_workspace_id_from_route(route)) is not None:
+            action = menu.addAction("Delete Analysis...")
+            action.triggered.connect(
+                lambda _checked=False, wid=analysis_id: self._delete_relaxation_analysis_workspace(wid)
+            )
+        elif (magnetic_id := self._magnetic_field_workspace_id_from_route(route)) is not None:
+            action = menu.addAction("Delete Workspace...")
+            action.triggered.connect(
+                lambda _checked=False, wid=magnetic_id: self._delete_magnetic_field_workspace(wid)
+            )
+        else:
+            menu.deleteLater()
+            return None
+        return menu
+
+    def _delete_relaxation_analysis_workspace(self, workspace_id: str) -> None:
+        """Delete one analysis workspace, keeping the relaxations it drew on.
+
+        A preliminary analysis made before every relaxation finished goes stale
+        once the full set is in; deleting it only drops the workspace and its
+        clustering. A Muon Sites summary pin taken from it is removed as well,
+        so the summary never keeps showing sites from an analysis that is gone.
+        """
+
+        if self._document is None:
+            return
+        workspaces = self._relaxation_analysis_workspaces()
+        target = next(
+            (workspace for workspace in workspaces if str(workspace.get("id", "")) == str(workspace_id)),
+            None,
+        )
+        if target is None:
+            return
+        name = str(target.get("name", "")).strip() or "Relaxation analysis"
+        pinned_charge_states = [
+            str(charge_state)
+            for charge_state, snapshot in self._muon_sites_summary_snapshots_state().items()
+            if isinstance(snapshot, dict) and str(snapshot.get("workspace_id", "")) == str(workspace_id)
+        ]
+        detail = (
+            "Its clustering results are discarded. The structural relaxations it "
+            "uses are kept and can be added to another analysis."
+        )
+        if pinned_charge_states:
+            detail += " Its sites are pinned to the Muon Sites summary; that pin is removed too."
+        if not workflow_table_utils.confirm_destructive(
+            self,
+            "Delete analysis",
+            f"Delete analysis '{name}'?",
+            detail,
+            accept_label="Delete",
+        ):
+            return
+        self._set_relaxation_analysis_workspaces(
+            [workspace for workspace in workspaces if workspace is not target]
+        )
+        for charge_state in pinned_charge_states:
+            self._store_muon_sites_summary_snapshot(charge_state, None)
+        if self._active_route() == self._relaxation_analysis_workspace_route(str(workspace_id)):
+            # Step up to the Analysis node first: rebuilding the tree without
+            # the selected node would otherwise fall back to the home page.
+            self._set_active_route("muon_analysis")
+        self._refresh_relaxation_analysis_context()
+        self._populate_project_tree()
+        if pinned_charge_states:
+            self._refresh_muon_sites_summary(only_if_visible=True)
+        self._persist_document_ui_state(
+            failure_message="The analysis was deleted, but autosave failed."
+        )
+        self.statusBar().showMessage(f"Deleted analysis '{name}'")
 
     def _on_relaxation_analysis_add_sites_requested(self, workspace_id: str) -> None:
         if self._document is None:
