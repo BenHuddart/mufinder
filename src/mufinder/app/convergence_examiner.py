@@ -1053,6 +1053,11 @@ class ConvergenceExaminerDialog(QDialog):
         QMessageBox.information(self, "Energy method info", text)
 
     def _run_analysis(self) -> None:
+        # Show the thresholds actually used: a typed value outside a field's range
+        # is clamped when read, and clicking the button does not always end the
+        # edit (macOS buttons take no focus), so snap the text here as well.
+        for field in (self._energy_threshold, self._force_threshold, self._stress_threshold):
+            field.setValue(field.value())
         self._update_method_availability()
         if not self._run_button.isEnabled():
             self._write_initial_summary()

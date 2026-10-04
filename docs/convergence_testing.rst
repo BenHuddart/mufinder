@@ -287,9 +287,12 @@ how many atoms are used for per-atom normalization.
 ``Convergence Criteria``
    ``Energy threshold (eV/atom)`` (default 0.001), ``Force threshold
    (eV/Ang)`` (default 0.05), and an optional ``Stress threshold (GPa)``
-   (default 0.1, matching the usual ``GEOM_STRESS_TOL``). The stress box can
-   only be ticked when every completed job reported a stress, that is, when
-   every job was run with ``Calculate Stress`` on.
+   (default 0.1, matching the usual ``GEOM_STRESS_TOL``). The smallest
+   accepted thresholds are 0.0001 eV/atom, 0.001 eV/Ang, and 0.0001 GPa; a
+   smaller value is raised to that minimum, and the field shows the value the
+   analysis used. The stress box can only be ticked when every completed job
+   reported a stress, that is, when every job was run with ``Calculate Stress``
+   on.
 ``Energy method``
    ``Delta-Threshold``, ``Derivative (dE/dEcut)``, or ``Asymptotic
    Extrapolation`` for a cutoff sweep; ``Info`` explains the selected method.

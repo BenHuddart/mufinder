@@ -774,3 +774,27 @@ def test_convergence_examiner_hover_survives_reanalysis(qapp) -> None:
     assert annotation is not None
     assert annotation.axes is dialog._force_ax
     assert annotation.get_visible() is True
+
+
+def test_convergence_examiner_shows_the_clamped_threshold_it_analysed_with(qapp) -> None:
+    """A threshold typed below the minimum is used as the minimum, so show the minimum.
+
+    Otherwise tightening an already-minimal threshold left ``0.0001`` on screen
+    while the analysis ran with ``0.001`` and nothing visibly changed.
+    """
+
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.30),
+            400.0: _completed_state(-10.01, 0.20),
+            500.0: _completed_state(-10.0105, 0.15),
+        },
+        num_atoms=2,
+    )
+    dialog._method_combo.setCurrentText("Delta-Threshold")
+    dialog._force_threshold.setText("0.0001")
+
+    dialog._run_analysis()
+
+    assert dialog._force_threshold.text() == "0.001"
+    assert "Force threshold: 0.001 eV/Ang" in dialog._results.toPlainText()
