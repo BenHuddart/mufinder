@@ -11,9 +11,12 @@ The usual order of work is:
    ``muonium analysis``), records whether the workspace is for positive muon or
    muonium calculations, and only allows later additions from the same
    charge-state family. Selecting rows from both charge states is refused.
-2. The workspace opens as a tab in ``Muon Sites -> Analysis``. Use
+2. The workspace opens as a tab in ``Muon Sites -> Analysis`` and appears as a
+   node under ``Analysis`` in the project tree; selecting the node opens its
+   tab, and switching tabs selects the matching node. Use
    **Add Structure to Analysis** to add further completed relaxations; the
-   workspace name can be edited in its ``Workspace`` field.
+   workspace name can be edited in its ``Workspace`` field, which also renames
+   its project-tree node.
 3. Click **Clustering...**, choose a method, and click **Apply Clustering**
    (see `Clustering`_).
 4. Optionally inspect distortions with **Analyse Displacements**, and click
@@ -21,8 +24,26 @@ The usual order of work is:
    page.
 
 Workspaces are stored in the project file under the saved UI state. They are
-therefore restored after a manual project save and load, but they are not
-autosaved while the application is running.
+therefore restored after a manual project save and load. Creating or editing a
+workspace is not autosaved while the application is running; deleting one is
+(see `Deleting a Workspace`_).
+
+Deleting a Workspace
+--------------------
+
+An analysis made before every relaxation has finished goes stale once the full
+set is available. Click **Delete Analysis...** in a workspace's header, or
+right-click the workspace's node in the project tree and choose
+**Delete Analysis...**, to remove it. MuFinder asks for confirmation first, with
+**Cancel** as the default. If the deleted workspace was the one showing, the
+Analysis page stays open.
+
+Deleting a workspace discards only the workspace and its clustering. The
+structural relaxations it used are kept, so they can be added to a new workspace
+straight away. If the workspace's sites were pinned to the ``Muon Sites``
+summary page (see `Muon Sites Summary`_), that pin is removed as well, and the
+confirmation says so. A pin taken from another workspace is left alone. The
+deletion is saved to the project immediately and cannot be undone.
 
 Site Ordering
 -------------
