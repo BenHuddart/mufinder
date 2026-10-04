@@ -314,6 +314,17 @@ class ConvergenceExaminerDialog(QDialog):
         for label in legend.get_texts():
             label.set_color(palette.text_primary)
 
+    def _clear_figure(self) -> None:
+        """Clear the figure and forget the hover annotation that lived on it.
+
+        ``Figure.clear`` detaches every artist, including a cached hover
+        annotation, which then can no longer be removed or redrawn; the next
+        hover creates a fresh one on the new axes.
+        """
+
+        self._figure.clear()
+        self._hover_annotation = None
+
     def _on_plot_leave(self, _event) -> None:
         if self._hover_annotation is not None:
             self._hover_annotation.set_visible(False)
@@ -434,7 +445,11 @@ class ConvergenceExaminerDialog(QDialog):
             self._hover_annotation.set_bbox(self._annotation_box_style())
             self._hover_annotation.set_color(self._annotation_text_color())
             if self._hover_annotation.axes is not anchor_ax:
-                self._hover_annotation.remove()
+                try:
+                    self._hover_annotation.remove()
+                except (NotImplementedError, ValueError):
+                    # Already detached from the figure; nothing to remove.
+                    pass
                 self._hover_annotation = anchor_ax.annotate(
                     nearest[2],
                     xy=(nearest[0], nearest[1]),
@@ -743,7 +758,7 @@ class ConvergenceExaminerDialog(QDialog):
 
         palette = current_palette()
         self._figure.set_facecolor(palette.bg_surface)
-        self._figure.clear()
+        self._clear_figure()
         energy_ax = self._figure.add_subplot(2, 1, 1)
         force_ax = self._figure.add_subplot(2, 1, 2, sharex=energy_ax)
         self._energy_ax = energy_ax
@@ -1243,7 +1258,7 @@ class ConvergenceExaminerDialog(QDialog):
                     axis.set_xscale("linear")
             except Exception:
                 pass
-        self._figure.clear()
+        self._clear_figure()
         energy_ax = self._figure.add_subplot(2, 1, 1)
         force_ax = self._figure.add_subplot(2, 1, 2, sharex=energy_ax)
         self._energy_ax = energy_ax

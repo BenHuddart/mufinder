@@ -739,3 +739,38 @@ def test_convergence_examiner_kpoint_adopt_label_names_the_grid_once(qapp) -> No
     results = dialog._results.toPlainText()
     assert "Recommended k-point grid: Grid:" not in results
     assert "2 x 4 x 1 left out" in results
+
+
+def test_convergence_examiner_hover_survives_reanalysis(qapp) -> None:
+    """Re-analysing clears the figure; the next hover must not touch the old annotation.
+
+    ``Figure.clear`` detaches the cached hover annotation, and removing a
+    detached artist raises ``NotImplementedError`` on every mouse move.
+    """
+
+    from matplotlib.backend_bases import MouseEvent
+
+    dialog = ConvergenceExaminerDialog(
+        {
+            300.0: _completed_state(-10.0, 0.30),
+            400.0: _completed_state(-10.01, 0.20),
+            500.0: _completed_state(-10.0105, 0.19),
+        },
+        num_atoms=2,
+    )
+    dialog._method_combo.setCurrentText("Delta-Threshold")
+
+    def hover() -> None:
+        dialog._canvas.draw()
+        x, y = dialog._force_ax.transData.transform((400.0, 0.20))
+        dialog._on_plot_hover(MouseEvent("motion_notify_event", dialog._canvas, x, y))
+
+    dialog._run_analysis()
+    hover()
+    dialog._run_analysis()
+    hover()
+
+    annotation = dialog._hover_annotation
+    assert annotation is not None
+    assert annotation.axes is dialog._force_ax
+    assert annotation.get_visible() is True
