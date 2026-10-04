@@ -22,6 +22,8 @@ def test_structural_relaxation_analysis_docs_cover_methods_and_sources() -> None
     assert "spglib" in normalized
     assert "pm-symmetry" in normalized
     assert "unoccupied" in normalized
+    assert "delete analysis..." in normalized
+    assert "relaxations it used are kept" in normalized
 
 
 def test_docs_index_includes_structural_relaxation_analysis_page() -> None:
