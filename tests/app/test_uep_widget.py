@@ -364,7 +364,7 @@ def test_uep_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
     remove_button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
     assert isinstance(remove_button, QToolButton)
     assert remove_button.isEnabled()
-    assert widget._runtime_controls_locked(widget._runtime_state_for_row(row_id).status)
+    assert workflow_table_utils.workflow_row_is_locked(widget._runtime_state_for_row(row_id).status)
 
 
 def test_uep_widget_delete_shortcut_removes_selected_job(qapp) -> None:
@@ -411,7 +411,7 @@ def test_uep_widget_cancelled_row_keeps_parameters_editable(qapp) -> None:
 
     widget.set_runtime_states({label: UepRunState(status="cancelled")})
 
-    assert not widget._runtime_controls_locked(widget._runtime_state_for_row(row_id).status)
+    assert not workflow_table_utils.workflow_row_is_locked(widget._runtime_state_for_row(row_id).status)
     label_item = widget._table.item(0, widget._LABEL_COLUMN)
     assert label_item is not None
     assert bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)

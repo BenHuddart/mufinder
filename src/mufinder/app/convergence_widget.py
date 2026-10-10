@@ -54,28 +54,22 @@ from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     infer_task,
     keyword_locked_in_workflow,
-    keyword_visible_in_workflow,
-    normalize_gui_value,
     validate_gui_values,
 )
 from mufinder.castep_io.schema import KeywordSpec
-from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.app.selection_snapshot import (
     SelectionSnapshotPushButton,
     SelectionSnapshotToolButton,
     resolve_target_keys,
 )
 from mufinder.app.workflow_dialogs import RowParameterRequest, run_row_parameter_dialog
+from mufinder.app.workflow_parameters import STRUCTURE_CONTROLLED_CELL_KEYWORDS
+from mufinder.app.workflow_parameters import sanitize_parameter_mapping
+from mufinder.app.workflow_parameters import workflow_default_params
+from mufinder.app.workflow_table_utils import workflow_row_is_locked
 
-_STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
-    "lattice_cart",
-    "lattice_abc",
-    "positions_frac",
-    "positions_abs",
-}
 _ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
 _PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
-_LOCKED_CUTOFF_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"cancelled"}
 
 
 def _reorder_specs_with_kpoint_anchor(specs: list[KeywordSpec]) -> list[KeywordSpec]:
@@ -274,7 +268,11 @@ class CutoffConvergenceWidget(QWidget):
         self._specs = [spec for spec in specs if spec.name not in {"task", "spin_polarised"}]
         self._specs = _reorder_specs_with_kpoint_anchor(self._specs)
         self._specs_by_name = {spec.name: spec for spec in self._specs}
-        self._default_params = self._default_shared_params()
+        self._default_params = workflow_default_params(
+            self._specs,
+            workflow_stage="convergence_cutoff",
+            locked_names=set(self._shared_locked_values()),
+        )
         self._schema_xc_functional = self._default_params.get("xc_functional")
 
         self._build_layout()
@@ -482,32 +480,6 @@ class CutoffConvergenceWidget(QWidget):
 
         return locked
 
-    def _spec_is_blocked_by_locked(self, spec: KeywordSpec, locked_names: set[str]) -> bool:
-        if spec.name in locked_names:
-            return False
-        return any(conflict in locked_names for conflict in spec.mutually_exclusive_with)
-
-    def _default_shared_params(self) -> dict[str, Any]:
-        defaults: dict[str, Any] = {"task": infer_task("convergence_cutoff")}
-        locked_names = set(self._shared_locked_values())
-
-        for spec in self._specs:
-            if spec.default_value is None:
-                continue
-            if not keyword_visible_in_workflow(
-                spec,
-                workflow_stage="convergence_cutoff",
-                include_advanced=False,
-            ):
-                continue
-            if self._spec_is_blocked_by_locked(spec, locked_names):
-                continue
-            if spec.name in locked_names:
-                continue
-            defaults[spec.name] = normalize_gui_value(spec, spec.default_value)
-
-        return defaults
-
     def _make_table_item(self, text: str, *, editable: bool) -> QTableWidgetItem:
         item = QTableWidgetItem(text)
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
@@ -659,7 +631,12 @@ class CutoffConvergenceWidget(QWidget):
                 values=self._common_parameter_values_for_cutoffs(cutoffs),
                 row_values={c: self._effective_params_for_cutoff(c) for c in cutoffs},
                 row_advanced={c: self._cutoff_added_advanced.get(c, set()) for c in cutoffs},
-                sanitize=self._sanitize_parameter_mapping,
+                sanitize=lambda values: sanitize_parameter_mapping(
+                    values,
+                    self._specs_by_name,
+                    keep=("task",),
+                    drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
+                ),
                 locked_values=self._shared_locked_values(),
                 read_only=self._cutoff_parameters_locked(cutoffs),
                 intro_text=f"Included cutoffs: {self._format_cutoff_list(tuple(sorted(cutoffs)))}",
@@ -684,7 +661,12 @@ class CutoffConvergenceWidget(QWidget):
     def _set_cutoff_parameter_values(
         self, cutoff: float, values: dict[str, Any], advanced_names: set[str]
     ) -> None:
-        normalized = self._sanitize_parameter_mapping(values)
+        normalized = sanitize_parameter_mapping(
+            values,
+            self._specs_by_name,
+            keep=("task",),
+            drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
+        )
         # A task-only mapping is what the legacy-restore path used to write for
         # a default row (see set_form_state); the parameter dialog cannot
         # produce one. Reading it back as "defaults" repairs rows saved that
@@ -725,7 +707,7 @@ class CutoffConvergenceWidget(QWidget):
         for cutoff in cutoffs:
             runtime = self._cutoff_runtime_states.get(float(cutoff))
             status = "" if runtime is None else runtime.status.strip().lower()
-            if status in _LOCKED_CUTOFF_EDIT_STATUSES:
+            if workflow_row_is_locked(status):
                 return True
         return False
 
@@ -943,7 +925,7 @@ class CutoffConvergenceWidget(QWidget):
         cutoff_item = self._cutoff_table.item(row, self._CUTOFF_COLUMN)
         if cutoff_item is not None:
             flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-            if status_normalized not in _LOCKED_CUTOFF_EDIT_STATUSES:
+            if not workflow_row_is_locked(status_normalized):
                 flags |= Qt.ItemFlag.ItemIsEditable
                 cutoff_item.setToolTip("")
             else:
@@ -977,7 +959,7 @@ class CutoffConvergenceWidget(QWidget):
         configure_button = self._cutoff_table.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
             customized = cutoff is not None and self._is_cutoff_customized(cutoff)
-            locked = status_normalized in _LOCKED_CUTOFF_EDIT_STATUSES
+            locked = workflow_row_is_locked(status_normalized)
             style_workflow_configure_button(
                 configure_button,
                 workflow_label="CASTEP",
@@ -1031,43 +1013,15 @@ class CutoffConvergenceWidget(QWidget):
             return
         self.form_state_changed.emit(self.collect_state())
 
-    def _restore_structured_value(self, name: str, value: object) -> object:
-        spec = self._specs_by_name.get(name)
-        if spec is None:
-            return value
-
-        if isinstance(value, dict):
-            if spec.kind == "block" and "rows" in value:
-                rows = tuple(tuple(row) for row in value.get("rows", ()))
-                return BlockSection(
-                    name=str(value.get("name", spec.name)),
-                    rows=rows,
-                    unit=str(value["unit"]) if value.get("unit") is not None else None,
-                )
-            if spec.value_type in {"physical", "positive_float_with_optional_unit"} and {"value", "unit"} <= value.keys():
-                return ValueWithUnit(value=value["value"], unit=str(value["unit"]))
-
-        if isinstance(value, list) and spec.value_type in {"int_triplet", "real_vector"}:
-            value = tuple(value)
-
-        try:
-            return normalize_gui_value(spec, value)
-        except (TypeError, ValueError):
-            return value
-
-    def _sanitize_parameter_mapping(self, values: dict[str, object]) -> dict[str, object]:
-        cleaned: dict[str, object] = {}
-        for name, value in values.items():
-            if name in _STRUCTURE_CONTROLLED_CELL_KEYWORDS:
-                continue
-            if name == "task" or name in self._specs_by_name:
-                cleaned[name] = self._restore_structured_value(name, value)
-        return cleaned
-
     def _restore_legacy_cutoff_configs(self, state: dict[str, Any], cutoffs: tuple[float, ...]) -> None:
         shared = state.get("shared_params", {})
         shared_clean = (
-            self._sanitize_parameter_mapping({str(name): raw for name, raw in shared.items()})
+            sanitize_parameter_mapping(
+                {str(name): raw for name, raw in shared.items()},
+                self._specs_by_name,
+                keep=("task",),
+                drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
+            )
             if isinstance(shared, dict)
             else dict(self._default_params)
         )
@@ -1083,8 +1037,11 @@ class CutoffConvergenceWidget(QWidget):
         for entry in state.get("overrides", []):
             if not isinstance(entry, dict):
                 continue
-            params = self._sanitize_parameter_mapping(
-                {str(name): raw for name, raw in dict(entry.get("params", {})).items()}
+            params = sanitize_parameter_mapping(
+                {str(name): raw for name, raw in dict(entry.get("params", {})).items()},
+                self._specs_by_name,
+                keep=("task",),
+                drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
             )
             advanced = {name for name in params if name in self._specs_by_name and params[name] is not None}
             for raw_cutoff in entry.get("cutoffs", []):
@@ -1191,8 +1148,11 @@ class CutoffConvergenceWidget(QWidget):
                         cutoff = float(entry.get("cutoff"))
                     except (TypeError, ValueError):
                         continue
-                    params = self._sanitize_parameter_mapping(
-                        {str(name): raw for name, raw in dict(entry.get("params", {})).items()}
+                    params = sanitize_parameter_mapping(
+                        {str(name): raw for name, raw in dict(entry.get("params", {})).items()},
+                        self._specs_by_name,
+                        keep=("task",),
+                        drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
                     )
                     advanced_names = {
                         str(name) for name in entry.get("added_advanced", []) if isinstance(name, str)
