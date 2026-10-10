@@ -179,7 +179,6 @@ PINNED_COVERAGE_TEST_FILES = frozenset(
         "tests/science/test_quantum_adiabatic_coverage.py",
         "tests/science/test_quantum_phonons_coverage.py",
         "tests/science/test_site_generation_coverage.py",
-        "tests/science/test_structure_io_coverage.py",
         "tests/science/test_structure_metrics_coverage.py",
         "tests/science/test_symmetry_analysis_coverage.py",
         "tests/science/test_uep_coverage.py",
