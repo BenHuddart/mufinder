@@ -15,33 +15,29 @@ All implemented and future functionality must satisfy these gates:
 Local commands
 --------------
 
-Install development dependencies (the ``scientific-backends`` extra is
-required by the test suite; ``make install-dev`` installs only ``.[dev]``):
+The ``Makefile`` is the single definition of the local commands; this page, the
+README, the pull-request template and CI refer to its targets. Pass
+``PYTHON=/path/to/python`` to use a specific interpreter.
 
-.. code-block:: bash
+- ``make install`` installs MuFinder editable with the ``dev`` and
+  ``scientific-backends`` extras, both of which the test suite needs.
+  ``uv sync --extra dev --extra scientific-backends`` is equivalent.
+- ``make test`` runs the full suite with the 85 percent coverage gate on four
+  ``pytest-xdist`` workers. Run it in the foreground and keep it at four
+  workers or fewer: each worker loads Qt, and more can exhaust the machine. CI
+  runs ``make test PYTEST_WORKERS=auto``.
+- ``make test-fast`` runs focused tests without coverage. With no arguments it
+  runs the targeted execution checks listed below; ``make test-fast
+  FILES="tests/science/test_supercell.py"`` runs the files you name.
+- ``make harness`` runs the agent-harness structural tests.
+- ``make docs`` builds this Sphinx site with warnings treated as errors.
+- ``make lint`` runs ``ruff check`` over ``src`` and ``tests``.
+- ``make quality`` runs ``lint``, ``test`` and ``docs``, the gates CI enforces.
 
-   python -m pip install -e ".[dev,scientific-backends]"
-   # or: uv sync --extra dev --extra scientific-backends
-
-Run tests with coverage gate. Locally, cap parallelism at 4 workers and run
-in the foreground — each xdist worker loads Qt, and ``-n auto`` can exhaust
-the machine (CI uses ``-n auto``):
-
-.. code-block:: bash
-
-   python -m pytest -n 4 --dist load
-
-Run only non-GUI tests during focused iteration:
-
-.. code-block:: bash
-
-   python -m pytest --no-cov -m "not gui"
-
-Build docs with warning-as-error behavior:
-
-.. code-block:: bash
-
-   python -m sphinx -W -b html docs docs/_build/html
+To skip the Qt widget tests while iterating, select by marker with
+``python -m pytest --no-cov -m "not gui"``. ``tests/conftest.py`` marks every
+test under ``tests/app/`` or using the ``qapp`` fixture as ``gui`` and every
+other test as ``unit``.
 
 PySide test shutdown note
 -------------------------
@@ -77,8 +73,8 @@ every CI run. Keep these in place when changing the test setup:
   silently fall back to the slower tracer on Python 3.12 and 3.13.
 - **Slow-test report.** CI passes ``--durations=25``, so the slowest test
   phases are listed at the end of every CI log. Check that list when CI time
-  creeps up; locally, ``python -m pytest -n 4 --no-cov --durations=25`` gives
-  the same report.
+  creeps up; locally, ``make test PYTEST_ARGS="--no-cov --durations=25"``
+  gives the same report.
 
 GUI-responsiveness trace logging
 ---------------------------------
@@ -119,25 +115,9 @@ The local CASTEP execution feature is validated by targeted tests that cover:
 - local runner queue/cancel behavior
 - CASTEP output parsing for success/failure cases, including zero-K energy and force extraction
 
-Run targeted checks during focused iteration:
-
-.. code-block:: bash
-
-   python -m pytest --no-cov \
-     tests/test_castep_output_parser.py \
-     tests/app/test_workflow_submission.py \
-     tests/services/test_job_execution_controller.py \
-     tests/services/test_local_runner.py \
-     tests/app/test_submission_dialog.py \
-     tests/app/test_castep_setup_dialog.py \
-     tests/app/test_convergence_widget.py \
-     tests/app/test_main_window_actions.py
-
-Then run the full coverage-enabled suite before merge:
-
-.. code-block:: bash
-
-   python -m pytest -n 4 --dist load
+``make test-fast`` runs these targeted checks (the ``FILES`` default in the
+``Makefile``) during focused iteration; ``make test`` runs the full
+coverage-enabled suite before merge.
 
 Agent harness checks
 --------------------
@@ -150,7 +130,7 @@ boundaries, or shared architecture:
 
 .. code-block:: bash
 
-   python -m pytest --no-cov tests/test_agent_harness.py
+   make harness
 
 The harness tests currently verify:
 
@@ -182,9 +162,9 @@ continuous integration and tag-driven publishing:
 - Pull requests into ``main`` (and pushes to ``main`` after merge) run the full
   quality gates:
 
-  - ``pytest`` with coverage threshold enforcement, distributed with
-    ``pytest-xdist`` using ``--dist load``
-  - ``sphinx`` HTML build with ``-W`` enabled
+  - ``make test PYTEST_WORKERS=auto``: ``pytest`` with coverage threshold
+    enforcement, distributed with ``pytest-xdist`` using ``--dist load``
+  - ``make docs``: ``sphinx`` HTML build with ``-W`` enabled
 
 - ``Preview Build`` is a manual GitHub Actions workflow that builds Windows
   and macOS artifacts from any branch, tag, or SHA without publishing a release
