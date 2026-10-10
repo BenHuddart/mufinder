@@ -38,9 +38,9 @@ rather than padding them.
 
 ## Gates
 
-- `python -m pytest -n 4 --dist load` — <N> passed
+- `make test` — <N> passed
 - Coverage <X>% (≥ 85%)
-- `python -m sphinx -W -b html docs docs/_build/html` — clean
+- `make docs` — clean
 - Docs updated alongside behaviour (the change is incomplete otherwise)
 - No new `_on_submit_*` / `_materialize_*` handlers on `MainWindow` (harness ratchet)
 - `docs/compatibility_policy.rst` checked for any renamed/removed persisted name

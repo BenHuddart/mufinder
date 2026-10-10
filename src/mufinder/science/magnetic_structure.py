@@ -8,7 +8,6 @@ from uuid import uuid4
 
 from ase import Atoms
 import numpy as np
-import spglib
 
 from mufinder.domain.models import Structure
 from mufinder.science.spglib_compat import get_crystal_symmetry_dataset

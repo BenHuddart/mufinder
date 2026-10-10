@@ -53,7 +53,7 @@ from mufinder.services.cluster_keyword_generator import (
     ClusterKeywordGenerationWorker,
     validate_cluster_keyword_config,
 )
-from mufinder.services.ssh_client import SSHConnection, SSHCredentials, SSHUnknownHostKeyError, save_trusted_host_key
+from mufinder.services.ssh_client import SSHConnection, SSHCredentials
 
 
 _PROGRESS_RE = re.compile(r"Processed:\s*\[[# ]*\]\s*(\d+)%")
