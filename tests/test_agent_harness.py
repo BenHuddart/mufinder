@@ -160,7 +160,7 @@ def _mufinder_import_layers(path: Path) -> set[str]:
 
 def test_agents_md_is_short_map_to_repository_system_of_record() -> None:
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    assert len(agents.splitlines()) <= 80
+    assert len(agents.splitlines()) <= 160
     for doc in REQUIRED_AGENT_DOCS:
         assert doc in agents
         assert (PROJECT_ROOT / doc).is_file()
@@ -267,9 +267,10 @@ def test_pull_request_template_is_discoverable_by_agents() -> None:
     """Guard the PR template and the pointers agents rely on to find it.
 
     ``gh pr create --body`` bypasses GitHub's web-form template injection, so
-    agents only follow the template if the files they load at session start
-    (``CLAUDE.md``, ``AGENTS.md``) point at it. This pins the template's
-    section headings and both pointers so neither can silently rot.
+    agents only follow the template if the file they load at session start
+    (``AGENTS.md``) points at it. ``CLAUDE.md`` must keep importing ``AGENTS.md``
+    so Claude Code sees the same rules. This pins the template's section
+    headings and both pointers so neither can silently rot.
     """
 
     template = (PROJECT_ROOT / PR_TEMPLATE_PATH).read_text(encoding="utf-8")
@@ -279,12 +280,16 @@ def test_pull_request_template_is_discoverable_by_agents() -> None:
     assert not missing_sections, (
         f"{PR_TEMPLATE_PATH} is missing section heading(s): {missing_sections}"
     )
-    for pointer_file in ("CLAUDE.md", "AGENTS.md"):
-        pointer = (PROJECT_ROOT / pointer_file).read_text(encoding="utf-8")
-        assert PR_TEMPLATE_PATH in pointer, (
-            f"{pointer_file} no longer references {PR_TEMPLATE_PATH}; agents "
-            "discover the PR template through that pointer."
-        )
+    agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert PR_TEMPLATE_PATH in agents, (
+        f"AGENTS.md no longer references {PR_TEMPLATE_PATH}; agents discover the "
+        "PR template through that pointer."
+    )
+    claude = (PROJECT_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "@AGENTS.md" in claude, (
+        "CLAUDE.md no longer imports AGENTS.md; Claude Code would stop seeing the "
+        "canonical agent guide."
+    )
 
 
 def test_repository_does_not_track_python_bytecode_artifacts() -> None:

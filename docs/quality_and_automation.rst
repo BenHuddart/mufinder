@@ -154,8 +154,8 @@ boundaries, or shared architecture:
 
 The harness tests currently verify:
 
-- ``AGENTS.md`` remains a short route map (at most 80 lines) and points to
-  durable docs.
+- ``AGENTS.md`` stays under 160 lines and points to the durable docs it depends
+  on; ``CLAUDE.md`` imports it.
 - The Sphinx index includes the agent harness, architecture, quality, and
   compatibility documents, and ``docs/architecture.rst`` names every layer
   package.
@@ -168,8 +168,8 @@ The harness tests currently verify:
   that build a ``FigureCanvasQTAgg`` directly rather than through
   ``create_plot_canvas`` match a pinned set that may only shrink (see
   :doc:`architecture`, Plot canvas policy).
-- ``.github/PULL_REQUEST_TEMPLATE.md`` keeps its section headings, and both
-  ``CLAUDE.md`` and ``AGENTS.md`` still point to it.
+- ``.github/PULL_REQUEST_TEMPLATE.md`` keeps its section headings and
+  ``AGENTS.md`` still points to it.
 - Source, test, and docs trees do not track Python bytecode artifacts that can
   confuse packaging and review.
 
@@ -197,8 +197,16 @@ continuous integration and tag-driven publishing:
   ``semantic-release version`` (for example
   ``uvx "python-semantic-release>=10.5,<11" version``) before pushing the tag.
   Branch protection blocks pushing that version-bump commit to ``main``, so it
-  goes through a ``release/vX.Y.Z`` pull request first; ``CLAUDE.md`` lists the
-  exact command sequence.
+  goes through a ``release/vX.Y.Z`` pull request first:
+
+  .. code-block:: bash
+
+     git checkout main && git pull
+     uvx "python-semantic-release>=10.5,<11" version   # bumps pyproject.toml + CHANGELOG.md, commits + tags locally
+     git checkout -b release/vX.Y.Z                    # branch off the version bump commit
+     git checkout main && git reset --hard origin/main  # restore local main
+     git push origin release/vX.Y.Z                    # open a PR, wait for CI + merge
+     git push origin vX.Y.Z                            # push the tag, which triggers Release Publish
 
 - ``Pages`` rebuilds this Sphinx site (with ``-W``) on every push to ``main``
   and deploys it to GitHub Pages.
