@@ -40,7 +40,13 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.job_execution_controller import JobExecutionController
-from mufinder.services.project_service import ProjectDocument, ProjectService
+from mufinder.services.project_service import (
+    ProjectDocument,
+    ProjectService,
+    active_definition,
+    definitions_for_stage,
+    job_for_mapping_key,
+)
 
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
@@ -133,9 +139,65 @@ class WorkflowJobController:
     calc_types: frozenset[str] = frozenset()
     #: Message shown when a submit request produced no ready jobs.
     no_ready_message: str = "No ready jobs to submit."
+    #: Workflow stage of this controller's calculation definitions. ``None``
+    #: (the default) means the controller reads no definitions.
+    stage: WorkflowStage | None = None
+    #: calc_type of this controller's *definitions* (not its jobs, which
+    #: :attr:`calc_types` lists). ``None`` accepts any calc type at :attr:`stage`.
+    definition_calc_type: str | None = None
+    #: ``ui_state`` key holding the id of the definition the user last
+    #: configured. ``None`` means the newest matching definition is active.
+    active_key: str | None = None
 
     def __init__(self, context: WorkflowControllerContext) -> None:
         self._context = context
+
+    # --- definition and job lookups ---
+
+    def definitions(self) -> list[CalculationDefinition]:
+        """Return this workflow's definitions in the current document, newest first."""
+
+        document = self._context.document()
+        if document is None or self.stage is None:
+            return []
+        return definitions_for_stage(document, self.stage, calc_type=self.definition_calc_type)
+
+    def active_definition(self) -> CalculationDefinition | None:
+        """Return the definition this workflow currently works on, if any.
+
+        See :func:`~mufinder.services.project_service.active_definition` for the
+        ``active_key`` lookup and the newest-definition fallback.
+        """
+
+        document = self._context.document()
+        if document is None or self.stage is None:
+            return None
+        return active_definition(
+            document,
+            self.stage,
+            calc_type=self.definition_calc_type,
+            active_key=self.active_key,
+        )
+
+    def job_for_key(
+        self,
+        definition: CalculationDefinition | None,
+        key: str,
+        *,
+        mapping_name: str = "job_ids_by_label",
+        calc_type: str | None = None,
+    ) -> Job | None:
+        """Return the job ``definition``'s ``mapping_name`` mapping binds to ``key``.
+
+        See :func:`~mufinder.services.project_service.job_for_mapping_key`.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return None
+        return job_for_mapping_key(
+            document, definition, key, mapping_name=mapping_name, calc_type=calc_type
+        )
 
     # --- submission contract (mirrors _submit_workflow_selection today) ---
 

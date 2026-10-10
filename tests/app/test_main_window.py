@@ -1569,7 +1569,7 @@ def test_main_window_energy_barriers_view_loads_with_existing_state(qapp, tmp_pa
     assert len(candidates) > 0
 
     # NEB configure dialog values must be gettable without error.
-    definition = window2._active_energy_barrier_neb_definition()
+    definition = window2._energy_barriers_controller.active_definition()
     for candidate in candidates:
         values, _advanced, _extras = window2._workflow_row_configuration_with_project_defaults(
             definition,
