@@ -14,7 +14,12 @@ from pathlib import Path
 import pytest
 
 from mufinder.services import job_artifacts as job_artifacts_module
-from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
+from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags, collect_job_artifacts
+from mufinder.workflow.energy_barriers import (
+    NUDGED_ELASTIC_BAND_CALC_TYPE,
+    TRANSITION_STATE_SEARCH_CALC_TYPE,
+)
+from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
 
 
 _OUT_CELL_TEXT = """
@@ -325,3 +330,63 @@ def test_collect_only_reads_requested_outputs(tmp_path: Path) -> None:
     assert artifacts.phonon is None
     assert artifacts.phonon_missing is False
     assert artifacts.phonon_path is None
+
+
+# --- RetrievalFlags ---
+
+
+@pytest.mark.parametrize(
+    ("calc_type", "expected"),
+    [
+        ("castep_uep_source", "retrieve_den_fmt"),
+        ("castep_pristine_relaxation", "retrieve_out_cell"),
+        ("castep_positivemuon_relaxation", "retrieve_out_cell"),
+        ("castep_muonium_relaxation", "retrieve_out_cell"),
+        (QUANTUM_PHONON_CALC_TYPE, "retrieve_phonon"),
+        (TRANSITION_STATE_SEARCH_CALC_TYPE, "retrieve_ts"),
+        (NUDGED_ELASTIC_BAND_CALC_TYPE, "retrieve_ts"),
+        ("castep_singlepoint", None),
+    ],
+)
+def test_retrieval_flags_for_calc_type_selects_one_secondary_output(
+    calc_type: str, expected: str | None
+) -> None:
+    flags = RetrievalFlags.for_calc_type(calc_type)
+
+    requested = {
+        name
+        for name in ("retrieve_den_fmt", "retrieve_out_cell", "retrieve_phonon", "retrieve_ts")
+        if getattr(flags, name)
+    }
+    assert requested == ({expected} if expected else set())
+    assert flags.farm_count == 1
+
+
+def test_retrieval_flags_normalise_and_round_trip_as_runner_keywords() -> None:
+    flags = RetrievalFlags.for_calc_type(
+        NUDGED_ELASTIC_BAND_CALC_TYPE, task_farming_enabled=1, num_farms="3"
+    )
+
+    assert flags.task_farming_enabled is True
+    assert flags.num_farms == 3
+    assert flags.farm_count == 3
+    assert RetrievalFlags(**flags.as_kwargs()) == flags
+    assert RetrievalFlags(num_farms=0).num_farms == 1
+    # Farming is only in effect when the flag is set.
+    assert RetrievalFlags(num_farms=4).farm_count == 1
+    with pytest.raises(TypeError):
+        RetrievalFlags(**{"retrieve_castep": True})
+
+
+def test_retrieval_flags_collect_reads_the_farmed_ts(tmp_path: Path) -> None:
+    (tmp_path / "seed_farm001.ts").write_text(
+        _TS_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    flags = RetrievalFlags(retrieve_ts=True, task_farming_enabled=True, num_farms=2)
+    artifacts = flags.collect(tmp_path, "seed")
+
+    assert artifacts.transition_state is not None
+    assert artifacts.ts_path == tmp_path / "seed_farm001.ts"
+    assert artifacts.relaxed_cell is None
+    assert artifacts.cell_missing is False

@@ -9,6 +9,7 @@ from pathlib import Path
 import posixpath
 import re
 import tempfile
+from typing import Any
 from uuid import UUID
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -25,7 +26,7 @@ from mufinder.services.failure_diagnosis import (
     diagnose_failure,
     find_failure_log_files,
 )
-from mufinder.services.job_artifacts import collect_job_artifacts, effective_num_farms
+from mufinder.services.job_artifacts import RetrievalFlags
 from mufinder.services.scheduler import Scheduler, SchedulerSubmitRequest, create_scheduler
 from mufinder.services.script_template import render_job_script
 from mufinder.services.ssh_client import SSHConnection, SSHCredentials
@@ -54,6 +55,11 @@ old, so a few seconds of slack costs nothing.
 """
 
 
+_ACTIVE_TRACKED_STATUSES = frozenset(
+    {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING}
+)
+
+
 @dataclass(slots=True)
 class _TrackedClusterJob:
     job_id: UUID
@@ -64,12 +70,7 @@ class _TrackedClusterJob:
     cluster_name: str = ""
     status: JobStatus = JobStatus.QUEUED
     terminal: bool = False
-    retrieve_den_fmt: bool = False
-    retrieve_out_cell: bool = False
-    retrieve_phonon: bool = False
-    retrieve_ts: bool = False
-    task_farming_enabled: bool = False
-    num_farms: int | None = None
+    retrieval: RetrievalFlags = RetrievalFlags()
     #: Consecutive polls where this job was missing from the scheduler queue
     #: and its output could not be downloaded. Reset when the job reappears.
     missing_retrieval_attempts: int = 0
@@ -256,17 +257,16 @@ class ClusterJobRunner(QObject):
         queue_name: str = "",
         comment: str = "",
         castep_executable: str = "",
-        retrieve_den_fmt: bool = False,
-        retrieve_out_cell: bool = False,
-        retrieve_phonon: bool = False,
-        retrieve_ts: bool = False,
         remote_directory: str | None = None,
         reuse_existing_files: bool = False,
         allow_existing_remote_directory: bool = False,
-        task_farming_enabled: bool = False,
-        num_farms: int | None = None,
+        **retrieval: Any,
     ) -> str:
         """Upload files, submit scheduler script, and start tracking the remote job.
+
+        ``retrieval`` holds the :class:`~mufinder.services.job_artifacts.RetrievalFlags`
+        fields as keywords (``retrieve_den_fmt``, ``task_farming_enabled``, ...),
+        as in :meth:`track_existing_job` and :meth:`retrieve_outputs_for`.
 
         ``reuse_existing_files`` skips only the ``.cell``/``.param`` upload, so a
         resubmission into an existing remote directory preserves the remote
@@ -362,21 +362,15 @@ class ClusterJobRunner(QObject):
         )
         remote_job_id = scheduler.submit(ssh, request)
 
-        self._tracked_jobs[job_id] = _TrackedClusterJob(
-            job_id=job_id,
+        self._track(
+            job_id,
             remote_job_id=remote_job_id,
             remote_dir=remote_dir,
             seed_name=seed_name,
             local_output_dir=local_dir,
-            cluster_name=self._config.name if self._config is not None else "",
+            cluster_name=cluster_name,
             status=JobStatus.QUEUED,
-            terminal=False,
-            retrieve_den_fmt=bool(retrieve_den_fmt),
-            retrieve_out_cell=bool(retrieve_out_cell),
-            retrieve_phonon=bool(retrieve_phonon),
-            retrieve_ts=bool(retrieve_ts),
-            task_farming_enabled=bool(task_farming_enabled),
-            num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
+            retrieval=retrieval,
         )
 
         self.status_changed.emit(job_id, JobStatus.QUEUED.value)
@@ -426,37 +420,27 @@ class ClusterJobRunner(QObject):
         local_output_dir: Path,
         cluster_name: str,
         status: JobStatus,
-        retrieve_den_fmt: bool = False,
-        retrieve_out_cell: bool = False,
-        retrieve_phonon: bool = False,
-        retrieve_ts: bool = False,
-        task_farming_enabled: bool = False,
-        num_farms: int | None = None,
+        **retrieval: Any,
     ) -> None:
-        """Register a persisted cluster job for queue polling and retrieval."""
+        """Register a persisted cluster job for queue polling and retrieval.
 
-        normalized_remote_job_id = remote_job_id.strip()
-        normalized_remote_dir = remote_dir.strip()
-        if not normalized_remote_job_id or not normalized_remote_dir:
+        ``retrieval`` holds the :class:`~mufinder.services.job_artifacts.RetrievalFlags`
+        fields as keywords.
+        """
+
+        if not remote_job_id.strip() or not remote_dir.strip():
             return
 
-        tracked = _TrackedClusterJob(
-            job_id=job_id,
-            remote_job_id=normalized_remote_job_id,
-            remote_dir=normalized_remote_dir,
+        tracked = self._track(
+            job_id,
+            remote_job_id=remote_job_id,
+            remote_dir=remote_dir,
             seed_name=seed_name,
-            local_output_dir=Path(local_output_dir),
-            cluster_name=cluster_name.strip(),
+            local_output_dir=local_output_dir,
+            cluster_name=cluster_name,
             status=status,
-            terminal=status not in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING},
-            retrieve_den_fmt=bool(retrieve_den_fmt),
-            retrieve_out_cell=bool(retrieve_out_cell),
-            retrieve_phonon=bool(retrieve_phonon),
-            retrieve_ts=bool(retrieve_ts),
-            task_farming_enabled=bool(task_farming_enabled),
-            num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
+            retrieval=retrieval,
         )
-        self._tracked_jobs[job_id] = tracked
         if (
             self.is_connected
             and not tracked.terminal
@@ -474,12 +458,7 @@ class ClusterJobRunner(QObject):
         seed_name: str,
         local_output_dir: Path,
         cluster_name: str = "",
-        retrieve_den_fmt: bool = False,
-        retrieve_out_cell: bool = False,
-        retrieve_phonon: bool = False,
-        retrieve_ts: bool = False,
-        task_farming_enabled: bool = False,
-        num_farms: int | None = None,
+        **retrieval: Any,
     ) -> None:
         """Re-attempt output retrieval for a scheduler-completed job on demand.
 
@@ -496,43 +475,74 @@ class ClusterJobRunner(QObject):
         instead. ``_retrieve_results`` already converts any SSH/parse error to
         ``failed`` internally, and the surrounding guard here catches the
         pre-``try`` ``_require_ssh`` raise for the same reason.
+
+        ``retrieval`` holds the :class:`~mufinder.services.job_artifacts.RetrievalFlags`
+        fields as keywords.
         """
 
-        tracked = _TrackedClusterJob(
-            job_id=job_id,
-            remote_job_id=remote_job_id.strip(),
-            remote_dir=remote_directory.strip(),
+        tracked = self._track(
+            job_id,
+            remote_job_id=remote_job_id,
+            remote_dir=remote_directory,
             seed_name=seed_name,
-            local_output_dir=Path(local_output_dir),
-            cluster_name=cluster_name.strip(),
+            local_output_dir=local_output_dir,
+            cluster_name=cluster_name,
             status=JobStatus.RETRIEVING,
-            terminal=False,
-            retrieve_den_fmt=bool(retrieve_den_fmt),
-            retrieve_out_cell=bool(retrieve_out_cell),
-            retrieve_phonon=bool(retrieve_phonon),
-            retrieve_ts=bool(retrieve_ts),
-            task_farming_enabled=bool(task_farming_enabled),
-            num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
+            retrieval=retrieval,
         )
-        self._tracked_jobs[job_id] = tracked
 
         if not self.is_connected or not self._tracked_job_matches_connected_cluster(tracked):
-            tracked.terminal = True
-            self.job_failed.emit(job_id, RETRY_RETRIEVAL_NOT_CONNECTED_MESSAGE)
-            self.status_changed.emit(job_id, JobStatus.FAILED.value)
+            self._fail(tracked, RETRY_RETRIEVAL_NOT_CONNECTED_MESSAGE)
             return
 
         try:
             self._retrieve_results(tracked)
         except Exception as exc:  # noqa: BLE001 - resolve rather than strand in RETRIEVING
-            tracked.terminal = True
-            self.job_failed.emit(job_id, f"{RETRIEVAL_FAILURE_PREFIX}: {exc}")
-            self.status_changed.emit(job_id, JobStatus.FAILED.value)
+            self._fail(tracked, f"{RETRIEVAL_FAILURE_PREFIX}: {exc}")
 
     def shutdown(self) -> None:
         """Best-effort shutdown during application close."""
 
         self.disconnect()
+
+    def _track(
+        self,
+        job_id: UUID,
+        *,
+        remote_job_id: str,
+        remote_dir: str,
+        seed_name: str,
+        local_output_dir: Path,
+        cluster_name: str,
+        status: JobStatus,
+        retrieval: dict[str, Any],
+    ) -> _TrackedClusterJob:
+        """Register (or replace) the tracked entry for ``job_id`` and return it.
+
+        ``retrieval`` is the caller's :class:`RetrievalFlags` keywords. An entry
+        whose status is not one of the four active ones is tracked as terminal.
+        """
+
+        tracked = _TrackedClusterJob(
+            job_id=job_id,
+            remote_job_id=remote_job_id.strip(),
+            remote_dir=remote_dir.strip(),
+            seed_name=seed_name,
+            local_output_dir=Path(local_output_dir),
+            cluster_name=cluster_name.strip(),
+            status=status,
+            terminal=status not in _ACTIVE_TRACKED_STATUSES,
+            retrieval=RetrievalFlags(**retrieval),
+        )
+        self._tracked_jobs[job_id] = tracked
+        return tracked
+
+    def _fail(self, entry: _TrackedClusterJob, message: str) -> None:
+        """Mark ``entry`` terminal and report it: ``job_failed`` then ``status_changed``."""
+
+        entry.terminal = True
+        self.job_failed.emit(entry.job_id, message)
+        self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
 
     def _tracked_job_matches_connected_cluster(self, entry: _TrackedClusterJob) -> bool:
         connected_cluster_key = (
@@ -688,11 +698,7 @@ class ClusterJobRunner(QObject):
             if mapped == JobStatus.FAILED:
                 entry.terminal = True
                 self._retrieve_error_files(entry)
-                self.job_failed.emit(
-                    entry.job_id,
-                    f"Scheduler reported the job as {scheduler.state_name(info.state)}.",
-                )
-                self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
+                self._fail(entry, f"Scheduler reported the job as {scheduler.state_name(info.state)}.")
                 continue
 
         elapsed_by_job_id = {
@@ -747,7 +753,8 @@ class ClusterJobRunner(QObject):
         # NEB run writes no <seed>.ts at all. Every farm writes an identical,
         # complete band; farm 001 is the canonical copy. Download it under the
         # same name locally so collect_job_artifacts finds it where it looks.
-        farm_count = effective_num_farms(entry.task_farming_enabled, entry.num_farms)
+        flags = entry.retrieval
+        farm_count = flags.farm_count
         ts_basename = f"{entry.seed_name}_farm001.ts" if farm_count > 1 else f"{entry.seed_name}.ts"
         remote_ts = posixpath.join(entry.remote_dir, ts_basename)
         local_castep = entry.local_output_dir / f"{entry.seed_name}.castep"
@@ -785,17 +792,17 @@ class ClusterJobRunner(QObject):
             else:
                 ssh.get(remote_castep, local_castep)
                 primary_output = local_castep
-            if entry.retrieve_den_fmt and ssh.exists(remote_den_fmt):
+            if flags.retrieve_den_fmt and ssh.exists(remote_den_fmt):
                 ssh.get(remote_den_fmt, local_den_fmt)
             if (
-                entry.retrieve_out_cell
+                flags.retrieve_out_cell
                 and ssh.exists(remote_out_cell)
                 and not self._remote_output_predates_submission(ssh, remote_out_cell, submitted_at)
             ):
                 ssh.get(remote_out_cell, local_out_cell)
-            if entry.retrieve_phonon and ssh.exists(remote_phonon):
+            if flags.retrieve_phonon and ssh.exists(remote_phonon):
                 ssh.get(remote_phonon, local_phonon)
-            if entry.retrieve_ts and ssh.exists(remote_ts):
+            if flags.retrieve_ts and ssh.exists(remote_ts):
                 ssh.get(remote_ts, local_ts)
         except Exception as exc:  # noqa: BLE001
             # Output-unavailable failure (SFTP download error, missing remote
@@ -810,16 +817,12 @@ class ClusterJobRunner(QObject):
                         f"(attempt {entry.missing_retrieval_attempts} of "
                         f"{MISSING_ENTRY_RETRIEVAL_ATTEMPTS})"
                     )
-                entry.terminal = True
-                self.job_failed.emit(entry.job_id, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
-                self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
+                self._fail(entry, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
                 return (
                     f"{prefix}output could not be retrieved after "
                     f"{MISSING_ENTRY_RETRIEVAL_ATTEMPTS} checks"
                 )
-            entry.terminal = True
-            self.job_failed.emit(entry.job_id, f"{RETRIEVAL_FAILURE_PREFIX}: {exc}")
-            self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
+            self._fail(entry, f"{RETRIEVAL_FAILURE_PREFIX}: {exc}")
             return f"{prefix}output retrieval failed"
 
         try:
@@ -827,9 +830,7 @@ class ClusterJobRunner(QObject):
         except Exception as exc:  # noqa: BLE001
             # The output was downloaded but is unreadable: a real failure in
             # both trigger modes, so no grace window applies.
-            entry.terminal = True
-            self.job_failed.emit(entry.job_id, f"{RETRIEVAL_FAILURE_PREFIX}: {exc}")
-            self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
+            self._fail(entry, f"{RETRIEVAL_FAILURE_PREFIX}: {exc}")
             return f"{prefix}output parsing failed"
 
         if not parsed.completed:
@@ -837,11 +838,7 @@ class ClusterJobRunner(QObject):
             if self._stopped_at_walltime(entry, parsed, logs_fetched_from=logs_fetched_from):
                 self.status_changed.emit(entry.job_id, JobStatus.STOPPED.value)
                 return f"{prefix}output incomplete; stopped (walltime)"
-            self.job_failed.emit(
-                entry.job_id,
-                parsed.error_message or "CASTEP did not report successful completion.",
-            )
-            self.status_changed.emit(entry.job_id, JobStatus.FAILED.value)
+            self._fail(entry, parsed.error_message or "CASTEP did not report successful completion.")
             return f"{prefix}output incomplete; job failed"
 
         entry.terminal = True
@@ -850,14 +847,7 @@ class ClusterJobRunner(QObject):
         # this job tracked. The GUI handler decides failure from the carrier and
         # the owning controller consumes the pre-parsed data — neither re-reads
         # disk. Errors are captured on the carrier, never raised.
-        artifacts = collect_job_artifacts(
-            entry.local_output_dir,
-            entry.seed_name,
-            want_out_cell=entry.retrieve_out_cell,
-            want_phonon=entry.retrieve_phonon,
-            want_ts=entry.retrieve_ts,
-            num_farms=farm_count,
-        )
+        artifacts = flags.collect(entry.local_output_dir, entry.seed_name)
         self.job_finished.emit(entry.job_id, parsed, artifacts)
         self.status_changed.emit(entry.job_id, JobStatus.COMPLETED.value)
         return f"{prefix}output retrieved and parsed"
