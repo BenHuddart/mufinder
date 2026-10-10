@@ -444,6 +444,11 @@ overriding these hooks.
    * - ``submission_groups(jobs)``
      - Split the planned jobs into separately dispatched groups.
      - muon relaxation, quantum corrections
+   * - ``validate_artifacts(job, parsed, run, artifacts)``
+     - Return the message that fails a completed job before any result is
+       built, or ``None`` to accept it (Result dispatch, below).
+     - pristine relaxation, muon relaxation, UEP, quantum corrections, energy
+       barriers
    * - ``handles_job(job)`` / ``build_result(...)``
      - Own a completed job's calc types and contribute its
        :class:`~mufinder.app.workflow_controllers.base.ControllerResult`.
@@ -486,9 +491,11 @@ Result dispatch
 ~~~~~~~~~~~~~~~
 
 Dispatch is registry-based: the job-finished handler calls
-:func:`~mufinder.app.workflow_controllers.base.merge_controller_result`, which
-asks the registered controllers ``handles_job`` and additively merges the
-owning controller's
+:func:`~mufinder.app.workflow_controllers.base.validate_controller_artifacts`
+and then
+:func:`~mufinder.app.workflow_controllers.base.merge_controller_result`. Both
+ask the registered controllers ``handles_job`` and use the first that claims the
+job. The merge additively combines the owning controller's
 :class:`~mufinder.app.workflow_controllers.base.ControllerResult`: the result
 payload, derived structures, and sanctioned document side effects such as
 rewriting a muon site's status, run id and total energy.
@@ -509,23 +516,30 @@ no carrier (reconciliation, retry, direct test invocation) fall back to one
 synchronous ``collect_job_artifacts`` call. ``build_result`` consumes the
 carrier and never re-reads disk.
 
-**No failure channel.** ``ControllerResult`` cannot fail a job. Guards that
-must abort a job before any result is built therefore stay in the job-finished
-handler, read the carrier, and run before dispatch:
+**Failing a completion.** ``ControllerResult`` cannot fail a job; the owning
+controller's ``validate_artifacts(job, parsed, run, artifacts) -> str | None``
+does. The job-finished handler resolves the carrier and the job's run, then
+dispatches the hook once. A returned message fails the job through the shared
+job-failure path with that text, and no result is built; ``None`` lets
+``build_result`` run. The hook reads the carrier's missing-file flags and error
+strings and never re-reads a file the carrier holds. The overrides are:
 
-- a relaxation job whose geometry optimisation did not converge;
-- a relaxation job whose ``-out.cell`` is missing, unparseable, or older than
-  the current run (a continuation reuses its directory), or whose muon position
-  cannot be located;
-- a UEP job whose ``{seed}.den_fmt`` is missing (a plain existence check);
-- a quantum-phonon job whose ``.phonon`` is missing or unparseable, including a
-  ``PhononParseError`` from the ZPE, gamma-point or witness computation;
-- an NEB or transition-state job whose ``.ts`` is missing or unparseable.
+- pristine and muon relaxation: the geometry optimisation did not converge, or
+  the ``-out.cell`` is missing, unparseable, or older than the current run (a
+  continuation reuses its directory). Both share
+  :func:`~mufinder.app.workflow_controllers.base.relaxation_artifact_failure`;
+  muon relaxation also fails a relaxed cell with no ``H:mu`` position;
+- UEP: ``{seed}.den_fmt`` is missing (a plain existence check, because the
+  density is not parsed on completion);
+- quantum corrections: a phonon job's ``.phonon`` is missing or unparseable,
+  including a ``PhononParseError`` from the ZPE, gamma-point or witness
+  computation;
+- energy barriers: an NEB or transition-state job's ``.ts`` is missing or
+  unparseable.
 
-A controller whose job passes these guards contributes only the success-path
-payload. Giving ``ControllerResult`` a failure channel, so the guards can move
-onto the owning controller, is the intended next step; until then a new guard
-goes beside the existing ones and reads the carrier rather than disk.
+``build_result`` therefore contributes only the success-path payload. A new
+failure check goes in the owning controller's ``validate_artifacts`` and reads
+the carrier rather than disk.
 
 Controller summary
 ~~~~~~~~~~~~~~~~~~

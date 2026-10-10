@@ -20,6 +20,7 @@ import mufinder.services.job_artifacts as job_artifacts_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
+from mufinder.app.workflow_controllers.base import output_predates_run
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.app.comparison_job_dialog import CompletedPristineJob
@@ -5326,11 +5327,9 @@ def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_p
 def test_main_window_local_finish_pristine_relaxation_missing_out_cell_fails_job(
     qapp, tmp_path: Path
 ) -> None:
-    """The shared out.cell prologue in _on_local_job_finished must fail a
-    pristine job whose relaxed structure output is absent, BEFORE the migrated
-    PristineRelaxationController.build_result is ever reached. This pins the
-    inline failure-detection guard that build_result deliberately does not own
-    (ControllerResult has no failure channel)."""
+    """PristineRelaxationController.validate_artifacts, dispatched from
+    _on_local_job_finished, must fail a pristine job whose relaxed structure
+    output is absent BEFORE build_result is ever reached."""
 
     window = MainWindow()
     service = ProjectService()
@@ -5446,8 +5445,8 @@ def test_main_window_local_finish_relaxation_stale_out_cell_fails_job(
 ) -> None:
     """A continued run that dies before writing a new ``-out.cell`` leaves the
     PREVIOUS run's file in the re-used job directory, where the completion path
-    would happily validate it as this run's geometry. The inline stale-output
-    guard fails the job instead, so no result is built from a superseded file."""
+    would happily validate it as this run's geometry. The relaxation
+    controller's stale-output check fails the job instead, so no result is built from a superseded file."""
 
     window = MainWindow()
     service = ProjectService()
@@ -5490,21 +5489,15 @@ def test_main_window_stale_output_guard_skips_jobs_with_no_start_time(tmp_path: 
     path.write_text("cell", encoding="utf-8")
     written = datetime.fromtimestamp(path.stat().st_mtime, UTC)
 
-    assert main_window_module._output_predates_run(path, None) is False
-    assert main_window_module._output_predates_run(None, written) is False
+    assert output_predates_run(path, None) is False
+    assert output_predates_run(None, written) is False
     # Written after the run started, and written a hair before it: both fresh.
-    assert main_window_module._output_predates_run(
-        path, written - timedelta(minutes=5)
-    ) is False
-    assert main_window_module._output_predates_run(
-        path, written + timedelta(seconds=1)
-    ) is False
+    assert output_predates_run(path, written - timedelta(minutes=5)) is False
+    assert output_predates_run(path, written + timedelta(seconds=1)) is False
     # A whole run older: stale.
-    assert main_window_module._output_predates_run(
-        path, written + timedelta(minutes=5)
-    ) is True
+    assert output_predates_run(path, written + timedelta(minutes=5)) is True
     # An unreadable path is not evidence of staleness either.
-    assert main_window_module._output_predates_run(tmp_path / "absent", written) is False
+    assert output_predates_run(tmp_path / "absent", written) is False
 
 
 def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references(

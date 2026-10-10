@@ -15,6 +15,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
     merge_controller_result,
+    validate_controller_artifacts,
 )
 from mufinder.app.workflow_controllers.convergence_cutoff import (
     ConvergenceCutoffController,
@@ -64,4 +65,5 @@ __all__ = [
     "WorkflowControllerContext",
     "WorkflowJobController",
     "merge_controller_result",
+    "validate_controller_artifacts",
 ]

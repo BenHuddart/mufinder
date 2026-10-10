@@ -242,6 +242,7 @@ from mufinder.app.workflow_controllers import (
     WorkflowControllerContext,
     WorkflowJobController,
     merge_controller_result,
+    validate_controller_artifacts,
 )
 from mufinder.app.workflow_controllers.quantum_corrections import (
     QUANTUM_STAGE_PHONON,
@@ -372,47 +373,6 @@ _QUANTUM_METHOD_TO_GUI = {value: key for key, value in _QUANTUM_GUI_TO_METHOD.it
 # of truth); aliased here so the still-inline stage helpers keep their names.
 _QUANTUM_STAGE_SINGLEPOINT = QUANTUM_STAGE_SINGLEPOINT
 _QUANTUM_STAGE_PHONON = QUANTUM_STAGE_PHONON
-
-
-#: Slack allowed between a run's start and an output file's mtime before the
-#: file counts as predating the run. It absorbs filesystem mtime granularity
-#: (1 s on ext3/HFS+, 2 s on FAT) and the small clock offset a network-mounted
-#: job directory can introduce. A genuinely stale output is a whole run old, so
-#: a few seconds of slack costs nothing.
-_STALE_OUTPUT_SLACK_SECONDS = 5.0
-
-
-def _output_predates_run(path: Path | None, started_at: datetime | None) -> bool:
-    """Return whether ``path`` was last written before the current run started.
-
-    Guards a continued relaxation against the *previous* run's ``-out.cell``. A
-    continuation re-uses its job directory, so a run that dies before writing a
-    new relaxed structure leaves the old file exactly where the completion path
-    looks for it — ``cell_missing`` is ``False`` and the last run's geometry is
-    silently accepted as this run's result.
-
-    This compares *local* mtimes, which is decisive for a locally-run job (the
-    file carries its write time) and for a cluster job only because retrieval
-    refuses to download a remote ``-out.cell`` that predates its submission:
-    ``sftp.get`` restamps the local copy with the download time, so an
-    unconditional download would make every retrieved file look fresh. Skipping
-    that download leaves the local copy carrying the *previous* retrieval's
-    mtime, which is what this comparison then rejects. The remote-side half of
-    the guard lives in ``ClusterJobRunner._retrieve_results``, which also refuses
-    to parse a ``.castep`` that predates the submission — the case this function
-    cannot see, because a run that never started has no ``started_at``.
-
-    ``started_at`` of ``None`` (a job the poller never observed running) returns
-    ``False``: the guard fails open rather than failing a job on no evidence.
-    """
-
-    if path is None or started_at is None:
-        return False
-    try:
-        modified = datetime.fromtimestamp(path.stat().st_mtime, UTC)
-    except OSError:
-        return False
-    return (started_at - modified).total_seconds() > _STALE_OUTPUT_SLACK_SECONDS
 
 
 def _structure_species_options(structure: Structure | None) -> tuple[str, ...]:
@@ -1040,9 +1000,8 @@ class MainWindow(QMainWindow):
         # Pristine-relaxation controller: the first migration with real
         # build_result logic (relaxed lattice payload + derived structure). Built
         # here (after its view exists) and appended to the registry so completed
-        # castep_pristine_relaxation jobs route through its build_result. The
-        # still-inline muon-relaxation branch of _on_local_job_finished is not
-        # migrated and falls through to that inline code via registry-fallback.
+        # castep_pristine_relaxation jobs route through its validate_artifacts
+        # and build_result.
         self._pristine_relaxation_controller = PristineRelaxationController(
             self._build_workflow_controller_context(),
             self._build_pristine_relaxation_deps(),
@@ -1083,8 +1042,7 @@ class MainWindow(QMainWindow):
         # the ``density_available`` flag (no derived structures, no document
         # mutation). Built here (after its view exists) and appended to the
         # registry so completed castep_uep_source jobs route through its
-        # build_result. The den_fmt *guard* (missing-output failure) stays inline
-        # in _on_local_job_finished per the base convention; only the flag moves.
+        # validate_artifacts (the den_fmt missing-output failure) and build_result.
         self._uep_controller = UepController(
             self._build_workflow_controller_context(),
             self._build_uep_deps(),
@@ -1190,9 +1148,8 @@ class MainWindow(QMainWindow):
         # jobs route through its build_result (phonon → ZPE/eigenvalue/witness
         # payload; singlepoint → empty result). The pre_submit_check runs the
         # shared ``_check_definition_host`` guard; task farming stays in the shared
-        # submit backend (not this controller). The ``.phonon`` failure guards
-        # (missing/unparseable file, downstream PhononParseError) stay inline in
-        # _on_local_job_finished per the base convention; only the payload moves.
+        # submit backend (not this controller). Its validate_artifacts fails a
+        # phonon job whose ``.phonon`` is missing or unparseable.
         self._quantum_corrections_controller = QuantumCorrectionsController(
             self._build_workflow_controller_context(),
             self._build_quantum_corrections_deps(),
@@ -1225,9 +1182,8 @@ class MainWindow(QMainWindow):
         # ``view_getter`` rather than a view instance. It is still constructed and
         # registered here so a completed NEB job dispatches through its
         # build_result even when the view was never opened; refresh_view no-ops
-        # until the view exists. The ``.ts`` failure guard stays inline in
-        # _on_local_job_finished (no failure channel on ControllerResult). The
-        # submit-signal wiring happens at lazy view creation
+        # until the view exists. Its validate_artifacts fails a job whose ``.ts``
+        # is missing or unparseable. The submit-signal wiring happens at lazy view creation
         # (``_ensure_energy_barriers_view``).
         self._energy_barriers_controller = EnergyBarriersController(
             self._build_workflow_controller_context(),
@@ -7628,8 +7584,8 @@ class MainWindow(QMainWindow):
         These helpers stay on ``MainWindow`` because non-migrating code still
         calls them: the definition/config/mapping helpers are shared with row
         removal, staging, and dashboard sync;
-        ``_muon_fractional_position_from_cell`` is still called by the inline
-        ``H:mu`` failure guard in ``_on_local_job_finished``;
+        ``_muon_fractional_position_from_cell`` locates the ``H:mu`` position
+        for the controller's ``validate_artifacts`` and ``build_result``;
         ``_coerce_fractional_triplet`` and ``_muon_relaxation_row_key`` have
         other view-refresh callers. The controller reaches them only through
         these late-bound wrappers.
@@ -8687,19 +8643,19 @@ class MainWindow(QMainWindow):
                 num_farms=farm_count or 1,
             )
 
-        if (
-            job.calc_type == "castep_pristine_relaxation"
-            or is_muon_relaxation_calc_type(job.calc_type)
-        ) and parsed.geom_converged is False:
-            self._on_local_job_failed(
-                job_id,
-                parsed.error_message
-                or "Geometry optimization did not satisfy CASTEP convergence criteria.",
-            )
-            return
-
         run = self._job_execution.ensure_run_for_job(job, status=JobStatus.RUNNING, started=True)
         if run is None:
+            return
+
+        # The owning controller rejects a completion whose outputs cannot carry
+        # a result (unconverged geometry, a missing, unparseable or stale
+        # secondary output). It reads the carrier, never disk, and runs before
+        # any result is built.
+        failure = validate_controller_artifacts(
+            self._workflow_controllers, job, parsed, run, artifacts
+        )
+        if failure is not None:
+            self._on_local_job_failed(job_id, failure)
             return
 
         result_payload = {
@@ -8716,146 +8672,10 @@ class MainWindow(QMainWindow):
             "geom_converged": parsed.geom_converged,
         }
 
-        if job.calc_type == "castep_uep_source":
-            # Missing-output guard (fails the job when {seed}.den_fmt is absent):
-            # kept inline per the base convention, like the -out.cell prologue,
-            # because ControllerResult has no failure channel. The
-            # ``density_available`` *flag* itself now moves to
-            # ``UepController.build_result`` (via merge_controller_result below),
-            # which re-checks the (here-guaranteed) den_fmt on the success path.
-            output_dir = self._job_output_directory(job)
-            seed_name = self._job_seed_name(job)
-            density_path = None if output_dir is None else output_dir / f"{seed_name}.den_fmt"
-            if density_path is None or not density_path.exists():
-                self._on_local_job_failed(
-                    job_id,
-                    f"Expected formatted density output was not found: {seed_name}.den_fmt",
-                )
-                return
-
-        if job.calc_type == QUANTUM_PHONON_CALC_TYPE:
-            # Failure-detection guard for the phonon stage, kept inline (like the
-            # -out.cell / den_fmt prologues) because ControllerResult has no
-            # failure channel. The ``.phonon`` parse plus the full ZPE / Gamma /
-            # witness computation now run once on the runner worker thread; a
-            # file that parses but fails downstream (missing Gamma point, wrong
-            # H:mu atom count) surfaces as ``artifacts.phonon_error``. The parsed
-            # calculation is carried on ``artifacts.phonon`` and re-used by
-            # ``QuantumCorrectionsController.build_result`` (via
-            # merge_controller_result below) with no second disk read.
-            seed_name = self._job_seed_name(job)
-            if artifacts.phonon_missing:
-                self._on_local_job_failed(
-                    job_id,
-                    f"Expected CASTEP phonon output was not found: {seed_name}.phonon",
-                )
-                return
-            if artifacts.phonon_error is not None:
-                self._on_local_job_failed(
-                    job_id,
-                    f"Failed to parse CASTEP phonon output: {artifacts.phonon_error}",
-                )
-                return
-
-        if job.calc_type in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE}:
-            # Failure-detection guard for the transition-state / NEB ``.ts`` output,
-            # kept inline (like the -out.cell / .phonon prologues) because
-            # ControllerResult has no failure channel: the ``.ts`` must exist and
-            # parse before any result is built. The parse now runs once on the
-            # runner worker thread; a missing/unparseable file surfaces as
-            # ``artifacts.ts_missing`` / ``artifacts.ts_error``. The parsed path is
-            # carried on ``artifacts.transition_state`` and re-used by
-            # ``EnergyBarriersController.build_result`` (via merge_controller_result
-            # below) with no second disk read.
-            if artifacts.ts_missing:
-                # Name the file the collector actually looked for: under task
-                # farming that is <seed>_farm001.ts, so reporting <seed>.ts would
-                # send the user hunting for a file CASTEP never writes.
-                expected_ts = (
-                    artifacts.ts_path.name
-                    if artifacts.ts_path is not None
-                    else f"{self._job_seed_name(job)}.ts"
-                )
-                self._on_local_job_failed(
-                    job_id,
-                    f"Expected CASTEP path output was not found: {expected_ts}",
-                )
-                return
-            if artifacts.ts_error is not None:
-                self._on_local_job_failed(
-                    job_id,
-                    f"Failed to parse CASTEP path output: {artifacts.ts_error}",
-                )
-                return
-
-        derived_structure_ids: list[UUID] = []
-        if job.calc_type == "castep_pristine_relaxation" or is_muon_relaxation_calc_type(job.calc_type):
-            # Shared failure-detection prologue for both relaxation workflows: the
-            # -out.cell must exist and parse before any result is built. This
-            # guard is deliberately kept inline (like the geom_converged prologue)
-            # because ControllerResult has no failure channel. The parse now runs
-            # once on the runner worker thread; a missing/unparseable file
-            # surfaces as ``artifacts.cell_missing`` / ``artifacts.cell_error``.
-            # The parsed cell is carried on ``artifacts.relaxed_cell`` and re-used
-            # by the pristine/muon controllers' build_result (via
-            # merge_controller_result below) with no second disk read.
-            seed_name = self._job_seed_name(job)
-            if artifacts.cell_missing:
-                self._on_local_job_failed(
-                    job_id,
-                    f"Expected relaxed structure output was not found: {seed_name}-out.cell",
-                )
-                return
-            if artifacts.cell_error is not None:
-                self._on_local_job_failed(
-                    job_id,
-                    f"Failed to parse relaxed CELL output: {artifacts.cell_error}",
-                )
-                return
-
-            # Stale-output guard, for the same reason the two guards above are
-            # inline: ControllerResult has no failure channel, so a result must
-            # not be built from a file this run never wrote. A continuation
-            # re-uses its job directory, so a present -out.cell is not by itself
-            # evidence that *this* run produced it — see _output_predates_run.
-            if _output_predates_run(
-                artifacts.out_cell_path, run.started_at or job.started_at
-            ):
-                self._on_local_job_failed(
-                    job_id,
-                    f"{seed_name}-out.cell predates this run: no relaxed structure "
-                    "was written, so the previous run's geometry is still in place.",
-                )
-                return
-
-            # Both relaxation workflows' lattice payloads and derived structures
-            # are now contributed by their controllers' build_result (via the
-            # merge_controller_result call below); the muon controller also
-            # contributes the folded muon position payload and mutates the source
-            # site. Only the H:mu failure guard stays inline (like the parse
-            # prologue above): ControllerResult has no failure channel, so a
-            # relaxed cell without a muon must abort the job before any result is
-            # built. The check runs against the carried, already-parsed cell so no
-            # second disk read is incurred; the muon controller re-extracts the
-            # (now validated) position from the same carried cell.
-            if is_muon_relaxation_calc_type(job.calc_type):
-                relaxed = artifacts.relaxed_cell
-                if (
-                    relaxed is None
-                    or self._muon_fractional_position_from_cell(relaxed) is None
-                ):
-                    self._on_local_job_failed(
-                        job_id,
-                        f"Expected H:mu muon position was not found in {seed_name}-out.cell.",
-                    )
-                    return
-
-        # Give the owning workflow controller (if any) a chance to contribute
-        # payload/file/structure additions before the Result is built. This is a
-        # strict no-op for unmigrated workflows and for controllers that return
-        # an empty ControllerResult (e.g. cutoff convergence), so behavior is
-        # unchanged until a workflow overrides build_result. The controller
-        # consumes the pre-parsed ``artifacts`` instead of re-reading disk.
+        # The owning workflow controller (if any) contributes payload, file and
+        # structure additions before the Result is built: a strict no-op for a
+        # calc type no controller owns and for an empty ControllerResult (cutoff
+        # convergence). It consumes the pre-parsed ``artifacts``.
         result_payload, output_files, derived_structure_ids, merged_warnings = (
             merge_controller_result(
                 self._workflow_controllers,
@@ -8865,7 +8685,7 @@ class MainWindow(QMainWindow):
                 artifacts,
                 payload=result_payload,
                 output_files=self._output_files_for_job(job),
-                derived_structure_ids=derived_structure_ids,
+                derived_structure_ids=[],
                 warnings=list(parsed.warnings),
             )
         )

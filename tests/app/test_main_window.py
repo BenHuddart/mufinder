@@ -2126,8 +2126,8 @@ def test_main_window_records_energy_barrier_result_from_ts_file(
         )
 
     # The ``.ts`` is parsed once by the off-thread collector
-    # (mufinder.services.job_artifacts) and carried to both the inline guard and
-    # the controller's build_result, so patch the collector's parse helper.
+    # (mufinder.services.job_artifacts) and carried to both the controller's
+    # validate_artifacts and build_result, so patch the collector's parse helper.
     monkeypatch.setattr(job_artifacts_module, "parse_transition_state_file", _fake_parse)
 
     window._on_local_job_finished(job.id, main_window_module.CastepResult(completed=True, total_energy=-1.0))

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -333,6 +334,27 @@ class WorkflowJobController:
 
         return job.calc_type in self.calc_types
 
+    def validate_artifacts(
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
+    ) -> str | None:
+        """Return why a completed ``job`` must fail before any result is built.
+
+        Called once per completion, through :func:`validate_controller_artifacts`,
+        after the job-finished handler has resolved the run and before
+        :meth:`build_result`. A non-``None`` return is the failure message the
+        handler passes to the job-failure path; ``None`` lets the result be
+        built. Overrides read the pre-parsed ``artifacts`` carrier (missing-file
+        flags and error strings) and never re-read a file the carrier holds.
+
+        Default: ``None`` (every completion is accepted).
+        """
+
+        return None
+
     def build_result(
         self,
         job: Job,
@@ -344,9 +366,9 @@ class WorkflowJobController:
 
         ``artifacts`` carries the job's secondary outputs (relaxed cell, phonon,
         transition state) parsed **once** on the runner worker thread. Overriding
-        controllers consume them instead of re-reading disk. The inline guards in
-        ``MainWindow._on_local_job_finished`` have already validated whatever
-        this controller relies on before dispatch reaches here.
+        controllers consume them instead of re-reading disk. This controller's
+        :meth:`validate_artifacts` has already accepted the completion, so
+        whatever it checks is present when dispatch reaches here.
 
         Default: empty :class:`ControllerResult` (base payload only). Cutoff
         convergence uses the default; workflows that derive structures or mutate
@@ -531,6 +553,113 @@ def upsert_job_derived_structure(
     return existing
 
 
+#: Slack allowed between a run's start and an output file's mtime before the
+#: file counts as predating the run. It absorbs filesystem mtime granularity
+#: (1 s on ext3/HFS+, 2 s on FAT) and the small clock offset a network-mounted
+#: job directory can introduce. A genuinely stale output is a whole run old, so
+#: a few seconds of slack costs nothing.
+STALE_OUTPUT_SLACK_SECONDS = 5.0
+
+
+def output_predates_run(path: Path | None, started_at: datetime | None) -> bool:
+    """Return whether ``path`` was last written before the current run started.
+
+    Guards a continued relaxation against the *previous* run's ``-out.cell``. A
+    continuation re-uses its job directory, so a run that dies before writing a
+    new relaxed structure leaves the old file exactly where the completion path
+    looks for it — ``cell_missing`` is ``False`` and the last run's geometry is
+    silently accepted as this run's result.
+
+    This compares *local* mtimes, which is decisive for a locally-run job (the
+    file carries its write time) and for a cluster job only because retrieval
+    refuses to download a remote ``-out.cell`` that predates its submission:
+    ``sftp.get`` restamps the local copy with the download time, so an
+    unconditional download would make every retrieved file look fresh. Skipping
+    that download leaves the local copy carrying the *previous* retrieval's
+    mtime, which is what this comparison then rejects. The remote-side half of
+    the guard lives in ``ClusterJobRunner._retrieve_results``, which also refuses
+    to parse a ``.castep`` that predates the submission — the case this function
+    cannot see, because a run that never started has no ``started_at``.
+
+    ``started_at`` of ``None`` (a job the poller never observed running) returns
+    ``False``: the guard fails open rather than failing a job on no evidence.
+    """
+
+    if path is None or started_at is None:
+        return False
+    try:
+        modified = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+    except OSError:
+        return False
+    return (started_at - modified).total_seconds() > STALE_OUTPUT_SLACK_SECONDS
+
+
+def relaxation_artifact_failure(
+    job: Job,
+    parsed: CastepResult,
+    run: CalculationRun,
+    artifacts: ParsedJobArtifacts,
+    *,
+    seed_name: str,
+) -> str | None:
+    """Return why a completed relaxation job must fail, shared by both relaxations.
+
+    The pristine and muon relaxation controllers' ``validate_artifacts`` both
+    apply these checks, in order:
+
+    1. the geometry optimisation did not converge (``geom_converged is False``);
+    2. the ``-out.cell`` is missing (``cell_missing``) or unparseable
+       (``cell_error``);
+    3. the ``-out.cell`` predates the current run (:func:`output_predates_run`
+       against the run's ``started_at``, falling back to the job's).
+
+    Returns ``None`` when the relaxed cell on the carrier belongs to this run.
+    """
+
+    if parsed.geom_converged is False:
+        return (
+            parsed.error_message
+            or "Geometry optimization did not satisfy CASTEP convergence criteria."
+        )
+    if artifacts.cell_missing:
+        return f"Expected relaxed structure output was not found: {seed_name}-out.cell"
+    if artifacts.cell_error is not None:
+        return f"Failed to parse relaxed CELL output: {artifacts.cell_error}"
+    if output_predates_run(artifacts.out_cell_path, run.started_at or job.started_at):
+        return (
+            f"{seed_name}-out.cell predates this run: no relaxed structure "
+            "was written, so the previous run's geometry is still in place."
+        )
+    return None
+
+
+def owning_controller(
+    controllers: Sequence[WorkflowJobController], job: Job
+) -> WorkflowJobController | None:
+    """Return the first registered controller that handles ``job``, if any."""
+
+    return next((c for c in controllers if c.handles_job(job)), None)
+
+
+def validate_controller_artifacts(
+    controllers: Sequence[WorkflowJobController],
+    job: Job,
+    parsed: CastepResult,
+    run: CalculationRun,
+    artifacts: ParsedJobArtifacts,
+) -> str | None:
+    """Return the owning controller's failure message for a completed ``job``.
+
+    Uses the same lookup as :func:`merge_controller_result`. ``None`` when no
+    controller owns the job or the owner accepts the completion.
+    """
+
+    controller = owning_controller(controllers, job)
+    if controller is None:
+        return None
+    return controller.validate_artifacts(job, parsed, run, artifacts)
+
+
 def merge_controller_result(
     controllers: Sequence[WorkflowJobController],
     job: Job,
@@ -561,7 +690,7 @@ def merge_controller_result(
     merged_structures = list(derived_structure_ids)
     merged_warnings = list(warnings)
 
-    controller = next((c for c in controllers if c.handles_job(job)), None)
+    controller = owning_controller(controllers, job)
     if controller is None:
         return merged_payload, merged_files, merged_structures, merged_warnings
 
@@ -574,11 +703,16 @@ def merge_controller_result(
 
 
 __all__ = [
+    "STALE_OUTPUT_SLACK_SECONDS",
     "ControllerResult",
     "WorkflowControllerContext",
     "WorkflowJobController",
     "apply_row_parameters_to_form_state",
     "find_job_derived_structure",
     "merge_controller_result",
+    "output_predates_run",
+    "owning_controller",
+    "relaxation_artifact_failure",
     "upsert_job_derived_structure",
+    "validate_controller_artifacts",
 ]

@@ -12,8 +12,11 @@ The logic here is a behavior-preserving move of the former ``MainWindow`` method
 ``_materialize_pristine_relaxation_jobs``, ``_build_pristine_relaxation_states``,
 ``_jobs_for_pristine_relaxation_labels``, ``_refresh_pristine_relaxation_rows``,
 and the ``castep_pristine_relaxation`` portion of ``_on_local_job_finished``'s
-result block. The muon-relaxation branch of that result block does **not** migrate
-in this PR and stays inline on ``MainWindow``.
+result block. :meth:`PristineRelaxationController.validate_artifacts` fails a job
+whose geometry did not converge or whose ``-out.cell`` is missing, unparseable or
+older than the current run, through the
+:func:`~mufinder.app.workflow_controllers.base.relaxation_artifact_failure` checks
+it shares with the muon-relaxation controller.
 
 Definition and job lookups come from the base class (:attr:`stage` and
 :attr:`active_key` drive them). Shared helpers that non-migrating code still
@@ -48,6 +51,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
     apply_row_parameters_to_form_state,
+    relaxation_artifact_failure,
     upsert_job_derived_structure,
 )
 from mufinder.app.workflow_submission import effective_row_status
@@ -524,6 +528,23 @@ class PristineRelaxationController(WorkflowJobController):
 
     # --- result contract ---
 
+    def validate_artifacts(
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
+    ) -> str | None:
+        """Fail a relaxation that did not converge or left no fresh ``-out.cell``.
+
+        See :func:`~mufinder.app.workflow_controllers.base.relaxation_artifact_failure`
+        for the checks and their messages; the carrier is read, not disk.
+        """
+
+        return relaxation_artifact_failure(
+            job, parsed, run, artifacts, seed_name=self._context.job_seed_name(job)
+        )
+
     def build_result(
         self,
         job: Job,
@@ -533,10 +554,9 @@ class PristineRelaxationController(WorkflowJobController):
     ) -> ControllerResult:
         """Contribute the relaxed lattice parameters and derived structure.
 
-        The inline ``_on_local_job_finished`` prologue has already validated that
-        the ``-out.cell`` exists and parses (it aborts the job otherwise, shared
-        with the muon branch), so the carried ``artifacts.relaxed_cell`` is
-        present on this success path. The file is parsed **once** on the runner
+        :meth:`validate_artifacts` has already accepted the completion (the
+        ``-out.cell`` exists, parses and belongs to this run), so the carried
+        ``artifacts.relaxed_cell`` is present on this success path. The file is parsed **once** on the runner
         worker thread; this controller consumes the carried cell rather than
         re-reading disk.
 

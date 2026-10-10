@@ -17,16 +17,13 @@ The logic here is a behavior-preserving move of the former ``MainWindow`` method
 ``_refresh_uep_rows``, plus the ``density_available`` *flag assignment* from the
 ``castep_uep_source`` branch of ``_on_local_job_finished``'s result block.
 
-Note on the den_fmt check: the *guard* that fails a job whose ``{seed}.den_fmt``
-output is missing (``_on_local_job_failed`` + ``return``) is a "missing output
-guard" and, per the base convention established in the pristine-relaxation
-migration, stays **inline** in ``_on_local_job_finished`` (ControllerResult has
-no failure channel). Only the flag assignment moves here:
-:meth:`UepController.build_result` re-checks ``{seed}.den_fmt`` on the validated
-success path (where the inline guard has already guaranteed it exists, so the
-flag is ``True``, byte-for-byte parity with the former inline assignment). The
-den_fmt file itself is **not** added to ``output_files`` here — the call site
-already passes ``_output_files_for_job(job)``, which includes it.
+Note on the den_fmt check: :meth:`UepController.validate_artifacts` fails a job
+whose ``{seed}.den_fmt`` output is missing. The density file is not parsed on
+completion, so this is a plain existence check rather than a carrier read.
+:meth:`UepController.build_result` re-checks the file on the validated success
+path, where it is guaranteed to exist, so the flag is ``True``. The den_fmt file
+itself is **not** added to ``output_files`` here — the call site already passes
+``_output_files_for_job(job)``, which includes it.
 
 Shared helpers that non-migrating code still calls (row removal, the analysis
 wizard, dashboard sync, cluster-source rows) remain on ``MainWindow`` and are
@@ -250,6 +247,26 @@ class UepController(WorkflowJobController):
 
     # --- result contract ---
 
+    def validate_artifacts(
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
+    ) -> str | None:
+        """Fail a UEP source job whose ``{seed}.den_fmt`` was not written.
+
+        The formatted density is not parsed on completion, so it has no carrier
+        field; this is a plain existence check in the job's output directory.
+        """
+
+        output_dir = self._context.job_output_directory(job)
+        seed_name = self._context.job_seed_name(job)
+        density_path = None if output_dir is None else output_dir / f"{seed_name}.den_fmt"
+        if density_path is None or not density_path.exists():
+            return f"Expected formatted density output was not found: {seed_name}.den_fmt"
+        return None
+
     def build_result(
         self,
         job: Job,
@@ -259,12 +276,9 @@ class UepController(WorkflowJobController):
     ) -> ControllerResult:
         """Contribute the ``density_available`` flag for a completed UEP job.
 
-        The inline ``_on_local_job_finished`` guard for ``castep_uep_source``
-        jobs has already failed the job when ``{seed}.den_fmt`` is missing (a
-        "missing output guard" kept inline per the base convention), so on the
-        validated success path this re-check finds the file present and the flag
-        is ``True`` — byte-for-byte parity with the former inline
-        ``result_payload["density_available"] = True`` assignment. The den_fmt
+        :meth:`validate_artifacts` has already failed the job when
+        ``{seed}.den_fmt`` is missing, so on the validated success path this
+        re-check finds the file present and the flag is ``True``. The den_fmt
         file is **not** contributed to ``output_files`` here: the call site
         already passes ``_output_files_for_job(job)``, which includes it.
         """
