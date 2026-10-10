@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from uuid import UUID
 
@@ -14,44 +15,18 @@ from mufinder.app.main_window import MainWindow
 from mufinder.app.uep_types import UepConfig, UepSourceRow
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, Result, Structure
+from mufinder.domain.models import CalculationRun, Result
 from mufinder.science.uep import UepField, load_uep_source, potential_grid
 from mufinder.services.project_service import ProjectService
+from tests.support.qt import find_tree_item_by_route
+from tests.support.structures import QUARTER_DIAGONAL, host_structure
 
 
-def _find_route(window: MainWindow, route: str):
-    def visit(item):
-        if item.data(0, 0x0100) == route:  # Qt.UserRole
-            return item
-        for index in range(item.childCount()):
-            child = item.child(index)
-            found = visit(child)
-            if found is not None:
-                return found
-        return None
-
-    for index in range(window._project_tree.topLevelItemCount()):
-        root = window._project_tree.topLevelItem(index)
-        if root is None:
-            continue
-        found = visit(root)
-        if found is not None:
-            return found
-    return None
+_host_structure = partial(host_structure, positions=QUARTER_DIAGONAL, properties={"atomic_spins": [2.0, -2.0]})
 
 
-def _host_structure() -> Structure:
-    return Structure(
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
-        properties={"atomic_spins": [2.0, -2.0]},
-    )
-
-
-def test_main_window_workflow_tree_contains_uep_stage(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
+def test_main_window_workflow_tree_contains_uep_stage(main_window, tmp_path: Path) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_route.mufinder", "UEPRoute")
     host = _host_structure()
@@ -61,12 +36,11 @@ def test_main_window_workflow_tree_contains_uep_stage(qapp, tmp_path: Path) -> N
 
     window._refresh_ui_after_project_change()
 
-    assert _find_route(window, "uep") is not None
-    window.close()
+    assert find_tree_item_by_route(window._project_tree, "uep") is not None
 
 
-def test_main_window_on_uep_configured_registers_definition(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
+def test_main_window_on_uep_configured_registers_definition(main_window, tmp_path: Path) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_configured.mufinder", "UEPConfigured")
     host = _host_structure()
@@ -86,21 +60,19 @@ def test_main_window_on_uep_configured_registers_definition(qapp, tmp_path: Path
     assert len(definitions) == 1
     assert definitions[0].calc_type == "castep_uep_source"
     assert definitions[0].input_structure_ids == [host.id]
-    window.close()
 
 
-def test_main_window_deserialize_uep_config_normalizes_legacy_prefix(qapp) -> None:
-    window = MainWindow()
+def test_main_window_deserialize_uep_config_normalizes_legacy_prefix(main_window) -> None:
+    window = main_window
 
     config = window._deserialize_uep_config({"name_prefix": "uep_source", "rows": []})
 
     assert config is not None
     assert config.name_prefix == "uep"
-    window.close()
 
 
-def test_main_window_local_finish_uep_source_marks_density_available(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
+def test_main_window_local_finish_uep_source_marks_density_available(main_window, tmp_path: Path) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_finish.mufinder", "UEPFinish")
     job = service.add_job(
@@ -135,11 +107,10 @@ def test_main_window_local_finish_uep_source_marks_density_available(qapp, tmp_p
     assert result.data["density_available"] is True
     assert result.data["total_energy"] == -20.5
     assert any(path.endswith(f"{job.label}.den_fmt") for path in result.output_files)
-    window.close()
 
 
-def test_main_window_open_uep_analysis_launches_dialog(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    window = MainWindow()
+def test_main_window_open_uep_analysis_launches_dialog(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_launch.mufinder", "UEPLaunch")
     host = _host_structure()
@@ -217,7 +188,6 @@ def test_main_window_open_uep_analysis_launches_dialog(qapp, tmp_path: Path, mon
     assert captured["raised"] is True
     assert captured["activated"] is True
     assert window._uep_analysis_dialogs[job.id] is captured["instance"]
-    window.close()
 
 
 def _completed_uep_job_with_grid(window: MainWindow, tmp_path: Path):
@@ -299,8 +269,8 @@ def _capture_uep_analysis_dialog(monkeypatch: pytest.MonkeyPatch) -> dict[str, o
     return captured
 
 
-def test_main_window_open_uep_analysis_loads_persisted_potential_grid(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    window = MainWindow()
+def test_main_window_open_uep_analysis_loads_persisted_potential_grid(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = main_window
     doc, _job, run, grid = _completed_uep_job_with_grid(window, tmp_path)
     result = Result(
         calculation_run_id=run.id,
@@ -313,16 +283,15 @@ def test_main_window_open_uep_analysis_loads_persisted_potential_grid(qapp, tmp_
     window._on_open_uep_analysis_requested("row_1")
 
     assert captured["initial_potential_grid"] is not None
-    window.close()
 
 
 @pytest.mark.parametrize("has_grid_result", [False, True])
 def test_main_window_open_uep_analysis_moves_legacy_state_grid_into_result(
-    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, has_grid_result: bool
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, has_grid_result: bool
 ) -> None:
     # Older UEP UI state repeated the potential grid; opening the analysis keeps
     # exactly one copy, as the grid result, and strips it from the UI state.
-    window = MainWindow()
+    window = main_window
     doc, job, run, grid = _completed_uep_job_with_grid(window, tmp_path)
     payload = main_window_module.serialize_potential_grid(grid)
     if has_grid_result:
@@ -347,15 +316,14 @@ def test_main_window_open_uep_analysis_moves_legacy_state_grid_into_result(
     assert np.allclose(loaded.potential_total_ev, grid.potential_total_ev)
     assert captured["initial_state"] == {"gw_factor": 5.0}
     assert doc.ui_state[window._UEP_ANALYSIS_STATES_KEY][str(job.id)] == {"gw_factor": 5.0}
-    window.close()
 
 
 def test_main_window_open_uep_analysis_does_not_request_snapshot_after_dialog_show(
-    qapp,
+    main_window,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    window = MainWindow()
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_no_post_exec_snapshot.mufinder", "UEPNoPostExecSnapshot")
     host = _host_structure()
@@ -414,11 +382,10 @@ def test_main_window_open_uep_analysis_does_not_request_snapshot_after_dialog_sh
 
     window._on_open_uep_analysis_requested("row_1")
 
-    window.close()
 
 
-def test_main_window_open_uep_analysis_reuses_existing_window(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    window = MainWindow()
+def test_main_window_open_uep_analysis_reuses_existing_window(main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_reuse_window.mufinder", "UEPReuseWindow")
     host = _host_structure()
@@ -482,11 +449,10 @@ def test_main_window_open_uep_analysis_reuses_existing_window(qapp, tmp_path: Pa
     assert captured["shown"] == 2
     assert captured["raised"] == 2
     assert captured["activated"] == 2
-    window.close()
 
 
-def test_main_window_open_uep_analysis_recreates_closed_window(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    window = MainWindow()
+def test_main_window_open_uep_analysis_recreates_closed_window(qapp, main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_recreate_closed_window.mufinder", "UEPRecreateClosedWindow")
     host = _host_structure()
@@ -539,11 +505,10 @@ def test_main_window_open_uep_analysis_recreates_closed_window(qapp, tmp_path: P
 
     assert len(constructed) == 2
     assert window._uep_analysis_dialogs[job.id] is constructed[1]
-    window.close()
 
 
-def test_main_window_close_closes_open_uep_dialogs_before_saving(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    window = MainWindow()
+def test_main_window_close_closes_open_uep_dialogs_before_saving(qapp, main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_close_before_save.mufinder", "UEPCloseBeforeSave")
     window._document = doc
@@ -580,8 +545,8 @@ def test_main_window_close_closes_open_uep_dialogs_before_saving(qapp, tmp_path:
     assert events[:2] == ["dialog.close", "save_project"]
 
 
-def test_main_window_uep_analysis_state_changed_updates_document_but_not_disk_until_save(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
+def test_main_window_uep_analysis_state_changed_updates_document_but_not_disk_until_save(main_window, tmp_path: Path) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_state.mufinder", "UEPState")
     window._document = doc
@@ -615,15 +580,14 @@ def test_main_window_uep_analysis_state_changed_updates_document_but_not_disk_un
     assert persisted[str(job_id)]["current_tab"] == 3
     assert persisted[str(job_id)]["probe_output"] == "saved"
     assert persisted[str(job_id)]["clustering_window_state"]["method"] == "kmeans"
-    window.close()
 
 
 def test_main_window_uep_analysis_state_change_keeps_dialog_visible_without_table_refresh(
-    qapp,
+    qapp, main_window,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    window = MainWindow()
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_isosurface_state.mufinder", "UEPIsosurfaceState")
     window._document = doc
@@ -670,15 +634,14 @@ def test_main_window_uep_analysis_state_change_keeps_dialog_visible_without_tabl
     assert doc.ui_state[window._UEP_ANALYSIS_STATES_KEY][str(job_id)]["isosurface_layers"] == updated_state[
         "isosurface_layers"
     ]
-    window.close()
 
 
 def test_main_window_uep_analysis_state_change_refreshes_muon_sources_for_batch_updates(
-    qapp,
+    qapp, main_window,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    window = MainWindow()
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_batch_state.mufinder", "UEPBatchState")
     window._document = doc
@@ -697,11 +660,10 @@ def test_main_window_uep_analysis_state_change_refreshes_muon_sources_for_batch_
     qapp.processEvents()
 
     assert refresh_calls == ["refresh"]
-    window.close()
 
 
-def test_main_window_uep_potential_grid_ready_updates_document_but_not_disk_until_save(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
+def test_main_window_uep_potential_grid_ready_updates_document_but_not_disk_until_save(main_window, tmp_path: Path) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_grid_state.mufinder", "UEPGridState")
     host = _host_structure()
@@ -752,15 +714,14 @@ def test_main_window_uep_potential_grid_ready_updates_document_but_not_disk_unti
     assert reloaded_persisted is not None
     assert reloaded_persisted.result_type == window._UEP_POTENTIAL_GRID_RESULT_TYPE
     reloaded_window.close()
-    window.close()
 
 
 def test_main_window_uep_potential_grid_ready_keeps_active_dialog_visible(
-    qapp,
+    qapp, main_window,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    window = MainWindow()
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_grid_focus.mufinder", "UEPGridFocus")
     host = _host_structure()
@@ -819,15 +780,14 @@ def test_main_window_uep_potential_grid_ready_keeps_active_dialog_visible(
     qapp.processEvents()
 
     assert dialog.calls == ["show", "raise", "activate"]
-    window.close()
 
 
 def test_main_window_uep_potential_grid_ready_keeps_visible_dialog_when_not_active(
-    qapp,
+    qapp, main_window,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    window = MainWindow()
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_grid_visible_focus.mufinder", "UEPGridVisibleFocus")
     host = _host_structure()
@@ -885,11 +845,10 @@ def test_main_window_uep_potential_grid_ready_keeps_visible_dialog_when_not_acti
     qapp.processEvents()
 
     assert events == ["show", "raise", "activate"]
-    window.close()
 
 
-def test_main_window_exposes_uep_cluster_rows_for_generation(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
+def test_main_window_exposes_uep_cluster_rows_for_generation(main_window, tmp_path: Path) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_cluster_generation.mufinder", "UEPClusterGeneration")
     host = _host_structure()
@@ -968,11 +927,10 @@ def test_main_window_exposes_uep_cluster_rows_for_generation(qapp, tmp_path: Pat
     assert site.source_structure_id == host.id
     assert site.properties["classification"] == "minimum"
 
-    window.close()
 
 
-def test_main_window_ignores_stale_uep_cluster_states_for_generation(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
+def test_main_window_ignores_stale_uep_cluster_states_for_generation(main_window, tmp_path: Path) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_stale_cluster_generation.mufinder", "UEPStaleClusterGeneration")
     host = _host_structure()
@@ -1053,7 +1011,6 @@ def test_main_window_ignores_stale_uep_cluster_states_for_generation(qapp, tmp_p
     assert {row["source_job_id"] for row in rows} == {str(active_job.id)}
     assert {row["cluster_index"] for row in rows} == {1}
 
-    window.close()
 
 
 class _SignalStub:

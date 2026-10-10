@@ -37,30 +37,11 @@ from mufinder.services.project_service import ProjectService
 from mufinder.services.ssh_client import SSHAuthenticationError, SSHCredentials
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
-
-
-def _find_item_by_route(parent: QTreeWidgetItem, route: str) -> QTreeWidgetItem | None:
-    if parent.data(0, 0x0100) == route:  # Qt.UserRole
-        return parent
-    for index in range(parent.childCount()):
-        child = parent.child(index)
-        if child is None:
-            continue
-        found = _find_item_by_route(child, route)
-        if found is not None:
-            return found
-    return None
+from tests.support.qt import find_item_by_route, find_tree_item_by_route
 
 
 def _select_route(window: MainWindow, route: str) -> None:
-    item = None
-    for index in range(window._project_tree.topLevelItemCount()):
-        top_item = window._project_tree.topLevelItem(index)
-        if top_item is None:
-            continue
-        item = _find_item_by_route(top_item, route)
-        if item is not None:
-            break
+    item = find_tree_item_by_route(window._project_tree, route)
     assert item is not None
     window._project_tree.setCurrentItem(item)
     window._on_tree_selection_changed()
@@ -1947,7 +1928,7 @@ def test_main_window_project_tree_uses_journal_route_and_view(qapp, tmp_path: Pa
     for index in range(window._project_tree.topLevelItemCount()):
         item = window._project_tree.topLevelItem(index)
         if item is not None:
-            journal_item = _find_item_by_route(item, "provenance_log")
+            journal_item = find_item_by_route(item, "provenance_log")
         if journal_item is not None:
             break
     assert journal_item is not None

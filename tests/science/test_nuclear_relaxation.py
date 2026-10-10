@@ -18,6 +18,7 @@ from mufinder.science.nuclear_relaxation import (
     gyromagnetic_ratio_from_moment,
     isotopes_for_element,
 )
+from tests.support.structures import hydrogen_host
 
 
 def _single_nucleus_structure(symbol: str = "H") -> Structure:
@@ -29,22 +30,13 @@ def _single_nucleus_structure(symbol: str = "H") -> Structure:
     )
 
 
-def _host_structure() -> Structure:
-    return Structure(
-        label="H host",
-        lattice_vectors=[[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]],
-        species=["H"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-    )
-
-
 def _distorted_structure(host_position=(0.0, 0.0, 0.0), cell_length: float = 2.0) -> Structure:
     return Structure(
         label="distorted",
         lattice_vectors=[[cell_length, 0.0, 0.0], [0.0, cell_length, 0.0], [0.0, 0.0, cell_length]],
         species=["H", "H:mu"],
         fractional_positions=[list(host_position), [0.5, 0.5, 0.5]],
-        parent_structure_id=_host_structure().id,
+        parent_structure_id=hydrogen_host().id,
     )
 
 
@@ -214,7 +206,7 @@ def test_missing_isotope_data_reports_element() -> None:
 
 def test_distortion_correction_is_zero_for_identical_host_positions() -> None:
     result = calculate_distortion_correction(
-        _host_structure(),
+        hydrogen_host(),
         _distorted_structure(),
         (0.5, 0.5, 0.5),
         options=NuclearRelaxationOptions(mode="zf_polycrystal", radius=6.0),
@@ -227,7 +219,7 @@ def test_distortion_correction_is_zero_for_identical_host_positions() -> None:
 
 def test_distortion_correction_changes_for_local_displacement() -> None:
     result = calculate_distortion_correction(
-        _host_structure(),
+        hydrogen_host(),
         _distorted_structure(host_position=(0.1, 0.0, 0.0)),
         (0.5, 0.5, 0.5),
         options=NuclearRelaxationOptions(mode="zf_polycrystal", radius=6.0),
@@ -239,7 +231,7 @@ def test_distortion_correction_changes_for_local_displacement() -> None:
 def test_distortion_correction_reports_unmatched_supercell() -> None:
     with pytest.raises(NuclearRelaxationError, match="matching pristine supercell"):
         calculate_distortion_correction(
-            _host_structure(),
+            hydrogen_host(),
             _distorted_structure(cell_length=2.5),
             (0.5, 0.5, 0.5),
             options=NuclearRelaxationOptions(mode="zf_polycrystal", radius=6.0),

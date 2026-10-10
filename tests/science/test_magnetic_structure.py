@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import numpy as np
 import pytest
 
@@ -34,15 +36,10 @@ from mufinder.science.magnetic_structure import (
     resolve_atom_selector,
     viable_atom_selectors,
 )
+from tests.support.structures import host_structure
 
 
-def _structure() -> Structure:
-    return Structure(
-        label="Fe",
-        lattice_vectors=[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
-        species=["Fe", "O"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
-    )
+_structure = partial(host_structure, label="Fe", lattice=3.0, species=("Fe", "O"))
 
 
 def _assert_muesr_fc_is_circular_helical(fc: np.ndarray) -> None:

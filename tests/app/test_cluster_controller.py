@@ -12,26 +12,14 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QObject, QThread, Signal
-from PySide6.QtWidgets import QApplication
 
 from mufinder.app import cluster_controller
 from mufinder.app.cluster_controller import ClusterController
-
-
-def _process_until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> bool:
-    """Pump the GUI event loop until ``predicate`` holds or ``timeout`` elapses."""
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        QApplication.processEvents()
-        time.sleep(0.005)
-    return predicate()
+from tests.support.qt import pump_until
 
 
 class _FakeConfig:
@@ -188,7 +176,7 @@ def test_bridge_ops_run_on_worker_thread_and_report_via_signal(controller) -> No
     # Every call returned a distinct request id immediately.
     assert len({rid_submit, rid_exists, rid_rm, rid_clear}) == 4
 
-    assert _process_until(lambda: len(ops) == 4)
+    assert pump_until(lambda: len(ops) == 4)
     by_kind = {kind: (result, error) for _rid, kind, result, error in ops}
     assert by_kind[ctrl.OP_SUBMIT] == ("JOB-1", None)
     assert by_kind[ctrl.OP_REMOTE_DIR_EXISTS] == (True, None)
@@ -222,7 +210,7 @@ def test_bridge_op_does_not_block_gui_while_worker_is_busy(controller) -> None:
 
     # Kick off the long op (worker will block inside fake.hold()).
     rid_slow = ctrl._run_async_op("hold", fake.hold)
-    assert _process_until(lambda: "hold" in fake.threads)  # worker is now blocked
+    assert pump_until(lambda: "hold" in fake.threads)  # worker is now blocked
 
     # This call must return immediately even though the worker is busy.
     start = time.monotonic()
@@ -232,7 +220,7 @@ def test_bridge_op_does_not_block_gui_while_worker_is_busy(controller) -> None:
 
     # Release the worker; both completions arrive, each keyed to its request id.
     gate.set()
-    assert _process_until(lambda: {rid_slow, rid_fast} <= {op[0] for op in ops})
+    assert pump_until(lambda: {rid_slow, rid_fast} <= {op[0] for op in ops})
 
 
 def test_async_calls_run_on_worker_thread(controller) -> None:
@@ -243,7 +231,7 @@ def test_async_calls_run_on_worker_thread(controller) -> None:
     ctrl.cancel("job-7")
     ctrl.track_existing_job(job_id="job-9")
 
-    assert _process_until(lambda: {"refresh", "cancel", "track"} <= set(fake.threads))
+    assert pump_until(lambda: {"refresh", "cancel", "track"} <= set(fake.threads))
     assert fake.threads["refresh"] is ctrl._thread
     assert fake.threads["refresh"] is not gui_thread
     assert fake.threads["cancel"] is ctrl._thread
@@ -262,14 +250,14 @@ def test_connect_mirrors_state_and_forwards_signal(controller) -> None:
 
     # The connect runs on the worker; the mirror adopts the pending identity from
     # the forwarded connection_status_changed once events are pumped (no blocking).
-    assert _process_until(lambda: ctrl.is_connected is True)
+    assert pump_until(lambda: ctrl.is_connected is True)
     assert ctrl.connected_cluster_name == "hpc"
     assert ctrl.connected_username == "alice"
     assert fake.threads["connect"] is ctrl._thread
     assert received == [True]
 
     # The op completion also fires (success -> no error).
-    assert _process_until(lambda: any(k == ctrl.OP_CONNECT for _r, k, _res, _e in ops))
+    assert pump_until(lambda: any(k == ctrl.OP_CONNECT for _r, k, _res, _e in ops))
     connect_op = next(op for op in ops if op[1] == ctrl.OP_CONNECT)
     assert connect_op[3] is None
 
@@ -281,7 +269,7 @@ def test_connect_async_success_mirrors_and_signals_none(controller) -> None:
 
     ctrl.connect_async(_FakeConfig(name="hpc", username="bob"), credentials=_FakeCredentials())
 
-    assert _process_until(lambda: results)
+    assert pump_until(lambda: results)
     assert results == [None]
     assert ctrl.is_connected is True
     assert ctrl.connected_cluster_name == "hpc"
@@ -294,11 +282,11 @@ def test_pending_connect_identity_is_consumed_not_reused(controller) -> None:
     # previous connect's identity (the pending identity is consumed once).
     ctrl, fake = controller
     ctrl.connect_async(_FakeConfig(name="hpc", username="bob"), credentials=_FakeCredentials())
-    assert _process_until(lambda: ctrl.connected_cluster_name == "hpc")
+    assert pump_until(lambda: ctrl.connected_cluster_name == "hpc")
 
     # A spurious reconnect signal with nothing pending keeps the current name.
     fake.connection_status_changed.emit(True)
-    assert _process_until(lambda: ctrl.is_connected is True)
+    assert pump_until(lambda: ctrl.is_connected is True)
     assert ctrl.connected_cluster_name == "hpc"
     assert ctrl._pending_connect is None
 
@@ -311,7 +299,7 @@ def test_connect_async_failure_emits_exception(controller) -> None:
 
     ctrl.connect_async(_FakeConfig(), credentials=_FakeCredentials())
 
-    assert _process_until(lambda: results)
+    assert pump_until(lambda: results)
     assert isinstance(results[0], ConnectionError)
     assert ctrl.is_connected is False
 
@@ -319,11 +307,11 @@ def test_connect_async_failure_emits_exception(controller) -> None:
 def test_disconnect_signal_clears_mirror(controller) -> None:
     ctrl, fake = controller
     ctrl.connect_to_cluster(_FakeConfig())
-    assert _process_until(lambda: ctrl.is_connected is True)
+    assert pump_until(lambda: ctrl.is_connected is True)
 
     fake.connection_status_changed.emit(False)
 
-    assert _process_until(lambda: ctrl.is_connected is False)
+    assert pump_until(lambda: ctrl.is_connected is False)
     assert ctrl.connected_cluster_name is None
     assert ctrl.connected_username is None
 
@@ -337,7 +325,7 @@ def test_bridge_op_delivers_exception_via_completion(controller) -> None:
 
     rid = ctrl.submit(seed_name="seed")
 
-    assert _process_until(lambda: any(op[0] == rid for op in ops))
+    assert pump_until(lambda: any(op[0] == rid for op in ops))
     op = next(op for op in ops if op[0] == rid)
     _rid, kind, result, error = op
     assert kind == ctrl.OP_SUBMIT
@@ -360,7 +348,7 @@ def test_two_ops_queued_back_to_back_route_to_own_continuation(controller) -> No
     rid_b = ctrl.remote_directory_exists("/no")
     assert rid_a != rid_b
 
-    assert _process_until(lambda: {rid_a, rid_b} <= set(routed))
+    assert pump_until(lambda: {rid_a, rid_b} <= set(routed))
     assert routed[rid_a] == (ctrl.OP_REMOTE_DIR_EXISTS, True, None)
     assert routed[rid_b] == (ctrl.OP_REMOTE_DIR_EXISTS, False, None)
 
@@ -372,7 +360,7 @@ def test_worker_signals_forward_to_gui(controller) -> None:
 
     fake.job_finished.emit("job-1", "parsed")
 
-    assert _process_until(lambda: received == [("job-1", "parsed")])
+    assert pump_until(lambda: received == [("job-1", "parsed")])
 
 
 def test_pure_passthrough_helpers(controller) -> None:
@@ -399,7 +387,7 @@ def test_check_remote_dirs_reports_existing_and_errors(controller) -> None:
 
     ctrl.check_remote_dirs([("a", "/exists"), ("b", "/missing"), ("c", "/broken")])
 
-    assert _process_until(lambda: payloads)
+    assert pump_until(lambda: payloads)
     assert payloads[0]["existing"] == ["/exists"]
     assert payloads[0]["errors"] == {"c": "stat failed"}
     assert fake.threads["exists"] is ctrl._thread
@@ -436,7 +424,7 @@ def test_check_remote_files_reports_existing_and_errors(controller) -> None:
         ]
     )
 
-    assert _process_until(lambda: payloads)
+    assert pump_until(lambda: payloads)
     assert payloads[0]["existing"] == ["/exists/seed.check"]
     assert payloads[0]["errors"] == {"c": "stat failed"}
     assert fake.threads["file_exists"] is ctrl._thread
@@ -482,7 +470,7 @@ def test_submit_batch_emits_progress_results_and_finished(controller) -> None:
 
     ctrl.submit_batch([_batch_item(0, delete="/old"), _batch_item(1)])
 
-    assert _process_until(lambda: finished)
+    assert pump_until(lambda: finished)
     assert progress[0] == (1, 2, "L0")
     assert [r[0] for r in results] == ["job-0", "job-1"]
     assert all(r[1] == "JOB-1" and r[2] == "" for r in results)
@@ -502,7 +490,7 @@ def test_submit_batch_reports_per_job_failure(controller) -> None:
 
     ctrl.submit_batch([_batch_item(0)])
 
-    assert _process_until(lambda: finished)
+    assert pump_until(lambda: finished)
     assert results == [("job-0", None, "boom")]
 
 
@@ -517,7 +505,7 @@ def test_submit_batch_stops_after_cancel(controller) -> None:
 
     ctrl.submit_batch([_batch_item(0), _batch_item(1), _batch_item(2)])
 
-    assert _process_until(lambda: finished)
+    assert pump_until(lambda: finished)
     assert [r[0] for r in results] == ["job-0"]
 
 

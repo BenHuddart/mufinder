@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import numpy as np
 import pytest
 
@@ -29,6 +31,7 @@ from mufinder.science.magnetic_structure import (
     MagneticComponent,
     MagneticStructureModel,
 )
+from tests.support.structures import host_structure
 
 
 def test_patch_numpy_aliases_for_muesr_restores_removed_aliases(monkeypatch) -> None:
@@ -56,13 +59,7 @@ def test_load_muesr_engines_patches_numpy_aliases(monkeypatch) -> None:
     assert np.float is float
 
 
-def _structure() -> Structure:
-    return Structure(
-        label="Fe",
-        lattice_vectors=[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
-        species=["Fe"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-    )
+_structure = partial(host_structure, label="Fe", lattice=3.0, species=("Fe",), positions=((0.0, 0.0, 0.0),))
 
 
 def _two_atom_structure() -> Structure:

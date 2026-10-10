@@ -5,12 +5,10 @@ from __future__ import annotations
 from dataclasses import replace
 import os
 import sys
-import time
 from pathlib import Path
-from typing import Callable
 
 import pytest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QLabel
 
 import mufinder.app.castep_setup_dialog as dialog_module
 import mufinder.castep_io.schema as schema_module
@@ -35,23 +33,7 @@ from mufinder.castep_setup import (
 from tests.support.keyword_catalogs import write_complete_catalog
 from mufinder.app.castep_setup_dialog import CastepSetupDialog
 from mufinder.services.ssh_client import SSHCredentials, SSHUnknownHostKeyError
-
-
-def _process_until(predicate: Callable[[], bool], *, timeout: float = 5.0) -> bool:
-    """Pump the GUI event loop until ``predicate`` holds or ``timeout`` elapses.
-
-    The pre-generation cluster connection check runs on a worker thread, so
-    its outcome arrives via queued signals that only deliver while the event
-    loop spins.
-    """
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        QApplication.processEvents()
-        time.sleep(0.005)
-    return predicate()
+from tests.support.qt import pump_until
 
 
 class _FakeSettings:
@@ -727,7 +709,7 @@ def test_castep_setup_dialog_starts_cluster_generation_for_selected_target(
 
     dialog._generate_keywords()
 
-    assert _process_until(lambda: bool(captured))
+    assert pump_until(lambda: bool(captured), timeout=5.0)
     assert [(name, path.name, creds) for name, path, creds in captured] == [
         ("Redwood", "castep_keywords.json", credentials)
     ]
@@ -792,7 +774,7 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
 
     dialog._generate_keywords()
 
-    assert _process_until(lambda: bool(captured))
+    assert pump_until(lambda: bool(captured), timeout=5.0)
     assert prompts == ["yes"]
     assert [(name, path.name, creds) for name, path, creds in captured] == [
         ("Redwood", "castep_keywords.json", credentials)

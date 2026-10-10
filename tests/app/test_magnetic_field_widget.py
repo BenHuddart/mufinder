@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import partial
 from uuid import uuid4
 
 import numpy as np
@@ -42,16 +43,16 @@ from mufinder.science.magnetic_structure import (
     build_conical_component,
 )
 from mufinder.services.project_service import ProjectService
+from tests.support.structures import host_structure
 
 
-def _host_structure() -> Structure:
-    return Structure(
-        label="FeO",
-        lattice_vectors=[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
-        species=["Fe", "O"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
-        properties={"atomic_spins": [1.0, -0.5], "propagation_vector": [0.0, 0.0, 0.0]},
-    )
+_host_structure = partial(
+    host_structure,
+    label="FeO",
+    lattice=3.0,
+    species=("Fe", "O"),
+    properties={"atomic_spins": [1.0, -0.5], "propagation_vector": [0.0, 0.0, 0.0]},
+)
 
 
 def _multi_species_structure() -> Structure:

@@ -3,35 +3,28 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 import pytest
 
-from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import Job
+from mufinder.domain.enums import JobStatus
 from mufinder.services.job_monitoring import (
     STALENESS_THRESHOLD_SECONDS,
     is_cluster_job,
     job_staleness,
 )
+from tests.support.jobs import make_job
 
 _NOW = datetime(2026, 7, 4, 12, 0, tzinfo=UTC)
 
 
-def _job(
-    status: JobStatus = JobStatus.QUEUED,
-    execution_target: str = "scarf",
-    last_checked_at: datetime | None = None,
-    submitted_at: datetime | None = None,
-) -> Job:
-    return Job(
-        label="Mon",
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
-        status=status,
-        execution_target=execution_target,
-        last_checked_at=last_checked_at,
-        submitted_at=submitted_at,
-    )
+_job = partial(
+    make_job,
+    label="Mon",
+    status=JobStatus.QUEUED,
+    calc_type="castep_convergence_cutoff",
+    execution_target="scarf",
+)
 
 
 @pytest.mark.parametrize("target,expected", [

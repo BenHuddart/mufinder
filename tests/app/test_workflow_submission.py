@@ -12,9 +12,10 @@ from mufinder.app.workflow_submission import (
     job_is_resubmittable_after_dismissal,
     workflow_row_state_is_ready,
 )
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import Job
 from mufinder.services.project_service import TERMINAL_RECOVERABLE_JOB_STATUSES
+from tests.support.jobs import make_job
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,12 +23,8 @@ class _State:
     status: str
 
 
-def _job(label: str) -> Job:
-    return Job(label=label, workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF, calc_type="castep_cutoff")
-
-
 def _job_with(status: JobStatus, *, dismissed: bool) -> Job:
-    job = _job(f"{status.value}-{'dismissed' if dismissed else 'active'}")
+    job = make_job(f"{status.value}-{'dismissed' if dismissed else 'active'}")
     job.status = status
     if dismissed:
         job.dismissed_at = datetime(2026, 7, 28, 12, 0, tzinfo=UTC)
@@ -35,8 +32,8 @@ def _job_with(status: JobStatus, *, dismissed: bool) -> Job:
 
 
 def test_submission_plan_normalizes_dedupes_and_materializes_ready_values() -> None:
-    existing = _job("existing-300")
-    materialized = _job("materialized-360")
+    existing = make_job("existing-300")
+    materialized = make_job("materialized-360")
     calls: dict[str, object] = {}
     coordinator = WorkflowSubmissionCoordinator()
 

@@ -18,16 +18,7 @@ from mufinder.app.relaxation_types import (
     PristineRelaxationRow,
 )
 from mufinder.castep_io import write_cell
-from mufinder.domain.models import Structure
-
-
-def _host_structure() -> Structure:
-    return Structure(
-        label="Si",
-        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
-    )
+from tests.support.structures import si_pair_host
 
 
 def test_expand_pristine_relaxation_jobs_applies_project_defaults() -> None:
@@ -44,7 +35,7 @@ def test_expand_pristine_relaxation_jobs_applies_project_defaults() -> None:
     )
 
     expansion = expand_pristine_relaxation_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=600.0,
         project_kpoint_grid=(4, 4, 4),
@@ -82,7 +73,7 @@ def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_unit_cell_w
             ),
         ),
     )
-    host = _host_structure()
+    host = si_pair_host()
     host.lattice_vectors = [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]]
 
     expansion = expand_pristine_relaxation_jobs(
@@ -109,7 +100,7 @@ def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_anisotropic
             ),
         ),
     )
-    host = _host_structure()
+    host = si_pair_host()
     host.lattice_vectors = [[3.0, 0.0, 0.0], [0.0, 3.2, 0.0], [0.0, 0.0, 5.0]]
 
     expansion = expand_pristine_relaxation_jobs(
@@ -141,7 +132,7 @@ def test_expand_pristine_relaxation_jobs_forces_write_cell_structure_true() -> N
     )
 
     expansion = expand_pristine_relaxation_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=None,
         project_kpoint_grid=None,
@@ -166,7 +157,7 @@ def test_expand_pristine_relaxation_jobs_emits_supercell_kpoint_message() -> Non
     )
 
     expansion = expand_pristine_relaxation_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=None,
         project_kpoint_grid=(4, 4, 4),
@@ -194,7 +185,7 @@ def test_expand_pristine_relaxation_jobs_honors_explicit_row_kpoint_override() -
     )
 
     expansion = expand_pristine_relaxation_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=600.0,
         project_kpoint_grid=(4, 4, 4),
@@ -283,7 +274,7 @@ def test_expand_muon_relaxation_jobs_forces_fixed_cell_and_charge() -> None:
     )
 
     expansion = expand_muon_relaxation_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=600.0,
         project_kpoint_grid=(4, 4, 4),
@@ -334,7 +325,7 @@ def test_expand_muon_relaxation_jobs_seeds_muonium_spin_in_cell() -> None:
     )
 
     expansion = expand_muon_relaxation_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=600.0,
         project_kpoint_grid=(4, 4, 4),
@@ -362,7 +353,7 @@ def test_expand_muon_relaxation_jobs_muonium_spin_polarized_is_overridable() -> 
     )
 
     expansion = expand_muon_relaxation_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=600.0,
         project_kpoint_grid=(4, 4, 4),
@@ -388,7 +379,7 @@ def test_expand_muon_relaxation_jobs_places_muon_in_origin_supercell_image() -> 
     )
 
     expansion = expand_muon_relaxation_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=None,
         project_kpoint_grid=(4, 4, 4),
@@ -414,7 +405,7 @@ def test_expand_muon_relaxation_jobs_writes_species_mass_block() -> None:
     )
 
     expansion = expand_muon_relaxation_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=None,
         project_kpoint_grid=None,
@@ -445,7 +436,7 @@ def test_expand_muon_relaxation_jobs_rejects_sanitized_seed_name_collisions() ->
 
     with pytest.raises(ValueError, match="positivemuon_A_B"):
         expand_muon_relaxation_jobs(
-            host_structure=_host_structure(),
+            host_structure=si_pair_host(),
             config=config,
             project_cutoff_energy=None,
             project_kpoint_grid=None,
@@ -473,7 +464,7 @@ def test_expand_pristine_relaxation_jobs_applies_project_xc_functional_unless_ro
     )
 
     expansion = expand_pristine_relaxation_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=600.0,
         project_kpoint_grid=(4, 4, 4),

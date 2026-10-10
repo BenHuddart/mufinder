@@ -4,37 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mufinder.app.main_window import MainWindow
 from mufinder.domain.models import ComparisonTable, Structure
 from mufinder.services.project_service import ProjectService
+from tests.support.qt import find_tree_item_by_route
 
 
-def _find_item_by_route(parent, route: str):
-    if parent.data(0, 0x0100) == route:
-        return parent
-    for index in range(parent.childCount()):
-        child = parent.child(index)
-        if child is None:
-            continue
-        found = _find_item_by_route(child, route)
-        if found is not None:
-            return found
-    return None
-
-
-def _find_tree_item_by_route(window: MainWindow, route: str):
-    for index in range(window._project_tree.topLevelItemCount()):
-        root = window._project_tree.topLevelItem(index)
-        if root is None:
-            continue
-        item = _find_item_by_route(root, route)
-        if item is not None:
-            return item
-    return None
-
-
-def test_main_window_adds_and_deletes_comparison_subtab(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
+def test_main_window_adds_and_deletes_comparison_subtab(main_window, tmp_path: Path) -> None:
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "comparison_ui.mufinder", "ComparisonUI")
 
@@ -66,7 +42,7 @@ def test_main_window_adds_and_deletes_comparison_subtab(qapp, tmp_path: Path) ->
     window._refresh_ui_after_project_change()
 
     route = window._comparison_route(table.id)
-    item = _find_tree_item_by_route(window, route)
+    item = find_tree_item_by_route(window._project_tree, route)
     assert item is not None
 
     window._set_active_route(route)
@@ -75,13 +51,12 @@ def test_main_window_adds_and_deletes_comparison_subtab(qapp, tmp_path: Path) ->
     window._delete_comparison_table(table.id, confirm=False)
     assert table.id not in doc.comparison_tables
 
-    window.close()
 
 
 def test_widget_delete_request_removes_only_requested_table_without_extra_prompt(
-    qapp, tmp_path: Path, monkeypatch
+    main_window, tmp_path: Path, monkeypatch
 ) -> None:
-    window = MainWindow()
+    window = main_window
     service = ProjectService()
     doc = service.create_project(tmp_path / "comparison_ui_multi.mufinder", "ComparisonUIMulti")
 
@@ -140,4 +115,3 @@ def test_widget_delete_request_removes_only_requested_table_without_extra_prompt
     assert table_b.id in doc.comparison_tables
     assert calls == []
 
-    window.close()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,17 +13,8 @@ from mufinder.app.main_window import MainWindow
 from mufinder.app.relaxation_analysis_widget import RelaxationAnalysisWidget, default_workspace_state
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.models import Structure
-from mufinder.services.project_service import ProjectService
-
-
-def _host_structure() -> Structure:
-    return Structure(
-        id=uuid4(),
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
-    )
+from tests.support.main_window import window_with_host
+from tests.support.structures import host_structure
 
 
 def _workspace(host: Structure, name: str, *, charge_state: str = POSITIVE_MUON_CHARGE_STATE) -> dict:
@@ -44,20 +36,11 @@ def _snapshot(workspace: dict, host: Structure) -> dict:
     }
 
 
-def _window_with_host(tmp_path: Path) -> tuple[MainWindow, ProjectService, object, Structure]:
-    window = MainWindow()
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "analysis.mufinder", "Analysis Doc")
-    host = _host_structure()
-    service.add_structure(doc, host)
-    doc.project.host_structure_id = host.id
-    window._document = doc
-    window._refresh_ui_after_project_change()
-    return window, service, doc, host
+_window_with_host = partial(window_with_host, filename="analysis.mufinder", name="Analysis Doc")
 
 
 def test_delete_button_emits_workspace_id(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     workspace = _workspace(host, "Preliminary analysis")
     widget = RelaxationAnalysisWidget()
     try:

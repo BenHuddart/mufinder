@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import partial
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
@@ -17,18 +19,17 @@ from mufinder.app.energy_barriers_widget import (
     EnergyBarriersWidget,
 )
 from mufinder.app.quantum_corrections_widget import QuantumCorrectionsWidget, QuantumResultRow, QuantumSourceRow
-from mufinder.domain.models import Structure
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
+from tests.support.structures import host_structure
 
 
-def _sample_structure() -> Structure:
-    return Structure(
-        label="preview",
-        origin="energy_barriers_neb_preview",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si", "H:mu"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [0.25, 0.25, 0.25]],
-    )
+_sample_structure = partial(
+    host_structure,
+    label="preview",
+    origin="energy_barriers_neb_preview",
+    species=("Si", "Si", "H:mu"),
+    positions=((0.0, 0.0, 0.0), (0.5, 0.5, 0.5), (0.25, 0.25, 0.25)),
+)
 
 
 def test_quantum_widget_emits_configure_for_source_row(qapp) -> None:

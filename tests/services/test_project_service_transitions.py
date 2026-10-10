@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import Job
+from mufinder.domain.enums import JobStatus
 from mufinder.services.project_service import ProjectService
+from tests.support.jobs import make_job
 
 # The state machine as implemented in ProjectService._assert_transition
 # (src/mufinder/services/project_service.py, ~line 2615). Pinned here so a
@@ -110,15 +110,6 @@ def test_allowed_map_matches_implementation_exactly() -> None:
     assert reconstructed == ALLOWED
 
 
-def _job(status: JobStatus) -> Job:
-    return Job(
-        label="job",
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_cutoff",
-        status=status,
-    )
-
-
 # The public primitives each drive exactly one target transition. We prove a
 # representative allowed edge succeeds AND a representative disallowed edge
 # raises through the primitive, confirming the guard is actually invoked.
@@ -149,11 +140,11 @@ def test_primitive_invokes_transition_guard(name: str) -> None:
     allowed_source = next(src for src in _ALL_STATUSES if target in ALLOWED[src])
     disallowed_source = next(src for src in _ALL_STATUSES if target not in ALLOWED[src])
 
-    job = _job(allowed_source)
+    job = make_job(status=allowed_source)
     call(service, job)
     assert job.status == target
 
-    job = _job(disallowed_source)
+    job = make_job(status=disallowed_source)
     with pytest.raises(ValueError, match="Invalid job transition"):
         call(service, job)
     # The rejected transition must leave the source status untouched.
@@ -166,7 +157,7 @@ def test_reset_failed_job_bypasses_assert_transition_and_targets_defined() -> No
     # DEFINED is a transition target that appears nowhere in the allowed map.
     service = _service()
     for source in (JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED):
-        job = _job(source)
+        job = make_job(status=source)
         job.error_message = "prior"
         job.remote_job_id = "999"
         service.reset_failed_job(job)
@@ -188,7 +179,7 @@ def test_prepare_job_continuation_bypasses_assert_transition_and_targets_defined
         JobStatus.CANCELLED,
     ):
         assert JobStatus.DEFINED not in ALLOWED[source]
-        job = _job(source)
+        job = make_job(status=source)
         job.remote_directory = "/scratch/run"
         service.prepare_job_continuation(job)
         assert job.status == JobStatus.DEFINED
@@ -209,7 +200,7 @@ def test_prepare_job_continuation_bypasses_assert_transition_and_targets_defined
 )
 def test_reset_failed_job_rejects_non_resettable_states(source: JobStatus) -> None:
     service = _service()
-    job = _job(source)
+    job = make_job(status=source)
     with pytest.raises(ValueError, match="Only failed, stopped, or cancelled jobs can be reset."):
         service.reset_failed_job(job)
     assert job.status == source
