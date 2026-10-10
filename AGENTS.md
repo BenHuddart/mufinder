@@ -64,11 +64,11 @@ sibling workflow's implementation.
 
 | Concern | Home |
 |---|---|
-| Workflow row tables, context menus, status cells, locked-row rule | `app/workflow_table_utils.py` |
+| Workflow row tables, context menus, status cells, locked-row rule, supercell column | `app/workflow_table_utils.py` |
 | Selection targeting for in-row buttons and mixed selections | `app/selection_snapshot.py` |
 | Parameter specs, defaults, shared-row ordering, value sanitising | `app/workflow_parameters.py` |
 | Parameter and configure dialogs | `app/workflow_dialogs.py`, `app/param_dialog.py` |
-| GUI value dicts to workflow templates, k-point rescaling | `app/adapter_common.py` |
+| GUI value dicts to workflow templates, k-point rescaling, adapter row prologue, supercell matrices | `app/adapter_common.py` |
 | Submit, materialize, result and refresh cycle | `app/workflow_controllers/base.py` |
 | Submission planning for workflow rows | `app/workflow_submission.py` |
 | Project-default display in workflow headers | `app/project_defaults_widget.py` |

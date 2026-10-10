@@ -47,7 +47,6 @@ from mufinder.app.relaxation_adapter import (
     POSITIVE_MUON_CHARGE_STATE,
     muon_charge_for_state,
     muon_charge_state_label,
-    suggested_grid_for_row,
 )
 from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow, RelaxationRunState, SupercellMatrix
 from mufinder.app.workflow_table_utils import (
@@ -58,8 +57,6 @@ from mufinder.app.workflow_table_utils import (
     bind_reset_failed_context_menu,
     confirm_row_removal,
     create_workflow_table,
-    multi_row_outcome_text,
-    show_status_message,
     standard_row_actions,
     style_workflow_configure_button,
     workflow_row_status_text,
@@ -72,7 +69,8 @@ from mufinder.app.theme import (
     style_section_title,
     use_tabbed_table_corners,
 )
-from mufinder.science.kpoint_grids import spacing_from_grid
+from mufinder.app.adapter_common import coerce_supercell_matrix
+from mufinder.app.workflow_table_utils import SupercellColumn
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     infer_task,
@@ -82,7 +80,6 @@ from mufinder.castep_io.gui_metadata import (
 from mufinder.castep_io.schema import KeywordSpec, get_keyword_spec
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.app.selection_snapshot import (
-    SelectionSnapshotComboBox,
     SelectionSnapshotPushButton,
     SelectionSnapshotToolButton,
     resolve_target_keys,
@@ -224,9 +221,6 @@ class MuonRelaxationWidget(QWidget):
         super().__init__(parent)
         self._restoring_form_state = False
         self._next_row_id = 1
-        self._host_lattice: list[list[float]] | None = None
-        self._reference_lattice: list[list[float]] | None = None
-        self._reference_grid: tuple[int, int, int] | None = None
 
         # Injected by the controller wiring (see MainWindow's
         # ``set_continuable_predicate`` call): resolves a row's job through the
@@ -238,7 +232,6 @@ class MuonRelaxationWidget(QWidget):
         self._row_site_ids: dict[int, UUID] = {}
         self._row_positions: dict[int, tuple[float, float, float]] = {}
         self._row_charge_states: dict[int, str] = {}
-        self._row_supercells: dict[int, SupercellMatrix | None] = {}
         self._row_parameter_values: dict[int, dict[str, object]] = {}
         self._row_added_advanced: dict[int, set[str]] = {}
         # Rows ingested from a calculation performed outside MuFinder. Membership
@@ -246,7 +239,6 @@ class MuonRelaxationWidget(QWidget):
         self._row_imported: set[int] = set()
         self._row_import_batch_ids: dict[int, UUID] = {}
         self._runtime_states: dict[str, RelaxationRunState] = {}
-        self._supercell_options: list[tuple[str, SupercellMatrix]] = []
         self._parameter_species_options: tuple[str, ...] = ()
 
         self._active_host_badge = ActiveHostBadge()
@@ -255,6 +247,16 @@ class MuonRelaxationWidget(QWidget):
         self._kpoint_message.setWordWrap(True)
         style_hint_text(self._kpoint_message)
         self._kpoint_message.hide()
+        self._supercells = SupercellColumn(
+            self,
+            column=self._SUPERCELL_COLUMN,
+            manage_requested=self.row_supercell_edit_requested.emit,
+            normalize_rows=self._normalize_all_row_parameter_values,
+            refresh_rows=self._refresh_all_rows,
+            state_changed=self._emit_state,
+            eligibility=self._row_supercell_is_editable,
+            kpoint_message=self._kpoint_message,
+        )
 
         self._charge_tabs = QTabWidget()
         self._charge_tabs.setObjectName("muonRelaxationChargeTabs")
@@ -556,8 +558,7 @@ class MuonRelaxationWidget(QWidget):
             xc_functional,
             schema_default=self._schema_xc_functional,
         )
-        self._reference_grid = kpoint_grid
-        self._reference_lattice = [list(row) for row in kpoint_reference_lattice] if isinstance(kpoint_reference_lattice, list) else None
+        self._supercells.set_kpoint_reference(kpoint_grid, kpoint_reference_lattice)
         if cutoff_energy is None:
             self._default_params.pop("cut_off_energy", None)
         else:
@@ -572,7 +573,7 @@ class MuonRelaxationWidget(QWidget):
         self._active_host_badge.set_active_host(structure if isinstance(structure, _Structure) else None)
 
     def set_host_lattice(self, lattice_vectors: list[list[float]] | None) -> None:
-        self._host_lattice = [list(row) for row in lattice_vectors] if lattice_vectors is not None else None
+        self._supercells.set_host_lattice(lattice_vectors)
         self._normalize_all_row_parameter_values()
         self._refresh_all_rows()
 
@@ -592,13 +593,7 @@ class MuonRelaxationWidget(QWidget):
         self._continuable_predicate = predicate
 
     def set_supercell_options(self, options: list[dict[str, object]]) -> None:
-        parsed: list[tuple[str, SupercellMatrix]] = []
-        for entry in options:
-            label = str(entry.get("label", "")).strip() if isinstance(entry, dict) else ""
-            matrix = self._coerce_supercell_matrix(entry.get("matrix")) if isinstance(entry, dict) else None
-            if label and matrix is not None:
-                parsed.append((label, matrix))
-        self._supercell_options = parsed
+        self._supercells.set_options(options)
         self._refresh_all_rows()
 
     def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
@@ -648,19 +643,15 @@ class MuonRelaxationWidget(QWidget):
         return tuple(self._tables_by_charge_state[charge_state] for charge_state, _label in _CHARGE_STATE_TABS)
 
     def row_supercell_matrix(self, row_id: int) -> SupercellMatrix | None:
-        return self._row_supercells.get(int(row_id))
+        return self._supercells.matrices.get(int(row_id))
 
     def set_row_supercell(self, row_id: int, matrix: SupercellMatrix | None, *, message: str | None = None) -> None:
-        self._row_supercells[int(row_id)] = matrix
+        self._supercells.matrices[int(row_id)] = matrix
         location = self._row_location_for_id(int(row_id))
         if location is not None:
             table, row = location
             self._refresh_row(row, table=table)
-        if message:
-            self._kpoint_message.setText(message)
-            self._kpoint_message.show()
-        else:
-            self._set_kpoint_message_for_row(int(row_id))
+        self._supercells.update_kpoint_message(int(row_id), message)
         self._emit_state()
 
     def _make_item(self, text: str, *, editable: bool) -> QTableWidgetItem:
@@ -698,7 +689,7 @@ class MuonRelaxationWidget(QWidget):
         self._row_site_ids[row_id] = site_id
         self._row_positions[row_id] = fractional
         self._row_charge_states[row_id] = charge_state
-        self._row_supercells[row_id] = None
+        self._supercells.matrices[row_id] = None
         self._row_parameter_values[row_id] = {}
         self._row_added_advanced[row_id] = set()
 
@@ -708,12 +699,7 @@ class MuonRelaxationWidget(QWidget):
         label_item.setData(Qt.ItemDataRole.UserRole, row_id)
         table.setItem(row, self._LABEL_COLUMN, label_item)
 
-        supercell_combo = SelectionSnapshotComboBox(table)
-        supercell_combo.selection_snapshot_key = row_id
-        supercell_combo.currentIndexChanged.connect(
-            lambda _index, rid=row_id, combo=supercell_combo: self._on_supercell_combo_changed(rid, combo)
-        )
-        table.setCellWidget(row, self._SUPERCELL_COLUMN, supercell_combo)
+        table.setCellWidget(row, self._SUPERCELL_COLUMN, self._supercells.create_combo(table, row_id))
 
         for column, value in zip(
             (self._INITIAL_FX_COLUMN, self._INITIAL_FY_COLUMN, self._INITIAL_FZ_COLUMN),
@@ -811,94 +797,6 @@ class MuonRelaxationWidget(QWidget):
         prefix = "muonium" if charge_state == MUONIUM_CHARGE_STATE else "positivemuon"
         return f"{prefix}:{label}"
 
-    @staticmethod
-    def _coerce_supercell_matrix(value: object) -> SupercellMatrix | None:
-        if value is None or not isinstance(value, (list, tuple)) or len(value) != 3:
-            return None
-        try:
-            return (
-                (int(value[0][0]), int(value[0][1]), int(value[0][2])),
-                (int(value[1][0]), int(value[1][1]), int(value[1][2])),
-                (int(value[2][0]), int(value[2][1]), int(value[2][2])),
-            )
-        except (TypeError, ValueError, IndexError):
-            return None
-
-    @staticmethod
-    def _supercell_label(matrix: SupercellMatrix | None) -> str:
-        if matrix is None or matrix == ((1, 0, 0), (0, 1, 0), (0, 0, 1)):
-            return "Unit cell"
-        if all(matrix[i][j] == 0 for i in range(3) for j in range(3) if i != j):
-            return f"{matrix[0][0]}x{matrix[1][1]}x{matrix[2][2]}"
-        return "Custom 3x3"
-
-    def _populate_supercell_combo(self, combo: QComboBox, row_id: int) -> None:
-        current = self._row_supercells.get(row_id)
-        previous = combo.blockSignals(True)
-        combo.clear()
-        combo.addItem("Unit cell", ("matrix", None))
-        selected_index = 0
-        for label, matrix in self._supercell_options:
-            combo.addItem(label, ("matrix", matrix))
-            if current is not None and matrix == current:
-                selected_index = combo.count() - 1
-        if current is not None and selected_index == 0:
-            combo.addItem(self._supercell_label(current), ("matrix", current))
-            selected_index = combo.count() - 1
-        combo.addItem("Manage Supercells...", ("create", None))
-        combo.setCurrentIndex(selected_index)
-        combo.blockSignals(previous)
-
-    def _on_supercell_combo_changed(self, row_id: int, combo: SelectionSnapshotComboBox) -> None:
-        location = self._row_location_for_id(row_id)
-        if location is None:
-            return
-        table, row = location
-        if not isinstance(combo, QComboBox):
-            return
-        data = combo.currentData()
-        if not isinstance(data, tuple) or len(data) != 2:
-            return
-        mode = data[0]
-        matrix = self._coerce_supercell_matrix(data[1])
-        if mode == "create":
-            self.row_supercell_edit_requested.emit(row_id)
-            self._refresh_row(row, table=table)
-            return
-        snapshot_keys = [
-            self._row_id_at(r, table=table)
-            for r in combo.selection_snapshot_rows
-        ]
-        target_row_ids = resolve_target_keys(
-            combo,
-            clicked_key=row_id,
-            snapshot_keys=[k for k in snapshot_keys if k is not None],
-            eligibility=self._row_supercell_is_editable,
-            parent=self,
-            action="Set this supercell on",
-        )
-        if not target_row_ids:
-            # Cancelled: put the combo back to the row's stored supercell.
-            self._refresh_row(row, table=table)
-            return
-        if len(target_row_ids) > 1:
-            show_status_message(
-                self,
-                multi_row_outcome_text("Supercell set on", len(target_row_ids), len(snapshot_keys)),
-            )
-        for target_row_id in target_row_ids:
-            self._row_supercells[target_row_id] = matrix
-            self._row_parameter_values[target_row_id] = self._strip_implicit_row_defaults(
-                target_row_id,
-                self._row_parameter_values.get(target_row_id, {}),
-            )
-            loc = self._row_location_for_id(target_row_id)
-            if loc is not None:
-                target_table, target_row = loc
-                self._refresh_row(target_row, table=target_table)
-        self._set_kpoint_message_for_row(row_id)
-        self._emit_state()
-
     def _dispatch_row_action(
         self,
         widget: SelectionSnapshotPushButton | SelectionSnapshotToolButton,
@@ -951,48 +849,6 @@ class MuonRelaxationWidget(QWidget):
         status = "not generated" if runtime is None else runtime.status or "not generated"
         return not workflow_row_is_locked(status)
 
-    def _suggested_grid_for_row(self, row_id: int) -> tuple[int, int, int] | None:
-        if self._host_lattice is None:
-            return None
-        return suggested_grid_for_row(
-            host_lattice=self._host_lattice,
-            row_matrix=self._row_supercells.get(row_id),
-            reference_lattice=self._reference_lattice,
-            reference_grid=self._reference_grid,
-        )
-
-    def _set_kpoint_message_for_row(self, row_id: int) -> None:
-        current_matrix = self._row_supercells.get(row_id)
-        if current_matrix is None or self._reference_grid is None or self._host_lattice is None:
-            self._kpoint_message.hide()
-            self._kpoint_message.setText("")
-            return
-        suggested = self._suggested_grid_for_row(row_id)
-        if suggested is None or suggested == self._reference_grid:
-            self._kpoint_message.hide()
-            self._kpoint_message.setText("")
-            return
-        self._kpoint_message.setText(
-            "K-point grid adjusted from "
-            f"{self._reference_grid[0]}x{self._reference_grid[1]}x{self._reference_grid[2]} to "
-            f"{suggested[0]}x{suggested[1]}x{suggested[2]} for equivalent density."
-        )
-        self._kpoint_message.show()
-
-    def _suggested_spacing_for_row(self, row_id: int) -> ValueWithUnit | None:
-        # Mirror the project's adopted k-point grid as a k-point spacing so
-        # the configure-parameters dialog has a sensible default when the
-        # user toggles to "Use spacing".
-        if self._reference_grid is None or self._reference_lattice is None:
-            return None
-        if tuple(int(v) for v in self._reference_grid) == (1, 1, 1):
-            return None
-        try:
-            spacing = spacing_from_grid(self._reference_lattice, self._reference_grid)
-        except ValueError:
-            return None
-        return ValueWithUnit(float(spacing), "1/ang")
-
     def _effective_params_for_row(self, row_id: int) -> dict[str, object]:
         if row_id in self._row_imported:
             # An imported row shows what its run used and nothing else. Layering
@@ -1027,7 +883,7 @@ class MuonRelaxationWidget(QWidget):
             "kpoint_mp_grid" not in values
             and "kpoint_mp_spacing" not in values
         ):
-            suggested = self._suggested_grid_for_row(row_id)
+            suggested = self._supercells.suggested_grid(row_id)
             if suggested is not None:
                 values["kpoint_mp_grid"] = suggested
         drop_default_conflicts(values, self._specs_by_name, locked_names={"task"})
@@ -1043,7 +899,7 @@ class MuonRelaxationWidget(QWidget):
             # matching its definition and a completed run reverts to "ready".
             implicit.pop("spin_polarized", None)
         implicit["task"] = infer_task(_WORKFLOW_STAGE)
-        suggested = self._suggested_grid_for_row(row_id)
+        suggested = self._supercells.suggested_grid(row_id)
         if suggested is not None:
             implicit["kpoint_mp_grid"] = suggested
         return drop_default_conflicts(implicit, self._specs_by_name, locked_names={"task"})
@@ -1089,7 +945,7 @@ class MuonRelaxationWidget(QWidget):
             return
         supercell_combo = target.cellWidget(row, self._SUPERCELL_COLUMN)
         if isinstance(supercell_combo, QComboBox):
-            self._populate_supercell_combo(supercell_combo, row_id)
+            self._supercells.populate_combo(supercell_combo, row_id)
         label = self._label_at_row(row, table=target)
         charge_state = self._charge_state_at_row(row, table=target)
         runtime = self._runtime_states.get(self._runtime_key(label, charge_state))
@@ -1277,11 +1133,11 @@ class MuonRelaxationWidget(QWidget):
         has_grid = "kpoint_mp_grid" in common
         has_spacing = "kpoint_mp_spacing" in common
         if has_grid and not has_spacing:
-            suggested_spacing = self._suggested_spacing_for_row(row_ids[0])
+            suggested_spacing = self._supercells.suggested_spacing()
             if suggested_spacing is not None:
                 common["kpoint_mp_spacing"] = suggested_spacing
         elif has_spacing and not has_grid:
-            suggested_grid = self._suggested_grid_for_row(row_ids[0])
+            suggested_grid = self._supercells.suggested_grid(row_ids[0])
             if suggested_grid is not None:
                 common["kpoint_mp_grid"] = suggested_grid
         return common
@@ -1413,7 +1269,7 @@ class MuonRelaxationWidget(QWidget):
             self._row_site_ids.pop(row_id, None)
             self._row_positions.pop(row_id, None)
             self._row_charge_states.pop(row_id, None)
-            self._row_supercells.pop(row_id, None)
+            self._supercells.matrices.pop(row_id, None)
             self._row_parameter_values.pop(row_id, None)
             self._row_added_advanced.pop(row_id, None)
             self._row_imported.discard(row_id)
@@ -1461,7 +1317,7 @@ class MuonRelaxationWidget(QWidget):
                         label=label,
                         initial_fractional_position=self._row_positions[row_id],
                         charge_state=charge_state,
-                        supercell_matrix=self._row_supercells.get(row_id),
+                        supercell_matrix=self._supercells.matrices.get(row_id),
                         parameter_values=dict(self._row_parameter_values.get(row_id, {})),
                         added_advanced=tuple(sorted(self._row_added_advanced.get(row_id, set()))),
                         imported=row_id in self._row_imported,
@@ -1554,8 +1410,8 @@ class MuonRelaxationWidget(QWidget):
                         "fractional_position": list(self._row_positions[row_id]),
                         "charge_state": self._charge_state_at_row(row, table=table),
                         "supercell_matrix": (
-                            [list(line) for line in self._row_supercells.get(row_id)]
-                            if self._row_supercells.get(row_id) is not None
+                            [list(line) for line in self._supercells.matrices.get(row_id)]
+                            if self._supercells.matrices.get(row_id) is not None
                             else None
                         ),
                         "parameter_values": dict(self._row_parameter_values.get(row_id, {})),
@@ -1580,7 +1436,7 @@ class MuonRelaxationWidget(QWidget):
             self._row_site_ids.clear()
             self._row_positions.clear()
             self._row_charge_states.clear()
-            self._row_supercells.clear()
+            self._supercells.matrices.clear()
             self._row_parameter_values.clear()
             self._row_added_advanced.clear()
             self._row_imported.clear()
@@ -1608,7 +1464,7 @@ class MuonRelaxationWidget(QWidget):
                 row_id = None if location is None else self._row_id_at(location[1], table=location[0])
                 if row_id is None:
                     continue
-                self._row_supercells[row_id] = self._coerce_supercell_matrix(entry.get("supercell_matrix"))
+                self._supercells.matrices[row_id] = coerce_supercell_matrix(entry.get("supercell_matrix"))
                 # The imported marker is read *before* the parameter values,
                 # because sanitising them consults it: an imported row keeps
                 # names the current keyword catalog does not know.

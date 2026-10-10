@@ -85,6 +85,51 @@ def test_uep_widget_supercell_dropdown_lists_project_cells(qapp) -> None:
     assert labels[-1] == "Manage Supercells..."
 
 
+def test_uep_widget_supercell_combo_shows_a_restored_custom_matrix(qapp) -> None:
+    widget = UEPWidget()
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
+    widget.set_form_state(
+        {
+            "name_prefix": "uep",
+            "rows": [{"label": "source_01", "supercell_matrix": [[1, 1, 0], [0, 1, 0], [0, 0, 2]]}],
+        }
+    )
+
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    row_id = widget._row_id_at(0)
+    assert [combo.itemText(index) for index in range(combo.count())] == [
+        "Unit cell",
+        "2x2x1",
+        "Custom 3x3",
+        "Manage Supercells...",
+    ]
+    assert combo.currentText() == "Custom 3x3"
+    assert widget.row_supercell_matrix(row_id) == ((1, 1, 0), (0, 1, 0), (0, 0, 2))
+
+
+def test_uep_widget_manage_supercells_entry_requests_the_manager(qapp) -> None:
+    widget = UEPWidget()
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    requested: list[int] = []
+    widget.row_supercell_edit_requested.connect(lambda payload: requested.append(int(payload)))
+    states: list[dict] = []
+    widget.form_state_changed.connect(states.append)
+
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    combo.setCurrentIndex(combo.findText("Manage Supercells..."))
+
+    assert requested == [row_id]
+    assert widget.row_supercell_matrix(row_id) is None
+    assert combo.currentText() == "Unit cell"
+    assert states == []
+
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+    assert widget.row_supercell_matrix(row_id) == ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert len(states) == 1
+
+
 def test_uep_widget_dialog_locks_write_formatted_density(qapp) -> None:
     widget = UEPWidget()
     dialog = ParameterDialog(
