@@ -723,10 +723,6 @@ def _quantum_method_to_gui_value(value: object) -> str:
     return _QUANTUM_METHOD_TO_GUI.get(normalized, "FINITEDISPLACEMENT")
 
 
-# Backward-compatible alias used by legacy tests and call sites.
-CutoffRunState = SweepPointRunState
-
-
 @dataclass(frozen=True, slots=True)
 class WorkflowDefinition:
     """Describe a workflow node and its completion rule."""

@@ -24,22 +24,6 @@ from mufinder.science.convergence_analysis import (
 
 
 # --------------------------------------------------------------------------
-# ConvergenceResult.converged_cutoff alias (line 30)
-# --------------------------------------------------------------------------
-def test_converged_cutoff_aliases_converged_value() -> None:
-    result = ConvergenceResult(
-        converged=True,
-        method="delta-threshold",
-        details="",
-        converged_value=512.0,
-    )
-    assert result.converged_cutoff == pytest.approx(512.0)
-
-    empty = ConvergenceResult(converged=False, method="delta-threshold", details="")
-    assert empty.converged_cutoff is None
-
-
-# --------------------------------------------------------------------------
 # _clean_series drops non-coercible entries (lines 39-40)
 # --------------------------------------------------------------------------
 def test_clean_series_skips_non_numeric_and_sorts_dedupes() -> None:

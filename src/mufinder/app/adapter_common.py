@@ -59,19 +59,6 @@ class AdapterExpansion:
     jobs: tuple[JobSpec, ...]
     messages: tuple[str, ...] = ()
 
-    @property
-    def kpoint_messages(self) -> tuple[str, ...]:
-        """Backward-compatible alias for :attr:`messages`.
-
-        The adjustment messages were originally named ``kpoint_messages`` on the
-        per-workflow expansion dataclasses. The field is not persisted and no
-        code outside the adapters and their tests read it, so it was renamed to
-        the generic ``messages`` here; this alias keeps any lingering readers
-        working.
-        """
-
-        return self.messages
-
 
 def find_keyword_spec(name: str):
     """Return the CASTEP keyword spec for ``name`` from param or cell metadata."""

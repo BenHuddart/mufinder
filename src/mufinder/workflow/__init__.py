@@ -6,7 +6,7 @@ or later combined with HPC execution metadata for remote submission.
 """
 
 from .bridge import StructureBridgeError, structure_to_spec
-from .convergence import ConvergenceWorkflow, expand_convergence_sweep_jobs
+from .convergence import expand_convergence_sweep_jobs
 from .energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     NUDGED_ELASTIC_BAND_SET_CALC_TYPE,
@@ -24,7 +24,7 @@ from .merge import (
     merge_with_precedence,
     resolve_job,
 )
-from .muon_site import MuonSiteWorkflow, expand_muon_site_jobs
+from .muon_site import expand_muon_site_jobs
 from .naming import job_name
 from .output import write_job_directory, write_job_set, write_manifest
 from .relaxation import RelaxationJobConfig, expand_relaxation_jobs
@@ -33,12 +33,10 @@ from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate
 
 __all__ = [
     "CellTemplate",
-    "ConvergenceWorkflow",
     "InputTemplate",
     "JobPatch",
     "JobSpec",
     "MERGE_PRECEDENCE_ORDER",
-    "MuonSiteWorkflow",
     "ParamTemplate",
     "RelaxationJobConfig",
     "StructureBridgeError",

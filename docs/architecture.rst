@@ -50,8 +50,6 @@ Package layers
    first and the per-config ``cell_overrides``/``param_overrides`` last, so the
    base template sits in the patch layer *above* ``workflow_defaults`` and
    ``structure_defaults`` while per-config overrides still win over the base.
-   ``ConvergenceWorkflow`` and ``MuonSiteWorkflow`` remain as deprecated class
-   wrappers over their ``expand_*`` functions (see :doc:`compatibility_policy`).
 
 ``mufinder.services``
    Project-level state management, local and remote execution, journals,
