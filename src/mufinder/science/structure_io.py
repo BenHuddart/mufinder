@@ -1,4 +1,4 @@
-"""Input structure loading helpers backed by ASE."""
+"""Structure file loading (CIF and MCIF through ASE, CASTEP CELL through ``castep_io``) and CIF export."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ import shlex
 from typing import Any
 
 from ase import Atoms
-from ase.geometry import cellpar_to_cell
 from ase.io import read as ase_read
 from ase.io import write as ase_write
 import numpy as np
 
+from mufinder.castep_io.cell_parser import parse_cell_file
 from mufinder.domain.models import Structure
 
 
@@ -239,160 +239,33 @@ def _resolve_ase_format(suffix: str) -> str | None:
     return None
 
 
-_CELL_UNITS = {
-    "bohr": 0.529177210903,
-    "ang": 1.0,
-    "m": 1e10,
-    "cm": 1e8,
-    "nm": 10.0,
-    "pm": 1e-2,
-}
-
-
 def _load_castep_cell_file(source: Path) -> LoadedStructure:
-    text = source.read_text(encoding="utf-8")
-    blocks = _extract_castep_blocks(text)
+    """Load the geometry of a CASTEP CELL file through :mod:`mufinder.castep_io.cell_parser`.
 
-    cell = _parse_cell_lattice(blocks)
-    species, scaled_positions, spins = _parse_cell_positions(blocks, cell)
+    Only the lattice and position blocks are read, so calculation keywords a
+    CASTEP ``-out.cell`` carries (or keywords outside the loaded catalog) do
+    not block the import. ``atomic_spins`` is present only when a row carried
+    a ``SPIN=`` value.
+    """
+    try:
+        parsed = parse_cell_file(source, geometry_only=True)
+    except ValueError as exc:  # CellParseError, malformed numbers, undecodable text.
+        raise StructureLoadError(f"Failed to parse structure file '{source.name}': {exc}") from exc
 
     properties: dict[str, Any] = {
         "source_extension": ".cell",
-        "atom_count": len(species),
+        "atom_count": len(parsed.species),
         "pbc": [True, True, True],
     }
-    if spins is not None:
-        properties["atomic_spins"] = [float(value) for value in spins]
+    if parsed.atomic_spins is not None:
+        properties["atomic_spins"] = [float(value) for value in parsed.atomic_spins]
 
     return LoadedStructure(
-        lattice_vectors=[[float(value) for value in row] for row in cell],
-        species=species,
-        fractional_positions=[[float(value) for value in row] for row in scaled_positions],
+        lattice_vectors=[[float(value) for value in row] for row in parsed.lattice_vectors],
+        species=list(parsed.species),
+        fractional_positions=[[float(value) for value in row] for row in parsed.fractional_positions],
         properties=properties,
     )
-
-
-def _extract_castep_blocks(text: str) -> dict[str, list[str]]:
-    pattern = re.compile(
-        r"%BLOCK\s+([A-Za-z0-9_]+)\s*\n(.*?)\n%ENDBLOCK\s+\1",
-        re.IGNORECASE | re.DOTALL,
-    )
-    blocks: dict[str, list[str]] = {}
-    for match in pattern.finditer(text):
-        name = match.group(1).strip().lower()
-        lines = [line.strip() for line in match.group(2).splitlines() if line.strip()]
-        blocks[name] = lines
-    return blocks
-
-
-def _parse_cell_lattice(blocks: dict[str, list[str]]) -> list[list[float]]:
-    if "lattice_cart" in blocks:
-        return _parse_lattice_cart_block(blocks["lattice_cart"])
-    if "lattice_abc" in blocks:
-        return _parse_lattice_abc_block(blocks["lattice_abc"])
-    raise StructureLoadError("CASTEP CELL file must contain LATTICE_CART or LATTICE_ABC.")
-
-
-def _parse_lattice_cart_block(lines: list[str]) -> list[list[float]]:
-    scale = 1.0
-    data_lines = lines
-    if len(lines) >= 4 and len(lines[0].split()) == 1:
-        scale = _parse_length_unit(lines[0], block_name="LATTICE_CART")
-        data_lines = lines[1:]
-    if len(data_lines) < 3:
-        raise StructureLoadError("LATTICE_CART must contain three lattice vectors.")
-    vectors: list[list[float]] = []
-    for index, line in enumerate(data_lines[:3], start=1):
-        parts = line.split()
-        if len(parts) < 3:
-            raise StructureLoadError(f"LATTICE_CART vector {index} must contain three components.")
-        vectors.append([float(parts[0]) * scale, float(parts[1]) * scale, float(parts[2]) * scale])
-    return vectors
-
-
-def _parse_lattice_abc_block(lines: list[str]) -> list[list[float]]:
-    scale = 1.0
-    data_lines = lines
-    if len(lines) >= 3 and len(lines[0].split()) == 1:
-        scale = _parse_length_unit(lines[0], block_name="LATTICE_ABC")
-        data_lines = lines[1:]
-    if len(data_lines) < 2:
-        raise StructureLoadError("LATTICE_ABC must contain lengths and angles rows.")
-    lengths = [float(value) * scale for value in data_lines[0].split()[:3]]
-    angles = [float(value) for value in data_lines[1].split()[:3]]
-    if len(lengths) != 3 or len(angles) != 3:
-        raise StructureLoadError("LATTICE_ABC must provide three lengths and three angles.")
-    cell = cellpar_to_cell(lengths + angles)
-    return [[float(component) for component in row] for row in cell]
-
-
-def _parse_cell_positions(
-    blocks: dict[str, list[str]],
-    cell: list[list[float]],
-) -> tuple[list[str], list[list[float]], list[float] | None]:
-    if "positions_frac" in blocks:
-        species, frac, spins = _parse_positions_frac_block(blocks["positions_frac"])
-        return species, frac, spins
-    if "positions_abs" in blocks:
-        species, cart = _parse_positions_abs_block(blocks["positions_abs"])
-        atoms = Atoms(symbols=species, positions=cart, cell=cell, pbc=True)
-        scaled = atoms.get_scaled_positions(wrap=True).tolist()
-        return species, [[float(value) for value in row] for row in scaled], None
-    raise StructureLoadError("CASTEP CELL file must contain POSITIONS_FRAC or POSITIONS_ABS.")
-
-
-def _parse_positions_frac_block(lines: list[str]) -> tuple[list[str], list[list[float]], list[float] | None]:
-    species: list[str] = []
-    positions: list[list[float]] = []
-    spins: list[float] = []
-    saw_spin_token = False
-    for line in lines:
-        parts = line.split()
-        if len(parts) < 4:
-            raise StructureLoadError("POSITIONS_FRAC rows must contain species and three coordinates.")
-        species.append(parts[0])
-        positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
-
-        spin_value = 0.0
-        for token in parts[4:]:
-            normalized = token.strip()
-            if normalized.lower().startswith("spin="):
-                raw_value = normalized.split("=", maxsplit=1)[1].strip()
-                try:
-                    spin_value = float(raw_value)
-                except ValueError as exc:
-                    raise StructureLoadError(
-                        f"Invalid SPIN value '{raw_value}' in POSITIONS_FRAC row '{line}'."
-                    ) from exc
-                saw_spin_token = True
-                break
-        spins.append(spin_value)
-    return species, positions, spins if saw_spin_token else None
-
-
-def _parse_positions_abs_block(lines: list[str]) -> tuple[list[str], list[list[float]]]:
-    scale = 1.0
-    data_lines = lines
-    if lines and len(lines[0].split()) == 1 and lines[0].lower() in _CELL_UNITS:
-        scale = _parse_length_unit(lines[0], block_name="POSITIONS_ABS")
-        data_lines = lines[1:]
-    species: list[str] = []
-    positions: list[list[float]] = []
-    for line in data_lines:
-        parts = line.split()
-        if len(parts) < 4:
-            raise StructureLoadError("POSITIONS_ABS rows must contain species and three coordinates.")
-        species.append(parts[0])
-        positions.append([float(parts[1]) * scale, float(parts[2]) * scale, float(parts[3]) * scale])
-    return species, positions
-
-
-def _parse_length_unit(token: str, *, block_name: str) -> float:
-    unit = token.strip().lower()
-    try:
-        return _CELL_UNITS[unit]
-    except KeyError as exc:
-        raise StructureLoadError(f"{block_name} uses unsupported length unit '{token}'.") from exc
 
 
 def _extract_mcif_magnetic_structure(source: Path) -> dict[str, Any] | None:
