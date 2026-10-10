@@ -25,6 +25,17 @@ This package implements a conservative subset of CASTEP `.cell` syntax for libra
 
 This separation is intentional: extending support should start with schema and docs, then validator logic, then serializer updates if formatting is keyword-specific.
 
+## Parsing
+
+`src/mufinder/castep_io/cell_parser.py` reads `.cell` and `-out.cell` text through `parse_cell_text` and `parse_cell_file`; it is the only `.cell` reader in the package.
+
+- Comments (`!`, `#`) are stripped and block names are case-insensitive.
+- An optional leading length-unit line (`ang`, `bohr`, `nm`, `pm`, `cm`, `m`) on `LATTICE_CART`, `LATTICE_ABC` and `POSITIONS_ABS` converts lengths to Angstrom. Any other single non-numeric token in that position is rejected as an unsupported length unit.
+- `POSITIONS_ABS` rows are converted to fractional coordinates wrapped into `[0, 1)`; `POSITIONS_FRAC` coordinates are kept as written. Species labels such as `H:mu` are kept verbatim.
+- `SPIN=<value>` tokens are read from `POSITIONS_FRAC` rows, including the padded `SPIN=  1.000` form CASTEP writes. Rows without a token get spin 0, an empty `SPIN=` marker counts as no token, and `atomic_spins` is `None` unless at least one row carries a value.
+- Both lattice blocks, both position blocks, a repeated geometry block, and an unterminated or mismatched block are errors.
+- A full parse validates the whole file against the loaded keyword catalog, so a keyword outside it raises `CellParseError`. With `geometry_only=True` only the lattice and position blocks are read and validated, and every other keyword and block is skipped. Structure import (`mufinder.science.structure_io.load_structure_file`) uses this mode, so a CASTEP `-out.cell` imports regardless of the calculation keywords it carries.
+
 ## Implemented Starter Subset
 
 The `.cell` entries in the starter catalog are:

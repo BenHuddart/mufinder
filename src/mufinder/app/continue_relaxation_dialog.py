@@ -142,8 +142,8 @@ class ContinueRelaxationDialog(ParameterDialog):
     **Why ``old_param_text`` is a plain string, not something this dialog
     renders itself:** a row's stored ``parameter_values`` is normally a
     *partial* set of overrides on top of workflow-template defaults (see
-    ``_strip_implicit_row_defaults`` in ``relaxation_widget.py``), so the text
-    actually on disk depends on how the real JobSpec-expansion path resolves
+    ``RelaxationRowTableWidget._stored_row_values`` in
+    ``workflow_row_widget.py``), so the text actually on disk depends on how the real JobSpec-expansion path resolves
     keywords the row never mentions. This dialog has no visibility into that
     resolution -- only WP6's controller wiring does. Passing a pre-rendered
     ``old_param_text`` keeps the dialog honest: it diffs two strings, one

@@ -36,6 +36,10 @@ _CELL_UNITS = {
 }
 _BLOCK_START_RE = re.compile(r"^\s*%BLOCK\s+([A-Za-z0-9_]+)\s*$", re.IGNORECASE)
 _BLOCK_END_RE = re.compile(r"^\s*%ENDBLOCK\s+([A-Za-z0-9_]+)\s*$", re.IGNORECASE)
+_STRUCTURED_BLOCKS = frozenset(
+    {"lattice_cart", "lattice_abc", "positions_frac", "positions_abs", "species_pot", "kpoints_list"}
+)
+_GEOMETRY_BLOCKS = frozenset({"lattice_cart", "lattice_abc", "positions_frac", "positions_abs"})
 
 
 class CellParseError(ValueError):
@@ -53,21 +57,40 @@ class ParsedCell:
     atomic_spins: tuple[float, ...] | None = None
 
 
-def parse_cell_file(path: str | Path) -> ParsedCell:
-    """Parse a CASTEP ``.cell`` or ``-out.cell`` file from disk."""
+def parse_cell_file(path: str | Path, *, geometry_only: bool = False) -> ParsedCell:
+    """Parse a CASTEP ``.cell`` or ``-out.cell`` file from disk.
+
+    ``geometry_only`` has the meaning documented on :func:`parse_cell_text`.
+    """
 
     source = Path(path)
     try:
         text = source.read_text(encoding="utf-8")
     except OSError as exc:
         raise CellParseError(f"Failed to read CELL file '{source}': {exc}") from exc
-    return parse_cell_text(text)
+    return parse_cell_text(text, geometry_only=geometry_only)
 
 
-def parse_cell_text(text: str) -> ParsedCell:
-    """Parse CASTEP CELL text into structured dataclasses."""
+def parse_cell_text(text: str, *, geometry_only: bool = False) -> ParsedCell:
+    """Parse CASTEP CELL text into structured dataclasses.
 
-    known_blocks, unknown_blocks, scalar_lines = _partition_cell_text(text)
+    By default every scalar keyword and block is parsed and the whole file is
+    validated against the loaded keyword catalog, so a keyword outside the
+    catalog raises :class:`CellParseError`.
+
+    With ``geometry_only=True`` only the lattice (``LATTICE_CART`` /
+    ``LATTICE_ABC``) and position (``POSITIONS_FRAC`` / ``POSITIONS_ABS``)
+    blocks are read and validated. Scalar keywords and every other block are
+    skipped without being parsed or checked against the catalog, and the
+    returned ``cell_file`` carries the geometry only. Block delimiters are
+    still checked for the whole text. Structure import uses this mode: it
+    needs the crystal, not the calculation settings a CASTEP ``-out.cell``
+    carries alongside it.
+    """
+
+    known_blocks, unknown_blocks, scalar_lines = _partition_cell_text(
+        text, geometry_only=geometry_only
+    )
 
     lattice_cart = _parse_lattice_cart(known_blocks.get("lattice_cart"))
     lattice_abc = _parse_lattice_abc(known_blocks.get("lattice_abc"))
@@ -187,12 +210,17 @@ def _fractional_from_cartesian(
     except np.linalg.LinAlgError as exc:
         raise CellParseError(f"CELL lattice vectors are singular and cannot be inverted: {exc}") from exc
 
-    wrapped = np.mod(fractional, 1.0)
+    # Wrap twice, as ``ase.Atoms.get_scaled_positions`` does: a coordinate a
+    # rounding error below zero (an atom on a cell face of a non-orthogonal
+    # lattice) maps to exactly 1.0 after one ``mod``, and back to 0.0 after two.
+    wrapped = np.mod(np.mod(fractional, 1.0), 1.0)
     return tuple(tuple(float(value) for value in row) for row in wrapped.tolist())
 
 
 def _partition_cell_text(
     text: str,
+    *,
+    geometry_only: bool = False,
 ) -> tuple[
     dict[str, list[str]],
     list[tuple[str, tuple[tuple[Any, ...], ...], str | None]],
@@ -227,18 +255,12 @@ def _partition_cell_text(
                 raise CellParseError(
                     f"Mismatched block terminator %ENDBLOCK {end_name} for %BLOCK {current_name}."
                 )
-            if current_name in {
-                "lattice_cart",
-                "lattice_abc",
-                "positions_frac",
-                "positions_abs",
-                "species_pot",
-                "kpoints_list",
-            }:
+            kept_blocks = _GEOMETRY_BLOCKS if geometry_only else _STRUCTURED_BLOCKS
+            if current_name in kept_blocks:
                 if current_name in known_blocks:
                     raise CellParseError(f"Duplicate block {current_name.upper()} is not supported.")
                 known_blocks[current_name] = list(current_lines)
-            else:
+            elif not geometry_only:
                 unit, rows = _parse_generic_block_rows(current_lines)
                 unknown_blocks.append((current_name, rows, unit))
             current_name = None
@@ -252,7 +274,7 @@ def _partition_cell_text(
             continue
 
         stripped = _strip_comment(line)
-        if stripped:
+        if stripped and not geometry_only:
             scalar_lines.append(stripped)
 
     if current_name is not None:
@@ -261,14 +283,31 @@ def _partition_cell_text(
     return known_blocks, unknown_blocks, scalar_lines
 
 
+def _split_length_unit(lines: list[str], block_name: str) -> tuple[float, str | None, list[str]]:
+    """Split an optional leading length-unit line off a block.
+
+    Returns the scale to Angstrom, the unit token as written (``None`` when the
+    block has no unit line) and the remaining data rows. A single non-numeric
+    token that is not a supported unit raises instead of being read as a row.
+    """
+
+    if not lines or len(lines[0].split()) != 1:
+        return 1.0, None, list(lines)
+    token = lines[0]
+    scale = _CELL_UNITS.get(token.lower())
+    if scale is not None:
+        return scale, token, list(lines[1:])
+    try:
+        float(token)
+    except ValueError:
+        raise CellParseError(f"{block_name} uses unsupported length unit '{token}'.") from None
+    return 1.0, None, list(lines)
+
+
 def _parse_lattice_cart(lines: list[str] | None) -> LatticeCart | None:
     if lines is None:
         return None
-    scale = 1.0
-    data_lines = list(lines)
-    if data_lines and len(data_lines[0].split()) == 1 and data_lines[0].lower() in _CELL_UNITS:
-        scale = _CELL_UNITS[data_lines[0].lower()]
-        data_lines = data_lines[1:]
+    scale, unit, data_lines = _split_length_unit(lines, "LATTICE_CART")
     if len(data_lines) < 3:
         raise CellParseError("LATTICE_CART must contain three lattice vectors.")
     vectors: list[tuple[float, float, float]] = []
@@ -277,18 +316,13 @@ def _parse_lattice_cart(lines: list[str] | None) -> LatticeCart | None:
         if len(parts) < 3:
             raise CellParseError("LATTICE_CART rows must contain three values.")
         vectors.append((float(parts[0]) * scale, float(parts[1]) * scale, float(parts[2]) * scale))
-    unit = None if scale == 1.0 and (not lines or lines[0].lower() != "ang") else (lines[0] if len(lines[0].split()) == 1 else None)
     return LatticeCart(vectors=(vectors[0], vectors[1], vectors[2]), unit=unit)
 
 
 def _parse_lattice_abc(lines: list[str] | None) -> LatticeABC | None:
     if lines is None:
         return None
-    scale = 1.0
-    data_lines = list(lines)
-    if data_lines and len(data_lines[0].split()) == 1 and data_lines[0].lower() in _CELL_UNITS:
-        scale = _CELL_UNITS[data_lines[0].lower()]
-        data_lines = data_lines[1:]
+    scale, unit, data_lines = _split_length_unit(lines, "LATTICE_ABC")
     if len(data_lines) < 2:
         raise CellParseError("LATTICE_ABC must contain lengths and angles rows.")
     lengths_parts = data_lines[0].split()
@@ -301,7 +335,6 @@ def _parse_lattice_abc(lines: list[str] | None) -> LatticeABC | None:
         float(lengths_parts[2]) * scale,
     )
     angles = (float(angles_parts[0]), float(angles_parts[1]), float(angles_parts[2]))
-    unit = lines[0] if len(lines[0].split()) == 1 else None
     return LatticeABC(lengths=lengths, angles=angles, unit=unit)
 
 
@@ -372,13 +405,7 @@ def _parse_positions(
         )
 
     assert positions_abs_lines is not None
-    scale = 1.0
-    data_lines = list(positions_abs_lines)
-    unit = None
-    if data_lines and len(data_lines[0].split()) == 1 and data_lines[0].lower() in _CELL_UNITS:
-        unit = data_lines[0]
-        scale = _CELL_UNITS[data_lines[0].lower()]
-        data_lines = data_lines[1:]
+    scale, unit, data_lines = _split_length_unit(positions_abs_lines, "POSITIONS_ABS")
 
     positions_abs: list[AtomicPosition] = []
     for line in data_lines:
