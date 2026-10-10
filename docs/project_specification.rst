@@ -525,7 +525,8 @@ Structure import and MCIF magnetic extraction
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 - Supported inputs are CIF (``.cif``), MCIF (``.mcif``) and CASTEP CELL
-  (``.cell``). Import parses the structure with ASE, copies the source file
+  (``.cell``). Import parses CIF and MCIF with ASE and CELL files with the
+  geometry-only mode of ``mufinder.castep_io.cell_parser``, copies the source file
   into ``imports/``, creates the structure entity (optionally as the active
   host) and appends a provenance record. Unsupported extensions, invalid
   content and missing files produce explicit user-visible errors.
