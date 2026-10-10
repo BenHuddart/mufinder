@@ -218,7 +218,7 @@ class TestTheAction:
         scan = _scan(build_folder(tmp_path / "legacy", sites=(1, 2)))
         window._commit_legacy_import(scan, list(scan.importable_runs), host_structure)
 
-        definition = window._active_muon_relaxation_definition()
+        definition = window._muon_relaxation_controller.active_definition()
         assert definition is not None
         assert len(definition.parameters["job_ids_by_label"]) == 2
         assert len(window._document.sites) == 2
@@ -398,7 +398,7 @@ class TestRemovalAction:
 
         assert window._document.sites == {}
         assert window._document.jobs == {}
-        definition = window._active_muon_relaxation_definition()
+        definition = window._muon_relaxation_controller.active_definition()
         assert definition.parameters["configuration"]["rows"] == []
         assert definition.parameters["job_ids_by_label"] == {}
         # The widget no longer shows them either.
@@ -786,7 +786,7 @@ class TestRemoveThenReimport:
 
         assert window._document.sites == {}
         assert window._document.jobs == {}
-        definition = window._active_muon_relaxation_definition()
+        definition = window._muon_relaxation_controller.active_definition()
         assert definition.parameters["configuration"]["rows"] == []
         assert definition.parameters["job_ids_by_label"] == {}
         assert definition.input_site_ids == []
@@ -824,7 +824,7 @@ class TestRemoveThenReimport:
         self._import(window, tmp_path, host_structure, folder)
 
         definition_rows = window._deserialize_muon_relaxation_config(
-            window._active_muon_relaxation_definition().parameters["configuration"]
+            window._muon_relaxation_controller.active_definition().parameters["configuration"]
         ).rows
         form_rows = window._muon_relaxation_form_config().rows
 

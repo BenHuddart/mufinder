@@ -331,6 +331,35 @@ built from three inputs:
 A controller holds no reference to ``MainWindow`` and never imports the
 ``main_window`` module, so it is unit-testable without a window.
 
+Three class attributes declare which calculation definitions a controller owns:
+
+- ``stage``: the :class:`~mufinder.domain.enums.WorkflowStage` of its
+  definitions;
+- ``definition_calc_type``: the calc type of its definitions, or ``None`` to
+  accept any at ``stage``. It is distinct from ``calc_types``, which lists the
+  calc types of the controller's *jobs* for result dispatch;
+- ``active_key``: the ``ui_state`` key that stores the id of the definition the
+  user last configured, or ``None`` when the newest definition is always the
+  active one (quantum corrections, energy barriers).
+
+From these the base class answers every definition and job lookup through the
+read-only queries in :mod:`mufinder.services.project_service`, so no workflow
+repeats them:
+
+- ``definitions()`` returns the matching definitions, newest first
+  (``definitions_for_stage``);
+- ``active_definition()`` returns the definition named by ``active_key`` when
+  it still matches, and otherwise the newest match (``active_definition``);
+- ``job_for_key(definition, key, *, mapping_name="job_ids_by_label",
+  calc_type=None)`` returns the job a definition's id mapping binds to a row
+  key, or ``None`` when the mapping, the id or the job is missing or the job's
+  calc type differs (``job_for_mapping_key``).
+
+Controllers whose rows bind jobs differently wrap ``job_for_key``: the cutoff
+sweep reads ``job_ids_by_cutoff`` and falls back to legacy ``job_labels``,
+muon relaxation tries the charge-qualified key before the bare label, and
+energy barriers accepts only NEB jobs.
+
 Hooks
 ~~~~~
 
@@ -355,7 +384,10 @@ overriding these hooks.
      - Decide whether a key can be submitted.
      - muon relaxation
    * - ``jobs_for_keys(keys)``
-     - Resolve keys to existing ``Job`` records for cancel, inspect and reset.
+     - Resolve keys to existing ``Job`` records. Each workflow table's row-menu
+       Cancel, Inspect Failure and Reset Failed Jobs signals connect to one
+       generic window handler per action, bound to the table's controller,
+       which passes the selected keys here.
      - all
    * - ``materialize(keys)``
      - Register or update the definition, expand the jobs, and write input

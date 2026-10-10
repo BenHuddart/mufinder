@@ -23,7 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job
 from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
 
@@ -52,7 +52,6 @@ class ConvergenceKpointDeps:
     two sweeps do not share a deps instance even where fields overlap.
     """
 
-    active_kpoint_definition: Callable[[], CalculationDefinition | None]
     deserialize_convergence_config: Callable[[object], ConvergenceConfig | None]
     sync_equivalent_convergence_kpoint_mappings: Callable[[CalculationDefinition], None]
     grid_key: Callable[[_Grid], str]
@@ -63,6 +62,8 @@ class ConvergenceKpointController(WorkflowJobController):
     """Controller for the k-point-grid convergence sweep."""
 
     calc_types = frozenset({"castep_convergence_kpoint"})
+    stage = WorkflowStage.CONVERGENCE_KPOINT
+    active_key = "active_convergence_kpoint_definition_id"
     no_ready_message = (
         "Only configured k-point grids that have not yet been submitted can be submitted."
     )
@@ -105,7 +106,7 @@ class ConvergenceKpointController(WorkflowJobController):
                 ),
             )
 
-        definition = self._deps.active_kpoint_definition()
+        definition = self.active_definition()
         if definition is None:
             return states
 
@@ -273,7 +274,7 @@ class ConvergenceKpointController(WorkflowJobController):
         no other caller needed the MainWindow original.
         """
 
-        active_definition = self._deps.active_kpoint_definition()
+        active_definition = self.active_definition()
         if active_definition is None:
             return None, None
 
@@ -302,19 +303,10 @@ class ConvergenceKpointController(WorkflowJobController):
         if document is None:
             return None
 
-        mapping = definition.parameters.get("job_ids_by_grid")
-        if isinstance(mapping, dict):
-            raw_job_id = mapping.get(self._deps.grid_key(grid))
-            if isinstance(raw_job_id, str):
-                try:
-                    job_id = UUID(raw_job_id)
-                except ValueError:
-                    job_id = None
-                if job_id is not None:
-                    job = document.jobs.get(job_id)
-                    if job is not None:
-                        return job
-            return None
+        if isinstance(definition.parameters.get("job_ids_by_grid"), dict):
+            return self.job_for_key(
+                definition, self._deps.grid_key(grid), mapping_name="job_ids_by_grid"
+            )
 
         label = convergence_job_name(
             definition.parameters.get("configuration", {}).get(

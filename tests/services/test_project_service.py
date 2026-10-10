@@ -18,6 +18,9 @@ from mufinder.services.project_service import (
     ProjectService,
     SiteHostMismatch,
     StructureHostMismatch,
+    active_definition,
+    definitions_for_stage,
+    job_for_mapping_key,
 )
 from tests.support.structures import silicon_oxide_host
 
@@ -2061,3 +2064,116 @@ def test_failure_reason_loads_as_none_when_absent_or_unknown() -> None:
         service._job_from_dict({**base, "failure_reason": "out_of_memory"}).failure_reason
         == FailureReason.OUT_OF_MEMORY
     )
+
+
+def _definition_at(
+    document, stage: WorkflowStage, *, calc_type: str = "", day: int = 1
+) -> CalculationDefinition:
+    definition = CalculationDefinition(
+        workflow_stage=stage,
+        calc_type=calc_type,
+        created_at=datetime(2025, 1, day, tzinfo=UTC),
+    )
+    document.calculations[definition.id] = definition
+    return definition
+
+
+def test_definitions_for_stage_lists_matching_definitions_newest_first(tmp_path: Path) -> None:
+    doc = ProjectService().create_project(tmp_path / "defs.mufinder", "Defs")
+    older = _definition_at(doc, WorkflowStage.UEP, day=1)
+    newer = _definition_at(doc, WorkflowStage.UEP, day=3)
+    _definition_at(doc, WorkflowStage.PRISTINE_RELAXATION, day=5)
+
+    assert definitions_for_stage(doc, WorkflowStage.UEP) == [newer, older]
+    assert definitions_for_stage(doc, WorkflowStage.CONVERGENCE_CUTOFF) == []
+
+
+def test_definitions_for_stage_filters_on_calc_type(tmp_path: Path) -> None:
+    doc = ProjectService().create_project(tmp_path / "defs.mufinder", "Defs")
+    wanted = _definition_at(doc, WorkflowStage.ENERGY_BARRIERS, calc_type="neb_set", day=1)
+    _definition_at(doc, WorkflowStage.ENERGY_BARRIERS, calc_type="ts_set", day=2)
+
+    assert definitions_for_stage(doc, WorkflowStage.ENERGY_BARRIERS, calc_type="neb_set") == [wanted]
+    assert len(definitions_for_stage(doc, WorkflowStage.ENERGY_BARRIERS)) == 2
+
+
+def test_active_definition_prefers_the_ui_state_selection(tmp_path: Path) -> None:
+    doc = ProjectService().create_project(tmp_path / "active.mufinder", "Active")
+    older = _definition_at(doc, WorkflowStage.UEP, day=1)
+    _definition_at(doc, WorkflowStage.UEP, day=2)
+    doc.ui_state["active_uep"] = str(older.id)
+
+    assert active_definition(doc, WorkflowStage.UEP, active_key="active_uep") is older
+
+
+@pytest.mark.parametrize(
+    "selection", ["not-a-uuid", "00000000-0000-4000-8000-000000000000", 7, "other-stage", "other-calc-type"]
+)
+def test_active_definition_falls_back_to_the_newest_match(tmp_path: Path, selection: object) -> None:
+    doc = ProjectService().create_project(tmp_path / "active.mufinder", "Active")
+    _definition_at(doc, WorkflowStage.MUON_RELAXATION, calc_type="muon_set", day=1)
+    newest = _definition_at(doc, WorkflowStage.MUON_RELAXATION, calc_type="muon_set", day=2)
+    other_stage = _definition_at(doc, WorkflowStage.UEP, day=9)
+    other_calc_type = _definition_at(doc, WorkflowStage.MUON_RELAXATION, calc_type="other", day=9)
+    doc.ui_state["active_muon"] = {
+        "other-stage": str(other_stage.id),
+        "other-calc-type": str(other_calc_type.id),
+    }.get(selection, selection)
+
+    resolved = active_definition(
+        doc, WorkflowStage.MUON_RELAXATION, calc_type="muon_set", active_key="active_muon"
+    )
+
+    assert resolved is newest
+
+
+def test_active_definition_without_a_key_or_match(tmp_path: Path) -> None:
+    doc = ProjectService().create_project(tmp_path / "active.mufinder", "Active")
+    first = _definition_at(doc, WorkflowStage.QUANTUM_CORRECTIONS, calc_type="phonon_set", day=1)
+    doc.ui_state["ignored"] = str(uuid4())
+
+    assert active_definition(doc, WorkflowStage.QUANTUM_CORRECTIONS, calc_type="phonon_set") is first
+    assert active_definition(doc, WorkflowStage.UEP, active_key="ignored") is None
+
+
+def test_job_for_mapping_key_resolves_the_mapped_job(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "jobs.mufinder", "Jobs")
+    job = service.add_job(doc, label="a", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source")
+    definition = _definition_at(doc, WorkflowStage.UEP)
+    definition.parameters["job_ids_by_label"] = {"a": str(job.id)}
+    definition.parameters["job_ids_by_cutoff"] = {"300": str(job.id)}
+
+    assert job_for_mapping_key(doc, definition, "a") is job
+    assert job_for_mapping_key(doc, definition, "300", mapping_name="job_ids_by_cutoff") is job
+    assert job_for_mapping_key(doc, definition, "a", calc_type="castep_uep_source") is job
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["no-definition", "no-mapping", "not-a-mapping", "unmapped", "non-string", "bad-uuid", "missing-job", "calc-type"],
+)
+def test_job_for_mapping_key_returns_none_when_unresolvable(tmp_path: Path, case: str) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "jobs.mufinder", "Jobs")
+    job = service.add_job(doc, label="a", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source")
+    definition = _definition_at(doc, WorkflowStage.UEP)
+    mapping: object = {
+        "no-mapping": None,
+        "not-a-mapping": [str(job.id)],
+        "unmapped": {"b": str(job.id)},
+        "non-string": {"a": 42},
+        "bad-uuid": {"a": "not-a-uuid"},
+        "missing-job": {"a": str(uuid4())},
+    }.get(case, {"a": str(job.id)})
+    if mapping is not None:
+        definition.parameters["job_ids_by_label"] = mapping
+
+    resolved = job_for_mapping_key(
+        doc,
+        None if case == "no-definition" else definition,
+        "a",
+        calc_type="castep_other" if case == "calc-type" else None,
+    )
+
+    assert resolved is None

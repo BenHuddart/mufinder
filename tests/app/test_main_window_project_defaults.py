@@ -86,7 +86,7 @@ def test_adopting_a_mixed_functional_sweep_leaves_the_project_functional_alone(
         overrides=[{"cutoffs": [400.0], "params": {"xc_functional": "LDA"}}],
     )
     assert window._convergence_definition_xc_functional(
-        window._active_convergence_definition()
+        window._convergence_controller.active_definition()
     ) is None
 
     window._on_cutoff_adopted(400.0, "delta-threshold", 0.001, 0.05)
