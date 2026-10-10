@@ -83,7 +83,7 @@ Fields, UEP, and relaxation-analysis features use at runtime:
 
 ```bash
 uv sync --extra dev --extra scientific-backends
-# or: python -m pip install -e ".[dev,scientific-backends]"
+# or: make install
 ```
 
 The structure viewer uses the PyVista/VTK + `pyvistaqt` stack.
@@ -98,38 +98,17 @@ python -m mufinder.main
 
 The project follows GitHub Flow. Branch short-lived `feature/*` branches off `main` and open pull requests **directly into `main`**; CI runs the full quality gates on every PR and merges are blocked until they pass.
 
-Run the full test suite manually when needed. Locally, cap parallelism at four
-workers (each worker loads Qt, and `-n auto` can exhaust the machine); CI uses
-`-n auto`:
+The `Makefile` defines the local commands; see
+[Quality and Automation](https://benhuddart.github.io/mufinder/quality_and_automation.html)
+for every target.
 
 ```bash
-python -m pytest -n 4 --dist load
+make test                                              # full suite with coverage; foreground, 4 workers
+make test-fast FILES="tests/science/test_supercell.py"  # focused tests without coverage
+make docs                                              # Sphinx build, warnings as errors
 ```
 
-Run a single test file without coverage while iterating:
-
-```bash
-python -m pytest --no-cov tests/science/test_supercell.py
-```
-
-Build the Sphinx documentation:
-
-```bash
-python -m sphinx -W -b html docs docs/_build/html
-```
-
-Cut a release from `main` (branch protection requires a PR for the version bump commit):
-
-```bash
-git checkout main && git pull
-uvx "python-semantic-release>=10.5,<11" version   # bumps pyproject.toml + CHANGELOG.md, commits + tags locally (push fails — expected)
-git checkout -b release/vX.Y.Z                    # branch off the version bump commit
-git checkout main && git reset --hard origin/main  # restore local main
-git push origin release/vX.Y.Z                    # open a PR, wait for CI + merge
-git push origin vX.Y.Z                            # push the tag — triggers the Release Publish workflow
-```
-
-Pushing the `vX.Y.Z` tag triggers the `Release Publish` workflow, which builds the Windows and macOS binaries and publishes the GitHub release from the tag.
+Releases are cut by pushing a `vX.Y.Z` tag, which triggers the `Release Publish` workflow to build the Windows and macOS binaries and publish the GitHub release. The version-bump steps are in the [Automation policy](https://benhuddart.github.io/mufinder/quality_and_automation.html#automation-policy).
 
 ## Binary Distributions
 

@@ -529,9 +529,3 @@ corrections, and nuclear dipolar linewidths. It stops at field-level results:
 MuFinder does not simulate muon spectra or polarisation functions, and the
 dipolar-field calculation does not yet apply muon-induced displacement
 corrections.
-
-The longer phased plan is tracked in
-``docs/magnetic_field_functionality_plan.md``.
-
-The focused builder review is tracked in
-``docs/magnetic_structure_builder_review.md``.

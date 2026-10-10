@@ -16,7 +16,6 @@ from mufinder.castep_io.types import ValueWithUnit
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.project_service import (
     ProjectService,
-    PromotableHost,
     SiteHostMismatch,
     StructureHostMismatch,
 )

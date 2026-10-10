@@ -18,7 +18,6 @@ import pytest
 
 import mufinder.app.main_window as main_window_module
 from mufinder.app.main_window import MainWindow
-from mufinder.app.resubmit_choice_dialog import ResubmitMode
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition
 from mufinder.services.project_service import ProjectService

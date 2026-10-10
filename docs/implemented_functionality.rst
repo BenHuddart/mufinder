@@ -1299,9 +1299,12 @@ Cluster setup and authentication includes:
 - Optional explicit scheduler command paths for submit/queue/cancel commands,
 	with non-interactive-shell command probing fallback.
 - SSH key authentication with password fallback support.
-- Explicit host-key trust prompts are preserved for both the jump host and the
-	target cluster host; bastion trust records are stored separately from
-	Glamdring trust records.
+- Unknown SSH host keys are never trusted automatically. MuFinder shows the
+	key's SHA-256 fingerprint and asks before trusting it, for both the jump host
+	and the target cluster host, and stores each trusted key in the user's
+	settings; bastion trust records are stored separately from Glamdring trust
+	records. A host key that differs from the trusted one stops the connection
+	and shows the stored and presented fingerprints.
 - Connection checks (the cluster setup ``Test Connection`` action and the
 	pre-flight check before cluster keyword generation) run on a worker thread
 	behind a cancellable progress dialog, so an unreachable or slow host never
@@ -1313,6 +1316,12 @@ Remote submission and monitoring includes:
 - A cluster run action under each workflow table (``Run All on Cluster`` / ``Run Selected on Cluster``).
 - Cluster selection and runtime override dialog at submission time.
 - Upload of generated ``.cell`` / ``.param`` inputs and scheduler-aware submission.
+- Cluster submission refuses job labels containing anything other than letters,
+	digits, ``.``, ``_`` and ``-``, because remote paths and scheduler commands use
+	the label directly; the cluster runner checks each seed name again before
+	submitting.
+- Remote job directories are deleted recursively over SFTP, not through a remote
+	shell command.
 - SLURM submission through ``sbatch`` with populated templates and capture of
 	scheduler job ids.
 - An optional per-CPU memory request for SLURM submissions, emitted into the
@@ -1343,8 +1352,12 @@ Remote submission and monitoring includes:
 - Periodic queue polling with last-checked timestamp updates.
 - SLURM queue polling tolerates stale/expired job ids (``Invalid job id specified``)
 	by falling back to per-job status checks instead of failing the full refresh.
-- Poll failures now force a full runner disconnect state (not just UI signal changes),
-	so subsequent ``Refresh Queue`` actions can cleanly reconnect rather than remaining stuck.
+- A poll failure shows the reason in a warning, updates the connection
+	indicator, and fully disconnects the runner, so the next ``Refresh Queue``
+	reconnects cleanly.
+- Cluster connection, queue refresh, submission, cancellation and polling
+	failures show a one-line summary, with the full error and recovery advice
+	under ``Details``.
 
 .. _remote-checkpoint-probe:
 

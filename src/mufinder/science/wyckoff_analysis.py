@@ -8,7 +8,6 @@ from functools import lru_cache
 
 from ase.data import atomic_numbers
 import numpy as np
-import spglib
 
 from mufinder.domain.models import Structure
 from mufinder.science.spglib_compat import get_crystal_symmetry, get_crystal_symmetry_dataset

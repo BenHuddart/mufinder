@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtWidgets import QPushButton, QTreeWidget
+from PySide6.QtWidgets import QPushButton
 
 from mufinder.app.main_window import MainWindow
-from mufinder.app.muon_sites_summary_widget import MuonSitesSummaryWidget, _MUON_SPECIES_LABEL
+from mufinder.app.muon_sites_summary_widget import MuonSitesSummaryWidget
 from mufinder.app.relaxation_analysis_widget import (
     CompletedRelaxationAnalysisSource,
     RelaxationAnalysisWidget,

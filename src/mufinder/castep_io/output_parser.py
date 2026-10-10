@@ -57,7 +57,7 @@ _FORCE_LINE_RE = re.compile(
     rf"^\s*(?:\d+\s+)?([A-Za-z][A-Za-z0-9]*)\s+({_FLOAT_RE})\s+({_FLOAT_RE})\s+({_FLOAT_RE})\s*$"
 )
 _ASE_FORCE_LINE_RE = re.compile(
-    rf"^\s*\*\s*([A-Za-z][A-Za-z0-9]*)\s+\d+\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+\*\s*$"
+    r"^\s*\*\s*([A-Za-z][A-Za-z0-9]*)\s+\d+\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+\*\s*$"
 )
 _STRESS_BLOCK_HEADER_RE = re.compile(r"\**.*\bStress\s+Tensor\b\s*\**", re.IGNORECASE)
 

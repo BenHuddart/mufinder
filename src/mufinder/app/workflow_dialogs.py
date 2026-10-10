@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QLabel, QHBoxLayout, QSpinBox, QVBoxLayout
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer

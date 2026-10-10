@@ -1584,7 +1584,7 @@ def test_main_window_energy_barriers_view_loads_with_existing_state(qapp, tmp_pa
     window2._document = doc
 
     # Navigate to energy barriers — this is what happens when the user opens the section.
-    view = window2._ensure_energy_barriers_view()
+    window2._ensure_energy_barriers_view()
     window2._refresh_energy_barriers_view()  # Must not raise
 
     # The view should show the generated paths.
