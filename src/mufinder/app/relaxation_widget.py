@@ -42,7 +42,6 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.param_dialog import ParameterDialog
-from mufinder.app.relaxation_adapter import suggested_grid_for_row
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.workflow_parameters import (
     merge_batch_advanced,
@@ -68,7 +67,8 @@ from mufinder.app.workflow_table_utils import (
     style_workflow_configure_button,
     workflow_row_status_text,
 )
-from mufinder.science.kpoint_grids import spacing_from_grid
+from mufinder.app.adapter_common import coerce_supercell_matrix
+from mufinder.app.workflow_table_utils import SupercellColumn
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     infer_task,
@@ -177,15 +177,9 @@ class PristineRelaxationWidget(QWidget):
         # offers an action it cannot fulfil.
         self._continuable_predicate: Callable[[object], bool] = lambda _key: False
 
-        self._host_lattice: list[list[float]] | None = None
-        self._reference_lattice: list[list[float]] | None = None
-        self._reference_grid: tuple[int, int, int] | None = None
-
-        self._row_supercells: dict[int, SupercellMatrix | None] = {}
         self._row_parameter_values: dict[int, dict[str, object]] = {}
         self._row_added_advanced: dict[int, set[str]] = {}
         self._runtime_states: dict[str, RelaxationRunState] = {}
-        self._supercell_options: list[tuple[str, SupercellMatrix]] = []
         self._parameter_species_options: tuple[str, ...] = ()
 
         self._name_prefix = QLineEdit("pristine_relax")
@@ -194,6 +188,16 @@ class PristineRelaxationWidget(QWidget):
         self._kpoint_message.setWordWrap(True)
         style_hint_text(self._kpoint_message)
         self._kpoint_message.hide()
+        self._supercells = SupercellColumn(
+            self,
+            column=self._SUPERCELL_COLUMN,
+            manage_requested=self.row_supercell_edit_requested.emit,
+            normalize_rows=self._normalize_all_row_parameter_values,
+            refresh_rows=self._refresh_all_rows,
+            state_changed=self._emit_state,
+            eligibility=self._row_supercell_is_editable,
+            kpoint_message=self._kpoint_message,
+        )
 
         self._table = create_workflow_table(
             (
@@ -497,12 +501,7 @@ class PristineRelaxationWidget(QWidget):
             xc_functional,
             schema_default=self._schema_xc_functional,
         )
-        self._reference_grid = kpoint_grid
-        self._reference_lattice = (
-            [list(row) for row in kpoint_reference_lattice]
-            if isinstance(kpoint_reference_lattice, list)
-            else None
-        )
+        self._supercells.set_kpoint_reference(kpoint_grid, kpoint_reference_lattice)
         if cutoff_energy is None:
             self._default_params.pop("cut_off_energy", None)
         else:
@@ -512,7 +511,7 @@ class PristineRelaxationWidget(QWidget):
         self._refresh_all_rows()
 
     def set_host_lattice(self, lattice_vectors: list[list[float]] | None) -> None:
-        self._host_lattice = [list(row) for row in lattice_vectors] if lattice_vectors is not None else None
+        self._supercells.set_host_lattice(lattice_vectors)
         self._normalize_all_row_parameter_values()
         self._refresh_all_rows()
 
@@ -532,18 +531,7 @@ class PristineRelaxationWidget(QWidget):
         self._continuable_predicate = predicate
 
     def set_supercell_options(self, options: list[dict[str, object]]) -> None:
-        parsed: list[tuple[str, SupercellMatrix]] = []
-        for entry in options:
-            if not isinstance(entry, dict):
-                continue
-            label = str(entry.get("label", "")).strip()
-            if not label:
-                continue
-            matrix = self._coerce_supercell_matrix(entry.get("matrix"))
-            if matrix is None:
-                continue
-            parsed.append((label, matrix))
-        self._supercell_options = parsed
+        self._supercells.set_options(options)
         self._refresh_all_rows()
 
     def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
@@ -552,7 +540,7 @@ class PristineRelaxationWidget(QWidget):
         )
 
     def row_supercell_matrix(self, row_id: int) -> SupercellMatrix | None:
-        return self._row_supercells.get(int(row_id))
+        return self._supercells.matrices.get(int(row_id))
 
     def set_row_supercell(
         self,
@@ -561,15 +549,11 @@ class PristineRelaxationWidget(QWidget):
         *,
         message: str | None = None,
     ) -> None:
-        self._row_supercells[int(row_id)] = matrix
+        self._supercells.matrices[int(row_id)] = matrix
         row = self._row_index_for_id(int(row_id))
         if row is not None:
             self._refresh_row(row)
-        if message:
-            self._kpoint_message.setText(message)
-            self._kpoint_message.show()
-        else:
-            self._set_kpoint_message_for_row(int(row_id))
+        self._supercells.update_kpoint_message(int(row_id), message)
         self._emit_state()
 
     def clear_kpoint_message(self) -> None:
@@ -592,7 +576,7 @@ class PristineRelaxationWidget(QWidget):
         row_id = self._next_row_id
         self._next_row_id += 1
 
-        self._row_supercells[row_id] = None
+        self._supercells.matrices[row_id] = None
         self._row_parameter_values[row_id] = {}
         self._row_added_advanced[row_id] = set()
 
@@ -603,12 +587,7 @@ class PristineRelaxationWidget(QWidget):
         label_item.setData(Qt.ItemDataRole.UserRole, row_id)
         self._table.setItem(row, self._LABEL_COLUMN, label_item)
 
-        supercell_combo = SelectionSnapshotComboBox(self._table)
-        supercell_combo.selection_snapshot_key = row_id
-        supercell_combo.currentIndexChanged.connect(
-            lambda _index, rid=row_id, combo=supercell_combo: self._on_supercell_combo_changed(rid, combo)
-        )
-        self._table.setCellWidget(row, self._SUPERCELL_COLUMN, supercell_combo)
+        self._table.setCellWidget(row, self._SUPERCELL_COLUMN, self._supercells.create_combo(self._table, row_id))
 
         fix_combo = SelectionSnapshotComboBox(self._table)
         fix_combo.selection_snapshot_key = row_id
@@ -693,115 +672,6 @@ class PristineRelaxationWidget(QWidget):
         if isinstance(combo, QComboBox):
             return bool(combo.currentData())
         return False
-
-    @staticmethod
-    def _coerce_supercell_matrix(value: object) -> SupercellMatrix | None:
-        if value is None:
-            return None
-        if not isinstance(value, (list, tuple)) or len(value) != 3:
-            return None
-        try:
-            matrix = (
-                (int(value[0][0]), int(value[0][1]), int(value[0][2])),
-                (int(value[1][0]), int(value[1][1]), int(value[1][2])),
-                (int(value[2][0]), int(value[2][1]), int(value[2][2])),
-            )
-        except (TypeError, ValueError, IndexError):
-            return None
-        return matrix
-
-    def _set_kpoint_message_for_row(self, row_id: int) -> None:
-        current_matrix = self._row_supercells.get(row_id)
-        if current_matrix is None or self._reference_grid is None or self._host_lattice is None:
-            self.clear_kpoint_message()
-            return
-        suggested = suggested_grid_for_row(
-            host_lattice=self._host_lattice,
-            row_matrix=current_matrix,
-            reference_lattice=self._reference_lattice,
-            reference_grid=self._reference_grid,
-        )
-        if suggested is None or suggested == self._reference_grid:
-            self.clear_kpoint_message()
-            return
-        self._kpoint_message.setText(
-            "K-point grid adjusted from "
-            f"{self._reference_grid[0]}x{self._reference_grid[1]}x{self._reference_grid[2]} to "
-            f"{suggested[0]}x{suggested[1]}x{suggested[2]} for equivalent density."
-        )
-        self._kpoint_message.show()
-
-    def _populate_supercell_combo(self, combo: QComboBox, row_id: int) -> None:
-        current = self._row_supercells.get(row_id)
-
-        previous = combo.blockSignals(True)
-        combo.clear()
-        combo.addItem("Unit cell", ("matrix", None))
-
-        selected_index = 0
-        for label, matrix in self._supercell_options:
-            combo.addItem(label, ("matrix", matrix))
-            if current is not None and matrix == current:
-                selected_index = combo.count() - 1
-
-        if current is not None and selected_index == 0:
-            combo.addItem(self._supercell_label(current), ("matrix", current))
-            selected_index = combo.count() - 1
-
-        combo.addItem("Manage Supercells...", ("create", None))
-        combo.setCurrentIndex(selected_index)
-        combo.blockSignals(previous)
-
-    def _on_supercell_combo_changed(self, row_id: int, combo: SelectionSnapshotComboBox) -> None:
-        row = self._row_index_for_id(row_id)
-        if row is None:
-            return
-        if not isinstance(combo, QComboBox):
-            return
-
-        data = combo.currentData()
-        if not isinstance(data, tuple) or len(data) != 2:
-            return
-
-        mode = data[0]
-        matrix = self._coerce_supercell_matrix(data[1])
-        if mode == "create":
-            self.row_supercell_edit_requested.emit(row_id)
-            self._refresh_row(row)
-            return
-
-        snapshot_keys = [
-            self._row_id_at(r)
-            for r in combo.selection_snapshot_rows
-        ]
-        target_row_ids = resolve_target_keys(
-            combo,
-            clicked_key=row_id,
-            snapshot_keys=[k for k in snapshot_keys if k is not None],
-            eligibility=self._row_supercell_is_editable,
-            parent=self,
-            action="Set this supercell on",
-        )
-        if not target_row_ids:
-            # Cancelled: put the combo back to the row's stored supercell.
-            self._refresh_row(row)
-            return
-        if len(target_row_ids) > 1:
-            show_status_message(
-                self,
-                multi_row_outcome_text("Supercell set on", len(target_row_ids), len(snapshot_keys)),
-            )
-        for target_row_id in target_row_ids:
-            self._row_supercells[target_row_id] = matrix
-            self._row_parameter_values[target_row_id] = self._strip_implicit_row_defaults(
-                target_row_id,
-                self._row_parameter_values.get(target_row_id, {}),
-            )
-            target_row = self._row_index_for_id(target_row_id)
-            if target_row is not None:
-                self._refresh_row(target_row)
-        self._set_kpoint_message_for_row(row_id)
-        self._emit_state()
 
     def _on_fix_cell_combo_changed(self, row_id: int, combo: SelectionSnapshotComboBox) -> None:
         snapshot_keys = [
@@ -895,49 +765,9 @@ class PristineRelaxationWidget(QWidget):
             item.setText(status)
         item.setForeground(status_brush(status))
 
-    def _supercell_label(self, matrix: SupercellMatrix | None) -> str:
-        if matrix is None or matrix == ((1, 0, 0), (0, 1, 0), (0, 0, 1)):
-            return "Unit cell"
-        is_diagonal = (
-            matrix[0][1] == 0
-            and matrix[0][2] == 0
-            and matrix[1][0] == 0
-            and matrix[1][2] == 0
-            and matrix[2][0] == 0
-            and matrix[2][1] == 0
-        )
-        if is_diagonal:
-            return f"{matrix[0][0]}x{matrix[1][1]}x{matrix[2][2]}"
-        return "Custom 3x3"
-
-    def _suggested_grid_for_row(self, row_id: int) -> tuple[int, int, int] | None:
-        if self._host_lattice is None:
-            return None
-        grid = suggested_grid_for_row(
-            host_lattice=self._host_lattice,
-            row_matrix=self._row_supercells.get(row_id),
-            reference_lattice=self._reference_lattice,
-            reference_grid=self._reference_grid,
-        )
-        return grid
-
     @staticmethod
     def _runtime_controls_locked(status: str) -> bool:
         return str(status).strip().casefold() not in _UNLOCKED_RUNTIME_STATUSES
-
-    def _suggested_spacing_for_row(self, row_id: int) -> ValueWithUnit | None:
-        # When the project has adopted a k-point grid, mirror it as a k-point
-        # spacing so the configure-parameters dialog's spacing field gets a
-        # sensible default when the user toggles to "Use spacing".
-        if self._reference_grid is None or self._reference_lattice is None:
-            return None
-        if tuple(int(v) for v in self._reference_grid) == (1, 1, 1):
-            return None
-        try:
-            spacing = spacing_from_grid(self._reference_lattice, self._reference_grid)
-        except ValueError:
-            return None
-        return ValueWithUnit(float(spacing), "1/ang")
 
     def _effective_params_for_row(self, row_id: int) -> dict[str, object]:
         # The row's "effective" values reflect what would land in the rendered
@@ -954,7 +784,7 @@ class PristineRelaxationWidget(QWidget):
             "kpoint_mp_grid" not in values
             and "kpoint_mp_spacing" not in values
         ):
-            suggested = self._suggested_grid_for_row(row_id)
+            suggested = self._supercells.suggested_grid(row_id)
             if suggested is not None:
                 values["kpoint_mp_grid"] = suggested
         return values
@@ -967,7 +797,7 @@ class PristineRelaxationWidget(QWidget):
         # been explicitly configured to use kpoint_mp_spacing instead.
         row_values = self._row_parameter_values.get(row_id, {})
         if "kpoint_mp_spacing" not in row_values:
-            suggested = self._suggested_grid_for_row(row_id)
+            suggested = self._supercells.suggested_grid(row_id)
             if suggested is not None:
                 implicit["kpoint_mp_grid"] = suggested
         return implicit
@@ -1000,7 +830,7 @@ class PristineRelaxationWidget(QWidget):
 
         supercell_combo = self._table.cellWidget(row, self._SUPERCELL_COLUMN)
         if isinstance(supercell_combo, QComboBox):
-            self._populate_supercell_combo(supercell_combo, row_id)
+            self._supercells.populate_combo(supercell_combo, row_id)
 
         label = self._label_at_row(row)
         runtime = self._runtime_states.get(label)
@@ -1116,11 +946,11 @@ class PristineRelaxationWidget(QWidget):
         has_grid = "kpoint_mp_grid" in common
         has_spacing = "kpoint_mp_spacing" in common
         if has_grid and not has_spacing:
-            suggested_spacing = self._suggested_spacing_for_row(row_ids[0])
+            suggested_spacing = self._supercells.suggested_spacing()
             if suggested_spacing is not None:
                 common["kpoint_mp_spacing"] = suggested_spacing
         elif has_spacing and not has_grid:
-            suggested_grid = self._suggested_grid_for_row(row_ids[0])
+            suggested_grid = self._supercells.suggested_grid(row_ids[0])
             if suggested_grid is not None:
                 common["kpoint_mp_grid"] = suggested_grid
         return common
@@ -1265,7 +1095,7 @@ class PristineRelaxationWidget(QWidget):
                 continue
             removed_labels.append(self._label_at_row(row))
             self._table.removeRow(row)
-            self._row_supercells.pop(row_id, None)
+            self._supercells.matrices.pop(row_id, None)
             self._row_parameter_values.pop(row_id, None)
             self._row_added_advanced.pop(row_id, None)
 
@@ -1309,7 +1139,7 @@ class PristineRelaxationWidget(QWidget):
                 PristineRelaxationRow(
                     label=label,
                     fix_all_cell=self._fix_all_cell_at_row(row_index),
-                    supercell_matrix=self._row_supercells.get(row_id),
+                    supercell_matrix=self._supercells.matrices.get(row_id),
                     parameter_values=dict(self._row_parameter_values.get(row_id, {})),
                     added_advanced=tuple(sorted(self._row_added_advanced.get(row_id, set()))),
                 )
@@ -1369,8 +1199,8 @@ class PristineRelaxationWidget(QWidget):
                     "label": self._label_at_row(row),
                     "fix_all_cell": self._fix_all_cell_at_row(row),
                     "supercell_matrix": (
-                        [list(line) for line in self._row_supercells.get(row_id)]
-                        if self._row_supercells.get(row_id) is not None
+                        [list(line) for line in self._supercells.matrices.get(row_id)]
+                        if self._supercells.matrices.get(row_id) is not None
                         else None
                     ),
                     "params": dict(self._row_parameter_values.get(row_id, {})),
@@ -1389,7 +1219,7 @@ class PristineRelaxationWidget(QWidget):
             self._table.blockSignals(True)
             self._table.setRowCount(0)
             self._next_row_id = 1
-            self._row_supercells = {}
+            self._supercells.matrices.clear()
             self._row_parameter_values = {}
             self._row_added_advanced = {}
 
@@ -1421,18 +1251,7 @@ class PristineRelaxationWidget(QWidget):
                     index = fix_combo.findData(target)
                     fix_combo.setCurrentIndex(index if index >= 0 else 0)
 
-                raw_matrix = entry.get("supercell_matrix")
-                matrix: SupercellMatrix | None = None
-                if isinstance(raw_matrix, list) and len(raw_matrix) == 3:
-                    try:
-                        matrix = (
-                            (int(raw_matrix[0][0]), int(raw_matrix[0][1]), int(raw_matrix[0][2])),
-                            (int(raw_matrix[1][0]), int(raw_matrix[1][1]), int(raw_matrix[1][2])),
-                            (int(raw_matrix[2][0]), int(raw_matrix[2][1]), int(raw_matrix[2][2])),
-                        )
-                    except (TypeError, ValueError, IndexError):
-                        matrix = None
-                self._row_supercells[row_id] = matrix
+                self._supercells.matrices[row_id] = coerce_supercell_matrix(entry.get("supercell_matrix"))
 
                 params = entry.get("params", {})
                 if isinstance(params, dict):

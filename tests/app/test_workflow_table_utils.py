@@ -5,7 +5,9 @@ variant in use so that adopting the helper across widgets cannot silently
 drift the visible text. The table tests pin down ``create_workflow_table``'s
 default chrome (the DL-4 house style) plus every keyword-only option added
 for the raw-``QTableWidget`` conversion sites, so future edits cannot
-silently change the shared defaults out from under existing callers.
+silently change the shared defaults out from under existing callers. The
+``SupercellColumn`` tests pin the supercell combo, its choice handling and the
+k-point suggestions every supercell workflow table shares.
 """
 
 from __future__ import annotations
@@ -14,20 +16,26 @@ import sys
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QPushButton, QTableWidgetItem
+from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QLabel, QPushButton, QTableWidget, QTableWidgetItem
 
 from mufinder.app.workflow_table_utils import confirm_destructive as _real_confirm_destructive
 from mufinder.app import workflow_table_utils
+from mufinder.app import selection_snapshot as selection_snapshot_module
+from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.workflow_table_utils import (
+    MANAGE_SUPERCELLS_TEXT,
     RESET_FAILED_ACTION_TEXT,
     RESET_FAILED_TABLE_TOOLTIP,
     RESETTABLE_ROW_STATUSES,
     RowMenuAction,
+    SupercellColumn,
     bind_reset_failed_context_menu,
     create_workflow_table,
     style_workflow_configure_button,
     workflow_row_status_text,
 )
+from mufinder.castep_io.types import ValueWithUnit
+from mufinder.science.kpoint_grids import spacing_from_grid
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
 
@@ -889,3 +897,150 @@ def test_show_status_message_uses_the_enclosing_main_window_only(qapp) -> None:
 
     # A widget outside any main window is simply ignored.
     workflow_table_utils.show_status_message(QWidget(), "Done")
+
+
+_SUPERCELL_2X2X1 = ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+_CUBIC_4 = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+
+
+def _supercell_table(*, eligibility=None, kpoint_message: QLabel | None = None):
+    """Return a two-row table whose column 0 is a SupercellColumn, plus the hook log."""
+
+    table = QTableWidget(2, 1)
+    calls: list[object] = []
+    column = SupercellColumn(
+        table,
+        column=0,
+        manage_requested=lambda row_id: calls.append(("manage", row_id)),
+        normalize_rows=lambda: calls.append("normalize"),
+        refresh_rows=lambda: calls.append("refresh"),
+        state_changed=lambda: calls.append("state"),
+        eligibility=eligibility,
+        kpoint_message=kpoint_message,
+    )
+    column.set_options([{"label": "2x2x1", "matrix": [list(line) for line in _SUPERCELL_2X2X1]}])
+    for row, row_id in enumerate((11, 12)):
+        column.matrices[row_id] = None
+        table.setCellWidget(row, 0, column.create_combo(table, row_id))
+    return table, column, calls
+
+
+def _combo_labels(combo) -> list[str]:
+    return [combo.itemText(index) for index in range(combo.count())]
+
+
+def test_supercell_column_options_skip_malformed_entries(qapp) -> None:
+    column = SupercellColumn(QTableWidget(), column=0, manage_requested=print, refresh_rows=print, state_changed=print)
+    column.set_options(
+        [
+            {"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]},
+            {"label": "", "matrix": [[3, 0, 0], [0, 3, 0], [0, 0, 3]]},
+            {"label": "broken", "matrix": [[1, 0, 0]]},
+            "not an option",
+        ]
+    )
+
+    assert column.options == [("2x2x1", _SUPERCELL_2X2X1)]
+
+
+def test_supercell_combo_lists_options_and_shows_a_custom_row_matrix(qapp) -> None:
+    table, column, _calls = _supercell_table()
+    combo = table.cellWidget(0, 0)
+
+    assert _combo_labels(combo) == ["Unit cell", "2x2x1", MANAGE_SUPERCELLS_TEXT]
+    assert combo.currentText() == "Unit cell"
+    assert combo.itemData(0) == ("matrix", None)
+    assert combo.itemData(combo.count() - 1) == ("create", None)
+
+    column.matrices[11] = _SUPERCELL_2X2X1
+    column.populate_combo(combo, 11)
+    assert combo.currentText() == "2x2x1"
+
+    custom = ((1, 1, 0), (0, 1, 0), (0, 0, 2))
+    column.matrices[11] = custom
+    column.populate_combo(combo, 11)
+    assert _combo_labels(combo) == ["Unit cell", "2x2x1", "Custom 3x3", MANAGE_SUPERCELLS_TEXT]
+    assert combo.currentData() == ("matrix", custom)
+
+
+def test_supercell_combo_choice_stores_the_matrix_and_runs_the_hooks_in_order(qapp) -> None:
+    message = QLabel()
+    table, column, calls = _supercell_table(kpoint_message=message)
+    column.set_host_lattice(_CUBIC_4)
+    column.set_kpoint_reference((4, 4, 4), _CUBIC_4)
+    combo = table.cellWidget(0, 0)
+
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+
+    assert column.matrices == {11: _SUPERCELL_2X2X1, 12: None}
+    assert calls == ["normalize", "refresh", "state"]
+    assert message.text() == "K-point grid adjusted from 4x4x4 to 2x2x4 for equivalent density."
+    assert not message.isHidden()
+
+    combo.setCurrentIndex(combo.findText("Unit cell"))
+    assert column.matrices[11] is None
+    assert message.text() == ""
+    assert message.isHidden()
+
+
+def test_supercell_manage_entry_requests_the_manager_and_keeps_the_row(qapp) -> None:
+    table, column, calls = _supercell_table()
+    combo = table.cellWidget(0, 0)
+
+    combo.setCurrentIndex(combo.findText(MANAGE_SUPERCELLS_TEXT))
+
+    assert calls == [("manage", 11)]
+    assert column.matrices[11] is None
+    assert combo.currentText() == "Unit cell"
+
+
+def test_supercell_choice_cancelled_from_the_selection_prompt_changes_nothing(qapp, monkeypatch) -> None:
+    table, column, calls = _supercell_table()
+    monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.CANCEL)
+    combo = table.cellWidget(0, 0)
+    combo.selection_snapshot_rows = (0, 1)
+
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+
+    assert column.matrices == {11: None, 12: None}
+    assert combo.currentText() == "Unit cell"
+    assert calls == []
+
+
+def test_supercell_choice_applies_to_the_eligible_selected_rows(qapp, monkeypatch) -> None:
+    table, column, calls = _supercell_table(eligibility=lambda row_id: row_id != 12)
+    table.insertRow(2)
+    column.matrices[13] = None
+    table.setCellWidget(2, 0, column.create_combo(table, 13))
+    monkeypatch.setattr(
+        selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED
+    )
+    combo = table.cellWidget(0, 0)
+    combo.selection_snapshot_rows = (0, 1, 2)
+
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+
+    assert column.matrices == {11: _SUPERCELL_2X2X1, 12: None, 13: _SUPERCELL_2X2X1}
+    assert calls == ["normalize", "refresh", "state"]
+
+
+def test_supercell_column_suggests_grid_and_spacing_from_the_project_reference(qapp) -> None:
+    _table, column, _calls = _supercell_table()
+    column.matrices[11] = _SUPERCELL_2X2X1
+
+    # No host lattice or project grid yet: nothing to suggest.
+    assert column.suggested_grid(11) is None
+    assert column.suggested_spacing() is None
+    assert column.kpoint_adjustment_text(11) == ""
+
+    column.set_host_lattice(_CUBIC_4)
+    column.set_kpoint_reference((4, 4, 4), _CUBIC_4)
+    assert column.suggested_grid(11) == (2, 2, 4)
+    assert column.suggested_grid(12) == (4, 4, 4)
+    assert column.suggested_spacing() == ValueWithUnit(float(spacing_from_grid(_CUBIC_4, (4, 4, 4))), "1/ang")
+    assert column.kpoint_adjustment_text(12) == ""
+
+    column.set_kpoint_reference((1, 1, 1), _CUBIC_4)
+    assert column.suggested_spacing() is None
+    column.set_kpoint_reference((4, 4, 4), None)
+    assert column.suggested_spacing() is None
