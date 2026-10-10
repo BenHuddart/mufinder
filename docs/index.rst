@@ -50,7 +50,6 @@ and the quality standards that must be maintained as development expands.
 
    project_specification
    compatibility_policy
-   hpc_security_audit
    api
 
 .. toctree::
