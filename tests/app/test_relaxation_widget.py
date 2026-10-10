@@ -10,7 +10,6 @@ from PySide6.QtWidgets import QComboBox, QDialog, QHeaderView, QMessageBox, QPus
 from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
-from mufinder.app import relaxation_widget as relaxation_widget_module
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_widget import PristineRelaxationWidget
 from mufinder.app.workflow_parameters import kpoint_exclusive_hint
@@ -822,7 +821,7 @@ def test_relaxation_configure_button_applies_to_snapshot_rows(qapp, monkeypatch)
     second_id = widget._row_id_at(1)
     third_id = widget._row_id_at(2)
 
-    monkeypatch.setattr(widget, "_open_row_parameter_dialog", _fake_dialog)
+    monkeypatch.setattr(widget, "_open_relaxation_parameter_dialog", _fake_dialog)
     monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
 
     btn = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
@@ -838,7 +837,7 @@ def test_relaxation_configure_button_single_row_no_prompt(qapp, monkeypatch):
     opened_for: list = []
     monkeypatch.setattr(
         PristineRelaxationWidget,
-        "_open_row_parameter_dialog",
+        "_open_relaxation_parameter_dialog",
         lambda self, row_ids: opened_for.extend(row_ids),
     )
     prompts: list = []
@@ -926,17 +925,17 @@ def test_relaxation_batch_configure_applies_to_all_selected_rows(
     assert first_id is not None and third_id is not None and unselected_id is not None
 
     monkeypatch.setattr(
-        relaxation_widget_module.ParameterDialog,
+        ParameterDialog,
         "exec",
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(
-        relaxation_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "GEOMETRYOPTIMIZATION", "max_scf_cycles": 77},
     )
     monkeypatch.setattr(
-        relaxation_widget_module.ParameterDialog,
+        ParameterDialog,
         "advanced_names",
         lambda _self: ("basis_precision",),
     )
@@ -965,7 +964,7 @@ def test_relaxation_batch_configure_empty_selection_shows_info(
     opened: list[int] = []
     monkeypatch.setattr(
         PristineRelaxationWidget,
-        "_open_row_parameter_dialog",
+        "_open_relaxation_parameter_dialog",
         lambda _self, _ids: opened.append(1),
     )
 
@@ -991,7 +990,7 @@ def test_relaxation_batch_configure_uses_selection_snapshot_not_collapsed(
     captured: list[tuple[int, ...]] = []
     monkeypatch.setattr(
         PristineRelaxationWidget,
-        "_open_row_parameter_dialog",
+        "_open_relaxation_parameter_dialog",
         lambda _self, ids: captured.append(ids),
     )
     # A multi-row snapshot prompts (via selection_snapshot.resolve_target_keys)
@@ -1489,9 +1488,9 @@ def test_relaxation_batch_configure_keeps_each_rows_own_differing_values(
         dialog._rows["xc_functional"].editor.set_value(other_xc)
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(relaxation_widget_module.ParameterDialog, "exec", _fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", _fake_exec)
 
-    widget._open_row_parameter_dialog((first_id, second_id))
+    widget._open_relaxation_parameter_dialog((first_id, second_id))
 
     assert mixed == [{"max_scf_cycles"}]
     first, second = (widget._row_parameter_values[row_id] for row_id in (first_id, second_id))

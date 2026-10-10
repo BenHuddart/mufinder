@@ -102,7 +102,6 @@ WORKFLOW_WIDGET_MODULES = (
 
 PINNED_DUPLICATED_WIDGET_METHODS: dict[str, int] = {
         "_add_row": 3,
-        "_advanced_names_for_rows": 2,
         "_build_config_or_warn": 3,
         "_build_layout": 5,
         "_build_parameter_specs": 3,
@@ -127,7 +126,6 @@ PINNED_DUPLICATED_WIDGET_METHODS: dict[str, int] = {
         "_on_simulation_cell_combo_changed": 2,
         "_on_supercell_combo_changed": 2,
         "_on_table_item_changed": 2,
-        "_open_row_parameter_dialog": 2,
         "_populate_supercell_combo": 2,
         "_refresh_all_rows": 3,
         "_refresh_batch_button_state": 5,

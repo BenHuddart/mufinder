@@ -1,9 +1,8 @@
 """Dialog for continuing a terminal relaxation job with an in-place parameter edit.
 
 ``ContinueRelaxationDialog`` is a :class:`~mufinder.app.param_dialog.ParameterDialog`
-subclass (the same base every relaxation-style config dialog uses -- see
-``mufinder.app.workflow_dialogs`` and the ``_open_row_parameter_dialog`` helpers
-in ``relaxation_widget.py`` / ``muon_relaxation_widget.py``) that adds a live
+subclass (the same base every row parameter dialog uses -- see
+``mufinder.app.workflow_dialogs.run_row_parameter_dialog``) that adds a live
 keyword-level diff of the row's old vs. new rendered ``.param`` text, an
 informational checkpoint-probe line, and a submit summary. It performs no I/O
 and knows nothing about ``Job``/``WorkflowDefinition``/SSH: everything it needs
@@ -198,9 +197,8 @@ class ContinueRelaxationDialog(ParameterDialog):
         self._old_param_text = old_param_text
         self._new_param_text = old_param_text
 
-        # Mirrors the call sequence every existing row-parameter dialog uses
-        # (see relaxation_widget.py / muon_relaxation_widget.py
-        # _open_row_parameter_dialog): seed values first, then the advanced
+        # Mirrors the call sequence of every row parameter dialog (see
+        # workflow_dialogs.run_row_parameter_dialog): seed values first, then the advanced
         # set, so the shown editors reflect exactly what the row was
         # continuing from before any edits are made.
         self.set_values(dict(initial_values), preferred_exclusive=kpoint_exclusive_hint([initial_values]))

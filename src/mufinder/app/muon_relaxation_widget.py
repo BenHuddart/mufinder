@@ -21,7 +21,6 @@ from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QDialog,
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
@@ -38,13 +37,8 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.active_host_badge import ActiveHostBadge
-from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.workflow_parameters import (
-    merge_batch_advanced,
-    merge_batch_values,
-    mixed_parameter_names,
-    kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     seed_xc_functional_default,
 )
@@ -93,6 +87,7 @@ from mufinder.app.selection_snapshot import (
     SelectionSnapshotToolButton,
     resolve_target_keys,
 )
+from mufinder.app.workflow_dialogs import RowParameterRequest, run_row_parameter_dialog
 from mufinder.app.workflow_parameters import clone_spec_for_workflow
 from mufinder.app.workflow_parameters import drop_default_conflicts
 from mufinder.app.workflow_parameters import sanitize_parameter_mapping
@@ -925,7 +920,7 @@ class MuonRelaxationWidget(QWidget):
                 action="Configure parameters for",
             )
             if target_row_ids:
-                self._open_row_parameter_dialog(target_row_ids)
+                self._open_muon_parameter_dialog(target_row_ids)
         elif kind == "remove":
             target_row_ids = resolve_target_keys(
                 widget,
@@ -1239,7 +1234,7 @@ class MuonRelaxationWidget(QWidget):
                 f"{excluded} imported row(s) were left out of this edit because their "
                 "parameters describe calculations that have already run.",
             )
-        self._open_row_parameter_dialog(editable)
+        self._open_muon_parameter_dialog(editable)
 
     def _delete_selected_rows(self, table: QTableWidget | None = None) -> None:
         target = table or self._active_table()
@@ -1291,12 +1286,6 @@ class MuonRelaxationWidget(QWidget):
                 common["kpoint_mp_grid"] = suggested_grid
         return common
 
-    def _advanced_names_for_rows(self, row_ids: tuple[int, ...]) -> set[str]:
-        names: set[str] = set()
-        for row_id in row_ids:
-            names.update(self._row_added_advanced.get(row_id, set()))
-        return names
-
     def _row_parameters_locked(self, row_ids: tuple[int, ...]) -> bool:
         for row_id in row_ids:
             # An imported row's parameters describe a run that already happened;
@@ -1321,7 +1310,7 @@ class MuonRelaxationWidget(QWidget):
         """Return the ``ContinueRelaxationDialog`` seed kwargs for one row.
 
         ``key`` must be the row's charge-qualified key. Mirrors
-        :meth:`_open_row_parameter_dialog`'s single-row seeding (effective
+        :meth:`_open_muon_parameter_dialog`'s single-row seeding (effective
         parameter values, added-advanced set, and the same locked task/
         fix-cell/write-cell-structure/charge keywords), for the one row the
         Continue action targets. MainWindow supplies everything this widget
@@ -1354,7 +1343,7 @@ class MuonRelaxationWidget(QWidget):
             "species_options": self._parameter_species_options,
         }
 
-    def _open_row_parameter_dialog(self, row_ids: tuple[int, ...]) -> None:
+    def _open_muon_parameter_dialog(self, row_ids: tuple[int, ...]) -> None:
         row_locations = [
             location
             for row_id in row_ids
@@ -1369,50 +1358,32 @@ class MuonRelaxationWidget(QWidget):
         if len(charges) == 1:
             charge_state = next(iter(charges))
             charge_text = f"{muon_charge_for_state(charge_state):+d} ({muon_charge_state_label(charge_state)})"
-        read_only = self._row_parameters_locked(row_ids)
-        dialog_kwargs = {
-            "specs": self._specs,
-            "workflow_stage": _WORKFLOW_STAGE,
-            "locked_values": {
-                "task": "GEOMETRYOPTIMIZATION",
-                "fix_all_cell": "TRUE (required for muon relaxation)",
-                "write_cell_structure": "TRUE (required for relaxed-cell outputs)",
-                "charge": charge_text,
-            },
-            "intro_text": "Included rows: " + ", ".join(intro_labels),
-            "species_options": self._parameter_species_options,
-            "parent": self,
-        }
-        if read_only:
-            dialog_kwargs["read_only"] = True
-        dialog = ParameterDialog(**dialog_kwargs)
-        dialog.setWindowTitle(
-            "Inspect Muon Relaxation Parameters" if read_only else "Configure Muon Relaxation Parameters"
+        result = run_row_parameter_dialog(
+            RowParameterRequest(
+                specs=self._specs,
+                workflow_stage=_WORKFLOW_STAGE,
+                subject="Muon Relaxation Parameters",
+                values=self._common_params_for_rows(row_ids),
+                row_values={row_id: self._effective_params_for_row(row_id) for row_id in row_ids},
+                row_advanced={row_id: self._row_added_advanced.get(row_id, set()) for row_id in row_ids},
+                sanitize=lambda values: sanitize_parameter_mapping(values, self._specs_by_name),
+                locked_values={
+                    "task": "GEOMETRYOPTIMIZATION",
+                    "fix_all_cell": "TRUE (required for muon relaxation)",
+                    "write_cell_structure": "TRUE (required for relaxed-cell outputs)",
+                    "charge": charge_text,
+                },
+                read_only=self._row_parameters_locked(row_ids),
+                intro_text="Included rows: " + ", ".join(intro_labels),
+                species_options=self._parameter_species_options,
+            ),
+            parent=self,
         )
-        kpoint_hint = kpoint_exclusive_hint(
-            self._effective_params_for_row(r) for r in row_ids
-        )
-        dialog.set_values(self._common_params_for_rows(row_ids), preferred_exclusive=kpoint_hint)
-        dialog.set_advanced_names(self._advanced_names_for_rows(row_ids))
-        effective_by_row = {row_id: self._effective_params_for_row(row_id) for row_id in row_ids}
-        dialog.set_mixed_names(mixed_parameter_names(effective_by_row.values()))
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        if result is None:
             return
-        if read_only:
-            return
-        # Parameters that differ between the rows and were left alone keep each
-        # row's own value; everything else follows the dialog.
-        values = sanitize_parameter_mapping(dialog.collect_values(), self._specs_by_name)
-        advanced = set(dialog.advanced_names())
-        untouched = dialog.untouched_mixed_names()
-        for row_id in row_ids:
-            self._row_parameter_values[row_id] = self._strip_implicit_row_defaults(
-                row_id,
-                merge_batch_values(values, effective_by_row[row_id], untouched),
-            )
-            self._row_added_advanced[row_id] = merge_batch_advanced(
-                advanced, self._row_added_advanced.get(row_id, set()), untouched
-            )
+        for row_id, values in result.row_values.items():
+            self._row_parameter_values[row_id] = self._strip_implicit_row_defaults(row_id, values)
+            self._row_added_advanced[row_id] = result.row_advanced[row_id]
         self._refresh_all_rows()
         self._emit_state()
 

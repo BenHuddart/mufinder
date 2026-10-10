@@ -23,17 +23,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_adapter import suggested_grid_for_row
 from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.uep_types import SupercellMatrix, UepConfig, UepRunState, UepSourceRow
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.workflow_parameters import (
-    merge_batch_advanced,
-    merge_batch_values,
-    mixed_parameter_names,
-    kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     seed_xc_functional_default,
 )
@@ -62,6 +57,7 @@ from mufinder.app.selection_snapshot import (
     SelectionSnapshotToolButton,
     resolve_target_keys,
 )
+from mufinder.app.workflow_dialogs import RowParameterRequest, run_row_parameter_dialog
 from mufinder.app.workflow_parameters import STRUCTURE_CONTROLLED_CELL_KEYWORDS
 from mufinder.app.workflow_parameters import clone_spec_for_workflow
 from mufinder.app.workflow_parameters import sanitize_parameter_mapping
@@ -577,10 +573,7 @@ class UEPWidget(QWidget):
             )
             if not target_row_ids:
                 return
-            if len(target_row_ids) == 1:
-                self._configure_row(target_row_ids[0])
-            else:
-                self._configure_rows(target_row_ids)
+            self._configure_rows(target_row_ids)
         elif kind == "remove":
             target_row_ids = resolve_target_keys(
                 widget,
@@ -617,147 +610,43 @@ class UEPWidget(QWidget):
                 return
         combo.setCurrentIndex(0)
 
-    def _configure_row(self, row_id: int) -> None:
-        read_only = workflow_row_is_locked(self._runtime_state_for_row(row_id).status)
-        dialog_kwargs = {
-            "specs": self._specs,
-            "workflow_stage": "uep",
-            "locked_values": {
-                "task": "SINGLEPOINT",
-                "write_formatted_density": "TRUE (required for UEP source analysis)",
-            },
-            "intro_text": (
-                "UEP source jobs are CASTEP single-point calculations. "
-                "Formatted density output stays enabled because the UEP analysis requires `.den_fmt`."
-            ),
-            "species_options": self._parameter_species_options,
-            "parent": self,
-        }
-        if read_only:
-            dialog_kwargs["read_only"] = True
-        dialog = ParameterDialog(**dialog_kwargs)
-        if hasattr(dialog, "setWindowTitle"):
-            dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
-        values = self._effective_params_for_row(row_id)
-        kpoint_hint = kpoint_exclusive_hint([values])
-        dialog.set_values(values, preferred_exclusive=kpoint_hint)
-        dialog.set_advanced_names(self._row_added_advanced.get(row_id, set()))
-        if dialog.exec() != dialog.DialogCode.Accepted:
-            return
-        if read_only:
-            return
-
-        resolved = sanitize_parameter_mapping(dialog.collect_values(), self._specs_by_name)
-        resolved["write_formatted_density"] = True
-        resolved["task"] = "SINGLEPOINT"
-        self._row_parameter_values[row_id] = resolved
-        self._row_added_advanced[row_id] = set(dialog.advanced_names())
-        self._emit_state()
-
     def _configure_rows(self, row_ids: tuple[int, ...]) -> None:
-        if not row_ids:
-            return
-        values = self._common_params_for_rows(row_ids)
-        kpoint_hint = kpoint_exclusive_hint(
-            self._effective_params_for_row(r) for r in row_ids
+        result = run_row_parameter_dialog(
+            RowParameterRequest(
+                specs=self._specs,
+                workflow_stage="uep",
+                subject="UEP Parameters",
+                values=self._common_params_for_rows(row_ids),
+                row_values={row_id: self._effective_params_for_row(row_id) for row_id in row_ids},
+                row_advanced={row_id: self._row_added_advanced.get(row_id, set()) for row_id in row_ids},
+                sanitize=lambda values: sanitize_parameter_mapping(values, self._specs_by_name),
+                locked_values={
+                    "task": "SINGLEPOINT",
+                    "write_formatted_density": "TRUE (required for UEP source analysis)",
+                },
+                read_only=any(
+                    workflow_row_is_locked(self._runtime_state_for_row(row_id).status)
+                    for row_id in row_ids
+                ),
+                intro_text=(
+                    "UEP source jobs are CASTEP single-point calculations. "
+                    "Formatted density output stays enabled because the UEP analysis requires `.den_fmt`."
+                ),
+                species_options=self._parameter_species_options,
+            ),
+            parent=self,
         )
-        read_only = any(
-            workflow_row_is_locked(self._runtime_state_for_row(row_id).status)
-            for row_id in row_ids
-        )
-        dialog_kwargs = {
-            "specs": self._specs,
-            "workflow_stage": "uep",
-            "locked_values": {
-                "task": "SINGLEPOINT",
-                "write_formatted_density": "TRUE (required for UEP source analysis)",
-            },
-            "species_options": self._parameter_species_options,
-            "parent": self,
-        }
-        if read_only:
-            dialog_kwargs["read_only"] = True
-        dialog = ParameterDialog(**dialog_kwargs)
-        if hasattr(dialog, "setWindowTitle"):
-            dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
-        dialog.set_values(values, preferred_exclusive=kpoint_hint)
-        names: set[str] = set()
-        for row_id in row_ids:
-            names.update(self._row_added_advanced.get(row_id, set()))
-        dialog.set_advanced_names(names)
-        effective_by_row = {row_id: self._effective_params_for_row(row_id) for row_id in row_ids}
-        dialog.set_mixed_names(mixed_parameter_names(effective_by_row.values()))
-        if dialog.exec() != dialog.DialogCode.Accepted:
+        if result is None:
             return
-        if read_only:
-            return
-        # Parameters that differ between the rows and were left alone keep each
-        # row's own value; everything else follows the dialog.
-        collected = sanitize_parameter_mapping(dialog.collect_values(), self._specs_by_name)
-        advanced = set(dialog.advanced_names())
-        untouched = dialog.untouched_mixed_names()
-        for row_id in row_ids:
-            row_values = merge_batch_values(collected, effective_by_row[row_id], untouched)
-            row_values["write_formatted_density"] = True
-            row_values["task"] = "SINGLEPOINT"
-            self._row_parameter_values[row_id] = row_values
-            self._row_added_advanced[row_id] = merge_batch_advanced(
-                advanced, self._row_added_advanced.get(row_id, set()), untouched
-            )
+        for row_id, values in result.row_values.items():
+            values["write_formatted_density"] = True
+            values["task"] = "SINGLEPOINT"
+            self._row_parameter_values[row_id] = values
+            self._row_added_advanced[row_id] = result.row_advanced[row_id]
         self._emit_state()
 
     def _on_batch_configure_clicked(self) -> None:
-        row_ids = self._selected_row_ids()
-        if not row_ids:
-            return
-        values = self._common_params_for_rows(row_ids)
-        kpoint_hint = kpoint_exclusive_hint(
-            self._effective_params_for_row(r) for r in row_ids
-        )
-        read_only = any(
-            workflow_row_is_locked(self._runtime_state_for_row(row_id).status)
-            for row_id in row_ids
-        )
-        dialog_kwargs = {
-            "specs": self._specs,
-            "workflow_stage": "uep",
-            "locked_values": {
-                "task": "SINGLEPOINT",
-                "write_formatted_density": "TRUE (required for UEP source analysis)",
-            },
-            "species_options": self._parameter_species_options,
-            "parent": self,
-        }
-        if read_only:
-            dialog_kwargs["read_only"] = True
-        dialog = ParameterDialog(**dialog_kwargs)
-        if hasattr(dialog, "setWindowTitle"):
-            dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
-        dialog.set_values(values, preferred_exclusive=kpoint_hint)
-        names: set[str] = set()
-        for row_id in row_ids:
-            names.update(self._row_added_advanced.get(row_id, set()))
-        dialog.set_advanced_names(names)
-        effective_by_row = {row_id: self._effective_params_for_row(row_id) for row_id in row_ids}
-        dialog.set_mixed_names(mixed_parameter_names(effective_by_row.values()))
-        if dialog.exec() != dialog.DialogCode.Accepted:
-            return
-        if read_only:
-            return
-        # Parameters that differ between the rows and were left alone keep each
-        # row's own value; everything else follows the dialog.
-        collected = sanitize_parameter_mapping(dialog.collect_values(), self._specs_by_name)
-        advanced = set(dialog.advanced_names())
-        untouched = dialog.untouched_mixed_names()
-        for row_id in row_ids:
-            row_values = merge_batch_values(collected, effective_by_row[row_id], untouched)
-            row_values["write_formatted_density"] = True
-            row_values["task"] = "SINGLEPOINT"
-            self._row_parameter_values[row_id] = row_values
-            self._row_added_advanced[row_id] = merge_batch_advanced(
-                advanced, self._row_added_advanced.get(row_id, set()), untouched
-            )
-        self._emit_state()
+        self._configure_rows(self._selected_row_ids())
 
     def _common_params_for_rows(self, row_ids: tuple[int, ...]) -> dict[str, object]:
         values_by_row = [self._effective_params_for_row(row_id) for row_id in row_ids]
