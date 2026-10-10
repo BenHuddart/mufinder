@@ -28,16 +28,7 @@ from mufinder.app.relaxation_analysis_widget import (
 )
 from mufinder.science.relaxation_analysis import RelaxedMuonSite
 from mufinder.domain.models import Structure
-
-
-def _host_structure() -> Structure:
-    return Structure(
-        id=uuid4(),
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
-    )
+from tests.support.structures import host_structure
 
 
 def _relaxed_site(host: Structure, fractional: tuple[float, float, float], energy: float) -> RelaxedMuonSite:
@@ -196,7 +187,7 @@ def test_relaxation_analysis_add_dialog_shows_relative_energies(qapp) -> None:
 
 
 def test_relaxation_clustering_dialog_close_shuts_down_viewer(qapp, monkeypatch) -> None:
-    host = _host_structure()
+    host = host_structure()
     workspace = default_workspace_state(
         name="Relaxation analysis",
         charge_state="positive_muon",
@@ -222,7 +213,7 @@ def test_relaxation_clustering_dialog_close_shuts_down_viewer(qapp, monkeypatch)
 
 
 def test_relaxation_connected_graph_uses_paper_style_nodes_and_edges(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     workspace = default_workspace_state(
         name="Relaxation analysis",
         charge_state="positive_muon",
@@ -267,7 +258,7 @@ def test_relaxation_connected_graph_uses_paper_style_nodes_and_edges(qapp) -> No
 
 
 def test_relaxation_tolerance_scan_plot_uses_convergence_style(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     workspace = default_workspace_state(
         name="Relaxation analysis",
         charge_state="positive_muon",
@@ -294,7 +285,7 @@ def test_relaxation_tolerance_scan_plot_uses_convergence_style(qapp) -> None:
 
 
 def test_relaxation_tolerance_scan_does_not_shrink_summary_headers(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     workspace = default_workspace_state(
         name="Relaxation analysis",
         charge_state="positive_muon",
@@ -427,7 +418,7 @@ def test_displacement_view_does_not_overlay_second_muon_when_relaxed_structure_c
 
 
 def test_relaxation_analysis_widget_opens_displacements_without_clustering(qapp, monkeypatch) -> None:
-    host = _host_structure()
+    host = host_structure()
     relaxed_id = uuid4()
     source = CompletedRelaxationAnalysisSource(
         job_id=uuid4(),
@@ -485,7 +476,7 @@ def test_relaxation_analysis_widget_opens_displacements_without_clustering(qapp,
 
 
 def test_relaxation_analysis_workspace_show_shifted_checkbox_uses_transparent_background(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     source = CompletedRelaxationAnalysisSource(
         job_id=uuid4(),
         job_label="Site A",
@@ -523,7 +514,7 @@ def test_relaxation_analysis_workspace_show_shifted_checkbox_uses_transparent_ba
 
 
 def test_relaxation_analysis_export_cif_writes_all_relaxed_sites(qapp, tmp_path, monkeypatch) -> None:
-    host = _host_structure()
+    host = host_structure()
     source_a = CompletedRelaxationAnalysisSource(
         job_id=uuid4(),
         job_label="Site A",
@@ -584,7 +575,7 @@ def test_relaxation_analysis_export_cif_writes_all_relaxed_sites(qapp, tmp_path,
 def test_relaxation_analysis_export_cif_warns_when_site_coincides_with_host_atom(
     qapp, tmp_path, monkeypatch
 ) -> None:
-    host = _host_structure()
+    host = host_structure()
     # Coincides exactly with the host's first Si atom at (0, 0, 0).
     source = CompletedRelaxationAnalysisSource(
         job_id=uuid4(),
@@ -631,7 +622,7 @@ def test_relaxation_analysis_export_cif_warns_when_site_coincides_with_host_atom
 
 
 def test_relaxation_analysis_export_cif_reports_when_workspace_empty(qapp, monkeypatch) -> None:
-    host = _host_structure()
+    host = host_structure()
     workspace = default_workspace_state(
         name="Relaxation analysis",
         charge_state="positive_muon",
@@ -667,7 +658,7 @@ def test_relaxation_analysis_export_cif_reports_when_workspace_empty(qapp, monke
 
 
 def test_relaxation_clustering_dialog_show_does_not_warn_about_collapsed_layout(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     workspace = default_workspace_state(
         name="Relaxation analysis",
         charge_state="positive_muon",
@@ -696,7 +687,7 @@ def test_relaxation_clustering_dialog_show_does_not_warn_about_collapsed_layout(
 
 
 def test_relaxation_clustering_dialog_switches_to_hierarchical_when_shown(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     workspace = default_workspace_state(
         name="Relaxation analysis",
         charge_state="positive_muon",
@@ -735,7 +726,7 @@ def test_relaxation_clustering_dialog_switches_to_hierarchical_when_shown(qapp) 
 
 
 def test_relaxation_clustering_dialog_shows_only_active_method_controls(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     workspace = default_workspace_state(
         name="Relaxation analysis",
         charge_state="positive_muon",
@@ -878,7 +869,7 @@ def test_graph_edge_strip_is_a_rectangle_of_the_requested_width() -> None:
 
 
 def test_relaxation_connected_graph_makes_dense_component_edges_thin_and_translucent(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     # Eight sites within 0.25 A of each other: every pair is connected (28 edges).
     sites = [
         _relaxed_site(host, (0.100 + 0.008 * (index % 4), 0.100 + 0.008 * (index // 4), 0.100), -10.0 + 0.01 * index)

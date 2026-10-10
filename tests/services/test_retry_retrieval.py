@@ -20,11 +20,12 @@ import pytest
 
 import mufinder.services.cluster_runner as cluster_runner_module
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import Job
 from mufinder.services.cluster_runner import ClusterJobRunner
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.project_service import ProjectDocument, ProjectService
+from tests.support.jobs import make_job
 
 
 # ---------------------------------------------------------------------------
@@ -76,20 +77,10 @@ class _FakeScheduler:
 # ---------------------------------------------------------------------------
 # ProjectService.retry_job_retrieval
 # ---------------------------------------------------------------------------
-def _job(status: JobStatus, **kwargs: object) -> Job:
-    return Job(
-        label="job",
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_cutoff",
-        status=status,
-        **kwargs,  # type: ignore[arg-type]
-    )
-
-
 @pytest.mark.parametrize("source", [JobStatus.FAILED, JobStatus.STOPPED])
 def test_retry_job_retrieval_moves_terminal_to_retrieving(source: JobStatus) -> None:
     service = ProjectService()
-    job = _job(source, remote_job_id="99", remote_directory="/remote/job")
+    job = make_job(status=source, remote_job_id="99", remote_directory="/remote/job")
     job.error_message = "retrieval blew up"
 
     service.retry_job_retrieval(job)
@@ -107,7 +98,7 @@ def test_retry_job_retrieval_moves_terminal_to_retrieving(source: JobStatus) -> 
 )
 def test_retry_job_retrieval_rejects_illegal_source(source: JobStatus) -> None:
     service = ProjectService()
-    job = _job(source)
+    job = make_job(status=source)
     with pytest.raises(ValueError, match="Invalid job transition"):
         service.retry_job_retrieval(job)
     assert job.status == source
@@ -231,8 +222,8 @@ def _controller_with_job(
 
 
 def test_prepare_retry_retrieval_creates_fresh_retrieving_run(tmp_path: Path) -> None:
-    job = _job(
-        JobStatus.FAILED,
+    job = make_job(
+        status=JobStatus.FAILED,
         execution_target="scarf",
         remote_job_id="99",
         remote_directory="/remote/job",
@@ -257,8 +248,8 @@ def test_prepare_retry_retrieval_creates_fresh_retrieving_run(tmp_path: Path) ->
 
 
 def test_prepare_retry_retrieval_increments_run_index_over_prior_run(tmp_path: Path) -> None:
-    job = _job(
-        JobStatus.FAILED,
+    job = make_job(
+        status=JobStatus.FAILED,
         execution_target="scarf",
         remote_job_id="99",
         remote_directory="/remote/job",
@@ -287,8 +278,8 @@ def test_retry_completion_lands_on_fresh_run_not_the_prior_terminal_run(
 
     from mufinder.domain.models import CalculationRun, Result
 
-    job = _job(
-        JobStatus.FAILED,
+    job = make_job(
+        status=JobStatus.FAILED,
         execution_target="scarf",
         remote_job_id="99",
         remote_directory="/remote/job",
@@ -329,8 +320,8 @@ def test_retry_completion_lands_on_fresh_run_not_the_prior_terminal_run(
     ],
 )
 def test_prepare_retry_retrieval_returns_none_when_ineligible(mutate, tmp_path: Path) -> None:
-    job = _job(
-        JobStatus.FAILED,
+    job = make_job(
+        status=JobStatus.FAILED,
         execution_target="scarf",
         remote_job_id="99",
         remote_directory="/remote/job",

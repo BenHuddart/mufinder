@@ -7,16 +7,7 @@ import pytest
 from mufinder.app.uep_adapter import expand_uep_jobs
 from mufinder.app.uep_types import UepConfig, UepSourceRow
 from mufinder.castep_io import write_cell
-from mufinder.domain.models import Structure
-
-
-def _host_structure() -> Structure:
-    return Structure(
-        label="Si",
-        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
-    )
+from tests.support.structures import si_pair_host
 
 
 def test_expand_uep_jobs_applies_project_defaults() -> None:
@@ -31,7 +22,7 @@ def test_expand_uep_jobs_applies_project_defaults() -> None:
     )
 
     expansion = expand_uep_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=650.0,
         project_kpoint_grid=(4, 4, 4),
@@ -60,7 +51,7 @@ def test_expand_uep_jobs_uses_exact_project_grid_for_unit_cell_with_reference_la
             ),
         ),
     )
-    host = _host_structure()
+    host = si_pair_host()
     host.lattice_vectors = [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]]
 
     expansion = expand_uep_jobs(
@@ -90,7 +81,7 @@ def test_expand_uep_jobs_forces_formatted_density_even_when_disabled_in_row() ->
     )
 
     expansion = expand_uep_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=None,
         project_kpoint_grid=None,
@@ -114,7 +105,7 @@ def test_expand_uep_jobs_uses_row_label_verbatim_for_job_suffix() -> None:
     )
 
     expansion = expand_uep_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=None,
         project_kpoint_grid=None,
@@ -138,7 +129,7 @@ def test_expand_uep_jobs_does_not_prepend_source_when_row_label_lacks_it() -> No
     )
 
     expansion = expand_uep_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=None,
         project_kpoint_grid=None,
@@ -158,7 +149,7 @@ def test_expand_uep_jobs_applies_project_xc_functional_unless_row_sets_one() -> 
     )
 
     expansion = expand_uep_jobs(
-        host_structure=_host_structure(),
+        host_structure=si_pair_host(),
         config=config,
         project_cutoff_energy=650.0,
         project_kpoint_grid=(4, 4, 4),

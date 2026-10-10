@@ -3,12 +3,12 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 from pathlib import Path
-from uuid import UUID
 
-from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.enums import FailureReason, JobStatus
 from mufinder.domain.models import Result, utc_now
 from mufinder.services.job_execution_controller import ClusterJobSubmission, JobExecutionController
 from mufinder.services.project_service import ProjectDocument, ProjectService
+from tests.support.jobs import make_job
 
 
 class FakeLocalRunner:
@@ -55,18 +55,9 @@ def _controller(
     )
 
 
-def _job(service: ProjectService, document: ProjectDocument, label: str = "job") -> UUID:
-    return service.add_job(
-        document,
-        label=label,
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_cutoff",
-    ).id
-
-
 def test_local_submission_creates_run_and_records_submission(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "local-job")
+    job_id = make_job("local-job", service=service, document=document).id
     runner = FakeLocalRunner()
     controller = _controller(
         document=document,
@@ -99,7 +90,7 @@ def test_local_submission_creates_run_and_records_submission(tmp_path: Path) -> 
 
 def test_local_resubmission_accepts_failed_job_and_creates_next_run(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "local-retry")
+    job_id = make_job("local-retry", service=service, document=document).id
     job = document.jobs[job_id]
     job.status = JobStatus.FAILED
     job.error_message = "previous failure"
@@ -132,7 +123,7 @@ def test_local_resubmission_accepts_failed_job_and_creates_next_run(tmp_path: Pa
 
 def test_local_resubmission_accepts_cancelled_job(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "local-cancelled-retry")
+    job_id = make_job("local-cancelled-retry", service=service, document=document).id
     job = document.jobs[job_id]
     job.status = JobStatus.CANCELLED
     runner = FakeLocalRunner()
@@ -159,7 +150,7 @@ def test_local_resubmission_accepts_cancelled_job(tmp_path: Path) -> None:
 
 def test_lifecycle_events_update_job_run_and_terminal_journal(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "lifecycle-job")
+    job_id = make_job("lifecycle-job", service=service, document=document).id
     controller = _controller(
         document=document,
         service=service,
@@ -199,7 +190,7 @@ def test_lifecycle_events_update_job_run_and_terminal_journal(tmp_path: Path) ->
 
 def test_cluster_submission_success_marks_remote_job_queued(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "cluster-job")
+    job_id = make_job("cluster-job", service=service, document=document).id
     runner = FakeClusterRunner()
     controller = _controller(
         document=document,
@@ -239,7 +230,7 @@ def test_cluster_resubmission_reuses_remote_directory_and_updates_remote_job_id(
     tmp_path: Path,
 ) -> None:
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "cluster-retry")
+    job_id = make_job("cluster-retry", service=service, document=document).id
     job = document.jobs[job_id]
     job.status = JobStatus.FAILED
     job.remote_job_id = "old123"
@@ -283,7 +274,7 @@ def test_cluster_resubmission_reuses_remote_directory_and_updates_remote_job_id(
 
 def test_cluster_resubmission_failure_keeps_existing_remote_context(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "cluster-retry-fail")
+    job_id = make_job("cluster-retry-fail", service=service, document=document).id
     job = document.jobs[job_id]
     job.status = JobStatus.FAILED
     job.remote_job_id = "old123"
@@ -322,7 +313,7 @@ def test_cluster_resubmission_failure_keeps_existing_remote_context(tmp_path: Pa
 
 def test_cluster_resubmission_accepts_cancelled_job(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "cluster-cancelled-retry")
+    job_id = make_job("cluster-cancelled-retry", service=service, document=document).id
     job = document.jobs[job_id]
     job.status = JobStatus.CANCELLED
     job.remote_job_id = "old123"
@@ -362,7 +353,7 @@ def test_cluster_submission_failure_marks_job_failed_and_records_terminal_event(
     # JobRunner design decision 1: ClusterJobRunner.submit may raise; this
     # controller caller converts the exception into a failed outcome.
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "bad-cluster-job")
+    job_id = make_job("bad-cluster-job", service=service, document=document).id
     controller = _controller(
         document=document,
         service=service,
@@ -401,7 +392,7 @@ def test_cluster_submission_failure_marks_job_failed_and_records_terminal_event(
 
 def test_cluster_stopped_status_is_terminal_and_clears_active_run(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "stopped-cluster-job")
+    job_id = make_job("stopped-cluster-job", service=service, document=document).id
     controller = _controller(
         document=document,
         service=service,
@@ -489,8 +480,8 @@ def test_mark_queue_checked_stamps_observed_jobs(tmp_path: Path) -> None:
     from uuid import uuid4
 
     service, document = _document(tmp_path)
-    observed_id = _job(service, document, "observed")
-    unobserved_id = _job(service, document, "unobserved")
+    observed_id = make_job("observed", service=service, document=document).id
+    unobserved_id = make_job("unobserved", service=service, document=document).id
     controller = _controller(document=document, service=service, output_dir=tmp_path)
 
     checked_at = datetime(2026, 7, 4, 12, 0, tzinfo=UTC)
@@ -523,7 +514,7 @@ def test_mark_queue_checked_tolerates_malformed_snapshots(tmp_path: Path) -> Non
     from types import SimpleNamespace
 
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "untouched")
+    job_id = make_job("untouched", service=service, document=document).id
     controller = _controller(document=document, service=service, output_dir=tmp_path)
 
     # Legacy emissions may pass a bare datetime instead of a snapshot object.
@@ -540,14 +531,14 @@ def test_mark_queue_checked_tolerates_malformed_snapshots(tmp_path: Path) -> Non
 
 
 def _cluster_running_job(service, document, label: str):
-    job = document.jobs[_job(service, document, label)]
+    job = make_job(label, service=service, document=document)
     job.execution_target = "scarf"
     job.status = JobStatus.RUNNING
     return job
 
 
 def _local_running_job(service, document, label: str):
-    job = document.jobs[_job(service, document, label)]
+    job = make_job(label, service=service, document=document)
     job.execution_target = "local"
     job.status = JobStatus.RUNNING
     return job
@@ -635,7 +626,7 @@ def test_mark_started_stamps_local_jobs_only(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
     controller = _controller(document=document, service=service, output_dir=tmp_path)
 
-    local_job = document.jobs[_job(service, document, "local-start")]
+    local_job = make_job("local-start", service=service, document=document)
     local_job.execution_target = "local"
     local_job.status = JobStatus.QUEUED
     controller.mark_started(local_job.id)
@@ -645,7 +636,7 @@ def test_mark_started_stamps_local_jobs_only(tmp_path: Path) -> None:
     assert local_job.last_checked_at is not None
 
     # Cluster jobs are stamped from queue polls, not from mark_started.
-    cluster_job = document.jobs[_job(service, document, "cluster-start")]
+    cluster_job = make_job("cluster-start", service=service, document=document)
     cluster_job.execution_target = "scarf"
     cluster_job.status = JobStatus.QUEUED
     controller.mark_started(cluster_job.id)
@@ -657,7 +648,7 @@ def test_mark_started_stamps_local_jobs_only(tmp_path: Path) -> None:
 def test_mark_local_status_changed_stamps_queued_locally(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
     controller = _controller(document=document, service=service, output_dir=tmp_path)
-    job = document.jobs[_job(service, document, "local-queued")]
+    job = make_job("local-queued", service=service, document=document)
     job.execution_target = "local"
     job.status = JobStatus.SUBMITTING
 
@@ -670,7 +661,7 @@ def test_mark_local_status_changed_stamps_queued_locally(tmp_path: Path) -> None
     assert job.last_checked_at is not None
 
     # An inert notification (wrong current status) does not stamp.
-    other = document.jobs[_job(service, document, "local-inert")]
+    other = make_job("local-inert", service=service, document=document)
     other.execution_target = "local"
     update = controller.mark_local_status_changed(other.id, JobStatus.QUEUED.value)
     assert update.changed is False
@@ -679,7 +670,7 @@ def test_mark_local_status_changed_stamps_queued_locally(tmp_path: Path) -> None
 
 def test_prepare_cluster_submission_forwards_mem_per_cpu_to_the_runner(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "mem-job")
+    job_id = make_job("mem-job", service=service, document=document).id
     runner = FakeClusterRunner()
     controller = _controller(
         document=document,
@@ -714,7 +705,7 @@ def test_prepare_cluster_submission_accepts_every_resubmittable_status(tmp_path:
 
     for status in (JobStatus.DEFINED, JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED):
         label = f"status-{status.value}"
-        job = document.jobs[_job(service, document, label)]
+        job = make_job(label, service=service, document=document)
         job.status = status
         controller = _controller(
             document=document,
@@ -742,7 +733,7 @@ def test_prepare_cluster_submission_accepts_every_resubmittable_status(tmp_path:
         assert job.status == JobStatus.SUBMITTING
 
     # Statuses with an in-flight or finished run are still refused.
-    running = document.jobs[_job(service, document, "status-running")]
+    running = make_job("status-running", service=service, document=document)
     running.status = JobStatus.RUNNING
     controller = _controller(
         document=document,
@@ -772,7 +763,7 @@ def test_prepare_cluster_submission_accepts_every_resubmittable_status(tmp_path:
 
 def test_prepare_cluster_submission_defaults_mem_per_cpu_to_unset(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
-    job_id = _job(service, document, "no-mem-job")
+    job_id = make_job("no-mem-job", service=service, document=document).id
     runner = FakeClusterRunner()
     controller = _controller(
         document=document,

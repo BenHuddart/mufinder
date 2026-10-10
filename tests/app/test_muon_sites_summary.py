@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from uuid import uuid4
 
 from PySide6.QtWidgets import QPushButton
 
-from mufinder.app.main_window import MainWindow
 from mufinder.app.muon_sites_summary_widget import MuonSitesSummaryWidget
 from mufinder.app.relaxation_analysis_widget import (
     CompletedRelaxationAnalysisSource,
@@ -16,17 +16,8 @@ from mufinder.app.relaxation_analysis_widget import (
 )
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.models import Structure
-from mufinder.services.project_service import ProjectService
-
-
-def _host_structure() -> Structure:
-    return Structure(
-        id=uuid4(),
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
-    )
+from tests.support.main_window import window_with_host
+from tests.support.structures import host_structure
 
 
 def _snapshot(workspace_id: str, host: Structure, *, charge_state: str = POSITIVE_MUON_CHARGE_STATE) -> dict:
@@ -144,7 +135,7 @@ def test_summary_empty_open_button_routes_to_analysis_root(qapp) -> None:
 
 
 def test_summary_panel_populates_table_and_preview(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     widget = MuonSitesSummaryWidget()
     try:
         widget.set_panel(
@@ -168,7 +159,7 @@ def test_summary_panel_populates_table_and_preview(qapp) -> None:
 
 
 def test_summary_repopulates_when_host_edited_in_place(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     widget = MuonSitesSummaryWidget()
     try:
         snap = _snapshot("ws-1", host)
@@ -195,7 +186,7 @@ def test_summary_repopulates_when_host_edited_in_place(qapp) -> None:
 
 
 def test_summary_updates_source_label_on_workspace_rename(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     widget = MuonSitesSummaryWidget()
     try:
         snap = _snapshot("ws-1", host)
@@ -217,7 +208,7 @@ def test_summary_updates_source_label_on_workspace_rename(qapp) -> None:
 
 
 def test_summary_row_click_emits_focus_site(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     widget = MuonSitesSummaryWidget()
     captured: list[tuple[str, int]] = []
     widget.focus_site_requested.connect(lambda wid, cluster: captured.append((wid, cluster)))
@@ -236,7 +227,7 @@ def test_summary_row_click_emits_focus_site(qapp) -> None:
 
 
 def test_summary_viewer_pick_emits_focus_site_only_for_muons(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     widget = MuonSitesSummaryWidget()
     captured: list[tuple[str, int]] = []
     widget.focus_site_requested.connect(lambda wid, cluster: captured.append((wid, cluster)))
@@ -259,7 +250,7 @@ def test_summary_viewer_pick_emits_focus_site_only_for_muons(qapp) -> None:
 
 
 def test_summary_open_and_unpin_buttons_emit(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     widget = MuonSitesSummaryWidget()
     opened: list[str] = []
     unpinned: list[str] = []
@@ -282,7 +273,7 @@ def test_summary_open_and_unpin_buttons_emit(qapp) -> None:
 
 
 def test_summary_export_cif_button_disabled_until_populated(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     widget = MuonSitesSummaryWidget()
     try:
         panel = widget._panels[POSITIVE_MUON_CHARGE_STATE]
@@ -303,7 +294,7 @@ def test_summary_export_cif_button_disabled_until_populated(qapp) -> None:
 
 
 def test_summary_export_cif_writes_host_and_muon_sites(qapp, tmp_path: Path, monkeypatch) -> None:
-    host = _host_structure()
+    host = host_structure()
     widget = MuonSitesSummaryWidget()
     try:
         widget.set_panel(
@@ -336,7 +327,7 @@ def test_summary_export_cif_writes_host_and_muon_sites(qapp, tmp_path: Path, mon
 
 
 def test_summary_export_cif_warns_when_site_coincides_with_host_atom(qapp, tmp_path: Path, monkeypatch) -> None:
-    host = _host_structure()
+    host = host_structure()
     snapshot = _snapshot("ws-1", host)
     # Overlay the first pinned site directly onto the host's Si atom at (0,0,0).
     snapshot["sites"][0]["fractional_position"] = [0.0, 0.0, 0.0]
@@ -368,7 +359,7 @@ def test_summary_export_cif_warns_when_site_coincides_with_host_atom(qapp, tmp_p
 
 
 def test_summary_export_cif_cancelled_dialog_writes_nothing(qapp, tmp_path: Path, monkeypatch) -> None:
-    host = _host_structure()
+    host = host_structure()
     widget = MuonSitesSummaryWidget()
     try:
         widget.set_panel(
@@ -388,7 +379,7 @@ def test_summary_export_cif_cancelled_dialog_writes_nothing(qapp, tmp_path: Path
 
 
 def test_summary_panel_clears_back_to_placeholder(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     widget = MuonSitesSummaryWidget()
     try:
         widget.set_panel(
@@ -416,7 +407,7 @@ def test_summary_panel_clears_back_to_placeholder(qapp) -> None:
 
 
 def test_focus_workspace_reveals_cluster_and_reports_missing(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     job_a, job_b = uuid4(), uuid4()
     workspace = _clustered_workspace(host, job_a)
     # Two rendered sites (distinct energies keep the energy-sorted order stable)
@@ -466,7 +457,7 @@ def test_focus_workspace_reveals_cluster_and_reports_missing(qapp) -> None:
 
 
 def test_pin_button_emits_pin_summary_requested(qapp) -> None:
-    host = _host_structure()
+    host = host_structure()
     job_id = uuid4()
     workspace = _clustered_workspace(host, job_id)
     source = CompletedRelaxationAnalysisSource(
@@ -503,16 +494,7 @@ def test_pin_button_emits_pin_summary_requested(qapp) -> None:
 # --- Main window integration ----------------------------------------------
 
 
-def _window_with_host(tmp_path: Path) -> tuple[MainWindow, ProjectService, object, Structure]:
-    window = MainWindow()
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "summary.mufinder", "Summary Doc")
-    host = _host_structure()
-    service.add_structure(doc, host)
-    doc.project.host_structure_id = host.id
-    window._document = doc
-    window._refresh_ui_after_project_change()
-    return window, service, doc, host
+_window_with_host = partial(window_with_host, filename="summary.mufinder", name="Summary Doc")
 
 
 def test_pin_builds_ranked_snapshot_and_populates_panel(qapp, tmp_path: Path) -> None:
@@ -625,7 +607,7 @@ def test_pin_from_non_active_host_workspace_is_rejected(qapp, tmp_path: Path, mo
     try:
         # A workspace whose clustering was run against a different host than the
         # active one must not overlay its old fractional sites on the new host.
-        other_host = _host_structure()
+        other_host = host_structure()
         workspace = _clustered_workspace(other_host, uuid4())
         window._set_relaxation_analysis_workspaces([workspace])
         monkeypatch.setattr(

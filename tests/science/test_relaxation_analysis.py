@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from uuid import uuid4
 
 import pytest
@@ -20,15 +21,15 @@ from mufinder.science.relaxation_analysis import (
     scan_connected_component_tolerances,
 )
 from mufinder.science.wyckoff_analysis import assign_cluster_wyckoff_sites
+from tests.support.structures import host_structure
 
 
-def _host_structure() -> Structure:
-    return Structure(
-        label="Host",
-        lattice_vectors=[[10.0, 0.0, 0.0], [0.1, 9.0, 0.0], [0.2, 0.3, 8.0]],
-        species=["Si", "O", "C"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.31, 0.23, 0.19], [0.67, 0.41, 0.83]],
-    )
+_host_structure = partial(
+    host_structure,
+    lattice=[[10.0, 0.0, 0.0], [0.1, 9.0, 0.0], [0.2, 0.3, 8.0]],
+    species=("Si", "O", "C"),
+    positions=((0.0, 0.0, 0.0), (0.31, 0.23, 0.19), (0.67, 0.41, 0.83)),
+)
 
 
 def _site(label: str, frac: tuple[float, float, float], energy: float) -> RelaxedMuonSite:

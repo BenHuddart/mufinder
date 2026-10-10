@@ -57,6 +57,7 @@ from mufinder.app.workflow_controllers.uep import (
     UepDeps,
 )
 from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
+from tests.support.jobs import make_job
 
 
 # --------------------------------------------------------------------------- #
@@ -296,15 +297,6 @@ class _FakeController(WorkflowJobController):
         self.refreshed += 1
 
 
-def _job(service: ProjectService, document: ProjectDocument, label: str, calc_type: str = "fake_calc") -> Job:
-    return service.add_job(
-        document,
-        label=label,
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type=calc_type,
-    )
-
-
 # --------------------------------------------------------------------------- #
 # Base template-method: submit()
 # --------------------------------------------------------------------------- #
@@ -313,8 +305,8 @@ def _job(service: ProjectService, document: ProjectDocument, label: str, calc_ty
 def test_submit_local_dispatches_planned_jobs_to_local_backend(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    existing = _job(service, document, "existing")
-    fresh = _job(service, document, "fresh")
+    existing = make_job("existing", service=service, document=document, calc_type="fake_calc")
+    fresh = make_job("fresh", service=service, document=document, calc_type="fake_calc")
 
     local = _RecordingBackend()
     cluster = _RecordingBackend()
@@ -338,7 +330,7 @@ def test_submit_local_dispatches_planned_jobs_to_local_backend(tmp_path: Path) -
 def test_submit_cluster_dispatches_to_cluster_backend(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    fresh = _job(service, document, "fresh")
+    fresh = make_job("fresh", service=service, document=document, calc_type="fake_calc")
 
     local = _RecordingBackend()
     cluster = _RecordingBackend()
@@ -376,7 +368,7 @@ def test_submit_shows_info_when_no_ready_jobs(tmp_path: Path) -> None:
 def test_submit_pre_submit_check_short_circuits(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    fresh = _job(service, document, "fresh")
+    fresh = make_job("fresh", service=service, document=document, calc_type="fake_calc")
     local = _RecordingBackend()
     infos: list[tuple[str, str]] = []
     context = _make_context(local_backend=local, infos=infos)
@@ -396,8 +388,8 @@ def test_submit_pre_submit_check_short_circuits(tmp_path: Path) -> None:
 def test_submit_grouped_override_forwards_extra_kwargs(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    job_a = _job(service, document, "a")
-    job_b = _job(service, document, "b")
+    job_a = make_job("a", service=service, document=document, calc_type="fake_calc")
+    job_b = make_job("b", service=service, document=document, calc_type="fake_calc")
     local = _RecordingBackend()
     context = _make_context(local_backend=local)
     controller = _FakeController(
@@ -423,7 +415,7 @@ def test_submit_resets_dismissed_job_before_dispatch(tmp_path: Path) -> None:
 
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    dismissed = _job(service, document, "dismissed")
+    dismissed = make_job("dismissed", service=service, document=document, calc_type="fake_calc")
     service.submit_job(dismissed)
     service.fail_job(dismissed, "boom")
     service.dismiss_job(dismissed)
@@ -465,7 +457,7 @@ def test_submit_resets_dismissed_job_before_dispatch(tmp_path: Path) -> None:
 def test_submit_aborts_when_resubmission_preparation_is_cancelled(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    dismissed = _job(service, document, "dismissed")
+    dismissed = make_job("dismissed", service=service, document=document, calc_type="fake_calc")
     service.submit_job(dismissed)
     service.fail_job(dismissed, "boom")
     service.dismiss_job(dismissed)
@@ -502,11 +494,11 @@ def test_submit_never_prepares_a_non_dismissed_failed_job(tmp_path: Path) -> Non
 
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    dismissed = _job(service, document, "dismissed")
+    dismissed = make_job("dismissed", service=service, document=document, calc_type="fake_calc")
     service.submit_job(dismissed)
     service.fail_job(dismissed, "boom")
     service.dismiss_job(dismissed)
-    still_failed = _job(service, document, "still-failed")
+    still_failed = make_job("still-failed", service=service, document=document, calc_type="fake_calc")
     service.submit_job(still_failed)
     service.fail_job(still_failed, "boom")
 
@@ -532,8 +524,8 @@ def test_submit_never_prepares_a_non_dismissed_failed_job(tmp_path: Path) -> Non
 def test_submit_reports_rows_left_out_of_a_mixed_selection(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    ready_job = _job(service, document, "ready")
-    running_job = _job(service, document, "running")
+    ready_job = make_job("ready", service=service, document=document, calc_type="fake_calc")
+    running_job = make_job("running", service=service, document=document, calc_type="fake_calc")
     running_job.status = JobStatus.RUNNING
     local = _RecordingBackend()
     cluster = _RecordingBackend()
@@ -561,7 +553,7 @@ def test_submit_reports_rows_left_out_of_a_mixed_selection(tmp_path: Path) -> No
 def test_submit_reports_a_single_skipped_row_in_the_singular(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    ready_job = _job(service, document, "ready")
+    ready_job = make_job("ready", service=service, document=document, calc_type="fake_calc")
     local = _RecordingBackend()
     controller = _FakeController(
         _make_context(local_backend=local),
@@ -579,8 +571,8 @@ def test_submit_reports_a_single_skipped_row_in_the_singular(tmp_path: Path) -> 
 def test_submit_skipped_report_goes_on_the_last_group_only(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    job_a = _job(service, document, "a")
-    job_b = _job(service, document, "b")
+    job_a = make_job("a", service=service, document=document, calc_type="fake_calc")
+    job_b = make_job("b", service=service, document=document, calc_type="fake_calc")
     local = _RecordingBackend()
     controller = _FakeController(
         _make_context(local_backend=local),
@@ -623,7 +615,7 @@ def _parsed() -> CastepResult:
 def test_merge_controller_result_no_matching_controller_is_noop(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    job = _job(service, document, "j", calc_type="unhandled_calc")
+    job = make_job("j", service=service, document=document, calc_type="unhandled_calc")
     run = CalculationRun(job_id=job.id)
     controllers = [_FakeController(_make_context(), states={})]
 
@@ -648,7 +640,7 @@ def test_merge_controller_result_no_matching_controller_is_noop(tmp_path: Path) 
 def test_merge_controller_result_empty_result_is_noop(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    job = _job(service, document, "j", calc_type="fake_calc")
+    job = make_job("j", service=service, document=document, calc_type="fake_calc")
     run = CalculationRun(job_id=job.id)
     # Fake controller with no build_result payload returns the empty default.
     controllers = [_FakeController(_make_context(), states={})]
@@ -674,7 +666,7 @@ def test_merge_controller_result_empty_result_is_noop(tmp_path: Path) -> None:
 def test_merge_controller_result_additively_merges_matching_controller(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    job = _job(service, document, "j", calc_type="fake_calc")
+    job = make_job("j", service=service, document=document, calc_type="fake_calc")
     run = CalculationRun(job_id=job.id)
     controller = _FakeController(
         _make_context(),
@@ -704,7 +696,7 @@ def test_merge_controller_result_additively_merges_matching_controller(tmp_path:
 def test_merge_controller_result_selects_first_handling_controller(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
-    job = _job(service, document, "j", calc_type="fake_calc")
+    job = make_job("j", service=service, document=document, calc_type="fake_calc")
     run = CalculationRun(job_id=job.id)
 
     class _OtherController(_FakeController):
@@ -1018,8 +1010,8 @@ def test_convergence_controller_handles_only_its_calc_type(tmp_path: Path) -> No
     controller = ConvergenceCutoffController(
         _make_context(document=document), _stub_deps(), _FakeConvergenceView()
     )
-    handled = _job(service, document, "j", calc_type="castep_convergence_cutoff")
-    other = _job(service, document, "k", calc_type="castep_uep_source")
+    handled = make_job("j", service=service, document=document, calc_type="castep_convergence_cutoff")
+    other = make_job("k", service=service, document=document, calc_type="castep_uep_source")
     assert controller.handles_job(handled) is True
     assert controller.handles_job(other) is False
 
@@ -1307,8 +1299,8 @@ def test_kpoint_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
     controller = ConvergenceKpointController(
         _make_context(document=document), _stub_kpoint_deps(), _FakeKpointView()
     )
-    handled = _job(service, document, "j", calc_type="castep_convergence_kpoint")
-    other = _job(service, document, "k", calc_type="castep_convergence_cutoff")
+    handled = make_job("j", service=service, document=document, calc_type="castep_convergence_kpoint")
+    other = make_job("k", service=service, document=document, calc_type="castep_convergence_cutoff")
     assert controller.handles_job(handled) is True
     assert controller.handles_job(other) is False
 

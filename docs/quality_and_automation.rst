@@ -76,6 +76,32 @@ every CI run. Keep these in place when changing the test setup:
   creeps up; locally, ``make test PYTEST_ARGS="--no-cov --durations=25"``
   gives the same report.
 
+Shared test helpers
+-------------------
+
+Test inputs that several modules build come from one place. Use these rather
+than a module-local copy; a module that needs different values passes them at
+the call site or binds them once with ``functools.partial``.
+
+- ``tests/support/structures.py``: ``host_structure(...)`` builds a
+  ``Structure`` from a lattice (cubic edge or explicit vectors), species and
+  fractional positions, returning fresh lists on every call. Presets:
+  ``si_pair_host`` (two Si atoms, 4.0 Å cube by default), ``silicon_oxide_host``
+  (O-Si-O in a 10 Å cube) and ``hydrogen_host`` (one H atom).
+- ``tests/support/symmetry_hosts.py``: hosts that exercise the symmetry code.
+- ``tests/support/jobs.py``: ``make_job(...)`` builds a bare ``Job``, or, given
+  ``service`` and ``document``, registers one through ``ProjectService.add_job``.
+- ``tests/support/qt.py``: ``pump_until(predicate, timeout=...)`` spins the
+  event loop until a queued signal has been delivered;
+  ``find_tree_item_by_route`` and ``find_item_by_route`` locate project-tree
+  items by route.
+- ``tests/support/main_window.py``: ``open_project_with_host`` and
+  ``window_with_host`` open a project with a host structure in a
+  ``MainWindow``.
+- ``tests/conftest.py`` fixtures: ``main_window`` gives a fresh ``MainWindow``
+  that the per-test Qt cleanup closes, and ``project_with_host`` gives
+  ``(window, service, document)`` with the default host structure loaded.
+
 GUI-responsiveness trace logging
 ---------------------------------
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
 from types import SimpleNamespace
-from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -14,19 +14,11 @@ from PySide6.QtWidgets import QApplication, QLabel, QSizePolicy
 
 from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
 from mufinder.app.uep_clustering_dialog import _GEOMETRY_STATE_EMIT_DELAY_MS, UepClusteringDialog
-from mufinder.domain.models import Structure
 from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult, relaxed_site_number_map
+from tests.support.structures import QUARTER_DIAGONAL, host_structure
 
 
-def _host_structure() -> Structure:
-    return Structure(
-        id=uuid4(),
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
-        properties={"pbc": [True, True, True]},
-    )
+_host_structure = partial(host_structure, positions=QUARTER_DIAGONAL, properties={"pbc": [True, True, True]})
 
 
 def _classification() -> StationaryPointClassification:

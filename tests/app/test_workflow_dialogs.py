@@ -16,17 +16,7 @@ from mufinder.app.workflow_dialogs import (
 )
 from mufinder.app.workflow_parameters import build_workflow_parameter_surface, workflow_basic_parameter_names
 from mufinder.castep_io.schema import KeywordSpec
-from mufinder.domain.models import Structure
-
-
-def _sample_structure() -> Structure:
-    return Structure(
-        label="supercell",
-        origin="imported",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
-    )
+from tests.support.structures import host_structure
 
 
 def _quantum_specs() -> list[KeywordSpec]:
@@ -87,7 +77,7 @@ def test_quantum_corrections_config_dialog_can_lock_parameters_but_keep_farms_ed
 
 def test_atomic_structure_viewer_line_overlays_extend_scene(qapp) -> None:
     viewer = AtomicStructureViewer()
-    viewer.set_structure(_sample_structure())
+    viewer.set_structure(host_structure(label="supercell"))
     viewer.set_line_overlays(
         [
             {
@@ -108,7 +98,7 @@ def test_atomic_structure_viewer_line_overlays_extend_scene(qapp) -> None:
 
 def test_energy_barrier_path_viewer_dialog_toggles_arrow_overlay(qapp) -> None:
     dialog = EnergyBarrierPathViewerDialog(
-        structure=_sample_structure(),
+        structure=host_structure(label="supercell"),
         start_fractional=(0.2, 0.2, 0.2),
         end_fractional=(0.8, 0.2, 0.2),
         title="Path Preview",

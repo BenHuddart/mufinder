@@ -17,24 +17,15 @@ from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.relaxation_analysis_widget import RelaxationClusteringDialog
 from mufinder.domain.models import Structure
 from mufinder.science.relaxation_analysis import RelaxedMuonSite
+from tests.support.structures import host_structure
 
 # Narrowest viewer the analysis dialogs should be able to give it.
 _NARROW_VIEWER_WIDTH = 300
 
 
-def _structure() -> Structure:
-    return Structure(
-        id=uuid4(),
-        label="Host",
-        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
-        species=["Fe", "O"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
-    )
-
-
 def _shown_viewer(qapp, width: int) -> AtomicStructureViewer:
     viewer = AtomicStructureViewer()
-    viewer.set_structure(_structure())
+    viewer.set_structure(host_structure(lattice=4.0, species=("Fe", "O")))
     viewer.show()
     viewer.resize(width, 480)
     for _ in range(3):

@@ -12,26 +12,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import Result, Structure
+from mufinder.domain.models import Result
 from mufinder.persistence.json_store import ProjectStore
 from mufinder.persistence.codec import to_jsonable
 from mufinder.services.project_service import ProjectService
-
-
-def _host_structure() -> Structure:
-    return Structure(
-        label="Host",
-        origin="imported",
-        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
-        species=["O", "Si", "O"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [0.25, 0.25, 0.25]],
-    )
+from tests.support.structures import silicon_oxide_host
 
 
 def _populated_document(service: ProjectService, root: Path):
     """Create a project with a structure, a job, and a result already saved."""
     doc = service.create_project(root, "Dirty")
-    service.add_structure(doc, _host_structure())
+    service.add_structure(doc, silicon_oxide_host())
     job = service.add_job(
         doc,
         label="Relax",
@@ -212,7 +203,7 @@ def test_tojsonable_roundtrips_to_exact_loaded_payload(tmp_path: Path) -> None:
     root = tmp_path / "roundtrip.mufinder"
 
     doc = service.create_project(root, "RoundTrip")
-    structure = _host_structure()
+    structure = silicon_oxide_host()
     structure.properties = {
         "magnetic_structure": {"moments": [{"vector": [0.0, 0.0, 1.0]}]},
         "atomic_spins": [1.0, 0.0, -1.0],

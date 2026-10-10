@@ -12,18 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import Job
+from mufinder.domain.enums import JobStatus
 from mufinder.services.project_service import ProjectService
-
-
-def _job(status: JobStatus) -> Job:
-    return Job(
-        label="job",
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_cutoff",
-        status=status,
-    )
+from tests.support.jobs import make_job
 
 
 @pytest.mark.parametrize(
@@ -32,7 +23,7 @@ def _job(status: JobStatus) -> Job:
 )
 def test_dismiss_job_stamps_dismissed_at_without_status_change(source: JobStatus) -> None:
     service = ProjectService()
-    job = _job(source)
+    job = make_job(status=source)
     job.error_message = "prior diagnostics"
 
     service.dismiss_job(job)
@@ -57,7 +48,7 @@ def test_dismiss_job_stamps_dismissed_at_without_status_change(source: JobStatus
 )
 def test_dismiss_job_rejects_non_terminal_states(source: JobStatus) -> None:
     service = ProjectService()
-    job = _job(source)
+    job = make_job(status=source)
     with pytest.raises(
         ValueError, match="Only failed, stopped, or cancelled jobs can be dismissed."
     ):
@@ -67,7 +58,7 @@ def test_dismiss_job_rejects_non_terminal_states(source: JobStatus) -> None:
 
 def test_dismiss_job_rejects_already_dismissed() -> None:
     service = ProjectService()
-    job = _job(JobStatus.FAILED)
+    job = make_job(status=JobStatus.FAILED)
     service.dismiss_job(job)
     first_stamp = job.dismissed_at
 
@@ -82,7 +73,7 @@ def test_dismiss_job_rejects_already_dismissed() -> None:
 def test_record_job_dismissed_appends_provenance(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "dismiss.mufinder", "Dismiss")
-    job = _job(JobStatus.STOPPED)
+    job = make_job(status=JobStatus.STOPPED)
     document.jobs[job.id] = job
 
     service.dismiss_job(job)

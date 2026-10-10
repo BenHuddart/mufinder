@@ -218,6 +218,33 @@ def _cleanup_qt_state_per_test(request: pytest.FixtureRequest) -> Iterator[None]
     _cleanup_qt_application(app, gc_module=request.node.path)
 
 
+@pytest.fixture
+def main_window(qapp: QApplication):
+    """A fresh ``MainWindow``.
+
+    It needs no explicit close: the per-test Qt cleanup above closes and deletes
+    every top-level widget once the test finishes.
+    """
+
+    from mufinder.app.main_window import MainWindow
+
+    return MainWindow()
+
+
+@pytest.fixture
+def project_with_host(main_window, tmp_path):
+    """``(window, service, document)`` for a project with the default host structure loaded.
+
+    The host is :func:`tests.support.structures.host_structure`; reach it through
+    ``document.project.host_structure_id``.
+    """
+
+    from tests.support.main_window import open_project_with_host
+
+    service, document, _host = open_project_with_host(main_window, tmp_path)
+    return main_window, service, document
+
+
 @pytest.fixture(autouse=True)
 def confirmed_destructive_actions(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
     """Answer every destructive-action confirmation with "go ahead", and record it.

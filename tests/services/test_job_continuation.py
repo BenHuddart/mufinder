@@ -9,6 +9,7 @@ appends the matching provenance milestone. See docs/job_lifecycle.rst.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from mufinder.services.project_service import (
     TERMINAL_RECOVERABLE_JOB_STATUSES,
     ProjectService,
 )
+from tests.support.jobs import make_job
 
 _CONTINUABLE = [
     JobStatus.COMPLETED,
@@ -29,17 +31,16 @@ _CONTINUABLE = [
 ]
 
 
-def _job(status: JobStatus) -> Job:
-    return Job(
-        label="relax_row_1",
-        workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
-        calc_type="castep_pristine_relaxation",
-        status=status,
-    )
+_job = partial(
+    make_job,
+    label="relax_row_1",
+    workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
+    calc_type="castep_pristine_relaxation",
+)
 
 
 def _job_with_run_metadata(status: JobStatus) -> Job:
-    job = _job(status)
+    job = _job(status=status)
     stamp = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     job.submitted_at = stamp
     job.started_at = stamp
@@ -69,7 +70,7 @@ def test_prepare_job_continuation_accepts_every_continuable_status(
     source: JobStatus,
 ) -> None:
     service = ProjectService()
-    job = _job(source)
+    job = _job(status=source)
 
     service.prepare_job_continuation(job)
 
@@ -90,7 +91,7 @@ def test_prepare_job_continuation_rejects_non_continuable_states(
     source: JobStatus,
 ) -> None:
     service = ProjectService()
-    job = _job(source)
+    job = _job(status=source)
     job.remote_directory = "/scratch/user/relax_row_1"
 
     with pytest.raises(
@@ -153,7 +154,7 @@ def test_prepare_job_continuation_makes_a_dismissed_job_visible_again() -> None:
 
 def test_prepare_job_continuation_keeps_a_local_job_without_a_directory() -> None:
     service = ProjectService()
-    job = _job(JobStatus.COMPLETED)
+    job = _job(status=JobStatus.COMPLETED)
     job.execution_target = "local"
 
     service.prepare_job_continuation(job)
@@ -186,7 +187,7 @@ def test_record_job_continuation_appends_provenance(tmp_path: Path) -> None:
 def test_record_job_continuation_marks_a_missing_remote_directory(tmp_path: Path) -> None:
     service = ProjectService()
     document = service.create_project(tmp_path / "continue_local.mufinder", "ContinueLocal")
-    job = _job(JobStatus.STOPPED)
+    job = _job(status=JobStatus.STOPPED)
     document.jobs[job.id] = job
 
     service.prepare_job_continuation(job)

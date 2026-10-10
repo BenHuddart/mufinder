@@ -8,14 +8,12 @@ using the same fake-runner/worker-thread harness as ``test_cluster_controller``.
 
 from __future__ import annotations
 
-import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QApplication
 
 from mufinder.app import cluster_controller
 from mufinder.app.cluster_controller import ClusterController
@@ -23,16 +21,7 @@ from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun
 from mufinder.services.project_service import ProjectService
-
-
-def _process_until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        QApplication.processEvents()
-        time.sleep(0.005)
-    return predicate()
+from tests.support.qt import pump_until
 
 
 class _FakeRunner(QObject):
@@ -83,15 +72,15 @@ def test_active_status_adds_and_terminal_status_removes(controller) -> None:
 
     # A queued notification (as emitted by submit / the poll loop) adds the job.
     fake.status_changed.emit(job_id, JobStatus.QUEUED.value)
-    assert _process_until(lambda: ctrl.tracked_active_job_ids() == frozenset({job_id}))
+    assert pump_until(lambda: ctrl.tracked_active_job_ids() == frozenset({job_id}))
 
     # A running notification keeps it tracked.
     fake.status_changed.emit(job_id, JobStatus.RUNNING.value)
-    assert _process_until(lambda: ctrl.tracked_active_job_ids() == frozenset({job_id}))
+    assert pump_until(lambda: ctrl.tracked_active_job_ids() == frozenset({job_id}))
 
     # A terminal notification removes it.
     fake.status_changed.emit(job_id, JobStatus.COMPLETED.value)
-    assert _process_until(lambda: ctrl.tracked_active_job_ids() == frozenset())
+    assert pump_until(lambda: ctrl.tracked_active_job_ids() == frozenset())
 
 
 @pytest.mark.parametrize(
@@ -107,9 +96,9 @@ def test_each_terminal_status_removes(controller, terminal: str) -> None:
     ctrl, fake = controller
     job_id = uuid4()
     fake.status_changed.emit(job_id, JobStatus.RUNNING.value)
-    assert _process_until(lambda: job_id in ctrl.tracked_active_job_ids())
+    assert pump_until(lambda: job_id in ctrl.tracked_active_job_ids())
     fake.status_changed.emit(job_id, terminal)
-    assert _process_until(lambda: job_id not in ctrl.tracked_active_job_ids())
+    assert pump_until(lambda: job_id not in ctrl.tracked_active_job_ids())
 
 
 def test_track_existing_job_adds_active_job_to_mirror(controller) -> None:
@@ -147,7 +136,7 @@ def test_clear_tracked_jobs_empties_mirror(controller) -> None:
     ctrl, fake = controller
     job_id = uuid4()
     fake.status_changed.emit(job_id, JobStatus.RUNNING.value)
-    assert _process_until(lambda: job_id in ctrl.tracked_active_job_ids())
+    assert pump_until(lambda: job_id in ctrl.tracked_active_job_ids())
 
     ctrl.clear_tracked_jobs()
     assert ctrl.tracked_active_job_ids() == frozenset()
@@ -160,10 +149,10 @@ def test_mirror_survives_disconnect(controller) -> None:
     ctrl, fake = controller
     job_id = uuid4()
     fake.status_changed.emit(job_id, JobStatus.RUNNING.value)
-    assert _process_until(lambda: job_id in ctrl.tracked_active_job_ids())
+    assert pump_until(lambda: job_id in ctrl.tracked_active_job_ids())
 
     fake.connection_status_changed.emit(False)
-    assert _process_until(lambda: ctrl.is_connected is False)
+    assert pump_until(lambda: ctrl.is_connected is False)
     assert ctrl.tracked_active_job_ids() == frozenset({job_id})
 
 
@@ -187,8 +176,8 @@ def _running_local_job(window: MainWindow, service: ProjectService, document) ->
     return job
 
 
-def test_watchdog_handler_stops_confirmed_stuck_local_job(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
+def test_watchdog_handler_stops_confirmed_stuck_local_job(main_window, tmp_path: Path) -> None:
+    window = main_window
     service = ProjectService()
     document = service.create_project(tmp_path / "watchdog_wiring.mufinder", "Watchdog Wiring")
     window._document = document
@@ -211,11 +200,10 @@ def test_watchdog_handler_stops_confirmed_stuck_local_job(qapp, tmp_path: Path) 
     assert job.id not in window._active_run_by_job
     stopped_runs = [run for run in document.runs.values() if run.job_id == job.id]
     assert stopped_runs and all(run.status == JobStatus.STOPPED for run in stopped_runs)
-    window.close()
 
 
-def test_watchdog_handler_noop_without_active_jobs(qapp, tmp_path: Path) -> None:
-    window = MainWindow()
+def test_watchdog_handler_noop_without_active_jobs(main_window, tmp_path: Path) -> None:
+    window = main_window
     service = ProjectService()
     document = service.create_project(tmp_path / "watchdog_empty.mufinder", "Watchdog Empty")
     window._document = document
@@ -224,4 +212,3 @@ def test_watchdog_handler_noop_without_active_jobs(qapp, tmp_path: Path) -> None
     # No active jobs: the handler returns early and does not raise.
     window._on_job_watchdog_tick()
     window._on_job_watchdog_tick()
-    window.close()

@@ -19,16 +19,7 @@ from mufinder.services.project_service import (
     SiteHostMismatch,
     StructureHostMismatch,
 )
-
-
-def _host_structure() -> Structure:
-    return Structure(
-        label="Host",
-        origin="imported",
-        lattice_vectors=[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
-        species=["O", "Si", "O"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [0.25, 0.25, 0.25]],
-    )
+from tests.support.structures import silicon_oxide_host
 
 
 def test_create_save_and_load_roundtrip(tmp_path: Path) -> None:
@@ -36,7 +27,7 @@ def test_create_save_and_load_roundtrip(tmp_path: Path) -> None:
     root = tmp_path / "roundtrip.mufinder"
 
     doc = service.create_project(root, "Roundtrip")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     doc.ui_state["muon_generation_form"] = {"method": "random", "random": {"count": 5}}
 
@@ -67,7 +58,7 @@ def test_create_save_and_load_roundtrip(tmp_path: Path) -> None:
 def test_manual_generation_cartesian_conversion(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "manual.mufinder", "Manual")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
 
     sites = service.generate_candidate_sites(
@@ -84,7 +75,7 @@ def test_manual_generation_cartesian_conversion(tmp_path: Path) -> None:
 def test_random_generation_by_target_count_estimates_spacing(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "random_count.mufinder", "RandomCount")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
 
     sites = service.generate_candidate_sites(
@@ -110,7 +101,7 @@ def test_random_generation_by_target_count_estimates_spacing(tmp_path: Path) -> 
 def test_candidate_numbering_is_scoped_to_label_prefix(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "prefix_numbering.mufinder", "PrefixNumbering")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     for index in range(1, 5):
         doc.sites[uuid4()] = MuonSite(
@@ -153,7 +144,7 @@ def test_candidate_numbering_is_scoped_to_label_prefix(tmp_path: Path) -> None:
 def test_random_generation_reports_project_service_progress(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "random_progress.mufinder", "RandomProgress")
-    service.add_structure(doc, _host_structure())
+    service.add_structure(doc, silicon_oxide_host())
     updates: list[tuple[int, int]] = []
 
     sites = service.generate_candidate_sites(
@@ -178,7 +169,7 @@ def test_random_generation_reports_project_service_progress(tmp_path: Path) -> N
 def test_random_generation_by_separation_fills_until_attempt_limit(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "random_spacing.mufinder", "RandomSpacing")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
 
     sites = service.generate_candidate_sites(
@@ -202,7 +193,7 @@ def test_random_generation_by_separation_fills_until_attempt_limit(tmp_path: Pat
 def test_attached_element_generation_uses_muons_per_atom(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "attached_element.mufinder", "AttachedElement")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
 
     sites = service.generate_candidate_sites(
@@ -226,7 +217,7 @@ def test_attached_element_generation_uses_muons_per_atom(tmp_path: Path) -> None
 def test_uep_cluster_generation_creates_sites_and_rejects_duplicates(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_cluster_generation.mufinder", "UEPClusterGeneration")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
 
     selection = {
@@ -269,7 +260,7 @@ def test_uep_cluster_generation_creates_sites_and_rejects_duplicates(tmp_path: P
 def test_uep_cluster_generation_creates_one_site_per_selection(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "uep_cluster_multi_generation.mufinder", "UEPClusterMultiGeneration")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
 
     selections = [
@@ -799,7 +790,7 @@ def test_workflow_supercell_asset_roundtrip_and_selection_state(tmp_path: Path) 
     service = ProjectService()
     root = tmp_path / "workflow_supercell_roundtrip.mufinder"
     doc = service.create_project(root, "WorkflowSupercell")
-    host = _host_structure()
+    host = silicon_oxide_host()
     host.properties["atomic_spins"] = [1.0, 0.0, -1.0]
     host.properties["propagation_vector"] = [0.0, 0.0, 0.5]
     service.add_structure(doc, host)
@@ -839,7 +830,7 @@ def test_workflow_supercell_asset_roundtrip_and_selection_state(tmp_path: Path) 
 def test_use_workflow_supercell_asset_clones_for_other_workflow(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "workflow_supercell_clone.mufinder", "WorkflowClone")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
 
@@ -872,7 +863,7 @@ def test_use_workflow_supercell_asset_clones_for_other_workflow(tmp_path: Path) 
 def test_workflow_supercell_asset_rename_update_and_delete(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "workflow_supercell_edit.mufinder", "WorkflowEdit")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
 
@@ -920,7 +911,7 @@ def test_workflow_supercell_asset_delete_and_matrix_update_block_frozen_definiti
 ) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "workflow_supercell_frozen.mufinder", "WorkflowFrozen")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     doc.project.host_structure_id = host.id
 
@@ -955,7 +946,7 @@ def test_workflow_supercell_asset_delete_and_matrix_update_block_frozen_definiti
 def test_resolve_workflow_structure_falls_back_to_unit_cell_for_mismatched_host(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "workflow_supercell_host_change.mufinder", "WorkflowHostChange")
-    first_host = _host_structure()
+    first_host = silicon_oxide_host()
     second_host = Structure(
         label="OtherHost",
         origin="imported",
@@ -1063,7 +1054,7 @@ def test_workflow_supercell_helpers_handle_invalid_metadata_and_defaults(tmp_pat
 def test_resolve_workflow_structure_repairs_legacy_zero_spin_supercell_asset(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "legacy_spin_repair.mufinder", "LegacySpinRepair")
-    host = _host_structure()
+    host = silicon_oxide_host()
     host.properties["atomic_spins"] = [2.0, -2.0, 1.5]
     host.properties["magnetic_structure"] = {
         "moments": [
@@ -1158,7 +1149,7 @@ def test_register_convergence_cutoff_definition_persists_snapshot(tmp_path: Path
     service = ProjectService()
     root = tmp_path / "conv_snapshot.mufinder"
     doc = service.create_project(root, "ConvSnapshot")
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
 
     definition = service.register_convergence_cutoff_definition(
@@ -1466,7 +1457,7 @@ def _completed_result(structure_id, convergence_achieved: bool | None = True) ->
 
 def test_promotable_imported_structure_included(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
 
     promotable = service.list_promotable_host_structures(doc)
@@ -1479,7 +1470,7 @@ def test_promotable_imported_structure_included(tmp_path: Path) -> None:
 
 def test_promotable_supercell_excluded(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     supercell = _supercell_structure(host.id)
     doc.structures[supercell.id] = supercell
@@ -1493,7 +1484,7 @@ def test_promotable_supercell_excluded(tmp_path: Path) -> None:
 
 def test_promotable_completed_pristine_relaxation_included(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     relaxed = Structure(
         label="Fe2O3 relaxed",
@@ -1516,7 +1507,7 @@ def test_promotable_completed_pristine_relaxation_included(tmp_path: Path) -> No
 
 def test_promotable_failed_relaxation_excluded(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     relaxed = Structure(
         label="Relaxed",
@@ -1539,7 +1530,7 @@ def test_promotable_failed_relaxation_excluded(tmp_path: Path) -> None:
 
 def test_promotable_non_converged_relaxation_excluded(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     relaxed = Structure(
         label="Relaxed NC",
@@ -1561,7 +1552,7 @@ def test_promotable_non_converged_relaxation_excluded(tmp_path: Path) -> None:
 
 def test_promotable_muon_relaxation_origin_excluded(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     muoniated = Structure(
         label="Muoniated",
@@ -1583,7 +1574,7 @@ def test_promotable_muon_relaxation_origin_excluded(tmp_path: Path) -> None:
 
 def test_promotable_order_imported_then_relaxed(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     relaxed = Structure(
         label="Relaxed",
@@ -1606,7 +1597,7 @@ def test_promotable_order_imported_then_relaxed(tmp_path: Path) -> None:
 
 def test_promotable_label_includes_job_label(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     job = Job(label="Fe2O3 pristine #1", workflow_stage=WorkflowStage.PRISTINE_RELAXATION, calc_type="castep_pristine_relaxation")
     doc.jobs[job.id] = job
@@ -1633,7 +1624,7 @@ def test_promotable_label_includes_job_label(tmp_path: Path) -> None:
 
 def test_set_active_host_switches_structure(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    original = _host_structure()
+    original = silicon_oxide_host()
     service.add_structure(doc, original)
     relaxed = Structure(
         label="Relaxed host",
@@ -1654,7 +1645,7 @@ def test_set_active_host_switches_structure(tmp_path: Path) -> None:
 
 def test_set_active_host_no_op_when_already_active(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     initial_provenance_count = len(doc.provenance)
 
@@ -1666,7 +1657,7 @@ def test_set_active_host_no_op_when_already_active(tmp_path: Path) -> None:
 
 def test_set_active_host_rejects_non_promotable(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     supercell = _supercell_structure(host.id)
     doc.structures[supercell.id] = supercell
@@ -1677,7 +1668,7 @@ def test_set_active_host_rejects_non_promotable(tmp_path: Path) -> None:
 
 def test_set_active_host_appends_provenance(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    original = _host_structure()
+    original = silicon_oxide_host()
     service.add_structure(doc, original)
     relaxed = Structure(
         label="Relaxed",
@@ -1732,7 +1723,7 @@ def test_set_active_host_rebinds_magnetic_structure(tmp_path: Path) -> None:
 
 def test_set_active_host_preserves_magnetic_if_new_host_has_it(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    original = _host_structure()
+    original = silicon_oxide_host()
     service.add_structure(doc, original)
     magnetic_data = {"moments": [{"vector": [0, 0, 2.0]}]}
     relaxed = Structure(
@@ -1757,7 +1748,7 @@ def test_set_active_host_preserves_magnetic_if_new_host_has_it(tmp_path: Path) -
 
 def test_resolve_host_for_imported_structure(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
 
     assert service.resolve_underlying_host(doc, host.id) == host.id
@@ -1765,7 +1756,7 @@ def test_resolve_host_for_imported_structure(tmp_path: Path) -> None:
 
 def test_resolve_host_for_pristine_relaxation(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     relaxed = Structure(
         label="Relaxed",
@@ -1781,7 +1772,7 @@ def test_resolve_host_for_pristine_relaxation(tmp_path: Path) -> None:
 
 def test_resolve_host_through_supercell(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     supercell = _supercell_structure(host.id)
     doc.structures[supercell.id] = supercell
@@ -1791,7 +1782,7 @@ def test_resolve_host_through_supercell(tmp_path: Path) -> None:
 
 def test_resolve_host_through_muon_relaxation_output(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     supercell = _supercell_structure(host.id)
     doc.structures[supercell.id] = supercell
@@ -1846,7 +1837,7 @@ def test_resolve_host_unknown_structure_returns_none(tmp_path: Path) -> None:
 
 def test_validate_sites_no_mismatch(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     site = MuonSite(label="S1", status="generated", source_structure_id=host.id)
     doc.sites[site.id] = site
@@ -1856,7 +1847,7 @@ def test_validate_sites_no_mismatch(tmp_path: Path) -> None:
 
 def test_validate_sites_mismatch_detected(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     other_host = Structure(label="Other", origin="imported", lattice_vectors=[[5.0, 0, 0], [0, 5.0, 0], [0, 0, 5.0]], species=["C"], fractional_positions=[[0, 0, 0]])
     doc.structures[other_host.id] = other_host
@@ -1875,7 +1866,7 @@ def test_validate_sites_mismatch_detected(tmp_path: Path) -> None:
 
 def test_validate_sites_skips_unknown_site_ids(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
 
     assert service.validate_sites_match_active_host(doc, [uuid4()]) is None
@@ -1893,7 +1884,7 @@ def test_validate_sites_no_active_host_returns_none(tmp_path: Path) -> None:
 
 def test_validate_structures_no_mismatch(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host = _host_structure()
+    host = silicon_oxide_host()
     service.add_structure(doc, host)
     supercell = _supercell_structure(host.id)
     doc.structures[supercell.id] = supercell
@@ -1912,7 +1903,7 @@ def test_validate_structures_no_mismatch(tmp_path: Path) -> None:
 
 def test_validate_structures_mismatch_detected(tmp_path: Path) -> None:
     service, doc = _make_doc(tmp_path)
-    host_a = _host_structure()
+    host_a = silicon_oxide_host()
     service.add_structure(doc, host_a)
     host_b = Structure(
         label="Host B",

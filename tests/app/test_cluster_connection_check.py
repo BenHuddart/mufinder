@@ -3,23 +3,13 @@
 from __future__ import annotations
 
 import time
-from typing import Callable
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QWidget
 
 from mufinder.app.cluster_connection_check import ClusterConnectionCheck
 from mufinder.cluster_setup import ClusterConfig
 from mufinder.services.ssh_client import SSHCredentials, SSHUnknownHostKeyError
-
-
-def _process_until(predicate: Callable[[], bool], *, timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        QApplication.processEvents()
-        time.sleep(0.005)
-    return predicate()
+from tests.support.qt import pump_until
 
 
 class _FakeSettings:
@@ -96,7 +86,7 @@ def test_connection_check_success(qapp) -> None:
     recorder = _Recorder(check)
     check.start()
 
-    assert _process_until(lambda: recorder.settled)
+    assert pump_until(lambda: recorder.settled, timeout=5.0)
     assert recorder.succeeded == 1
     assert recorder.failures == []
     assert recorder.cancelled == 0
@@ -119,7 +109,7 @@ def test_connection_check_reports_failure(qapp) -> None:
     recorder = _Recorder(check)
     check.start()
 
-    assert _process_until(lambda: recorder.settled)
+    assert pump_until(lambda: recorder.settled, timeout=5.0)
     assert recorder.succeeded == 0
     assert len(recorder.failures) == 1
     assert str(recorder.failures[0]) == "host unreachable"
@@ -155,7 +145,7 @@ def test_connection_check_retries_after_trusting_host_key(qapp) -> None:
     recorder = _Recorder(check)
     check.start()
 
-    assert _process_until(lambda: recorder.settled)
+    assert pump_until(lambda: recorder.settled, timeout=5.0)
     assert recorder.succeeded == 1
     assert attempts["count"] == 2
     assert prompts == ["target"]
@@ -191,7 +181,7 @@ def test_connection_check_fails_when_trust_declined(qapp) -> None:
     recorder = _Recorder(check)
     check.start()
 
-    assert _process_until(lambda: recorder.settled)
+    assert pump_until(lambda: recorder.settled, timeout=5.0)
     assert recorder.succeeded == 0
     assert attempts["count"] == 1
     assert len(recorder.failures) == 1
@@ -226,11 +216,11 @@ def test_connection_check_cancel_abandons_attempt(qapp) -> None:
     # cancel() does not emit canceled, so emit it as the button click would.
     assert check._progress is not None
     check._progress.canceled.emit()
-    assert _process_until(lambda: recorder.cancelled == 1)
+    assert pump_until(lambda: recorder.cancelled == 1, timeout=5.0)
 
     # Release the worker; its late success must not fire stale callbacks.
     release["flag"] = True
-    _process_until(lambda: False, timeout=0.3)
+    pump_until(lambda: False, timeout=0.3)
     assert recorder.succeeded == 0
     assert recorder.failures == []
     assert recorder.cancelled == 1

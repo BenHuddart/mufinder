@@ -26,6 +26,7 @@ from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRA
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
 from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel, build_collinear_component
 from mufinder.services.project_service import ProjectService
+from tests.support.qt import find_tree_item_by_route
 
 
 PHONON_TEXT = """ BEGIN header
@@ -65,19 +66,6 @@ Mode Ion                X                                   Y                   
 """
 
 
-def _find_item_by_route(parent: QTreeWidgetItem, route: str) -> QTreeWidgetItem | None:
-    if parent.data(0, 0x0100) == route:  # Qt.UserRole
-        return parent
-    for index in range(parent.childCount()):
-        child = parent.child(index)
-        if child is None:
-            continue
-        found = _find_item_by_route(child, route)
-        if found is not None:
-            return found
-    return None
-
-
 def _find_item_by_prefix(parent: QTreeWidgetItem, prefix: str) -> QTreeWidgetItem | None:
     if parent.text(0).startswith(prefix):
         return parent
@@ -86,17 +74,6 @@ def _find_item_by_prefix(parent: QTreeWidgetItem, prefix: str) -> QTreeWidgetIte
         if child is None:
             continue
         found = _find_item_by_prefix(child, prefix)
-        if found is not None:
-            return found
-    return None
-
-
-def _find_tree_item_by_route(window: MainWindow, route: str) -> QTreeWidgetItem | None:
-    for index in range(window._project_tree.topLevelItemCount()):
-        item = window._project_tree.topLevelItem(index)
-        if item is None:
-            continue
-        found = _find_item_by_route(item, route)
         if found is not None:
             return found
     return None
@@ -452,7 +429,7 @@ def test_main_window_pins_restores_renames_and_deletes_magnetic_field_workspace(
     assert len(workspaces) == 1
     workspace_id = workspaces[0]["id"]
     route = window._magnetic_field_workspace_route(workspace_id)
-    workspace_item = _find_tree_item_by_route(window, route)
+    workspace_item = find_tree_item_by_route(window._project_tree, route)
     workspace_widget = window._magnetic_field_workspace_widgets[workspace_id]
     assert workspace_item is not None
     assert workspace_item.text(0) == "Pinned helix"
@@ -471,7 +448,7 @@ def test_main_window_pins_restores_renames_and_deletes_magnetic_field_workspace(
     workspace_widget._on_title_edit_finished()
 
     assert doc.ui_state["magnetic_field_workspaces"][0]["title"] == "Renamed helix"
-    workspace_item = _find_tree_item_by_route(window, route)
+    workspace_item = find_tree_item_by_route(window._project_tree, route)
     assert workspace_item is not None
     assert workspace_item.text(0) == "Renamed helix"
 
@@ -508,7 +485,7 @@ def test_main_window_routes_to_quantum_view_and_construction_placeholders(qapp, 
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    quantum_item = _find_tree_item_by_route(window, "quantum_corrections")
+    quantum_item = find_tree_item_by_route(window._project_tree, "quantum_corrections")
     assert quantum_item is not None
     window._project_tree.setCurrentItem(quantum_item)
     window._on_tree_selection_changed()
@@ -516,7 +493,7 @@ def test_main_window_routes_to_quantum_view_and_construction_placeholders(qapp, 
     assert window._main_stack.currentWidget() is window._quantum_corrections_view
     assert window._quantum_corrections_view.accessibleName() == "Quantum Corrections workflow"
 
-    barriers_item = _find_tree_item_by_route(window, "energy_barriers")
+    barriers_item = find_tree_item_by_route(window._project_tree, "energy_barriers")
     assert barriers_item is not None
     window._project_tree.setCurrentItem(barriers_item)
     window._on_tree_selection_changed()
@@ -2610,7 +2587,7 @@ def test_main_window_project_tree_header_shows_project_name_without_root_item(qa
     assert title is not None
     assert title.text() == "Project: CoF2"
     assert window._project_tree.topLevelItem(0).text(0) == "Host Structure"
-    assert _find_tree_item_by_route(window, "host_structure") is not None
+    assert find_tree_item_by_route(window._project_tree, "host_structure") is not None
     assert window._main_stack.currentWidget() is window._home_page
     assert window._home_content_stack.currentWidget() is window._project_home_page
     assert window._project_home_button.isEnabled() is True
@@ -2726,10 +2703,10 @@ def test_main_window_workflow_completion_roles_track_project_defaults(
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    host_item = _find_tree_item_by_route(window, "host_structure")
-    cutoff_item = _find_tree_item_by_route(window, "convergence_cutoff")
-    kpoint_item = _find_tree_item_by_route(window, "convergence_kpoint")
-    pristine_item = _find_tree_item_by_route(window, "pristine_relaxation")
+    host_item = find_tree_item_by_route(window._project_tree, "host_structure")
+    cutoff_item = find_tree_item_by_route(window._project_tree, "convergence_cutoff")
+    kpoint_item = find_tree_item_by_route(window._project_tree, "convergence_kpoint")
+    pristine_item = find_tree_item_by_route(window._project_tree, "pristine_relaxation")
     convergence_item = _find_tree_item_by_prefix(window, "Convergence Testing")
 
     assert host_item is not None
@@ -2750,10 +2727,10 @@ def test_main_window_workflow_completion_roles_track_project_defaults(
     doc.comparison_tables[uuid4()] = ComparisonTable(label="Comparison 1")
     window._populate_project_tree()
 
-    host_item = _find_tree_item_by_route(window, "host_structure")
-    cutoff_item = _find_tree_item_by_route(window, "convergence_cutoff")
-    kpoint_item = _find_tree_item_by_route(window, "convergence_kpoint")
-    pristine_item = _find_tree_item_by_route(window, "pristine_relaxation")
+    host_item = find_tree_item_by_route(window._project_tree, "host_structure")
+    cutoff_item = find_tree_item_by_route(window._project_tree, "convergence_cutoff")
+    kpoint_item = find_tree_item_by_route(window._project_tree, "convergence_kpoint")
+    pristine_item = find_tree_item_by_route(window._project_tree, "pristine_relaxation")
     convergence_item = _find_tree_item_by_prefix(window, "Convergence Testing")
 
     assert host_item is not None
@@ -2787,8 +2764,8 @@ def test_main_window_refreshes_uep_and_muon_site_completion_from_live_document(
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    uep_item = _find_tree_item_by_route(window, "uep")
-    muon_item = _find_tree_item_by_route(window, "muon_candidates")
+    uep_item = find_tree_item_by_route(window._project_tree, "uep")
+    muon_item = find_tree_item_by_route(window._project_tree, "muon_candidates")
 
     assert uep_item is not None
     assert muon_item is not None
@@ -2810,8 +2787,8 @@ def test_main_window_refreshes_uep_and_muon_site_completion_from_live_document(
     window._refresh_jobs_table()
     window._refresh_muon_generation_table()
 
-    uep_item = _find_tree_item_by_route(window, "uep")
-    muon_item = _find_tree_item_by_route(window, "muon_candidates")
+    uep_item = find_tree_item_by_route(window._project_tree, "uep")
+    muon_item = find_tree_item_by_route(window._project_tree, "muon_candidates")
     assert uep_item is not None
     assert muon_item is not None
     assert uep_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is True
@@ -2844,7 +2821,7 @@ def test_main_window_supercell_editor_complete_when_active_host_has_saved_asset(
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    supercell_item = _find_tree_item_by_route(window, "supercell_editor")
+    supercell_item = find_tree_item_by_route(window._project_tree, "supercell_editor")
     assert supercell_item is not None
     assert supercell_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is False
     assert "Save reusable supercells" in str(supercell_item.data(0, window._WORKFLOW_GOAL_ROLE))
@@ -2865,7 +2842,7 @@ def test_main_window_supercell_editor_complete_when_active_host_has_saved_asset(
     )
     window._populate_project_tree()
 
-    supercell_item = _find_tree_item_by_route(window, "supercell_editor")
+    supercell_item = find_tree_item_by_route(window._project_tree, "supercell_editor")
     assert supercell_item is not None
     assert supercell_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is False
 
@@ -2878,7 +2855,7 @@ def test_main_window_supercell_editor_complete_when_active_host_has_saved_asset(
     )
     window._populate_project_tree()
 
-    supercell_item = _find_tree_item_by_route(window, "supercell_editor")
+    supercell_item = find_tree_item_by_route(window._project_tree, "supercell_editor")
     assert supercell_item is not None
     assert supercell_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is True
 
@@ -2945,7 +2922,7 @@ def test_main_window_muon_relaxation_workflow_complete_when_table_jobs_done(
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    relaxation_item = _find_tree_item_by_route(window, "muon_relaxations")
+    relaxation_item = find_tree_item_by_route(window._project_tree, "muon_relaxations")
 
     assert relaxation_item is not None
     assert relaxation_item.toolTip(0) == "Complete when: All structural relaxations completed."
@@ -2954,7 +2931,7 @@ def test_main_window_muon_relaxation_workflow_complete_when_table_jobs_done(
     second_job.status = JobStatus.COMPLETED
     window._populate_project_tree()
 
-    relaxation_item = _find_tree_item_by_route(window, "muon_relaxations")
+    relaxation_item = find_tree_item_by_route(window._project_tree, "muon_relaxations")
     assert relaxation_item is not None
     assert relaxation_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is True
 

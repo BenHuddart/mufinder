@@ -15,16 +15,7 @@ from mufinder.science.energy_barriers import (
     neb_farm_distribution,
     prepare_transition_state_structures,
 )
-
-
-def _host_structure() -> Structure:
-    return Structure(
-        label="host",
-        origin="imported",
-        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
-    )
+from tests.support.structures import BODY_CENTRE, si_pair_host
 
 
 def _relaxed_structure(label: str, muon_fractional: list[float]) -> Structure:
@@ -39,7 +30,7 @@ def _relaxed_structure(label: str, muon_fractional: list[float]) -> Structure:
 
 
 def test_enumerate_distinct_muon_paths_returns_ordered_paths() -> None:
-    pristine = _host_structure()
+    pristine = si_pair_host(label="host", positions=BODY_CENTRE)
     reactant = _relaxed_structure("siteA", [0.25, 0.25, 0.25])
     product = _relaxed_structure("siteB", [0.75, 0.25, 0.25])
 
@@ -55,7 +46,7 @@ def test_enumerate_distinct_muon_paths_returns_ordered_paths() -> None:
 
 
 def test_prepare_transition_state_structures_aligns_product_to_path() -> None:
-    pristine = _host_structure()
+    pristine = si_pair_host(label="host", positions=BODY_CENTRE)
     reactant = _relaxed_structure("siteA", [0.25, 0.25, 0.25])
     product = _relaxed_structure("siteB", [0.75, 0.25, 0.25])
 
@@ -74,7 +65,7 @@ def test_prepare_transition_state_structures_aligns_product_to_path() -> None:
 
 
 def test_enumerate_distinct_muon_paths_respects_max_distance() -> None:
-    pristine = _host_structure()
+    pristine = si_pair_host(label="host", positions=BODY_CENTRE)
     reactant = _relaxed_structure("siteA", [0.25, 0.25, 0.25])
     product = _relaxed_structure("siteB", [0.75, 0.25, 0.25])
 

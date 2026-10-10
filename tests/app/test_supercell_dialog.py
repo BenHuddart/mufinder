@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 from PySide6.QtWidgets import QDialog, QHeaderView
 
 from mufinder.app.supercell_dialog import SupercellEditorDialog, SupercellPreviewDialog
@@ -10,16 +12,10 @@ from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Structure
 from mufinder.science.supercell_suggestion import SupercellCandidate, SupercellSuggestion
 from mufinder.services.project_service import ProjectService
+from tests.support.structures import si_pair_host
 
 
-def _host_structure() -> Structure:
-    return Structure(
-        label="Host",
-        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
-        species=["Si", "Si"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
-        properties={"pbc": [True, True, True]},
-    )
+_host_structure = partial(si_pair_host, label="Host", properties={"pbc": [True, True, True]})
 
 
 def test_supercell_dialog_simple_mode_matrix(qapp) -> None:

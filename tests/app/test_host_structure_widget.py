@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -40,21 +41,21 @@ from mufinder.app import theme as theme_module
 from mufinder.app.theme import body_font_family, current_palette
 from mufinder.app.host_structure_widget import HostStructureWidget
 from mufinder.domain.models import Structure
+from tests.support.structures import host_structure
 
 
-def _sample_structure() -> Structure:
-    return Structure(
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 7.0]],
-        species=["Si", "O"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.5, 0.75]],
-        source_file="imports/host.cif",
-        properties={
-            "pbc": [True, True, True],
-            "atomic_spins": [1.0, -1.5],
-            "propagation_vector": [0.0, 0.0, 0.25],
-        },
-    )
+_sample_structure = partial(
+    host_structure,
+    lattice=[[5.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 7.0]],
+    species=("Si", "O"),
+    positions=((0.0, 0.0, 0.0), (0.25, 0.5, 0.75)),
+    source_file="imports/host.cif",
+    properties={
+        "pbc": [True, True, True],
+        "atomic_spins": [1.0, -1.5],
+        "propagation_vector": [0.0, 0.0, 0.25],
+    },
+)
 
 
 def test_host_structure_widget_splitter_fits_small_screen_width(qapp) -> None:
