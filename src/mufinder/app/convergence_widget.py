@@ -28,13 +28,8 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
-from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.workflow_parameters import (
-    merge_batch_advanced,
-    merge_batch_values,
-    mixed_parameter_names,
-    kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     seed_xc_functional_default,
 )
@@ -70,6 +65,7 @@ from mufinder.app.selection_snapshot import (
     SelectionSnapshotToolButton,
     resolve_target_keys,
 )
+from mufinder.app.workflow_dialogs import RowParameterRequest, run_row_parameter_dialog
 
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
     "lattice_cart",
@@ -654,61 +650,27 @@ class CutoffConvergenceWidget(QWidget):
         if not cutoffs:
             return
 
-        intro_text = f"Included cutoffs: {self._format_cutoff_list(tuple(sorted(cutoffs)))}"
-        read_only = self._cutoff_parameters_locked(cutoffs)
-        dialog_kwargs = {
-            "specs": self._specs,
-            "workflow_stage": "convergence_cutoff",
-            "locked_values": self._shared_locked_values(),
-            "intro_text": intro_text,
-            "species_options": self._parameter_species_options,
-            "parent": self,
-        }
-        if read_only:
-            dialog_kwargs["read_only"] = True
-        dialog = ParameterDialog(**dialog_kwargs)
-        dialog.setWindowTitle(
-            (
-                "Inspect Cutoff Parameters"
-                if len(cutoffs) > 1
-                else f"Inspect Parameters: {cutoffs[0]:.8g} eV"
-            )
-            if read_only
-            else (
-                "Configure Cutoff Parameters"
-                if len(cutoffs) > 1
-                else f"Configure Parameters: {cutoffs[0]:.8g} eV"
-            )
+        subject = "Cutoff Parameters" if len(cutoffs) > 1 else f"Parameters: {cutoffs[0]:.8g} eV"
+        result = run_row_parameter_dialog(
+            RowParameterRequest(
+                specs=self._specs,
+                workflow_stage="convergence_cutoff",
+                subject=subject,
+                values=self._common_parameter_values_for_cutoffs(cutoffs),
+                row_values={c: self._effective_params_for_cutoff(c) for c in cutoffs},
+                row_advanced={c: self._cutoff_added_advanced.get(c, set()) for c in cutoffs},
+                sanitize=self._sanitize_parameter_mapping,
+                locked_values=self._shared_locked_values(),
+                read_only=self._cutoff_parameters_locked(cutoffs),
+                intro_text=f"Included cutoffs: {self._format_cutoff_list(tuple(sorted(cutoffs)))}",
+                species_options=self._parameter_species_options,
+            ),
+            parent=self,
         )
-        kpoint_hint = kpoint_exclusive_hint(
-            self._effective_params_for_cutoff(c) for c in cutoffs
-        )
-        dialog.set_values(
-            self._common_parameter_values_for_cutoffs(cutoffs),
-            preferred_exclusive=kpoint_hint,
-        )
-        dialog.set_advanced_names(self._advanced_names_for_cutoffs(cutoffs))
-        effective_by_cutoff = {c: self._effective_params_for_cutoff(c) for c in cutoffs}
-        dialog.set_mixed_names(mixed_parameter_names(effective_by_cutoff.values()))
-
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        if result is None:
             return
-        if read_only:
-            return
-
-        # Parameters that differ between the cutoffs and were left alone keep
-        # each cutoff's own value; everything else follows the dialog.
-        values = self._sanitize_parameter_mapping(dialog.collect_values())
-        advanced_names = set(dialog.advanced_names())
-        untouched = dialog.untouched_mixed_names()
-        for cutoff in cutoffs:
-            self._set_cutoff_parameter_values(
-                cutoff,
-                merge_batch_values(values, effective_by_cutoff[cutoff], untouched),
-                merge_batch_advanced(
-                    advanced_names, self._cutoff_added_advanced.get(cutoff, set()), untouched
-                ),
-            )
+        for cutoff, values in result.row_values.items():
+            self._set_cutoff_parameter_values(cutoff, values, result.row_advanced[cutoff])
 
         self._refresh_all_cutoff_rows()
         self._emit_state()
@@ -755,12 +717,6 @@ class CutoffConvergenceWidget(QWidget):
         if "task" not in common:
             common["task"] = infer_task("convergence_cutoff")
         return common
-
-    def _advanced_names_for_cutoffs(self, cutoffs: tuple[float, ...]) -> set[str]:
-        names: set[str] = set()
-        for cutoff in cutoffs:
-            names.update(self._cutoff_added_advanced.get(cutoff, set()))
-        return names
 
     def _is_cutoff_customized(self, cutoff: float) -> bool:
         return cutoff in self._cutoff_parameter_values or cutoff in self._cutoff_added_advanced

@@ -188,7 +188,9 @@ workflow widget modules define, how many define it; the counts may only fall.
        default seeding (``seed_xc_functional_default``), and sanitising and
        restoring persisted parameter values.
    * - ``mufinder.app.workflow_dialogs`` / ``mufinder.app.param_dialog``
-     - The row parameter dialog and the configure dialogs.
+     - The row parameter dialog (``run_row_parameter_dialog``, driven by a
+       ``RowParameterRequest`` and returning a ``RowParameterResult``) and the
+       configure dialogs.
    * - ``mufinder.app.adapter_common``
      - GUI value dict to ``InputTemplate``, k-point rescaling for supercell
        rows, and the ``AdapterExpansion`` return shape (see Workflow adapters).
@@ -231,6 +233,15 @@ controllers treat every workflow alike:
   targeting rule; a delete-shortcut handler returns early while the table is
   editing a cell; a row whose job is in a runtime state is locked by
   ``workflow_row_is_locked`` and its parameter dialog opens read-only.
+- **Row parameter dialog.** Configure and inspect go through
+  ``run_row_parameter_dialog``. The widget supplies the targeted rows' effective
+  parameters and advanced names, the dialog seed, its locked values and
+  sanitiser; the launcher titles the dialog ``Configure …`` or ``Inspect …``,
+  applies the k-point grid/spacing preference, marks parameters that differ
+  between the rows as mixed, sanitises what the dialog returns and resolves it
+  per row, keeping each row's own value for a mixed parameter left untouched.
+  It returns ``None`` on cancel and for a read-only inspection; the widget
+  only stores the per-row result.
 - **Parameters.** Specs exclude ``task``; defaults are seeded from the schema
   and the project defaults; effective parameters carry exactly one of
   ``kpoint_mp_grid`` / ``kpoint_mp_spacing``; every restore passes through the

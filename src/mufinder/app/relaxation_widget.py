@@ -26,7 +26,6 @@ from mufinder.app.selection_snapshot import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QDialog,
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
@@ -41,14 +40,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_adapter import suggested_grid_for_row
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.workflow_parameters import (
-    merge_batch_advanced,
-    merge_batch_values,
-    mixed_parameter_names,
-    kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     seed_xc_functional_default,
 )
@@ -68,6 +62,7 @@ from mufinder.app.workflow_table_utils import (
     style_workflow_configure_button,
     workflow_row_status_text,
 )
+from mufinder.app.workflow_dialogs import RowParameterRequest, run_row_parameter_dialog
 from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
@@ -859,7 +854,7 @@ class PristineRelaxationWidget(QWidget):
                 action="Configure parameters for",
             )
             if target_row_ids:
-                self._open_row_parameter_dialog(target_row_ids)
+                self._open_relaxation_parameter_dialog(target_row_ids)
         elif kind == "remove":
             target_row_ids = resolve_target_keys(
                 widget,
@@ -1080,7 +1075,7 @@ class PristineRelaxationWidget(QWidget):
         if not row_ids:
             QMessageBox.information(self, "No rows selected", "Select one or more rows first.")
             return
-        self._open_row_parameter_dialog(row_ids)
+        self._open_relaxation_parameter_dialog(row_ids)
 
     def _delete_selected_rows(self) -> None:
         if self._table.state() == QAbstractItemView.State.EditingState:
@@ -1124,12 +1119,6 @@ class PristineRelaxationWidget(QWidget):
             if suggested_grid is not None:
                 common["kpoint_mp_grid"] = suggested_grid
         return common
-
-    def _advanced_names_for_rows(self, row_ids: tuple[int, ...]) -> set[str]:
-        names: set[str] = set()
-        for row_id in row_ids:
-            names.update(self._row_added_advanced.get(row_id, set()))
-        return names
 
     def _row_parameters_locked(self, row_ids: tuple[int, ...]) -> bool:
         for row_id in row_ids:
@@ -1176,7 +1165,7 @@ class PristineRelaxationWidget(QWidget):
     def continue_relaxation_dialog_seed(self, label: object) -> dict[str, object] | None:
         """Return the ``ContinueRelaxationDialog`` seed kwargs for one row.
 
-        Mirrors :meth:`_open_row_parameter_dialog`'s single-row seeding (the
+        Mirrors :meth:`_open_relaxation_parameter_dialog`'s single-row seeding (the
         row's effective parameter values, its added-advanced set, and the same
         locked task/fix-cell/write-cell-structure keywords), for the one row
         the Continue action targets. MainWindow supplies everything this
@@ -1202,7 +1191,7 @@ class PristineRelaxationWidget(QWidget):
             "species_options": self._parameter_species_options,
         }
 
-    def _open_row_parameter_dialog(self, row_ids: tuple[int, ...]) -> None:
+    def _open_relaxation_parameter_dialog(self, row_ids: tuple[int, ...]) -> None:
         intro_labels: list[str] = []
         for row_id in row_ids:
             row = self._row_index_for_id(row_id)
@@ -1210,49 +1199,31 @@ class PristineRelaxationWidget(QWidget):
                 continue
             intro_labels.append(self._label_at_row(row))
 
-        read_only = self._row_parameters_locked(row_ids)
-        dialog_kwargs = {
-            "specs": self._specs,
-            "workflow_stage": "pristine_relaxation",
-            "locked_values": {
-                "task": "GEOMETRYOPTIMIZATION",
-                "fix_all_cell": "Variable (set by row control)",
-                "write_cell_structure": "TRUE (required for relaxed-cell outputs)",
-            },
-            "intro_text": "Included rows: " + ", ".join(intro_labels),
-            "species_options": self._parameter_species_options,
-            "parent": self,
-        }
-        if read_only:
-            dialog_kwargs["read_only"] = True
-        dialog = ParameterDialog(**dialog_kwargs)
-        dialog.setWindowTitle("Inspect Relaxation Parameters" if read_only else "Configure Relaxation Parameters")
-        kpoint_hint = kpoint_exclusive_hint(
-            self._effective_params_for_row(r) for r in row_ids
+        result = run_row_parameter_dialog(
+            RowParameterRequest(
+                specs=self._specs,
+                workflow_stage="pristine_relaxation",
+                subject="Relaxation Parameters",
+                values=self._common_params_for_rows(row_ids),
+                row_values={row_id: self._effective_params_for_row(row_id) for row_id in row_ids},
+                row_advanced={row_id: self._row_added_advanced.get(row_id, set()) for row_id in row_ids},
+                sanitize=self._sanitize_parameter_mapping,
+                locked_values={
+                    "task": "GEOMETRYOPTIMIZATION",
+                    "fix_all_cell": "Variable (set by row control)",
+                    "write_cell_structure": "TRUE (required for relaxed-cell outputs)",
+                },
+                read_only=self._row_parameters_locked(row_ids),
+                intro_text="Included rows: " + ", ".join(intro_labels),
+                species_options=self._parameter_species_options,
+            ),
+            parent=self,
         )
-        dialog.set_values(self._common_params_for_rows(row_ids), preferred_exclusive=kpoint_hint)
-        dialog.set_advanced_names(self._advanced_names_for_rows(row_ids))
-        effective_by_row = {row_id: self._effective_params_for_row(row_id) for row_id in row_ids}
-        dialog.set_mixed_names(mixed_parameter_names(effective_by_row.values()))
-
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        if result is None:
             return
-        if read_only:
-            return
-
-        # Parameters that differ between the rows and were left alone keep each
-        # row's own value; everything else follows the dialog.
-        values = self._sanitize_parameter_mapping(dialog.collect_values())
-        advanced = set(dialog.advanced_names())
-        untouched = dialog.untouched_mixed_names()
-        for row_id in row_ids:
-            self._row_parameter_values[row_id] = self._strip_implicit_row_defaults(
-                row_id,
-                merge_batch_values(values, effective_by_row[row_id], untouched),
-            )
-            self._row_added_advanced[row_id] = merge_batch_advanced(
-                advanced, self._row_added_advanced.get(row_id, set()), untouched
-            )
+        for row_id, values in result.row_values.items():
+            self._row_parameter_values[row_id] = self._strip_implicit_row_defaults(row_id, values)
+            self._row_added_advanced[row_id] = result.row_advanced[row_id]
 
         self._refresh_all_rows()
         self._emit_state()

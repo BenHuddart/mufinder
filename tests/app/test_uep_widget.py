@@ -12,7 +12,6 @@ from PySide6.QtWidgets import QComboBox, QDialog, QLabel, QPushButton, QToolButt
 from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
-from mufinder.app import uep_widget as uep_widget_module
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.uep_types import UepRunState
 from mufinder.app.uep_widget import UEPWidget
@@ -216,10 +215,11 @@ def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkey
             workflow_stage: str,
                 locked_values: Mapping[str, object],
                 intro_text: str | None = None,
+                read_only: bool = False,
                 species_options: tuple[str, ...] = (),
                 parent: object | None = None,
             ) -> None:
-                del specs, workflow_stage, locked_values, intro_text, species_options, parent
+                del specs, workflow_stage, locked_values, intro_text, read_only, species_options, parent
 
         def set_values(
             self, values: Mapping[str, object], *, preferred_exclusive: str | None = None
@@ -228,6 +228,15 @@ def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkey
 
         def set_advanced_names(self, names: set[str]) -> None:
             calls.append(("set_advanced_names", tuple(sorted(names))))
+
+        def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt API naming.
+            del title
+
+        def set_mixed_names(self, names: set[str]) -> None:
+            del names
+
+        def untouched_mixed_names(self) -> set[str]:
+            return set()
 
         def exec(self) -> int:
             return self.DialogCode.Accepted
@@ -238,10 +247,10 @@ def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkey
         def advanced_names(self) -> tuple[str, ...]:
             return ("spin_polarized",)
 
-    monkeypatch.setattr("mufinder.app.uep_widget.ParameterDialog", DummyDialog)
+    monkeypatch.setattr("mufinder.app.workflow_dialogs.ParameterDialog", DummyDialog)
     widget._row_added_advanced[row_id] = {"spin_polarized"}
 
-    widget._configure_row(row_id)
+    widget._configure_rows((row_id,))
 
     assert ("set_advanced_names", ("spin_polarized",)) in calls
     assert widget._row_parameter_values[row_id]["task"] == "SINGLEPOINT"
@@ -274,10 +283,11 @@ def test_uep_widget_reopens_dialog_with_saved_row_values(qapp, monkeypatch) -> N
             workflow_stage: str,
                 locked_values: Mapping[str, object],
                 intro_text: str | None = None,
+                read_only: bool = False,
                 species_options: tuple[str, ...] = (),
                 parent: object | None = None,
             ) -> None:
-                del specs, workflow_stage, locked_values, intro_text, species_options, parent
+                del specs, workflow_stage, locked_values, intro_text, read_only, species_options, parent
                 self._payload = next(dialog_payloads)
 
         def set_values(
@@ -288,6 +298,15 @@ def test_uep_widget_reopens_dialog_with_saved_row_values(qapp, monkeypatch) -> N
         def set_advanced_names(self, names: set[str]) -> None:
             del names
 
+        def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt API naming.
+            del title
+
+        def set_mixed_names(self, names: set[str]) -> None:
+            del names
+
+        def untouched_mixed_names(self) -> set[str]:
+            return set()
+
         def exec(self) -> int:
             return self.DialogCode.Accepted
 
@@ -297,10 +316,10 @@ def test_uep_widget_reopens_dialog_with_saved_row_values(qapp, monkeypatch) -> N
         def advanced_names(self) -> tuple[str, ...]:
             return ()
 
-    monkeypatch.setattr("mufinder.app.uep_widget.ParameterDialog", DummyDialog)
+    monkeypatch.setattr("mufinder.app.workflow_dialogs.ParameterDialog", DummyDialog)
 
-    widget._configure_row(row_id)
-    widget._configure_row(row_id)
+    widget._configure_rows((row_id,))
+    widget._configure_rows((row_id,))
 
     assert seen_values[0]["task"] == "SINGLEPOINT"
     assert seen_values[0]["write_formatted_density"] is True
@@ -481,17 +500,17 @@ def test_uep_batch_configure_applies_to_all_selected_rows(qapp, monkeypatch) -> 
     assert first_id is not None and third_id is not None and unselected_id is not None
 
     monkeypatch.setattr(
-        uep_widget_module.ParameterDialog,
+        ParameterDialog,
         "exec",
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(
-        uep_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"cut_off_energy": 555.0},
     )
     monkeypatch.setattr(
-        uep_widget_module.ParameterDialog,
+        ParameterDialog,
         "advanced_names",
         lambda _self: (),
     )
@@ -517,7 +536,7 @@ def test_uep_batch_configure_empty_selection_is_noop(qapp, monkeypatch) -> None:
 
     opened: list[int] = []
     monkeypatch.setattr(
-        uep_widget_module.ParameterDialog,
+        ParameterDialog,
         "exec",
         lambda _self: opened.append(1) or QDialog.DialogCode.Accepted,
     )
@@ -541,7 +560,7 @@ def test_uep_configure_uses_selection_snapshot_not_collapsed(qapp, monkeypatch) 
     assert first_id is not None and second_id is not None
 
     captured: list[tuple[int, ...]] = []
-    # Multi-row snapshots route to _configure_rows (single-row → _configure_row).
+    # Every Configure target, single- or multi-row, routes to _configure_rows.
     monkeypatch.setattr(
         UEPWidget,
         "_configure_rows",
@@ -742,7 +761,7 @@ def test_uep_batch_configure_keeps_each_rows_own_differing_values(qapp, monkeypa
         mixed.append(dialog.untouched_mixed_names())
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(uep_widget_module.ParameterDialog, "exec", _fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", _fake_exec)
 
     widget._configure_rows((first_id, second_id))
 

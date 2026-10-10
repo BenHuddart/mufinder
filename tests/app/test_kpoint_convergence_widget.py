@@ -11,6 +11,7 @@ import mufinder.app.kpoint_convergence_widget as kpoint_widget_module
 from mufinder.app import workflow_table_utils
 from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget, KPointGridDialog, KPointSpacingDialog
+from mufinder.app.param_dialog import ParameterDialog
 from mufinder.castep_io.types import ValueWithUnit
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
@@ -372,7 +373,7 @@ def test_kpoint_widget_configure_button_reopens_after_first_use(
         exec_calls.append(1)
         return QDialog.DialogCode.Rejected
 
-    monkeypatch.setattr(kpoint_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
 
     configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
@@ -392,17 +393,17 @@ def test_kpoint_widget_open_grid_parameter_dialog_applies_to_all_selected(
     widget._add_grid((3, 3, 2))
 
     monkeypatch.setattr(
-        kpoint_widget_module.ParameterDialog,
+        ParameterDialog,
         "exec",
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(
-        kpoint_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "SINGLEPOINT", "xc_functional": "PBE", "max_scf_cycles": 75},
     )
     monkeypatch.setattr(
-        kpoint_widget_module.ParameterDialog,
+        ParameterDialog,
         "advanced_names",
         lambda _self: ("basis_precision",),
     )
@@ -429,9 +430,9 @@ def test_kpoint_widget_queued_grid_parameter_dialog_is_read_only(
         observed["title"] = dialog.windowTitle()
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(kpoint_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
     monkeypatch.setattr(
-        kpoint_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
     )
@@ -460,9 +461,9 @@ def test_kpoint_widget_cancelled_grid_parameters_are_editable(
         observed["title"] = dialog.windowTitle()
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(kpoint_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
     monkeypatch.setattr(
-        kpoint_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
     )
@@ -492,7 +493,7 @@ def test_kpoint_widget_parameter_dialog_prefers_cutoff_and_shows_spin_polarized(
         )
         return QDialog.DialogCode.Rejected
 
-    monkeypatch.setattr(kpoint_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
 
     widget._open_grid_parameter_dialog(((2, 2, 2),))
 
@@ -520,7 +521,7 @@ def test_kpoint_widget_parameter_dialog_places_kpoint_below_basis_controls(
         observed["names"] = names
         return QDialog.DialogCode.Rejected
 
-    monkeypatch.setattr(kpoint_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
 
     widget._open_grid_parameter_dialog(((2, 2, 2),))
 

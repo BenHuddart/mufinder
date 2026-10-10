@@ -11,7 +11,6 @@ from PySide6.QtWidgets import QComboBox, QDialog, QMessageBox, QPushButton, QToo
 from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
-from mufinder.app import muon_relaxation_widget as muon_relaxation_widget_module
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.relaxation_types import RelaxationRunState
@@ -704,17 +703,17 @@ def test_muon_relaxation_batch_configure_applies_to_all_selected_rows(
     assert first_id is not None and third_id is not None and unselected_id is not None
 
     monkeypatch.setattr(
-        muon_relaxation_widget_module.ParameterDialog,
+        ParameterDialog,
         "exec",
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(
-        muon_relaxation_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "GEOMETRYOPTIMIZATION", "max_scf_cycles": 88},
     )
     monkeypatch.setattr(
-        muon_relaxation_widget_module.ParameterDialog,
+        ParameterDialog,
         "advanced_names",
         lambda _self: (),
     )
@@ -742,7 +741,7 @@ def test_muon_relaxation_batch_configure_empty_selection_shows_info(
     opened: list[int] = []
     monkeypatch.setattr(
         MuonRelaxationWidget,
-        "_open_row_parameter_dialog",
+        "_open_muon_parameter_dialog",
         lambda _self, _ids: opened.append(1),
     )
 
@@ -771,7 +770,7 @@ def test_muon_relaxation_configure_uses_selection_snapshot_not_collapsed(
     captured: list[tuple[int, ...]] = []
     monkeypatch.setattr(
         MuonRelaxationWidget,
-        "_open_row_parameter_dialog",
+        "_open_muon_parameter_dialog",
         lambda _self, ids: captured.append(ids),
     )
     monkeypatch.setattr(
@@ -1096,8 +1095,8 @@ def _save_dialog(monkeypatch, widget: MuonRelaxationWidget, row_id: int, *, spin
             editor.set_value(spin_polarized)
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(muon_relaxation_widget_module.ParameterDialog, "exec", _accept)
-    widget._open_row_parameter_dialog((row_id,))
+    monkeypatch.setattr(ParameterDialog, "exec", _accept)
+    widget._open_muon_parameter_dialog((row_id,))
     return shown[0]
 
 
