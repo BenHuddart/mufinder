@@ -16,8 +16,12 @@ from mufinder.services.ssh_client import (
     SSHProtocolBannerError,
     SSHTransportError,
     SSHUnknownHostKeyError,
+    TrustedHostKeyRecord,
+    _decode_host_key,
     load_trusted_host_key,
     save_trusted_host_key,
+    trusted_host_lookup_name,
+    trusted_host_settings_prefix,
 )
 
 
@@ -337,6 +341,33 @@ def _jump_config() -> ClusterConfig:
     )
 
 
+def _patch_paramiko(monkeypatch: pytest.MonkeyPatch, paramiko) -> None:
+    monkeypatch.setattr(SSHConnection, "_import_paramiko", staticmethod(lambda: paramiko))
+
+
+def _connected(monkeypatch: pytest.MonkeyPatch) -> tuple[SSHConnection, _FakeParamiko]:
+    """Return a key-authenticated connection to a host the system already trusts."""
+
+    fake_paramiko = _FakeParamiko(fail_key=False, system_host_keys={"example.org": _FakeKey()})
+    _patch_paramiko(monkeypatch, fake_paramiko)
+    connection = SSHConnection(_config("key"))
+    connection.connect()
+    return connection, fake_paramiko
+
+
+def _failing_connect_paramiko(error: BaseException) -> _FakeParamiko:
+    """Return a fake paramiko whose client raises ``error`` from ``connect``."""
+
+    class _FailingClient(_FakeSSHClient):
+        def connect(self, **kwargs) -> None:
+            self.connect_calls.append(kwargs)
+            raise error
+
+    fake_paramiko = _FakeParamiko()
+    fake_paramiko._client = _FailingClient(system_host_keys={"example.org": _FakeKey()})
+    return fake_paramiko
+
+
 def test_ssh_connection_connects_with_key_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_paramiko = _FakeParamiko(
         fail_key=False,
@@ -477,6 +508,42 @@ def test_ssh_connection_password_auth_requires_password(monkeypatch: pytest.Monk
         connection.connect(password=None)
 
 
+def test_ssh_connection_password_auth_sends_only_the_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_paramiko = _FakeParamiko(fail_key=False, system_host_keys={"example.org": _FakeKey()})
+    _patch_paramiko(monkeypatch, fake_paramiko)
+
+    connection = SSHConnection(_config("password"))
+    connection.connect(password="secret")
+
+    assert connection.is_connected
+    call = fake_paramiko._client.connect_calls[0]
+    assert call["password"] == "secret"
+    assert call["look_for_keys"] is False
+    assert call["allow_agent"] is False
+
+
+def test_ssh_connection_key_auth_failure_without_password_is_structured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_paramiko(
+        monkeypatch,
+        _FakeParamiko(fail_key=True, system_host_keys={"example.org": _FakeKey()}),
+    )
+
+    with pytest.raises(SSHAuthenticationError, match="SSH key authentication failed"):
+        SSHConnection(_config("key")).connect(password=None)
+
+
+def test_ssh_connection_password_auth_failure_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_paramiko(
+        monkeypatch,
+        _failing_connect_paramiko(_FakeParamiko.AuthenticationException("bad password")),
+    )
+
+    with pytest.raises(SSHAuthenticationError, match="SSH authentication failed"):
+        SSHConnection(_config("password")).connect(password="wrong")
+
+
 def test_ssh_connection_file_operations(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     fake_paramiko = _FakeParamiko(
         fail_key=False,
@@ -511,6 +578,97 @@ def test_ssh_connection_file_operations(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert not connection.exists("/remote/work/dir/local.txt")
 
 
+def test_ssh_connection_file_operations_require_an_sftp_session() -> None:
+    connection = SSHConnection(_config("key"))
+
+    with pytest.raises(ConnectionError, match="SFTP session is not active"):
+        connection.stat("/anything")
+
+
+def test_ssh_connection_missing_path_is_neither_file_nor_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection, _fake_paramiko = _connected(monkeypatch)
+
+    assert connection.is_dir("/does/not/exist") is False
+    assert connection.is_file("/does/not/exist") is False
+
+
+def test_ssh_connection_mtime_reports_the_remote_modification_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection, fake_paramiko = _connected(monkeypatch)
+    monkeypatch.setattr(
+        fake_paramiko._client._sftp,
+        "stat",
+        lambda _path: type("Attr", (), {"st_mode": 0o100644, "st_mtime": 1_700_000_000})(),
+    )
+
+    assert connection.mtime("/remote/job/seed.param") == 1_700_000_000.0
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        None,
+        type("NoMtime", (), {"st_mode": 0o100644})(),
+        type("BadMtime", (), {"st_mode": 0o100644, "st_mtime": "not-a-time"})(),
+    ],
+    ids=["missing-path", "no-mtime-attribute", "unparseable-mtime"],
+)
+def test_ssh_connection_mtime_is_none_when_the_server_reports_nothing_usable(
+    monkeypatch: pytest.MonkeyPatch, attributes: object
+) -> None:
+    """Callers order two remote mtimes against each other, so "unknown" must be
+    distinguishable from an ordering and never coerced into one."""
+
+    connection, fake_paramiko = _connected(monkeypatch)
+    if attributes is not None:
+        monkeypatch.setattr(fake_paramiko._client._sftp, "stat", lambda _path: attributes)
+
+    assert connection.mtime("/remote/job/seed.param") is None
+
+
+def test_ssh_connection_mkdir_ignores_root_and_empty_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection, fake_paramiko = _connected(monkeypatch)
+
+    connection.mkdir("/")
+    connection.mkdir(".")
+    connection.mkdir("")
+
+    assert fake_paramiko._client._sftp.directories == set()
+
+
+def test_ssh_connection_mkdir_reraises_when_not_exist_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection, fake_paramiko = _connected(monkeypatch)
+
+    def _mkdir_denied(_path: str) -> None:
+        raise IOError("permission denied")
+
+    monkeypatch.setattr(fake_paramiko._client._sftp, "mkdir", _mkdir_denied)
+
+    with pytest.raises(IOError, match="permission denied"):
+        connection.mkdir("/blocked/dir", exist_ok=False)
+
+
+def test_ssh_connection_read_text_accepts_a_text_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection, fake_paramiko = _connected(monkeypatch)
+
+    class _TextFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return "already-text"
+
+    monkeypatch.setattr(fake_paramiko._client._sftp, "open", lambda _path, _mode: _TextFile())
+
+    assert connection.read_text("/remote/file.txt") == "already-text"
+
+
 def test_ssh_connection_exec_command(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_paramiko = _FakeParamiko(
         fail_key=False,
@@ -540,6 +698,20 @@ def test_ssh_connection_disconnect(monkeypatch: pytest.MonkeyPatch) -> None:
     connection.disconnect()
 
     assert not connection.is_connected
+
+
+def test_ssh_connection_disconnect_swallows_close_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection, fake_paramiko = _connected(monkeypatch)
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("close failed")
+
+    monkeypatch.setattr(fake_paramiko._client._sftp, "close", _boom)
+    monkeypatch.setattr(fake_paramiko._client, "close", _boom)
+
+    connection.disconnect()
+
+    assert connection.is_connected is False
 
 
 def test_ssh_connection_requires_hostname(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -692,6 +864,19 @@ def test_ssh_connection_rmtree_tolerates_entries_that_vanish_mid_delete(
     assert sftp.files == {}
 
 
+@pytest.mark.parametrize("remote_path", ["/", "/remote/absent"], ids=["root", "missing"])
+def test_ssh_connection_rmtree_leaves_root_and_missing_paths_alone(
+    monkeypatch: pytest.MonkeyPatch, remote_path: str
+) -> None:
+    connection, fake_paramiko = _connected(monkeypatch)
+    sftp = fake_paramiko._client._sftp
+    sftp.directories.add("/remote")
+
+    connection.rmtree(remote_path)
+
+    assert sftp.directories == {"/remote"}
+
+
 def test_ssh_connection_requires_active_connection_for_exec() -> None:
     connection = SSHConnection(_config("key"))
 
@@ -762,6 +947,109 @@ def test_ssh_connection_host_key_mismatch_raises_structured_error(
     assert exc_info.value.presented_fingerprint_sha256.startswith("SHA256:")
 
 
+def test_trusted_host_key_storage_is_inert_without_settings_or_a_complete_record() -> None:
+    config = _config("key")
+    # Neither call needs a backing store.
+    save_trusted_host_key(None, config, algorithm="ssh-rsa", key_base64="AAAA")
+    assert load_trusted_host_key(None, config) is None
+
+    settings = _FakeSettings()
+    prefix = trusted_host_settings_prefix(config)
+    settings.setValue(f"{prefix}/algorithm", "ssh-ed25519")
+    settings.setValue(f"{prefix}/key_base64", "")
+
+    assert load_trusted_host_key(settings, config) is None
+
+
+def test_trusted_host_lookup_name_brackets_a_nonstandard_port() -> None:
+    config = ClusterConfig(name="t", hostname="example.org", port=2222, username="user")
+
+    assert trusted_host_lookup_name(config) == "[example.org]:2222"
+
+
+@pytest.mark.parametrize("algorithm", ["ssh-rsa", "ssh-ed25519", "ssh-dss", "ecdsa-sha2-nistp256"])
+def test_ssh_connection_registers_a_saved_trusted_host_key_of_each_algorithm(
+    monkeypatch: pytest.MonkeyPatch, algorithm: str
+) -> None:
+    config = _config("key")
+    settings = _FakeSettings()
+    # The fake server presents an ed25519 key with this material, so the saved
+    # ed25519 key matches it and the other algorithms sit alongside it.
+    raw = _FakeKey().asbytes()
+    save_trusted_host_key(
+        settings,
+        config,
+        algorithm=algorithm,
+        key_base64=base64.b64encode(raw).decode("ascii"),
+    )
+    fake_paramiko = _FakeParamiko(fail_key=False)
+    _patch_paramiko(monkeypatch, fake_paramiko)
+
+    connection = SSHConnection(config, settings=settings)
+    connection.connect()
+
+    registered = fake_paramiko._client.get_host_keys().lookup("example.org")
+    assert registered is not None
+    assert registered[algorithm].asbytes() == raw
+
+
+def test_ssh_connection_prefers_system_host_keys_over_a_saved_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config("key")
+    settings = _FakeSettings()
+    save_trusted_host_key(
+        settings,
+        config,
+        algorithm="ssh-rsa",
+        key_base64=base64.b64encode(b"saved-key").decode("ascii"),
+    )
+    fake_paramiko = _FakeParamiko(fail_key=False, system_host_keys={"example.org": _FakeKey()})
+    _patch_paramiko(monkeypatch, fake_paramiko)
+
+    connection = SSHConnection(config, settings=settings)
+    connection.connect()
+
+    # The endpoint is already known, so the saved key is not added alongside it.
+    assert set(fake_paramiko._client.get_host_keys().lookup("example.org")) == {"ssh-ed25519"}
+    assert connection.is_connected
+
+
+def test_ssh_connection_skips_an_undecodable_trusted_host_key(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A corrupt or legacy stored key must not abort the connection with a cryptic
+    # decode error; it is skipped, so the connection falls through to system host
+    # keys or the trust prompt, which re-saves a correct key.
+    config = _config("key")
+    settings = _FakeSettings()
+    save_trusted_host_key(
+        settings,
+        config,
+        algorithm="ssh-unknown-magic",
+        key_base64=base64.b64encode(b"data").decode("ascii"),
+    )
+    _patch_paramiko(monkeypatch, _FakeParamiko(fail_key=False, system_host_keys={}))
+
+    with pytest.raises(SSHUnknownHostKeyError):
+        SSHConnection(config, settings=settings).connect()
+
+    assert "Unsupported trusted host key algorithm: ssh-unknown-magic" in caplog.text
+
+
+def test_decode_host_key_rejects_hostname_placeholder_blob() -> None:
+    # Drives the decoder directly: only real paramiko rejects this blob, and the
+    # connection tests run against a fake. The blob reproduces the real corruption,
+    # where key_base64 held the base64 of a hostname instead of SSH key wire data.
+    paramiko = pytest.importorskip("paramiko")
+    record = TrustedHostKeyRecord(
+        algorithm="ssh-ed25519",
+        key_base64=base64.b64encode(b"bastion").decode("ascii"),
+    )
+    with pytest.raises(Exception):
+        _decode_host_key(paramiko, record)
+
+
 def test_ssh_connection_connect_returns_early_if_already_connected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -790,6 +1078,16 @@ def test_ssh_connection_import_failure_raises_connection_error(
 
     with pytest.raises(ConnectionError, match="paramiko is required"):
         SSHConnection._import_paramiko()
+
+
+def test_ssh_connection_import_returns_the_paramiko_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    sentinel = object()
+    monkeypatch.setattr(
+        "mufinder.services.ssh_client.importlib.import_module",
+        lambda name: sentinel if name == "paramiko" else None,
+    )
+
+    assert SSHConnection._import_paramiko() is sentinel
 
 
 def test_ssh_connection_protocol_banner_failure_is_structured(
@@ -837,6 +1135,57 @@ def test_ssh_connection_generic_ssh_exception_is_transport_error(
         connection.connect()
 
 
+def test_ssh_connection_banner_text_in_a_non_ssh_error_is_a_banner_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_paramiko(
+        monkeypatch,
+        _failing_connect_paramiko(ValueError("Error reading SSH protocol banner: timed out")),
+    )
+
+    with pytest.raises(SSHProtocolBannerError) as exc_info:
+        SSHConnection(_config("key")).connect()
+
+    assert exc_info.value.hostname == "example.org"
+    assert "valid SSH protocol banner" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (OSError("network unreachable"), "SSH connection failed: network unreachable"),
+        (OSError(), "SSH connection failed: OSError"),
+    ],
+    ids=["with-detail", "without-detail"],
+)
+def test_ssh_connection_other_errors_are_transport_errors(
+    monkeypatch: pytest.MonkeyPatch, error: OSError, message: str
+) -> None:
+    _patch_paramiko(monkeypatch, _failing_connect_paramiko(error))
+
+    with pytest.raises(SSHTransportError) as exc_info:
+        SSHConnection(_config("key")).connect()
+
+    assert str(exc_info.value) == message
+
+
+def test_ssh_connection_sftp_failure_closes_the_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _SFTPFailClient(_FakeSSHClient):
+        def open_sftp(self):
+            raise OSError("sftp subsystem refused")
+
+    fake_paramiko = _FakeParamiko()
+    fake_paramiko._client = _SFTPFailClient(system_host_keys={"example.org": _FakeKey()})
+    _patch_paramiko(monkeypatch, fake_paramiko)
+    connection = SSHConnection(_config("key"))
+
+    with pytest.raises(ConnectionError, match="Failed to open SFTP session"):
+        connection.connect()
+
+    assert fake_paramiko._client.get_transport().is_active() is False
+    assert connection.is_connected is False
+
+
 def test_ssh_connection_key_auth_forwards_passphrase(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -857,6 +1206,7 @@ def test_ssh_connection_resolve_command_path_prefers_configured() -> None:
     connection = SSHConnection(_config("key"))
 
     assert connection.resolve_command_path("sbatch", "/custom/sbatch") == "/custom/sbatch"
+    assert connection.resolve_command_path("   ", "") == ""
 
 
 def test_ssh_connection_resolve_command_path_probes_and_falls_back(

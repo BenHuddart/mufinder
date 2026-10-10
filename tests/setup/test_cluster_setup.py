@@ -344,3 +344,60 @@ def test_cluster_setup_drops_default_mem_per_cpu_for_addqueue() -> None:
     loaded = load_cluster_configs(settings)
     redwood = next(config for config in loaded if config.name == "redwood")
     assert redwood.default_mem_per_cpu_gb is None
+
+
+def test_cluster_setup_load_falls_back_to_defaults_for_unusable_stored_values() -> None:
+    settings = _FakeSettings()
+    # A single stored name may come back from QSettings as a bare string.
+    settings.setValue("clusters/names", "example")
+    settings.setValue("clusters/example/hostname", "example.org")
+    settings.setValue("clusters/example/auth_method", "token")
+    settings.setValue("clusters/example/port", "bad-port")
+    settings.setValue("clusters/example/queue_system", "ADDQUEUE")
+    settings.setValue("clusters/example/cores_per_node", "bad-cores")
+    settings.setValue("clusters/example/default_walltime", "")
+    settings.setValue("clusters/example/default_memory_gb", "bad-memory")
+    settings.setValue("clusters/example/default_queue_name", "")
+    settings.setValue("clusters/example/keyword_execution_mode", "mystery")
+
+    config = load_cluster_config(settings, "example")
+
+    assert config is not None
+    assert config.auth_method == "key"
+    assert config.port == 22
+    assert config.cores_per_node == 1
+    assert config.default_walltime == ""
+    assert config.default_memory_gb == 7.5
+    assert config.default_queue_name == "redwood"
+    # An unrecognised mode falls back to the default: a scheduler job.
+    assert config.keyword_execution_mode == "scheduler"
+    assert load_cluster_config(settings, "") is None
+
+
+def test_cluster_setup_load_skips_blank_and_duplicate_stored_names() -> None:
+    settings = _FakeSettings()
+    settings.setValue("clusters/names", ["alpha", " beta ", "alpha", ""])
+    settings.setValue("clusters/alpha/hostname", "alpha.example")
+    settings.setValue("clusters/beta/hostname", "beta.example")
+
+    loaded = load_cluster_configs(settings)
+
+    assert [config.name for config in loaded] == ["alpha", "beta", "Redwood"]
+
+
+def test_cluster_setup_save_skips_duplicate_names_and_fills_defaults() -> None:
+    settings = _FakeSettings()
+
+    save_cluster_configs(
+        settings,
+        [
+            ClusterConfig(name="alpha", hostname="alpha.example", default_walltime="", queue_system="SLURM"),
+            ClusterConfig(name="alpha", hostname="duplicate.example"),
+            ClusterConfig(name="beta", hostname="beta.example", queue_system="ADDQUEUE", default_memory_gb=0),
+        ],
+    )
+
+    assert settings.value("clusters/names") == ["alpha", "beta"]
+    assert settings.value("clusters/alpha/hostname") == "alpha.example"
+    assert settings.value("clusters/alpha/default_walltime") == "01:00:00"
+    assert settings.value("clusters/beta/default_memory_gb") == 7.5
