@@ -8,7 +8,6 @@ from functools import lru_cache
 
 from ase.data import atomic_numbers
 import numpy as np
-import spglib
 
 from mufinder.domain.models import Structure
 from mufinder.science.spglib_compat import get_crystal_symmetry, get_crystal_symmetry_dataset
@@ -128,18 +127,6 @@ def _orbit_from_images(
 ) -> tuple[tuple[float, float, float], ...]:
     # ``np.mod`` matches Python's ``%``; each image is wrapped once here and once more on deduplication.
     return _deduplicate_positions(np.mod(images, 1.0), lattice, tolerance_ang=tolerance_ang)
-
-
-def _symmetry_orbit(
-    position: Sequence[float],
-    rotations: Sequence[np.ndarray],
-    translations: Sequence[np.ndarray],
-    lattice: Sequence[Sequence[float]],
-    *,
-    tolerance_ang: float,
-) -> tuple[tuple[float, float, float], ...]:
-    images = _operation_images(position, rotations, translations)
-    return _orbit_from_images(images, lattice, tolerance_ang=tolerance_ang)
 
 
 def _dummy_atomic_number(host_numbers: Sequence[int]) -> int:

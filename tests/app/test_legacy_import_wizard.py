@@ -382,7 +382,7 @@ class TestRemovalAction:
     ) -> None:
         from PySide6.QtWidgets import QMessageBox
 
-        outcome = self._imported_window(window, tmp_path, host_structure)
+        self._imported_window(window, tmp_path, host_structure)
         monkeypatch.setattr(
             "mufinder.app.main_window.QInputDialog.getItem",
             lambda *args, **kwargs: (args[3][0], True),

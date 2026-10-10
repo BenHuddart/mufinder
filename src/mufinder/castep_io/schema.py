@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, replace
-import json
 import os
 from pathlib import Path
 import re
@@ -673,14 +672,6 @@ def _starter_canonical_names(file: FileKind) -> tuple[str, ...]:
     for name in KEYWORD_OVERRIDES.get(file, {}):
         if name not in names:
             names.append(name)
-    return tuple(names)
-
-
-def _starter_source_names(file: FileKind, canonical_names: tuple[str, ...]) -> tuple[str, ...]:
-    names = list(canonical_names)
-    for alias, canonical in MANUAL_ALIAS_MAP.get(file, {}).items():
-        if canonical in canonical_names and alias not in names:
-            names.append(alias)
     return tuple(names)
 
 

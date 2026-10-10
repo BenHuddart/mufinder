@@ -1,7 +1,7 @@
 MuFinder Documentation
 ======================
 
-.. image:: branding/mufinder_logo.png
+.. image:: ../src/mufinder/assets/mufinder_logo.png
    :alt: MuFinder logo
    :width: 180
    :align: center
@@ -50,7 +50,6 @@ and the quality standards that must be maintained as development expands.
 
    project_specification
    compatibility_policy
-   hpc_security_audit
    api
 
 .. toctree::

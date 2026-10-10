@@ -70,12 +70,6 @@ class LocalJobRunner(QObject):
     def running_count(self) -> int:
         return len(self._active)
 
-    def queued_count(self) -> int:
-        return len(self._pending)
-
-    def is_running(self, job_id: UUID) -> bool:
-        return job_id in self._active
-
     def active_job_ids(self) -> frozenset[UUID]:
         """Return the ids of jobs with a live ``QProcess`` (running)."""
 

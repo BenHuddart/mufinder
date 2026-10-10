@@ -146,12 +146,12 @@ def test_local_runner_queues_and_cancels_pending_jobs(
 
     assert started == [first_job]
     assert runner.running_count() == 1
-    assert runner.queued_count() == 1
+    assert len(runner.pending_job_ids()) == 1
     assert (second_job, JobStatus.QUEUED.value) in status_events
 
     runner.cancel(second_job)
 
-    assert runner.queued_count() == 0
+    assert len(runner.pending_job_ids()) == 0
     assert second_job in cancel_events
     assert (second_job, JobStatus.CANCELLED.value) in status_events
 
@@ -469,7 +469,7 @@ def test_local_runner_misc_small_branches(
     assert runner.max_concurrent == 3
 
     unknown_id = uuid4()
-    assert runner.is_running(unknown_id) is False
+    assert unknown_id not in runner.active_job_ids()
 
     # Cancel is a no-op for unknown IDs.
     runner.cancel(unknown_id)
@@ -567,7 +567,7 @@ def test_local_runner_shutdown_clears_state(
     runner.shutdown()
 
     assert runner.running_count() == 0
-    assert runner.queued_count() == 0
+    assert len(runner.pending_job_ids()) == 0
     assert process.killed is True
 
 

@@ -8,7 +8,6 @@ from uuid import uuid4
 
 from ase import Atoms
 import numpy as np
-import spglib
 
 from mufinder.domain.models import Structure
 from mufinder.science.spglib_compat import get_crystal_symmetry_dataset
@@ -1202,20 +1201,6 @@ def _legacy_q_basis_rlu(structure: Structure) -> tuple[tuple[float, float, float
     while len(vectors) < 3:
         vectors.append((0.0, 0.0, 0.0))
     return tuple(vectors[:3])
-
-
-def _legacy_moment_vectors(structure: Structure) -> list[tuple[float, float, float]]:
-    entries = _legacy_moment_entries(structure)
-    if entries:
-        atom_count = len(structure.species)
-        vectors = [(0.0, 0.0, 0.0) for _ in range(atom_count)]
-        for entry in entries:
-            atom_index = int(entry["atom_index"])
-            if 0 <= atom_index < atom_count:
-                vectors[atom_index] = entry["vector"]
-        return vectors
-
-    return [(0.0, 0.0, 0.0) for _ in range(len(structure.species))]
 
 
 def _legacy_moment_entries(structure: Structure) -> list[dict[str, object]]:

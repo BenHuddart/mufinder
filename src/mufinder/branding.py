@@ -20,13 +20,6 @@ def windows_icon_path() -> str:
     return str(files("mufinder.assets").joinpath("mufinder_logo.ico"))
 
 
-def project_home_landmark_path(name: str) -> str:
-    """Return a packaged project-home landmark sprite path."""
-
-    safe_name = name.strip().replace("/", "_").replace("\\", "_")
-    return str(files("mufinder.assets").joinpath(f"project_home_{safe_name}.png"))
-
-
 def project_home_map_path() -> str:
     """Return the packaged muted project-home map artwork path."""
 

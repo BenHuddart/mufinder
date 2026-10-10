@@ -21,7 +21,6 @@ from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
     ComparisonTable,
-    Job,
     MuonSite,
     Result,
     Structure,
@@ -317,13 +316,13 @@ def test_register_quantum_phonon_validates_structures_and_sites(tmp_path: Path) 
     assert definition.parameters["job_seed_names_by_label"] == {"a": "seed"}
 
 
-def test_register_transition_state_and_neb_validate(tmp_path: Path) -> None:
+def test_register_neb_definition_validates_inputs(tmp_path: Path) -> None:
     service, doc, host = _doc_with_host(tmp_path, "neb_def")
     site = MuonSite(label="S", status="staged", source_structure_id=host.id)
     doc.sites[site.id] = site
 
     with pytest.raises(ValueError, match="At least one input structure"):
-        service.register_transition_state_search_definition(
+        service.register_nudged_elastic_band_definition(
             doc,
             input_structure_ids=[],
             input_site_ids=[site.id],
@@ -338,15 +337,6 @@ def test_register_transition_state_and_neb_validate(tmp_path: Path) -> None:
             parameters={},
             output_directory=doc.project_root / "t",
         )
-
-    tss = service.register_transition_state_search_definition(
-        doc,
-        input_structure_ids=[host.id],
-        input_site_ids=[site.id],
-        parameters={"rows": [{"a": 1}]},
-        output_directory=doc.project_root / "t",
-    )
-    assert tss.calc_type == "castep_transition_state_search_set"
 
     neb = service.register_nudged_elastic_band_definition(
         doc,

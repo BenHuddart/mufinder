@@ -15,11 +15,9 @@ from ase.io import write as ase_write
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QTreeWidgetItem
 
-import mufinder.app.convergence_widget as convergence_widget_module
 import mufinder.app.main_window as main_window_module
 import mufinder.services.job_artifacts as job_artifacts_module
 import mufinder.app.workflow_table_utils as workflow_table_utils
-from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES

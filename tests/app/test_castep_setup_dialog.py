@@ -34,7 +34,7 @@ from mufinder.castep_setup import (
 )
 from tests.support.keyword_catalogs import write_complete_catalog
 from mufinder.app.castep_setup_dialog import CastepSetupDialog
-from mufinder.services.ssh_client import SSHCredentials
+from mufinder.services.ssh_client import SSHCredentials, SSHUnknownHostKeyError
 
 
 def _process_until(predicate: Callable[[], bool], *, timeout: float = 5.0) -> bool:
@@ -591,9 +591,30 @@ def test_castep_setup_dialog_local_generation_wraps_executable_in_mpi_launcher(
     )
 
     assert len(captured) == 1
-    _program, arguments = captured[0]
-    # argv: ["-u", "-c", <script>, <castep_command>, <filename>, <directory>]
-    assert arguments[3] == "/usr/bin/mpirun -np 1 /home/ben/.local/bin/castep.mpi"
+    program, arguments = captured[0]
+    assert program == sys.executable
+    # argv: ["-u", "-c", <script>, <executable>, <mpirun>, <output path>]
+    assert arguments[:2] == ["-u", "-c"]
+    assert arguments[3:] == [
+        "/home/ben/.local/bin/castep.mpi",
+        "/usr/bin/mpirun",
+        str(tmp_path / "castep_keywords.json"),
+    ]
+
+    # Running the script hands ASE the MPI-wrapped command and the output path.
+    ase_calls: list[tuple[str, str, str]] = []
+
+    def fake_create(command: str, filename: str, force_write: bool, path: str, fetch_only=None) -> None:
+        ase_calls.append((command, filename, path))
+        (Path(path) / filename).write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr("ase.calculators.castep.create_castep_keywords", fake_create)
+    monkeypatch.setattr(sys, "argv", ["-c", *arguments[3:]])
+    exec(arguments[2], {"__name__": "__main__"})
+
+    assert ase_calls == [
+        ("/usr/bin/mpirun -np 1 /home/ben/.local/bin/castep.mpi", "castep_keywords.json", str(tmp_path))
+    ]
     dialog.close()
 
 
@@ -743,7 +764,7 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
             _ = password
             self.__class__.attempts += 1
             if self.__class__.attempts == 1:
-                raise dialog_module.SSHUnknownHostKeyError(
+                raise SSHUnknownHostKeyError(
                     hostname="glamdring.physics.ox.ac.uk",
                     port=22,
                     algorithm="ssh-ed25519",
