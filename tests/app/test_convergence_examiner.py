@@ -11,12 +11,12 @@ from PySide6.QtWidgets import QScrollArea
 import mufinder.app.convergence_examiner as convergence_examiner_module
 from mufinder.app import theme as theme_module
 from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
-from mufinder.app.convergence_types import CutoffRunState
+from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.persistence.codec import to_jsonable
 
 
-def _completed_state(energy: float, force: float) -> CutoffRunState:
-    return CutoffRunState(status="completed", total_energy=energy, max_force=force)
+def _completed_state(energy: float, force: float) -> SweepPointRunState:
+    return SweepPointRunState(status="completed", total_energy=energy, max_force=force)
 
 
 def test_convergence_examiner_disables_run_with_insufficient_points(qapp) -> None:
@@ -414,9 +414,9 @@ def test_convergence_examiner_hover_routes_twin_axes_to_logical_subplot(qapp) ->
     # subplot and show the matching tooltip.
     lattice = [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]]
     sweep_data = {
-        1.0: CutoffRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=2.0),
-        8.0: CutoffRunState(status="completed", total_energy=-10.02, max_force=0.18, max_stress=0.50),
-        27.0: CutoffRunState(status="completed", total_energy=-10.025, max_force=0.17, max_stress=0.05),
+        1.0: SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=2.0),
+        8.0: SweepPointRunState(status="completed", total_energy=-10.02, max_force=0.18, max_stress=0.50),
+        27.0: SweepPointRunState(status="completed", total_energy=-10.025, max_force=0.17, max_stress=0.05),
     }
     dialog = ConvergenceExaminerDialog(
         sweep_data,
@@ -455,9 +455,9 @@ def test_convergence_examiner_hover_combines_force_and_stress_in_cutoff_mode(qap
     # annotation should be anchored on the stress axis (so the arrow points
     # at the stress data point, not the force line) and show both metrics.
     sweep_data = {
-        300.0: CutoffRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=1.5),
-        400.0: CutoffRunState(status="completed", total_energy=-10.01, max_force=0.20, max_stress=0.4),
-        500.0: CutoffRunState(status="completed", total_energy=-10.011, max_force=0.05, max_stress=0.08),
+        300.0: SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=1.5),
+        400.0: SweepPointRunState(status="completed", total_energy=-10.01, max_force=0.20, max_stress=0.4),
+        500.0: SweepPointRunState(status="completed", total_energy=-10.011, max_force=0.05, max_stress=0.08),
     }
     dialog = ConvergenceExaminerDialog(sweep_data, num_atoms=2, sweep_kind="cutoff")
     dialog._include_stress.setChecked(True)
@@ -556,8 +556,8 @@ def test_convergence_examiner_emit_adopted_uses_current_thresholds_when_not_cach
     assert cutoffs == [(400.0, "delta-threshold", pytest.approx(0.002), pytest.approx(0.07), None)]
 
 
-def _completed_state_with_stress(energy: float, force: float, stress: float | None) -> CutoffRunState:
-    return CutoffRunState(
+def _completed_state_with_stress(energy: float, force: float, stress: float | None) -> SweepPointRunState:
+    return SweepPointRunState(
         status="completed", total_energy=energy, max_force=force, max_stress=stress
     )
 
@@ -809,9 +809,9 @@ def test_convergence_examiner_floors_force_and_stress_at_castep_printed_precisio
 
     dialog = ConvergenceExaminerDialog(
         {
-            300.0: CutoffRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=1.0),
-            400.0: CutoffRunState(status="completed", total_energy=-10.01, max_force=0.20, max_stress=0.6),
-            500.0: CutoffRunState(status="completed", total_energy=-10.0105, max_force=0.15, max_stress=0.4),
+            300.0: SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.30, max_stress=1.0),
+            400.0: SweepPointRunState(status="completed", total_energy=-10.01, max_force=0.20, max_stress=0.6),
+            500.0: SweepPointRunState(status="completed", total_energy=-10.0105, max_force=0.15, max_stress=0.4),
         },
         num_atoms=2,
     )

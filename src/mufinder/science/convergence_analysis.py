@@ -23,12 +23,6 @@ class ConvergenceResult:
     extrapolated_energy: float | None = None
     fallback_suggestion: str | None = None
 
-    @property
-    def converged_cutoff(self) -> float | None:
-        """Backward-compatible alias for older cutoff-only call sites."""
-
-        return self.converged_value
-
 
 def _clean_series(cutoffs: Sequence[float], values: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, ...]]:
     pairs: list[tuple[float, float]] = []
@@ -603,13 +597,3 @@ def unconverged_criteria(
         for name, result in named
         if result is not None and not (result.converged and result.converged_value is not None)
     )
-
-
-def recommended_cutoff(
-    energy_result: ConvergenceResult,
-    force_result: ConvergenceResult,
-    stress_result: ConvergenceResult | None = None,
-) -> float | None:
-    """Backward-compatible helper name for cutoff workflows."""
-
-    return recommended_value(energy_result, force_result, stress_result)

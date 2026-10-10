@@ -58,7 +58,7 @@ def test_expand_pristine_relaxation_jobs_applies_project_defaults() -> None:
     assert "FIX_CELL" not in rendered_cell
     assert job.cell_file.symmetry_generate is True
     assert job.cell_file.kpoint_mp_grid == (4, 4, 4)
-    assert expansion.kpoint_messages == ()
+    assert expansion.messages == ()
 
 
 def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_unit_cell_with_reference_lattice() -> None:
@@ -85,7 +85,7 @@ def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_unit_cell_w
     )
 
     assert expansion.jobs[0].cell_file.kpoint_mp_grid == (3, 3, 3)
-    assert expansion.kpoint_messages == ()
+    assert expansion.messages == ()
 
 
 def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_anisotropic_unit_cell() -> None:
@@ -112,7 +112,7 @@ def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_anisotropic
     )
 
     assert expansion.jobs[0].cell_file.kpoint_mp_grid == (3, 3, 3)
-    assert expansion.kpoint_messages == ()
+    assert expansion.messages == ()
 
 
 def test_expand_pristine_relaxation_jobs_forces_write_cell_structure_true() -> None:
@@ -164,8 +164,8 @@ def test_expand_pristine_relaxation_jobs_emits_supercell_kpoint_message() -> Non
         project_kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
     )
 
-    assert len(expansion.kpoint_messages) == 1
-    assert "4x4x4 to 2x4x4" in expansion.kpoint_messages[0]
+    assert len(expansion.messages) == 1
+    assert "4x4x4 to 2x4x4" in expansion.messages[0]
 
 
 def test_expand_pristine_relaxation_jobs_honors_explicit_row_kpoint_override() -> None:
@@ -193,7 +193,7 @@ def test_expand_pristine_relaxation_jobs_honors_explicit_row_kpoint_override() -
     )
 
     assert expansion.jobs[0].cell_file.kpoint_mp_grid == (3, 3, 3)
-    assert expansion.kpoint_messages == ()
+    assert expansion.messages == ()
 
 
 

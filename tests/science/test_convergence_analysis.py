@@ -17,7 +17,6 @@ from mufinder.science.convergence_analysis import (
     delta_threshold_force,
     delta_threshold_stress,
     derivative_energy,
-    recommended_cutoff,
     recommended_value,
     unconverged_criteria,
 )
@@ -131,7 +130,7 @@ def test_analyze_convergence_runs_selected_method_and_force() -> None:
 
     assert energy_result.converged is True
     assert force_result.converged is True
-    assert recommended_cutoff(energy_result, force_result) == pytest.approx(500.0)
+    assert recommended_value(energy_result, force_result) == pytest.approx(500.0)
 
 
 def test_delta_threshold_ignores_nan_and_requires_two_points() -> None:
@@ -160,7 +159,7 @@ def test_analyze_kpoint_convergence_uses_delta_threshold_only() -> None:
     assert force_result.method == "force-delta-threshold"
     assert energy_result.converged is True
     assert force_result.converged is True
-    assert recommended_cutoff(energy_result, force_result) == pytest.approx(27.0)
+    assert recommended_value(energy_result, force_result) == pytest.approx(27.0)
 
 
 def test_analyze_kpoint_convergence_details_use_grid_label_when_labels_provided() -> None:

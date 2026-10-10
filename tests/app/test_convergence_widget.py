@@ -10,8 +10,9 @@ from PySide6.QtWidgets import QDialog, QPushButton, QToolButton
 import mufinder.app.convergence_widget as convergence_widget_module
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
 from mufinder.app import workflow_table_utils
-from mufinder.app.convergence_types import ConvergenceConfig, CutoffRunState
+from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.convergence_widget import ConvergenceWidget, CutoffRangeDialog
+from mufinder.app.param_dialog import ParameterDialog
 
 
 def _table_values(widget: ConvergenceWidget) -> list[float]:
@@ -232,7 +233,7 @@ def test_convergence_widget_configure_button_reopens_after_first_use(
         exec_calls.append(1)
         return QDialog.DialogCode.Rejected
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
 
     configure_button = widget._cutoff_table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
@@ -251,17 +252,17 @@ def test_convergence_widget_single_cutoff_parameter_dialog_updates_row(
     widget._add_cutoff(300.0)
 
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "exec",
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
     )
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "advanced_names",
         lambda _self: ("basis_precision",),
     )
@@ -281,7 +282,7 @@ def test_convergence_widget_queued_cutoff_parameter_dialog_is_read_only(
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget._cutoff_parameter_values[300.0] = {"max_scf_cycles": 50}
-    widget.set_runtime_states({300.0: CutoffRunState(status="queued")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="queued")})
 
     observed: dict[str, object] = {}
 
@@ -290,9 +291,9 @@ def test_convergence_widget_queued_cutoff_parameter_dialog_is_read_only(
         observed["title"] = dialog.windowTitle()
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
     )
@@ -312,7 +313,7 @@ def test_convergence_widget_cancelled_cutoff_parameters_are_editable(
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
     widget._cutoff_parameter_values[300.0] = {"max_scf_cycles": 50}
-    widget.set_runtime_states({300.0: CutoffRunState(status="cancelled")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="cancelled")})
 
     observed: dict[str, object] = {}
 
@@ -321,9 +322,9 @@ def test_convergence_widget_cancelled_cutoff_parameters_are_editable(
         observed["title"] = dialog.windowTitle()
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
     )
@@ -343,25 +344,25 @@ def test_convergence_widget_batch_configure_selected_cutoffs(
     monkeypatch.setattr(widget, "_selected_cutoffs", lambda: (300.0, 360.0))
 
     intros: list[str | None] = []
-    original_init = convergence_widget_module.ParameterDialog.__init__
+    original_init = ParameterDialog.__init__
 
     def fake_init(self, *args, **kwargs):
         intros.append(kwargs.get("intro_text"))
         original_init(self, *args, **kwargs)
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "__init__", fake_init)
+    monkeypatch.setattr(ParameterDialog, "__init__", fake_init)
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "exec",
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "SINGLEPOINT", "xc_functional": "PBE"},
     )
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "advanced_names",
         lambda _self: (),
     )
@@ -387,7 +388,7 @@ def test_convergence_widget_parameter_dialog_places_kpoint_below_basis_controls(
         observed["names"] = names
         return QDialog.DialogCode.Rejected
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
 
     widget._open_cutoff_parameter_dialog((300.0,))
 
@@ -416,8 +417,8 @@ def test_convergence_widget_updates_runtime_columns(qapp) -> None:
 
     widget.set_runtime_states(
         {
-            300.0: CutoffRunState(status="running"),
-            360.0: CutoffRunState(status="completed", total_energy=-1234.567, max_force=0.0123),
+            300.0: SweepPointRunState(status="running"),
+            360.0: SweepPointRunState(status="completed", total_energy=-1234.567, max_force=0.0123),
         }
     )
 
@@ -446,10 +447,10 @@ def test_convergence_widget_ready_rows_lock_cutoff_editing(qapp) -> None:
     assert bool(cutoff_item.flags() & Qt.ItemFlag.ItemIsEditable)
 
     # 'ready' state alone should not lock direct editing; lock when queued or later
-    widget.set_runtime_states({300.0: CutoffRunState(status="ready")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="ready")})
     assert bool(cutoff_item.flags() & Qt.ItemFlag.ItemIsEditable)
 
-    widget.set_runtime_states({300.0: CutoffRunState(status="queued")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="queued")})
     assert not bool(cutoff_item.flags() & Qt.ItemFlag.ItemIsEditable)
 
 
@@ -461,7 +462,7 @@ def test_convergence_widget_runtime_columns_use_higher_precision(qapp) -> None:
     max_force = 0.012345678901234
     widget.set_runtime_states(
         {
-            300.0: CutoffRunState(status="completed", total_energy=total_energy, max_force=max_force),
+            300.0: SweepPointRunState(status="completed", total_energy=total_energy, max_force=max_force),
         }
     )
 
@@ -474,7 +475,7 @@ def test_convergence_widget_remove_cutoff_confirms_and_reports_submitted_jobs(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_runtime_states({300.0: CutoffRunState(status="completed")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="completed")})
     requested: list[object] = []
     widget.remove_cutoff_requested.connect(lambda payload: requested.append(payload))
     answers = [False, True]
@@ -506,8 +507,8 @@ def test_convergence_widget_remove_cutoff_running_emits_cancel_request(
     widget._add_cutoff(360.0)
     widget.set_runtime_states(
         {
-            300.0: CutoffRunState(status="running"),
-            360.0: CutoffRunState(status="completed"),
+            300.0: SweepPointRunState(status="running"),
+            360.0: SweepPointRunState(status="completed"),
         }
     )
 
@@ -528,7 +529,7 @@ def test_convergence_widget_declined_removal_cancels_nothing(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_runtime_states({300.0: CutoffRunState(status="running")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="running")})
     emitted: list[object] = []
     widget.cancel_requested.connect(emitted.append)
     widget.remove_cutoff_requested.connect(emitted.append)
@@ -760,7 +761,7 @@ def test_convergence_widget_context_menu_emits_submit_for_ready_rows(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_runtime_states({300.0: CutoffRunState(status="ready")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="ready")})
     emitted: list[object] = []
     widget.submit_local_requested.connect(lambda payload: emitted.append(payload))
     install_fake_menu(monkeypatch)
@@ -778,7 +779,7 @@ def test_convergence_widget_context_menu_submit_enabled_for_not_generated_rows(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_runtime_states({300.0: CutoffRunState(status="not generated")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="not generated")})
     emitted: list[object] = []
     widget.submit_cluster_requested.connect(lambda payload: emitted.append(payload))
     install_fake_menu(monkeypatch)
@@ -796,7 +797,7 @@ def test_convergence_widget_context_menu_emits_inspect_for_failed_rows(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_runtime_states({300.0: CutoffRunState(status="failed")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="failed")})
     emitted: list[object] = []
     widget.inspect_failed_requested.connect(lambda payload: emitted.append(payload))
     install_fake_menu(monkeypatch)
@@ -814,7 +815,7 @@ def test_convergence_widget_context_menu_emits_reset_for_failed_rows(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_runtime_states({300.0: CutoffRunState(status="failed")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="failed")})
     emitted: list[object] = []
     widget.reset_failed_requested.connect(lambda payload: emitted.append(payload))
     install_fake_menu(monkeypatch)
@@ -830,7 +831,7 @@ def test_convergence_widget_context_menu_emits_reset_for_cancelled_rows(
 ) -> None:
     widget = ConvergenceWidget()
     widget._add_cutoff(300.0)
-    widget.set_runtime_states({300.0: CutoffRunState(status="cancelled")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="cancelled")})
     emitted: list[object] = []
     widget.reset_failed_requested.connect(lambda payload: emitted.append(payload))
     install_fake_menu(monkeypatch)
@@ -848,8 +849,8 @@ def test_convergence_widget_enables_examine_button_for_completed_results(qapp) -
 
     widget.set_runtime_states(
         {
-            300.0: CutoffRunState(status="completed", total_energy=-10.0, max_force=0.2),
-            400.0: CutoffRunState(status="completed", total_energy=-10.01, max_force=0.18),
+            300.0: SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.2),
+            400.0: SweepPointRunState(status="completed", total_energy=-10.01, max_force=0.18),
         }
     )
 
@@ -863,8 +864,8 @@ def test_convergence_widget_disables_examine_button_without_complete_metrics(qap
 
     widget.set_runtime_states(
         {
-            300.0: CutoffRunState(status="completed", total_energy=-10.0, max_force=0.2),
-            400.0: CutoffRunState(status="completed", total_energy=-10.01, max_force=None),
+            300.0: SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.2),
+            400.0: SweepPointRunState(status="completed", total_energy=-10.01, max_force=None),
         }
     )
 
@@ -933,7 +934,7 @@ def test_convergence_widget_remove_button_scope_prompt_does_not_cover_running_jo
     assert confirmed_destructive_actions == []
 
     # A running row: the prompt said nothing about cancelling, so ask again.
-    widget.set_runtime_states({300.0: CutoffRunState(status="running")})
+    widget.set_runtime_states({300.0: SweepPointRunState(status="running")})
     button = widget._cutoff_table.cellWidget(0, widget._REMOVE_COLUMN)
     button.selection_snapshot_rows = (0, 1)
     button.clicked.emit()
@@ -950,7 +951,7 @@ def test_convergence_widget_context_cancel_is_confirmed(
     widget._add_cutoff(300.0)
     widget._add_cutoff(360.0)
     widget.set_runtime_states(
-        {300.0: CutoffRunState(status="running"), 360.0: CutoffRunState(status="queued")}
+        {300.0: SweepPointRunState(status="running"), 360.0: SweepPointRunState(status="queued")}
     )
     cancelled: list[object] = []
     widget.cancel_requested.connect(cancelled.append)
@@ -1023,7 +1024,7 @@ def _accept_after(monkeypatch: pytest.MonkeyPatch, edit) -> list[set[str]]:
         edit(dialog)
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", _fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", _fake_exec)
     return mixed
 
 

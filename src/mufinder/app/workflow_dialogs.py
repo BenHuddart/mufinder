@@ -2,16 +2,120 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Generic, TypeVar
 
-from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QLabel, QHBoxLayout, QSpinBox, QVBoxLayout
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QLabel, QHBoxLayout, QSpinBox, QVBoxLayout, QWidget
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.workflow_parameters import (
+    kpoint_exclusive_hint,
+    merge_batch_advanced,
+    merge_batch_values,
+    mixed_parameter_names,
+)
 from mufinder.domain.models import Structure
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.science.energy_barriers import neb_farm_distribution
 from mufinder.science.site_generation import lattice_frac_to_cart
+
+#: Row key of a workflow table: a row id, a cutoff energy or a k-point grid.
+RowKeyT = TypeVar("RowKeyT", bound=Hashable)
+
+
+@dataclass(frozen=True)
+class RowParameterRequest(Generic[RowKeyT]):
+    """What a workflow widget asks of the row parameter dialog.
+
+    ``row_values`` and ``row_advanced`` hold, for every targeted row, its
+    effective parameters and its shown advanced names; ``values`` is the dialog
+    seed (the parameters the rows share, plus any widget-specific pre-fill).
+    ``subject`` names the dialog: the title reads ``Configure <subject>``, or
+    ``Inspect <subject>`` when ``read_only`` is set.
+    """
+
+    specs: Sequence[KeywordSpec]
+    workflow_stage: str
+    subject: str
+    values: Mapping[str, object]
+    row_values: Mapping[RowKeyT, Mapping[str, object]]
+    row_advanced: Mapping[RowKeyT, Iterable[str]]
+    sanitize: Callable[[Mapping[str, object]], dict[str, object]]
+    locked_values: Mapping[str, str] = field(default_factory=dict)
+    read_only: bool = False
+    intro_text: str | None = None
+    species_options: Sequence[str] = ()
+
+
+@dataclass(frozen=True)
+class RowParameterResult(Generic[RowKeyT]):
+    """The accepted dialog, resolved for every targeted row.
+
+    ``values`` and ``advanced_names`` are what the dialog returned, sanitised.
+    ``row_values`` and ``row_advanced`` apply them to each row: a parameter that
+    differed between the rows and was left untouched keeps each row's own value
+    and advanced-name visibility.
+    """
+
+    values: dict[str, object]
+    advanced_names: frozenset[str]
+    row_values: dict[RowKeyT, dict[str, object]]
+    row_advanced: dict[RowKeyT, set[str]]
+
+
+def run_row_parameter_dialog(
+    request: RowParameterRequest[RowKeyT],
+    *,
+    parent: QWidget | None = None,
+) -> RowParameterResult[RowKeyT] | None:
+    """Open the parameter dialog for one or more workflow rows.
+
+    Returns ``None`` when there are no rows, when the dialog is cancelled, and
+    when it opened read-only to inspect locked rows.
+    """
+
+    if not request.row_values:
+        return None
+    dialog = ParameterDialog(
+        specs=list(request.specs),
+        workflow_stage=request.workflow_stage,
+        locked_values=dict(request.locked_values),
+        intro_text=request.intro_text,
+        read_only=request.read_only,
+        species_options=request.species_options,
+        parent=parent,
+    )
+    dialog.setWindowTitle(f"{'Inspect' if request.read_only else 'Configure'} {request.subject}")
+    dialog.set_values(
+        dict(request.values),
+        preferred_exclusive=kpoint_exclusive_hint(request.row_values.values()),
+    )
+    seed_advanced: set[str] = set()
+    for names in request.row_advanced.values():
+        seed_advanced.update(names)
+    dialog.set_advanced_names(seed_advanced)
+    dialog.set_mixed_names(mixed_parameter_names(request.row_values.values()))
+
+    if dialog.exec() != QDialog.DialogCode.Accepted or request.read_only:
+        return None
+
+    values = request.sanitize(dialog.collect_values())
+    advanced = frozenset(dialog.advanced_names())
+    untouched = dialog.untouched_mixed_names()
+    return RowParameterResult(
+        values=values,
+        advanced_names=advanced,
+        row_values={
+            key: merge_batch_values(values, row_values, untouched)
+            for key, row_values in request.row_values.items()
+        },
+        row_advanced={
+            key: merge_batch_advanced(advanced, request.row_advanced.get(key, ()), untouched)
+            for key in request.row_values
+        },
+    )
 
 
 class QuantumCorrectionsConfigDialog(ParameterDialog):

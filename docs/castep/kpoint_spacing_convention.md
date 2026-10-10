@@ -37,8 +37,9 @@ tested by `test_grid_from_spacing_round_trips_lif_high_n` (N=2 through N=13).
 **Where these values surface in the GUI**: results-pane "Recommended
 k-point grid: ... (spacing X 1/Ang)" line; per-grid spacing annotations on the
 examiner and overview plots; "Use spacing" toggle defaults in the relaxation,
-muon-relaxation, and UEP workflow configure-parameters dialogs. All three use
-the same `spacing_from_grid` value. The examiner's secondary spacing axis is
+muon-relaxation, and UEP workflow configure-parameters dialogs. All three take
+it from `SupercellColumn.suggested_spacing` (`app/workflow_table_utils.py`),
+which applies `spacing_from_grid` to the project grid and its reference lattice. The examiner's secondary spacing axis is
 different: its ticks are round spacing values placed with
 `kpoint_count_for_spacing` (`_regular_spacing_ticks`), not per-grid
 `spacing_from_grid` values.

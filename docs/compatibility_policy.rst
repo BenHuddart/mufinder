@@ -23,23 +23,12 @@ Compatibility ledger
        workflows move to generic ``sweep_parameter`` / ``sweep_values`` data.
      - Keep until the next saved-project schema version bump includes an
        automatic migration from ``cutoff_energies`` to ``sweep_values``.
-   * - ``CutoffRunState``
-     - ``mufinder.app.convergence_types`` and ``mufinder.app.main_window``
-     - Import alias for ``SweepPointRunState`` used by older cutoff tests and
-       external automation.
-     - Keep through the same schema bump as ``cutoff_energies``; remove only
-       after app-level call sites and tests import ``SweepPointRunState``.
    * - ``ConvergenceWidget``
      - ``mufinder.app.convergence_widget``
      - Import alias for ``CutoffConvergenceWidget`` kept for public app imports
        and old tests.
      - Public compatibility alias. Keep until a major application release or an
        explicitly documented API break.
-   * - ``recommended_cutoff``
-     - ``mufinder.science.convergence_analysis``
-     - Backward-compatible helper name for cutoff-only analysis callers.
-     - Public science helper. Keep until a major release provides a documented
-       replacement and migration note.
    * - ``imported`` / ``import_batch_id`` row fields
      - ``MuonRelaxationRow`` / muon-relaxation definition ``configuration``
      - Mark a relaxation row ingested from a calculation performed outside
@@ -189,32 +178,6 @@ Compatibility ledger
      - Application setting, not project data. Keep indefinitely: honouring an
        arbitrary path costs nothing, and dropping it would silently return
        existing users to the starter catalog.
-   * - ``ConvergenceWorkflow``
-     - ``mufinder.workflow.convergence`` (re-exported from
-       ``mufinder.workflow``)
-     - Deprecated class wrapper kept for public imports while the workflow layer
-       converges on ``expand_convergence_sweep_jobs``.
-     - Public import alias. Keep until a major release or one minor release
-       after ``expand_convergence_sweep_jobs`` has shipped as the documented
-       replacement.
-   * - ``build_convergence_workflow``
-     - ``mufinder.app.convergence_adapter`` (re-exported from ``mufinder.app``)
-     - Deprecated public helper that returns the ``ConvergenceWorkflow`` shim.
-       Its happy path is orphaned now that the GUI calls
-       ``expand_convergence_jobs`` /
-       ``expand_convergence_sweep_jobs`` directly; kept only for external
-       callers.
-     - Public helper alias. Retires together with ``ConvergenceWorkflow``: keep
-       until a major release or one minor release after
-       ``expand_convergence_sweep_jobs`` has shipped as the documented
-       replacement.
-   * - ``MuonSiteWorkflow``
-     - ``mufinder.workflow.muon_site`` (re-exported from ``mufinder.workflow``)
-     - Deprecated class wrapper kept for public imports while the workflow layer
-       converges on ``expand_muon_site_jobs``.
-     - Public import alias. Keep until a major release or one minor release
-       after ``expand_muon_site_jobs`` has shipped as the documented
-       replacement.
    * - ``candidate`` muon-site status
      - ``MuonSite.status`` / site entity files; read by
        ``ProjectService._site_status_from_payload`` and
@@ -235,27 +198,18 @@ Compatibility ledger
        ``converged_cutoff`` when ``converged_value`` is absent.
      - Keep until the next saved-project schema version bump, whose migration
        can rename the key to ``converged_value``.
-   * - ``ConvergenceResult.converged_cutoff``
-     - ``mufinder.science.convergence_analysis``
-     - Read-only property alias for ``converged_value`` kept for cutoff-only
-       callers, alongside ``recommended_cutoff``.
-     - Public science helper. Retire together with ``recommended_cutoff``.
-   * - ``RelaxationExpansion`` / ``UepExpansion`` and
-       ``AdapterExpansion.kpoint_messages``
-     - ``mufinder.app.relaxation_adapter`` / ``mufinder.app.uep_adapter`` /
-       ``mufinder.app.adapter_common``
-     - The per-workflow expansion classes became aliases of the shared
-       ``AdapterExpansion`` when adapter template building was deduplicated,
-       and its former ``kpoint_messages`` field is now a property returning
-       ``messages``. Not persisted.
-     - Public import alias. Keep until a major release or one minor release
-       after ``AdapterExpansion`` has shipped as the documented replacement.
-   * - ``workflow_tick_icon``
-     - ``mufinder.app.icons``
-     - Legacy boolean wrapper over ``workflow_stage_icon``. Nothing in
-       ``src`` calls it; only ``tests/app/test_icons.py`` exercises it.
-     - Public helper alias under the public-import-alias rule below; it can be
-       removed together with its test.
+   * - ``ProjectHomeTrailWidget`` / ``ConstructionSignWidget`` /
+       ``ProjectTrailDestination`` / ``WorkflowDefinition`` /
+       ``MuonChargeStateDialog``
+     - ``mufinder.app.main_window``
+     - Import path kept for names that live in
+       ``mufinder.app.project_home_trail`` and
+       ``mufinder.app.muon_generation_support``. ``ConstructionSignWidget`` is
+       imported only to keep the path; ``MainWindow`` uses the others. Not
+       persisted.
+     - Public import alias. Keep for one minor release (through 0.6.x); then
+       drop the ``ConstructionSignWidget`` import and move test and external
+       imports of these names to their defining modules.
 
 Rules for new shims
 -------------------
@@ -269,9 +223,34 @@ Rules for new shims
   future cleanup work can find the remaining callers with ``rg``.
 
 
-Removed settings
-----------------
+Removed aliases and settings
+----------------------------
 
+Each public import alias below was removed after its documented replacement had
+shipped for at least one minor release. None was persisted, so projects need no
+migration; code that imported one switches to the replacement named.
+
+- ``ConvergenceWorkflow`` (``mufinder.workflow.convergence``, re-exported from
+  ``mufinder.workflow``): call ``expand_convergence_sweep_jobs``.
+- ``MuonSiteWorkflow`` (``mufinder.workflow.muon_site``, re-exported from
+  ``mufinder.workflow``): call ``expand_muon_site_jobs``.
+- ``build_convergence_workflow`` (``mufinder.app.convergence_adapter``,
+  re-exported from ``mufinder.app``): call ``expand_convergence_jobs``.
+- ``RelaxationExpansion`` (``mufinder.app.relaxation_adapter``) and
+  ``UepExpansion`` (``mufinder.app.uep_adapter``): use ``AdapterExpansion``
+  from ``mufinder.app.adapter_common``.
+- ``AdapterExpansion.kpoint_messages``: read ``AdapterExpansion.messages``.
+- ``CutoffRunState`` (``mufinder.app.convergence_types`` and
+  ``mufinder.app.main_window``): use ``SweepPointRunState`` from
+  ``mufinder.app.convergence_types``.
+- ``recommended_cutoff`` (``mufinder.science.convergence_analysis``,
+  re-exported from ``mufinder.science``): call ``recommended_value``.
+- ``ConvergenceResult.converged_cutoff``: read
+  ``ConvergenceResult.converged_value``. The persisted ``converged_cutoff``
+  key in convergence-examiner snapshots is a separate project-file shim and
+  stays in the ledger above.
+- ``workflow_tick_icon`` (``mufinder.app.icons``): call
+  ``workflow_stage_icon("completed")`` or ``workflow_stage_icon("incomplete")``.
 - ``clusters/<name>/keyword_python_command`` (application setting, removed with
   the shell-loop keyword generator described in :doc:`castep_keyword_catalog`).
   Cluster keyword generation no longer runs Python on the cluster, so the value

@@ -11,10 +11,15 @@ from mufinder.app.adapter_common import (
     STRUCTURE_CONTROLLED_CELL_KEYWORDS,
     AdapterExpansion,
     build_input_template,
+    claim_unique_name,
+    is_identity_supercell,
+    kpoint_reference_lattice,
+    prepare_row,
     reference_is_supercell_of,
-    rescale_kpoint_grid,
+    require_row_label,
     row_values_has_keyword,
-    template_has_explicit_kpoints,
+    seed_workflow_defaults,
+    supercell_label,
 )
 from mufinder.app.relaxation_types import (
     MuonRelaxationConfig,
@@ -55,7 +60,6 @@ __all__ = [
     "MUON_RELAXATION_JOB_PREFIXES",
     "MUONIUM_CHARGE_STATE",
     "POSITIVE_MUON_CHARGE_STATE",
-    "RelaxationExpansion",
     "canonical_charge_state",
     "expand_muon_relaxation_jobs",
     "expand_pristine_relaxation_jobs",
@@ -71,18 +75,11 @@ from mufinder.science.kpoint_grids import (
     supercell_lattice_vectors,
 )
 from mufinder.science.supercell import build_supercell_structure
-from mufinder.workflow import StructureBridgeError, structure_to_spec
 from mufinder.workflow.naming import job_name
 from mufinder.domain.constants import MUON_MASS_AMU
 from mufinder.workflow.merge import merge_templates
 from mufinder.workflow.relaxation import RelaxationJobConfig, expand_relaxation_jobs
 from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamTemplate
-
-
-# ``RelaxationExpansion`` is a thin backward-compatible alias for the generic
-# :class:`~mufinder.app.adapter_common.AdapterExpansion`. The former per-workflow
-# ``kpoint_messages`` field is exposed as a property on ``AdapterExpansion``.
-RelaxationExpansion = AdapterExpansion
 
 
 def _template_from_values(values: Mapping[str, object]) -> InputTemplate:
@@ -100,34 +97,12 @@ def _template_from_values(values: Mapping[str, object]) -> InputTemplate:
     )
 
 
-def _is_identity_supercell(matrix: SupercellMatrix | None) -> bool:
-    return matrix is None or matrix == ((1, 0, 0), (0, 1, 0), (0, 0, 1))
-
-
 def _matrix_token(matrix: SupercellMatrix | None) -> str:
-    if _is_identity_supercell(matrix):
-        return "unit cell"
-    if matrix is None:
-        return "unit cell"
-    is_diagonal = (
-        matrix[0][1] == 0
-        and matrix[0][2] == 0
-        and matrix[1][0] == 0
-        and matrix[1][2] == 0
-        and matrix[2][0] == 0
-        and matrix[2][1] == 0
-    )
-    if is_diagonal:
-        return f"{matrix[0][0]}x{matrix[1][1]}x{matrix[2][2]}"
-    return (
-        f"[{matrix[0][0]} {matrix[0][1]} {matrix[0][2]}; "
-        f"{matrix[1][0]} {matrix[1][1]} {matrix[1][2]}; "
-        f"{matrix[2][0]} {matrix[2][1]} {matrix[2][2]}]"
-    )
+    return supercell_label(matrix, unit_cell="unit cell", spell_out_custom=True)
 
 
 def _structure_for_row(host_structure: Structure, row: PristineRelaxationRow) -> Structure:
-    if _is_identity_supercell(row.supercell_matrix):
+    if is_identity_supercell(row.supercell_matrix):
         return host_structure
 
     matrix = row.supercell_matrix
@@ -144,18 +119,12 @@ def _structure_for_row(host_structure: Structure, row: PristineRelaxationRow) ->
     return structure
 
 
-
-
-
-
-
-
 def _muon_supercell_fractional_position(
     host_fractional_position: tuple[float, float, float],
     matrix: SupercellMatrix | None,
 ) -> tuple[float, float, float]:
     wrapped = np.mod(np.asarray(host_fractional_position, dtype=float), 1.0)
-    if _is_identity_supercell(matrix):
+    if is_identity_supercell(matrix):
         return tuple(float(component) for component in wrapped)  # type: ignore[return-value]
     parsed = np.asarray(matrix, dtype=float)
     supercell_fractional = wrapped @ np.linalg.inv(parsed)
@@ -213,74 +182,57 @@ def expand_pristine_relaxation_jobs(
     project_kpoint_grid: tuple[int, int, int] | None,
     project_kpoint_reference_lattice: list[list[float]] | None,
     project_xc_functional: str | None = None,
-) -> RelaxationExpansion:
+) -> AdapterExpansion:
     """Expand pristine-relaxation UI config to workflow job specs."""
 
     if not config.rows:
         raise ValueError("At least one pristine-relaxation row must be configured.")
 
-    workflow_defaults_values: dict[str, object] = {
-        "task": "GEOMETRYOPTIMIZATION",
-        "geom_max_iter": 300,
-        "symmetry_generate": True,
-        "write_cell_structure": True,
-    }
-    if project_xc_functional is not None:
-        workflow_defaults_values["xc_functional"] = project_xc_functional
-    if project_cutoff_energy is not None:
-        workflow_defaults_values["cut_off_energy"] = float(project_cutoff_energy)
-    workflow_defaults = _template_from_values(workflow_defaults_values)
-
-    reference_lattice = (
-        project_kpoint_reference_lattice
-        if isinstance(project_kpoint_reference_lattice, list) and len(project_kpoint_reference_lattice) == 3
-        else host_structure.lattice_vectors
+    workflow_defaults = _template_from_values(
+        seed_workflow_defaults(
+            {
+                "task": "GEOMETRYOPTIMIZATION",
+                "geom_max_iter": 300,
+                "symmetry_generate": True,
+                "write_cell_structure": True,
+            },
+            project_xc_functional=project_xc_functional,
+            project_cutoff_energy=project_cutoff_energy,
+        )
     )
+    reference_lattice = kpoint_reference_lattice(project_kpoint_reference_lattice, host_structure)
 
     jobs: list[RelaxationJobConfig] = []
     messages: list[str] = []
     seen_labels: set[str] = set()
     for row in config.rows:
-        label = row.label.strip()
-        if not label:
-            raise ValueError("Pristine-relaxation row labels must not be empty.")
-        if label in seen_labels:
-            raise ValueError(f"Duplicate pristine-relaxation row label '{label}'.")
-        seen_labels.add(label)
-
-        row_structure = _structure_for_row(host_structure, row)
-        try:
-            structure_spec = structure_to_spec(row_structure)
-        except StructureBridgeError as exc:
-            raise ValueError(f"Could not convert row '{label}' structure: {exc}") from exc
+        label = require_row_label(row.label, workflow="pristine-relaxation")
+        claim_unique_name(label, seen_labels, workflow="pristine-relaxation")
 
         # WRITE_CELL_STRUCTURE is controlled by the pristine-relaxation workflow
         # and must stay enabled to guarantee -out.cell output files.
-        row_values = dict(row.parameter_values)
-        row_values.pop("write_cell_structure", None)
-        row_template = _template_from_values(row_values)
-
-        kpoint_grid = None
-        if not template_has_explicit_kpoints(row_template):
-            kpoint_grid, message = rescale_kpoint_grid(
-                project_kpoint_grid=project_kpoint_grid,
-                reference_lattice=reference_lattice,
-                row_lattice=row_structure.lattice_vectors,
-                is_identity_supercell=_is_identity_supercell(row.supercell_matrix),
-                has_supercell=row.supercell_matrix is not None,
-                target_description=f"{_matrix_token(row.supercell_matrix)} (equivalent density).",
-            )
-            if message is not None:
-                messages.append(message)
+        prepared = prepare_row(
+            label=label,
+            structure=_structure_for_row(host_structure, row),
+            parameter_values=row.parameter_values,
+            template_from_values=_template_from_values,
+            supercell_matrix=row.supercell_matrix,
+            project_kpoint_grid=project_kpoint_grid,
+            reference_lattice=reference_lattice,
+            target_description=f"{_matrix_token(row.supercell_matrix)} (equivalent density).",
+            drop=("write_cell_structure",),
+        )
+        if prepared.message is not None:
+            messages.append(prepared.message)
 
         jobs.append(
             RelaxationJobConfig(
                 label=label,
-                structure=structure_spec,
+                structure=prepared.structure,
                 fix_all_cell=row.fix_all_cell,
-                kpoint_grid=kpoint_grid,
-                cell_overrides=row_template.cell,
-                param_overrides=row_template.param,
+                kpoint_grid=prepared.kpoint_grid,
+                cell_overrides=prepared.template.cell,
+                param_overrides=prepared.template.param,
                 provenance={
                     "supercell_matrix": (
                         [list(line) for line in row.supercell_matrix]
@@ -308,76 +260,62 @@ def expand_muon_relaxation_jobs(
     project_kpoint_grid: tuple[int, int, int] | None,
     project_kpoint_reference_lattice: list[list[float]] | None,
     project_xc_functional: str | None = None,
-) -> RelaxationExpansion:
+) -> AdapterExpansion:
     """Expand staged muon sites to fixed-cell CASTEP geometry-optimization jobs."""
 
     if not config.rows:
         raise ValueError("At least one muon-relaxation row must be staged.")
 
-    workflow_defaults_values: dict[str, object] = {
-        "task": "GEOMETRYOPTIMIZATION",
-        "geom_max_iter": 300,
-        "write_cell_structure": True,
-    }
-    if project_xc_functional is not None:
-        workflow_defaults_values["xc_functional"] = project_xc_functional
-    if project_cutoff_energy is not None:
-        workflow_defaults_values["cut_off_energy"] = float(project_cutoff_energy)
     species_mass_block = BlockSection("species_mass", (("H:mu", MUON_MASS_AMU),), unit="AMU")
     workflow_defaults = merge_templates(
-        _template_from_values(workflow_defaults_values),
+        _template_from_values(
+            seed_workflow_defaults(
+                {
+                    "task": "GEOMETRYOPTIMIZATION",
+                    "geom_max_iter": 300,
+                    "write_cell_structure": True,
+                },
+                project_xc_functional=project_xc_functional,
+                project_cutoff_energy=project_cutoff_energy,
+            )
+        ),
         InputTemplate(cell=CellTemplate(extra_blocks=(species_mass_block,))),
     )
-
-    reference_lattice = (
-        project_kpoint_reference_lattice
-        if isinstance(project_kpoint_reference_lattice, list) and len(project_kpoint_reference_lattice) == 3
-        else host_structure.lattice_vectors
-    )
+    reference_lattice = kpoint_reference_lattice(project_kpoint_reference_lattice, host_structure)
 
     messages: list[str] = []
     expanded_jobs: list[JobSpec] = []
     seen_names: set[str] = set()
     for row in config.rows:
-        label = row.label.strip()
-        if not label:
-            raise ValueError("Muon-relaxation row labels must not be empty.")
+        label = require_row_label(row.label, workflow="muon-relaxation")
         charge_state = _charge_state_key(row.charge_state)
         charge_prefix = muon_charge_state_prefix(charge_state)
-        seed_name = job_name(charge_prefix, label)
-        if seed_name in seen_names:
-            raise ValueError(f"Duplicate muon-relaxation job seed name '{seed_name}'.")
-        seen_names.add(seed_name)
+        claim_unique_name(
+            job_name(charge_prefix, label),
+            seen_names,
+            workflow="muon-relaxation",
+            noun="job seed name",
+        )
 
-        row_structure = _structure_for_muon_row(host_structure, row)
-        try:
-            structure_spec = structure_to_spec(row_structure)
-        except StructureBridgeError as exc:
-            raise ValueError(f"Could not convert row '{label}' structure: {exc}") from exc
+        prepared = prepare_row(
+            label=label,
+            structure=_structure_for_muon_row(host_structure, row),
+            parameter_values=row.parameter_values,
+            template_from_values=_template_from_values,
+            supercell_matrix=row.supercell_matrix,
+            project_kpoint_grid=project_kpoint_grid,
+            reference_lattice=reference_lattice,
+            target_description=f"{_matrix_token(row.supercell_matrix)} (equivalent density).",
+            drop=("task", "write_cell_structure", "charge", "fix_all_cell"),
+        )
+        if prepared.message is not None:
+            messages.append(prepared.message)
 
-        row_values = dict(row.parameter_values)
-        for locked in ("task", "write_cell_structure", "charge", "fix_all_cell"):
-            row_values.pop(locked, None)
-        row_template = _template_from_values(row_values)
-
-        kpoint_grid = None
-        if not template_has_explicit_kpoints(row_template):
-            kpoint_grid, message = rescale_kpoint_grid(
-                project_kpoint_grid=project_kpoint_grid,
-                reference_lattice=reference_lattice,
-                row_lattice=row_structure.lattice_vectors,
-                is_identity_supercell=_is_identity_supercell(row.supercell_matrix),
-                has_supercell=row.supercell_matrix is not None,
-                target_description=f"{_matrix_token(row.supercell_matrix)} (equivalent density).",
-            )
-            if message is not None:
-                messages.append(message)
-
-        param = row_template.param
+        param = prepared.template.param
         forced_keywords = [KeywordAssignment("charge", muon_charge_for_state(charge_state))]
         # Muonium is open-shell, so default to a spin-polarised SCF. Left as a default (not locked
         # like charge) so the user can still override it from the param dialog.
-        if charge_state == MUONIUM_CHARGE_STATE and not row_values_has_keyword(row_values, "spin_polarized"):
+        if charge_state == MUONIUM_CHARGE_STATE and not row_values_has_keyword(prepared.values, "spin_polarized"):
             forced_keywords.append(KeywordAssignment("spin_polarized", True))
         param_overrides = ParamTemplate(
             keywords=(tuple(param.keywords) if param is not None else ()) + tuple(forced_keywords),
@@ -388,10 +326,10 @@ def expand_muon_relaxation_jobs(
             jobs=(
                 RelaxationJobConfig(
                     label=label,
-                    structure=structure_spec,
+                    structure=prepared.structure,
                     fix_all_cell=True,
-                    kpoint_grid=kpoint_grid,
-                    cell_overrides=row_template.cell,
+                    kpoint_grid=prepared.kpoint_grid,
+                    cell_overrides=prepared.template.cell,
                     param_overrides=param_overrides,
                     provenance={
                         "site_id": str(row.site_id),
@@ -442,7 +380,7 @@ def suggested_grid_for_row(
     if reference_grid is None:
         return None
 
-    if _is_identity_supercell(row_matrix) and not reference_is_supercell_of(reference_lattice, host_lattice):
+    if is_identity_supercell(row_matrix) and not reference_is_supercell_of(reference_lattice, host_lattice):
         return reference_grid
 
     row_lattice = [
