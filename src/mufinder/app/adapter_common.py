@@ -3,7 +3,11 @@
 This module consolidates the near-identical logic that the convergence,
 relaxation, and UEP adapters used to triplicate: parsing a GUI ``values`` dict
 into a workflow :class:`~mufinder.workflow.types.InputTemplate`, the standard
-expansion-result shape, and the supercell k-point-grid rescaling helper.
+expansion-result shape, the supercell k-point-grid rescaling helper, the
+expansion prologue every supercell workflow adapter runs (project-default
+seeding, the k-point reference lattice, and the per-row label, structure and
+k-point preparation), and the supercell-matrix coercion and labelling shared
+with the workflow widgets.
 
 It stays free of PySide imports so it can live alongside the adapters in the
 ``app`` layer while remaining a pure workflow/castep_io/domain consumer.
@@ -11,9 +15,10 @@ It stays free of PySide imports so it can live alongside the adapters in the
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
+from mufinder.app.relaxation_types import SupercellMatrix
 from mufinder.castep_io.gui_metadata import make_block_section, make_keyword_assignment
 from mufinder.castep_io.schema import canonical_keyword_name, get_keyword_spec
 from mufinder.castep_io.types import (
@@ -26,13 +31,16 @@ from mufinder.castep_io.types import (
     PositionBlock,
     SpeciesPotential,
 )
+from mufinder.domain.models import Structure
 from mufinder.science.kpoint_grids import equivalent_grid_for_supercell
 from mufinder.science.supercell_matching import detect_supercell_matrix_from_lattices
+from mufinder.workflow.bridge import StructureBridgeError, structure_to_spec
 from mufinder.workflow.types import (
     CellTemplate,
     InputTemplate,
     JobSpec,
     ParamTemplate,
+    StructureSpec,
 )
 
 # Cell keywords whose values always come from the selected structure and must
@@ -356,3 +364,180 @@ def rescale_kpoint_grid(
             f"{target_description}"
         )
     return kpoint_grid, message
+
+
+IDENTITY_SUPERCELL: SupercellMatrix = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+
+
+def coerce_supercell_matrix(value: object) -> SupercellMatrix | None:
+    """Return ``value`` as a 3x3 integer supercell matrix, or ``None``.
+
+    Accepts the nested lists that persisted widget state and supercell options
+    carry as well as tuples. Anything that is not three rows of three integers
+    (or integer-convertible values) yields ``None``.
+    """
+
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return None
+    try:
+        return (
+            (int(value[0][0]), int(value[0][1]), int(value[0][2])),
+            (int(value[1][0]), int(value[1][1]), int(value[1][2])),
+            (int(value[2][0]), int(value[2][1]), int(value[2][2])),
+        )
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def is_identity_supercell(matrix: SupercellMatrix | None) -> bool:
+    """Return whether ``matrix`` selects the unit cell (``None`` or identity)."""
+
+    return matrix is None or matrix == IDENTITY_SUPERCELL
+
+
+def supercell_label(
+    matrix: SupercellMatrix | None,
+    *,
+    unit_cell: str = "Unit cell",
+    spell_out_custom: bool = False,
+) -> str:
+    """Return a short label for a supercell matrix.
+
+    The unit cell reads ``unit_cell``, a diagonal matrix reads ``AxBxC``, and
+    any other matrix reads ``Custom 3x3`` or, with ``spell_out_custom``, its
+    rows as ``[a b c; d e f; g h i]``.
+    """
+
+    if matrix is None or is_identity_supercell(matrix):
+        return unit_cell
+    if all(matrix[i][j] == 0 for i in range(3) for j in range(3) if i != j):
+        return f"{matrix[0][0]}x{matrix[1][1]}x{matrix[2][2]}"
+    if not spell_out_custom:
+        return "Custom 3x3"
+    return "[" + "; ".join(" ".join(str(value) for value in row) for row in matrix) + "]"
+
+
+def seed_workflow_defaults(
+    values: Mapping[str, object],
+    *,
+    project_xc_functional: str | None,
+    project_cutoff_energy: float | None,
+) -> dict[str, object]:
+    """Return a workflow's default GUI values with the project defaults applied.
+
+    The project exchange-correlation functional and cut-off energy, when set,
+    are layered over the workflow's own defaults.
+    """
+
+    seeded = dict(values)
+    if project_xc_functional is not None:
+        seeded["xc_functional"] = project_xc_functional
+    if project_cutoff_energy is not None:
+        seeded["cut_off_energy"] = float(project_cutoff_energy)
+    return seeded
+
+
+def kpoint_reference_lattice(
+    project_kpoint_reference_lattice: list[list[float]] | None,
+    host_structure: Structure,
+) -> list[list[float]]:
+    """Return the lattice the project k-point grid was converged on.
+
+    A recorded three-vector project reference lattice wins; otherwise the grid
+    is taken to belong to the host cell.
+    """
+
+    if isinstance(project_kpoint_reference_lattice, list) and len(project_kpoint_reference_lattice) == 3:
+        return project_kpoint_reference_lattice
+    return host_structure.lattice_vectors
+
+
+def require_row_label(raw_label: str, *, workflow: str) -> str:
+    """Return the stripped row label, rejecting an empty one.
+
+    ``workflow`` names the rows in the error, for example
+    ``"pristine-relaxation"`` or ``"UEP source"``.
+    """
+
+    label = raw_label.strip()
+    if not label:
+        raise ValueError(f"{workflow[:1].upper()}{workflow[1:]} row labels must not be empty.")
+    return label
+
+
+def claim_unique_name(name: str, seen: set[str], *, workflow: str, noun: str = "row label") -> None:
+    """Record ``name`` in ``seen``, rejecting a name an earlier row already claimed."""
+
+    if name in seen:
+        raise ValueError(f"Duplicate {workflow} {noun} '{name}'.")
+    seen.add(name)
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedRow:
+    """One adapter row's resolved inputs, ready for its workflow expander.
+
+    ``values`` are the row's GUI values after the workflow-controlled names
+    were dropped or forced; ``template`` is built from them. ``kpoint_grid``
+    is the supercell-rescaled project grid, or ``None`` when the row pins its
+    own k-points or the project has no grid. ``message`` describes a k-point
+    rescaling, when one happened.
+    """
+
+    structure: StructureSpec
+    values: dict[str, object]
+    template: InputTemplate
+    kpoint_grid: tuple[int, int, int] | None
+    message: str | None
+
+
+def prepare_row(
+    *,
+    label: str,
+    structure: Structure,
+    parameter_values: Mapping[str, object],
+    template_from_values: Callable[[Mapping[str, object]], InputTemplate],
+    supercell_matrix: SupercellMatrix | None,
+    project_kpoint_grid: tuple[int, int, int] | None,
+    reference_lattice: list[list[float]],
+    target_description: str,
+    drop: Iterable[str] = (),
+    force: Mapping[str, object] | None = None,
+) -> PreparedRow:
+    """Run the per-row prologue shared by the supercell workflow adapters.
+
+    Converts the row's ``structure`` to a workflow structure spec, removes the
+    ``drop`` names the workflow controls and applies the ``force`` values,
+    builds the row template, and, unless the row pins its own k-points,
+    rescales the project grid to the row's cell with :func:`rescale_kpoint_grid`.
+    """
+
+    try:
+        structure_spec = structure_to_spec(structure)
+    except StructureBridgeError as exc:
+        raise ValueError(f"Could not convert row '{label}' structure: {exc}") from exc
+
+    values = dict(parameter_values)
+    for name in drop:
+        values.pop(name, None)
+    values.update(force or {})
+    template = template_from_values(values)
+
+    kpoint_grid = None
+    message = None
+    if not template_has_explicit_kpoints(template):
+        kpoint_grid, message = rescale_kpoint_grid(
+            project_kpoint_grid=project_kpoint_grid,
+            reference_lattice=reference_lattice,
+            row_lattice=structure.lattice_vectors,
+            is_identity_supercell=is_identity_supercell(supercell_matrix),
+            has_supercell=supercell_matrix is not None,
+            target_description=target_description,
+        )
+    return PreparedRow(
+        structure=structure_spec,
+        values=values,
+        template=template,
+        kpoint_grid=kpoint_grid,
+        message=message,
+    )

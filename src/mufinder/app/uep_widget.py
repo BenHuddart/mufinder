@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import replace
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
@@ -24,17 +23,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.param_dialog import ParameterDialog
-from mufinder.app.relaxation_adapter import suggested_grid_for_row
-from mufinder.science.kpoint_grids import spacing_from_grid
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.app.uep_types import SupercellMatrix, UepConfig, UepRunState, UepSourceRow
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.workflow_parameters import (
-    merge_batch_advanced,
-    merge_batch_values,
-    mixed_parameter_names,
-    kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     seed_xc_functional_default,
 )
@@ -45,76 +37,33 @@ from mufinder.app.workflow_table_utils import (
     bind_reset_failed_context_menu,
     confirm_row_removal,
     create_workflow_table,
-    multi_row_outcome_text,
-    show_status_message,
     standard_row_actions,
     style_workflow_configure_button,
     workflow_row_status_text,
 )
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
-    normalize_gui_value,
     validate_gui_values,
 )
 from mufinder.castep_io.schema import KeywordSpec
-from mufinder.castep_io.types import BlockSection, ValueWithUnit
+from mufinder.castep_io.types import ValueWithUnit
 from mufinder.app.selection_snapshot import (
-    SelectionSnapshotComboBox,
     SelectionSnapshotPushButton,
     SelectionSnapshotToolButton,
     resolve_target_keys,
 )
-
-
-_STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
-    "lattice_cart",
-    "lattice_abc",
-    "positions_frac",
-    "positions_abs",
-}
-_PREFERRED_DEFAULT_PARAMETER_NAMES = (
-    "cut_off_energy",
-    "kpoint_mp_grid",
-    "kpoint_mp_spacing",
-    "kpoints_list",
-)
-_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready", "cancelled"}
+from mufinder.app.workflow_dialogs import RowParameterRequest, run_row_parameter_dialog
+from mufinder.app.workflow_parameters import STRUCTURE_CONTROLLED_CELL_KEYWORDS
+from mufinder.app.workflow_parameters import clone_spec_for_workflow
+from mufinder.app.workflow_parameters import sanitize_parameter_mapping
+from mufinder.app.workflow_table_utils import workflow_row_is_locked
+from mufinder.app.adapter_common import coerce_supercell_matrix
+from mufinder.app.workflow_table_utils import SupercellColumn
 
 
 def _normalize_uep_name_prefix(value: object) -> str:
     prefix = str(value).strip() or "uep"
     return "uep" if prefix == "uep_source" else prefix
-
-
-def _append_workflow_stage(values: tuple[str, ...], workflow_stage: str) -> tuple[str, ...]:
-    if workflow_stage in values:
-        return values
-    return (*values, workflow_stage)
-
-
-def _clone_spec_for_uep_workflow(
-    spec: KeywordSpec,
-    *,
-    basic: bool,
-    advanced: bool,
-) -> KeywordSpec:
-    basic_workflows = spec.basic_workflows
-    advanced_workflows = spec.advanced_workflows
-
-    if basic:
-        basic_workflows = _append_workflow_stage(basic_workflows, "uep")
-    if advanced:
-        advanced_workflows = _append_workflow_stage(advanced_workflows, "uep")
-
-    return replace(
-        spec,
-        basic_workflows=basic_workflows,
-        advanced_workflows=advanced_workflows,
-    )
-
-
-def _reorder_specs(specs: list[KeywordSpec]) -> list[KeywordSpec]:
-    return reorder_workflow_parameter_specs(specs)
 
 
 class UEPWidget(QWidget):
@@ -148,15 +97,9 @@ class UEPWidget(QWidget):
         self._suppress_state_emission = False
         self._next_row_id = 1
 
-        self._host_lattice: list[list[float]] | None = None
-        self._reference_lattice: list[list[float]] | None = None
-        self._reference_grid: tuple[int, int, int] | None = None
-
-        self._row_supercells: dict[int, SupercellMatrix | None] = {}
         self._row_parameter_values: dict[int, dict[str, object]] = {}
         self._row_added_advanced: dict[int, set[str]] = {}
         self._runtime_states: dict[str, UepRunState] = {}
-        self._supercell_options: list[tuple[str, SupercellMatrix]] = []
         self._source_structure_options: list[tuple[str, str]] = []
         self._updating_source_structure = False
         self._parameter_species_options: tuple[str, ...] = ()
@@ -171,6 +114,13 @@ class UEPWidget(QWidget):
         self._kpoint_message.setWordWrap(True)
         style_hint_text(self._kpoint_message)
         self._kpoint_message.hide()
+        self._supercells = SupercellColumn(
+            self,
+            column=self._SUPERCELL_COLUMN,
+            manage_requested=self.row_supercell_edit_requested.emit,
+            refresh_rows=self._refresh_table_rows,
+            state_changed=self._emit_state,
+        )
 
         self._table = create_workflow_table(
             (
@@ -221,7 +171,11 @@ class UEPWidget(QWidget):
 
         self._specs = self._build_parameter_specs()
         self._specs_by_name = {spec.name: spec for spec in self._specs}
-        self._default_params = self._default_shared_params()
+        self._default_params: dict[str, object] = {
+            "task": "SINGLEPOINT",
+            "symmetry_generate": True,
+            "write_formatted_density": True,
+        }
 
         self._build_layout()
         self._connect_signals()
@@ -337,28 +291,20 @@ class UEPWidget(QWidget):
         )
         adjusted: list[KeywordSpec] = []
         for spec in specs:
-            if spec.file == "cell" and spec.name in _STRUCTURE_CONTROLLED_CELL_KEYWORDS:
+            if spec.file == "cell" and spec.name in STRUCTURE_CONTROLLED_CELL_KEYWORDS:
                 continue
             if spec.name == "write_formatted_density":
-                adjusted.append(_clone_spec_for_uep_workflow(spec, basic=True, advanced=True))
+                adjusted.append(clone_spec_for_workflow(spec, workflow_stage="uep", basic=True, advanced=True))
                 continue
             # kpoint_mp_grid / kpoint_mp_spacing render as a mutually-exclusive
             # radio pair in the configure-parameters dialog. Force both into
             # the basic view so the toggle is visible without expanding the
             # advanced section, matching pristine/muon relaxation.
             if spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing"):
-                adjusted.append(_clone_spec_for_uep_workflow(spec, basic=True, advanced=True))
+                adjusted.append(clone_spec_for_workflow(spec, workflow_stage="uep", basic=True, advanced=True))
                 continue
             adjusted.append(spec)
-        return _reorder_specs(adjusted)
-
-    def _default_shared_params(self) -> dict[str, object]:
-        defaults: dict[str, object] = {
-            "task": "SINGLEPOINT",
-            "symmetry_generate": True,
-            "write_formatted_density": True,
-        }
-        return defaults
+        return reorder_workflow_parameter_specs(adjusted)
 
     def set_project_defaults(
         self,
@@ -373,8 +319,7 @@ class UEPWidget(QWidget):
             seed_xc_functional_default(
                 self._default_params, xc_functional, schema_default=None
             )
-            self._reference_grid = kpoint_grid
-            self._reference_lattice = [list(row) for row in kpoint_reference_lattice] if kpoint_reference_lattice else None
+            self._supercells.set_kpoint_reference(kpoint_grid, kpoint_reference_lattice)
             if cutoff_energy is not None:
                 self._default_params["cut_off_energy"] = ValueWithUnit(float(cutoff_energy), "eV")
             else:
@@ -386,7 +331,7 @@ class UEPWidget(QWidget):
             self._refresh_table_rows()
 
     def set_host_lattice(self, lattice_vectors: list[list[float]] | None) -> None:
-        self._host_lattice = [list(row) for row in lattice_vectors] if lattice_vectors is not None else None
+        self._supercells.set_host_lattice(lattice_vectors)
         self._refresh_table_rows()
 
     def set_source_structure_options(
@@ -437,60 +382,14 @@ class UEPWidget(QWidget):
         self._refresh_table_rows()
 
     def set_supercell_options(self, options: list[dict[str, object]]) -> None:
-        parsed: list[tuple[str, SupercellMatrix]] = []
-        for option in options:
-            label = str(option.get("label", "")).strip()
-            matrix_payload = option.get("matrix")
-            if not label or not isinstance(matrix_payload, list) or len(matrix_payload) != 3:
-                continue
-            try:
-                matrix: SupercellMatrix = (
-                    (int(matrix_payload[0][0]), int(matrix_payload[0][1]), int(matrix_payload[0][2])),
-                    (int(matrix_payload[1][0]), int(matrix_payload[1][1]), int(matrix_payload[1][2])),
-                    (int(matrix_payload[2][0]), int(matrix_payload[2][1]), int(matrix_payload[2][2])),
-                )
-            except (TypeError, ValueError, IndexError):
-                continue
-            parsed.append((label, matrix))
-        self._supercell_options = parsed
+        self._supercells.set_options(options)
         self._refresh_table_rows()
 
-    def _restore_structured_value(self, name: str, value: object) -> object:
-        spec = self._specs_by_name.get(name)
-        if spec is None:
-            return value
-
-        if isinstance(value, dict):
-            if spec.kind == "block" and "rows" in value:
-                rows = tuple(tuple(row) for row in value.get("rows", ()))
-                return BlockSection(
-                    name=str(value.get("name", spec.name)),
-                    rows=rows,
-                    unit=str(value["unit"]) if value.get("unit") is not None else None,
-                )
-            if spec.value_type in {"physical", "positive_float_with_optional_unit"} and {"value", "unit"} <= value.keys():
-                return ValueWithUnit(value=value["value"], unit=str(value["unit"]))
-
-        if isinstance(value, list) and spec.value_type in {"int_triplet", "real_vector"}:
-            value = tuple(value)
-
-        try:
-            return normalize_gui_value(spec, value)
-        except (TypeError, ValueError):
-            return value
-
-    def _sanitize_parameter_mapping(self, values: dict[str, object]) -> dict[str, object]:
-        cleaned: dict[str, object] = {}
-        for name, value in values.items():
-            if name in self._specs_by_name:
-                cleaned[name] = self._restore_structured_value(name, value)
-        return cleaned
-
     def row_supercell_matrix(self, row_id: int) -> SupercellMatrix | None:
-        return self._row_supercells.get(int(row_id))
+        return self._supercells.matrices.get(int(row_id))
 
     def set_row_supercell(self, row_id: int, matrix: SupercellMatrix | None) -> None:
-        self._row_supercells[int(row_id)] = matrix
+        self._supercells.matrices[int(row_id)] = matrix
         self._refresh_table_rows()
         self._emit_state()
 
@@ -532,7 +431,7 @@ class UEPWidget(QWidget):
     def _add_row(self) -> None:
         row_id = self._next_row_id
         self._next_row_id += 1
-        self._row_supercells.setdefault(row_id, None)
+        self._supercells.matrices.setdefault(row_id, None)
         self._row_parameter_values.setdefault(row_id, {})
         self._row_added_advanced.setdefault(row_id, set())
         self._insert_row(row_id=row_id, label=self._new_row_label())
@@ -546,16 +445,7 @@ class UEPWidget(QWidget):
         label_item.setData(Qt.ItemDataRole.UserRole, row_id)
         self._table.setItem(row, self._LABEL_COLUMN, label_item)
 
-        supercell_combo = SelectionSnapshotComboBox(self._table)
-        supercell_combo.selection_snapshot_key = row_id
-        supercell_combo.addItem("Unit cell", None)
-        for option_label, matrix in self._supercell_options:
-            supercell_combo.addItem(option_label, matrix)
-        supercell_combo.addItem("Manage Supercells...", "__create__")
-        supercell_combo.currentIndexChanged.connect(
-            lambda _index, rid=row_id, combo=supercell_combo: self._on_supercell_changed(rid, combo)
-        )
-        self._table.setCellWidget(row, self._SUPERCELL_COLUMN, supercell_combo)
+        self._table.setCellWidget(row, self._SUPERCELL_COLUMN, self._supercells.create_combo(self._table, row_id))
 
         self._table.setItem(row, self._STATUS_COLUMN, QTableWidgetItem("ready"))
         self._table.setItem(row, self._TOTAL_ENERGY_COLUMN, QTableWidgetItem(""))
@@ -593,42 +483,6 @@ class UEPWidget(QWidget):
                 return row
         return None
 
-    def _on_supercell_changed(self, row_id: int, combo: SelectionSnapshotComboBox) -> None:
-        data = combo.currentData()
-        if data == "__create__":
-            self.row_supercell_edit_requested.emit(row_id)
-            current = self._row_supercells.get(row_id)
-            self._set_combo_to_supercell(combo, current)
-            return
-        matrix = data if isinstance(data, tuple) else None
-        snapshot_keys = [
-            self._row_id_at(r)
-            for r in combo.selection_snapshot_rows
-        ]
-        target_row_ids = resolve_target_keys(
-            combo,
-            clicked_key=row_id,
-            snapshot_keys=[k for k in snapshot_keys if k is not None],
-            eligibility=lambda rid: True,
-            parent=self,
-            action="Set this supercell on",
-        )
-        if not target_row_ids:
-            # Cancelled: put the combo back to the row's stored supercell.
-            previous = combo.blockSignals(True)
-            self._set_combo_to_supercell(combo, self._row_supercells.get(row_id))
-            combo.blockSignals(previous)
-            return
-        if len(target_row_ids) > 1:
-            show_status_message(
-                self,
-                multi_row_outcome_text("Supercell set on", len(target_row_ids), len(snapshot_keys)),
-            )
-        for target_row_id in target_row_ids:
-            self._row_supercells[target_row_id] = matrix
-        self._refresh_table_rows()
-        self._emit_state()
-
     def _dispatch_row_action(
         self,
         widget: SelectionSnapshotPushButton | SelectionSnapshotToolButton,
@@ -656,10 +510,7 @@ class UEPWidget(QWidget):
             )
             if not target_row_ids:
                 return
-            if len(target_row_ids) == 1:
-                self._configure_row(target_row_ids[0])
-            else:
-                self._configure_rows(target_row_ids)
+            self._configure_rows(target_row_ids)
         elif kind == "remove":
             target_row_ids = resolve_target_keys(
                 widget,
@@ -677,13 +528,9 @@ class UEPWidget(QWidget):
         submitted = sum(
             1
             for row_id in row_ids
-            if self._runtime_controls_locked(self._runtime_state_for_row(row_id).status)
+            if workflow_row_is_locked(self._runtime_state_for_row(row_id).status)
         )
         return confirm_row_removal(self, len(row_ids), submitted_count=submitted)
-
-    @staticmethod
-    def _runtime_controls_locked(status: str) -> bool:
-        return str(status).strip().casefold() not in _UNLOCKED_RUNTIME_STATUSES
 
     def _runtime_state_for_row(self, row_id: int) -> UepRunState:
         row = self._row_index_for_id(row_id)
@@ -693,154 +540,44 @@ class UEPWidget(QWidget):
         label = "" if item is None else item.text().strip()
         return self._runtime_states.get(label, UepRunState(status="ready"))
 
-    def _set_combo_to_supercell(self, combo: QComboBox, matrix: SupercellMatrix | None) -> None:
-        for index in range(combo.count()):
-            if combo.itemData(index) == matrix:
-                combo.setCurrentIndex(index)
-                return
-        combo.setCurrentIndex(0)
-
-    def _configure_row(self, row_id: int) -> None:
-        read_only = self._runtime_controls_locked(self._runtime_state_for_row(row_id).status)
-        dialog_kwargs = {
-            "specs": self._specs,
-            "workflow_stage": "uep",
-            "locked_values": {
-                "task": "SINGLEPOINT",
-                "write_formatted_density": "TRUE (required for UEP source analysis)",
-            },
-            "intro_text": (
-                "UEP source jobs are CASTEP single-point calculations. "
-                "Formatted density output stays enabled because the UEP analysis requires `.den_fmt`."
-            ),
-            "species_options": self._parameter_species_options,
-            "parent": self,
-        }
-        if read_only:
-            dialog_kwargs["read_only"] = True
-        dialog = ParameterDialog(**dialog_kwargs)
-        if hasattr(dialog, "setWindowTitle"):
-            dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
-        values = self._effective_params_for_row(row_id)
-        kpoint_hint = kpoint_exclusive_hint([values])
-        dialog.set_values(values, preferred_exclusive=kpoint_hint)
-        dialog.set_advanced_names(self._row_added_advanced.get(row_id, set()))
-        if dialog.exec() != dialog.DialogCode.Accepted:
-            return
-        if read_only:
-            return
-
-        resolved = self._sanitize_parameter_mapping(dialog.collect_values())
-        resolved["write_formatted_density"] = True
-        resolved["task"] = "SINGLEPOINT"
-        self._row_parameter_values[row_id] = resolved
-        self._row_added_advanced[row_id] = set(dialog.advanced_names())
-        self._emit_state()
 
     def _configure_rows(self, row_ids: tuple[int, ...]) -> None:
-        if not row_ids:
-            return
-        values = self._common_params_for_rows(row_ids)
-        kpoint_hint = kpoint_exclusive_hint(
-            self._effective_params_for_row(r) for r in row_ids
+        result = run_row_parameter_dialog(
+            RowParameterRequest(
+                specs=self._specs,
+                workflow_stage="uep",
+                subject="UEP Parameters",
+                values=self._common_params_for_rows(row_ids),
+                row_values={row_id: self._effective_params_for_row(row_id) for row_id in row_ids},
+                row_advanced={row_id: self._row_added_advanced.get(row_id, set()) for row_id in row_ids},
+                sanitize=lambda values: sanitize_parameter_mapping(values, self._specs_by_name),
+                locked_values={
+                    "task": "SINGLEPOINT",
+                    "write_formatted_density": "TRUE (required for UEP source analysis)",
+                },
+                read_only=any(
+                    workflow_row_is_locked(self._runtime_state_for_row(row_id).status)
+                    for row_id in row_ids
+                ),
+                intro_text=(
+                    "UEP source jobs are CASTEP single-point calculations. "
+                    "Formatted density output stays enabled because the UEP analysis requires `.den_fmt`."
+                ),
+                species_options=self._parameter_species_options,
+            ),
+            parent=self,
         )
-        read_only = any(
-            self._runtime_controls_locked(self._runtime_state_for_row(row_id).status)
-            for row_id in row_ids
-        )
-        dialog_kwargs = {
-            "specs": self._specs,
-            "workflow_stage": "uep",
-            "locked_values": {
-                "task": "SINGLEPOINT",
-                "write_formatted_density": "TRUE (required for UEP source analysis)",
-            },
-            "species_options": self._parameter_species_options,
-            "parent": self,
-        }
-        if read_only:
-            dialog_kwargs["read_only"] = True
-        dialog = ParameterDialog(**dialog_kwargs)
-        if hasattr(dialog, "setWindowTitle"):
-            dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
-        dialog.set_values(values, preferred_exclusive=kpoint_hint)
-        names: set[str] = set()
-        for row_id in row_ids:
-            names.update(self._row_added_advanced.get(row_id, set()))
-        dialog.set_advanced_names(names)
-        effective_by_row = {row_id: self._effective_params_for_row(row_id) for row_id in row_ids}
-        dialog.set_mixed_names(mixed_parameter_names(effective_by_row.values()))
-        if dialog.exec() != dialog.DialogCode.Accepted:
+        if result is None:
             return
-        if read_only:
-            return
-        # Parameters that differ between the rows and were left alone keep each
-        # row's own value; everything else follows the dialog.
-        collected = self._sanitize_parameter_mapping(dialog.collect_values())
-        advanced = set(dialog.advanced_names())
-        untouched = dialog.untouched_mixed_names()
-        for row_id in row_ids:
-            row_values = merge_batch_values(collected, effective_by_row[row_id], untouched)
-            row_values["write_formatted_density"] = True
-            row_values["task"] = "SINGLEPOINT"
-            self._row_parameter_values[row_id] = row_values
-            self._row_added_advanced[row_id] = merge_batch_advanced(
-                advanced, self._row_added_advanced.get(row_id, set()), untouched
-            )
+        for row_id, values in result.row_values.items():
+            values["write_formatted_density"] = True
+            values["task"] = "SINGLEPOINT"
+            self._row_parameter_values[row_id] = values
+            self._row_added_advanced[row_id] = result.row_advanced[row_id]
         self._emit_state()
 
     def _on_batch_configure_clicked(self) -> None:
-        row_ids = self._selected_row_ids()
-        if not row_ids:
-            return
-        values = self._common_params_for_rows(row_ids)
-        kpoint_hint = kpoint_exclusive_hint(
-            self._effective_params_for_row(r) for r in row_ids
-        )
-        read_only = any(
-            self._runtime_controls_locked(self._runtime_state_for_row(row_id).status)
-            for row_id in row_ids
-        )
-        dialog_kwargs = {
-            "specs": self._specs,
-            "workflow_stage": "uep",
-            "locked_values": {
-                "task": "SINGLEPOINT",
-                "write_formatted_density": "TRUE (required for UEP source analysis)",
-            },
-            "species_options": self._parameter_species_options,
-            "parent": self,
-        }
-        if read_only:
-            dialog_kwargs["read_only"] = True
-        dialog = ParameterDialog(**dialog_kwargs)
-        if hasattr(dialog, "setWindowTitle"):
-            dialog.setWindowTitle("Inspect UEP Parameters" if read_only else "Configure UEP Parameters")
-        dialog.set_values(values, preferred_exclusive=kpoint_hint)
-        names: set[str] = set()
-        for row_id in row_ids:
-            names.update(self._row_added_advanced.get(row_id, set()))
-        dialog.set_advanced_names(names)
-        effective_by_row = {row_id: self._effective_params_for_row(row_id) for row_id in row_ids}
-        dialog.set_mixed_names(mixed_parameter_names(effective_by_row.values()))
-        if dialog.exec() != dialog.DialogCode.Accepted:
-            return
-        if read_only:
-            return
-        # Parameters that differ between the rows and were left alone keep each
-        # row's own value; everything else follows the dialog.
-        collected = self._sanitize_parameter_mapping(dialog.collect_values())
-        advanced = set(dialog.advanced_names())
-        untouched = dialog.untouched_mixed_names()
-        for row_id in row_ids:
-            row_values = merge_batch_values(collected, effective_by_row[row_id], untouched)
-            row_values["write_formatted_density"] = True
-            row_values["task"] = "SINGLEPOINT"
-            self._row_parameter_values[row_id] = row_values
-            self._row_added_advanced[row_id] = merge_batch_advanced(
-                advanced, self._row_added_advanced.get(row_id, set()), untouched
-            )
-        self._emit_state()
+        self._configure_rows(self._selected_row_ids())
 
     def _common_params_for_rows(self, row_ids: tuple[int, ...]) -> dict[str, object]:
         values_by_row = [self._effective_params_for_row(row_id) for row_id in row_ids]
@@ -861,40 +598,14 @@ class UEPWidget(QWidget):
         has_grid = "kpoint_mp_grid" in common
         has_spacing = "kpoint_mp_spacing" in common
         if has_grid and not has_spacing and row_ids:
-            suggested_spacing = self._suggested_spacing_for_row(row_ids[0])
+            suggested_spacing = self._supercells.suggested_spacing()
             if suggested_spacing is not None:
                 common["kpoint_mp_spacing"] = suggested_spacing
         elif has_spacing and not has_grid and row_ids:
-            suggested_grid = self._suggested_grid_for_row(row_ids[0])
+            suggested_grid = self._supercells.suggested_grid(row_ids[0])
             if suggested_grid is not None:
                 common["kpoint_mp_grid"] = suggested_grid
         return common
-
-    def _suggested_grid_for_row(
-        self, row_id: int
-    ) -> tuple[int, int, int] | None:
-        if self._host_lattice is None or self._reference_grid is None:
-            return None
-        return suggested_grid_for_row(
-            host_lattice=self._host_lattice,
-            row_matrix=self._row_supercells.get(row_id),
-            reference_lattice=self._reference_lattice,
-            reference_grid=self._reference_grid,
-        )
-
-    def _suggested_spacing_for_row(self, row_id: int) -> ValueWithUnit | None:
-        # Mirror the project's adopted k-point grid as a spacing so the
-        # configure-parameters dialog has a sensible default when the user
-        # toggles to "Use spacing".
-        if self._reference_grid is None or self._reference_lattice is None:
-            return None
-        if tuple(int(v) for v in self._reference_grid) == (1, 1, 1):
-            return None
-        try:
-            spacing = spacing_from_grid(self._reference_lattice, self._reference_grid)
-        except ValueError:
-            return None
-        return ValueWithUnit(float(spacing), "1/ang")
 
     def _effective_params_for_row(self, row_id: int) -> dict[str, object]:
         # The row's effective values reflect what would land in the rendered
@@ -914,18 +625,10 @@ class UEPWidget(QWidget):
             # User explicitly chose grid: drop any spacing inherited from defaults.
             effective.pop("kpoint_mp_spacing", None)
         elif (
-            self._host_lattice is not None
-            and (matrix := self._row_supercells.get(row_id)) is not None
-            and self._reference_grid is not None
+            self._supercells.matrices.get(row_id) is not None
+            and (suggested := self._supercells.suggested_grid(row_id)) is not None
         ):
-            suggested = suggested_grid_for_row(
-                host_lattice=self._host_lattice,
-                row_matrix=matrix,
-                reference_lattice=self._reference_lattice,
-                reference_grid=self._reference_grid,
-            )
-            if suggested is not None:
-                effective["kpoint_mp_grid"] = suggested
+            effective["kpoint_mp_grid"] = suggested
         effective["task"] = "SINGLEPOINT"
         effective["write_formatted_density"] = True
         return effective
@@ -942,7 +645,7 @@ class UEPWidget(QWidget):
             label_item = self._table.item(row, self._LABEL_COLUMN)
             label = label_item.text().strip() if label_item is not None else ""
             self._table.removeRow(row)
-            self._row_supercells.pop(row_id, None)
+            self._supercells.matrices.pop(row_id, None)
             self._row_parameter_values.pop(row_id, None)
             self._row_added_advanced.pop(row_id, None)
             if label:
@@ -1040,7 +743,7 @@ class UEPWidget(QWidget):
             rows.append(
                 UepSourceRow(
                     label=label,
-                    supercell_matrix=self._row_supercells.get(row_id),
+                    supercell_matrix=self._supercells.matrices.get(row_id),
                     parameter_values=values,
                     added_advanced=tuple(sorted(self._row_added_advanced.get(row_id, set()))),
                 )
@@ -1062,17 +765,7 @@ class UEPWidget(QWidget):
                 continue
             combo = self._table.cellWidget(row, self._SUPERCELL_COLUMN)
             if isinstance(combo, QComboBox):
-                current = self._row_supercells.get(row_id)
-                combo.blockSignals(True)
-                labels = [combo.itemText(index) for index in range(combo.count())]
-                if labels != ["Unit cell", *[label for label, _ in self._supercell_options], "Manage Supercells..."]:
-                    combo.clear()
-                    combo.addItem("Unit cell", None)
-                    for option_label, matrix in self._supercell_options:
-                        combo.addItem(option_label, matrix)
-                    combo.addItem("Manage Supercells...", "__create__")
-                self._set_combo_to_supercell(combo, current)
-                combo.blockSignals(False)
+                self._supercells.populate_combo(combo, row_id)
             self._apply_row_state(row_id)
 
     def _apply_row_state(self, row_id: int) -> None:
@@ -1089,7 +782,7 @@ class UEPWidget(QWidget):
             status_item = QTableWidgetItem("")
             self._table.setItem(row, self._STATUS_COLUMN, status_item)
         status_text = state.status or "ready"
-        locked = self._runtime_controls_locked(status_text)
+        locked = workflow_row_is_locked(status_text)
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if not locked:
             flags |= Qt.ItemFlag.ItemIsEditable
@@ -1153,7 +846,7 @@ class UEPWidget(QWidget):
             row_id = self._row_id_at(row)
             if item is None or row_id is None:
                 continue
-            matrix = self._row_supercells.get(row_id)
+            matrix = self._supercells.matrices.get(row_id)
             rows.append(
                 {
                     "label": item.text().strip(),
@@ -1172,7 +865,7 @@ class UEPWidget(QWidget):
         self._restoring_form_state = True
         try:
             self._table.setRowCount(0)
-            self._row_supercells.clear()
+            self._supercells.matrices.clear()
             self._row_parameter_values.clear()
             self._row_added_advanced.clear()
             self._next_row_id = 1
@@ -1189,22 +882,12 @@ class UEPWidget(QWidget):
                 self._next_row_id += 1
                 default_label = self._new_row_label(row_id)
                 label = str(entry.get("label", default_label)).strip() or default_label
-                matrix_payload = entry.get("supercell_matrix")
-                matrix = None
-                if isinstance(matrix_payload, list) and len(matrix_payload) == 3:
-                    try:
-                        matrix = (
-                            (int(matrix_payload[0][0]), int(matrix_payload[0][1]), int(matrix_payload[0][2])),
-                            (int(matrix_payload[1][0]), int(matrix_payload[1][1]), int(matrix_payload[1][2])),
-                            (int(matrix_payload[2][0]), int(matrix_payload[2][1]), int(matrix_payload[2][2])),
-                        )
-                    except (TypeError, ValueError, IndexError):
-                        matrix = None
-                self._row_supercells[row_id] = matrix
+                self._supercells.matrices[row_id] = coerce_supercell_matrix(entry.get("supercell_matrix"))
                 params = entry.get("parameter_values", {})
                 if isinstance(params, dict):
-                    self._row_parameter_values[row_id] = self._sanitize_parameter_mapping(
-                        {str(name): raw for name, raw in params.items()}
+                    self._row_parameter_values[row_id] = sanitize_parameter_mapping(
+                        {str(name): raw for name, raw in params.items()},
+                        self._specs_by_name,
                     )
                 else:
                     self._row_parameter_values[row_id] = {}

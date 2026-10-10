@@ -4,18 +4,20 @@ from __future__ import annotations
 
 from mufinder.app.adapter_common import (
     AdapterExpansion,
-    rescale_kpoint_grid,
-    template_has_explicit_kpoints,
+    claim_unique_name,
+    kpoint_reference_lattice,
+    prepare_row,
+    require_row_label,
+    seed_workflow_defaults,
 )
 from mufinder.app.relaxation_adapter import (
-    _is_identity_supercell,
     _structure_for_row,
     _template_from_values,
 )
 from mufinder.app.uep_types import UepConfig
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import Structure
-from mufinder.workflow import JobPatch, StructureBridgeError, job_name, resolve_job, structure_to_spec
+from mufinder.workflow import JobPatch, job_name, resolve_job
 from mufinder.workflow.types import InputTemplate, JobSpec
 
 
@@ -33,59 +35,42 @@ def expand_uep_jobs(
     if not config.rows:
         raise ValueError("At least one UEP source row must be configured.")
 
-    workflow_defaults_values: dict[str, object] = {
-        "task": "SINGLEPOINT",
-        "symmetry_generate": True,
-        "write_formatted_density": True,
-    }
-    if project_xc_functional is not None:
-        workflow_defaults_values["xc_functional"] = project_xc_functional
-    if project_cutoff_energy is not None:
-        workflow_defaults_values["cut_off_energy"] = float(project_cutoff_energy)
-    workflow_defaults = _template_from_values(workflow_defaults_values)
-
-    reference_lattice = (
-        project_kpoint_reference_lattice
-        if isinstance(project_kpoint_reference_lattice, list) and len(project_kpoint_reference_lattice) == 3
-        else host_structure.lattice_vectors
+    workflow_defaults = _template_from_values(
+        seed_workflow_defaults(
+            {
+                "task": "SINGLEPOINT",
+                "symmetry_generate": True,
+                "write_formatted_density": True,
+            },
+            project_xc_functional=project_xc_functional,
+            project_cutoff_energy=project_cutoff_energy,
+        )
     )
+    reference_lattice = kpoint_reference_lattice(project_kpoint_reference_lattice, host_structure)
 
     seen_labels: set[str] = set()
     messages: list[str] = []
     jobs: list[JobSpec] = []
     for row in config.rows:
-        label = row.label.strip()
-        if not label:
-            raise ValueError("UEP source row labels must not be empty.")
-        if label in seen_labels:
-            raise ValueError(f"Duplicate UEP source row label '{label}'.")
-        seen_labels.add(label)
+        label = require_row_label(row.label, workflow="UEP source")
+        claim_unique_name(label, seen_labels, workflow="UEP source")
 
-        row_structure = _structure_for_row(host_structure, row)  # type: ignore[arg-type]
-        try:
-            structure_spec = structure_to_spec(row_structure)
-        except StructureBridgeError as exc:
-            raise ValueError(f"Could not convert row '{label}' structure: {exc}") from exc
-
-        row_values = dict(row.parameter_values)
-        row_values["task"] = "SINGLEPOINT"
-        row_values["write_formatted_density"] = True
-        row_template = _template_from_values(row_values)
-
-        kpoint_grid = None
-        if not template_has_explicit_kpoints(row_template):
-            kpoint_grid, message = rescale_kpoint_grid(
-                project_kpoint_grid=project_kpoint_grid,
-                reference_lattice=reference_lattice,
-                row_lattice=row_structure.lattice_vectors,
-                is_identity_supercell=_is_identity_supercell(row.supercell_matrix),
-                has_supercell=row.supercell_matrix is not None,
-                target_description=(
-                    f"row '{label}' (equivalent reciprocal-space density)."
-                ),
-            )
-            if message is not None:
-                messages.append(message)
+        prepared = prepare_row(
+            label=label,
+            structure=_structure_for_row(host_structure, row),  # type: ignore[arg-type]
+            parameter_values=row.parameter_values,
+            template_from_values=_template_from_values,
+            supercell_matrix=row.supercell_matrix,
+            project_kpoint_grid=project_kpoint_grid,
+            reference_lattice=reference_lattice,
+            target_description=f"row '{label}' (equivalent reciprocal-space density).",
+            force={"task": "SINGLEPOINT", "write_formatted_density": True},
+        )
+        if prepared.message is not None:
+            messages.append(prepared.message)
+        kpoint_grid = prepared.kpoint_grid
+        row_template = prepared.template
+        structure_spec = prepared.structure
 
         patch_cell = row_template.cell
         if kpoint_grid is not None:

@@ -30,13 +30,8 @@ from PySide6.QtWidgets import (
 
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.decimal_input import DecimalLineEdit
-from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
 from mufinder.app.workflow_parameters import (
-    merge_batch_advanced,
-    merge_batch_values,
-    mixed_parameter_names,
-    kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     seed_xc_functional_default,
 )
@@ -62,28 +57,24 @@ from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     infer_task,
     keyword_locked_in_workflow,
-    keyword_visible_in_workflow,
-    normalize_gui_value,
     validate_gui_values,
 )
 from mufinder.castep_io.schema import KeywordSpec
-from mufinder.castep_io.types import BlockSection, ValueWithUnit
+from mufinder.castep_io.types import ValueWithUnit
 from mufinder.science.kpoint_grids import generate_kpoint_grids, lattice_matches
 from mufinder.app.selection_snapshot import (
     SelectionSnapshotPushButton,
     SelectionSnapshotToolButton,
     resolve_target_keys,
 )
+from mufinder.app.workflow_dialogs import RowParameterRequest, run_row_parameter_dialog
+from mufinder.app.workflow_parameters import STRUCTURE_CONTROLLED_CELL_KEYWORDS
+from mufinder.app.workflow_parameters import sanitize_parameter_mapping
+from mufinder.app.workflow_parameters import workflow_default_params
+from mufinder.app.workflow_table_utils import workflow_row_is_locked
 
-_STRUCTURE_CONTROLLED_CELL_KEYWORDS = {
-    "lattice_cart",
-    "lattice_abc",
-    "positions_frac",
-    "positions_abs",
-}
 _ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
 _PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
-_LOCKED_GRID_EDIT_STATUSES = _PROGRESSED_JOB_STATUSES - {"cancelled"}
 _DEFAULT_KPOINT_SPACING = 0.02
 
 
@@ -317,7 +308,11 @@ class KPointConvergenceWidget(QWidget):
         self._specs = [spec for spec in specs if spec.name not in {"task", "spin_polarised"}]
         self._specs = _reorder_specs_with_kpoint_anchor(self._specs)
         self._specs_by_name = {spec.name: spec for spec in self._specs}
-        self._default_params = self._default_shared_params()
+        self._default_params = workflow_default_params(
+            self._specs,
+            workflow_stage="convergence_kpoint",
+            locked_names=set(self._shared_locked_values()),
+        )
         self._schema_xc_functional = self._default_params.get("xc_functional")
 
         self._build_layout()
@@ -590,32 +585,6 @@ class KPointConvergenceWidget(QWidget):
 
         return locked
 
-    def _spec_is_blocked_by_locked(self, spec: KeywordSpec, locked_names: set[str]) -> bool:
-        if spec.name in locked_names:
-            return False
-        return any(conflict in locked_names for conflict in spec.mutually_exclusive_with)
-
-    def _default_shared_params(self) -> dict[str, Any]:
-        defaults: dict[str, Any] = {"task": infer_task("convergence_kpoint")}
-        locked_names = set(self._shared_locked_values())
-
-        for spec in self._specs:
-            if spec.default_value is None:
-                continue
-            if not keyword_visible_in_workflow(
-                spec,
-                workflow_stage="convergence_kpoint",
-                include_advanced=False,
-            ):
-                continue
-            if self._spec_is_blocked_by_locked(spec, locked_names):
-                continue
-            if spec.name in locked_names:
-                continue
-            defaults[spec.name] = normalize_gui_value(spec, spec.default_value)
-
-        return defaults
-
     def _grid_value_at_row(self, row: int, *, strict: bool) -> tuple[int, int, int] | None:
         item = self._table.item(row, self._GRID_COLUMN)
         if item is None:
@@ -797,44 +766,31 @@ class KPointConvergenceWidget(QWidget):
         if not grids:
             return
 
-        intro = "Included grids: " + ", ".join(self._format_grid(grid) for grid in sorted(grids))
-        read_only = self._grid_parameters_locked(grids)
-        dialog_kwargs = {
-            "specs": self._specs,
-            "workflow_stage": "convergence_kpoint",
-            "locked_values": self._shared_locked_values(),
-            "intro_text": intro,
-            "species_options": self._parameter_species_options,
-            "parent": self,
-        }
-        if read_only:
-            dialog_kwargs["read_only"] = True
-        dialog = ParameterDialog(**dialog_kwargs)
-        dialog.setWindowTitle("Inspect K-Point Parameters" if read_only else "Configure K-Point Parameters")
-        kpoint_hint = kpoint_exclusive_hint(
-            self._effective_params_for_grid(g) for g in grids
+        result = run_row_parameter_dialog(
+            RowParameterRequest(
+                specs=self._specs,
+                workflow_stage="convergence_kpoint",
+                subject="K-Point Parameters",
+                values=self._common_parameter_values_for_grids(grids),
+                row_values={g: self._effective_params_for_grid(g) for g in grids},
+                row_advanced={g: self._added_advanced.get(g, set()) for g in grids},
+                sanitize=lambda values: sanitize_parameter_mapping(
+                    values,
+                    self._specs_by_name,
+                    keep=("task",),
+                    drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
+                ),
+                locked_values=self._shared_locked_values(),
+                read_only=self._grid_parameters_locked(grids),
+                intro_text="Included grids: " + ", ".join(self._format_grid(grid) for grid in sorted(grids)),
+                species_options=self._parameter_species_options,
+            ),
+            parent=self,
         )
-        dialog.set_values(self._common_parameter_values_for_grids(grids), preferred_exclusive=kpoint_hint)
-        dialog.set_advanced_names(self._advanced_names_for_grids(grids))
-        effective_by_grid = {g: self._effective_params_for_grid(g) for g in grids}
-        dialog.set_mixed_names(mixed_parameter_names(effective_by_grid.values()))
-
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        if result is None:
             return
-        if read_only:
-            return
-
-        # Parameters that differ between the grids and were left alone keep
-        # each grid's own value; everything else follows the dialog.
-        values = self._sanitize_parameter_mapping(dialog.collect_values())
-        advanced_names = set(dialog.advanced_names())
-        untouched = dialog.untouched_mixed_names()
-        for grid in grids:
-            self._set_grid_parameter_values(
-                grid,
-                merge_batch_values(values, effective_by_grid[grid], untouched),
-                merge_batch_advanced(advanced_names, self._added_advanced.get(grid, set()), untouched),
-            )
+        for grid, values in result.row_values.items():
+            self._set_grid_parameter_values(grid, values, result.row_advanced[grid])
 
         self._refresh_all_rows()
         self._emit_state()
@@ -851,7 +807,12 @@ class KPointConvergenceWidget(QWidget):
         values: dict[str, Any],
         advanced_names: set[str],
     ) -> None:
-        normalized = self._sanitize_parameter_mapping(values)
+        normalized = sanitize_parameter_mapping(
+            values,
+            self._specs_by_name,
+            keep=("task",),
+            drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
+        )
         if normalized == self._default_params and not advanced_names:
             self._parameter_values.pop(grid, None)
             self._added_advanced.pop(grid, None)
@@ -883,12 +844,6 @@ class KPointConvergenceWidget(QWidget):
             common["task"] = infer_task("convergence_kpoint")
         return common
 
-    def _advanced_names_for_grids(self, grids: tuple[tuple[int, int, int], ...]) -> set[str]:
-        names: set[str] = set()
-        for grid in grids:
-            names.update(self._added_advanced.get(grid, set()))
-        return names
-
     def _is_grid_customized(self, grid: tuple[int, int, int]) -> bool:
         return grid in self._parameter_values or grid in self._added_advanced
 
@@ -896,7 +851,7 @@ class KPointConvergenceWidget(QWidget):
         for grid in grids:
             runtime = self._runtime_states.get(tuple(grid))
             status = "" if runtime is None else runtime.status.strip().lower()
-            if status in _LOCKED_GRID_EDIT_STATUSES:
+            if workflow_row_is_locked(status):
                 return True
         return False
 
@@ -1010,7 +965,7 @@ class KPointConvergenceWidget(QWidget):
         grid_item = self._table.item(row, self._GRID_COLUMN)
         if grid_item is not None:
             flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-            if status_normalized not in _LOCKED_GRID_EDIT_STATUSES:
+            if not workflow_row_is_locked(status_normalized):
                 flags |= Qt.ItemFlag.ItemIsEditable
             grid_item.setFlags(flags)
 
@@ -1039,7 +994,7 @@ class KPointConvergenceWidget(QWidget):
         configure_button = self._table.cellWidget(row, self._CONFIGURE_COLUMN)
         if isinstance(configure_button, QPushButton):
             customized = grid is not None and self._is_grid_customized(grid)
-            locked = status_normalized in _LOCKED_GRID_EDIT_STATUSES
+            locked = workflow_row_is_locked(status_normalized)
             style_workflow_configure_button(
                 configure_button,
                 workflow_label="CASTEP",
@@ -1085,39 +1040,6 @@ class KPointConvergenceWidget(QWidget):
         if self._restoring_form_state:
             return
         self.form_state_changed.emit(self.collect_state())
-
-    def _restore_structured_value(self, name: str, value: object) -> object:
-        spec = self._specs_by_name.get(name)
-        if spec is None:
-            return value
-
-        if isinstance(value, dict):
-            if spec.kind == "block" and "rows" in value:
-                rows = tuple(tuple(row) for row in value.get("rows", ()))
-                return BlockSection(
-                    name=str(value.get("name", spec.name)),
-                    rows=rows,
-                    unit=str(value["unit"]) if value.get("unit") is not None else None,
-                )
-            if spec.value_type in {"physical", "positive_float_with_optional_unit"} and {"value", "unit"} <= value.keys():
-                return ValueWithUnit(value=value["value"], unit=str(value["unit"]))
-
-        if isinstance(value, list) and spec.value_type in {"int_triplet", "real_vector"}:
-            value = tuple(value)
-
-        try:
-            return normalize_gui_value(spec, value)
-        except (TypeError, ValueError):
-            return value
-
-    def _sanitize_parameter_mapping(self, values: dict[str, object]) -> dict[str, object]:
-        cleaned: dict[str, object] = {}
-        for name, value in values.items():
-            if name in _STRUCTURE_CONTROLLED_CELL_KEYWORDS:
-                continue
-            if name == "task" or name in self._specs_by_name:
-                cleaned[name] = self._restore_structured_value(name, value)
-        return cleaned
 
     def collect_state(self) -> dict[str, Any]:
         return {
@@ -1192,8 +1114,11 @@ class KPointConvergenceWidget(QWidget):
                         if not grid_values:
                             continue
                         grid = grid_values[0]
-                        params = self._sanitize_parameter_mapping(
-                            {str(name): raw for name, raw in dict(entry.get("params", {})).items()}
+                        params = sanitize_parameter_mapping(
+                            {str(name): raw for name, raw in dict(entry.get("params", {})).items()},
+                            self._specs_by_name,
+                            keep=("task",),
+                            drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
                         )
                         advanced_names = {
                             str(name)

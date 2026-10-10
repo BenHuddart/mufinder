@@ -12,7 +12,6 @@ from PySide6.QtWidgets import QComboBox, QDialog, QLabel, QPushButton, QToolButt
 from mufinder.app import workflow_table_utils
 from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
-from mufinder.app import uep_widget as uep_widget_module
 from mufinder.app.param_dialog import ParameterDialog
 from mufinder.app.uep_types import UepRunState
 from mufinder.app.uep_widget import UEPWidget
@@ -84,6 +83,51 @@ def test_uep_widget_supercell_dropdown_lists_project_cells(qapp) -> None:
     assert labels[0] == "Unit cell"
     assert "pristine_relaxation 2x2x1" in labels
     assert labels[-1] == "Manage Supercells..."
+
+
+def test_uep_widget_supercell_combo_shows_a_restored_custom_matrix(qapp) -> None:
+    widget = UEPWidget()
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
+    widget.set_form_state(
+        {
+            "name_prefix": "uep",
+            "rows": [{"label": "source_01", "supercell_matrix": [[1, 1, 0], [0, 1, 0], [0, 0, 2]]}],
+        }
+    )
+
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    row_id = widget._row_id_at(0)
+    assert [combo.itemText(index) for index in range(combo.count())] == [
+        "Unit cell",
+        "2x2x1",
+        "Custom 3x3",
+        "Manage Supercells...",
+    ]
+    assert combo.currentText() == "Custom 3x3"
+    assert widget.row_supercell_matrix(row_id) == ((1, 1, 0), (0, 1, 0), (0, 0, 2))
+
+
+def test_uep_widget_manage_supercells_entry_requests_the_manager(qapp) -> None:
+    widget = UEPWidget()
+    widget.set_supercell_options([{"label": "2x2x1", "matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 1]]}])
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    requested: list[int] = []
+    widget.row_supercell_edit_requested.connect(lambda payload: requested.append(int(payload)))
+    states: list[dict] = []
+    widget.form_state_changed.connect(states.append)
+
+    combo = widget._table.cellWidget(0, widget._SUPERCELL_COLUMN)
+    combo.setCurrentIndex(combo.findText("Manage Supercells..."))
+
+    assert requested == [row_id]
+    assert widget.row_supercell_matrix(row_id) is None
+    assert combo.currentText() == "Unit cell"
+    assert states == []
+
+    combo.setCurrentIndex(combo.findText("2x2x1"))
+    assert widget.row_supercell_matrix(row_id) == ((2, 0, 0), (0, 2, 0), (0, 0, 1))
+    assert len(states) == 1
 
 
 def test_uep_widget_dialog_locks_write_formatted_density(qapp) -> None:
@@ -216,10 +260,11 @@ def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkey
             workflow_stage: str,
                 locked_values: Mapping[str, object],
                 intro_text: str | None = None,
+                read_only: bool = False,
                 species_options: tuple[str, ...] = (),
                 parent: object | None = None,
             ) -> None:
-                del specs, workflow_stage, locked_values, intro_text, species_options, parent
+                del specs, workflow_stage, locked_values, intro_text, read_only, species_options, parent
 
         def set_values(
             self, values: Mapping[str, object], *, preferred_exclusive: str | None = None
@@ -228,6 +273,15 @@ def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkey
 
         def set_advanced_names(self, names: set[str]) -> None:
             calls.append(("set_advanced_names", tuple(sorted(names))))
+
+        def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt API naming.
+            del title
+
+        def set_mixed_names(self, names: set[str]) -> None:
+            del names
+
+        def untouched_mixed_names(self) -> set[str]:
+            return set()
 
         def exec(self) -> int:
             return self.DialogCode.Accepted
@@ -238,10 +292,10 @@ def test_uep_widget_configure_row_uses_current_parameter_dialog_api(qapp, monkey
         def advanced_names(self) -> tuple[str, ...]:
             return ("spin_polarized",)
 
-    monkeypatch.setattr("mufinder.app.uep_widget.ParameterDialog", DummyDialog)
+    monkeypatch.setattr("mufinder.app.workflow_dialogs.ParameterDialog", DummyDialog)
     widget._row_added_advanced[row_id] = {"spin_polarized"}
 
-    widget._configure_row(row_id)
+    widget._configure_rows((row_id,))
 
     assert ("set_advanced_names", ("spin_polarized",)) in calls
     assert widget._row_parameter_values[row_id]["task"] == "SINGLEPOINT"
@@ -274,10 +328,11 @@ def test_uep_widget_reopens_dialog_with_saved_row_values(qapp, monkeypatch) -> N
             workflow_stage: str,
                 locked_values: Mapping[str, object],
                 intro_text: str | None = None,
+                read_only: bool = False,
                 species_options: tuple[str, ...] = (),
                 parent: object | None = None,
             ) -> None:
-                del specs, workflow_stage, locked_values, intro_text, species_options, parent
+                del specs, workflow_stage, locked_values, intro_text, read_only, species_options, parent
                 self._payload = next(dialog_payloads)
 
         def set_values(
@@ -288,6 +343,15 @@ def test_uep_widget_reopens_dialog_with_saved_row_values(qapp, monkeypatch) -> N
         def set_advanced_names(self, names: set[str]) -> None:
             del names
 
+        def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt API naming.
+            del title
+
+        def set_mixed_names(self, names: set[str]) -> None:
+            del names
+
+        def untouched_mixed_names(self) -> set[str]:
+            return set()
+
         def exec(self) -> int:
             return self.DialogCode.Accepted
 
@@ -297,10 +361,10 @@ def test_uep_widget_reopens_dialog_with_saved_row_values(qapp, monkeypatch) -> N
         def advanced_names(self) -> tuple[str, ...]:
             return ()
 
-    monkeypatch.setattr("mufinder.app.uep_widget.ParameterDialog", DummyDialog)
+    monkeypatch.setattr("mufinder.app.workflow_dialogs.ParameterDialog", DummyDialog)
 
-    widget._configure_row(row_id)
-    widget._configure_row(row_id)
+    widget._configure_rows((row_id,))
+    widget._configure_rows((row_id,))
 
     assert seen_values[0]["task"] == "SINGLEPOINT"
     assert seen_values[0]["write_formatted_density"] is True
@@ -345,7 +409,7 @@ def test_uep_widget_queued_row_locks_controls_and_parameters(qapp) -> None:
     remove_button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
     assert isinstance(remove_button, QToolButton)
     assert remove_button.isEnabled()
-    assert widget._runtime_controls_locked(widget._runtime_state_for_row(row_id).status)
+    assert workflow_table_utils.workflow_row_is_locked(widget._runtime_state_for_row(row_id).status)
 
 
 def test_uep_widget_delete_shortcut_removes_selected_job(qapp) -> None:
@@ -392,7 +456,7 @@ def test_uep_widget_cancelled_row_keeps_parameters_editable(qapp) -> None:
 
     widget.set_runtime_states({label: UepRunState(status="cancelled")})
 
-    assert not widget._runtime_controls_locked(widget._runtime_state_for_row(row_id).status)
+    assert not workflow_table_utils.workflow_row_is_locked(widget._runtime_state_for_row(row_id).status)
     label_item = widget._table.item(0, widget._LABEL_COLUMN)
     assert label_item is not None
     assert bool(label_item.flags() & Qt.ItemFlag.ItemIsEditable)
@@ -481,17 +545,17 @@ def test_uep_batch_configure_applies_to_all_selected_rows(qapp, monkeypatch) -> 
     assert first_id is not None and third_id is not None and unselected_id is not None
 
     monkeypatch.setattr(
-        uep_widget_module.ParameterDialog,
+        ParameterDialog,
         "exec",
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(
-        uep_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"cut_off_energy": 555.0},
     )
     monkeypatch.setattr(
-        uep_widget_module.ParameterDialog,
+        ParameterDialog,
         "advanced_names",
         lambda _self: (),
     )
@@ -517,7 +581,7 @@ def test_uep_batch_configure_empty_selection_is_noop(qapp, monkeypatch) -> None:
 
     opened: list[int] = []
     monkeypatch.setattr(
-        uep_widget_module.ParameterDialog,
+        ParameterDialog,
         "exec",
         lambda _self: opened.append(1) or QDialog.DialogCode.Accepted,
     )
@@ -541,7 +605,7 @@ def test_uep_configure_uses_selection_snapshot_not_collapsed(qapp, monkeypatch) 
     assert first_id is not None and second_id is not None
 
     captured: list[tuple[int, ...]] = []
-    # Multi-row snapshots route to _configure_rows (single-row → _configure_row).
+    # Every Configure target, single- or multi-row, routes to _configure_rows.
     monkeypatch.setattr(
         UEPWidget,
         "_configure_rows",
@@ -742,7 +806,7 @@ def test_uep_batch_configure_keeps_each_rows_own_differing_values(qapp, monkeypa
         mixed.append(dialog.untouched_mixed_names())
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(uep_widget_module.ParameterDialog, "exec", _fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", _fake_exec)
 
     widget._configure_rows((first_id, second_id))
 
