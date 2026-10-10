@@ -15,13 +15,12 @@ and the ``castep_pristine_relaxation`` portion of ``_on_local_job_finished``'s
 result block. The muon-relaxation branch of that result block does **not** migrate
 in this PR and stays inline on ``MainWindow``.
 
-Shared helpers that non-migrating code still calls (including the muon-relaxation
-branch, which reuses the same ``-out.cell`` parse and the same
-``pristine_relaxation``/``muon_relaxation`` definition/job lookups) remain on
-``MainWindow`` and are reached via :class:`PristineRelaxationDeps` — the
-per-controller deps dataclass this module defines, following the
-shared-context + per-controller-deps + view pattern documented in
-:mod:`mufinder.app.workflow_controllers.base`.
+Definition and job lookups come from the base class (:attr:`stage` and
+:attr:`active_key` drive them). Shared helpers that non-migrating code still
+calls remain on ``MainWindow`` and are reached via
+:class:`PristineRelaxationDeps` — the per-controller deps dataclass this module
+defines, following the shared-context + per-controller-deps + view pattern
+documented in :mod:`mufinder.app.workflow_controllers.base`.
 """
 
 from __future__ import annotations
@@ -70,7 +69,6 @@ class PristineRelaxationDeps:
     is needed here.
     """
 
-    active_pristine_relaxation_definition: Callable[[], CalculationDefinition | None]
     deserialize_pristine_relaxation_config: Callable[
         [object], PristineRelaxationConfig | None
     ]
@@ -82,9 +80,6 @@ class PristineRelaxationDeps:
     ]
     pristine_relaxation_form_config: Callable[[], PristineRelaxationConfig | None]
     pristine_relaxation_row_signature: Callable[[object], tuple[object, ...]]
-    job_for_pristine_relaxation_label: Callable[
-        [CalculationDefinition, str], Job | None
-    ]
     expand_pristine_relaxation_jobs: Callable[
         [CalculationDefinition, PristineRelaxationConfig], AdapterExpansion | None
     ]
@@ -94,6 +89,8 @@ class PristineRelaxationController(WorkflowJobController):
     """Controller for the pristine structural-relaxation workflow."""
 
     calc_types = frozenset({"castep_pristine_relaxation"})
+    stage = WorkflowStage.PRISTINE_RELAXATION
+    active_key = "active_pristine_relaxation_definition_id"
     no_ready_message = (
         "Only configured pristine-relaxation rows that have not yet been submitted can be submitted."
     )
@@ -128,7 +125,7 @@ class PristineRelaxationController(WorkflowJobController):
             for row in form_config.rows:
                 states[row.label] = RelaxationRunState(status="ready")
 
-        definition = self._deps.active_pristine_relaxation_definition()
+        definition = self.active_definition()
         if definition is None:
             return states
         self._deps.sync_equivalent_pristine_relaxation_mappings(definition)
@@ -151,7 +148,7 @@ class PristineRelaxationController(WorkflowJobController):
             rows_for_status = list(config.rows)
 
         for row in rows_for_status:
-            job = self._deps.job_for_pristine_relaxation_label(definition, row.label)
+            job = self.job_for_key(definition, row.label)
             if job is None:
                 states[row.label] = RelaxationRunState(status="ready")
                 continue
@@ -196,7 +193,7 @@ class PristineRelaxationController(WorkflowJobController):
         document = self._context.document()
         if document is None:
             return []
-        definition = self._deps.active_pristine_relaxation_definition()
+        definition = self.active_definition()
         if definition is None:
             return []
         self._deps.sync_equivalent_pristine_relaxation_mappings(definition)
@@ -204,7 +201,7 @@ class PristineRelaxationController(WorkflowJobController):
         selected: list[Job] = []
         seen: set[UUID] = set()
         for label in keys:
-            job = self._deps.job_for_pristine_relaxation_label(definition, str(label))
+            job = self.job_for_key(definition, str(label))
             if job is None or job.id in seen:
                 continue
             selected.append(job)
@@ -216,7 +213,7 @@ class PristineRelaxationController(WorkflowJobController):
         if document is None:
             return []
 
-        definition = self._deps.active_pristine_relaxation_definition()
+        definition = self.active_definition()
         if definition is None:
             return []
         self._deps.sync_equivalent_pristine_relaxation_mappings(definition)
@@ -253,7 +250,7 @@ class PristineRelaxationController(WorkflowJobController):
         for label in keys:
             label = str(label)
             spec = spec_by_label.get(label)
-            existing_job = self._deps.job_for_pristine_relaxation_label(definition, label)
+            existing_job = self.job_for_key(definition, label)
             if existing_job is not None:
                 if existing_job.status == JobStatus.DEFINED and spec is not None:
                     write_job_directory(spec, output_root)
@@ -310,7 +307,7 @@ class PristineRelaxationController(WorkflowJobController):
         hatch, so a desynced row falls back to a jobless "ready").
         """
 
-        definition = self._deps.active_pristine_relaxation_definition()
+        definition = self.active_definition()
         if definition is None:
             return False
         config = self._deps.deserialize_pristine_relaxation_config(
@@ -430,7 +427,7 @@ class PristineRelaxationController(WorkflowJobController):
         definition, no matching row, or expansion fails.
         """
 
-        definition = self._deps.active_pristine_relaxation_definition()
+        definition = self.active_definition()
         if definition is None:
             return ""
         config = self._deps.deserialize_pristine_relaxation_config(
@@ -568,7 +565,7 @@ class PristineRelaxationController(WorkflowJobController):
             "lattice_c": lattice_c,
         }
 
-        definition = self._deps.active_pristine_relaxation_definition()
+        definition = self.active_definition()
         parent_structure_id = (
             definition.input_structure_ids[0]
             if definition is not None and definition.input_structure_ids

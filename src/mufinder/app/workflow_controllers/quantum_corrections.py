@@ -65,7 +65,7 @@ from typing import Literal
 
 from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.science.quantum_phonons import (
@@ -76,6 +76,7 @@ from mufinder.science.quantum_phonons import (
 from mufinder.workflow import StructureBridgeError, structure_to_spec
 from mufinder.workflow.quantum import (
     QUANTUM_PHONON_CALC_TYPE,
+    QUANTUM_PHONON_SET_CALC_TYPE,
     QUANTUM_SINGLEPOINT_CALC_TYPE,
     QuantumPhononJobConfig,
     QuantumPhononSource,
@@ -213,7 +214,6 @@ class QuantumCorrectionsDeps:
     ``job_output_directory``, ``job_seed_name``) live there instead.
     """
 
-    active_quantum_corrections_definition: Callable[[], CalculationDefinition | None]
     ensure_quantum_corrections_definition: Callable[
         [list[str]], CalculationDefinition | None
     ]
@@ -264,6 +264,8 @@ class QuantumCorrectionsController(WorkflowJobController):
     calc_types = frozenset(
         {QUANTUM_SINGLEPOINT_CALC_TYPE, QUANTUM_PHONON_CALC_TYPE}
     )
+    stage = WorkflowStage.QUANTUM_CORRECTIONS
+    definition_calc_type = QUANTUM_PHONON_SET_CALC_TYPE
     no_ready_message = (
         "Only eligible muon sites that have not yet been submitted can be submitted."
     )
@@ -304,7 +306,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         """
 
         if not self._deps.check_definition_host(
-            self._deps.active_quantum_corrections_definition()
+            self.active_definition()
         ):
             return False
 
@@ -338,7 +340,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         check in :func:`~mufinder.science.quantum_phonons.muon_mass_warning`.
         """
 
-        definition = self._deps.active_quantum_corrections_definition()
+        definition = self.active_definition()
         if definition is None:
             return []
         output_root = self._context.definition_output_directory(definition)
@@ -421,7 +423,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         shared submission plan, which skips them.
         """
 
-        definition = self._deps.active_quantum_corrections_definition()
+        definition = self.active_definition()
         if definition is None:
             return []
         rows: list[tuple[CalculationDefinition, str, object, object]] = []
@@ -814,7 +816,7 @@ class QuantumCorrectionsController(WorkflowJobController):
         source_rows: list[QuantumSourceRow] = []
         quantum_states = self._deps.build_quantum_corrections_states()
         relative_energies = self._deps.quantum_source_relative_energies()
-        definition = self._deps.active_quantum_corrections_definition()
+        definition = self.active_definition()
         for candidate in self._deps.eligible_quantum_source_candidates():
             state = quantum_states.get(candidate.key)
             stage_state = self._deps.quantum_stage_state(definition, candidate)

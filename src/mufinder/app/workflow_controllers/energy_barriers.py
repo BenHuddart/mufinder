@@ -64,8 +64,8 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus
-from mufinder.domain.models import CalculationRun, Job, Structure
+from mufinder.domain.enums import JobStatus, WorkflowStage
+from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Structure
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.science.energy_barriers import (
     EnergyBarrierError,
@@ -75,6 +75,7 @@ from mufinder.science.energy_barriers import (
 from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
+    NUDGED_ELASTIC_BAND_SET_CALC_TYPE,
     TRANSITION_STATE_SEARCH_CALC_TYPE,
     NudgedElasticBandJobConfig,
     NudgedElasticBandSource,
@@ -125,13 +126,10 @@ class EnergyBarriersDeps:
     """
 
     # Definition / source / candidate helpers
-    active_energy_barrier_neb_definition: Callable[[], object | None]
     build_energy_barrier_neb_states: Callable[[], Mapping[str, object]]
-    energy_barrier_neb_definitions: Callable[[], list[object]]
     ensure_energy_barrier_neb_definition: Callable[[list[str]], object | None]
     energy_barrier_neb_source_candidates: Callable[[], list[object]]
     eligible_energy_barrier_source_candidates: Callable[[], list[object]]
-    job_for_energy_barrier_neb_source_key: Callable[[object, str], Job | None]
     energy_barrier_neb_row_configuration_with_source_defaults: Callable[
         ..., tuple[dict[str, object], tuple[str, ...], dict[str, object]]
     ]
@@ -177,6 +175,8 @@ class EnergyBarriersController(WorkflowJobController):
     calc_types = frozenset(
         {NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE}
     )
+    stage = WorkflowStage.ENERGY_BARRIERS
+    definition_calc_type = NUDGED_ELASTIC_BAND_SET_CALC_TYPE
     no_ready_message = (
         "Only NEB paths that have not yet been submitted can be submitted."
     )
@@ -256,6 +256,13 @@ class EnergyBarriersController(WorkflowJobController):
     def build_states(self) -> Mapping[str, object]:
         return self._deps.build_energy_barrier_neb_states()
 
+    def job_for_neb_source_key(
+        self, definition: CalculationDefinition | None, key: str
+    ) -> Job | None:
+        """Return the NEB job ``definition`` binds to the path ``key``, if any."""
+
+        return self.job_for_key(definition, key, calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE)
+
     def jobs_for_keys(self, keys: list[object]) -> list[Job]:
         document = self._context.document()
         if document is None:
@@ -263,9 +270,9 @@ class EnergyBarriersController(WorkflowJobController):
         selected: list[Job] = []
         seen: set[UUID] = set()
         str_keys = [str(key) for key in keys]
-        for definition in self._deps.energy_barrier_neb_definitions():
+        for definition in self.definitions():
             for key in str_keys:
-                job = self._deps.job_for_energy_barrier_neb_source_key(definition, key)
+                job = self.job_for_neb_source_key(definition, key)
                 if job is None or job.id in seen:
                     continue
                 selected.append(job)
@@ -432,7 +439,7 @@ class EnergyBarriersController(WorkflowJobController):
         created: list[Job] = []
         for key in str_keys:
             spec = spec_by_key.get(key)
-            existing = self._deps.job_for_energy_barrier_neb_source_key(definition, key)
+            existing = self.job_for_neb_source_key(definition, key)
             if existing is not None:
                 if existing.status == JobStatus.DEFINED and spec is not None:
                     write_job_directory(spec, output_root)
@@ -548,7 +555,7 @@ class EnergyBarriersController(WorkflowJobController):
         # One unified table: each generated path carries its NEB status + configuration.
         source_rows: list[EnergyBarrierSourceRow] = []
         neb_states = self._deps.build_energy_barrier_neb_states()
-        neb_definition = self._deps.active_energy_barrier_neb_definition()
+        neb_definition = self.active_definition()
         for candidate in self._deps.eligible_energy_barrier_source_candidates():
             source_rows.append(
                 EnergyBarrierSourceRow(

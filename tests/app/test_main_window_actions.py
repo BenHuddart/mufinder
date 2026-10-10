@@ -1495,7 +1495,7 @@ def test_main_window_convergence_definition_helpers_support_legacy_labels(qapp, 
     definition.parameters.pop("job_ids_by_cutoff", None)
     window._document = doc
 
-    resolved_job = window._job_for_definition_cutoff(definition, 300.0)
+    resolved_job = window._convergence_controller.job_for_cutoff(definition, 300.0)
 
     assert resolved_job is job
     assert window._definition_output_directory(definition) == doc.project_root / "files" / "convergence_cutoff"
@@ -6301,7 +6301,7 @@ def test_main_window_local_finish_muon_relaxation_records_folded_final_muon_posi
         warnings=(),
         geom_converged=True,
     )
-    assert window._active_muon_relaxation_definition().id == newer_definition.id
+    assert window._muon_relaxation_controller.active_definition().id == newer_definition.id
 
     window._on_local_job_finished(job.id, parsed)
 
@@ -7517,8 +7517,8 @@ def test_main_window_convergence_failed_handlers_forward_jobs(
     monkeypatch.setattr(window, "_inspect_failed_jobs", lambda jobs: inspected.append(jobs))
     monkeypatch.setattr(window, "_reset_failed_jobs", lambda jobs: reset.append(jobs))
 
-    window._on_inspect_failed_from_convergence([300.0])
-    window._on_reset_failed_from_convergence([300.0])
+    window._convergence_view.inspect_failed_requested.emit([300.0])
+    window._convergence_view.reset_failed_requested.emit([300.0])
 
     assert inspected == [[job]]
     assert reset == [[job]]
@@ -11397,28 +11397,51 @@ def test_dismissed_row_submit_regenerates_job_inputs(
 
 
 # ---------------------------------------------------------------------------
-# Per-row "Reset Failed Jobs..." coverage for the workflows that lacked it
+# Row-menu Cancel / Inspect Failure / Reset Failed Jobs routing
 # ---------------------------------------------------------------------------
+
+_ROW_ACTION_VIEWS = [
+    ("_convergence_view", "_convergence_controller", [300.0]),
+    ("_kpoint_convergence_view", "_kpoint_convergence_controller", [(2, 2, 2)]),
+    ("_pristine_relaxation_view", "_pristine_relaxation_controller", ["relax_1"]),
+    ("_muon_relaxation_view", "_muon_relaxation_controller", ["positivemuon:siteA"]),
+    ("_uep_view", "_uep_controller", ["uep_1"]),
+    ("_quantum_corrections_view", "_quantum_corrections_controller", ["site-a"]),
+    ("_energy_barriers_view", "_energy_barriers_controller", ["path-a"]),
+]
+_ROW_ACTION_SIGNALS = [
+    ("cancel_requested", "_cancel_jobs"),
+    ("inspect_failed_requested", "_inspect_failed_jobs"),
+    ("reset_failed_requested", "_reset_failed_jobs"),
+]
 
 
 @pytest.mark.parametrize(
-    ("handler_name", "controller_attr", "keys"),
+    ("view_attr", "controller_attr", "keys", "signal_name", "handler_name"),
     [
-        ("_on_reset_failed_from_pristine_relaxation", "_pristine_relaxation_controller", ["relax_1"]),
-        ("_on_reset_failed_from_muon_relaxation", "_muon_relaxation_controller", ["positivemuon:siteA"]),
-        ("_on_reset_failed_from_energy_barriers", "_energy_barriers_controller", ["path-a"]),
-        ("_on_reset_failed_from_uep", "_uep_controller", ["uep_1"]),
-        ("_on_reset_failed_from_kpoint_convergence", "_kpoint_convergence_controller", [(2, 2, 2)]),
+        (*view, *signal)
+        for view in _ROW_ACTION_VIEWS
+        for signal in _ROW_ACTION_SIGNALS
+        # Quantum rows reset through "Reset to stage 1", not a failed-job reset.
+        if not (view[0] == "_quantum_corrections_view" and signal[0] == "reset_failed_requested")
     ],
 )
-def test_main_window_row_reset_handlers_delegate_to_reset_failed_jobs(
+def test_main_window_routes_workflow_row_actions_through_the_controller(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
-    handler_name: str,
+    view_attr: str,
     controller_attr: str,
     keys: list[object],
+    signal_name: str,
+    handler_name: str,
 ) -> None:
+    # The signal must actually reach MainWindow: k-point and UEP once shipped a
+    # declared-and-connected reset signal that no widget ever emitted. The
+    # energy-barriers view is created lazily, so its wiring happens in
+    # _ensure_energy_barriers_view rather than __init__.
     window = MainWindow()
+    if view_attr == "_energy_barriers_view":
+        window._ensure_energy_barriers_view()
     job = Job(
         label="row-job",
         workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
@@ -11427,64 +11450,18 @@ def test_main_window_row_reset_handlers_delegate_to_reset_failed_jobs(
     )
 
     requested_keys: list[list[object]] = []
-    reset: list[list[Job]] = []
+    handled: list[list[Job]] = []
     monkeypatch.setattr(
         getattr(window, controller_attr),
         "jobs_for_keys",
         lambda values: (requested_keys.append(list(values)), [job])[1],
     )
-    monkeypatch.setattr(window, "_reset_failed_jobs", lambda jobs: reset.append(jobs))
+    monkeypatch.setattr(window, handler_name, lambda jobs: handled.append(jobs))
 
-    getattr(window, handler_name)(keys)
+    getattr(getattr(window, view_attr), signal_name).emit(keys)
 
     assert requested_keys == [keys]
-    assert reset == [[job]]
-    window.close()
-
-
-@pytest.mark.parametrize(
-    ("view_attr", "handler_name", "payload"),
-    [
-        ("_pristine_relaxation_view", "_on_reset_failed_from_pristine_relaxation", ["relax_1"]),
-        ("_muon_relaxation_view", "_on_reset_failed_from_muon_relaxation", ["positivemuon:siteA"]),
-        ("_uep_view", "_on_reset_failed_from_uep", ["uep_1"]),
-        ("_kpoint_convergence_view", "_on_reset_failed_from_kpoint_convergence", [(2, 2, 2)]),
-        ("_convergence_view", "_on_reset_failed_from_convergence", [300.0]),
-    ],
-)
-def test_main_window_connects_workflow_reset_signals(
-    qapp,
-    monkeypatch: pytest.MonkeyPatch,
-    view_attr: str,
-    handler_name: str,
-    payload: list[object],
-) -> None:
-    # The reset signal must actually reach MainWindow: k-point and UEP shipped a
-    # declared-and-connected signal that no widget ever emitted, which is exactly
-    # the failure this asserts against.
-    window = MainWindow()
-    received: list[object] = []
-    monkeypatch.setattr(window, handler_name, received.append)
-
-    getattr(window, view_attr).reset_failed_requested.emit(payload)
-
-    assert received == [payload]
-    window.close()
-
-
-def test_main_window_connects_energy_barriers_reset_signal(
-    qapp, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The energy-barriers view is created lazily, so its wiring lives in
-    # _ensure_energy_barriers_view rather than __init__.
-    window = MainWindow()
-    view = window._ensure_energy_barriers_view()
-    received: list[object] = []
-    monkeypatch.setattr(window, "_on_reset_failed_from_energy_barriers", received.append)
-
-    view.reset_failed_requested.emit(["path-a"])
-
-    assert received == [["path-a"]]
+    assert handled == [[job]]
     window.close()
 
 
@@ -11723,7 +11700,7 @@ def test_main_window_row_reset_clears_the_displayed_status_for_a_bound_job(
     # Decline the output cleanup so this asserts the state change alone.
     monkeypatch.setattr(window, "_prompt_failed_job_cleanup", lambda _count: False)
 
-    window._on_reset_failed_from_pristine_relaxation(["row_1"])
+    window._pristine_relaxation_view.reset_failed_requested.emit(["row_1"])
 
     assert failed_job.status == JobStatus.DEFINED
     # The row stays bound to the same job - no duplicate is minted - and now
@@ -12843,35 +12820,6 @@ def test_main_window_dashboard_menu_selects_the_clicked_row_and_offers_delete(
     assert selected == [2]
     menu.action("Delete...").triggered.emit()
     assert deleted == [1]
-    window.close()
-
-
-@pytest.mark.parametrize(
-    ("view_attr", "controller_attr"),
-    [
-        ("_pristine_relaxation_view", "_pristine_relaxation_controller"),
-        ("_muon_relaxation_view", "_muon_relaxation_controller"),
-        ("_quantum_corrections_view", "_quantum_corrections_controller"),
-    ],
-)
-def test_main_window_connects_workflow_cancel_and_inspect_signals(
-    qapp, monkeypatch: pytest.MonkeyPatch, view_attr, controller_attr
-) -> None:
-    window = MainWindow()
-    controller = getattr(window, controller_attr)
-    sentinel_jobs = [object()]
-    monkeypatch.setattr(controller, "jobs_for_keys", lambda keys: sentinel_jobs if keys == ["k"] else [])
-    cancelled: list[object] = []
-    inspected: list[object] = []
-    monkeypatch.setattr(window, "_cancel_jobs", lambda jobs: cancelled.append(jobs))
-    monkeypatch.setattr(window, "_inspect_failed_jobs", lambda jobs: inspected.append(jobs))
-
-    view = getattr(window, view_attr)
-    view.cancel_requested.emit(["k"])
-    view.inspect_failed_requested.emit(["k"])
-
-    assert cancelled == [sentinel_jobs]
-    assert inspected == [sentinel_jobs]
     window.close()
 
 
