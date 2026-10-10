@@ -166,8 +166,7 @@ def test_resolve_snapshot_rows_cleared_after_consumption(qapp, monkeypatch):
     btn = _make_widget(qapp)
     btn.selection_snapshot_rows = (0, 1)
 
-    # Build snapshot_keys from the rows as callers do
-    snapshot_rows = btn.selection_snapshot_rows
+    # Callers build snapshot_keys from the snapshot rows: (0, 1) -> a, b
     result = resolve_target_keys(
         btn,
         clicked_key="a",

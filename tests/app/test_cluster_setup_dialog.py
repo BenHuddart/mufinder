@@ -12,7 +12,7 @@ import mufinder.app.cluster_setup_dialog as dialog_module
 import mufinder.services.keychain as keychain_module
 from mufinder.cluster_setup import load_cluster_configs
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
-from mufinder.services.ssh_client import SSHCredentials
+from mufinder.services.ssh_client import SSHCredentials, SSHUnknownHostKeyError
 
 
 class _FakeSettings:
@@ -346,7 +346,7 @@ def test_cluster_setup_dialog_test_connection_trusts_unknown_host_key(
         def connect(self, password: str | None = None) -> None:
             self.__class__.attempts += 1
             if self.__class__.attempts == 1:
-                raise dialog_module.SSHUnknownHostKeyError(
+                raise SSHUnknownHostKeyError(
                     hostname="alpha.example",
                     port=22,
                     algorithm="ssh-ed25519",
@@ -392,7 +392,7 @@ def test_cluster_setup_dialog_test_connection_trusts_jump_and_target_host_keys(
             _ = password
             self.__class__.attempts += 1
             if self.__class__.attempts == 1:
-                raise dialog_module.SSHUnknownHostKeyError(
+                raise SSHUnknownHostKeyError(
                     hostname="bastion.physics.ox.ac.uk",
                     port=22,
                     algorithm="ssh-ed25519",
@@ -401,7 +401,7 @@ def test_cluster_setup_dialog_test_connection_trusts_jump_and_target_host_keys(
                     endpoint="jump",
                 )
             if self.__class__.attempts == 2:
-                raise dialog_module.SSHUnknownHostKeyError(
+                raise SSHUnknownHostKeyError(
                     hostname="glamdring.physics.ox.ac.uk",
                     port=22,
                     algorithm="ssh-ed25519",

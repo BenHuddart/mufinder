@@ -27,7 +27,6 @@ from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
-from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
 from mufinder.app.workflow_controllers.base import (
@@ -358,7 +357,7 @@ def test_submit_cluster_dispatches_to_cluster_backend(tmp_path: Path) -> None:
 
 def test_submit_shows_info_when_no_ready_jobs(tmp_path: Path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "p.mufinder", "P")
+    service.create_project(tmp_path / "p.mufinder", "P")
     local = _RecordingBackend()
     infos: list[tuple[str, str]] = []
     context = _make_context(local_backend=local, infos=infos)
@@ -4533,7 +4532,7 @@ def test_quantum_controller_build_result_phonon_missing_dir_is_empty(tmp_path: P
 def _seed_quantum_two_stage_document(service: ProjectService, tmp_path: Path):
     """Seed a document with two eligible relaxed sources sharing one definition."""
 
-    from mufinder.domain.models import CalculationDefinition, MuonSite, Structure
+    from mufinder.domain.models import MuonSite, Structure
 
     document = service.create_project(tmp_path / "q2.mufinder", "Q2")
     output_root = document.project_root / "files" / "quantum_corrections"

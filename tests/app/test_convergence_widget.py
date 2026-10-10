@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QPoint, QItemSelectionModel, Qt
+from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QMessageBox, QPushButton, QToolButton
+from PySide6.QtWidgets import QDialog, QPushButton, QToolButton
 
 import mufinder.app.convergence_widget as convergence_widget_module
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
