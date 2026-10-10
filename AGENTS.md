@@ -130,9 +130,11 @@ Rules:
   close a coverage gap in the sibling test file.
 - Every feature covers its normal path, its validation and failure modes, and its
   persistence behaviour.
-- `tests/test_agent_harness.py` enforces layer boundaries, the `MainWindow` handler
-  ratchet, the plot-canvas rules and this file's pointers. Run it after touching docs
-  indexes, package boundaries or this file.
+- `tests/test_agent_harness.py` enforces layer boundaries (including no Qt widgets
+  outside `app`), the `MainWindow` handler ratchet, the cross-widget duplicate-method
+  ratchet, the no-new-coverage-files ratchet, the plot-canvas rules and this file's
+  pointers. Run `make harness` after touching docs indexes, package boundaries, a
+  workflow widget or this file.
 
 ## Docs
 
