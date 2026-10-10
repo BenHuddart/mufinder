@@ -137,12 +137,6 @@ NON_APP_LAYER_PACKAGES = ("domain", "castep_io", "persistence", "science", "work
 # list may only shrink as the files are merged into their siblings.
 PINNED_COVERAGE_TEST_FILES = frozenset(
     {
-        "tests/services/test_job_execution_controller_coverage.py",
-        "tests/services/test_project_service_coverage.py",
-        "tests/services/test_ssh_client_coverage.py",
-        "tests/test_bridge_coverage.py",
-        "tests/test_quantum_coverage.py",
-        "tests/test_runtime_helper_coverage.py",
     }
 )
 

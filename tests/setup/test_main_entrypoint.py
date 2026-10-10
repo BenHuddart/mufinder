@@ -283,3 +283,90 @@ def test_prompt_for_keyword_catalog_is_deferred_to_the_event_loop(monkeypatch):
     # A window without the hook (the test doubles above) is left alone.
     main_module._prompt_for_keyword_catalog(_FakeWindow())
     assert len(scheduled) == 1
+
+
+# The splash-exposure helpers below are driven directly: run() reaches them only
+# with a real Qt splash screen, whose exposure timing a test cannot control.
+
+
+def test_process_events_falls_back_when_the_timed_overload_is_missing():
+    class AppWithoutTimedOverload:
+        def __init__(self):
+            self.calls = []
+
+        def processEvents(self, *args):
+            self.calls.append(args)
+            if args:
+                raise TypeError("overload not available")
+
+    app = AppWithoutTimedOverload()
+    main_module._process_events(app, max_ms=10)
+    main_module._process_events(app, max_ms=None)
+    main_module._process_events(object(), max_ms=10)
+
+    assert app.calls == [
+        (main_module.QEventLoop.ProcessEventsFlag.AllEvents, 10),
+        (),
+        (),
+    ]
+
+
+def test_splash_exposure_tolerates_missing_and_deleted_windows():
+    class ExposedHandle:
+        def isExposed(self):
+            return True
+
+    class ExposedSplash:
+        def windowHandle(self):
+            return ExposedHandle()
+
+    class InvisibleSplash:
+        def windowHandle(self):
+            return None
+
+        def isVisible(self):
+            return False
+
+    class DeletedSplash:
+        def windowHandle(self):
+            class _Handle:
+                def isExposed(self):
+                    raise RuntimeError("deleted")
+
+            return _Handle()
+
+        def isVisible(self):
+            raise RuntimeError("deleted")
+
+    assert main_module._is_splash_exposed(ExposedSplash()) is True
+    assert main_module._is_splash_exposed(InvisibleSplash()) is False
+    assert main_module._is_splash_exposed(DeletedSplash()) is False
+
+
+def test_wait_for_splash_exposed_pumps_events_until_the_splash_is_shown(monkeypatch):
+    class FakeTimer:
+        def __init__(self):
+            self._elapsed = -10
+
+        def start(self):
+            self._elapsed = 0
+
+        def elapsed(self):
+            self._elapsed += 10
+            return self._elapsed
+
+    exposures = iter([False, False, True])
+    process_calls = []
+
+    monkeypatch.setattr(main_module, "QElapsedTimer", FakeTimer)
+    monkeypatch.setattr(main_module.QThread, "msleep", lambda _ms: None)
+    monkeypatch.setattr(main_module, "_is_splash_exposed", lambda _splash: next(exposures))
+    monkeypatch.setattr(
+        main_module,
+        "_process_events",
+        lambda _app, *, max_ms=None: process_calls.append(max_ms),
+    )
+
+    main_module._wait_for_splash_exposed(object(), object(), timeout_ms=40)
+
+    assert process_calls == [25, 25, 10]

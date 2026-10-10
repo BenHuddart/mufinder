@@ -13,7 +13,7 @@ from mufinder import __version__
 from mufinder._version import current_version
 from mufinder.domain.models import Project
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _pyproject_version() -> str:
