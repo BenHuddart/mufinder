@@ -1,6 +1,12 @@
-"""Tests for reciprocal-space Monkhorst-Pack grid generation helpers."""
+"""Tests for reciprocal-space Monkhorst-Pack grid generation helpers.
+
+The spacing<->grid round-trip cases are the contract described in
+``docs/castep/kpoint_spacing_convention.md``.
+"""
 
 from __future__ import annotations
+
+import math
 
 import pytest
 
@@ -20,6 +26,9 @@ from mufinder.science.kpoint_grids import (
 )
 
 
+# Lattice geometry: reciprocal vectors, parameters, matching and supercells
+
+
 def test_reciprocal_lattice_vectors_cubic_cell() -> None:
     lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
     b1, b2, b3 = reciprocal_lattice_vectors(lattice)
@@ -27,6 +36,124 @@ def test_reciprocal_lattice_vectors_cubic_cell() -> None:
     assert b1 == pytest.approx((1.57079632679, 0.0, 0.0))
     assert b2 == pytest.approx((0.0, 1.57079632679, 0.0))
     assert b3 == pytest.approx((0.0, 0.0, 1.57079632679))
+
+
+def test_reciprocal_lattice_vectors_rejects_wrong_vector_count() -> None:
+    with pytest.raises(ValueError, match="three vectors"):
+        reciprocal_lattice_vectors([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+
+
+def test_reciprocal_lattice_vectors_rejects_wrong_component_count() -> None:
+    with pytest.raises(ValueError, match="three components"):
+        reciprocal_lattice_vectors([[1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+
+
+def test_reciprocal_lattice_vectors_rejects_zero_volume_cell() -> None:
+    # Coplanar lattice vectors -> zero triple product -> zero volume.
+    coplanar = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]]
+    with pytest.raises(ValueError, match="non-zero cell volume"):
+        reciprocal_lattice_vectors(coplanar)
+
+
+def test_lattice_parameters_return_lengths_and_angles() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]]
+
+    a, b, c, alpha, beta, gamma = lattice_parameters(lattice)
+
+    assert a == pytest.approx(4.0)
+    assert b == pytest.approx(5.0)
+    assert c == pytest.approx(6.0)
+    assert alpha == pytest.approx(90.0)
+    assert beta == pytest.approx(90.0)
+    assert gamma == pytest.approx(90.0)
+
+
+def test_lattice_parameters_reports_non_orthogonal_angles() -> None:
+    # A monoclinic-ish cell where the b axis is tilted into the a direction
+    # yields a gamma angle below 90 degrees, exercising the angle branch with
+    # a non-trivial cosine.
+    lattice = [[4.0, 0.0, 0.0], [2.0, 2.0 * math.sqrt(3.0), 0.0], [0.0, 0.0, 6.0]]
+    a, b, c, alpha, beta, gamma = lattice_parameters(lattice)
+    assert a == pytest.approx(4.0)
+    assert c == pytest.approx(6.0)
+    assert alpha == pytest.approx(90.0)
+    assert beta == pytest.approx(90.0)
+    assert gamma == pytest.approx(60.0)
+
+
+def test_lattice_parameters_rejects_wrong_vector_count() -> None:
+    with pytest.raises(ValueError, match="three vectors"):
+        lattice_parameters([[4.0, 0.0, 0.0], [0.0, 5.0, 0.0]])
+
+
+def test_lattice_parameters_rejects_wrong_component_count() -> None:
+    with pytest.raises(ValueError, match="three components"):
+        lattice_parameters([[4.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]])
+
+
+def test_lattice_parameters_rejects_zero_length_vector() -> None:
+    with pytest.raises(ValueError, match="greater than zero"):
+        lattice_parameters([[0.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]])
+
+
+def test_lattice_matches_with_tolerance() -> None:
+    lhs = [[4.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]]
+    rhs = [[4.0 + 1e-7, 0.0, 0.0], [0.0, 5.0 - 1e-7, 0.0], [0.0, 0.0, 6.0]]
+
+    assert lattice_matches(lhs, rhs)
+    assert not lattice_matches(lhs, [[4.01, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]])
+
+
+def test_lattice_matches_rejects_wrong_outer_length() -> None:
+    lhs = [[4.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]]
+    assert not lattice_matches(lhs, [[4.0, 0.0, 0.0], [0.0, 5.0, 0.0]])
+    assert not lattice_matches([[4.0, 0.0, 0.0], [0.0, 5.0, 0.0]], lhs)
+
+
+def test_lattice_matches_rejects_wrong_row_length() -> None:
+    lhs = [[4.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]]
+    rhs = [[4.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]]
+    assert not lattice_matches(lhs, rhs)
+
+
+def test_supercell_lattice_vectors_identity_is_passthrough() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]]
+    identity = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    result = supercell_lattice_vectors(lattice, identity)
+    assert result == (
+        (4.0, 0.0, 0.0),
+        (0.0, 5.0, 0.0),
+        (0.0, 0.0, 6.0),
+    )
+
+
+def test_supercell_lattice_vectors_rejects_wrong_matrix_row_count() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    with pytest.raises(ValueError, match="three rows"):
+        supercell_lattice_vectors(lattice, [[1, 0, 0], [0, 1, 0]])
+
+
+def test_supercell_lattice_vectors_rejects_wrong_matrix_row_length() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    with pytest.raises(ValueError, match="three values"):
+        supercell_lattice_vectors(lattice, [[1, 0], [0, 1, 0], [0, 0, 1]])
+
+
+def test_supercell_lattice_vectors_rejects_wrong_lattice_vector_count() -> None:
+    identity = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    with pytest.raises(ValueError, match="three vectors"):
+        supercell_lattice_vectors([[4.0, 0.0, 0.0], [0.0, 4.0, 0.0]], identity)
+
+
+def test_supercell_lattice_vectors_rejects_wrong_lattice_component_count() -> None:
+    identity = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    with pytest.raises(ValueError, match="three components"):
+        supercell_lattice_vectors(
+            [[4.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]], identity
+        )
+
+
+# Spacing to grid (CASTEP's floor + 1 formula)
 
 
 def test_grid_from_spacing_uses_reciprocal_magnitudes_formula() -> None:
@@ -40,6 +167,34 @@ def test_grid_from_spacing_uses_reciprocal_magnitudes_formula() -> None:
     # denominator = 2*pi*0.1 = 0.6283
     # n = [3, 2, 2]
     assert grid == (3, 2, 2)
+
+
+def test_grid_from_spacing_clamps_to_gamma_for_huge_spacing() -> None:
+    # A spacing far larger than |b_i|/(2*pi) drives floor(...) to 0, so each
+    # axis count clamps up to 1 via max(1, count).
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    assert grid_from_spacing(lattice, 1000.0) == (1, 1, 1)
+
+
+def test_grid_from_spacing_rejects_zero_spacing() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    with pytest.raises(ValueError, match="positive finite"):
+        grid_from_spacing(lattice, 0.0)
+
+
+def test_grid_from_spacing_rejects_negative_spacing() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    with pytest.raises(ValueError, match="positive finite"):
+        grid_from_spacing(lattice, -0.05)
+
+
+def test_grid_from_spacing_rejects_non_finite_spacing() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    with pytest.raises(ValueError, match="positive finite"):
+        grid_from_spacing(lattice, math.inf)
+
+
+# Convergence sweep grids
 
 
 def test_generate_kpoint_grids_walks_castep_spacing_trajectory() -> None:
@@ -99,58 +254,7 @@ def test_kpoint_helpers_format_and_count() -> None:
     assert format_kpoint_grid(grid) == "4 x 5 x 6"
 
 
-def test_lattice_matches_with_tolerance() -> None:
-    lhs = [[4.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]]
-    rhs = [[4.0 + 1e-7, 0.0, 0.0], [0.0, 5.0 - 1e-7, 0.0], [0.0, 0.0, 6.0]]
-
-    assert lattice_matches(lhs, rhs)
-    assert not lattice_matches(lhs, [[4.01, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]])
-
-
-def test_lattice_parameters_return_lengths_and_angles() -> None:
-    lattice = [[4.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 6.0]]
-
-    a, b, c, alpha, beta, gamma = lattice_parameters(lattice)
-
-    assert a == pytest.approx(4.0)
-    assert b == pytest.approx(5.0)
-    assert c == pytest.approx(6.0)
-    assert alpha == pytest.approx(90.0)
-    assert beta == pytest.approx(90.0)
-    assert gamma == pytest.approx(90.0)
-
-
-def test_equivalent_grid_for_supercell_preserves_density() -> None:
-    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
-    reference_grid = (4, 4, 4)
-    doubled_a = ((2, 0, 0), (0, 1, 0), (0, 0, 1))
-
-    super_lattice = supercell_lattice_vectors(lattice, doubled_a)
-    equivalent = equivalent_grid_for_supercell(lattice, reference_grid, super_lattice)
-
-    assert equivalent == (2, 4, 4)
-
-
-def test_equivalent_grid_for_supercell_scales_each_axis_for_unequal_lattice_lengths() -> None:
-    lattice = [[3.6, 0.0, 0.0], [0.0, 4.2, 0.0], [0.0, 0.0, 5.4]]
-    reference_grid = (4, 4, 4)
-    doubled_all = ((2, 0, 0), (0, 2, 0), (0, 0, 2))
-
-    super_lattice = supercell_lattice_vectors(lattice, doubled_all)
-    equivalent = equivalent_grid_for_supercell(lattice, reference_grid, super_lattice)
-
-    assert equivalent == (2, 2, 2)
-
-
-def test_equivalent_grid_for_supercell_rounds_up_to_avoid_undersampling() -> None:
-    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
-    reference_grid = (4, 4, 4)
-    supercell = ((2, 0, 0), (0, 2, 0), (0, 0, 3))
-
-    super_lattice = supercell_lattice_vectors(lattice, supercell)
-    equivalent = equivalent_grid_for_supercell(lattice, reference_grid, super_lattice)
-
-    assert equivalent == (2, 2, 2)
+# Grid to spacing and the round-trip contract
 
 
 def test_spacing_from_grid_returns_round_trip_upper_bound() -> None:
@@ -236,6 +340,16 @@ def test_spacing_from_grid_rejects_gamma_only_grid() -> None:
         spacing_from_grid(lattice, (1, 1, 1))
 
 
+def test_spacing_from_grid_rejects_non_positive_grid_values() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    with pytest.raises(ValueError, match="positive integers"):
+        spacing_from_grid(lattice, (0, 2, 2))
+    with pytest.raises(ValueError, match="positive integers"):
+        spacing_from_grid(lattice, (2, -1, 2))
+    with pytest.raises(ValueError, match="positive integers"):
+        spacing_from_grid(lattice, (2, 2, 0))
+
+
 def test_spacing_from_grid_handles_partial_gamma_axes() -> None:
     # Slab-like grid with one frozen axis: the spacing only depends on the
     # non-frozen axes that contribute to the round-trip bound.
@@ -244,6 +358,9 @@ def test_spacing_from_grid_handles_partial_gamma_axes() -> None:
     # |b_a|/(2*pi*4) = 1/(3*4); the c axis with N=1 does not contribute.
     assert spacing == pytest.approx(1.0 / (3.0 * 4.0))
     assert grid_from_spacing(lattice, spacing) == (5, 5, 1)
+
+
+# Continuous k-point count
 
 
 def test_kpoint_count_for_spacing_matches_grid_product_at_integer_grids() -> None:
@@ -280,6 +397,12 @@ def test_kpoint_count_for_spacing_rejects_nonpositive_spacing() -> None:
         kpoint_count_for_spacing(lattice, -0.1)
 
 
+def test_kpoint_count_for_spacing_rejects_non_finite_spacing() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    with pytest.raises(ValueError, match="positive finite"):
+        kpoint_count_for_spacing(lattice, math.nan)
+
+
 def test_kpoint_count_for_spacing_agrees_with_grid_from_spacing_at_castep_boundary() -> None:
     # CASTEP uses floor((|b|/(2*pi*s)) + 1, so at the exact boundary s = 1/a
     # the discrete grid is (2,2,2). The continuous helper should report
@@ -290,6 +413,51 @@ def test_kpoint_count_for_spacing_agrees_with_grid_from_spacing_at_castep_bounda
     assert kpoint_count_for_spacing(lattice, 0.25) == pytest.approx(
         float(grid[0] * grid[1] * grid[2])
     )
+
+
+# Supercell-equivalent grids
+
+
+def test_equivalent_grid_for_supercell_preserves_density() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    reference_grid = (4, 4, 4)
+    doubled_a = ((2, 0, 0), (0, 1, 0), (0, 0, 1))
+
+    super_lattice = supercell_lattice_vectors(lattice, doubled_a)
+    equivalent = equivalent_grid_for_supercell(lattice, reference_grid, super_lattice)
+
+    assert equivalent == (2, 4, 4)
+
+
+def test_equivalent_grid_for_supercell_scales_each_axis_for_unequal_lattice_lengths() -> None:
+    lattice = [[3.6, 0.0, 0.0], [0.0, 4.2, 0.0], [0.0, 0.0, 5.4]]
+    reference_grid = (4, 4, 4)
+    doubled_all = ((2, 0, 0), (0, 2, 0), (0, 0, 2))
+
+    super_lattice = supercell_lattice_vectors(lattice, doubled_all)
+    equivalent = equivalent_grid_for_supercell(lattice, reference_grid, super_lattice)
+
+    assert equivalent == (2, 2, 2)
+
+
+def test_equivalent_grid_for_supercell_rounds_up_to_avoid_undersampling() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    reference_grid = (4, 4, 4)
+    supercell = ((2, 0, 0), (0, 2, 0), (0, 0, 3))
+
+    super_lattice = supercell_lattice_vectors(lattice, supercell)
+    equivalent = equivalent_grid_for_supercell(lattice, reference_grid, super_lattice)
+
+    assert equivalent == (2, 2, 2)
+
+
+def test_equivalent_grid_for_supercell_rejects_non_positive_reference_count() -> None:
+    lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+    with pytest.raises(ValueError, match="positive integers"):
+        equivalent_grid_for_supercell(lattice, (0, 4, 4), lattice)
+
+
+# Grid choice
 
 
 def test_most_uniform_grid_prefers_fewer_kpoints_along_the_long_axis() -> None:
