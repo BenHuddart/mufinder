@@ -61,8 +61,8 @@ every CI run. Keep these in place when changing the test setup:
   cleanup in ``tests/conftest.py`` runs ``gc.collect()`` after each test so
   leaked widgets are destroyed before the next one starts. A full collection
   walks every tracked object (around 200k once Qt, VTK, SciPy and matplotlib
-  are imported), and paying that after every test was close to half of the
-  suite's run time. ``_collect_garbage`` therefore freezes each collection's
+  are imported), and paying that after every test would cost close to half of
+  the suite's run time. The cleanup therefore freezes each collection's
   survivors with ``gc.freeze()``, so the next collection only scans what the
   next test allocated. The first teardown in each new test module unfreezes
   everything and does a full collection, so a reference cycle that outlives one
@@ -81,8 +81,8 @@ GUI-responsiveness trace logging
 
 ``mufinder.services.perf_trace.PerfTrace`` times named stages (via a
 ``with trace.stage("name"):`` block) and logs one summary line per traced
-operation through the standard ``logging`` module. It currently wraps
-``MainWindow._flush_dashboard`` (one stage per dashboard view, plus the
+operation through the standard ``logging`` module. It wraps the main
+window's coalesced dashboard flush (one stage per dashboard view, plus the
 autosave) and ``ProjectService.save_project`` (total duration plus
 ``entity_files_written`` and ``entity_files_skipped`` counters), both of which
 run on the GUI thread and have been observed to stall the app when many cluster

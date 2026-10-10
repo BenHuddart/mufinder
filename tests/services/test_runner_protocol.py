@@ -1,6 +1,6 @@
 """Conformance and error-contract pins for the :class:`JobRunner` protocol.
 
-These tests codify Phase 3 of the submission-consistency initiative. They pin:
+These tests pin the shared runner contract:
 
 - Both concrete runners structurally satisfy ``JobRunner`` (the five signals with
   their expected parameter counts, plus ``submit``/``cancel``).

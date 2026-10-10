@@ -30,8 +30,8 @@ For non-trivial changes, use this loop:
 
 1. Read ``AGENTS.md`` and the relevant document in ``docs/``.
 2. Identify the package layer that owns the behavior in :doc:`architecture`, and the
-   shared home for any cross-workflow concern (``AGENTS.md``, Reuse before you
-   write).
+   shared home for any cross-workflow concern (:doc:`architecture`, Shared
+   workflow infrastructure).
 3. Update implementation, tests, and documentation together.
 4. Run focused tests for the touched area.
 5. Run the full quality gates before merging or publishing.
@@ -47,7 +47,8 @@ Sources of truth
 Use these documents as the first stop for common tasks:
 
 - :doc:`project_specification` defines product and workflow requirements.
-- :doc:`architecture` defines package responsibilities and dependency directions.
+- :doc:`architecture` defines package responsibilities, dependency directions,
+  the shared homes for cross-workflow code and the workflow-controller contract.
 - :doc:`implemented_functionality` summarizes the current feature surface.
 - :doc:`quality_and_automation` lists quality gates, local commands, and targeted checks.
 - :doc:`compatibility_policy` records compatibility aliases and expiry rules.

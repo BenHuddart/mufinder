@@ -366,7 +366,8 @@ offering to delete it. No other code path produces the combination. Every writer
 of ``remote_directory`` either sets it while moving a job to ``submitting``
 (``JobExecutionController``), clears it for local submission (also
 ``JobExecutionController``), clears it on ``reset_failed_job``, or touches only
-active jobs (``MainWindow._sync_cluster_tracking_from_document``).
+active jobs (the cluster re-tracking that runs when a project is opened or
+refreshed; see below).
 
 ``CONTINUABLE_JOB_STATUSES`` is a *third* status set, wider than the shared
 reset/dismiss set, because a ``completed`` relaxation is continuable: running
@@ -383,8 +384,8 @@ terms as a reset.
 
 This is a deliberate divergence from the quantum-corrections precedent, where a
 ``completed`` stage-1 job is rewound by *deleting* the job records and clearing
-the directory (``MainWindow._on_reset_quantum_corrections_to_stage_one``, gated
-by ``_QUANTUM_STAGE_ONE_RESETTABLE_STATUSES`` — the same four statuses).
+the directory (the quantum-corrections stage reset, gated by the same four
+statuses).
 Deleting is right there because the row genuinely starts over. A relaxation
 continuation must instead keep the job's identity: the job id is what binds the
 workflow-table row to the calculation, and the job record is what carries the
@@ -425,9 +426,10 @@ path looks for it: a run that dies before writing a new one would have the old
 geometry accepted as its result. Two guards cover this, each closing the other's
 blind spot.
 
-The local one is in ``MainWindow._on_local_job_finished``, alongside the
-existing missing-file and parse-failure guards (all three are inline because
-``ControllerResult`` has no failure channel): it fails a relaxation job whose
+The local one is in the main window's job-finished handler, alongside the
+missing-file and parse-failure guards (all three are inline because
+``ControllerResult`` has no failure channel; see :doc:`architecture`, Result
+dispatch): it fails a relaxation job whose
 local ``-out.cell`` predates the current run's ``started_at``. The comparison
 allows a few seconds of slack for filesystem mtime granularity and network-mount
 clock offsets, and skips entirely when ``started_at`` is unset — a job the poller
@@ -658,7 +660,7 @@ the worker's poll ``QTimer`` on the worker thread with a blocking call at teardo
 Connecting is also asynchronous (``connect_async`` / ``connect_finished``): the
 multi-second SSH handshake runs on the worker behind a modal "Connecting…"
 dialog instead of freezing the window. Host-key trust is handled by the GUI
-retry loop in ``_connect_to_cluster_with_trust`` — on an unknown-host-key error
+connect-with-trust retry loop — on an unknown-host-key error
 it prompts, saves the key, and reconnects, and the next attempt trusts it — so
 no cross-thread coordination is needed.
 
@@ -782,13 +784,12 @@ The main window wires runner signals into ``JobExecutionController``:
 The per-job document mutation happens synchronously, but the **heavy dashboard
 work is coalesced**: rebuilding the journal (whole provenance), the jobs table
 (which recreates per-row action buttons), and the workflow views, plus the
-full-document autosave. Lifecycle handlers call ``_request_dashboard_flush``
-instead of refreshing and saving inline; the pending flush runs on
-``_flush_dashboard``, scheduled via ``_dashboard_flush_timer``, and also
-before save/close/project-switch.
+full-document autosave. Lifecycle handlers *request* a dashboard flush
+instead of refreshing and saving inline; the pending flush runs on a timer and
+also before save, close and project switch.
 
-``_request_dashboard_flush`` combines two rules so both an isolated
-completion and a multi-minute completion stream behave well:
+The flush request combines two rules so both an isolated completion and a
+multi-minute completion stream behave well:
 
 - **Quiet-period debounce** (``_DASHBOARD_FLUSH_DEBOUNCE_MS`` = 300 ms): an
   isolated event flushes shortly after it arrives, giving the same prompt
@@ -801,14 +802,13 @@ completion and a multi-minute completion stream behave well:
   the future, so a steady stream of requests cannot re-arm the timer forever
   and starve the flush until the stream ends.
 
-``_on_cluster_queue_checked`` stamps per-job monitor metadata
-(``last_checked_at``/source/message) and then also goes through
-``_request_dashboard_flush`` rather than flushing synchronously — it no
-longer bypasses the debounce/rate-limit, since a queue poll can itself fire
-every few seconds during a retrieval. A burst of cluster jobs finishing
-across one or several polls therefore rebuilds the views and writes the
-document at a bounded cadence rather than once per job, which previously
-froze the GUI for large batches.
+The cluster queue-poll handler stamps per-job monitor metadata
+(``last_checked_at``/source/message) and then also requests a flush rather
+than flushing synchronously, so it is subject to the same debounce and rate
+limit; a queue poll can itself fire every few seconds during a retrieval. A
+burst of cluster jobs finishing across one or several polls therefore rebuilds
+the views and writes the document at a bounded cadence rather than once per
+job, which keeps the GUI responsive for large batches.
 
 The dashboard displays active states plus ``failed``, ``stopped``, and
 ``cancelled``; rows whose job carries a ``dismissed_at`` stamp are filtered
@@ -861,8 +861,9 @@ The shared implementation lives in ``mufinder.app.workflow_table_utils``:
 - ``resettable_keys`` — picks, from the selected rows, the ones a reset applies
   to: status in ``RESETTABLE_ROW_STATUSES`` and a non-``None`` ``key_for_row``.
   The action is enabled when there is at least one and resets those rows only.
-  ``_reset_failed_jobs`` prompts once for the batch, including the destructive
-  output cleanup, so the selection must never be narrowed *silently*: for a
+  The shared reset handler prompts once for the batch, including the
+  destructive output cleanup, so the selection must never be narrowed
+  *silently*: for a
   mixed or partially keyed selection the menu entry carries the count
   (``Reset Failed Jobs... (2 of 5)``, from ``partial_count_suffix``), and the
   prompt that follows names the same number of jobs.
@@ -886,23 +887,21 @@ The shared implementation lives in ``mufinder.app.workflow_table_utils``:
   visible hint label.
 
 ``MainWindow`` connects each widget's ``reset_failed_requested`` signal to a
-thin ``_on_reset_failed_from_*`` handler that resolves the keys through the
-workflow's ``WorkflowJobController.jobs_for_keys`` and hands the jobs to the
-shared ``_reset_failed_jobs``. Muon relaxation binds the menu once per
+thin handler that resolves the keys through the workflow's
+``WorkflowJobController.jobs_for_keys`` and hands the jobs to the shared reset
+handler. Muon relaxation binds the menu once per
 charge-state table, each capturing its own table, so a right-click acts on the
 rows it was raised over rather than on whichever tab happens to be current.
 
-After a reset, ``_refresh_views_after_job_reset`` repaints every workflow table.
-``_refresh_jobs_table`` already covers the dashboard plus the convergence,
-pristine, muon, and UEP tables; energy barriers and quantum corrections are
-refreshed through their own wrappers, which no-op until their lazily-created
-view exists.
+After a reset the main window repaints every workflow table: the dashboard
+refresh covers the convergence, pristine, muon and UEP tables, and energy
+barriers and quantum corrections are refreshed through their controllers'
+``refresh_view``, which no-ops until their lazily-created view exists.
 
 Quantum corrections is the exception to the shape above. Its row stages a
 singlepoint job and then a phonon job into one shared output directory, so its
-recovery is a *stage* reset (``_on_reset_quantum_corrections_to_stage_one``,
-which deletes both job records and clears the directory) rather than a job
-reset. ``_quantum_can_reset_to_stage_one`` gates it: the row qualifies once it
+recovery is a *stage* reset (which deletes both job records and clears the
+directory) rather than a job reset. Its gate is: the row qualifies once it
 has staged a job and has no job still running — either the phonon job exists and
 is not active, or the row is still on stage 1 with a singlepoint job that has
 finished, which includes a failed, stopped, or cancelled one. That last case is
@@ -960,15 +959,15 @@ row bound to nothing and let a second submit mint a duplicate).
 The projection is derived at read time, so no persisted state changes and
 projects already stranded by an earlier dismissal heal on load.
 
-When a project is opened or refreshed, ``_sync_cluster_tracking_from_document``
-re-registers persisted active cluster jobs that have enough metadata to poll:
+When a project is opened or refreshed, the main window re-registers persisted
+active cluster jobs that have enough metadata to poll with the cluster runner:
 non-local execution target, active status, remote job id, remote directory or an
 inferable remote directory, and a local output directory.
 
 Active-job watchdog
 ~~~~~~~~~~~~~~~~~~~
 
-Orphaned-local reconciliation (recommendation 1) only covers the app-restart
+Orphaned-local reconciliation (safeguard 1) only covers the app-restart
 case. A running session can still leave a job active with nothing executing it:
 a local ``QProcess`` that died without a finish event, a cluster job the runner
 silently stopped tracking, or a queue entry that never reached a runner. A
@@ -987,7 +986,7 @@ snapshots, it flags:
 - a cluster job in an active state whose id is not in the cluster controller's
   tracked-id mirror, **only** when the connected cluster is the one that job
   targets. When the cluster is disconnected, cluster jobs are never flagged —
-  that is the staleness marker's responsibility (recommendations 2–3), not the
+  that is the staleness marker's responsibility (safeguards 2–3), not the
   watchdog's.
 
 Runner introspection is exposed by ``LocalJobRunner.active_job_ids()`` /
@@ -1017,14 +1016,13 @@ and shows *"N job(s) were stopped by the job watchdog because no runner was
 tracking them."* when any were stopped. The handler is cheap when no jobs are
 active.
 
-Recommendations
----------------
+Stuck-job safeguards
+--------------------
 
-This section began as a review of failure modes that could leave jobs in the
-dashboard indefinitely. All nine recommendations have since been implemented;
-each entry below records what shipped and where the behavior lives.
+Nine safeguards together ensure that no failure mode leaves a job in the
+dashboard indefinitely. Each entry records the behavior and where it lives.
 
-1. Orphaned local-job reconciliation on project open (implemented).
+1. Orphaned local-job reconciliation on project open.
    A local job left ``submitting``, ``queued``, ``running``, or ``retrieving``
    when MuFinder closes has no live process behind it on the next launch, yet
    would otherwise show as running forever. On every project open/switch,
@@ -1036,22 +1034,21 @@ each entry below records what shipped and where the behavior lives.
    ``completed_at`` stamp) to keep run and job status consistent. A
    ``job_stopped`` provenance milestone is recorded per reconciled job. The
    stopped rows remain visible and resettable, and the reset/resubmit action
-   is unchanged. Reconciliation runs from ``MainWindow`` inside
-   ``_refresh_ui_after_project_change`` — before the jobs table is rendered, so
-   the user never sees a phantom running row — and ``_open_project_from_path``
-   surfaces a status-bar message such as *"N local job(s) were stopped because
+   is unchanged. Reconciliation runs from ``MainWindow`` while the UI is being
+   refreshed for the new project, before the jobs table is rendered, so the
+   user never sees a phantom running row, and opening a project surfaces a
+   status-bar message such as *"N local job(s) were stopped because
    MuFinder closed while they were in progress."* when any jobs are reconciled.
 
    Cluster jobs are deliberately left untouched by this path: they re-attach to
-   the cluster runner instead, via
-   ``MainWindow._sync_cluster_tracking_from_document`` (which re-registers
-   active cluster jobs, including ``submitting``, that still carry a remote job
-   id and directory). Cluster jobs that lack enough metadata to re-register —
+   the cluster runner instead through the project-open re-tracking described
+   above (which re-registers active cluster jobs, including ``submitting``, that
+   still carry a remote job id and directory). Cluster jobs that lack enough metadata to re-register —
    missing remote id, remote directory, cluster config, or local output
    directory — are surfaced by the staleness marker and the active-job
-   watchdog (recommendations 2–3 and 7).
+   watchdog (safeguards 2–3 and 7).
 
-2. Persist monitor metadata and last-observed status (implemented).
+2. Persist monitor metadata and last-observed status.
    ``Job`` carries ``last_checked_at``, ``last_status_source``, and
    ``last_status_message`` (optional, ``None``-defaulted, persisted through the
    codec and cleared by ``reset_failed_job``). They are stamped from queue
@@ -1061,7 +1058,7 @@ each entry below records what shipped and where the behavior lives.
    "Execution orchestration". The dashboard's ``Last Checked`` column renders
    the age plus a tooltip with the source and observation.
 
-3. Make disconnected cluster jobs visibly stale (implemented).
+3. Make disconnected cluster jobs visibly stale.
    A queue poll failure still disconnects the runner and deliberately leaves
    job state untouched; staleness is derived, not stored.
    ``services.job_monitoring.job_staleness`` marks an active cluster job stale
@@ -1069,7 +1066,7 @@ each entry below records what shipped and where the behavior lives.
    threshold (180 s), and the dashboard renders a " — stale" marker with the
    reason in the tooltip.
 
-4. Add a retry-retrieval action for stopped/failed cluster jobs (implemented).
+4. Add a retry-retrieval action for stopped/failed cluster jobs.
    A ``Retry retrieval`` dashboard action re-attempts output retrieval for a
    scheduler-completed cluster job that kept its remote metadata, avoiding an
    unnecessary duplicate scheduler job. It routes through
@@ -1080,8 +1077,7 @@ each entry below records what shipped and where the behavior lives.
    and resolves a not-connected cluster to ``failed`` rather than stranding
    the job in ``retrieving``.
 
-5. Avoid treating every missing scheduler entry as completed without context
-   (implemented).
+5. Avoid treating every missing scheduler entry as completed without context.
    A missing scheduler entry still attempts retrieval immediately, but
    output-unavailable failures are retried across a three-poll grace window
    before the job is failed with a diagnostic naming the likely causes
@@ -1089,7 +1085,7 @@ each entry below records what shipped and where the behavior lives.
    suggesting retry or resubmission. Parse failures of downloaded output fail
    immediately. See "During polling" above.
 
-6. Fail fast on local process start errors (implemented).
+6. Fail fast on local process start errors.
    ``LocalJobRunner._on_process_error`` handles
    ``QProcess.ProcessError.FailedToStart`` directly: it emits ``job_failed``
    and ``failed``, cleans up the active entry, and starts the next queued job,
@@ -1097,7 +1093,7 @@ each entry below records what shipped and where the behavior lives.
    event. A late ``finished`` event for that job is a no-op. Other
    ``ProcessError`` values keep the store-and-wait behaviour.
 
-7. Add an active-job watchdog (implemented).
+7. Add an active-job watchdog.
    A once-a-minute watchdog (``mufinder.services.job_watchdog``) detects
    active jobs with no runner tracking them — ``queued``/``running``/
    ``submitting`` local jobs missing from the local runner's pending/active
@@ -1107,7 +1103,7 @@ each entry below records what shipped and where the behavior lives.
    (through ``ProjectService.stop_job``) with a diagnostic message and
    ``last_status_source = "watchdog"``. See "Active-job watchdog" above.
 
-8. Separate terminal history from the active dashboard (implemented).
+8. Separate terminal history from the active dashboard.
    A ``Dismiss`` action stamps ``dismissed_at`` on a failed/stopped/cancelled
    job so the dashboard filters the row out, while keeping the job record,
    runs, results, and provenance intact (a ``job_dismissed`` milestone is
@@ -1115,7 +1111,7 @@ each entry below records what shipped and where the behavior lives.
    ``reset_failed_job``, which the job's workflow row triggers on its next
    submit (see :ref:`dismissed-rows-stay-resubmittable`).
 
-9. Strengthen tests around stuck-row prevention (implemented alongside 1–8).
+9. Tests around stuck-row prevention.
    Project-open reconciliation, poll-failure inertness, the missing-entry
    grace window, ``QProcess`` startup failure, watchdog detection and wiring,
    retry-retrieval run bookkeeping, and dismissal visibility are all pinned by

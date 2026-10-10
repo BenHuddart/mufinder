@@ -53,41 +53,14 @@ FORBIDDEN_LAYER_IMPORTS = {
 }
 
 
-# Per-workflow submit/materialize handlers still living on ``MainWindow``.
+# Submit/materialize handlers allowed on ``MainWindow``.
 #
-# The Phase 4 submission-consistency initiative moves each workflow's
-# submit → materialize → result → refresh cycle onto a
-# ``mufinder.app.workflow_controllers`` controller. This set pins the handlers
-# that have NOT yet migrated, so it acts as a ratchet against the god object:
-# the test fails if a NEW ``_on_submit_*`` / ``_materialize_*`` name appears on
-# ``MainWindow``. Each migration PR removes the migrated workflow's names from
-# this set (the set may only shrink). Cutoff and k-point convergence migrated
-# first, so their former ``_on_submit_*_from_convergence`` /
-# ``_on_submit_*_from_kpoint_convergence`` /
-# ``_materialize_convergence_jobs`` / ``_materialize_kpoint_jobs`` handlers are
-# intentionally absent here. Pristine relaxation migrated next (the first
-# migration with real build_result logic), so its
-# ``_on_submit_*_from_pristine_relaxation`` / ``_materialize_pristine_relaxation_jobs``
-# handlers are intentionally absent here too. Muon relaxation followed (the
-# first migration exercising ``pre_submit_check`` and ``submission_groups``),
-# so its ``_on_submit_*_from_muon_relaxation`` /
-# ``_materialize_muon_relaxation_jobs`` handlers are intentionally absent as
-# well. UEP followed (a simpler migration: no pre_submit_check, no grouping, a
-# small ``build_result`` contributing only the ``density_available`` flag), so
-# its ``_on_submit_*_from_uep`` / ``_materialize_uep_jobs`` handlers are
-# intentionally absent here too. Quantum corrections followed (the two-stage
-# singlepoint → phonon migration with a pre_submit host check and the richest
-# ``build_result`` — phonon ZPE/eigenvalue/witness payload), so its
-# ``_on_submit_*_from_quantum_corrections`` / ``_materialize_quantum_corrections_jobs``
-# handlers are intentionally absent here too. Energy barriers (NEB) followed last
-# (the source-key-provenance migration with IDPP intermediate interpolation, a
-# ``.ts`` transition-state ``build_result`` payload, and a lazily-created view
-# behind a ``view_getter``), so its ``_on_submit_*_neb_from_energy_barriers`` /
-# ``_materialize_energy_barrier_neb_jobs`` handlers are intentionally absent here
-# too. With energy barriers migrated, the per-workflow migration series is
-# COMPLETE: the only entries that remain are the two dashboard handlers, which are
-# cross-workflow submit entry points (they fan out to every workflow's controller)
-# and legitimately stay on ``MainWindow`` — not per-workflow submit logic.
+# Every workflow's submit -> materialize -> result -> refresh cycle lives on a
+# ``mufinder.app.workflow_controllers`` controller (docs/architecture.rst,
+# Workflow controllers). The only ``_on_submit_*`` / ``_materialize_*`` names
+# that may remain here are the two cross-workflow dashboard entry points,
+# which fan out to every controller. This set is a ratchet: it may only
+# shrink, and a new per-workflow handler on ``MainWindow`` fails the test.
 PINNED_MAIN_WINDOW_SUBMIT_HANDLERS = frozenset(
     {
         "_on_submit_from_dashboard",
@@ -204,9 +177,9 @@ def test_main_window_submit_handlers_do_not_grow() -> None:
 
     New ``_on_submit_*`` / ``_materialize_*`` methods must not appear on
     ``MainWindow``: workflow submission logic belongs on a
-    ``mufinder.app.workflow_controllers`` controller. Each Phase 4 migration PR
-    removes the migrated workflow's names from
-    ``PINNED_MAIN_WINDOW_SUBMIT_HANDLERS`` (the set may only shrink).
+    ``mufinder.app.workflow_controllers`` controller. A handler that moves off
+    ``MainWindow`` is removed from ``PINNED_MAIN_WINDOW_SUBMIT_HANDLERS`` (the
+    set may only shrink).
     """
 
     actual = _main_window_submit_handler_methods()

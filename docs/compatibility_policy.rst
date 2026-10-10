@@ -98,8 +98,8 @@ Compatibility ledger
      - Load-bearing persisted job-contract state, not deprecation shims.
        ``execution_target`` and ``num_processes`` drive resubmission and
        dashboard columns; ``remote_job_id`` and ``remote_directory`` are the
-       metadata that lets ``_sync_cluster_tracking_from_document`` re-register
-       persisted active cluster jobs after a project is reopened. Orphaned
+       metadata that lets the main window re-register persisted active
+       cluster jobs with the cluster runner after a project is reopened. Orphaned
        local-job reconciliation also reads ``execution_target`` to decide which
        active jobs to stop on project open.
      - Current job data, not deprecated. Renaming or removing any of these
@@ -160,8 +160,8 @@ Compatibility ledger
        shim: keep it until the next saved-project schema version bump, whose
        migration can stamp ``created_at`` on every job file that lacks it.
    * - ``potential_grid`` key in UEP analysis UI state
-     - ``uep_analysis_states`` UI state; read by
-       ``MainWindow._migrate_legacy_uep_state_potential_grid`` and
+     - ``uep_analysis_states`` UI state; read by the UEP analysis open path
+       in ``mufinder.app.main_window`` and by
        ``UepAnalysisDialog._restore_initial_state``
      - Older UEP analysis snapshots repeated the full potential grid, which is
        also persisted as the job's ``uep_potential_grid`` result. Snapshots no
