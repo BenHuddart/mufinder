@@ -34,7 +34,7 @@ from mufinder.castep_setup import (
 )
 from tests.support.keyword_catalogs import write_complete_catalog
 from mufinder.app.castep_setup_dialog import CastepSetupDialog
-from mufinder.services.ssh_client import SSHCredentials
+from mufinder.services.ssh_client import SSHCredentials, SSHUnknownHostKeyError
 
 
 def _process_until(predicate: Callable[[], bool], *, timeout: float = 5.0) -> bool:
@@ -743,7 +743,7 @@ def test_castep_setup_dialog_cluster_generation_trusts_unknown_host_key(
             _ = password
             self.__class__.attempts += 1
             if self.__class__.attempts == 1:
-                raise dialog_module.SSHUnknownHostKeyError(
+                raise SSHUnknownHostKeyError(
                     hostname="glamdring.physics.ox.ac.uk",
                     port=22,
                     algorithm="ssh-ed25519",

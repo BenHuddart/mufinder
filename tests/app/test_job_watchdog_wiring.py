@@ -14,7 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 from mufinder.app import cluster_controller

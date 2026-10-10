@@ -56,6 +56,7 @@ __all__ = [
     "MUONIUM_CHARGE_STATE",
     "POSITIVE_MUON_CHARGE_STATE",
     "RelaxationExpansion",
+    "canonical_charge_state",
     "expand_muon_relaxation_jobs",
     "expand_pristine_relaxation_jobs",
     "is_muon_relaxation_calc_type",
