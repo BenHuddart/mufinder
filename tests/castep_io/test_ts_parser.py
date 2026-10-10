@@ -7,7 +7,7 @@ import pytest
 from mufinder.castep_io import parse_transition_state_file
 from mufinder.castep_io.ts_parser import TransitionStateParseError, parse_transition_state_text
 
-_FIXTURES = Path(__file__).parent / "fixtures"
+_FIXTURES = Path(__file__).parents[1] / "fixtures"
 _FIXTURE = _FIXTURES / "transition_state_path.ts"
 _NEB_FIXTURE = _FIXTURES / "neb_path.ts"
 
