@@ -59,7 +59,7 @@ def bind_delete_shortcuts(
     """Bind a delete/remove ``slot`` to both Delete and Backspace on ``widget``.
 
     macOS delivers the physical Delete key as ``Qt.Key.Key_Backspace``, so
-    CLAUDE.md requires every delete/remove/cancel/reset shortcut to bind both
+    AGENTS.md requires every delete/remove/cancel/reset shortcut to bind both
     ``QKeySequence.StandardKey.Delete`` and ``Qt.Key.Key_Backspace`` — binding
     only the standard "Delete" key sequence leaves macOS users unable to
     trigger the action from the keyboard. Returns the two ``QShortcut``
