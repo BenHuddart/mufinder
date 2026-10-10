@@ -574,6 +574,29 @@ Cluster submission uses ``submit_cluster_job``:
   completed as ``failed``. For continuation resubmissions, the previous remote
   context is preserved when possible so the user can try again.
 
+Retrieval flags
+~~~~~~~~~~~~~~~
+
+Which secondary outputs a job produces is one value,
+:class:`~mufinder.services.job_artifacts.RetrievalFlags`:
+
+- ``retrieve_den_fmt`` (UEP source jobs), ``retrieve_out_cell`` (pristine and
+  muon relaxations), ``retrieve_phonon`` (quantum-phonon jobs) and
+  ``retrieve_ts`` (transition-state and NEB jobs), set from the calc type by
+  ``RetrievalFlags.for_calc_type``;
+- ``task_farming_enabled`` and ``num_farms``, the job's farm setting, because
+  a farmed run writes ``<seed>_farmNNN.<ext>`` in place of ``<seed>.<ext>``.
+
+Submission passes the value whole: ``submit_local_jobs`` takes a
+``retrieval_for_job`` callback and ``ClusterJobSubmission`` carries a
+``retrieval`` field. The runners take the fields as keywords:
+``LocalJobRunner.submit``, ``ClusterJobRunner.submit``,
+``track_existing_job`` and ``retrieve_outputs_for`` each accept them through
+``**retrieval``, rebuild the value, and keep it on their tracking record,
+where it drives both the download of the optional files and
+``RetrievalFlags.collect``. The local runner never downloads, so it ignores
+``retrieve_den_fmt``.
+
 Local runner behavior
 ~~~~~~~~~~~~~~~~~~~~~
 
@@ -736,8 +759,9 @@ During polling:
 - ``stopped`` marks the tracked job terminal and emits ``stopped``.
 - ``failed`` marks the tracked job terminal, retrieves available error files,
   emits ``job_failed``, and emits ``failed``.
-- ``completed`` triggers retrieval of ``.castep`` plus optional ``.den_fmt``,
-  ``-out.cell``, ``.phonon``, or ``.ts`` outputs. Retrieval or parsing failure
+- ``completed`` triggers retrieval of ``.castep`` plus the optional ``.den_fmt``,
+  ``-out.cell``, ``.phonon``, or ``.ts`` outputs that the job's retrieval flags
+  request (see Retrieval flags). Retrieval or parsing failure
   becomes ``failed``. Parsed incomplete CASTEP output becomes ``stopped`` when
   it looks like walltime; otherwise it becomes ``failed``. Parsed completed
   output emits ``job_finished`` and ``completed``. The secondary outputs

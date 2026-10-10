@@ -29,11 +29,13 @@ Layering: this lives in ``mufinder.services`` and may import ``castep_io`` and
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
+from typing import Any
 
 from mufinder.castep_io.cell_parser import ParsedCell, parse_cell_file
 from mufinder.castep_io.ts_parser import TransitionStatePath, parse_transition_state_file
+from mufinder.domain.charge_states import is_muon_relaxation_calc_type
 from mufinder.science.kpoint_grids import lattice_parameters
 from mufinder.science.quantum_phonons import (
     PhononCalculation,
@@ -41,6 +43,14 @@ from mufinder.science.quantum_phonons import (
     parse_phonon_path,
     w1_entanglement_witness,
 )
+from mufinder.workflow.energy_barriers import (
+    NUDGED_ELASTIC_BAND_CALC_TYPE,
+    TRANSITION_STATE_SEARCH_CALC_TYPE,
+)
+from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
+
+_UEP_SOURCE_CALC_TYPE = "castep_uep_source"
+_PRISTINE_RELAXATION_CALC_TYPE = "castep_pristine_relaxation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +113,95 @@ def effective_num_farms(task_farming_enabled: bool, num_farms: int | None) -> in
     if not task_farming_enabled:
         return 1
     return max(1, int(num_farms or 1))
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalFlags:
+    """Which secondary outputs a job produces, and how CASTEP named them.
+
+    One value per job, threaded from submission through both runners to
+    :func:`collect_job_artifacts`. The ``retrieve_*`` flags select the optional
+    outputs (``.den_fmt``, relaxed ``-out.cell``, ``.phonon``, ``.ts``); the
+    farming pair says whether task farming renamed them to
+    ``<seed>_farmNNN.<ext>``. The local runner reads but never downloads
+    ``.den_fmt``, so it ignores ``retrieve_den_fmt``.
+
+    The field names are also the runners' keyword names: ``submit``,
+    ``track_existing_job`` and ``retrieve_outputs_for`` take the fields as
+    keywords and rebuild the value with ``RetrievalFlags(**kwargs)``, and
+    :meth:`as_kwargs` produces them. Construction normalises the values, so two
+    equal requests always compare equal.
+    """
+
+    retrieve_den_fmt: bool = False
+    retrieve_out_cell: bool = False
+    retrieve_phonon: bool = False
+    retrieve_ts: bool = False
+    task_farming_enabled: bool = False
+    num_farms: int | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "retrieve_den_fmt",
+            "retrieve_out_cell",
+            "retrieve_phonon",
+            "retrieve_ts",
+            "task_farming_enabled",
+        ):
+            object.__setattr__(self, name, bool(getattr(self, name)))
+        if self.num_farms is not None:
+            object.__setattr__(self, "num_farms", max(1, int(self.num_farms)))
+
+    @classmethod
+    def for_calc_type(
+        cls,
+        calc_type: str,
+        *,
+        task_farming_enabled: bool = False,
+        num_farms: int | None = None,
+    ) -> "RetrievalFlags":
+        """Return the flags for a job of ``calc_type``.
+
+        UEP source jobs keep their ``.den_fmt``; pristine and muon relaxations
+        their ``-out.cell``; quantum-phonon jobs their ``.phonon``; and
+        transition-state and NEB jobs their ``.ts``. Every other calc type
+        produces only the primary ``.castep``. The farm count is per job, not
+        per calc type, so the caller supplies it.
+        """
+
+        return cls(
+            retrieve_den_fmt=calc_type == _UEP_SOURCE_CALC_TYPE,
+            retrieve_out_cell=calc_type == _PRISTINE_RELAXATION_CALC_TYPE
+            or is_muon_relaxation_calc_type(calc_type),
+            retrieve_phonon=calc_type == QUANTUM_PHONON_CALC_TYPE,
+            retrieve_ts=calc_type
+            in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE},
+            task_farming_enabled=task_farming_enabled,
+            num_farms=num_farms,
+        )
+
+    @property
+    def farm_count(self) -> int:
+        """Return the farm count in effect; see :func:`effective_num_farms`."""
+
+        return effective_num_farms(self.task_farming_enabled, self.num_farms)
+
+    def as_kwargs(self) -> dict[str, Any]:
+        """Return the fields as the runner keyword arguments they travel as."""
+
+        return {field.name: getattr(self, field.name) for field in fields(self)}
+
+    def collect(self, output_dir: Path | None, seed_name: str) -> "ParsedJobArtifacts":
+        """Parse the secondary outputs these flags request; see :func:`collect_job_artifacts`."""
+
+        return collect_job_artifacts(
+            output_dir,
+            seed_name,
+            want_out_cell=self.retrieve_out_cell,
+            want_phonon=self.retrieve_phonon,
+            want_ts=self.retrieve_ts,
+            num_farms=self.farm_count,
+        )
 
 
 def _resolve_ts_path(output_dir: Path, seed_name: str, num_farms: int) -> Path:
@@ -242,5 +341,7 @@ def collect_job_artifacts(
 
 __all__ = [
     "ParsedJobArtifacts",
+    "RetrievalFlags",
     "collect_job_artifacts",
+    "effective_num_farms",
 ]

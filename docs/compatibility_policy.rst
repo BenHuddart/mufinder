@@ -210,6 +210,17 @@ Compatibility ledger
      - Public import alias. Keep for one minor release (through 0.6.x); then
        drop the ``ConstructionSignWidget`` import and move test and external
        imports of these names to their defining modules.
+   * - ``task_farming_for_job`` / ``retrieve_flags_for_job`` keywords
+     - ``JobExecutionController.submit_local_jobs``
+     - The two-callback form of ``retrieval_for_job``: one callback returns
+       ``(task_farming_enabled, num_farms)`` and the other a mapping of
+       ``retrieve_*`` flags. They are read only when ``retrieval_for_job`` is
+       ``None`` and are combined into one
+       ``mufinder.services.job_artifacts.RetrievalFlags``. The application
+       passes ``retrieval_for_job``. Not persisted.
+     - Public keyword alias. Keep for one minor release (through 0.6.x); then
+       move the remaining test callers to ``retrieval_for_job`` and drop both
+       keywords.
 
 Rules for new shims
 -------------------

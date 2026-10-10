@@ -11,6 +11,7 @@ import mufinder.services.cluster_runner as cluster_runner_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
 from mufinder.services.cluster_runner import ClusterJobRunner
+from mufinder.services.job_artifacts import RetrievalFlags
 from mufinder.services.scheduler import SchedulerJobInfo
 
 
@@ -603,7 +604,7 @@ def test_cluster_runner_retrieve_downloads_optional_formatted_density(
         remote_dir="/remote/job",
         seed_name="seed",
         local_output_dir=tmp_path,
-        retrieve_den_fmt=True,
+        retrieval=RetrievalFlags(retrieve_den_fmt=True),
     )
     runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
     runner._ssh.remote_files["/remote/job/seed.den_fmt"] = b"density output"
@@ -632,7 +633,7 @@ def test_cluster_runner_retrieve_downloads_optional_phonon(
         remote_dir="/remote/job",
         seed_name="seed",
         local_output_dir=tmp_path,
-        retrieve_phonon=True,
+        retrieval=RetrievalFlags(retrieve_phonon=True),
     )
     runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
     runner._ssh.remote_files["/remote/job/seed.phonon"] = b"phonon output"
@@ -661,9 +662,7 @@ def test_cluster_runner_retrieve_uses_task_farm_primary_output(
         remote_dir="/remote/job",
         seed_name="seed",
         local_output_dir=tmp_path,
-        retrieve_phonon=True,
-        task_farming_enabled=True,
-        num_farms=4,
+        retrieval=RetrievalFlags(retrieve_phonon=True, task_farming_enabled=True, num_farms=4),
     )
     runner._ssh.remote_files["/remote/job/seed.castep"] = b"minimal output"
     runner._ssh.remote_files["/remote/job/seed_farm001.castep"] = b"farmed output"
@@ -695,7 +694,7 @@ def test_cluster_runner_retrieve_downloads_optional_ts_file(
         remote_dir="/remote/job",
         seed_name="seed",
         local_output_dir=tmp_path,
-        retrieve_ts=True,
+        retrieval=RetrievalFlags(retrieve_ts=True),
     )
     runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
     runner._ssh.remote_files["/remote/job/seed.ts"] = b"ts output"
@@ -727,9 +726,7 @@ def test_cluster_runner_retrieve_downloads_farmed_ts_file(
         remote_dir="/remote/job",
         seed_name="seed",
         local_output_dir=tmp_path,
-        retrieve_ts=True,
-        task_farming_enabled=True,
-        num_farms=3,
+        retrieval=RetrievalFlags(retrieve_ts=True, task_farming_enabled=True, num_farms=3),
     )
     runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
     runner._ssh.remote_files["/remote/job/seed_farm001.castep"] = b"farmed output"
@@ -762,8 +759,7 @@ def test_cluster_runner_retrieve_downloads_farmed_error_files(
         remote_dir="/remote/job",
         seed_name="seed",
         local_output_dir=tmp_path,
-        task_farming_enabled=True,
-        num_farms=2,
+        retrieval=RetrievalFlags(task_farming_enabled=True, num_farms=2),
     )
     runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
     runner._ssh.remote_files["/remote/job/seed_farm001.0000.err"] = b"farm 1 stderr"
@@ -794,8 +790,7 @@ def test_cluster_runner_retrieve_skips_optional_files_when_not_requested(
         remote_dir="/remote/job",
         seed_name="seed",
         local_output_dir=tmp_path,
-        retrieve_den_fmt=False,
-        retrieve_out_cell=False,
+        retrieval=RetrievalFlags(retrieve_den_fmt=False, retrieve_out_cell=False),
     )
     runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
     runner._ssh.remote_files["/remote/job/seed.den_fmt"] = b"density output"
@@ -839,7 +834,7 @@ def _continuation_entry(tmp_path: Path) -> object:
         remote_dir="/remote/job",
         seed_name="seed",
         local_output_dir=tmp_path,
-        retrieve_out_cell=True,
+        retrieval=RetrievalFlags(retrieve_out_cell=True),
     )
 
 
