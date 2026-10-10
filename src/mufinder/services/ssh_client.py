@@ -385,17 +385,6 @@ class SSHConnection:
             self._config.key_path.strip(),
         )
 
-    def reconnect(
-        self,
-        password: str | None = None,
-        *,
-        credentials: SSHCredentials | None = None,
-    ) -> None:
-        """Reconnect SSH transport."""
-
-        self.disconnect()
-        self.connect(password=password, credentials=credentials)
-
     def disconnect(self) -> None:
         """Close SSH and SFTP resources."""
 

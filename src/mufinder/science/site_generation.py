@@ -559,17 +559,6 @@ def _host_position_array(host_positions_frac: Sequence[Sequence[float]]) -> np.n
     return hosts
 
 
-def _sample_unit_sphere_direction(rng: random.Random) -> list[float]:
-    while True:
-        x = rng.uniform(-1.0, 1.0)
-        y = rng.uniform(-1.0, 1.0)
-        z = rng.uniform(-1.0, 1.0)
-        norm2 = x * x + y * y + z * z
-        if 1e-12 < norm2 <= 1.0:
-            inv = 1.0 / math.sqrt(norm2)
-            return [x * inv, y * inv, z * inv]
-
-
 def _norm(vector: Sequence[float]) -> float:
     return math.sqrt(sum(float(value) * float(value) for value in vector))
 

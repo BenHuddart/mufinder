@@ -113,6 +113,30 @@ def _find_tree_item_by_prefix(window: MainWindow, prefix: str) -> QTreeWidgetIte
     return None
 
 
+def _add_transition_state_search_set_definition(
+    doc,
+    *,
+    input_structure_ids: list,
+    input_site_ids: list,
+    parameters: dict,
+) -> CalculationDefinition:
+    """Store an Energy Barriers source definition as a saved project holds it."""
+
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type="castep_transition_state_search_set",
+        parameters={
+            "configuration": parameters,
+            "output_directory": "files/energy_barriers",
+            "job_ids_by_label": {},
+        },
+        input_structure_ids=list(input_structure_ids),
+        input_site_ids=list(input_site_ids),
+    )
+    doc.calculations[definition.id] = definition
+    return definition
+
+
 def _magnetic_model(label: str) -> MagneticStructureModel:
     return MagneticStructureModel(
         components=(
@@ -2187,7 +2211,7 @@ def test_main_window_materializes_neb_jobs_directly_from_endpoints(
     doc.sites[site_b.id] = site_b
 
     # Only the endpoint path source exists: no TS job, no job_ids_by_label, no TS result.
-    service.register_transition_state_search_definition(
+    _add_transition_state_search_set_definition(
         doc,
         input_structure_ids=[relaxed_a.id, relaxed_b.id],
         input_site_ids=[site_a.id, site_b.id],
@@ -2211,7 +2235,6 @@ def test_main_window_materializes_neb_jobs_directly_from_endpoints(
                 }
             ],
         },
-        output_directory=doc.project_root / "files" / "energy_barriers",
     )
 
     jobs = window._energy_barriers_controller.materialize(["source-key"])
@@ -2285,7 +2308,7 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
     doc.sites[site_a.id] = site_a
     doc.sites[site_b.id] = site_b
 
-    definition = service.register_transition_state_search_definition(
+    definition = _add_transition_state_search_set_definition(
         doc,
         input_structure_ids=[relaxed_a.id, relaxed_b.id],
         input_site_ids=[site_a.id, site_b.id],
@@ -2309,7 +2332,6 @@ def test_main_window_applies_neb_row_configuration_to_materialized_job(
                 }
             ],
         },
-        output_directory=doc.project_root / "files" / "energy_barriers",
     )
 
     ts_job = service.add_job(

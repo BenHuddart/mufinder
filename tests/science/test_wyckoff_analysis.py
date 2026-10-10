@@ -28,9 +28,10 @@ from mufinder.science.spglib_compat import get_crystal_symmetry
 from mufinder.science.wyckoff_analysis import (
     _deduplicate_positions,
     _host_cell,
+    _operation_images,
+    _orbit_from_images,
     _project_nearby_special_candidates,
     _project_to_constraints,
-    _symmetry_orbit,
     assign_cluster_wyckoff_sites,
 )
 from tests.support.symmetry_hosts import (
@@ -320,7 +321,9 @@ def test_symmetry_orbit_matches_greedy_pairwise_deduplication(host_factory) -> N
             if not any(_pbc_distance(wrapped, existing, lattice) <= 1e-5 for existing in expected):
                 expected.append(wrapped)
 
-        orbit = _symmetry_orbit(point, rotations, translations, lattice, tolerance_ang=1e-5)
+        orbit = _orbit_from_images(
+            _operation_images(point, rotations, translations), lattice, tolerance_ang=1e-5
+        )
 
         assert len(orbit) == len(expected)
         for actual_position, expected_position in zip(orbit, expected, strict=True):

@@ -129,18 +129,6 @@ def _orbit_from_images(
     return _deduplicate_positions(np.mod(images, 1.0), lattice, tolerance_ang=tolerance_ang)
 
 
-def _symmetry_orbit(
-    position: Sequence[float],
-    rotations: Sequence[np.ndarray],
-    translations: Sequence[np.ndarray],
-    lattice: Sequence[Sequence[float]],
-    *,
-    tolerance_ang: float,
-) -> tuple[tuple[float, float, float], ...]:
-    images = _operation_images(position, rotations, translations)
-    return _orbit_from_images(images, lattice, tolerance_ang=tolerance_ang)
-
-
 def _dummy_atomic_number(host_numbers: Sequence[int]) -> int:
     used = {int(number) for number in host_numbers}
     for number in range(118, 0, -1):
