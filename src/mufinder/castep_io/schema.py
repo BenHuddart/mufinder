@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, replace
-import json
 import os
 from pathlib import Path
 import re

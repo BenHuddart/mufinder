@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
+from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Project, Structure
 from mufinder.services.legacy_import import scan_legacy_folder

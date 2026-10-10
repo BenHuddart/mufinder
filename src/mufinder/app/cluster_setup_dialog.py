@@ -36,7 +36,7 @@ from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.theme import style_help_button, style_inline_group
 from mufinder.cluster_setup import ClusterConfig, load_cluster_configs, save_cluster_configs
 from mufinder.services.keychain import is_glamdring_keychain_supported, keychain_setup_help
-from mufinder.services.ssh_client import SSHConnection, SSHUnknownHostKeyError, save_trusted_host_key
+from mufinder.services.ssh_client import SSHConnection
 
 #: Pre-filled default per-CPU memory request for SLURM cluster profiles. Mirrors
 #: ``cluster_submission_dialog._DEFAULT_MEM_PER_CPU_GB``.

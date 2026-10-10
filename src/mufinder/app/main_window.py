@@ -83,6 +83,7 @@ from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import (
     MANUAL_DEFAULT_METHOD,
+    CalculationDefinition,
     CalculationRun,
     ComparisonTable,
     Job,
@@ -123,9 +124,7 @@ from mufinder.app.convergence_widget import ConvergenceWidget
 from mufinder.app.energy_barriers_widget import (
     EnergyBarriersWidget,
     EnergyBarrierEndpointRow,
-    EnergyBarrierNebResultRow,
     EnergyBarrierPreviewImageRow,
-    EnergyBarrierSourceRow,
 )
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
 from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
@@ -188,8 +187,6 @@ from mufinder.app.project_defaults_widget import ProjectDefaultsStrip, ProjectDe
 from mufinder.app.quantum_analysis_dialog import QuantumPhononAnalysisDialog
 from mufinder.app.quantum_corrections_widget import (
     QuantumCorrectionsWidget,
-    QuantumResultRow,
-    QuantumSourceRow,
 )
 from mufinder.app.screen_utils import clamp_to_screen, clamped_size
 from mufinder.app.supercell_dialog import SupercellEditorDialog
@@ -317,14 +314,10 @@ from mufinder.workflow.quantum import (
     QUANTUM_SINGLEPOINT_CALC_TYPE,
     QUANTUM_PHONON_CALC_TYPE,
     QUANTUM_PHONON_SET_CALC_TYPE,
-    QuantumPhononJobConfig,
-    QuantumPhononSource,
-    expand_quantum_singlepoint_jobs,
-    expand_quantum_phonon_jobs,
     quantum_source_eligibility,
 )
 from mufinder.workflow.renderer import render_job
-from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamTemplate
+from mufinder.workflow.types import CellTemplate, InputTemplate, ParamTemplate
 
 
 _LOG = logging.getLogger(__name__)

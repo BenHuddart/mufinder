@@ -21,7 +21,6 @@ from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
     ComparisonTable,
-    Job,
     MuonSite,
     Result,
     Structure,
