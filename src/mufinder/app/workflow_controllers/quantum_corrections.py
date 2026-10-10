@@ -26,12 +26,11 @@ continuation. This is the richest migration onto
   eigenvalues, mode participations, and the ``w1`` entanglement witness for a
   quantum-*phonon* job; a quantum-*singlepoint* job contributes nothing (an empty
   :class:`~mufinder.app.workflow_controllers.base.ControllerResult`, a strict
-  no-op). Following the success-path-only convention, the failure guards
-  (missing/unparseable ``.phonon``, plus any downstream
+  no-op). :meth:`QuantumCorrectionsController.validate_artifacts` fails a phonon
+  job whose ``.phonon`` is missing or unparseable, including any downstream
   :class:`~mufinder.science.quantum_phonons.PhononParseError` from the ZPE / Gamma
-  / witness computation) stay inline in ``MainWindow._on_local_job_finished`` and
-  abort the job before this controller's ``build_result`` runs; ``build_result``
-  therefore re-parses and recomputes on the validated success path.
+  / witness computation, before ``build_result`` runs; ``build_result`` then
+  derives the payload from the carried, validated calculation.
 
 - **Task farming is NOT this controller's concern.** The stage-2 phonon jobs are
   task-farmed, but that is applied by ``MainWindow._submit_jobs_locally`` in the
@@ -725,6 +724,29 @@ class QuantumCorrectionsController(WorkflowJobController):
 
     # --- result contract ---
 
+    def validate_artifacts(
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
+    ) -> str | None:
+        """Fail a quantum-phonon job whose ``.phonon`` is missing or unusable.
+
+        Reads the carrier: ``phonon_missing`` for an absent file, and
+        ``phonon_error`` for a file that does not parse or fails the ZPE / Gamma /
+        witness computation during collection. A singlepoint job is accepted.
+        """
+
+        if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
+            return None
+        if artifacts.phonon_missing:
+            seed_name = self._context.job_seed_name(job)
+            return f"Expected CASTEP phonon output was not found: {seed_name}.phonon"
+        if artifacts.phonon_error is not None:
+            return f"Failed to parse CASTEP phonon output: {artifacts.phonon_error}"
+        return None
+
     def build_result(
         self,
         job: Job,
@@ -740,9 +762,9 @@ class QuantumCorrectionsController(WorkflowJobController):
         phonon continuation happens in ``quantum_stage_state`` during the next
         materialize/refresh, not here.
 
-        For a quantum-*phonon* job, the inline ``_on_local_job_finished`` guard has
-        already verified the ``.phonon`` file exists and that the full ZPE / Gamma /
-        witness computation succeeds (aborting the job on any
+        For a quantum-*phonon* job, :meth:`validate_artifacts` has already
+        verified the ``.phonon`` file exists and that the full ZPE / Gamma /
+        witness computation succeeds (failing the job on any
         :class:`~mufinder.science.quantum_phonons.PhononParseError`). The file is
         parsed **once** on the runner worker thread and carried on
         ``artifacts.phonon``; this controller derives the ZPE / eigenvalue /

@@ -30,11 +30,11 @@ supercell and host coordinates, the derived relaxed
 :class:`~mufinder.domain.models.Structure`, and — as a sanctioned document side
 effect (see the :class:`~mufinder.app.workflow_controllers.base.ControllerResult`
 docstring) — mutation of the source :class:`~mufinder.domain.models.MuonSite`
-(``status``/``relaxation_run_id``/``total_energy_eV``). Following the
-success-path-only convention, the failure guards (``geom_converged``,
-missing/unparseable ``-out.cell``, and the missing ``H:mu`` position) stay
-inline in ``MainWindow._on_local_job_finished`` and abort the job before this
-controller's ``build_result`` runs.
+(``status``/``relaxation_run_id``/``total_energy_eV``).
+:meth:`MuonRelaxationController.validate_artifacts` fails the job before any
+result is built: it applies the relaxation checks shared with the pristine
+controller (``geom_converged``, a missing, unparseable or stale ``-out.cell``)
+and then requires an ``H:mu`` position in the relaxed cell.
 
 Shared helpers that non-migrating code still calls remain on ``MainWindow`` and
 are reached via :class:`MuonRelaxationDeps`, following the shared-context +
@@ -79,6 +79,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
     apply_row_parameters_to_form_state,
+    relaxation_artifact_failure,
     upsert_job_derived_structure,
 )
 from mufinder.app.workflow_submission import effective_row_status
@@ -142,8 +143,8 @@ class MuonRelaxationDeps:
     These helpers stay on ``MainWindow`` because non-migrating code still calls
     them there: the definition/config/mapping helpers are shared with row
     removal, staging, and dashboard sync; ``muon_fractional_position_from_cell``
-    is still called by the inline ``H:mu`` failure guard in
-    ``_on_local_job_finished`` (against the carried, already-parsed cell); and
+    locates the ``H:mu`` position in the carried, already-parsed cell for both
+    :meth:`MuonRelaxationController.validate_artifacts` and ``build_result``; and
     ``coerce_fractional_triplet`` and ``muon_relaxation_row_key`` have other
     view-refresh callers. The relaxed ``-out.cell`` is parsed once on the runner
     worker thread and delivered to ``build_result`` via
@@ -169,7 +170,7 @@ class MuonRelaxationDeps:
     muon_relaxation_row_signature: Callable[[MuonRelaxationRow], tuple[object, ...]]
     muon_relaxation_row_key: Callable[[MuonRelaxationRow], str]
     handle_site_host_mismatch: Callable[[SiteHostMismatch], bool]
-    # Shared with the still-inline result-block failure guards:
+    # Used by validate_artifacts and build_result:
     muon_relaxation_definition_and_row_for_job: Callable[
         [Job], tuple[CalculationDefinition | None, MuonRelaxationRow | None]
     ]
@@ -806,6 +807,31 @@ class MuonRelaxationController(WorkflowJobController):
 
     # --- result contract ---
 
+    def validate_artifacts(
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
+    ) -> str | None:
+        """Fail a muon relaxation with no fresh ``-out.cell`` or no muon in it.
+
+        Applies :func:`~mufinder.app.workflow_controllers.base.relaxation_artifact_failure`
+        first, then looks for the ``H:mu`` position in the carried relaxed cell
+        (no second disk read).
+        """
+
+        seed_name = self._context.job_seed_name(job)
+        failure = relaxation_artifact_failure(
+            job, parsed, run, artifacts, seed_name=seed_name
+        )
+        if failure is not None:
+            return failure
+        relaxed = artifacts.relaxed_cell
+        if relaxed is None or self._deps.muon_fractional_position_from_cell(relaxed) is None:
+            return f"Expected H:mu muon position was not found in {seed_name}-out.cell."
+        return None
+
     def build_result(
         self,
         job: Job,
@@ -816,10 +842,10 @@ class MuonRelaxationController(WorkflowJobController):
         """Contribute lattice/muon-position payload, derived structure, and the
         source-site mutation for a completed muon-relaxation job.
 
-        The inline ``_on_local_job_finished`` prologue has already validated
-        that the ``-out.cell`` exists, parses, and contains an ``H:mu``
-        position (it aborts the job otherwise), so the carried
-        ``artifacts.relaxed_cell`` is present and muonated on this success path.
+        :meth:`validate_artifacts` has already accepted the completion (the
+        ``-out.cell`` exists, parses, belongs to this run and contains an
+        ``H:mu`` position), so the carried ``artifacts.relaxed_cell`` is present
+        and muonated on this success path.
         The file is parsed **once** on the runner worker thread; this controller
         consumes the carried cell rather than re-reading disk.
 
@@ -857,12 +883,12 @@ class MuonRelaxationController(WorkflowJobController):
             definition = self.active_definition()
         final_supercell_position = self._deps.muon_fractional_position_from_cell(relaxed)
         if final_supercell_position is None:
-            # build_result runs only on the validated success path: the inline
-            # H:mu guard in the job-finished handler fails muon-less cells
-            # before dispatch reaches this controller. Fail loudly if violated.
+            # build_result runs only on the validated success path:
+            # validate_artifacts fails muon-less cells before dispatch reaches
+            # build_result. Fail loudly if that contract is violated.
             raise ValueError(
                 "Muon-relaxation build_result requires a relaxed cell containing "
-                "the muon; the inline guard must reject muon-less cells first."
+                "the muon; validate_artifacts must reject muon-less cells first."
             )
         final_host_position = _fold_supercell_fractional_to_host(
             final_supercell_position,

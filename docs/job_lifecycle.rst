@@ -426,11 +426,10 @@ path looks for it: a run that dies before writing a new one would have the old
 geometry accepted as its result. Two guards cover this, each closing the other's
 blind spot.
 
-The local one is in the main window's job-finished handler, alongside the
-missing-file and parse-failure guards (all three are inline because
-``ControllerResult`` has no failure channel; see :doc:`architecture`, Result
-dispatch): it fails a relaxation job whose
-local ``-out.cell`` predates the current run's ``started_at``. The comparison
+The local one is in both relaxation controllers' ``validate_artifacts``,
+alongside the missing-file and parse-failure checks (see :doc:`architecture`,
+Result dispatch): it fails a relaxation job whose local ``-out.cell`` predates
+the current run's ``started_at``. The comparison
 allows a few seconds of slack for filesystem mtime granularity and network-mount
 clock offsets, and skips entirely when ``started_at`` is unset — a job the poller
 never observed running fails open rather than failing on no evidence.

@@ -34,6 +34,7 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowControllerContext,
     WorkflowJobController,
     merge_controller_result,
+    validate_controller_artifacts,
 )
 from mufinder.app.workflow_controllers.convergence_cutoff import (
     ConvergenceCutoffController,
@@ -763,6 +764,40 @@ def test_merge_controller_result_selects_first_handling_controller(tmp_path: Pat
     )
 
     assert merged_payload == {"custom_metric": 7}
+
+
+def test_validate_controller_artifacts_asks_the_owning_controller(tmp_path: Path) -> None:
+    """Dispatch uses the same owner lookup as merge_controller_result: no owner
+    and the base default both accept the completion, and an override's message
+    is returned verbatim."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    job = make_job("j", service=service, document=document, calc_type="fake_calc")
+    run = CalculationRun(job_id=job.id)
+
+    class _RejectingController(_FakeController):
+        def validate_artifacts(self, job, parsed, run, artifacts):
+            return f"rejected {job.label}"
+
+    default = _FakeController(_make_context(), states={})
+    rejecting = _RejectingController(_make_context(), states={})
+    unhandled = make_job("u", service=service, document=document, calc_type="unhandled_calc")
+
+    assert validate_controller_artifacts([default], job, _parsed(), run, _no_artifacts()) is None
+    assert (
+        validate_controller_artifacts([rejecting], unhandled, _parsed(), run, _no_artifacts())
+        is None
+    )
+    # The first handling controller wins, exactly as for result dispatch.
+    assert (
+        validate_controller_artifacts([rejecting, default], job, _parsed(), run, _no_artifacts())
+        == "rejected j"
+    )
+    assert (
+        validate_controller_artifacts([default, rejecting], job, _parsed(), run, _no_artifacts())
+        is None
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1574,7 +1609,7 @@ def test_pristine_controller_build_result_missing_out_cell_is_empty(tmp_path: Pa
     """build_result no longer parses or raises on a missing ``-out.cell``: it now
     consumes the pre-parsed carrier and returns an empty ControllerResult when
     ``artifacts.relaxed_cell`` is ``None``. In production the missing-file failure
-    is detected by the inline handler guard from the carrier (the ``cell_missing``
+    is detected by ``validate_artifacts`` from the carrier (the ``cell_missing``
     flag surfaced on :class:`ParsedJobArtifacts`), not by build_result — so
     build_result is never reached with a missing file, and its own contract when
     handed an empty carrier is simply to contribute nothing."""
@@ -3775,7 +3810,7 @@ def test_muon_controller_recompletion_keeps_charge_states_separate(
 
 def test_muon_controller_build_result_fails_loudly_on_muonless_cell(tmp_path: Path) -> None:
     """The success-path invariant is self-contained: if build_result is ever
-    reached with a relaxed cell that lacks the muon (the inline guard's job to
+    reached with a relaxed cell that lacks the muon (validate_artifacts' job to
     prevent), it raises a descriptive error instead of a deep TypeError."""
 
     from mufinder.app.relaxation_types import MuonRelaxationRow
@@ -3917,9 +3952,8 @@ def test_uep_controller_refresh_view_without_document_clears_rows() -> None:
 
 def test_uep_controller_build_result_flag_true_when_den_fmt_present(tmp_path: Path) -> None:
     """build_result reports ``density_available: True`` when the completed job's
-    ``{seed}.den_fmt`` output exists on disk — byte-for-byte parity with the
-    former inline ``result_payload["density_available"] = True`` on the success
-    path (where the inline guard has already guaranteed the file)."""
+    ``{seed}.den_fmt`` output exists on disk, as it always does on the success
+    path (``validate_artifacts`` has already guaranteed the file)."""
 
     service = ProjectService()
     document = service.create_project(tmp_path / "p.mufinder", "P")
@@ -3950,8 +3984,8 @@ def test_uep_controller_build_result_flag_true_when_den_fmt_present(tmp_path: Pa
 
 def test_uep_controller_build_result_flag_false_when_den_fmt_absent(tmp_path: Path) -> None:
     """With no ``{seed}.den_fmt`` on disk, build_result reports
-    ``density_available: False``. In production the inline guard fails the job
-    before build_result is ever reached, so this branch is only exercised by a
+    ``density_available: False``. In production ``validate_artifacts`` fails the
+    job before build_result is ever reached, so this branch is only exercised by a
     direct unit call — mirroring the pristine missing-out.cell unit test."""
 
     service = ProjectService()
@@ -4155,7 +4189,7 @@ from mufinder.app.workflow_controllers.quantum_corrections import (
 
 # A minimal, valid CASTEP ``.phonon`` file with one Gamma q-point and an H:mu
 # atom (mirrors the fixture used by tests/app/test_main_window.py so build_result
-# exercises the same real science path the inline guard validates).
+# exercises the same real science path validate_artifacts accepts).
 _QUANTUM_PHONON_TEXT = """ BEGIN header
  Number of ions         2
  Number of branches     6
@@ -4478,7 +4512,7 @@ def test_quantum_controller_build_result_warns_on_a_hydrogen_mass_muon(tmp_path:
 
 def test_quantum_controller_build_result_phonon_missing_dir_is_empty(tmp_path: Path) -> None:
     """If the job's output directory can't be resolved, build_result yields an
-    empty result rather than crashing (the inline guard fails such jobs first)."""
+    empty result rather than crashing (validate_artifacts fails such jobs first)."""
 
     service = ProjectService()
     document = service.create_project(tmp_path / "q.mufinder", "Q")
@@ -5197,7 +5231,7 @@ def test_energy_barriers_controller_build_result_ts_payload(tmp_path: Path) -> N
 
 def test_energy_barriers_controller_build_result_missing_dir_is_empty(tmp_path: Path) -> None:
     """If the job's output directory can't be resolved, build_result yields an
-    empty result rather than crashing (the inline ``.ts`` guard fails such jobs
+    empty result rather than crashing (validate_artifacts fails such jobs
     first)."""
 
     service = ProjectService()
@@ -5837,3 +5871,165 @@ def test_quantum_controller_submits_finite_displacement_without_asking(tmp_path:
     assert infos == []
     assert questions == []
     assert len(local.calls) == 1
+
+
+# --------------------------------------------------------------------------- #
+# validate_artifacts: per-controller completion failures
+# --------------------------------------------------------------------------- #
+#
+# Each controller rejects a completion whose outputs cannot carry a result
+# before build_result runs. The checks read the pre-parsed carrier; these tests
+# pin every failure message the job-finished handler records.
+
+
+def test_pristine_controller_validate_artifacts_messages(tmp_path: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    job = _pristine_job(service, document, "pristine_relax_row1")
+    run = CalculationRun(job_id=job.id)
+    controller = PristineRelaxationController(
+        _make_context(document=document), _stub_pristine_deps(), _FakeRelaxationView()
+    )
+    converged = CastepResult(completed=True, total_energy=-1.0, geom_converged=True)
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    (output_dir / f"{job.label}-out.cell").write_text(_OUT_CELL_TEXT, encoding="utf-8")
+    fresh = collect_job_artifacts(output_dir, job.label, want_out_cell=True)
+
+    # Geometry did not converge: CASTEP's own message, else the generic one.
+    assert controller.validate_artifacts(
+        job,
+        CastepResult(completed=True, geom_converged=False, error_message="BFGS gave up"),
+        run,
+        fresh,
+    ) == "BFGS gave up"
+    assert controller.validate_artifacts(
+        job, CastepResult(completed=True, geom_converged=False), run, fresh
+    ) == "Geometry optimization did not satisfy CASTEP convergence criteria."
+    assert controller.validate_artifacts(
+        job, converged, run, ParsedJobArtifacts(cell_missing=True)
+    ) == "Expected relaxed structure output was not found: pristine_relax_row1-out.cell"
+    assert controller.validate_artifacts(
+        job, converged, run, ParsedJobArtifacts(cell_error="bad block")
+    ) == "Failed to parse relaxed CELL output: bad block"
+
+    # Fails open with no start time; a file a whole run older than the start is stale.
+    assert controller.validate_artifacts(job, converged, run, fresh) is None
+    run.started_at = datetime.now(UTC) + timedelta(minutes=5)
+    assert controller.validate_artifacts(job, converged, run, fresh) == (
+        "pristine_relax_row1-out.cell predates this run: no relaxed structure "
+        "was written, so the previous run's geometry is still in place."
+    )
+
+
+def test_muon_controller_validate_artifacts_requires_the_muon(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _host = _muon_host_document(service, tmp_path)
+    job = _muon_job(service, document, "Site 1", "castep_muonium_relaxation")
+    run = CalculationRun(job_id=job.id)
+    controller = MuonRelaxationController(
+        _make_context(document=document), _stub_muon_deps(), _FakeMuonRelaxationView()
+    )
+    parsed = CastepResult(completed=True, total_energy=-1.0, geom_converged=True)
+
+    muonated_dir = tmp_path / "muonated"
+    muonated_dir.mkdir()
+    (muonated_dir / f"{job.label}-out.cell").write_text(_MUON_OUT_CELL_TEXT, encoding="utf-8")
+    muonless_dir = tmp_path / "muonless"
+    muonless_dir.mkdir()
+    (muonless_dir / f"{job.label}-out.cell").write_text(
+        "\n".join(
+            line for line in _MUON_OUT_CELL_TEXT.splitlines() if "h:mu" not in line.casefold()
+        ),
+        encoding="utf-8",
+    )
+
+    assert controller.validate_artifacts(
+        job, parsed, run, collect_job_artifacts(muonated_dir, job.label, want_out_cell=True)
+    ) is None
+    assert controller.validate_artifacts(
+        job, parsed, run, collect_job_artifacts(muonless_dir, job.label, want_out_cell=True)
+    ) == "Expected H:mu muon position was not found in Site 1-out.cell."
+    # The shared relaxation checks run first.
+    assert controller.validate_artifacts(
+        job, parsed, run, ParsedJobArtifacts(cell_missing=True)
+    ) == "Expected relaxed structure output was not found: Site 1-out.cell"
+    assert controller.validate_artifacts(
+        job, CastepResult(completed=True, geom_converged=False), run, ParsedJobArtifacts()
+    ) == "Geometry optimization did not satisfy CASTEP convergence criteria."
+
+
+def test_uep_controller_validate_artifacts_requires_den_fmt(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    job = _uep_job(service, document, "uep_row1")
+    run = CalculationRun(job_id=job.id)
+    output_dir = tmp_path / "job_out"
+    output_dir.mkdir()
+    parsed = CastepResult(completed=True, total_energy=-1.0)
+    missing = "Expected formatted density output was not found: uep_row1.den_fmt"
+
+    def _controller(directory):
+        context = _make_context(document=document, job_output_directory=lambda _job: directory)
+        return UepController(context, _stub_uep_deps(), _FakeUepView())
+
+    assert _controller(output_dir).validate_artifacts(job, parsed, run, _no_artifacts()) == missing
+    assert _controller(None).validate_artifacts(job, parsed, run, _no_artifacts()) == missing
+    (output_dir / "uep_row1.den_fmt").write_text("density", encoding="utf-8")
+    assert _controller(output_dir).validate_artifacts(job, parsed, run, _no_artifacts()) is None
+
+
+def test_quantum_controller_validate_artifacts_checks_phonon_jobs_only(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    controller = QuantumCorrectionsController(
+        _make_context(document=document), _stub_quantum_deps(), _FakeQuantumView()
+    )
+    singlepoint = _quantum_job(service, document, "quantum_singlepoint_s", QUANTUM_SINGLEPOINT_CALC_TYPE)
+    phonon = _quantum_job(service, document, "quantum_phonon_s", QUANTUM_PHONON_CALC_TYPE)
+    run = CalculationRun(job_id=phonon.id)
+    parsed = CastepResult(completed=True, total_energy=-1.0)
+
+    assert controller.validate_artifacts(
+        singlepoint, parsed, run, ParsedJobArtifacts(phonon_missing=True)
+    ) is None
+    assert controller.validate_artifacts(
+        phonon, parsed, run, ParsedJobArtifacts(phonon_missing=True)
+    ) == "Expected CASTEP phonon output was not found: quantum_phonon_s.phonon"
+    assert controller.validate_artifacts(
+        phonon, parsed, run, ParsedJobArtifacts(phonon_error="no Gamma point")
+    ) == "Failed to parse CASTEP phonon output: no Gamma point"
+    assert controller.validate_artifacts(phonon, parsed, run, _no_artifacts()) is None
+
+
+@pytest.mark.parametrize(
+    "calc_type", [NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE]
+)
+def test_energy_barriers_controller_validate_artifacts_checks_ts(
+    tmp_path: Path, calc_type: str
+) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "e.mufinder", "E")
+    controller = EnergyBarriersController(
+        _make_context(document=document), _stub_energy_barriers_deps(), lambda: None
+    )
+    job = _neb_job(service, document, "neb_path", calc_type)
+    run = CalculationRun(job_id=job.id)
+    parsed = CastepResult(completed=True, total_energy=-1.0)
+
+    assert controller.validate_artifacts(
+        job, parsed, run, ParsedJobArtifacts(ts_missing=True)
+    ) == "Expected CASTEP path output was not found: neb_path.ts"
+    # Under task farming the collector looked for the farmed name; report that.
+    assert controller.validate_artifacts(
+        job,
+        parsed,
+        run,
+        ParsedJobArtifacts(ts_missing=True, ts_path=tmp_path / "neb_path_farm001.ts"),
+    ) == "Expected CASTEP path output was not found: neb_path_farm001.ts"
+    assert controller.validate_artifacts(
+        job, parsed, run, ParsedJobArtifacts(ts_error="truncated band")
+    ) == "Failed to parse CASTEP path output: truncated band"
+    assert controller.validate_artifacts(job, parsed, run, _no_artifacts()) is None

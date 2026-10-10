@@ -21,17 +21,16 @@ Four features distinguish this controller from the others:
 - **``.ts`` transition-state result payload.**
   :meth:`EnergyBarriersController.build_result` parses the completed ``.ts`` file
   and contributes ``transition_state_file``, ``barrier_height_eV``, ``num_images``,
-  ``image_labels``, ``reaction_coordinates``, and ``image_energies_eV``. Following
-  the success-path-only convention, the failure guards (missing/unparseable
-  ``.ts``) stay inline in ``MainWindow._on_local_job_finished`` and abort the job
-  before this controller's ``build_result`` runs; ``build_result`` therefore
-  re-parses on the validated success path. Both the NEB and the
+  ``image_labels``, ``reaction_coordinates``, and ``image_energies_eV``.
+  :meth:`EnergyBarriersController.validate_artifacts` fails a job whose ``.ts``
+  is missing or unparseable before ``build_result`` runs, so ``build_result``
+  reads the carried, validated path. Both the NEB and the
   transition-state-search calc types are registered on :attr:`calc_types` so
   :meth:`handles_job` is coherent across the ``.ts``-producing pair (materialize
-  only creates NEB jobs today, but the inline guard and this payload handle both
-  identically); ``build_result`` returns an empty
+  only creates NEB jobs today, but ``validate_artifacts`` and this payload handle
+  both identically); ``build_result`` returns an empty
   :class:`~mufinder.app.workflow_controllers.base.ControllerResult` when the
-  ``.ts`` output cannot be resolved (mirroring the inline guard's abort).
+  carrier holds no parsed path.
 
 - **Lazily-created view (sanctioned constructor-shape deviation).** Unlike the
   other controllers, whose views exist at ``MainWindow.__init__``, the
@@ -469,6 +468,32 @@ class EnergyBarriersController(WorkflowJobController):
 
     # --- result contract ---
 
+    def validate_artifacts(
+        self,
+        job: Job,
+        parsed: CastepResult,
+        run: CalculationRun,
+        artifacts: ParsedJobArtifacts,
+    ) -> str | None:
+        """Fail an NEB or transition-state job whose ``.ts`` is missing or unparseable.
+
+        Reads the carrier's ``ts_missing`` / ``ts_error``. The missing-file
+        message names the file the collector looked for (``artifacts.ts_path``):
+        under task farming that is ``<seed>_farm001.ts``, which CASTEP writes in
+        place of ``<seed>.ts``.
+        """
+
+        if artifacts.ts_missing:
+            expected_ts = (
+                artifacts.ts_path.name
+                if artifacts.ts_path is not None
+                else f"{self._context.job_seed_name(job)}.ts"
+            )
+            return f"Expected CASTEP path output was not found: {expected_ts}"
+        if artifacts.ts_error is not None:
+            return f"Failed to parse CASTEP path output: {artifacts.ts_error}"
+        return None
+
     def build_result(
         self,
         job: Job,
@@ -478,8 +503,8 @@ class EnergyBarriersController(WorkflowJobController):
     ) -> ControllerResult:
         """Contribute the ``.ts`` transition-state payload for a completed NEB job.
 
-        The inline ``_on_local_job_finished`` guard has already verified the ``.ts``
-        file exists and parses (aborting the job on a missing file or
+        :meth:`validate_artifacts` has already verified the ``.ts`` file exists
+        and parses (failing the job on a missing file or
         ``TransitionStateParseError``), so the carried ``artifacts.transition_state``
         is present on this success path. The file is parsed **once** on the runner
         worker thread; this controller consumes the carried path with no second
