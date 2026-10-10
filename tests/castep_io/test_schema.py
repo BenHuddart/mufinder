@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -20,8 +21,13 @@ from mufinder.castep_io import (
 )
 import mufinder.castep_io.schema as schema_module
 from mufinder.castep_io.schema import (
+    BlockSchema,
     CatalogSourceInfo,
+    KeywordSpec,
     SOURCE_KEYWORDS,
+    _starter_alias_map,
+    _starter_parse_requirements,
+    _starter_sequence,
     canonical_keyword_name,
     get_keyword_spec,
     keyword_catalog_source_info,
@@ -336,3 +342,260 @@ def test_starter_catalog_offers_spin_polarized_but_not_net_spin_in_every_workflo
     spin_override = KEYWORD_OVERRIDES["param"]["spin"]
     assert spin_override["advanced_workflows"] == ALL_WORKFLOWS
     assert not spin_override.get("basic_workflows")
+
+
+# --- Keyword specs inferred from a CASTEP catalog ------------------------------
+
+
+def _entry(option_type: str, docstring: str = "Example") -> dict[str, str]:
+    return {"option_type": option_type, "level": "Basic", "docstring": docstring}
+
+
+def _refresh_from_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    cell: dict[str, dict[str, str]],
+    param: dict[str, dict[str, str]],
+) -> None:
+    catalog = tmp_path / "castep_keywords.json"
+    catalog.write_text(
+        json.dumps({"castep_version": "test", "cell": cell, "param": param}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MUFINDER_CASTEP_KEYWORDS_JSON", str(catalog))
+    refresh_keyword_catalog()
+
+
+def _param(name: str) -> KeywordSpec:
+    spec = get_keyword_spec("param", name)
+    assert spec is not None
+    return spec
+
+
+def test_catalog_docstrings_populate_labels_examples_and_allowed_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docstring = (
+        "First sentence. Second sentence.\n"
+        "Allowed values: TRUE or FALSE, AUTO\n"
+        "Default value: TRUE\n"
+        "Example: FLAG : TRUE\n"
+    )
+    _refresh_from_catalog(
+        tmp_path,
+        monkeypatch,
+        cell={},
+        param={
+            "xc_test_flag": _entry("String", docstring),
+            "test_free_text": _entry("String", "Allowed values: libxc-backed supported values; see docs"),
+        },
+    )
+
+    spec = _param("xc_test_flag")
+    assert spec.label == "XC Test Flag"
+    assert spec.description == "First sentence."
+    assert spec.example == "FLAG : TRUE"
+    assert spec.allowed_values == ("TRUE", "FALSE", "AUTO")
+    assert spec.value_type == "enum"
+    assert spec.default_value == "TRUE"
+    assert _param("test_free_text").allowed_values == ()
+    assert _param("test_free_text").value_type == "text"
+
+
+def test_catalog_docstrings_set_typed_defaults_and_units(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _refresh_from_catalog(
+        tmp_path,
+        monkeypatch,
+        cell={},
+        param={
+            "test_true": _entry("Boolean (Logical)", "Default value: TRUE"),
+            "test_false": _entry("Boolean (Logical)", "Default value: false"),
+            "test_enum": _entry("String", "Allowed values: PBE, LDA\nDefault value: pbe"),
+            "test_int": _entry("Integer", "Default value: 42"),
+            "test_physical": _entry("Physical", "Default value: 0.05 eV"),
+            "test_example_unit": _entry("Physical", "Example: CUT_OFF_ENERGY : 340 eV"),
+            "test_real": _entry("Real", "Default value: 1e-6"),
+            "test_text": _entry("String", "Default value: text-value"),
+            "test_workflow_text": _entry("String", "Default value: set by workflow"),
+        },
+    )
+
+    assert _param("test_true").default_value is True
+    assert _param("test_false").default_value is False
+    assert _param("test_enum").default_value == "PBE"
+    assert _param("test_int").default_value == 42
+    assert _param("test_physical").default_value == pytest.approx(0.05)
+    assert _param("test_physical").unit == "eV"
+    assert _param("test_example_unit").unit == "eV"
+    assert _param("test_real").unit is None
+    assert _param("test_real").value_type == "float"
+    assert _param("test_text").default_value == "text-value"
+    assert _param("test_workflow_text").default_value is None
+
+
+def test_catalog_keyword_names_set_value_types_categories_and_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _refresh_from_catalog(
+        tmp_path,
+        monkeypatch,
+        cell={
+            "test_kpoint_grid": _entry("Integer Vector"),
+            "symmetry_test": _entry("Defined"),
+            "species_test": _entry("Block"),
+        },
+        param={
+            "geom_test_tol": _entry("Physical"),
+            "smearing_test": _entry("Physical"),
+            "md_test_temperature": _entry("Physical"),
+            "phonon_test_grid": _entry("Integer Vector"),
+            "test_general": _entry("String"),
+        },
+    )
+
+    grid = get_keyword_spec("cell", "test_kpoint_grid")
+    flag = get_keyword_spec("cell", "symmetry_test")
+    block = get_keyword_spec("cell", "species_test")
+    assert grid is not None and (grid.kind, grid.value_type, grid.category) == ("scalar", "int_triplet", "kpoints")
+    assert flag is not None and (flag.kind, flag.value_type, flag.category) == ("flag", "bool", "symmetry")
+    assert block is not None and (block.kind, block.category) == ("block", "pseudopotentials")
+    # A block with no curated layout keeps raw rows.
+    assert block.block_schema is None
+
+    assert _param("geom_test_tol").category == "geometry"
+    assert _param("geom_test_tol").allowed_tasks == ("GEOMETRYOPTIMIZATION",)
+    assert _param("smearing_test").category == "electronic"
+    assert _param("md_test_temperature").allowed_tasks == ("MOLECULARDYNAMICS",)
+    assert _param("phonon_test_grid").allowed_tasks == ("PHONON", "PHONON+EFIELD", "THERMODYNAMICS")
+    assert _param("test_general").allowed_tasks == ()
+    assert _param("test_general").category == "general"
+
+
+def test_catalog_blocks_pick_up_curated_layouts_and_aliases_resolve(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _refresh_from_catalog(
+        tmp_path,
+        monkeypatch,
+        cell={"positions_frac": _entry("Block"), "lattice_abc": _entry("Block")},
+        param={
+            "test_polarisation": _entry("String", "Default value: Determined from TEST_POLARIZATION"),
+            "test_polarization": _entry("String"),
+            "test_isation": _entry("String"),
+            "test_ization": _entry("String"),
+            "spin_polarised": _entry("Boolean (Logical)"),
+            "spin_polarized": _entry("Boolean (Logical)"),
+            "test_polarised": _entry("String"),
+            "test_polarized": _entry("String"),
+        },
+    )
+
+    positions = get_keyword_spec("cell", "positions_frac")
+    lattice_abc = get_keyword_spec("cell", "lattice_abc")
+    assert positions is not None and isinstance(positions.block_schema, BlockSchema)
+    assert lattice_abc is not None and isinstance(lattice_abc.block_schema, BlockSchema)
+    assert lattice_abc.block_schema.fixed_row_count == 2
+    assert lattice_abc.block_schema.row_labels == ("Lengths", "Angles")
+
+    assert canonical_keyword_name("param", "test_polarisation") == "test_polarization"
+    assert canonical_keyword_name("param", "test_isation") == "test_ization"
+    assert canonical_keyword_name("param", "spin_polarised") == "spin_polarized"
+    assert canonical_keyword_name("param", "test_polarised") == "test_polarized"
+    assert "test_polarisation" in _param("test_polarization").aliases
+
+
+def test_refresh_skips_unusable_catalogs_and_reports_explicit_ones(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    custom_catalog = tmp_path / "custom.json"
+    custom_catalog.write_text(
+        json.dumps(
+            {
+                "castep_version": "test",
+                "cell": {"ABC": _entry("Text")},
+                "param": {"TASK": _entry("String")},
+            }
+        ),
+        encoding="utf-8",
+    )
+    # A file that is not a keyword catalog is skipped, not fatal: the next
+    # candidate is used and the reason is kept for the UI.
+    broken_catalog = tmp_path / "broken.json"
+    broken_catalog.write_text(json.dumps({"cell": [], "param": {}}), encoding="utf-8")
+    monkeypatch.setattr(
+        schema_module,
+        "_candidate_catalog_sources",
+        lambda: (
+            CatalogSourceInfo(path=broken_catalog, origin="env_json:test"),
+            CatalogSourceInfo(path=custom_catalog, origin="setup"),
+        ),
+    )
+
+    refresh_keyword_catalog()
+
+    status = schema_module.keyword_catalog_status()
+    assert (status.origin, status.path, status.castep_version) == ("setup", custom_catalog, "test")
+    assert get_keyword_spec("cell", "abc") is not None
+    assert status.issue is not None
+    assert "broken.json" in status.issue
+    assert "no 'cell' keyword section" in status.issue
+
+    corrupt_catalog = tmp_path / "corrupt.json"
+    corrupt_catalog.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(
+        schema_module,
+        "_candidate_catalog_sources",
+        lambda: (
+            CatalogSourceInfo(path=corrupt_catalog, origin="setup"),
+            CatalogSourceInfo(path=tmp_path / "missing.json", origin="env_json:test"),
+            CatalogSourceInfo(path=tmp_path / "undiscovered.json", origin="auto_discovery"),
+        ),
+    )
+
+    with pytest.raises(FileNotFoundError, match="requires a local CASTEP metadata file"):
+        refresh_keyword_catalog()
+    issue = schema_module.keyword_catalog_status().issue
+    assert issue is not None
+    assert "is not valid JSON" in issue
+    assert "missing.json' no longer exists" in issue
+    # Auto-discovery misses are routine, not something to report.
+    assert "undiscovered.json" not in issue
+
+
+def test_starter_catalog_entries_parse_requirement_strings_and_renamed_keywords() -> None:
+    # The bundled starter catalog lists requirements as YAML lists and has no
+    # renamed entries, so these spellings are exercised on the entry parsers.
+    alias_map = {
+        "spin_polarised": "spin_polarized",
+        "calculate_polarisation": "calculate_polarization",
+    }
+
+    assert _starter_sequence("TASK=GEOMETRYOPTIMIZATION") == ("TASK=GEOMETRYOPTIMIZATION",)
+    requires, requires_any_of, allowed_tasks = _starter_parse_requirements(
+        "param",
+        ["TASK=GEOMETRYOPTIMIZATION", "spin_polarised", "calculate_polarisation or spin_polarised"],
+        alias_map=alias_map,
+    )
+    assert requires == ("spin_polarized",)
+    assert requires_any_of == ("calculate_polarization", "spin_polarized")
+    assert allowed_tasks == ("GEOMETRYOPTIMIZATION",)
+
+    starter_aliases = _starter_alias_map(
+        "param",
+        [
+            {"source_name": "calculate_polarisation", "canonical_name": "calculate_polarization"},
+            {"source_name": "calculate_polarization", "canonical_name": "calculate_polarization"},
+            {"source_name": "spin_polarised", "canonical_name": "spin_polarised"},
+            {"source_name": "spin_polarized", "canonical_name": "spin_polarized"},
+        ],
+    )
+    assert starter_aliases["calculate_polarisation"] == "calculate_polarization"
+    assert starter_aliases["spin_polarised"] == "spin_polarized"

@@ -1,18 +1,10 @@
-"""Additional coverage for runtime and serialization helpers."""
+"""Additional coverage for runtime, scheduler and cluster-setup helpers."""
 
 from __future__ import annotations
 
 import pytest
 
 import mufinder.main as main_module
-from mufinder.castep_io.param_writer import (
-    _format_atom,
-    _render_block,
-    _render_scalar,
-    _render_value,
-    write_param,
-)
-from mufinder.castep_io.types import BlockSection, KeywordAssignment, ParamFile, ValueWithUnit
 from mufinder.cluster_setup import (
     ClusterConfig,
     _cluster_from_settings,
@@ -125,34 +117,6 @@ def test_main_helpers_cover_process_and_visibility_branches(monkeypatch: pytest.
     main_module._wait_for_splash_exposed(object(), splash, timeout_ms=40)
 
     assert process_calls == [25, 25, 10]
-
-
-def test_param_writer_helpers_cover_block_scalar_and_value_rendering() -> None:
-    param_file = ParamFile(
-        keywords=(
-            KeywordAssignment("task", "SINGLEPOINT"),
-            KeywordAssignment("spin_polarized", True),
-            KeywordAssignment("cut_off_energy", ValueWithUnit(350.0, "eV")),
-        ),
-    )
-
-    rendered = write_param(param_file)
-
-    assert rendered.splitlines()[:3] == [
-        "TASK : SINGLEPOINT",
-        "CUT_OFF_ENERGY : 350 eV",
-        "SPIN_POLARIZED : TRUE",
-    ]
-
-    assert _render_scalar(KeywordAssignment("xc_functional", "PBE")) == "XC_FUNCTIONAL : PBE"
-    assert _render_block(BlockSection("species_pot", (("Si", "Si.recpot"),))) == (
-        "%BLOCK SPECIES_POT\nSi Si.recpot\n%ENDBLOCK SPECIES_POT"
-    )
-    assert _render_value(ValueWithUnit((1, 2, 3), "bohr")) == "1 2 3 bohr"
-    assert _render_value((True, 3.5, "A")) == "TRUE 3.5 A"
-    assert _format_atom(False) == "FALSE"
-    with pytest.raises(ValueError, match="may not be None"):
-        _format_atom(None)
 
 
 def test_scheduler_helpers_cover_status_resolution_and_error_paths() -> None:
