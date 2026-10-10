@@ -323,7 +323,7 @@ class TestMergingABatch:
         document, outcome, merged = self._import_into(window, tmp_path)
 
         assert merged is True
-        definition = window._active_muon_relaxation_definition()
+        definition = window._muon_relaxation_controller.active_definition()
         assert definition is not None
         mapping = definition.parameters["job_ids_by_label"]
         assert len(mapping) == 2
@@ -339,7 +339,7 @@ class TestMergingABatch:
         _document, _outcome, _merged = self._import_into(window, tmp_path)
 
         config = window._deserialize_muon_relaxation_config(
-            window._active_muon_relaxation_definition().parameters["configuration"]
+            window._muon_relaxation_controller.active_definition().parameters["configuration"]
         )
         assert config is not None
         assert len(config.rows) == 2
@@ -356,7 +356,7 @@ class TestMergingABatch:
         _document, _outcome, _merged = self._import_into(window, tmp_path)
 
         definition_rows = window._deserialize_muon_relaxation_config(
-            window._active_muon_relaxation_definition().parameters["configuration"]
+            window._muon_relaxation_controller.active_definition().parameters["configuration"]
         ).rows
         form_rows = window._muon_relaxation_form_config().rows
 
@@ -393,7 +393,7 @@ class TestMergingABatch:
         and sever every existing row's binding."""
 
         document, _outcome, _merged = self._import_into(window, tmp_path)
-        definition = window._active_muon_relaxation_definition()
+        definition = window._muon_relaxation_controller.active_definition()
         before = dict(definition.parameters["job_ids_by_label"])
 
         from mufinder.services.legacy_import import scan_legacy_folder
@@ -415,7 +415,7 @@ class TestMergingABatch:
             outcome, output_directory=document.project_root / "files" / "muon_relaxation"
         )
 
-        after = window._active_muon_relaxation_definition().parameters["job_ids_by_label"]
+        after = window._muon_relaxation_controller.active_definition().parameters["job_ids_by_label"]
         assert before.items() <= after.items()
         assert len(after) == 3
 
@@ -553,7 +553,7 @@ class TestSignatureStability:
 
     def _signatures(self, window: MainWindow):
         definition_rows = window._deserialize_muon_relaxation_config(
-            window._active_muon_relaxation_definition().parameters["configuration"]
+            window._muon_relaxation_controller.active_definition().parameters["configuration"]
         ).rows
         form_rows = window._muon_relaxation_form_config().rows
         return (

@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job
 from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
 
@@ -43,13 +43,11 @@ class ConvergenceCutoffDeps:
     the shared :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`.
     """
 
-    active_convergence_definition: Callable[[], CalculationDefinition | None]
     deserialize_convergence_config: Callable[[object], ConvergenceConfig | None]
     sync_equivalent_convergence_cutoff_mappings: Callable[[CalculationDefinition], None]
     definition_for_convergence_cutoff: Callable[
         [float], tuple[CalculationDefinition | None, ConvergenceConfig | None]
     ]
-    job_for_definition_cutoff: Callable[[CalculationDefinition, float], Job | None]
     cutoff_key: Callable[[float], str]
     max_stress_for_job: Callable[[UUID], float | None]
 
@@ -58,6 +56,8 @@ class ConvergenceCutoffController(WorkflowJobController):
     """Controller for the cutoff-energy convergence sweep."""
 
     calc_types = frozenset({"castep_convergence_cutoff"})
+    stage = WorkflowStage.CONVERGENCE_CUTOFF
+    active_key = "active_convergence_cutoff_definition_id"
     no_ready_message = (
         "Only configured cutoffs that have not yet been submitted can be submitted."
     )
@@ -99,7 +99,7 @@ class ConvergenceCutoffController(WorkflowJobController):
                 ),
             )
 
-        definition = self._deps.active_convergence_definition()
+        definition = self.active_definition()
         if definition is None:
             return states
 
@@ -117,7 +117,7 @@ class ConvergenceCutoffController(WorkflowJobController):
             return states
 
         for cutoff in config.cutoff_energies:
-            job = self._deps.job_for_definition_cutoff(definition, cutoff)
+            job = self.job_for_cutoff(definition, cutoff)
             if job is None:
                 states[cutoff] = SweepPointRunState(
                     status="ready",
@@ -174,7 +174,7 @@ class ConvergenceCutoffController(WorkflowJobController):
             definition, config = self._deps.definition_for_convergence_cutoff(cutoff)
             if definition is None or config is None:
                 continue
-            existing = self._deps.job_for_definition_cutoff(definition, cutoff)
+            existing = self.job_for_cutoff(definition, cutoff)
             if existing is not None:
                 created.append(existing)
                 if existing.status != JobStatus.DEFINED:
@@ -222,7 +222,7 @@ class ConvergenceCutoffController(WorkflowJobController):
                 cutoff = desired_labels.get(job_spec.name)
                 if cutoff is None:
                     continue
-                existing = self._deps.job_for_definition_cutoff(definition, cutoff)
+                existing = self.job_for_cutoff(definition, cutoff)
                 if existing is not None:
                     if existing.status == JobStatus.DEFINED:
                         write_job_directory(job_spec, output_root)
@@ -245,6 +245,41 @@ class ConvergenceCutoffController(WorkflowJobController):
             seen.add(job.id)
             deduped.append(job)
         return deduped
+
+    def job_for_cutoff(self, definition: CalculationDefinition, cutoff: float) -> Job | None:
+        """Return the job ``definition`` binds to its ``cutoff`` sweep point.
+
+        Definitions carrying a ``job_ids_by_cutoff`` mapping answer from it
+        alone. A definition without one (written before the mapping existed)
+        falls back to the newest job whose label matches the cutoff's position
+        in the definition's ``job_labels``.
+        """
+
+        if isinstance(definition.parameters.get("job_ids_by_cutoff"), dict):
+            return self.job_for_key(
+                definition, self._deps.cutoff_key(cutoff), mapping_name="job_ids_by_cutoff"
+            )
+
+        document = self._context.document()
+        if document is None:
+            return None
+        labels = definition.parameters.get("job_labels", [])
+        configuration = self._deps.deserialize_convergence_config(
+            definition.parameters.get("configuration", {})
+        )
+        if not isinstance(labels, list) or configuration is None:
+            return None
+        try:
+            index = list(configuration.cutoff_energies).index(float(cutoff))
+        except ValueError:
+            return None
+        if index >= len(labels):
+            return None
+        label = str(labels[index])
+        for job in reversed(tuple(document.jobs.values())):
+            if job.label == label:
+                return job
+        return None
 
     # --- view contract ---
 

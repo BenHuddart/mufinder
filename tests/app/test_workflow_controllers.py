@@ -603,6 +603,51 @@ def test_default_is_ready_uses_workflow_row_predicate() -> None:
     assert controller.is_ready({"k": _State("failed")}, "k") is False
 
 
+class _StagedFakeController(_FakeController):
+    stage = WorkflowStage.UEP
+    active_key = "active_fake_definition_id"
+
+
+def test_base_definition_lookups_read_the_context_document(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from mufinder.domain.models import CalculationDefinition
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "p.mufinder", "P")
+    older = CalculationDefinition(
+        workflow_stage=WorkflowStage.UEP, created_at=datetime(2025, 1, 1, tzinfo=UTC)
+    )
+    newer = CalculationDefinition(
+        workflow_stage=WorkflowStage.UEP, created_at=datetime(2025, 1, 2, tzinfo=UTC)
+    )
+    for definition in (older, newer):
+        document.calculations[definition.id] = definition
+    job = service.add_job(document, label="row", workflow_stage=WorkflowStage.UEP, calc_type="fake_calc")
+    older.parameters["job_ids_by_label"] = {"row": str(job.id)}
+    controller = _StagedFakeController(_make_context(document=document), states={})
+
+    assert controller.definitions() == [newer, older]
+    assert controller.active_definition() is newer
+    document.ui_state["active_fake_definition_id"] = str(older.id)
+    assert controller.active_definition() is older
+    assert controller.job_for_key(older, "row") is job
+    assert controller.job_for_key(older, "row", calc_type="other_calc") is None
+    assert controller.job_for_key(newer, "row") is None
+
+
+def test_base_definition_lookups_without_a_document_or_stage(tmp_path: Path) -> None:
+    staged = _StagedFakeController(_make_context(document=None), states={})
+    assert staged.definitions() == []
+    assert staged.active_definition() is None
+    assert staged.job_for_key(None, "row") is None
+
+    document = ProjectService().create_project(tmp_path / "p.mufinder", "P")
+    unstaged = _FakeController(_make_context(document=document), states={})
+    assert unstaged.definitions() == []
+    assert unstaged.active_definition() is None
+
+
 # --------------------------------------------------------------------------- #
 # Base result dispatch: merge_controller_result
 # --------------------------------------------------------------------------- #
@@ -744,11 +789,9 @@ def _stub_deps() -> ConvergenceCutoffDeps:
     reach the definition-backed paths."""
 
     return ConvergenceCutoffDeps(
-        active_convergence_definition=lambda: None,
         deserialize_convergence_config=lambda _payload: None,
         sync_equivalent_convergence_cutoff_mappings=lambda _definition: None,
         definition_for_convergence_cutoff=lambda _cutoff: (None, None),
-        job_for_definition_cutoff=lambda _definition, _cutoff: None,
         cutoff_key=lambda value: f"{float(value):.12g}",
         max_stress_for_job=lambda _job_id: None,
     )
@@ -776,11 +819,6 @@ def _cutoff_context_and_deps(
     def definition_for_cutoff(cutoff):
         return active_definition, document.ui_state.get("_test_config")
 
-    def job_for_definition_cutoff(definition, cutoff):
-        mapping = definition.parameters.get("job_ids_by_cutoff", {}) if definition else {}
-        job_id = mapping.get(f"{float(cutoff):.12g}")
-        return document.jobs.get(UUID(job_id)) if job_id else None
-
     context = WorkflowControllerContext(
         document=lambda: document,
         project_service=service,
@@ -801,11 +839,9 @@ def _cutoff_context_and_deps(
         max_force_for_job=lambda _job_id: None,
     )
     deps = ConvergenceCutoffDeps(
-        active_convergence_definition=lambda: active_definition,
         deserialize_convergence_config=deserialize,
         sync_equivalent_convergence_cutoff_mappings=lambda _d: None,
         definition_for_convergence_cutoff=definition_for_cutoff,
-        job_for_definition_cutoff=job_for_definition_cutoff,
         cutoff_key=lambda value: f"{float(value):.12g}",
         max_stress_for_job=lambda _job_id: None,
     )
@@ -1040,7 +1076,6 @@ def _stub_kpoint_deps() -> ConvergenceKpointDeps:
     reach the definition-backed paths."""
 
     return ConvergenceKpointDeps(
-        active_kpoint_definition=lambda: None,
         deserialize_convergence_config=lambda _payload: None,
         sync_equivalent_convergence_kpoint_mappings=lambda _definition: None,
         grid_key=_grid_key,
@@ -1061,7 +1096,7 @@ def _kpoint_context_and_deps(
     closely enough to drive materialize/build_states without a MainWindow.
     """
 
-    active_definition = next(iter(document.calculations.values()), None)
+    next(iter(document.calculations.values()), None)
 
     def deserialize(payload):
         return document.ui_state.get("_test_config")
@@ -1086,7 +1121,6 @@ def _kpoint_context_and_deps(
         max_force_for_job=lambda _job_id: None,
     )
     deps = ConvergenceKpointDeps(
-        active_kpoint_definition=lambda: active_definition,
         deserialize_convergence_config=deserialize,
         sync_equivalent_convergence_kpoint_mappings=lambda _d: None,
         grid_key=_grid_key,
@@ -1412,13 +1446,11 @@ Si 0.0 0.0 0.0
 
 def _stub_pristine_deps(**overrides) -> PristineRelaxationDeps:
     base = dict(
-        active_pristine_relaxation_definition=lambda: None,
         deserialize_pristine_relaxation_config=lambda _payload: None,
         serialize_pristine_relaxation_config=_serialize_pristine_config,
         sync_equivalent_pristine_relaxation_mappings=lambda _definition: None,
         pristine_relaxation_form_config=lambda: None,
         pristine_relaxation_row_signature=lambda _row: (),
-        job_for_pristine_relaxation_label=lambda _definition, _label: None,
         expand_pristine_relaxation_jobs=lambda _definition, _config: None,
     )
     base.update(overrides)
@@ -1489,7 +1521,7 @@ def test_pristine_controller_build_result_parses_lattice_and_creates_structure(
     )
     service.add_structure(document, host)
 
-    definition = service.register_pristine_relaxation_definition(
+    service.register_pristine_relaxation_definition(
         document,
         host_structure_id=host.id,
         parameters={"name_prefix": "pristine_relax", "rows": []},
@@ -1506,7 +1538,6 @@ def test_pristine_controller_build_result_parses_lattice_and_creates_structure(
     (output_dir / f"{job.label}-out.cell").write_text(_OUT_CELL_TEXT, encoding="utf-8")
 
     deps = _stub_pristine_deps(
-        active_pristine_relaxation_definition=lambda: definition,
     )
     context = _make_context(
         document=document,
@@ -1607,7 +1638,7 @@ def test_pristine_controller_recompletion_updates_derived_structure_in_place(
         fractional_positions=[[0.0, 0.0, 0.0]],
     )
     service.add_structure(document, host)
-    definition = service.register_pristine_relaxation_definition(
+    service.register_pristine_relaxation_definition(
         document,
         host_structure_id=host.id,
         parameters={"name_prefix": "pristine_relax", "rows": []},
@@ -1626,7 +1657,7 @@ def test_pristine_controller_recompletion_updates_derived_structure_in_place(
     )
     controller = PristineRelaxationController(
         context,
-        _stub_pristine_deps(active_pristine_relaxation_definition=lambda: definition),
+        _stub_pristine_deps(),
         _FakeRelaxationView(),
     )
     parsed = CastepResult(completed=True, total_energy=-11.0, warnings=())
@@ -1835,11 +1866,6 @@ def test_pristine_controller_materialize_writes_job_ids_by_label(tmp_path: Path)
         output_directory=output_root,
     )
 
-    def job_for_label(defn, label):
-        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
-        job_id = mapping.get(label)
-        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
-
     def expand(defn, cfg):
         return expand_pristine_relaxation_jobs(
             host_structure=host,
@@ -1850,9 +1876,7 @@ def test_pristine_controller_materialize_writes_job_ids_by_label(tmp_path: Path)
         )
 
     deps = _stub_pristine_deps(
-        active_pristine_relaxation_definition=lambda: definition,
         deserialize_pristine_relaxation_config=lambda _payload: config,
-        job_for_pristine_relaxation_label=job_for_label,
         expand_pristine_relaxation_jobs=expand,
     )
     context = _make_context(
@@ -1896,17 +1920,12 @@ def test_pristine_controller_submit_local_reaches_local_backend(tmp_path: Path) 
         rows=(PristineRelaxationRow(label="row1"),),
     )
     output_root = document.project_root / "files" / "pristine_relaxation"
-    definition = service.register_pristine_relaxation_definition(
+    service.register_pristine_relaxation_definition(
         document,
         host_structure_id=host.id,
         parameters={"name_prefix": "pristine_relax", "rows": [{"label": "row1"}]},
         output_directory=output_root,
     )
-
-    def job_for_label(defn, label):
-        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
-        job_id = mapping.get(label)
-        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
 
     def expand(defn, cfg):
         return expand_pristine_relaxation_jobs(
@@ -1918,11 +1937,9 @@ def test_pristine_controller_submit_local_reaches_local_backend(tmp_path: Path) 
         )
 
     deps = _stub_pristine_deps(
-        active_pristine_relaxation_definition=lambda: definition,
         deserialize_pristine_relaxation_config=lambda _payload: config,
         pristine_relaxation_form_config=lambda: config,
         pristine_relaxation_row_signature=lambda row: (row.label,),
-        job_for_pristine_relaxation_label=job_for_label,
         expand_pristine_relaxation_jobs=expand,
     )
 
@@ -2010,11 +2027,6 @@ def _pristine_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
         }
     )
 
-    def job_for_label(defn, label):
-        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
-        raw_job_id = mapping.get(label)
-        return document.jobs.get(UUID(raw_job_id)) if isinstance(raw_job_id, str) else None
-
     def expand(_defn, cfg):
         return expand_pristine_relaxation_jobs(
             host_structure=host,
@@ -2025,7 +2037,6 @@ def _pristine_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
         )
 
     deps = _stub_pristine_deps(
-        active_pristine_relaxation_definition=lambda: definition,
         deserialize_pristine_relaxation_config=_deserialize_pristine_config,
         pristine_relaxation_form_config=lambda: _deserialize_pristine_config(
             view.collect_state()
@@ -2034,7 +2045,6 @@ def _pristine_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
             tuple(sorted(row.parameter_values.items())),
             tuple(row.added_advanced),
         ),
-        job_for_pristine_relaxation_label=job_for_label,
         expand_pristine_relaxation_jobs=expand,
     )
     return document, definition, job, deps, view, output_root
@@ -2156,7 +2166,6 @@ def test_pristine_controller_update_row_parameters_without_definition_or_config(
     assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is False
 
     unparseable = _stub_pristine_deps(
-        active_pristine_relaxation_definition=lambda: definition,
         deserialize_pristine_relaxation_config=lambda _payload: None,
     )
     controller = _pristine_edit_controller(
@@ -2576,7 +2585,6 @@ def _stub_muon_deps(**overrides) -> MuonRelaxationDeps:
     from mufinder.app.relaxation_adapter import muon_charge_state_prefix
 
     base = dict(
-        active_muon_relaxation_definition=lambda: None,
         deserialize_muon_relaxation_config=lambda _payload: None,
         serialize_muon_relaxation_config=_serialize_muon_config,
         sync_equivalent_muon_relaxation_mappings=lambda _definition: None,
@@ -2586,7 +2594,6 @@ def _stub_muon_deps(**overrides) -> MuonRelaxationDeps:
         muon_relaxation_row_key=(
             lambda row: f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
         ),
-        job_for_muon_relaxation_label=lambda _definition, _label, _charge_state: None,
         handle_site_host_mismatch=lambda _mismatch: False,
         muon_relaxation_definition_and_row_for_job=lambda _job: (None, None),
         muon_fractional_position_from_cell=_real_muon_position_from_cell,
@@ -2620,6 +2627,38 @@ def _muon_host_document(service: ProjectService, tmp_path: Path):
     service.add_structure(document, host)
     document.project.host_structure_id = host.id
     return document, host
+
+
+def test_muon_controller_job_for_label_checks_charge_state_calc_types(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    definition = service.register_muon_relaxation_definition(
+        document,
+        input_structure_id=host.id,
+        parameters={"rows": []},
+        output_directory=document.project_root / "files" / "muon_relaxation",
+    )
+    positive = _muon_job(service, document, "Site 1", "castep_positivemuon_relaxation")
+    muonium = _muon_job(service, document, "Site 2", "castep_muonium_relaxation")
+    pristine = _muon_job(service, document, "Site 3", "castep_pristine_relaxation")
+    definition.parameters["job_ids_by_label"] = {
+        "positivemuon:Site 1": str(positive.id),
+        # A charge-qualified key bound to the wrong charge state's job.
+        "muonium:Site 1": str(positive.id),
+        # A bare legacy key accepts any muon-relaxation calc type.
+        "Site 2": str(muonium.id),
+        "Site 3": str(pristine.id),
+    }
+    controller = MuonRelaxationController(
+        _make_context(document=document), _stub_muon_deps(), _FakeMuonRelaxationView()
+    )
+
+    assert controller.active_definition() is definition
+    assert controller.job_for_label(definition, "Site 1", "positive_muon") is positive
+    assert controller.job_for_label(definition, "Site 1", "muonium") is None
+    assert controller.job_for_label(definition, "Site 2", "positive_muon") is muonium
+    assert controller.job_for_label(definition, "Site 2") is muonium
+    assert controller.job_for_label(definition, "Site 3") is None
 
 
 def test_muon_controller_handles_both_charge_state_calc_types(tmp_path: Path) -> None:
@@ -2706,7 +2745,6 @@ def test_muon_controller_pre_submit_check_blocks_submission(tmp_path: Path) -> N
     mismatches: list[object] = []
     form_config_calls: list[bool] = []
     deps = _stub_muon_deps(
-        active_muon_relaxation_definition=lambda: definition,
         handle_site_host_mismatch=lambda mismatch: (mismatches.append(mismatch), False)[1],
         muon_relaxation_form_config=lambda: (form_config_calls.append(True), None)[1],
     )
@@ -2751,7 +2789,6 @@ def test_muon_controller_pre_submit_check_passes_when_sites_match_host(
 
     mismatches: list[object] = []
     deps = _stub_muon_deps(
-        active_muon_relaxation_definition=lambda: definition,
         handle_site_host_mismatch=lambda mismatch: (mismatches.append(mismatch), False)[1],
     )
     local = _RecordingBackend()
@@ -2796,9 +2833,7 @@ def _muon_two_row_submission_fixture(service: ProjectService, tmp_path: Path):
     """Document + config with one positive-muon and one muonium row, wired for
     real materialization through expand_muon_relaxation_jobs."""
 
-    from uuid import UUID
 
-    from mufinder.app.relaxation_adapter import muon_charge_state_prefix
     from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow
     from mufinder.domain.models import MuonSite
 
@@ -2842,23 +2877,9 @@ def _muon_two_row_submission_fixture(service: ProjectService, tmp_path: Path):
         output_directory=output_root,
     )
 
-    def job_for_label(defn, label, charge_state):
-        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
-        keys = (
-            [f"{muon_charge_state_prefix(charge_state)}:{label}"] if charge_state else []
-        )
-        keys.append(label)
-        for key in keys:
-            job_id = mapping.get(key)
-            if isinstance(job_id, str):
-                return document.jobs.get(UUID(job_id))
-        return None
-
     deps = _stub_muon_deps(
-        active_muon_relaxation_definition=lambda: definition,
         deserialize_muon_relaxation_config=lambda _payload: config,
         muon_relaxation_form_config=lambda: config,
-        job_for_muon_relaxation_label=job_for_label,
     )
     return document, definition, deps, output_root
 
@@ -2986,22 +3007,7 @@ def _muon_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
 
     view = _FakeMuonRelaxationView(_serialize_muon_config(config))
 
-    def job_for_label(defn, label, charge_state):
-        from mufinder.app.relaxation_adapter import muon_charge_state_prefix
-
-        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
-        keys = (
-            [f"{muon_charge_state_prefix(charge_state)}:{label}"] if charge_state else []
-        )
-        keys.append(label)
-        for key in keys:
-            raw_job_id = mapping.get(key)
-            if isinstance(raw_job_id, str):
-                return document.jobs.get(UUID(raw_job_id))
-        return None
-
     deps = _stub_muon_deps(
-        active_muon_relaxation_definition=lambda: definition,
         deserialize_muon_relaxation_config=_deserialize_muon_config,
         muon_relaxation_form_config=lambda: _deserialize_muon_config(
             view.collect_state()
@@ -3010,7 +3016,6 @@ def _muon_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
             tuple(sorted(row.parameter_values.items())),
             tuple(row.added_advanced),
         ),
-        job_for_muon_relaxation_label=job_for_label,
     )
     return document, definition, job, deps, view, output_root
 
@@ -3146,7 +3151,6 @@ def test_muon_controller_update_row_parameters_without_definition_or_config(
     )
 
     unparseable = _stub_muon_deps(
-        active_muon_relaxation_definition=lambda: definition,
         deserialize_muon_relaxation_config=lambda _payload: None,
     )
     controller = _muon_edit_controller(
@@ -3519,7 +3523,6 @@ def test_muon_controller_build_result_records_position_structure_and_site_mutati
     (output_dir / f"{job.label}-out.cell").write_text(_MUON_OUT_CELL_TEXT, encoding="utf-8")
 
     deps = _stub_muon_deps(
-        active_muon_relaxation_definition=lambda: definition,
         muon_relaxation_definition_and_row_for_job=lambda _job: (definition, row),
     )
     context = _make_context(
@@ -3629,7 +3632,6 @@ def test_muon_controller_recompletion_updates_structure_and_site_to_new_run(
     out_cell = output_dir / f"{job.label}-out.cell"
 
     deps = _stub_muon_deps(
-        active_muon_relaxation_definition=lambda: definition,
         muon_relaxation_definition_and_row_for_job=lambda _job: (definition, row),
     )
     context = _make_context(
@@ -3727,7 +3729,6 @@ def test_muon_controller_recompletion_keeps_charge_states_separate(
 
     def controller_for(row):
         deps = _stub_muon_deps(
-            active_muon_relaxation_definition=lambda: definition,
             muon_relaxation_definition_and_row_for_job=lambda _job: (definition, row),
         )
         return MuonRelaxationController(context, deps, _FakeMuonRelaxationView())
@@ -3817,7 +3818,6 @@ def test_muon_controller_build_result_fails_loudly_on_muonless_cell(tmp_path: Pa
     (output_dir / f"{job.label}-out.cell").write_text(muonless_text, encoding="utf-8")
 
     deps = _stub_muon_deps(
-        active_muon_relaxation_definition=lambda: definition,
         muon_relaxation_definition_and_row_for_job=lambda _job: (definition, row),
     )
     context = _make_context(
@@ -3863,10 +3863,8 @@ class _FakeUepView:
 
 def _stub_uep_deps(**overrides) -> UepDeps:
     base = dict(
-        active_uep_definition=lambda: None,
         deserialize_uep_config=lambda _payload: None,
         sync_equivalent_uep_mappings=lambda _definition: None,
-        job_for_uep_label=lambda _definition, _label: None,
         uep_potential_grid_result_for_job=lambda _job_id: None,
     )
     base.update(overrides)
@@ -4003,15 +4001,8 @@ def test_uep_controller_materialize_writes_job_ids_by_label(tmp_path: Path) -> N
         output_directory=output_root,
     )
 
-    def job_for_label(defn, label):
-        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
-        job_id = mapping.get(label)
-        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
-
     deps = _stub_uep_deps(
-        active_uep_definition=lambda: definition,
         deserialize_uep_config=lambda _payload: config,
-        job_for_uep_label=job_for_label,
     )
     context = _make_context(
         document=document,
@@ -4054,22 +4045,15 @@ def test_uep_controller_submit_local_reaches_local_backend(tmp_path: Path) -> No
 
     config = UepConfig(name_prefix="uep", rows=(UepSourceRow(label="row1"),))
     output_root = document.project_root / "files" / "uep"
-    definition = service.register_uep_definition(
+    service.register_uep_definition(
         document,
         host_structure_id=host.id,
         parameters={"name_prefix": "uep", "rows": [{"label": "row1"}]},
         output_directory=output_root,
     )
 
-    def job_for_label(defn, label):
-        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
-        job_id = mapping.get(label)
-        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
-
     deps = _stub_uep_deps(
-        active_uep_definition=lambda: definition,
         deserialize_uep_config=lambda _payload: config,
-        job_for_uep_label=job_for_label,
     )
 
     local = _RecordingBackend()
@@ -4109,22 +4093,15 @@ def test_uep_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -
 
     config = UepConfig(name_prefix="uep", rows=(UepSourceRow(label="row1"),))
     output_root = document.project_root / "files" / "uep"
-    definition = service.register_uep_definition(
+    service.register_uep_definition(
         document,
         host_structure_id=host.id,
         parameters={"name_prefix": "uep", "rows": [{"label": "row1"}]},
         output_directory=output_root,
     )
 
-    def job_for_label(defn, label):
-        mapping = defn.parameters.get("job_ids_by_label", {}) if defn else {}
-        job_id = mapping.get(label)
-        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
-
     deps = _stub_uep_deps(
-        active_uep_definition=lambda: definition,
         deserialize_uep_config=lambda _payload: config,
-        job_for_uep_label=job_for_label,
     )
 
     local = _RecordingBackend()
@@ -4248,7 +4225,6 @@ class _FakeQuantumCandidate:
 
 def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
     base = dict(
-        active_quantum_corrections_definition=lambda: None,
         ensure_quantum_corrections_definition=lambda _keys: None,
         eligible_quantum_source_candidates=lambda: [],
         quantum_source_relative_energies=lambda: {},
@@ -4682,7 +4658,6 @@ def _quantum_stage_two_guard_setup(service: ProjectService, tmp_path: Path):
     )
     phonon_key = list(candidates)[0]
     deps_kwargs = dict(
-        active_quantum_corrections_definition=lambda: definition,
         quantum_source_candidate_by_key=lambda key: candidates.get(key),
         quantum_stage_state=lambda _definition, _candidate: _FakeQuantumStageState(
             stage=QUANTUM_STAGE_PHONON, status="ready"
@@ -4814,7 +4789,6 @@ def test_quantum_controller_submit_local_reaches_local_backend(tmp_path: Path) -
         return job_dir
 
     deps = _stub_quantum_deps(
-        active_quantum_corrections_definition=lambda: definition,
         ensure_quantum_corrections_definition=lambda _keys: definition,
         eligible_quantum_source_candidates=lambda: list(candidates.values()),
         quantum_source_candidate_by_key=lambda k: candidates.get(k),
@@ -4862,7 +4836,6 @@ def test_quantum_controller_submit_cluster_reaches_cluster_backend(tmp_path: Pat
         return job_dir
 
     deps = _stub_quantum_deps(
-        active_quantum_corrections_definition=lambda: definition,
         ensure_quantum_corrections_definition=lambda _keys: definition,
         eligible_quantum_source_candidates=lambda: list(candidates.values()),
         quantum_source_candidate_by_key=lambda k: candidates.get(k),
@@ -4943,13 +4916,10 @@ class _FakeNebCandidate:
 
 def _stub_energy_barriers_deps(**overrides) -> EnergyBarriersDeps:
     base = dict(
-        active_energy_barrier_neb_definition=lambda: None,
         build_energy_barrier_neb_states=lambda: {},
-        energy_barrier_neb_definitions=lambda: [],
         ensure_energy_barrier_neb_definition=lambda _keys: None,
         energy_barrier_neb_source_candidates=lambda: [],
         eligible_energy_barrier_source_candidates=lambda: [],
-        job_for_energy_barrier_neb_source_key=lambda _definition, _key: None,
         energy_barrier_neb_row_configuration_with_source_defaults=(
             lambda _definition, _key, **_kwargs: ({}, (), {})
         ),
@@ -5028,12 +4998,9 @@ def _neb_materialize_deps(definition, candidate, output_root, **overrides) -> En
 
     base = dict(
         ensure_energy_barrier_neb_definition=lambda _keys: definition,
-        active_energy_barrier_neb_definition=lambda: definition,
-        energy_barrier_neb_definitions=lambda: [definition],
         energy_barrier_neb_source_candidates=lambda: [candidate],
         eligible_energy_barrier_source_candidates=lambda: [],
         fractional_position_block_from_structure=_neb_frac_block,
-        job_for_energy_barrier_neb_source_key=lambda _definition, _key: None,
         build_energy_barrier_neb_states=lambda: {
             candidate.key: _State("ready")
         },
@@ -5613,7 +5580,6 @@ def _stage_two_target_controller(
         singlepoints[key] = singlepoint
     ready = _FakeQuantumStageState(stage=QUANTUM_STAGE_PHONON, status="ready")
     deps = _stub_quantum_deps(
-        active_quantum_corrections_definition=lambda: definition,
         quantum_source_candidate_by_key=lambda key: candidates.get(key),
         quantum_stage_state=lambda _definition, _candidate: ready,
         build_quantum_corrections_states=lambda: {key: ready for key in keys},
@@ -5746,7 +5712,6 @@ def _phonon_method_controller(
     config = {by_label[label]: spec for label, spec in rows.items()}
     keys = list(config)
     deps = _stub_quantum_deps(
-        active_quantum_corrections_definition=lambda: definition,
         quantum_source_candidate_by_key=lambda key: candidates.get(key),
         quantum_stage_state=lambda _definition, candidate: _FakeQuantumStageState(
             stage=config[candidate.key][0], status="ready"

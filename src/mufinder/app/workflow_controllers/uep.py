@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.workflow import StructureBridgeError, write_job_directory
@@ -63,9 +63,8 @@ class UepDeps:
     """UEP-specific handles, late-bound to ``MainWindow`` helpers.
 
     These helpers stay on ``MainWindow`` because non-migrating code still calls
-    them there: ``active_uep_definition`` / ``deserialize_uep_config`` /
-    ``sync_equivalent_uep_mappings`` / ``job_for_uep_label`` are shared with the
-    UEP configure path, row removal, the analysis wizard, and dashboard
+    them there: ``deserialize_uep_config`` / ``sync_equivalent_uep_mappings``
+    are shared with the UEP configure path, row removal, the analysis wizard, and dashboard
     cluster-source sync; and ``uep_potential_grid_result_for_job`` still feeds
     the analysis wizard's "already analysed" detection. The controller reaches
     them only through these required callables. Workflow-specific dependencies
@@ -76,10 +75,8 @@ class UepDeps:
     instead.
     """
 
-    active_uep_definition: Callable[[], CalculationDefinition | None]
     deserialize_uep_config: Callable[[object], UepConfig | None]
     sync_equivalent_uep_mappings: Callable[[CalculationDefinition], None]
-    job_for_uep_label: Callable[[CalculationDefinition, str], Job | None]
     uep_potential_grid_result_for_job: Callable[[UUID], Result | None]
 
 
@@ -87,6 +84,8 @@ class UepController(WorkflowJobController):
     """Controller for the UEP source-job workflow."""
 
     calc_types = frozenset({"castep_uep_source"})
+    stage = WorkflowStage.UEP
+    active_key = "active_uep_definition_id"
     no_ready_message = (
         "Only configured UEP source rows that have not yet been submitted can be submitted."
     )
@@ -115,7 +114,7 @@ class UepController(WorkflowJobController):
         document = self._context.document()
         if document is None:
             return states
-        definition = self._deps.active_uep_definition()
+        definition = self.active_definition()
         if definition is None:
             return states
         self._deps.sync_equivalent_uep_mappings(definition)
@@ -126,7 +125,7 @@ class UepController(WorkflowJobController):
             return states
 
         for row in config.rows:
-            job = self._deps.job_for_uep_label(definition, row.label)
+            job = self.job_for_key(definition, row.label)
             if job is None:
                 states[row.label] = UepRunState(status="ready")
                 continue
@@ -161,14 +160,14 @@ class UepController(WorkflowJobController):
         document = self._context.document()
         if document is None:
             return []
-        definition = self._deps.active_uep_definition()
+        definition = self.active_definition()
         if definition is None:
             return []
         self._deps.sync_equivalent_uep_mappings(definition)
         selected: list[Job] = []
         seen: set[UUID] = set()
         for label in keys:
-            job = self._deps.job_for_uep_label(definition, str(label))
+            job = self.job_for_key(definition, str(label))
             if job is None or job.id in seen:
                 continue
             selected.append(job)
@@ -179,7 +178,7 @@ class UepController(WorkflowJobController):
         document = self._context.document()
         if document is None:
             return []
-        definition = self._deps.active_uep_definition()
+        definition = self.active_definition()
         if definition is None or not definition.input_structure_ids:
             return []
         self._deps.sync_equivalent_uep_mappings(definition)
@@ -222,7 +221,7 @@ class UepController(WorkflowJobController):
         for label in keys:
             label = str(label)
             spec = spec_by_label.get(label)
-            existing = self._deps.job_for_uep_label(definition, label)
+            existing = self.job_for_key(definition, label)
             if existing is not None:
                 if existing.status == JobStatus.DEFINED and spec is not None:
                     write_job_directory(spec, output_root)

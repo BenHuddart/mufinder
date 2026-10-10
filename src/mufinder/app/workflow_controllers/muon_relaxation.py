@@ -64,6 +64,7 @@ from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.relaxation_adapter import (
     MUON_RELAXATION_CALC_TYPES,
     expand_muon_relaxation_jobs,
+    is_muon_relaxation_calc_type,
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
@@ -158,7 +159,6 @@ class MuonRelaxationDeps:
     directly (``app`` → ``domain`` is a legal import).
     """
 
-    active_muon_relaxation_definition: Callable[[], CalculationDefinition | None]
     deserialize_muon_relaxation_config: Callable[[object], MuonRelaxationConfig | None]
     serialize_muon_relaxation_config: Callable[
         [MuonRelaxationConfig], dict[str, object]
@@ -168,9 +168,6 @@ class MuonRelaxationDeps:
     muon_relaxation_form_config: Callable[[], MuonRelaxationConfig | None]
     muon_relaxation_row_signature: Callable[[MuonRelaxationRow], tuple[object, ...]]
     muon_relaxation_row_key: Callable[[MuonRelaxationRow], str]
-    job_for_muon_relaxation_label: Callable[
-        [CalculationDefinition, str, str | None], Job | None
-    ]
     handle_site_host_mismatch: Callable[[SiteHostMismatch], bool]
     # Shared with the still-inline result-block failure guards:
     muon_relaxation_definition_and_row_for_job: Callable[
@@ -186,6 +183,9 @@ class MuonRelaxationController(WorkflowJobController):
     """Controller for the muon structural-relaxation workflow."""
 
     calc_types = frozenset(MUON_RELAXATION_CALC_TYPES.values())
+    stage = WorkflowStage.MUON_RELAXATION
+    definition_calc_type = "castep_muon_relaxation"
+    active_key = "active_muon_relaxation_definition_id"
     no_ready_message = (
         "Only configured muon-relaxation rows that have not yet been submitted can be submitted."
     )
@@ -199,6 +199,33 @@ class MuonRelaxationController(WorkflowJobController):
         super().__init__(context)
         self._deps = deps
         self._view = view
+
+    def job_for_label(
+        self,
+        definition: CalculationDefinition | None,
+        label: str,
+        charge_state: str | None = None,
+    ) -> Job | None:
+        """Return the muon-relaxation job ``definition`` binds to one row.
+
+        With a ``charge_state`` the charge-qualified ``"{prefix}:{label}"`` key
+        is tried first and must hold a job of that charge state's calc type.
+        The bare ``label`` key, kept by definitions written before rows were
+        charge-qualified, accepts a job of any muon-relaxation calc type.
+        """
+
+        if charge_state:
+            job = self.job_for_key(
+                definition,
+                f"{muon_charge_state_prefix(charge_state)}:{label}",
+                calc_type=muon_relaxation_calc_type(charge_state),
+            )
+            if job is not None:
+                return job
+        job = self.job_for_key(definition, label)
+        if job is None or not is_muon_relaxation_calc_type(job.calc_type):
+            return None
+        return job
 
     # --- submission contract ---
 
@@ -237,7 +264,7 @@ class MuonRelaxationController(WorkflowJobController):
         document = self._context.document()
         if document is None:
             return True
-        definition = self._deps.active_muon_relaxation_definition()
+        definition = self.active_definition()
         if definition is None or not definition.input_site_ids:
             return True
         mismatch = self._context.project_service.validate_sites_match_active_host(
@@ -286,7 +313,7 @@ class MuonRelaxationController(WorkflowJobController):
                     status="ready"
                 )
 
-        definition = self._deps.active_muon_relaxation_definition()
+        definition = self.active_definition()
         if definition is None:
             return states
         self._deps.sync_equivalent_muon_relaxation_mappings(definition)
@@ -312,7 +339,7 @@ class MuonRelaxationController(WorkflowJobController):
                 ) == self._deps.muon_relaxation_row_signature(definition_row):
                     rows_for_status.append(definition_row)
                     continue
-                job = self._deps.job_for_muon_relaxation_label(
+                job = self.job_for_label(
                     definition,
                     definition_row.label,
                     definition_row.charge_state,
@@ -324,7 +351,7 @@ class MuonRelaxationController(WorkflowJobController):
 
         for row in rows_for_status:
             state_key = self._deps.muon_relaxation_row_key(row)
-            job = self._deps.job_for_muon_relaxation_label(
+            job = self.job_for_label(
                 definition, row.label, row.charge_state
             )
             if job is None:
@@ -368,7 +395,7 @@ class MuonRelaxationController(WorkflowJobController):
         document = self._context.document()
         if document is None:
             return []
-        definition = self._deps.active_muon_relaxation_definition()
+        definition = self.active_definition()
         if definition is None:
             return []
         self._deps.sync_equivalent_muon_relaxation_mappings(definition)
@@ -386,7 +413,7 @@ class MuonRelaxationController(WorkflowJobController):
                 _muon_relaxation_selection_matches(row, selection) for selection in wanted
             ):
                 continue
-            job = self._deps.job_for_muon_relaxation_label(
+            job = self.job_for_label(
                 definition, row.label, row.charge_state
             )
             if job is None or job.id in seen:
@@ -399,7 +426,7 @@ class MuonRelaxationController(WorkflowJobController):
         document = self._context.document()
         if document is None:
             return []
-        definition = self._deps.active_muon_relaxation_definition()
+        definition = self.active_definition()
         if definition is None:
             return []
         self._deps.sync_equivalent_muon_relaxation_mappings(definition)
@@ -449,7 +476,7 @@ class MuonRelaxationController(WorkflowJobController):
         for row in rows_by_label:
             key = f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
             spec = spec_by_key.get(key)
-            existing_job = self._deps.job_for_muon_relaxation_label(
+            existing_job = self.job_for_label(
                 definition, row.label, row.charge_state
             )
             if existing_job is not None:
@@ -516,7 +543,7 @@ class MuonRelaxationController(WorkflowJobController):
         its definition signature.
         """
 
-        definition = self._deps.active_muon_relaxation_definition()
+        definition = self.active_definition()
         if definition is None:
             return False
         config = self._deps.deserialize_muon_relaxation_config(
@@ -661,7 +688,7 @@ class MuonRelaxationController(WorkflowJobController):
         document = self._context.document()
         if document is None:
             return ""
-        definition = self._deps.active_muon_relaxation_definition()
+        definition = self.active_definition()
         if definition is None:
             return ""
         config = self._deps.deserialize_muon_relaxation_config(
@@ -827,7 +854,7 @@ class MuonRelaxationController(WorkflowJobController):
 
         definition, row = self._deps.muon_relaxation_definition_and_row_for_job(job)
         if definition is None:
-            definition = self._deps.active_muon_relaxation_definition()
+            definition = self.active_definition()
         final_supercell_position = self._deps.muon_fractional_position_from_cell(relaxed)
         if final_supercell_position is None:
             # build_result runs only on the validated success path: the inline
