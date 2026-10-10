@@ -187,14 +187,8 @@ PINNED_COVERAGE_TEST_FILES = frozenset(
         "tests/services/test_project_service_coverage.py",
         "tests/services/test_ssh_client_coverage.py",
         "tests/test_bridge_coverage.py",
-        "tests/test_castep_internal_coverage.py",
-        "tests/test_castep_validators_coverage.py",
-        "tests/test_output_parser_coverage.py",
-        "tests/test_param_writer_coverage.py",
         "tests/test_quantum_coverage.py",
         "tests/test_runtime_helper_coverage.py",
-        "tests/test_ts_parser_coverage.py",
-        "tests/test_validators_coverage.py",
     }
 )
 

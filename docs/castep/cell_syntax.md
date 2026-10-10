@@ -1,6 +1,6 @@
 # CASTEP `.cell` Syntax Guide
 
-This package implements a conservative subset of CASTEP `.cell` syntax for library use and editor assistance. The contributor-facing source of truth for implemented support is [`keyword_catalog.yaml`](keyword_catalog.yaml); a byte-identical copy ships as `src/mufinder/assets/keyword_catalog.yaml` and serves as the starter catalog (`tests/test_castep_schema_catalog.py` checks the two agree).
+This package implements a conservative subset of CASTEP `.cell` syntax for library use and editor assistance. The contributor-facing source of truth for implemented support is [`keyword_catalog.yaml`](keyword_catalog.yaml); a byte-identical copy ships as `src/mufinder/assets/keyword_catalog.yaml` and serves as the starter catalog (`tests/castep_io/test_schema.py` checks the two agree).
 
 ## Formatting Conventions
 
