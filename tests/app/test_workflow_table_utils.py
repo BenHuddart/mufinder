@@ -192,6 +192,29 @@ def _reset_menu_table(qapp, statuses: tuple[str, ...]):
     return table, emitted
 
 
+@pytest.mark.parametrize(
+    ("status", "locked"),
+    [
+        ("", False),
+        ("not generated", False),
+        ("Defined", False),
+        ("ready", False),
+        # A cancelled job never produced a result: its row stays editable.
+        ("cancelled", False),
+        (" Cancelled ", False),
+        ("submitting", True),
+        ("queued", True),
+        ("running", True),
+        ("retrieving", True),
+        ("stopped", True),
+        ("failed", True),
+        ("completed", True),
+    ],
+)
+def test_workflow_row_is_locked_is_the_one_locked_row_rule(status: str, locked: bool) -> None:
+    assert workflow_table_utils.workflow_row_is_locked(status) is locked
+
+
 def test_resettable_row_statuses_match_reset_failed_job_contract() -> None:
     # ProjectService.reset_failed_job accepts exactly failed/stopped/cancelled;
     # the menu gate must not drift away from it.
@@ -634,6 +657,9 @@ def test_standard_row_menu_omits_actions_a_table_does_not_have(qapp, monkeypatch
         (["running", "queued"], {"Cancel", "Configure...", "Remove"}),
         (["failed", "stopped"], {"Inspect Failure", "Reset Failed Jobs...", "Configure...", "Remove"}),
         (["completed", "completed"], {"Configure...", "Remove"}),
+        # Cancelled rows are editable but run again through Reset (or the
+        # dashboard), so Run stays off, matching the submission filter.
+        (["cancelled", "cancelled"], {"Reset Failed Jobs...", "Configure...", "Remove"}),
     ],
 )
 def test_standard_row_menu_enables_actions_from_row_status(qapp, monkeypatch, statuses, enabled) -> None:
