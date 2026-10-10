@@ -256,6 +256,18 @@ Compatibility ledger
        ``src`` calls it; only ``tests/app/test_icons.py`` exercises it.
      - Public helper alias under the public-import-alias rule below; it can be
        removed together with its test.
+   * - ``ProjectHomeTrailWidget`` / ``ConstructionSignWidget`` /
+       ``ProjectTrailDestination`` / ``WorkflowDefinition`` /
+       ``MuonChargeStateDialog``
+     - ``mufinder.app.main_window``
+     - Import path kept for names that live in
+       ``mufinder.app.project_home_trail`` and
+       ``mufinder.app.muon_generation_support``. ``ConstructionSignWidget`` is
+       imported only to keep the path; ``MainWindow`` uses the others. Not
+       persisted.
+     - Public import alias. Keep for one minor release (through 0.6.x); then
+       drop the ``ConstructionSignWidget`` import and move test and external
+       imports of these names to their defining modules.
 
 Rules for new shims
 -------------------
