@@ -500,8 +500,10 @@ runner worker thread. Each runner calls
 :func:`~mufinder.services.job_artifacts.collect_job_artifacts` after the primary
 ``.castep`` parse succeeds and delivers a
 :class:`~mufinder.services.job_artifacts.ParsedJobArtifacts` carrier with the
-``job_finished`` signal. Collection follows the per-calc-type retrieval flags
-the runners track, and every failure travels as data (missing-file flags and
+``job_finished`` signal. Collection follows the
+:class:`~mufinder.services.job_artifacts.RetrievalFlags` the runners track
+(per-calc-type output flags plus the farm count; see :doc:`job_lifecycle`),
+and every failure travels as data (missing-file flags and
 error strings), never as an exception across the signal boundary. Callers with
 no carrier (reconciliation, retry, direct test invocation) fall back to one
 synchronous ``collect_job_artifacts`` call. ``build_result`` consumes the

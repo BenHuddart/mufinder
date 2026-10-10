@@ -271,7 +271,7 @@ from mufinder.services.failure_diagnosis import (
     find_failure_log_files,
     read_log_tail,
 )
-from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
+from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags, collect_job_artifacts
 from mufinder.services.job_monitoring import job_staleness
 from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
@@ -4208,9 +4208,7 @@ class MainWindow(QMainWindow):
                 seed_name=self._job_seed_name(job),
                 local_output_dir=output_dir,
                 cluster_name=job.execution_target,
-                task_farming_enabled=self._task_farming_for_job(job)[0],
-                num_farms=self._task_farming_for_job(job)[1],
-                **self._cluster_retrieve_flags(job),
+                **self._retrieval_flags_for_job(job).as_kwargs(),
             )
             retried += 1
 
@@ -6153,8 +6151,7 @@ class MainWindow(QMainWindow):
             castep_executable=setup.executable_path,
             mpirun_path=setup.mpirun_path,
             eligible_statuses=allowed_statuses,
-            task_farming_for_job=self._task_farming_for_job,
-            retrieve_flags_for_job=self._cluster_retrieve_flags,
+            retrieval_for_job=self._retrieval_flags_for_job,
         )
 
         self._refresh_jobs_table()
@@ -6528,7 +6525,6 @@ class MainWindow(QMainWindow):
                 continue
             seed_name = seed_name_by_job.get(job.id, self._job_seed_name(job))
             remote_target = remote_target_by_job.get(job.id)
-            task_farming_enabled, num_farms = self._task_farming_for_job(job)
             prepared = self._job_execution.prepare_cluster_submission(
                 ClusterJobSubmission(
                     job=job,
@@ -6546,15 +6542,9 @@ class MainWindow(QMainWindow):
                     queue_name=getattr(submission, "queue_name", ""),
                     comment=getattr(submission, "comment", ""),
                     castep_executable=selected_cluster.castep_executable,
-                    retrieve_den_fmt=job.calc_type == "castep_uep_source",
-                    retrieve_out_cell=job.calc_type == "castep_pristine_relaxation"
-                    or is_muon_relaxation_calc_type(job.calc_type),
-                    retrieve_phonon=job.calc_type == QUANTUM_PHONON_CALC_TYPE,
-                    retrieve_ts=job.calc_type in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE},
                     reuse_existing_files=reuse_existing_files_by_job.get(job.id, False),
                     allow_existing_remote_directory=allow_existing_remote_directory_by_job.get(job.id, False),
-                    task_farming_enabled=task_farming_enabled,
-                    num_farms=num_farms,
+                    retrieval=self._retrieval_flags_for_job(job),
                 )
             )
             if prepared is None:
@@ -9248,7 +9238,6 @@ class MainWindow(QMainWindow):
             if output_dir is None:
                 continue
 
-            task_farming_enabled, num_farms = self._task_farming_for_job(job)
             self._cluster_runner.track_existing_job(
                 job_id=job.id,
                 remote_job_id=remote_job_id,
@@ -9257,27 +9246,33 @@ class MainWindow(QMainWindow):
                 local_output_dir=output_dir,
                 cluster_name=target,
                 status=job.status,
-                task_farming_enabled=task_farming_enabled,
-                num_farms=num_farms,
-                **self._cluster_retrieve_flags(job),
+                **self._retrieval_flags_for_job(job).as_kwargs(),
             )
+
+    def _retrieval_flags_for_job(self, job: Job) -> RetrievalFlags:
+        """Return the retrieval flags and farm count both runners need for ``job``.
+
+        Shared by local and cluster submission, cluster re-attachment and the
+        dashboard "Retry retrieval" action, so every path collects the same
+        optional outputs (``.den_fmt`` / ``-out.cell`` / ``.phonon`` / ``.ts``)
+        under the same farmed names.
+        """
+
+        task_farming_enabled, num_farms = self._task_farming_for_job(job)
+        return RetrievalFlags.for_calc_type(
+            job.calc_type, task_farming_enabled=task_farming_enabled, num_farms=num_farms
+        )
 
     @staticmethod
     def _cluster_retrieve_flags(job: Job) -> dict[str, bool]:
-        """Return the per-calc-type retrieval flags for a cluster job.
+        """Return the per-calc-type ``retrieve_*`` flags for ``job`` as a mapping."""
 
-        Shared by cluster re-attachment (``_sync_cluster_tracking_from_document``)
-        and the dashboard "Retry retrieval" action so both download the same
-        optional outputs (``.den_fmt`` / ``-out.cell`` / ``.phonon`` / ``.ts``).
-        """
-
+        flags = RetrievalFlags.for_calc_type(job.calc_type)
         return {
-            "retrieve_den_fmt": job.calc_type == "castep_uep_source",
-            "retrieve_out_cell": job.calc_type == "castep_pristine_relaxation"
-            or is_muon_relaxation_calc_type(job.calc_type),
-            "retrieve_phonon": job.calc_type == QUANTUM_PHONON_CALC_TYPE,
-            "retrieve_ts": job.calc_type
-            in {TRANSITION_STATE_SEARCH_CALC_TYPE, NUDGED_ELASTIC_BAND_CALC_TYPE},
+            "retrieve_den_fmt": flags.retrieve_den_fmt,
+            "retrieve_out_cell": flags.retrieve_out_cell,
+            "retrieve_phonon": flags.retrieve_phonon,
+            "retrieve_ts": flags.retrieve_ts,
         }
 
     def _infer_remote_job_directory(self, job: Job, cluster_name: str) -> str:
