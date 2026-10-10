@@ -10,6 +10,7 @@ import pytest
 from mufinder.domain.models import CalculationRun
 from mufinder.domain.enums import FailureReason, JobStatus
 from mufinder.domain.models import Result, utc_now
+from mufinder.services.job_artifacts import RetrievalFlags
 from mufinder.services.job_execution_controller import ClusterJobSubmission, JobExecutionController
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from tests.support.jobs import make_job
@@ -1193,3 +1194,77 @@ def test_prepare_cluster_submission_defaults_mem_per_cpu_to_unset(tmp_path: Path
 
     assert prepared is not None
     assert prepared.submit_kwargs["mem_per_cpu_gb"] is None
+
+
+def test_prepare_cluster_submission_expands_retrieval_flags_into_runner_keywords(
+    tmp_path: Path,
+) -> None:
+    service, document = _document(tmp_path)
+    job_id = make_job("neb-job", service=service, document=document).id
+    controller = _controller(document=document, service=service, output_dir=tmp_path / "neb-job")
+    flags = RetrievalFlags(retrieve_ts=True, task_farming_enabled=True, num_farms=3)
+
+    prepared = controller.prepare_cluster_submission(
+        ClusterJobSubmission(
+            job=document.jobs[job_id],
+            output_dir=tmp_path / "neb-job",
+            seed_name="neb-job",
+            remote_target="/remote/neb-job",
+            execution_target="test-cluster",
+            num_processes=8,
+            walltime="01:00:00",
+            working_directory="/remote",
+            template_script_path="run.sh",
+            cores_per_node=4,
+            reuse_existing_files=True,
+            retrieval=flags,
+        )
+    )
+
+    assert prepared is not None
+    assert prepared.submit_kwargs == {
+        "job_id": job_id,
+        "local_job_dir": tmp_path / "neb-job",
+        "seed_name": "neb-job",
+        "remote_directory": "/remote/neb-job",
+        "num_processes": 8,
+        "walltime": "01:00:00",
+        "working_directory": "/remote",
+        "template_script_path": "run.sh",
+        "cores_per_node": 4,
+        "memory_gb": None,
+        "mem_per_cpu_gb": None,
+        "queue_name": "",
+        "comment": "",
+        "castep_executable": "",
+        "reuse_existing_files": True,
+        "allow_existing_remote_directory": False,
+        **flags.as_kwargs(),
+    }
+
+
+def test_local_submission_forwards_retrieval_flags_to_the_runner(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job_id = make_job("phonon-job", service=service, document=document).id
+    runner = FakeLocalRunner()
+    controller = _controller(
+        document=document,
+        service=service,
+        local_runner=runner,
+        output_dir=tmp_path / "phonon-job",
+    )
+    flags = RetrievalFlags(retrieve_phonon=True, task_farming_enabled=True, num_farms=2)
+
+    outcome = controller.submit_local_jobs(
+        [document.jobs[job_id]],
+        num_cores=2,
+        max_concurrent=1,
+        castep_executable="/bin/castep",
+        mpirun_path="/bin/mpirun",
+        retrieval_for_job=lambda _job: flags,
+    )
+
+    assert outcome.submitted_count == 1
+    assert RetrievalFlags(
+        **{name: runner.submitted[0][name] for name in flags.as_kwargs()}
+    ) == flags

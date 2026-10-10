@@ -438,3 +438,107 @@ def build_workflow_parameter_surface(
         )
         seen.add(name)
     return reorder_workflow_parameter_specs(specs, ordered_names=basic_names)
+
+#: Geometry-optimisation keywords a relaxation workflow shows in its basic view
+#: on top of the convergence surface.
+GEOMETRY_PARAMETER_NAMES = (
+    "geom_disp_tol",
+    "geom_energy_tol",
+    "geom_force_tol",
+    "geom_frequency_est",
+    "geom_max_iter",
+    "geom_stress_tol",
+)
+
+
+def geometry_relaxation_parameter_specs(
+    *,
+    workflow_stage: str,
+    excluded_names: Collection[str],
+    default_overrides: Mapping[str, object],
+) -> list[KeywordSpec]:
+    """Return the parameter specs of a geometry-relaxation workflow.
+
+    The surface is the cut-off convergence surface (its basic rows stay basic,
+    its advanced rows stay advanced) plus the k-point pair and
+    :data:`GEOMETRY_PARAMETER_NAMES` in the basic view, every spec cloned for
+    ``workflow_stage`` with ``default_overrides``. ``excluded_names`` are the
+    keywords the workflow controls itself (``task`` and the row-controlled
+    ones). The shared rows come first.
+    """
+
+    specs: list[KeywordSpec] = []
+    seen_names: set[str] = set()
+    for spec in get_gui_keyword_specs_for_files(
+        files=("param", "cell"),
+        workflow_stage="convergence_cutoff",
+        include_advanced=True,
+    ):
+        if spec.name in excluded_names or spec.name in seen_names:
+            continue
+        basic_in_convergence = keyword_visible_in_workflow(
+            spec,
+            workflow_stage="convergence_cutoff",
+            include_advanced=False,
+        )
+        specs.append(
+            clone_spec_for_workflow(
+                spec,
+                workflow_stage=workflow_stage,
+                basic=(
+                    basic_in_convergence
+                    or spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing")
+                    or spec.name in GEOMETRY_PARAMETER_NAMES
+                ),
+                advanced=keyword_visible_in_workflow(
+                    spec,
+                    workflow_stage="convergence_cutoff",
+                    include_advanced=True,
+                )
+                and not basic_in_convergence,
+                default_overrides=default_overrides,
+            )
+        )
+        seen_names.add(spec.name)
+
+    for name in GEOMETRY_PARAMETER_NAMES:
+        spec = get_keyword_spec("param", name) or get_keyword_spec("cell", name)
+        if spec is None or spec.name in excluded_names or spec.name in seen_names:
+            continue
+        specs.append(
+            clone_spec_for_workflow(
+                spec,
+                workflow_stage=workflow_stage,
+                basic=True,
+                advanced=True,
+                default_overrides=default_overrides,
+            )
+        )
+        seen_names.add(spec.name)
+
+    return reorder_workflow_parameter_specs(specs)
+
+
+def drop_explicit_conflicts(
+    values: dict[str, Any],
+    specs_by_name: Mapping[str, KeywordSpec],
+    *,
+    explicit_names: Collection[str],
+) -> dict[str, Any]:
+    """Remove from ``values``, in place, what conflicts with an explicit choice.
+
+    A row's explicit value (one of ``explicit_names``) wins over an inherited
+    default that is mutually exclusive with it, so a row that chose
+    ``kpoint_mp_spacing`` does not also carry the default ``kpoint_mp_grid``.
+    Returns ``values``.
+    """
+
+    explicit = set(explicit_names)
+    for name in tuple(explicit):
+        spec = specs_by_name.get(name)
+        if name not in values or spec is None:
+            continue
+        for conflict in spec.mutually_exclusive_with:
+            if conflict in values and conflict not in explicit:
+                values.pop(conflict, None)
+    return values

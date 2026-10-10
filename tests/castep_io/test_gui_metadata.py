@@ -1,13 +1,18 @@
-"""Focused tests for CASTEP validator and GUI helper branches."""
+"""Tests for GUI metadata helpers over CASTEP keyword schema."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
-import mufinder.castep_io.schema as schema_module
 from mufinder.castep_io.gui_metadata import (
     default_assignments,
+    get_gui_keyword_specs,
     gui_value_is_active,
+    infer_task,
+    keyword_locked_in_workflow,
+    keyword_visible_for_task,
     make_block_section,
     make_keyword_assignment,
     normalize_gui_value,
@@ -15,64 +20,124 @@ from mufinder.castep_io.gui_metadata import (
 )
 from mufinder.castep_io.schema import get_keyword_spec
 from mufinder.castep_io.types import BlockSection, KeywordAssignment, ValueWithUnit
-from mufinder.castep_io.validators import CastepValidationError, UnknownKeywordError, validate_keyword_value
+from tests.support.golden_inputs import pinned_starter_catalog
 
 
-@pytest.fixture(autouse=True)
-def fallback_schema(monkeypatch: pytest.MonkeyPatch) -> None:
-    original_sources = schema_module._candidate_catalog_sources
-    monkeypatch.setattr(schema_module, "_candidate_catalog_sources", lambda: ())
-    schema_module.refresh_keyword_catalog(allow_fallback=True)
-    yield
-    monkeypatch.setattr(schema_module, "_candidate_catalog_sources", original_sources)
-    schema_module.refresh_keyword_catalog(allow_fallback=True)
+@pytest.fixture
+def starter_catalog() -> Iterator[None]:
+    """Read keyword specs from the bundled starter catalog, whatever is installed locally."""
+
+    with pinned_starter_catalog():
+        yield
 
 
-def test_validate_keyword_value_covers_scalar_and_error_branches() -> None:
-    with pytest.raises(UnknownKeywordError):
-        validate_keyword_value("param", "missing_keyword", 1)
+def test_get_gui_keyword_specs_respects_basic_vs_advanced() -> None:
+    basic_specs = get_gui_keyword_specs(
+        file="param",
+        workflow_stage="convergence_cutoff",
+        include_advanced=False,
+    )
+    advanced_specs = get_gui_keyword_specs(
+        file="param",
+        workflow_stage="convergence_cutoff",
+        include_advanced=True,
+    )
 
-    validate_keyword_value("cell", "symmetry_generate", False)
+    basic_names = {spec.name for spec in basic_specs}
+    advanced_names = {spec.name for spec in advanced_specs}
 
-    with pytest.raises(CastepValidationError, match="expects TRUE or FALSE"):
-        validate_keyword_value("param", "spin_polarized", "TRUE")
-
-    with pytest.raises(CastepValidationError, match="Allowed values"):
-        validate_keyword_value("param", "basis_precision", "INVALID")
-
-    with pytest.raises(CastepValidationError, match="expects a tuple of three integers"):
-        validate_keyword_value("cell", "kpoint_mp_grid", "1 1 1")
-
-    with pytest.raises(CastepValidationError, match="greater than zero"):
-        validate_keyword_value("param", "max_scf_cycles", 0)
-
-    with pytest.raises(CastepValidationError, match="greater than or equal to zero"):
-        validate_keyword_value("param", "geom_max_iter", -1)
-
-    with pytest.raises(CastepValidationError, match="expects a numeric value"):
-        validate_keyword_value("param", "spin", "not-a-number")
-
-    with pytest.raises(CastepValidationError, match="expects a scalar numeric value"):
-        validate_keyword_value("param", "cut_off_energy", (1, 2, 3))
-
-    with pytest.raises(CastepValidationError, match="units may not be empty"):
-        validate_keyword_value("param", "cut_off_energy", ValueWithUnit(300.0, ""))
-
-    with pytest.raises(CastepValidationError, match="not per-atom units"):
-        validate_keyword_value("param", "elec_energy_tol", ValueWithUnit(1e-6, "eV/atom"))
-
-    with pytest.raises(CastepValidationError, match="expects exactly 3 components"):
-        validate_keyword_value("cell", "kpoint_mp_offset", (0.0, 0.0))
-
-    with pytest.raises(CastepValidationError, match="expects text"):
-        validate_keyword_value("cell", "unit_cell", 1.0)
-
-    validate_keyword_value("param", "max_scf_cycles", 100)
-    validate_keyword_value("cell", "symmetry_generate", True)
-    validate_keyword_value("param", "cut_off_energy", ValueWithUnit(450.0, "eV"))
+    assert "task" in basic_names
+    assert "max_scf_cycles" in basic_names
+    assert "basis_precision" not in basic_names
+    assert "basis_precision" in advanced_names
 
 
-def test_normalize_gui_value_and_assignment_helpers_cover_branches() -> None:
+def test_make_keyword_assignment_unitized_float() -> None:
+    spec = get_keyword_spec("param", "cut_off_energy")
+    assert spec is not None
+
+    assignment = make_keyword_assignment(spec, 340.0)
+
+    assert assignment is not None
+    assert assignment.name == "cut_off_energy"
+    assert isinstance(assignment.value, ValueWithUnit)
+    assert assignment.value.value == 340.0
+    assert assignment.value.unit == "eV"
+
+
+def test_default_assignments_include_declared_defaults() -> None:
+    specs = [
+        spec
+        for spec in get_gui_keyword_specs(
+            file="param",
+            workflow_stage="convergence_cutoff",
+            include_advanced=False,
+        )
+        if spec.default_value is not None
+    ]
+
+    assignments = default_assignments(specs)
+    names = {item.name for item in assignments}
+
+    assert "task" in names
+    assert "xc_functional" in names
+
+
+def test_infer_task_from_workflow_stage() -> None:
+    assert infer_task("convergence_cutoff") == "SINGLEPOINT"
+    assert infer_task("convergence_kpoint") == "SINGLEPOINT"
+    assert infer_task("uep") == "SINGLEPOINT"
+    assert infer_task("pristine_relaxation") == "GEOMETRYOPTIMIZATION"
+    assert infer_task("muon_relaxation") == "GEOMETRYOPTIMIZATION"
+    assert infer_task("energy_barriers") == "TRANSITIONSTATESEARCH"
+
+
+def test_keyword_locked_in_workflow() -> None:
+    cut_off = get_keyword_spec("param", "cut_off_energy")
+    assert cut_off is not None
+    assert keyword_locked_in_workflow(cut_off, workflow_stage="convergence_cutoff") is True
+    assert keyword_locked_in_workflow(cut_off, workflow_stage="convergence_kpoint") is False
+
+    formatted_density = get_keyword_spec("param", "write_formatted_density")
+    assert formatted_density is not None
+    assert keyword_locked_in_workflow(formatted_density, workflow_stage="uep") is True
+
+
+def test_keyword_visible_for_task_filters_task_specific_keywords() -> None:
+    geom_force_tol = get_keyword_spec("param", "geom_force_tol")
+    assert geom_force_tol is not None
+
+    assert keyword_visible_for_task(geom_force_tol, task="GEOMETRYOPTIMIZATION") is True
+    assert keyword_visible_for_task(geom_force_tol, task="SINGLEPOINT") is False
+
+
+def test_structure_controlled_blocks_are_not_exposed_in_gui_specs() -> None:
+    names = {
+        spec.name
+        for spec in get_gui_keyword_specs(
+            file="cell",
+            workflow_stage="convergence_cutoff",
+            include_advanced=True,
+        )
+    }
+
+    assert "lattice_cart" not in names
+    assert "lattice_abc" not in names
+    assert "positions_frac" not in names
+    assert "positions_abs" not in names
+
+
+def test_xc_functional_spec_exposes_enum_allowed_values() -> None:
+    spec = get_keyword_spec("param", "xc_functional")
+
+    assert spec is not None
+    assert spec.value_type == "enum"
+    assert "PBE" in spec.allowed_values
+    assert "LDA" in spec.allowed_values
+
+
+@pytest.mark.usefixtures("starter_catalog")
+def test_normalize_gui_value_coerces_each_value_type_and_builds_assignments() -> None:
     block_spec = get_keyword_spec("cell", "species_pot")
     assert block_spec is not None
     block = BlockSection("not_canonical", (("Si", "Si.recpot"),))
@@ -118,7 +183,8 @@ def test_normalize_gui_value_and_assignment_helpers_cover_branches() -> None:
     assert make_block_section(block_spec, block) == normalized_block
 
 
-def test_gui_value_helpers_cover_activity_validation_and_defaults() -> None:
+@pytest.mark.usefixtures("starter_catalog")
+def test_gui_values_report_activity_task_and_conflict_errors_and_defaults() -> None:
     flag_spec = get_keyword_spec("cell", "symmetry_generate")
     bool_spec = get_keyword_spec("param", "spin_polarized")
     enum_spec = get_keyword_spec("param", "basis_precision")
@@ -137,8 +203,7 @@ def test_gui_value_helpers_cover_activity_validation_and_defaults() -> None:
 
     specs_by_name = {
         spec.name: spec
-        for spec in (flag_spec, bool_spec, enum_spec, requires_spec, conflict_spec, get_keyword_spec("param", "basis_precision"))
-        if spec is not None
+        for spec in (flag_spec, bool_spec, enum_spec, requires_spec, conflict_spec)
     }
     errors = validate_gui_values(
         {

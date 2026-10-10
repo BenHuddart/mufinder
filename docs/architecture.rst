@@ -190,7 +190,7 @@ workflow widget modules define, how many define it; the counts may only fall.
        (``standard_row_actions``, ``bind_reset_failed_context_menu``),
        the supercell column and its k-point suggestions (``SupercellColumn``),
        destructive confirmations (``confirm_destructive``), selection feedback
-       (``SelectionFeedback``), delete/backspace binding
+       (``SelectionFeedback``, ``selected_table_rows``), delete/backspace binding
        (``bind_delete_shortcuts``) and the locked-row rule
        (``workflow_row_is_locked``: rows with no job yet and ``cancelled``
        rows are editable, every other status locks the row).
@@ -199,14 +199,20 @@ workflow widget modules define, how many define it; the counts may only fall.
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
        in-row button acts on when its row is, or is not, part of a multi-row
        selection, and the three-way prompt.
+   * - ``mufinder.app.workflow_row_widget``
+     - The label-keyed row-table widget base that pristine relaxation, muon
+       relaxation and UEP subclass (``RowTableWidget``, and
+       ``RelaxationRowTableWidget`` for the two geometry relaxations; see Row
+       table widgets).
    * - ``mufinder.app.workflow_parameters``
      - Parameter specs per workflow stage
-       (``build_workflow_parameter_surface``, ``clone_spec_for_workflow``), the
-       shared-row ordering, schema and project defaults
+       (``build_workflow_parameter_surface``,
+       ``geometry_relaxation_parameter_specs``, ``clone_spec_for_workflow``),
+       the shared-row ordering, schema and project defaults
        (``workflow_default_params``, ``drop_default_conflicts``,
-       ``seed_xc_functional_default``), and sanitising and restoring persisted
-       parameter values (``sanitize_parameter_mapping``,
-       ``restore_structured_value``).
+       ``drop_explicit_conflicts``, ``seed_xc_functional_default``), and
+       sanitising and restoring persisted parameter values
+       (``sanitize_parameter_mapping``, ``restore_structured_value``).
    * - ``mufinder.app.workflow_dialogs`` / ``mufinder.app.param_dialog``
      - The row parameter dialog (``run_row_parameter_dialog``, driven by a
        ``RowParameterRequest`` and returning a ``RowParameterResult``) and the
@@ -248,7 +254,8 @@ controllers treat every workflow alike:
   ``set_xc_functional_default`` push project state into the widget.
 - **Persisted form state.** ``ui_state["<workflow>_form"]`` holds a job-name
   prefix and a row list. Each row stores its label, its supercell matrix as a
-  3×3 list, its parameter values as the diff from the implicit defaults, and
+  3×3 list, its parameter values as the diff from the implicit defaults (a UEP
+  row stores the dialog's values with its pinned task and density flag), and
   its sorted ``added_advanced`` names.
 - **Rows.** The row id lives in the label item's ``UserRole``; per-row controls
   are ``SelectionSnapshot`` buttons that resolve their targets through the shared
@@ -265,8 +272,9 @@ controllers treat every workflow alike:
   applies a choice to the targeted rows through the shared targeting rule, and
   derives the row's suggested k-point grid, the grid's equivalent spacing for
   the parameter dialog, and the grid-adjustment message. The widget supplies
-  only its hooks: normalise row parameters, refresh rows, emit state, and the
-  manager request.
+  only its hooks: normalise row parameters, refresh rows, emit state, the
+  manager request and which rows may change (locked and read-only rows may
+  not).
 - **Row parameter dialog.** Configure and inspect go through
   ``run_row_parameter_dialog``. The widget supplies the targeted rows' effective
   parameters and advanced names, the dialog seed, its locked values and
@@ -285,6 +293,43 @@ controllers treat every workflow alike:
   a controls row (``Add...``, a count label, ``Remove Selected``,
   ``Configure Selected Parameters...``); and a run row with the job-name prefix
   and the two run buttons.
+
+Row table widgets
+~~~~~~~~~~~~~~~~~
+
+Pristine relaxation, muon relaxation and UEP subclass one base,
+``mufinder.app.workflow_row_widget.RowTableWidget``, which implements the widget
+contract above once for a table of labelled job rows. A row is keyed by its
+row id; it is submitted, tracked and reset under its *submission key*, the
+label (muon relaxation qualifies it with the charge state, and keeps one table
+per charge state).
+
+The base owns the table and the shared cells (label, supercell, status,
+Configure, remove), row lookup, the selection and the row menu, the delete
+shortcuts, per-row Configure and remove targeting, removal with its
+confirmation, the parameter dialog, runtime refresh and the locked-row rule,
+config validation (empty and duplicate labels, then each row's parameters)
+and submission, the form-state plumbing (``_restoring_form`` clears the rows,
+re-normalises them afterwards and emits the restored state once) and the page
+layout. ``RelaxationRowTableWidget`` adds the geometry-relaxation parameter
+surface, project-default seeding, row values stored as the diff from the
+row's implicit defaults, and the "Continue relaxation…" row action
+(``set_continuable_predicate``, ``continue_relaxation_dialog_seed``).
+
+A subclass declares its columns, workflow stage, pinned parameters, dialog
+wording and empty-row status as class attributes and implements three public
+hooks, as a controller implements its hooks: ``create_row_cells`` and
+``refresh_row_cells`` for its own columns, and ``config_for_rows`` for its run
+configuration from the validated rows. It keeps its own ``collect_state`` and
+``set_form_state``, built from the base's row helpers, and calls
+``_build_layout`` (with its title, extra header widgets, table view and run-row
+extras) and ``_connect_signals`` at the end of ``__init__``. A behaviour only
+one workflow has is an override of a private base method with a default:
+muon relaxation's read-only imported rows (``_row_is_read_only``,
+``_configurable_row_ids``, ``_removable_row_ids``), its muonium spin default
+(``_row_default_overrides``) and its charge-state tables and keys; UEP's
+parameter surface and k-point rule. Never copy a base method into a
+subclass to change it; add the hook.
 
 Controller naming
 ~~~~~~~~~~~~~~~~~
@@ -455,8 +500,10 @@ runner worker thread. Each runner calls
 :func:`~mufinder.services.job_artifacts.collect_job_artifacts` after the primary
 ``.castep`` parse succeeds and delivers a
 :class:`~mufinder.services.job_artifacts.ParsedJobArtifacts` carrier with the
-``job_finished`` signal. Collection follows the per-calc-type retrieval flags
-the runners track, and every failure travels as data (missing-file flags and
+``job_finished`` signal. Collection follows the
+:class:`~mufinder.services.job_artifacts.RetrievalFlags` the runners track
+(per-calc-type output flags plus the farm count; see :doc:`job_lifecycle`),
+and every failure travels as data (missing-file flags and
 error strings), never as an exception across the signal boundary. Callers with
 no carrier (reconciliation, retry, direct test invocation) fall back to one
 synchronous ``collect_job_artifacts`` call. ``build_result`` consumes the

@@ -10,6 +10,7 @@ from PySide6.QtCore import QProcess
 import mufinder.services.local_runner as local_runner_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
+from mufinder.services.job_artifacts import RetrievalFlags
 from mufinder.services.local_runner import LocalJobRunner
 
 
@@ -401,8 +402,7 @@ def test_local_runner_process_finished_uses_task_farm_primary_output(
         castep_executable="/usr/bin/castep",
         mpirun_path="",
         num_cores=1,
-        task_farming_enabled=True,
-        num_farms=4,
+        retrieval=RetrievalFlags(task_farming_enabled=True, num_farms=4),
     )
     runner._active[job_id] = local_runner_module._ActiveJob(request=request, process=_DummyProcess())
 

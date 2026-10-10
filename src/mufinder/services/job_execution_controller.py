@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,7 @@ from mufinder.services.failure_diagnosis import (
     failure_reason_summary,
     find_failure_log_files,
 )
+from mufinder.services.job_artifacts import RetrievalFlags
 from mufinder.services.job_monitoring import is_cluster_job
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
@@ -56,14 +57,32 @@ class ClusterJobSubmission:
     queue_name: str = ""
     comment: str = ""
     castep_executable: str = ""
-    retrieve_den_fmt: bool = False
-    retrieve_out_cell: bool = False
-    retrieve_phonon: bool = False
-    retrieve_ts: bool = False
     reuse_existing_files: bool = False
     allow_existing_remote_directory: bool = False
-    task_farming_enabled: bool = False
-    num_farms: int | None = None
+    retrieval: RetrievalFlags = RetrievalFlags()
+
+
+#: ``ClusterJobSubmission`` fields that are document-side only and never reach
+#: ``ClusterJobRunner.submit``.
+_SUBMISSION_ONLY_FIELDS = frozenset({"job", "execution_target", "retrieval"})
+#: ``ClusterJobSubmission`` fields whose ``ClusterJobRunner.submit`` keyword differs.
+_SUBMIT_KEYWORD_BY_FIELD = {"output_dir": "local_job_dir", "remote_target": "remote_directory"}
+
+
+def _cluster_submit_kwargs(request: ClusterJobSubmission) -> dict[str, Any]:
+    """Return the ``ClusterJobRunner.submit`` keywords for ``request``.
+
+    Every runner-facing field is copied under its submit keyword, and the
+    retrieval flags are expanded into the keywords they travel as.
+    """
+
+    kwargs: dict[str, Any] = {"job_id": request.job.id}
+    for field in fields(request):
+        if field.name in _SUBMISSION_ONLY_FIELDS:
+            continue
+        kwargs[_SUBMIT_KEYWORD_BY_FIELD.get(field.name, field.name)] = getattr(request, field.name)
+    kwargs.update(request.retrieval.as_kwargs())
+    return kwargs
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,15 +207,22 @@ class JobExecutionController:
         castep_executable: str,
         mpirun_path: str,
         eligible_statuses: set[JobStatus] | None = None,
+        retrieval_for_job: Callable[[Job], RetrievalFlags] | None = None,
         task_farming_for_job: Callable[[Job], tuple[bool, int | None]] | None = None,
-        retrieve_flags_for_job: Callable[[Job], dict[str, bool]] | None = None,
+        retrieve_flags_for_job: Callable[[Job], Mapping[str, bool]] | None = None,
     ) -> SubmissionOutcome:
         """Submit eligible jobs to the local runner and create tracked runs.
 
-        ``retrieve_flags_for_job`` maps a job to its per-calc-type secondary-output
-        flags (``retrieve_out_cell`` / ``retrieve_phonon`` / ``retrieve_ts``),
-        mirroring the cluster path. The local runner uses them to parse those
-        outputs off the GUI thread on completion, exactly once.
+        ``retrieval_for_job`` maps a job to its
+        :class:`~mufinder.services.job_artifacts.RetrievalFlags`, mirroring the
+        cluster path. The local runner uses them to find farmed outputs and to
+        parse the secondary outputs once, on completion. Without it every job
+        is submitted with default (all-off) flags.
+
+        ``task_farming_for_job`` (``(enabled, num_farms)``) and
+        ``retrieve_flags_for_job`` (a mapping of ``retrieve_*`` flags) are the
+        compatibility form of ``retrieval_for_job``, used only when it is
+        ``None``; see :doc:`/compatibility_policy`.
         """
 
         document = self._document_getter()
@@ -218,12 +244,10 @@ class JobExecutionController:
                 missing_paths.append(job.label)
                 continue
             seed_name = self._job_seed_name(job)
-            task_farming_enabled, num_farms = (
-                task_farming_for_job(job) if task_farming_for_job is not None else (False, None)
-            )
-            retrieve_flags = (
-                retrieve_flags_for_job(job) if retrieve_flags_for_job is not None else {}
-            )
+            if retrieval_for_job is not None:
+                retrieval = retrieval_for_job(job)
+            else:
+                retrieval = _legacy_retrieval_flags(job, task_farming_for_job, retrieve_flags_for_job)
 
             try:
                 job.execution_target = "local"
@@ -243,11 +267,7 @@ class JobExecutionController:
                     castep_executable=castep_executable,
                     mpirun_path=mpirun_path,
                     num_cores=num_cores,
-                    task_farming_enabled=task_farming_enabled,
-                    num_farms=num_farms,
-                    retrieve_out_cell=bool(retrieve_flags.get("retrieve_out_cell", False)),
-                    retrieve_phonon=bool(retrieve_flags.get("retrieve_phonon", False)),
-                    retrieve_ts=bool(retrieve_flags.get("retrieve_ts", False)),
+                    **retrieval.as_kwargs(),
                 )
             except Exception as exc:  # noqa: BLE001
                 failed_messages.append(f"- {job.label}: {exc}")
@@ -306,32 +326,7 @@ class JobExecutionController:
         job.execution_target = request.execution_target
         job.remote_directory = request.remote_target
         run = self._create_active_run(document, job, JobStatus.SUBMITTING)
-
-        submit_kwargs: dict[str, Any] = {
-            "job_id": job.id,
-            "local_job_dir": request.output_dir,
-            "seed_name": request.seed_name,
-            "num_processes": request.num_processes,
-            "walltime": request.walltime,
-            "working_directory": request.working_directory,
-            "template_script_path": request.template_script_path,
-            "cores_per_node": request.cores_per_node,
-            "memory_gb": request.memory_gb,
-            "mem_per_cpu_gb": request.mem_per_cpu_gb,
-            "queue_name": request.queue_name,
-            "comment": request.comment,
-            "castep_executable": request.castep_executable,
-            "retrieve_den_fmt": request.retrieve_den_fmt,
-            "retrieve_out_cell": request.retrieve_out_cell,
-            "retrieve_phonon": request.retrieve_phonon,
-            "retrieve_ts": request.retrieve_ts,
-            "remote_directory": request.remote_target,
-            "reuse_existing_files": request.reuse_existing_files,
-            "allow_existing_remote_directory": request.allow_existing_remote_directory,
-            "task_farming_enabled": request.task_farming_enabled,
-            "num_farms": request.num_farms,
-        }
-        return PreparedClusterSubmission(job=job, run=run, submit_kwargs=submit_kwargs)
+        return PreparedClusterSubmission(job=job, run=run, submit_kwargs=_cluster_submit_kwargs(request))
 
     def finalize_cluster_submission(
         self, prepared: PreparedClusterSubmission, remote_job_id: str
@@ -352,15 +347,11 @@ class JobExecutionController:
         """Record a failed remote submit. Runs on the GUI thread."""
 
         job = prepared.job
-        run = prepared.run
         try:
             self._project_service.fail_job(job, message, reason=FailureReason.SUBMISSION)
         except ValueError:
             pass
-        run.status = JobStatus.FAILED
-        run.completed_at = utc_now()
-        self._active_run_by_job.pop(job.id, None)
-        self._record_terminal_event("job_failed", job, error_message=message)
+        self._close_active_run(job, prepared.run, JobStatus.FAILED, "job_failed", error_message=message)
         return ClusterJobSubmissionOutcome(
             failed_message=f"- {job.label}: {message}",
             journal_changed=True,
@@ -607,14 +598,10 @@ class JobExecutionController:
 
         run = self.run_for_job(job_id)
         if run is not None:
-            if run.started_at is None:
-                run.started_at = utc_now()
-            run.completed_at = utc_now()
-            run.status = JobStatus.FAILED
             run.warnings = [message]
-
-        self._active_run_by_job.pop(job_id, None)
-        self._record_terminal_event("job_failed", job, error_message=message)
+        self._close_active_run(
+            job, run, JobStatus.FAILED, "job_failed", error_message=message, mark_started=True
+        )
         return LifecycleUpdate(job=job, changed=True, journal_changed=True)
 
     def diagnose_failure(self, job: Job, message: str | None) -> FailureDiagnosis:
@@ -653,13 +640,7 @@ class JobExecutionController:
             except ValueError:
                 pass
 
-        run = self.run_for_job(job_id)
-        if run is not None:
-            run.completed_at = utc_now()
-            run.status = JobStatus.CANCELLED
-
-        self._active_run_by_job.pop(job_id, None)
-        self._record_terminal_event("job_cancelled", job)
+        self._close_active_run(job, self.run_for_job(job_id), JobStatus.CANCELLED, "job_cancelled")
         return LifecycleUpdate(job=job, changed=True, journal_changed=True)
 
     def mark_cluster_status_changed(self, job_id: UUID, status_value: str) -> LifecycleUpdate:
@@ -701,23 +682,14 @@ class JobExecutionController:
             return LifecycleUpdate(job=job)
 
         run = self.run_for_job(job_id)
+        if mapped == JobStatus.STOPPED:
+            self._close_active_run(job, run, JobStatus.STOPPED, "job_stopped", error_message=job.error_message)
+            return LifecycleUpdate(job=job, changed=True, journal_changed=True)
         if run is not None:
             run.status = mapped
             if mapped == JobStatus.RUNNING and run.started_at is None:
                 run.started_at = utc_now()
-            if mapped == JobStatus.STOPPED:
-                run.completed_at = utc_now()
-
-        journal_changed = False
-        if mapped == JobStatus.STOPPED:
-            self._active_run_by_job.pop(job_id, None)
-            self._record_terminal_event(
-                "job_stopped",
-                job,
-                error_message=job.error_message,
-            )
-            journal_changed = True
-        return LifecycleUpdate(job=job, changed=True, journal_changed=journal_changed)
+        return LifecycleUpdate(job=job, changed=True)
 
     def mark_queue_checked(self, snapshot: Any) -> bool:
         """Stamp per-job monitor metadata from one queue polling pass.
@@ -789,22 +761,42 @@ class JobExecutionController:
         except ValueError:
             return LifecycleUpdate(job=job)
 
-        # Watchdog bookkeeping (mutated directly by the controller, per contract).
-        stamped_at = utc_now()
-        job.last_checked_at = stamped_at
-        job.last_status_source = "watchdog"
-        job.last_status_message = message
-
-        run = self.run_for_job(job_id)
-        if run is not None:
-            if run.started_at is None:
-                run.started_at = stamped_at
-            run.completed_at = stamped_at
-            run.status = JobStatus.STOPPED
-
-        self._active_run_by_job.pop(job_id, None)
-        self._record_terminal_event("job_stopped", job, error_message=message)
+        self._stamp_monitor_metadata(job, source="watchdog", message=message)
+        self._close_active_run(
+            job,
+            self.run_for_job(job_id),
+            JobStatus.STOPPED,
+            "job_stopped",
+            error_message=message,
+            mark_started=True,
+        )
         return LifecycleUpdate(job=job, changed=True, journal_changed=True)
+
+    def _close_active_run(
+        self,
+        job: Job,
+        run: CalculationRun | None,
+        status: JobStatus,
+        event: str,
+        *,
+        error_message: str | None = None,
+        mark_started: bool = False,
+    ) -> None:
+        """Finish ``run`` as ``status``, release the job's active run, and journal ``event``.
+
+        ``mark_started`` also stamps a run that never started with the same
+        completion time, so a run that failed or was stopped before its process
+        began still records a start.
+        """
+
+        if run is not None:
+            completed_at = utc_now()
+            if mark_started and run.started_at is None:
+                run.started_at = completed_at
+            run.completed_at = completed_at
+            run.status = status
+        self._active_run_by_job.pop(job.id, None)
+        self._record_terminal_event(event, job, error_message=error_message)
 
     def _create_active_run(
         self,
@@ -845,3 +837,24 @@ class JobExecutionController:
             result=result,
             error_message=error_message,
         )
+
+
+def _legacy_retrieval_flags(
+    job: Job,
+    task_farming_for_job: Callable[[Job], tuple[bool, int | None]] | None,
+    retrieve_flags_for_job: Callable[[Job], Mapping[str, bool]] | None,
+) -> RetrievalFlags:
+    """Build ``RetrievalFlags`` from the compatibility form of ``submit_local_jobs``."""
+
+    task_farming_enabled, num_farms = (
+        task_farming_for_job(job) if task_farming_for_job is not None else (False, None)
+    )
+    flags = retrieve_flags_for_job(job) if retrieve_flags_for_job is not None else {}
+    return RetrievalFlags(
+        retrieve_den_fmt=bool(flags.get("retrieve_den_fmt", False)),
+        retrieve_out_cell=bool(flags.get("retrieve_out_cell", False)),
+        retrieve_phonon=bool(flags.get("retrieve_phonon", False)),
+        retrieve_ts=bool(flags.get("retrieve_ts", False)),
+        task_farming_enabled=task_farming_enabled,
+        num_farms=num_farms,
+    )

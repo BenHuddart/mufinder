@@ -5,14 +5,14 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Deque
+from typing import Any, Deque
 from uuid import UUID
 
 from PySide6.QtCore import QObject, QProcess, Signal
 
 from mufinder.castep_io.output_parser import parse_castep_output
 from mufinder.domain.enums import JobStatus
-from mufinder.services.job_artifacts import collect_job_artifacts, effective_num_farms
+from mufinder.services.job_artifacts import RetrievalFlags
 
 
 @dataclass(slots=True)
@@ -23,13 +23,9 @@ class _PendingJob:
     castep_executable: str
     mpirun_path: str
     num_cores: int
-    task_farming_enabled: bool = False
-    num_farms: int | None = None
-    # Which secondary outputs this job produces, mirroring the cluster runner's
-    # retrieval flags. Drive off-thread artifact collection on completion.
-    retrieve_out_cell: bool = False
-    retrieve_phonon: bool = False
-    retrieve_ts: bool = False
+    # Which secondary outputs this job produces and whether task farming renamed
+    # them, mirroring the cluster runner. Drives artifact collection on completion.
+    retrieval: RetrievalFlags = RetrievalFlags()
 
 
 @dataclass(slots=True)
@@ -89,13 +85,13 @@ class LocalJobRunner(QObject):
         castep_executable: str,
         mpirun_path: str,
         num_cores: int,
-        task_farming_enabled: bool = False,
-        num_farms: int | None = None,
-        retrieve_out_cell: bool = False,
-        retrieve_phonon: bool = False,
-        retrieve_ts: bool = False,
+        **retrieval: Any,
     ) -> None:
-        """Submit one local CASTEP job for execution."""
+        """Submit one local CASTEP job for execution.
+
+        ``retrieval`` holds the :class:`~mufinder.services.job_artifacts.RetrievalFlags`
+        fields as keywords (``retrieve_out_cell``, ``task_farming_enabled``, ...).
+        """
 
         request = _PendingJob(
             job_id=job_id,
@@ -104,17 +100,12 @@ class LocalJobRunner(QObject):
             castep_executable=str(castep_executable).strip(),
             mpirun_path=str(mpirun_path).strip(),
             num_cores=max(1, int(num_cores)),
-            task_farming_enabled=bool(task_farming_enabled),
-            num_farms=(max(1, int(num_farms)) if num_farms is not None else None),
-            retrieve_out_cell=bool(retrieve_out_cell),
-            retrieve_phonon=bool(retrieve_phonon),
-            retrieve_ts=bool(retrieve_ts),
+            retrieval=RetrievalFlags(**retrieval),
         )
 
         validation_error = self._validate_request(request)
         if validation_error is not None:
-            self.job_failed.emit(job_id, validation_error)
-            self.status_changed.emit(job_id, JobStatus.FAILED.value)
+            self._fail(job_id, validation_error)
             return
 
         self._pending.append(request)
@@ -234,57 +225,48 @@ class LocalJobRunner(QObject):
             f"The CASTEP process failed to start: {detail}. "
             "Check the CASTEP executable path and file permissions."
         )
-        self.job_failed.emit(job_id, message)
-        self.status_changed.emit(job_id, JobStatus.FAILED.value)
+        self._fail(job_id, message)
         self._start_queued_jobs()
 
     def _on_process_finished(self, job_id: UUID, exit_code: int) -> None:
         active = self._active.pop(job_id, None)
-        if active is None:
-            self._start_queued_jobs()
-            return
+        if active is not None:
+            active.process.deleteLater()
+            self._report_finished(job_id, active, exit_code)
+        self._start_queued_jobs()
+
+    def _report_finished(self, job_id: UUID, active: _ActiveJob, exit_code: int) -> None:
+        """Emit the outcome of one finished process: cancelled, failed or completed."""
 
         request = active.request
-        process = active.process
-        process.deleteLater()
-
         if job_id in self._cancel_requested:
             self._cancel_requested.remove(job_id)
             self.job_cancelled.emit(job_id)
             self.status_changed.emit(job_id, JobStatus.CANCELLED.value)
-            self._start_queued_jobs()
             return
 
         if exit_code != 0:
-            stderr = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
-            details = stderr or active.process_error or f"Process exited with code {exit_code}."
-            self.job_failed.emit(job_id, details)
-            self.status_changed.emit(job_id, JobStatus.FAILED.value)
-            self._start_queued_jobs()
+            stderr = (
+                bytes(active.process.readAllStandardError())
+                .decode("utf-8", errors="replace")
+                .strip()
+            )
+            self._fail(job_id, stderr or active.process_error or f"Process exited with code {exit_code}.")
             return
 
         output_path = self._primary_output_path(request)
         if not output_path.exists():
-            self.job_failed.emit(job_id, f"Expected CASTEP output was not found: {output_path.name}")
-            self.status_changed.emit(job_id, JobStatus.FAILED.value)
-            self._start_queued_jobs()
+            self._fail(job_id, f"Expected CASTEP output was not found: {output_path.name}")
             return
 
         try:
             result = parse_castep_output(output_path)
         except Exception as exc:  # noqa: BLE001
-            self.job_failed.emit(job_id, f"Failed to parse CASTEP output: {exc}")
-            self.status_changed.emit(job_id, JobStatus.FAILED.value)
-            self._start_queued_jobs()
+            self._fail(job_id, f"Failed to parse CASTEP output: {exc}")
             return
 
         if not result.completed:
-            self.job_failed.emit(
-                job_id,
-                result.error_message or "CASTEP did not report successful completion.",
-            )
-            self.status_changed.emit(job_id, JobStatus.FAILED.value)
-            self._start_queued_jobs()
+            self._fail(job_id, result.error_message or "CASTEP did not report successful completion.")
             return
 
         # Parse the secondary outputs (relaxed cell / phonon / transition state)
@@ -292,21 +274,19 @@ class LocalJobRunner(QObject):
         # flags this job carries. The GUI handler decides failure from the
         # carrier and the owning controller consumes the pre-parsed data —
         # neither re-reads disk. Errors are captured on the carrier, never raised.
-        artifacts = collect_job_artifacts(
-            request.job_dir,
-            request.seed_name,
-            want_out_cell=request.retrieve_out_cell,
-            want_phonon=request.retrieve_phonon,
-            want_ts=request.retrieve_ts,
-            num_farms=effective_num_farms(request.task_farming_enabled, request.num_farms),
-        )
+        artifacts = request.retrieval.collect(request.job_dir, request.seed_name)
         self.job_finished.emit(job_id, result, artifacts)
         self.status_changed.emit(job_id, JobStatus.COMPLETED.value)
-        self._start_queued_jobs()
+
+    def _fail(self, job_id: UUID, message: str) -> None:
+        """Report ``job_id`` as failed: ``job_failed`` then ``status_changed``."""
+
+        self.job_failed.emit(job_id, message)
+        self.status_changed.emit(job_id, JobStatus.FAILED.value)
 
     @staticmethod
     def _primary_output_path(request: _PendingJob) -> Path:
-        if effective_num_farms(request.task_farming_enabled, request.num_farms) > 1:
+        if request.retrieval.farm_count > 1:
             farmed = request.job_dir / f"{request.seed_name}_farm001.castep"
             if farmed.exists():
                 return farmed

@@ -741,7 +741,7 @@ def test_muon_relaxation_batch_configure_empty_selection_shows_info(
     opened: list[int] = []
     monkeypatch.setattr(
         MuonRelaxationWidget,
-        "_open_muon_parameter_dialog",
+        "_open_parameter_dialog",
         lambda _self, _ids: opened.append(1),
     )
 
@@ -770,7 +770,7 @@ def test_muon_relaxation_configure_uses_selection_snapshot_not_collapsed(
     captured: list[tuple[int, ...]] = []
     monkeypatch.setattr(
         MuonRelaxationWidget,
-        "_open_muon_parameter_dialog",
+        "_open_parameter_dialog",
         lambda _self, ids: captured.append(ids),
     )
     monkeypatch.setattr(
@@ -1096,7 +1096,7 @@ def _save_dialog(monkeypatch, widget: MuonRelaxationWidget, row_id: int, *, spin
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(ParameterDialog, "exec", _accept)
-    widget._open_muon_parameter_dialog((row_id,))
+    widget._open_parameter_dialog((row_id,))
     return shown[0]
 
 
