@@ -76,6 +76,18 @@ every CI run. Keep these in place when changing the test setup:
   creeps up; locally, ``make test PYTEST_ARGS="--no-cov --durations=25"``
   gives the same report.
 
+Test layout
+-----------
+
+Tests mirror ``src/mufinder/``: each package has a test package of the same
+name (``tests/app``, ``tests/domain``, ``tests/services``, ``tests/workflow``
+and so on), and ``tests/setup`` holds the tests of the top-level modules
+(``main``, ``cluster_setup``, ``branding`` and the version metadata). The
+structural tests in ``tests/test_agent_harness.py``, the golden-input rendering
+test and ``tests/conftest.py`` stay at the top level. The test packages have no
+``__init__.py``, so pytest imports every test module by its file name: a test
+file name must be unique across the whole ``tests`` tree.
+
 Shared test helpers
 -------------------
 

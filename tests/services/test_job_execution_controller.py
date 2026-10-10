@@ -3,7 +3,11 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
+import pytest
+
+from mufinder.domain.models import CalculationRun
 from mufinder.domain.enums import FailureReason, JobStatus
 from mufinder.domain.models import Result, utc_now
 from mufinder.services.job_execution_controller import ClusterJobSubmission, JobExecutionController
@@ -12,12 +16,15 @@ from tests.support.jobs import make_job
 
 
 class FakeLocalRunner:
-    def __init__(self) -> None:
+    def __init__(self, *, raise_on_submit: Exception | None = None) -> None:
         self.max_concurrent = 1
         self.submitted: list[dict[str, object]] = []
+        self._raise_on_submit = raise_on_submit
 
     def submit(self, **kwargs: object) -> None:
         self.submitted.append(kwargs)
+        if self._raise_on_submit is not None:
+            raise self._raise_on_submit
 
 
 class FakeClusterRunner:
@@ -39,11 +46,11 @@ def _document(tmp_path: Path) -> tuple[ProjectService, ProjectDocument]:
 
 def _controller(
     *,
-    document: ProjectDocument,
+    document: ProjectDocument | None,
     service: ProjectService,
     local_runner: FakeLocalRunner | None = None,
     cluster_runner: FakeClusterRunner | None = None,
-    output_dir: Path,
+    output_dir: Path | None,
 ) -> JobExecutionController:
     return JobExecutionController(
         document_getter=lambda: document,
@@ -146,6 +153,179 @@ def test_local_resubmission_accepts_cancelled_job(tmp_path: Path) -> None:
     assert outcome.submitted_count == 1
     assert runner.submitted[0]["job_id"] == job_id
     assert job.status == JobStatus.SUBMITTING
+
+
+def _submit_local(controller: JobExecutionController, jobs, **options):
+    return controller.submit_local_jobs(
+        jobs,
+        num_cores=options.pop("num_cores", 1),
+        max_concurrent=1,
+        castep_executable="/bin/castep",
+        mpirun_path="",
+        **options,
+    )
+
+
+def test_local_submission_skips_jobs_outside_the_eligible_statuses(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("ineligible", service=service, document=document)
+    job.status = JobStatus.COMPLETED
+    runner = FakeLocalRunner()
+    controller = _controller(document=document, service=service, local_runner=runner, output_dir=tmp_path)
+
+    outcome = _submit_local(controller, [job])
+
+    assert outcome.submitted_count == 0
+    assert runner.submitted == []
+
+
+def test_local_submission_skips_jobs_the_project_cannot_submit(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("submit-raises", service=service, document=document)
+    # COMPLETED passes the caller's eligibility filter but ProjectService.submit_job
+    # rejects the transition, so the job is skipped untouched.
+    job.status = JobStatus.COMPLETED
+    runner = FakeLocalRunner()
+    controller = _controller(document=document, service=service, local_runner=runner, output_dir=tmp_path)
+
+    outcome = _submit_local(controller, [job], eligible_statuses={JobStatus.COMPLETED})
+
+    assert outcome.submitted_count == 0
+    assert runner.submitted == []
+    assert job.status == JobStatus.COMPLETED
+
+
+def test_local_submission_reports_jobs_without_an_output_directory(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("missing-dir", service=service, document=document)
+    controller = _controller(document=document, service=service, output_dir=None)
+
+    outcome = _submit_local(controller, [job])
+
+    assert outcome.missing_paths == (job.label,)
+    assert outcome.submitted_count == 0
+
+
+def test_local_submission_fails_the_job_when_the_runner_raises(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("runner-error", service=service, document=document)
+    runner = FakeLocalRunner(raise_on_submit=RuntimeError("runner exploded"))
+    controller = _controller(document=document, service=service, local_runner=runner, output_dir=tmp_path)
+
+    outcome = _submit_local(controller, [job], num_cores=2)
+
+    assert outcome.submitted_count == 0
+    assert outcome.failed_messages == ("- runner-error: runner exploded",)
+    assert outcome.journal_changed is True
+    assert job.status == JobStatus.FAILED
+    assert controller.active_run_by_job == {}
+    assert document.provenance[-1].action == "job_failed"
+
+
+def test_local_submission_forwards_task_farming_to_the_runner(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("task-farm", service=service, document=document)
+    runner = FakeLocalRunner()
+    controller = _controller(document=document, service=service, local_runner=runner, output_dir=tmp_path)
+
+    outcome = _submit_local(controller, [job], num_cores=4, task_farming_for_job=lambda _job: (True, 3))
+
+    assert outcome.submitted_count == 1
+    assert runner.submitted[0]["task_farming_enabled"] is True
+    assert runner.submitted[0]["num_farms"] == 3
+
+
+def _cluster_submission(job, output_dir: Path) -> ClusterJobSubmission:
+    return ClusterJobSubmission(
+        job=job,
+        output_dir=output_dir,
+        seed_name=job.label,
+        remote_target=None,
+        execution_target="cluster",
+        num_processes=1,
+        walltime="01:00:00",
+        working_directory="/remote",
+        template_script_path="",
+        cores_per_node=1,
+    )
+
+
+def test_controller_is_inert_without_an_open_document(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("orphan", service=service, document=document)
+    controller = _controller(document=None, service=service, output_dir=tmp_path)
+
+    assert controller.next_run_index(job.id) == 1
+    assert controller.run_for_job(job.id) is None
+    assert controller.ensure_run_for_job(job) is None
+    local = _submit_local(controller, [job])
+    assert (local.submitted_count, local.journal_changed) == (0, False)
+    cluster = controller.submit_cluster_job(_cluster_submission(job, tmp_path))
+    assert (cluster.submitted_job, cluster.journal_changed) == (None, False)
+    assert controller.record_submission([job], "local") is False
+    result = Result(result_type="castep_cutoff", data={"e": 1.0})
+    assert controller.complete_job_with_result(job, result=result, warnings=[], convergence_achieved=None) is False
+    assert job.status == JobStatus.DEFINED
+
+
+def test_record_submission_journals_only_when_there_are_jobs(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("rec-ok", service=service, document=document)
+    service.submit_job(job)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+
+    assert controller.record_submission([], "local") is False
+    assert controller.record_submission([job], "local") is True
+    assert document.provenance[-1].action == "submit_jobs"
+
+
+def test_run_for_job_falls_back_to_the_latest_persisted_run(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job_id = make_job("persisted", service=service, document=document).id
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    assert controller.run_for_job(job_id) is None
+
+    older = CalculationRun(job_id=job_id, run_index=1, status=JobStatus.FAILED)
+    newer = CalculationRun(job_id=job_id, run_index=2, status=JobStatus.COMPLETED)
+    document.runs[older.id] = older
+    document.runs[newer.id] = newer
+
+    assert controller.run_for_job(job_id) is newer
+
+
+def test_run_for_job_prefers_the_active_run_passed_to_the_controller(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("active", service=service, document=document)
+    active = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.RUNNING)
+    newer = CalculationRun(job_id=job.id, run_index=2, status=JobStatus.FAILED)
+    document.runs[active.id] = active
+    document.runs[newer.id] = newer
+    controller = JobExecutionController(
+        document_getter=lambda: document,
+        project_service=service,
+        local_runner=FakeLocalRunner(),
+        cluster_runner=FakeClusterRunner(),
+        job_output_directory=lambda _job: tmp_path,
+        job_seed_name=lambda job: job.label,
+        active_run_by_job={job.id: active.id},
+    )
+
+    assert controller.active_run_by_job == {job.id: active.id}
+    assert controller.run_for_job(job.id) is active
+    assert controller.ensure_run_for_job(job) is active
+
+
+def test_ensure_run_for_job_creates_a_started_run_when_none_is_active(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("ensure-create", service=service, document=document)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+
+    run = controller.ensure_run_for_job(job, status=JobStatus.RUNNING, started=True)
+
+    assert run is not None
+    assert run.status == JobStatus.RUNNING
+    assert run.started_at is not None
+    assert controller.active_run_by_job[job.id] == run.id
 
 
 def test_lifecycle_events_update_job_run_and_terminal_journal(tmp_path: Path) -> None:
@@ -390,6 +570,20 @@ def test_cluster_submission_failure_marks_job_failed_and_records_terminal_event(
     assert document.provenance[-1].action == "job_failed"
 
 
+def test_cluster_submission_rejects_jobs_outside_the_eligible_statuses(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("cluster-ineligible", service=service, document=document)
+    job.status = JobStatus.RUNNING
+    runner = FakeClusterRunner()
+    controller = _controller(document=document, service=service, cluster_runner=runner, output_dir=tmp_path)
+
+    outcome = controller.submit_cluster_job(_cluster_submission(job, tmp_path))
+
+    assert outcome.submitted_job is None
+    assert runner.submitted == []
+    assert job.status == JobStatus.RUNNING
+
+
 def test_cluster_stopped_status_is_terminal_and_clears_active_run(tmp_path: Path) -> None:
     service, document = _document(tmp_path)
     job_id = make_job("stopped-cluster-job", service=service, document=document).id
@@ -430,6 +624,216 @@ def test_cluster_stopped_status_is_terminal_and_clears_active_run(tmp_path: Path
     assert run.status == JobStatus.STOPPED
     assert controller.active_run_by_job == {}
     assert document.provenance[-1].action == "job_stopped"
+
+
+def _tracked_run(controller: JobExecutionController, document: ProjectDocument, job, status: JobStatus):
+    """Register an active run for ``job`` without a start time."""
+
+    run = CalculationRun(job_id=job.id, run_index=1, status=status, started_at=None)
+    document.runs[run.id] = run
+    controller.active_run_by_job[job.id] = run.id
+    return run
+
+
+@pytest.mark.parametrize(
+    "notify",
+    [
+        lambda controller, job_id: controller.mark_local_status_changed(job_id, JobStatus.QUEUED.value),
+        lambda controller, job_id: controller.mark_started(job_id),
+        lambda controller, job_id: controller.mark_cluster_status_changed(job_id, JobStatus.RUNNING.value),
+        lambda controller, job_id: controller.fail_job(job_id, "boom"),
+        lambda controller, job_id: controller.cancel_job(job_id),
+    ],
+    ids=["local-status", "started", "cluster-status", "fail", "cancel"],
+)
+def test_lifecycle_notifications_ignore_unknown_jobs(tmp_path: Path, notify) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+
+    update = notify(controller, uuid4())
+
+    assert update.job is None
+    assert update.changed is False
+
+
+def test_local_status_change_only_acts_on_queued(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("nonqueued", service=service, document=document)
+    service.submit_job(job)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+
+    update = controller.mark_local_status_changed(job.id, JobStatus.RUNNING.value)
+
+    assert update.job is job
+    assert update.changed is False
+    assert job.status == JobStatus.SUBMITTING
+
+
+@pytest.mark.parametrize(
+    "notify",
+    [
+        lambda controller, job_id: controller.mark_local_status_changed(job_id, JobStatus.QUEUED.value),
+        lambda controller, job_id: controller.mark_cluster_status_changed(job_id, JobStatus.QUEUED.value),
+    ],
+    ids=["local", "cluster"],
+)
+def test_queued_notification_is_unchanged_when_the_project_rejects_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, notify
+) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("queued-error", service=service, document=document)
+    service.submit_job(job)
+    calls: list[object] = []
+
+    def _reject(rejected_job: object, *, remote_job_id: object) -> None:
+        calls.append(rejected_job)
+        raise ValueError("invalid transition")
+
+    monkeypatch.setattr(service, "mark_job_queued", _reject)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+
+    update = notify(controller, job.id)
+
+    assert calls == [job]
+    assert update.job is job
+    assert update.changed is False
+
+
+def test_mark_started_stamps_a_missing_run_start_time(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("start", service=service, document=document)
+    service.submit_job(job)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    run = _tracked_run(controller, document, job, JobStatus.SUBMITTING)
+
+    update = controller.mark_started(job.id)
+
+    assert update.changed is True
+    assert job.status == JobStatus.RUNNING
+    assert run.status == JobStatus.RUNNING
+    assert run.started_at is not None
+
+
+def test_complete_job_with_result_creates_a_run_when_none_exists(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("complete-create-run", service=service, document=document)
+    service.submit_job(job)
+    service.start_job(job)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    result = Result(result_type="castep_cutoff", data={"e": -2.0})
+    document.results[result.id] = result
+
+    completed = controller.complete_job_with_result(
+        job, result=result, warnings=["w"], convergence_achieved=False
+    )
+
+    run = controller.run_for_job(job.id)
+    assert completed is True
+    assert job.status == JobStatus.COMPLETED
+    assert run is not None
+    assert run.status == JobStatus.COMPLETED
+    assert run.result_id == result.id
+
+
+def test_fail_job_closes_the_active_run(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("fail", service=service, document=document)
+    service.submit_job(job)
+    service.start_job(job)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    run = _tracked_run(controller, document, job, JobStatus.RUNNING)
+
+    update = controller.fail_job(job.id, "kaboom")
+
+    assert update.changed is True
+    assert update.journal_changed is True
+    assert job.status == JobStatus.FAILED
+    assert run.status == JobStatus.FAILED
+    assert run.started_at is not None
+    assert run.completed_at is not None
+    assert run.warnings == ["kaboom"]
+    assert controller.active_run_by_job == {}
+    assert document.provenance[-1].action == "job_failed"
+
+
+def test_fail_job_journals_a_late_failure_without_reopening_a_completed_job(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("fail-terminal", service=service, document=document)
+    job.status = JobStatus.COMPLETED
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+
+    update = controller.fail_job(job.id, "late failure")
+
+    assert update.job is job
+    assert job.status == JobStatus.COMPLETED
+    assert document.provenance[-1].action == "job_failed"
+
+
+def test_cancel_job_closes_the_active_run(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("cancel", service=service, document=document)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    run = _tracked_run(controller, document, job, JobStatus.SUBMITTING)
+
+    update = controller.cancel_job(job.id)
+
+    assert update.changed is True
+    assert update.journal_changed is True
+    assert job.status == JobStatus.CANCELLED
+    assert run.status == JobStatus.CANCELLED
+    assert run.completed_at is not None
+    assert controller.active_run_by_job == {}
+    assert document.provenance[-1].action == "job_cancelled"
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["definitely-not-a-status", JobStatus.RETRIEVING.value],
+    ids=["unmapped", "not-applicable"],
+)
+def test_cluster_status_change_ignores_statuses_that_do_not_apply(tmp_path: Path, status: str) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("cluster-noop", service=service, document=document)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+
+    update = controller.mark_cluster_status_changed(job.id, status)
+
+    assert update.job is job
+    assert update.changed is False
+    assert job.status == JobStatus.DEFINED
+
+
+def test_cluster_status_change_moves_a_running_job_to_retrieving(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("cluster-retrieving", service=service, document=document)
+    service.submit_job(job)
+    service.mark_job_queued(job, remote_job_id="r1")
+    service.start_job(job)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    run = _tracked_run(controller, document, job, JobStatus.RUNNING)
+
+    update = controller.mark_cluster_status_changed(job.id, JobStatus.RETRIEVING.value)
+
+    assert update.changed is True
+    assert update.journal_changed is False
+    assert job.status == JobStatus.RETRIEVING
+    assert run.status == JobStatus.RETRIEVING
+
+
+def test_cluster_status_change_to_running_stamps_the_run_start_time(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    job = make_job("cluster-running", service=service, document=document)
+    service.submit_job(job)
+    service.mark_job_queued(job, remote_job_id="r1")
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    run = _tracked_run(controller, document, job, JobStatus.QUEUED)
+
+    update = controller.mark_cluster_status_changed(job.id, JobStatus.RUNNING.value)
+
+    assert update.changed is True
+    assert job.status == JobStatus.RUNNING
+    assert run.status == JobStatus.RUNNING
+    assert run.started_at is not None
 
 
 def test_fail_job_diagnoses_castep_error_files(tmp_path: Path) -> None:
