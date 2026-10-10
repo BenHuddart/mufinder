@@ -30,6 +30,7 @@ from mufinder.app.relaxation_adapter import suggested_grid_for_row
 from mufinder.app.relaxation_types import SupercellMatrix
 from mufinder.app.selection_snapshot import SelectionSnapshotComboBox, resolve_target_keys
 from mufinder.app.theme import use_square_top_table_corners, use_tabbed_table_corners
+from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.science.kpoint_grids import spacing_from_grid
 
@@ -404,7 +405,9 @@ def standard_row_actions(
     def _rows(callback: Callable[[Sequence[int]], None]) -> Callable[[Sequence[object]], None]:
         return lambda rows: callback([int(row) for row in rows])
 
-    is_ready = _status_is(lambda status: not workflow_row_is_locked(status))
+    # Run follows the submit filter, not the edit lock: a cancelled row is
+    # editable, but the dashboard's Resubmit/Reset is its way back to running.
+    is_ready = _status_is(lambda status: not status or status in READY_WORKFLOW_ROW_STATUSES)
     before: list[RowMenuAction] = []
     if run_local is not None:
         before.append(
@@ -732,8 +735,22 @@ def multi_row_outcome_text(action: str, applied: int, selected: int) -> str:
     return text
 
 
+# Row statuses whose parameters, supercell and sweep value stay editable: rows
+# with no job yet, and cancelled rows, whose job never produced a result and may
+# be edited before it runs again. Every other status locks the row.
+_UNLOCKED_ROW_STATUSES = frozenset({"", "ready", "defined", "not generated", "cancelled"})
+
+
 def workflow_row_is_locked(status: str) -> bool:
-    return str(status).strip().casefold() not in {"", "ready", "defined", "not generated"}
+    """Return whether a workflow row with ``status`` is locked against edits.
+
+    This is the one locked-row rule for every workflow table: a locked row's
+    inline cells (supercell, sweep value) are read-only and its parameter dialog
+    opens read-only. Whether a row can be submitted is a separate rule,
+    ``READY_WORKFLOW_ROW_STATUSES`` in ``workflow_submission``.
+    """
+
+    return str(status).strip().casefold() not in _UNLOCKED_ROW_STATUSES
 
 
 def style_workflow_configure_button(

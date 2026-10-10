@@ -1,7 +1,7 @@
 """Pristine-relaxation configuration panel.
 
 Rows whose job has left the unlocked runtime statuses keep their inline
-parameter lock (``_runtime_controls_locked``): a submitted row's inputs must not
+parameter lock (``workflow_row_is_locked``): a submitted row's inputs must not
 drift away from the directory that was rendered from them. Editing a terminal
 row's parameters goes through the "Continue relaxation…" path instead, which
 mutates the active definition's row in place via
@@ -11,7 +11,6 @@ and mirrors the edit back into this form, preserving the row→job binding.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -67,17 +66,21 @@ from mufinder.app.workflow_table_utils import (
     style_workflow_configure_button,
     workflow_row_status_text,
 )
+from mufinder.app.workflow_parameters import clone_spec_for_workflow
+from mufinder.app.workflow_parameters import drop_default_conflicts
+from mufinder.app.workflow_parameters import sanitize_parameter_mapping
+from mufinder.app.workflow_parameters import workflow_default_params
+from mufinder.app.workflow_table_utils import workflow_row_is_locked
 from mufinder.app.adapter_common import coerce_supercell_matrix
 from mufinder.app.workflow_table_utils import SupercellColumn
 from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     infer_task,
     keyword_visible_in_workflow,
-    normalize_gui_value,
     validate_gui_values,
 )
 from mufinder.castep_io.schema import KeywordSpec, get_keyword_spec
-from mufinder.castep_io.types import BlockSection, ValueWithUnit
+from mufinder.castep_io.types import ValueWithUnit
 
 
 _EXCLUDED_PARAMETER_NAMES = {"task", "fix_all_cell"}
@@ -89,49 +92,8 @@ _EXTRA_GEOMETRY_PARAMETER_NAMES = (
     "geom_max_iter",
     "geom_stress_tol",
 )
-_PREFERRED_DEFAULT_PARAMETER_NAMES = (
-    "cut_off_energy",
-    "kpoint_mp_grid",
-    "kpoint_mp_spacing",
-    "kpoints_list",
-)
-_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready", "cancelled"}
-
-
-def _append_workflow_stage(values: tuple[str, ...], workflow_stage: str) -> tuple[str, ...]:
-    if workflow_stage in values:
-        return values
-    return (*values, workflow_stage)
-
-
-def _clone_spec_for_pristine_workflow(
-    spec: KeywordSpec,
-    *,
-    basic: bool,
-    advanced: bool,
-) -> KeywordSpec:
-    basic_workflows = spec.basic_workflows
-    advanced_workflows = spec.advanced_workflows
-
-    if basic:
-        basic_workflows = _append_workflow_stage(basic_workflows, "pristine_relaxation")
-    if advanced:
-        advanced_workflows = _append_workflow_stage(advanced_workflows, "pristine_relaxation")
-
-    default_value = 300 if spec.name == "geom_max_iter" else spec.default_value
-    if spec.name == "continuation":
-        default_value = "DEFAULT"
-
-    return replace(
-        spec,
-        basic_workflows=basic_workflows,
-        advanced_workflows=advanced_workflows,
-        default_value=default_value,
-    )
-
-
-def _reorder_pristine_specs(specs: list[KeywordSpec]) -> list[KeywordSpec]:
-    return reorder_workflow_parameter_specs(specs)
+# Starting values that differ from the schema default in this workflow.
+_PRISTINE_DEFAULT_OVERRIDES = {"geom_max_iter": 300, "continuation": "DEFAULT"}
 
 
 class PristineRelaxationWidget(QWidget):
@@ -255,7 +217,20 @@ class PristineRelaxationWidget(QWidget):
 
         self._specs = self._build_parameter_specs()
         self._specs_by_name = {spec.name: spec for spec in self._specs}
-        self._default_params = self._default_shared_params()
+        # kpoint_mp_grid and kpoint_mp_spacing are project-default-aware:
+        # _effective_params_for_row injects them from the adopted project grid
+        # (and its equivalent spacing) so the dialog reflects the user's project
+        # default rather than the bare schema default.
+        self._default_params = drop_default_conflicts(
+            workflow_default_params(
+                self._specs,
+                workflow_stage="pristine_relaxation",
+                locked_names={"task"},
+                skip_names=("kpoint_mp_grid", "kpoint_mp_spacing"),
+            ),
+            self._specs_by_name,
+            locked_names={"task"},
+        )
         self._schema_xc_functional = self._default_params.get("xc_functional")
 
         self._build_layout()
@@ -385,8 +360,9 @@ class PristineRelaxationWidget(QWidget):
                 workflow_stage="convergence_cutoff",
                 include_advanced=False,
             )
-            cloned = _clone_spec_for_pristine_workflow(
+            cloned = clone_spec_for_workflow(
                 spec,
+                workflow_stage="pristine_relaxation",
                 basic=(
                     basic_in_convergence
                     or spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing")
@@ -398,6 +374,7 @@ class PristineRelaxationWidget(QWidget):
                     include_advanced=True,
                 )
                 and not basic_in_convergence,
+                default_overrides=_PRISTINE_DEFAULT_OVERRIDES,
             )
             specs.append(cloned)
             seen_names.add(cloned.name)
@@ -407,85 +384,17 @@ class PristineRelaxationWidget(QWidget):
             if spec is None or spec.name in _EXCLUDED_PARAMETER_NAMES or spec.name in seen_names:
                 continue
             specs.append(
-                _clone_spec_for_pristine_workflow(
+                clone_spec_for_workflow(
                     spec,
+                    workflow_stage="pristine_relaxation",
                     basic=True,
                     advanced=True,
+                    default_overrides=_PRISTINE_DEFAULT_OVERRIDES,
                 )
             )
             seen_names.add(spec.name)
 
-        return _reorder_pristine_specs(specs)
-
-    @staticmethod
-    def _spec_is_blocked_by_locked(spec: KeywordSpec, locked_names: set[str]) -> bool:
-        if spec.name in locked_names:
-            return False
-        return any(conflict in locked_names for conflict in spec.mutually_exclusive_with)
-
-    @staticmethod
-    def _preferred_default_name(left: str, right: str) -> str:
-        pair = {left, right}
-        for preferred in _PREFERRED_DEFAULT_PARAMETER_NAMES:
-            if preferred in pair:
-                return preferred
-        return min(left, right)
-
-    def _drop_default_conflicts(self, values: dict[str, Any], *, locked_names: set[str] | None = None) -> dict[str, Any]:
-        locked = locked_names or set()
-        for name in tuple(values):
-            spec = self._specs_by_name.get(name)
-            if spec is not None and self._spec_is_blocked_by_locked(spec, locked):
-                values.pop(name, None)
-
-        # Prefer deterministic defaults inside mutually exclusive groups.
-        changed = True
-        while changed:
-            changed = False
-            for name in tuple(values):
-                if name in locked:
-                    continue
-                spec = self._specs_by_name.get(name)
-                if spec is None or name not in values:
-                    continue
-                for conflict in spec.mutually_exclusive_with:
-                    if conflict not in values:
-                        continue
-                    keep = self._preferred_default_name(name, conflict)
-                    drop = conflict if keep == name else name
-                    if drop in locked:
-                        drop = name
-                    if drop in values:
-                        values.pop(drop, None)
-                        changed = True
-                        break
-                if changed:
-                    break
-        return values
-
-    def _default_shared_params(self) -> dict[str, Any]:
-        defaults: dict[str, Any] = {"task": infer_task("pristine_relaxation")}
-        locked_names = {"task"}
-        for spec in self._specs:
-            if spec.default_value is None:
-                continue
-            # kpoint_mp_grid and kpoint_mp_spacing are project-default-aware:
-            # _effective_params_for_row injects them from the adopted project
-            # grid (and its equivalent spacing) so the dialog reflects the
-            # user's project default rather than the bare schema default.
-            if spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing"):
-                continue
-            if not keyword_visible_in_workflow(
-                spec,
-                workflow_stage="pristine_relaxation",
-                include_advanced=False,
-            ):
-                continue
-            if self._spec_is_blocked_by_locked(spec, locked_names):
-                continue
-            defaults[spec.name] = normalize_gui_value(spec, spec.default_value)
-
-        return self._drop_default_conflicts(defaults, locked_names=locked_names)
+        return reorder_workflow_parameter_specs(specs)
 
     def set_project_defaults(
         self,
@@ -506,7 +415,7 @@ class PristineRelaxationWidget(QWidget):
             self._default_params.pop("cut_off_energy", None)
         else:
             self._default_params["cut_off_energy"] = ValueWithUnit(float(cutoff_energy), "eV")
-        self._default_params = self._drop_default_conflicts(self._default_params, locked_names={"task"})
+        self._default_params = drop_default_conflicts(self._default_params, self._specs_by_name, locked_names={"task"})
         self._normalize_all_row_parameter_values()
         self._refresh_all_rows()
 
@@ -754,7 +663,7 @@ class PristineRelaxationWidget(QWidget):
         label = self._label_at_row(row)
         runtime = self._runtime_states.get(label)
         status = "not generated" if runtime is None else runtime.status or "not generated"
-        return not self._runtime_controls_locked(status)
+        return not workflow_row_is_locked(status)
 
     def _set_status_item(self, row: int, status: str) -> None:
         item = self._table.item(row, self._STATUS_COLUMN)
@@ -764,10 +673,6 @@ class PristineRelaxationWidget(QWidget):
         else:
             item.setText(status)
         item.setForeground(status_brush(status))
-
-    @staticmethod
-    def _runtime_controls_locked(status: str) -> bool:
-        return str(status).strip().casefold() not in _UNLOCKED_RUNTIME_STATUSES
 
     def _effective_params_for_row(self, row_id: int) -> dict[str, object]:
         # The row's "effective" values reflect what would land in the rendered
@@ -803,7 +708,7 @@ class PristineRelaxationWidget(QWidget):
         return implicit
 
     def _strip_implicit_row_defaults(self, row_id: int, values: dict[str, object]) -> dict[str, object]:
-        cleaned = self._sanitize_parameter_mapping(dict(values))
+        cleaned = sanitize_parameter_mapping(dict(values), self._specs_by_name)
         implicit = self._implicit_params_for_row(row_id)
 
         stripped: dict[str, object] = {}
@@ -835,7 +740,7 @@ class PristineRelaxationWidget(QWidget):
         label = self._label_at_row(row)
         runtime = self._runtime_states.get(label)
         status = "not generated" if runtime is None else runtime.status or "not generated"
-        locked = self._runtime_controls_locked(status)
+        locked = workflow_row_is_locked(status)
         label_item = self._table.item(row, self._LABEL_COLUMN)
         if label_item is not None:
             flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
@@ -968,40 +873,9 @@ class PristineRelaxationWidget(QWidget):
                 continue
             runtime = self._runtime_states.get(self._label_at_row(row))
             status = "" if runtime is None else runtime.status
-            if self._runtime_controls_locked(status):
+            if workflow_row_is_locked(status):
                 return True
         return False
-
-    def _restore_structured_value(self, name: str, value: object) -> object:
-        spec = self._specs_by_name.get(name)
-        if spec is None:
-            return value
-
-        if isinstance(value, dict):
-            if spec.kind == "block" and "rows" in value:
-                rows = tuple(tuple(row) for row in value.get("rows", ()))
-                return BlockSection(
-                    name=str(value.get("name", spec.name)),
-                    rows=rows,
-                    unit=str(value["unit"]) if value.get("unit") is not None else None,
-                )
-            if spec.value_type in {"physical", "positive_float_with_optional_unit"} and {"value", "unit"} <= value.keys():
-                return ValueWithUnit(value=value["value"], unit=str(value["unit"]))
-
-        if isinstance(value, list) and spec.value_type in {"int_triplet", "real_vector"}:
-            value = tuple(value)
-
-        try:
-            return normalize_gui_value(spec, value)
-        except (TypeError, ValueError):
-            return value
-
-    def _sanitize_parameter_mapping(self, values: dict[str, object]) -> dict[str, object]:
-        cleaned: dict[str, object] = {}
-        for name, value in values.items():
-            if name in self._specs_by_name:
-                cleaned[name] = self._restore_structured_value(name, value)
-        return cleaned
 
     def continue_relaxation_dialog_seed(self, label: object) -> dict[str, object] | None:
         """Return the ``ContinueRelaxationDialog`` seed kwargs for one row.
@@ -1072,7 +946,7 @@ class PristineRelaxationWidget(QWidget):
 
         # Parameters that differ between the rows and were left alone keep each
         # row's own value; everything else follows the dialog.
-        values = self._sanitize_parameter_mapping(dialog.collect_values())
+        values = sanitize_parameter_mapping(dialog.collect_values(), self._specs_by_name)
         advanced = set(dialog.advanced_names())
         untouched = dialog.untouched_mixed_names()
         for row_id in row_ids:
@@ -1255,8 +1129,9 @@ class PristineRelaxationWidget(QWidget):
 
                 params = entry.get("params", {})
                 if isinstance(params, dict):
-                    self._row_parameter_values[row_id] = self._sanitize_parameter_mapping(
-                        {str(name): raw for name, raw in params.items()}
+                    self._row_parameter_values[row_id] = sanitize_parameter_mapping(
+                        {str(name): raw for name, raw in params.items()},
+                        self._specs_by_name,
                     )
                 else:
                     self._row_parameter_values[row_id] = {}

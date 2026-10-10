@@ -13,7 +13,6 @@ form, preserving the row→job binding.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
@@ -82,16 +81,20 @@ from mufinder.castep_io.gui_metadata import (
     get_gui_keyword_specs_for_files,
     infer_task,
     keyword_visible_in_workflow,
-    normalize_gui_value,
     validate_gui_values,
 )
 from mufinder.castep_io.schema import KeywordSpec, get_keyword_spec
-from mufinder.castep_io.types import BlockSection, ValueWithUnit
+from mufinder.castep_io.types import ValueWithUnit
 from mufinder.app.selection_snapshot import (
     SelectionSnapshotPushButton,
     SelectionSnapshotToolButton,
     resolve_target_keys,
 )
+from mufinder.app.workflow_parameters import clone_spec_for_workflow
+from mufinder.app.workflow_parameters import drop_default_conflicts
+from mufinder.app.workflow_parameters import sanitize_parameter_mapping
+from mufinder.app.workflow_parameters import workflow_default_params
+from mufinder.app.workflow_table_utils import workflow_row_is_locked
 
 
 _IMPORTED_ROW_TOOLTIP = (
@@ -108,53 +111,12 @@ _EXTRA_GEOMETRY_PARAMETER_NAMES = (
     "geom_max_iter",
     "geom_stress_tol",
 )
-_PREFERRED_DEFAULT_PARAMETER_NAMES = (
-    "cut_off_energy",
-    "kpoint_mp_grid",
-    "kpoint_mp_spacing",
-    "kpoints_list",
-)
-_UNLOCKED_RUNTIME_STATUSES = {"", "not generated", "defined", "ready", "cancelled"}
+# Starting values that differ from the schema default in this workflow.
+_MUON_DEFAULT_OVERRIDES = {"geom_max_iter": 300, "continuation": "DEFAULT", "symmetry_generate": None}
 _CHARGE_STATE_TABS = (
     (POSITIVE_MUON_CHARGE_STATE, "Positive muon"),
     (MUONIUM_CHARGE_STATE, "Muonium"),
 )
-
-
-def _append_workflow_stage(values: tuple[str, ...], workflow_stage: str) -> tuple[str, ...]:
-    if workflow_stage in values:
-        return values
-    return (*values, workflow_stage)
-
-
-def _clone_spec_for_muon_workflow(
-    spec: KeywordSpec,
-    *,
-    basic: bool,
-    advanced: bool,
-) -> KeywordSpec:
-    basic_workflows = spec.basic_workflows
-    advanced_workflows = spec.advanced_workflows
-
-    if basic:
-        basic_workflows = _append_workflow_stage(basic_workflows, _WORKFLOW_STAGE)
-    if advanced:
-        advanced_workflows = _append_workflow_stage(advanced_workflows, _WORKFLOW_STAGE)
-
-    default_value = spec.default_value
-    if spec.name == "continuation":
-        default_value = "DEFAULT"
-    elif spec.name == "geom_max_iter":
-        default_value = 300
-    elif spec.name == "symmetry_generate":
-        default_value = None
-
-    return replace(
-        spec,
-        basic_workflows=basic_workflows,
-        advanced_workflows=advanced_workflows,
-        default_value=default_value,
-    )
 
 
 class _GroupedCoordinateHeader(QHeaderView):
@@ -323,7 +285,20 @@ class MuonRelaxationWidget(QWidget):
 
         self._specs = self._build_parameter_specs()
         self._specs_by_name = {spec.name: spec for spec in self._specs}
-        self._default_params = self._default_shared_params()
+        # kpoint_mp_grid and kpoint_mp_spacing are project-default-aware:
+        # _effective_params_for_row injects them from the adopted project grid
+        # (and its equivalent spacing) so the dialog reflects the user's project
+        # default rather than the bare schema default.
+        self._default_params = drop_default_conflicts(
+            workflow_default_params(
+                self._specs,
+                workflow_stage=_WORKFLOW_STAGE,
+                locked_names={"task"},
+                skip_names=("kpoint_mp_grid", "kpoint_mp_spacing"),
+            ),
+            self._specs_by_name,
+            locked_names={"task"},
+        )
         self._schema_xc_functional = self._default_params.get("xc_functional")
 
         self._build_layout()
@@ -521,8 +496,9 @@ class MuonRelaxationWidget(QWidget):
                 workflow_stage="convergence_cutoff",
                 include_advanced=False,
             )
-            cloned = _clone_spec_for_muon_workflow(
+            cloned = clone_spec_for_workflow(
                 spec,
+                workflow_stage=_WORKFLOW_STAGE,
                 basic=(
                     basic_in_convergence
                     or spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing")
@@ -534,6 +510,7 @@ class MuonRelaxationWidget(QWidget):
                     include_advanced=True,
                 )
                 and not basic_in_convergence,
+                default_overrides=_MUON_DEFAULT_OVERRIDES,
             )
             specs.append(cloned)
             seen_names.add(cloned.name)
@@ -543,61 +520,17 @@ class MuonRelaxationWidget(QWidget):
             if spec is None or spec.name in _EXCLUDED_PARAMETER_NAMES or spec.name in seen_names:
                 continue
             specs.append(
-                _clone_spec_for_muon_workflow(
+                clone_spec_for_workflow(
                     spec,
+                    workflow_stage=_WORKFLOW_STAGE,
                     basic=True,
                     advanced=True,
+                    default_overrides=_MUON_DEFAULT_OVERRIDES,
                 )
             )
             seen_names.add(spec.name)
 
         return reorder_workflow_parameter_specs(specs)
-
-    @staticmethod
-    def _spec_is_blocked_by_locked(spec: KeywordSpec, locked_names: set[str]) -> bool:
-        if spec.name in locked_names:
-            return False
-        return any(conflict in locked_names for conflict in spec.mutually_exclusive_with)
-
-    @staticmethod
-    def _preferred_default_name(left: str, right: str) -> str:
-        pair = {left, right}
-        for preferred in _PREFERRED_DEFAULT_PARAMETER_NAMES:
-            if preferred in pair:
-                return preferred
-        return min(left, right)
-
-    def _drop_default_conflicts(self, values: dict[str, Any], *, locked_names: set[str] | None = None) -> dict[str, Any]:
-        locked = locked_names or set()
-        for name in tuple(values):
-            spec = self._specs_by_name.get(name)
-            if spec is not None and self._spec_is_blocked_by_locked(spec, locked):
-                values.pop(name, None)
-
-        # Prefer deterministic defaults inside mutually exclusive groups.
-        changed = True
-        while changed:
-            changed = False
-            for name in tuple(values):
-                if name in locked:
-                    continue
-                spec = self._specs_by_name.get(name)
-                if spec is None or name not in values:
-                    continue
-                for conflict in spec.mutually_exclusive_with:
-                    if conflict not in values:
-                        continue
-                    keep = self._preferred_default_name(name, conflict)
-                    drop = conflict if keep == name else name
-                    if drop in locked:
-                        drop = name
-                    if drop in values:
-                        values.pop(drop, None)
-                        changed = True
-                        break
-                if changed:
-                    break
-        return values
 
     def _drop_conflicts_with_explicit_values(
         self,
@@ -615,25 +548,6 @@ class MuonRelaxationWidget(QWidget):
                 if conflict in values and conflict not in explicit_names:
                     values.pop(conflict, None)
         return values
-
-    def _default_shared_params(self) -> dict[str, Any]:
-        defaults: dict[str, Any] = {"task": infer_task(_WORKFLOW_STAGE)}
-        locked_names = {"task"}
-        for spec in self._specs:
-            if spec.default_value is None:
-                continue
-            # kpoint_mp_grid and kpoint_mp_spacing are project-default-aware:
-            # _effective_params_for_row injects them from the adopted project
-            # grid (and its equivalent spacing) so the dialog reflects the
-            # user's project default rather than the bare schema default.
-            if spec.name in ("kpoint_mp_grid", "kpoint_mp_spacing"):
-                continue
-            if not keyword_visible_in_workflow(spec, workflow_stage=_WORKFLOW_STAGE, include_advanced=False):
-                continue
-            if self._spec_is_blocked_by_locked(spec, locked_names):
-                continue
-            defaults[spec.name] = normalize_gui_value(spec, spec.default_value)
-        return self._drop_default_conflicts(defaults, locked_names=locked_names)
 
     def set_project_defaults(
         self,
@@ -654,7 +568,7 @@ class MuonRelaxationWidget(QWidget):
             self._default_params.pop("cut_off_energy", None)
         else:
             self._default_params["cut_off_energy"] = ValueWithUnit(float(cutoff_energy), "eV")
-        self._default_params = self._drop_default_conflicts(self._default_params, locked_names={"task"})
+        self._default_params = drop_default_conflicts(self._default_params, self._specs_by_name, locked_names={"task"})
         self._normalize_all_row_parameter_values()
         self._refresh_all_rows()
 
@@ -888,10 +802,6 @@ class MuonRelaxationWidget(QWidget):
         prefix = "muonium" if charge_state == MUONIUM_CHARGE_STATE else "positivemuon"
         return f"{prefix}:{label}"
 
-    @staticmethod
-    def _runtime_controls_locked(status: str) -> bool:
-        return str(status).strip().casefold() not in _UNLOCKED_RUNTIME_STATUSES
-
     def _dispatch_row_action(
         self,
         widget: SelectionSnapshotPushButton | SelectionSnapshotToolButton,
@@ -942,7 +852,7 @@ class MuonRelaxationWidget(QWidget):
         if runtime is None:
             runtime = self._runtime_states.get(label)
         status = "not generated" if runtime is None else runtime.status or "not generated"
-        return not self._runtime_controls_locked(status)
+        return not workflow_row_is_locked(status)
 
     def _effective_params_for_row(self, row_id: int) -> dict[str, object]:
         if row_id in self._row_imported:
@@ -952,8 +862,10 @@ class MuonRelaxationWidget(QWidget):
             # suggested grid would overwrite the grid actually recovered from the
             # run's own output. An empty result means recovery found nothing,
             # which is the honest answer.
-            values = self._sanitize_parameter_mapping(
-                dict(self._row_parameter_values.get(row_id, {})), keep_unknown=True
+            values = sanitize_parameter_mapping(
+                dict(self._row_parameter_values.get(row_id, {})),
+                self._specs_by_name,
+                keep_unknown=True,
             )
             values["task"] = infer_task(_WORKFLOW_STAGE)
             return values
@@ -979,7 +891,7 @@ class MuonRelaxationWidget(QWidget):
             suggested = self._supercells.suggested_grid(row_id)
             if suggested is not None:
                 values["kpoint_mp_grid"] = suggested
-        self._drop_default_conflicts(values, locked_names={"task"})
+        drop_default_conflicts(values, self._specs_by_name, locked_names={"task"})
         return values
 
     def _implicit_params_for_row(self, row_id: int) -> dict[str, object]:
@@ -995,7 +907,7 @@ class MuonRelaxationWidget(QWidget):
         suggested = self._supercells.suggested_grid(row_id)
         if suggested is not None:
             implicit["kpoint_mp_grid"] = suggested
-        return self._drop_default_conflicts(implicit, locked_names={"task"})
+        return drop_default_conflicts(implicit, self._specs_by_name, locked_names={"task"})
 
     def _strip_implicit_row_defaults(self, row_id: int, values: dict[str, object]) -> dict[str, object]:
         if row_id in self._row_imported:
@@ -1015,8 +927,8 @@ class MuonRelaxationWidget(QWidget):
             # completed import would render as "ready" with no energy.
             #
             # Coerce, never strip.
-            return self._sanitize_parameter_mapping(values, keep_unknown=True)
-        cleaned = self._sanitize_parameter_mapping(values)
+            return sanitize_parameter_mapping(values, self._specs_by_name, keep_unknown=True)
+        cleaned = sanitize_parameter_mapping(values, self._specs_by_name)
         implicit = self._implicit_params_for_row(row_id)
         stripped: dict[str, object] = {}
         for name, value in cleaned.items():
@@ -1046,7 +958,7 @@ class MuonRelaxationWidget(QWidget):
             runtime = self._runtime_states.get(label)
         status = "not generated" if runtime is None else runtime.status or "not generated"
         imported = row_id in self._row_imported
-        locked = imported or self._runtime_controls_locked(status)
+        locked = imported or workflow_row_is_locked(status)
         label_item = target.item(row, self._LABEL_COLUMN)
         if label_item is not None:
             flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
@@ -1257,54 +1169,9 @@ class MuonRelaxationWidget(QWidget):
             if runtime is None:
                 runtime = self._runtime_states.get(label)
             status = "" if runtime is None else runtime.status
-            if self._runtime_controls_locked(status):
+            if workflow_row_is_locked(status):
                 return True
         return False
-
-    def _restore_structured_value(self, name: str, value: object) -> object:
-        spec = self._specs_by_name.get(name)
-        if spec is None:
-            return value
-        if isinstance(value, dict):
-            if spec.kind == "block" and "rows" in value:
-                return BlockSection(
-                    name=str(value.get("name", spec.name)),
-                    rows=tuple(tuple(row) for row in value.get("rows", ())),
-                    unit=str(value["unit"]) if value.get("unit") is not None else None,
-                )
-            if spec.value_type in {"physical", "positive_float_with_optional_unit"} and {"value", "unit"} <= value.keys():
-                return ValueWithUnit(value=value["value"], unit=str(value["unit"]))
-        if isinstance(value, list) and spec.value_type in {"int_triplet", "real_vector"}:
-            value = tuple(value)
-        try:
-            return normalize_gui_value(spec, value)
-        except (TypeError, ValueError):
-            return value
-
-    def _sanitize_parameter_mapping(
-        self, values: dict[str, object], *, keep_unknown: bool = False
-    ) -> dict[str, object]:
-        """Coerce stored values back to their structured form.
-
-        Names with no spec in the runtime keyword catalog are dropped, because a
-        row the user can still edit must not carry a value no editor can show.
-
-        ``keep_unknown`` passes them through instead, for imported rows. The
-        catalog is discovered from the environment, so the same project can see
-        a thinner one on another machine — and a name dropped from the widget's
-        state while the definition row keeps it desynchronises the two, which
-        drops the completed import to a "ready" row with no energy. The
-        passed-through values are inert: imported rows are never edited, never
-        expanded, and never submitted.
-        """
-
-        cleaned: dict[str, object] = {}
-        for name, value in values.items():
-            if name in self._specs_by_name:
-                cleaned[name] = self._restore_structured_value(name, value)
-            elif keep_unknown:
-                cleaned[name] = value
-        return cleaned
 
     def continue_relaxation_dialog_seed(self, key: object) -> dict[str, object] | None:
         """Return the ``ContinueRelaxationDialog`` seed kwargs for one row.
@@ -1391,7 +1258,7 @@ class MuonRelaxationWidget(QWidget):
             return
         # Parameters that differ between the rows and were left alone keep each
         # row's own value; everything else follows the dialog.
-        values = self._sanitize_parameter_mapping(dialog.collect_values())
+        values = sanitize_parameter_mapping(dialog.collect_values(), self._specs_by_name)
         advanced = set(dialog.advanced_names())
         untouched = dialog.untouched_mixed_names()
         for row_id in row_ids:
@@ -1642,8 +1509,9 @@ class MuonRelaxationWidget(QWidget):
                             pass
                 params = entry.get("parameter_values", {})
                 if isinstance(params, dict):
-                    self._row_parameter_values[row_id] = self._sanitize_parameter_mapping(
+                    self._row_parameter_values[row_id] = sanitize_parameter_mapping(
                         {str(name): value for name, value in params.items()},
+                        self._specs_by_name,
                         keep_unknown=row_id in self._row_imported,
                     )
                 added = entry.get("added_advanced", [])

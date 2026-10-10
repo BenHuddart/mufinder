@@ -194,7 +194,8 @@ workflow widget modules define, how many define it; the counts may only fall.
        destructive confirmations (``confirm_destructive``), selection feedback
        (``SelectionFeedback``), delete/backspace binding
        (``bind_delete_shortcuts``) and the locked-row rule
-       (``workflow_row_is_locked``).
+       (``workflow_row_is_locked``: rows with no job yet and ``cancelled``
+       rows are editable, every other status locks the row).
    * - ``mufinder.app.selection_snapshot``
      - Targeting for in-row controls (``SelectionSnapshotPushButton``,
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
@@ -202,9 +203,12 @@ workflow widget modules define, how many define it; the counts may only fall.
        selection, and the three-way prompt.
    * - ``mufinder.app.workflow_parameters``
      - Parameter specs per workflow stage
-       (``build_workflow_parameter_surface``), the shared-row ordering, project
-       default seeding (``seed_xc_functional_default``), and sanitising and
-       restoring persisted parameter values.
+       (``build_workflow_parameter_surface``, ``clone_spec_for_workflow``), the
+       shared-row ordering, schema and project defaults
+       (``workflow_default_params``, ``drop_default_conflicts``,
+       ``seed_xc_functional_default``), and sanitising and restoring persisted
+       parameter values (``sanitize_parameter_mapping``,
+       ``restore_structured_value``).
    * - ``mufinder.app.workflow_dialogs`` / ``mufinder.app.param_dialog``
      - The row parameter dialog and the configure dialogs.
    * - ``mufinder.app.adapter_common``
@@ -250,7 +254,9 @@ controllers treat every workflow alike:
   are ``SelectionSnapshot`` buttons that resolve their targets through the shared
   targeting rule; a delete-shortcut handler returns early while the table is
   editing a cell; a row whose job is in a runtime state is locked by
-  ``workflow_row_is_locked`` and its parameter dialog opens read-only.
+  ``workflow_row_is_locked`` and its parameter dialog opens read-only. A
+  ``cancelled`` row is editable but is not submitted from the table: the row
+  menu's Run entries follow ``READY_WORKFLOW_ROW_STATUSES``, the submit filter.
 - **Supercells.** A widget with a supercell column (pristine relaxation, muon
   relaxation, UEP) delegates it to one ``SupercellColumn``. The column holds the
   project supercell options, each row's matrix and the project k-point
@@ -264,7 +270,7 @@ controllers treat every workflow alike:
 - **Parameters.** Specs exclude ``task``; defaults are seeded from the schema
   and the project defaults; effective parameters carry exactly one of
   ``kpoint_mp_grid`` / ``kpoint_mp_spacing``; every restore passes through the
-  shared sanitiser; the shared rows come first (see Workflow parameter surface
+  shared sanitiser (``sanitize_parameter_mapping``); the shared rows come first (see Workflow parameter surface
   policy).
 - **Layout.** A header row with the title, subtitle and project-defaults strip;
   a controls row (``Add...``, a count label, ``Remove Selected``,
