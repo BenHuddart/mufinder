@@ -413,7 +413,7 @@ Si 2
         ),
         pytest.param(
             CUBIC_4 + "%BLOCK POSITIONS_FRAC\nSi 0 0 0\n",
-            "POSITIONS_FRAC",
+            "Unterminated block",
             id="unterminated-block",
         ),
     ],
@@ -423,70 +423,110 @@ def test_load_cell_rejects_malformed_geometry(tmp_path: Path, text: str, match: 
         _load_cell(tmp_path, text)
 
 
-def test_load_cell_with_a_non_numeric_coordinate_raises_value_error(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="could not convert string to float"):
+def test_load_cell_with_a_non_numeric_coordinate_is_a_load_error(tmp_path: Path) -> None:
+    with pytest.raises(StructureLoadError, match="sample.cell.*could not convert string to float"):
         _load_cell(
             tmp_path,
             "%BLOCK LATTICE_CART\n4 0 x\n0 4 0\n0 0 4\n%ENDBLOCK LATTICE_CART\n" + SI_AT_ORIGIN,
         )
 
 
+@pytest.mark.parametrize(
+    ("text", "match"),
+    [
+        pytest.param(
+            CUBIC_4 + "%BLOCK LATTICE_ABC\n5 5 5\n90 90 90\n%ENDBLOCK LATTICE_ABC\n" + SI_AT_ORIGIN,
+            "both LATTICE_CART and LATTICE_ABC",
+            id="both-lattice-blocks",
+        ),
+        pytest.param(
+            CUBIC_4 + SI_AT_ORIGIN + "%BLOCK POSITIONS_ABS\nO 1 1 1\n%ENDBLOCK POSITIONS_ABS\n",
+            "both POSITIONS_FRAC and POSITIONS_ABS",
+            id="both-position-blocks",
+        ),
+        pytest.param(
+            CUBIC_4 + SI_AT_ORIGIN + "%BLOCK POSITIONS_FRAC\nO 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n",
+            "Duplicate block POSITIONS_FRAC",
+            id="repeated-block",
+        ),
+    ],
+)
+def test_load_cell_rejects_conflicting_geometry_blocks(tmp_path: Path, text: str, match: str) -> None:
+    # CASTEP itself rejects these files, so the import does not pick one block.
+    with pytest.raises(StructureLoadError, match=match):
+        _load_cell(tmp_path, text)
+
+
 # --------------------------------------------------------------------------
-# CASTEP CELL: CASTEP-written files and conflicting blocks
+# CASTEP CELL: files written by CASTEP
 # --------------------------------------------------------------------------
 
 
-def test_load_cell_spin_with_space_after_equals_is_rejected(tmp_path: Path) -> None:
-    with pytest.raises(StructureLoadError, match="Invalid SPIN value ''"):
-        _load_cell(
-            tmp_path,
-            CUBIC_4 + "%BLOCK POSITIONS_FRAC\nFe 0 0 0 SPIN=  1.000\n%ENDBLOCK POSITIONS_FRAC\n",
-        )
-
-
-def test_load_cell_comment_line_inside_block_is_rejected(tmp_path: Path) -> None:
-    with pytest.raises(StructureLoadError, match="species and three coordinates"):
-        _load_cell(
-            tmp_path,
-            CUBIC_4 + "%BLOCK POSITIONS_FRAC\n! the silicon\nSi 0 0 0\n%ENDBLOCK POSITIONS_FRAC\n",
-        )
-
-
-def test_load_cell_positions_abs_with_a_muon_label_raises_key_error(tmp_path: Path) -> None:
-    with pytest.raises(KeyError):
-        _load_cell(
-            tmp_path,
-            CUBIC_4 + "%BLOCK POSITIONS_ABS\nSi 0 0 0\nH:mu 1 2 3\n%ENDBLOCK POSITIONS_ABS\n",
-        )
-
-
-def test_load_cell_with_both_lattice_blocks_uses_lattice_cart(tmp_path: Path) -> None:
+def test_load_cell_reads_a_castep_out_cell(tmp_path: Path) -> None:
+    # CASTEP pads SPIN values after the '=', writes comments, muon species
+    # labels and calculation keywords outside the bundled catalog.
     loaded = _load_cell(
         tmp_path,
-        CUBIC_4
-        + "%BLOCK LATTICE_ABC\n5 5 5\n90 90 90\n%ENDBLOCK LATTICE_ABC\n"
-        + SI_AT_ORIGIN,
+        """
+%BLOCK LATTICE_CART
+ang
+       5.430000000000000       0.000000000000000       0.000000000000000
+       0.000000000000000       5.430000000000000       0.000000000000000
+       0.000000000000000       0.000000000000000       5.430000000000000
+%ENDBLOCK LATTICE_CART
+
+%BLOCK CELL_CONSTRAINTS
+       1       1       1
+       0       0       0
+%ENDBLOCK CELL_CONSTRAINTS
+
+FIX_COM : false
+%BLOCK IONIC_CONSTRAINTS
+%ENDBLOCK IONIC_CONSTRAINTS
+
+%BLOCK POSITIONS_FRAC
+! relaxed positions
+   Si            0.0000000000000000    0.0000000000000000    0.0000000000000000 SPIN=  1.000
+   H:mu          0.2500000000000000    0.2500000000000000    0.2500000000000000 SPIN= -0.500
+%ENDBLOCK POSITIONS_FRAC
+
+FIX_VOL : false
+%BLOCK SPECIES_MASS
+          Si     28.0855000
+        H:mu      0.1134289
+%ENDBLOCK SPECIES_MASS
+
+%BLOCK SPECIES_LCAO_STATES
+          Si         2
+%ENDBLOCK SPECIES_LCAO_STATES
+
+SYMMETRY_TOL :        0.01000000 ang
+""",
     )
 
-    assert loaded.lattice_vectors[0][0] == pytest.approx(4.0)
+    assert loaded.species == ["Si", "H:mu"]
+    assert loaded.lattice_vectors[0] == pytest.approx([5.43, 0.0, 0.0])
+    assert loaded.fractional_positions[1] == pytest.approx([0.25, 0.25, 0.25])
+    assert loaded.properties["atomic_spins"] == pytest.approx([1.0, -0.5])
 
 
-def test_load_cell_with_both_position_blocks_uses_positions_frac(tmp_path: Path) -> None:
+def test_load_cell_empty_spin_marker_means_no_spin(tmp_path: Path) -> None:
     loaded = _load_cell(
         tmp_path,
-        CUBIC_4 + SI_AT_ORIGIN + "%BLOCK POSITIONS_ABS\nO 1 1 1\n%ENDBLOCK POSITIONS_ABS\n",
+        CUBIC_4 + "%BLOCK POSITIONS_FRAC\nSi 0 0 0 SPIN=\n%ENDBLOCK POSITIONS_FRAC\n",
     )
 
-    assert loaded.species == ["Si"]
+    assert "atomic_spins" not in loaded.properties
 
 
-def test_load_cell_with_a_repeated_block_uses_the_last(tmp_path: Path) -> None:
+def test_load_cell_positions_abs_accepts_a_muon_species_label(tmp_path: Path) -> None:
     loaded = _load_cell(
         tmp_path,
-        CUBIC_4 + SI_AT_ORIGIN + "%BLOCK POSITIONS_FRAC\nO 0.5 0.5 0.5\n%ENDBLOCK POSITIONS_FRAC\n",
+        CUBIC_4 + "%BLOCK POSITIONS_ABS\nSi 0 0 0\nH:mu 1 2 3\n%ENDBLOCK POSITIONS_ABS\n",
     )
 
-    assert loaded.species == ["O"]
+    assert loaded.species == ["Si", "H:mu"]
+    assert loaded.fractional_positions[1] == pytest.approx([0.25, 0.5, 0.75])
 
 
 # --------------------------------------------------------------------------

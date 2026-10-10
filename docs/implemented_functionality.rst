@@ -182,7 +182,10 @@ Host-structure loading currently supports:
 Import behavior currently includes:
 
 - Parsing CIF/MCIF files via ASE-backed readers and ``.cell`` files with
-  MuFinder's own CASTEP cell parser.
+  MuFinder's own CASTEP cell parser (``mufinder.castep_io.cell_parser``),
+  reading only the lattice and position blocks so a CASTEP ``-out.cell``
+  imports whatever calculation keywords it carries. Inline ``SPIN=`` values
+  become per-atom spins.
 - Copying source files into project ``imports/`` for provenance.
 - Setting imported structure as active host structure by default.
 - Capturing import provenance records.
