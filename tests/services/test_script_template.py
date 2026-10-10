@@ -14,7 +14,6 @@ from mufinder.services.script_template import (
     load_template_for_cluster,
     populate_template,
     render_job_script,
-    validate_template,
 )
 
 
@@ -42,14 +41,6 @@ def test_populate_template_safe_substitute_keeps_unknowns() -> None:
     rendered = populate_template(template, {"job_name": "test"})
 
     assert rendered == "run test and $unknown"
-
-
-def test_validate_template_reports_unknown_placeholders() -> None:
-    template = Template("$job_name $not_supported")
-
-    warnings = validate_template(template)
-
-    assert warnings == ["Unknown template variable: not_supported"]
 
 
 def test_load_template_supports_builtin_tokens() -> None:

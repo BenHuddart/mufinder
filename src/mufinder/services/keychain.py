@@ -41,12 +41,6 @@ class KeychainCredentialError(ConnectionError):
 SubprocessRun = Callable[..., subprocess.CompletedProcess[str]]
 
 
-def is_macos() -> bool:
-    """Return whether the current platform is macOS."""
-
-    return sys.platform == "darwin"
-
-
 def is_glamdring_keychain_supported(config: ClusterConfig, *, platform: str | None = None) -> bool:
     """Return whether MuFinder can use macOS Keychain for this cluster."""
 

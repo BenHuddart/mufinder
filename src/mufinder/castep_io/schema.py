@@ -676,14 +676,6 @@ def _starter_canonical_names(file: FileKind) -> tuple[str, ...]:
     return tuple(names)
 
 
-def _starter_source_names(file: FileKind, canonical_names: tuple[str, ...]) -> tuple[str, ...]:
-    names = list(canonical_names)
-    for alias, canonical in MANUAL_ALIAS_MAP.get(file, {}).items():
-        if canonical in canonical_names and alias not in names:
-            names.append(alias)
-    return tuple(names)
-
-
 def _starter_resolve_name(file: FileKind, name: str, alias_map: dict[str, str]) -> str:
     current = name.strip().lower()
     seen: set[str] = set()

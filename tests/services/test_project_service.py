@@ -1001,7 +1001,6 @@ def test_workflow_supercell_helpers_handle_invalid_metadata_and_defaults(tmp_pat
     doc = service.create_project(tmp_path / "workflow_supercell_helpers.mufinder", "WorkflowHelpers")
     doc.ui_state["workflow_supercells"] = "bad-state"
 
-    assert service._identity_supercell_matrix() == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
     assert service._coerce_supercell_matrix([[1, 0, 0]]) is None
     assert service._coerce_supercell_matrix([[1, 0, 0], [0, 1], [0, 0, 1]]) is None
     assert service._parse_optional_uuid("not-a-uuid") is None
@@ -1328,39 +1327,6 @@ def test_register_quantum_phonon_definition_persists_configuration(tmp_path: Pat
     assert loaded_definition.input_site_ids == [site.id]
     assert loaded_definition.parameters["configuration"]["sources"][0]["label"] == "siteA"
     assert loaded_definition.parameters["phonon_job_ids_by_label"] == {str(site.id): "ph-job"}
-
-
-def test_register_transition_state_search_definition_persists_configuration(tmp_path: Path) -> None:
-    service = ProjectService()
-    root = tmp_path / "energy_barriers_definition.mufinder"
-    doc = service.create_project(root, "EnergyBarriersDefinition")
-    structure = service.import_structure_file(doc, Path("tests/golden/si_geom_opt.cell"), make_active=True)
-    site = MuonSite(label="siteA", status="relaxed", source_structure_id=structure.id)
-    doc.sites[site.id] = site
-
-    definition = service.register_transition_state_search_definition(
-        doc,
-        input_structure_ids=[structure.id],
-        input_site_ids=[site.id],
-        parameters={
-            "method": "LSTQST",
-            "sources": [{"site_id": str(site.id), "label": "siteA_to_siteB_path1"}],
-        },
-        output_directory=root / "files" / "energy_barriers",
-    )
-
-    assert definition.id in doc.calculations
-    assert doc.calculations[definition.id].workflow_stage == WorkflowStage.ENERGY_BARRIERS
-    assert doc.calculations[definition.id].input_site_ids == [site.id]
-    assert doc.calculations[definition.id].parameters["configuration"]["method"] == "LSTQST"
-    assert doc.calculations[definition.id].parameters["job_ids_by_label"] == {}
-    assert doc.provenance[-1].action == "configure_energy_barriers"
-
-    service.save_project(doc)
-    loaded = service.load_project(root)
-    loaded_definition = loaded.calculations[definition.id]
-    assert loaded_definition.input_site_ids == [site.id]
-    assert loaded_definition.parameters["configuration"]["sources"][0]["label"] == "siteA_to_siteB_path1"
 
 
 def test_register_nudged_elastic_band_definition_persists_configuration(tmp_path: Path) -> None:

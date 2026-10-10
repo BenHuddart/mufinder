@@ -1,7 +1,7 @@
 MuFinder Documentation
 ======================
 
-.. image:: branding/mufinder_logo.png
+.. image:: ../src/mufinder/assets/mufinder_logo.png
    :alt: MuFinder logo
    :width: 180
    :align: center

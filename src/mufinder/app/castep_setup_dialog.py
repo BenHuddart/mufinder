@@ -41,7 +41,6 @@ from mufinder.cluster_setup import ClusterConfig, load_cluster_configs, save_clu
 from mufinder.castep_setup import (
     CastepSetup,
     apply_castep_environment,
-    build_castep_keyword_command,
     discover_mpirun,
     install_keyword_catalog,
     load_castep_setup,
@@ -58,15 +57,14 @@ from mufinder.services.ssh_client import SSHConnection, SSHCredentials, SSHUnkno
 
 _PROGRESS_RE = re.compile(r"Processed:\s*\[[# ]*\]\s*(\d+)%")
 _GENERATOR_SCRIPT = """
-from pathlib import Path
 import sys
-from ase.calculators.castep import create_castep_keywords
+from mufinder.castep_setup import generate_castep_keywords_json
 
-executable = sys.argv[1]
-filename = sys.argv[2]
-directory = sys.argv[3]
-Path(directory).mkdir(parents=True, exist_ok=True)
-create_castep_keywords(executable, filename=filename, path=directory, force_write=True)
+generate_castep_keywords_json(
+    executable_path=sys.argv[1],
+    mpirun_path=sys.argv[2],
+    output_path=sys.argv[3],
+)
 """.strip()
 
 
@@ -543,11 +541,9 @@ class CastepSetupDialog(QDialog):
         self._progress_label.setText("Starting CASTEP keyword extraction...")
         self._progress_bar.setValue(0)
 
-        # MPI-built CASTEP binaries hang when executed directly, so wrap the
-        # executable in the configured MPI launcher (`mpirun -np 1`) for the
-        # `-help` queries ASE runs. Without this the process stalls at 0%.
-        castep_command = build_castep_keyword_command(executable, self._mpirun_edit.text().strip())
-
+        # The subprocess runs ``generate_castep_keywords_json`` with the
+        # configured MPI launcher: MPI-built CASTEP binaries hang at 0% when the
+        # `-help` queries ASE runs are not wrapped in `mpirun -np 1`.
         process = QProcess(self)
         process.readyReadStandardOutput.connect(self._on_generation_output)
         process.readyReadStandardError.connect(self._on_generation_output)
@@ -560,9 +556,9 @@ class CastepSetupDialog(QDialog):
                 "-u",
                 "-c",
                 _GENERATOR_SCRIPT,
-                castep_command,
-                self._generation_output_path.name,
-                str(self._generation_output_path.parent),
+                executable,
+                self._mpirun_edit.text().strip(),
+                str(self._generation_output_path),
             ],
         )
 

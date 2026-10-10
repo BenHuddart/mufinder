@@ -9,20 +9,6 @@ import shlex
 from string import Template
 
 
-_ALLOWED_TEMPLATE_VARIABLES = {
-    "job_name",
-    "num_processes",
-    "num_nodes",
-    "cores_per_node",
-    "walltime",
-    "working_directory",
-    "seed_name",
-    "castep_command",
-}
-
-
-_TEMPLATE_VAR_RE = re.compile(r"\$\{?([a-zA-Z_][a-zA-Z0-9_]*)\}?")
-
 # Any leading-block ``#SBATCH`` line, and any ``#SBATCH`` line that already
 # carries a memory request (``--mem``, ``--mem-per-cpu``, ``--mem-per-gpu``).
 _SBATCH_LINE_RE = re.compile(r"^\s*#SBATCH\b")
@@ -253,17 +239,3 @@ def render_job_script(
     if not is_slurm:
         return script
     return insert_sbatch_directive(script, format_mem_per_cpu_directive(mem_per_cpu_gb))
-
-
-def validate_template(template: Template) -> list[str]:
-    """Return warnings for unknown placeholders used in a template."""
-
-    warnings: list[str] = []
-    seen: set[str] = set()
-    for match in _TEMPLATE_VAR_RE.finditer(template.template):
-        variable = match.group(1)
-        if variable in _ALLOWED_TEMPLATE_VARIABLES or variable in seen:
-            continue
-        seen.add(variable)
-        warnings.append(f"Unknown template variable: {variable}")
-    return warnings

@@ -566,7 +566,7 @@ def test_ssh_connection_requires_hostname(monkeypatch: pytest.MonkeyPatch) -> No
         connection.connect()
 
 
-def test_ssh_connection_reconnect(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ssh_connection_connects_again_after_disconnect(monkeypatch: pytest.MonkeyPatch) -> None:
     class _FreshParamiko:
         AuthenticationException = _FakeParamiko.AuthenticationException
         SSHException = _FakeParamiko.SSHException
@@ -586,7 +586,11 @@ def test_ssh_connection_reconnect(monkeypatch: pytest.MonkeyPatch) -> None:
 
     connection = SSHConnection(_config("key"))
     connection.connect()
-    connection.reconnect()
+    connection.disconnect()
+
+    assert not connection.is_connected
+
+    connection.connect()
 
     assert connection.is_connected
 

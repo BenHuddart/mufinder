@@ -50,7 +50,6 @@ _LOG = logging.getLogger(__name__)
 _WORKFLOW_SUPERCELLS_STATE_KEY = "workflow_supercells"
 _WORKFLOW_SUPERCELL_UNIT_CELL = "unit_cell"
 _WORKFLOW_SUPERCELL_SAVED = "saved_supercell"
-_IDENTITY_SUPERCELL_MATRIX = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
 _GENERATED_SITE_STATUS = "generated"
 _LEGACY_GENERATED_SITE_STATUSES = {_GENERATED_SITE_STATUS, "candidate"}
 _STAGEABLE_SITE_STATUSES = {*_LEGACY_GENERATED_SITE_STATUSES, "staged"}
@@ -786,10 +785,6 @@ class ProjectService:
                 output_entity_ids=[table.id, *table.dft_structure_ids],
             ),
         )
-
-    @staticmethod
-    def _identity_supercell_matrix() -> list[list[int]]:
-        return [[int(value) for value in row] for row in _IDENTITY_SUPERCELL_MATRIX]
 
     @staticmethod
     def _coerce_supercell_matrix(matrix: Any) -> list[list[int]] | None:
@@ -1894,67 +1889,6 @@ class ProjectService:
                 workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
                 actor="user",
                 description=f"Configured Quantum Corrections with {len(input_site_ids)} relaxed site(s)",
-                parameters={
-                    "calculation_definition_id": str(definition.id),
-                    "configuration": snapshot,
-                    "output_directory": relative_output,
-                    "job_ids_by_label": dict(job_ids_by_label or {}),
-                },
-                input_entity_ids=[*input_structure_ids, *input_site_ids],
-                output_entity_ids=[definition.id],
-            ),
-        )
-
-        return definition
-
-    def register_transition_state_search_definition(
-        self,
-        document: ProjectDocument,
-        *,
-        input_structure_ids: list[UUID],
-        input_site_ids: list[UUID],
-        parameters: dict[str, Any],
-        output_directory: Path,
-        job_ids_by_label: dict[str, str] | None = None,
-    ) -> CalculationDefinition:
-        """Persist one Energy Barriers transition-state-search configuration."""
-
-        if not input_structure_ids:
-            raise ValueError("At least one input structure is required.")
-        missing_structures = [structure_id for structure_id in input_structure_ids if structure_id not in document.structures]
-        if missing_structures:
-            raise ValueError("input_structure_ids must reference known structures.")
-        missing_sites = [site_id for site_id in input_site_ids if site_id not in document.sites]
-        if missing_sites:
-            raise ValueError("input_site_ids must reference known sites.")
-
-        relative_output = str(output_directory)
-        try:
-            relative_output = str(output_directory.relative_to(document.project_root))
-        except ValueError:
-            relative_output = str(output_directory)
-
-        snapshot = to_jsonable(parameters)
-        definition = CalculationDefinition(
-            workflow_stage=WorkflowStage.ENERGY_BARRIERS,
-            calc_type="castep_transition_state_search_set",
-            parameters={
-                "configuration": snapshot,
-                "output_directory": relative_output,
-                "job_ids_by_label": dict(job_ids_by_label or {}),
-            },
-            input_structure_ids=list(input_structure_ids),
-            input_site_ids=list(input_site_ids),
-        )
-        document.calculations[definition.id] = definition
-
-        self.append_provenance(
-            document,
-            ProvenanceRecord(
-                action="configure_energy_barriers",
-                workflow_stage=WorkflowStage.ENERGY_BARRIERS,
-                actor="user",
-                description=f"Configured Energy Barriers with {len(input_site_ids)} relaxed site(s)",
                 parameters={
                     "calculation_definition_id": str(definition.id),
                     "configuration": snapshot,
