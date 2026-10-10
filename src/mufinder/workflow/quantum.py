@@ -169,64 +169,16 @@ def expand_quantum_singlepoint_jobs(
 ) -> list[JobSpec]:
     """Expand quantum-corrections singlepoint configurations into CASTEP jobs."""
 
-    require_jobs(jobs, "quantum singlepoint job")
-
-    resolved: list[JobSpec] = []
-    for config in jobs:
-        label = config.source.label.strip()
-        if not label:
-            raise ValueError("Quantum singlepoint source labels must not be empty.")
-
-        structure = config.source.structure
-        if is_muonium(config.source.charge_state):
-            structure = _seed_muonium_spin(structure, config.muon_species)
-        # The singlepoint cell base carries the muon species blocks only: the
-        # phonon-specific scalars belong to stage 2. See ``_muon_species_blocks``
-        # for why the mass has to be written here and not only in stage 2.
-        patch_template = compose_patch(
-            InputTemplate(
-                cell=_singlepoint_cell_base_template(config),
-                param=_singlepoint_param_base_template(config),
-            ),
-            InputTemplate(cell=config.cell_overrides, param=config.param_overrides),
-        )
-        patch = JobPatch(
-            label_suffix=label,
-            structure=structure,
-            cell=patch_template.cell,
-            param=patch_template.param,
-        )
-        resolved.append(
-            resolve_job(
-                name=job_name(name_prefix, label),
-                base_structure=structure,
-                workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
-                global_defaults=global_defaults,
-                workflow_defaults=workflow_defaults,
-                structure_defaults=structure_defaults,
-                patch=patch,
-                user_overrides=user_overrides,
-                tags=("quantum_corrections", "singlepoint", *tags),
-                provenance={
-                    "workflow": "quantum_corrections",
-                    "calc_type": QUANTUM_SINGLEPOINT_CALC_TYPE,
-                    "label": label,
-                    "muon_species": config.muon_species,
-                    "muon_mass_amu": MUON_MASS_AMU,
-                    "muon_gamma_rad_s_T": MUON_GAMMA_RAD_S_T,
-                    "source_site_id": str(config.source.source_site_id),
-                    "source_relaxation_run_id": str(config.source.source_relaxation_run_id),
-                    "source_relaxation_job_id": (
-                        str(config.source.source_relaxation_job_id)
-                        if config.source.source_relaxation_job_id is not None
-                        else None
-                    ),
-                    "charge_state": config.source.charge_state,
-                    **dict(config.source.provenance),
-                },
-            )
-        )
-    return resolved
+    return _expand_quantum_jobs(
+        "singlepoint",
+        jobs=jobs,
+        name_prefix=name_prefix,
+        global_defaults=global_defaults,
+        workflow_defaults=workflow_defaults,
+        structure_defaults=structure_defaults,
+        user_overrides=user_overrides,
+        tags=tags,
+    )
 
 
 def expand_quantum_phonon_jobs(
@@ -241,25 +193,69 @@ def expand_quantum_phonon_jobs(
 ) -> list[JobSpec]:
     """Expand quantum-corrections phonon configurations into CASTEP jobs."""
 
-    require_jobs(jobs, "quantum phonon job")
+    return _expand_quantum_jobs(
+        "phonon",
+        jobs=jobs,
+        name_prefix=name_prefix,
+        global_defaults=global_defaults,
+        workflow_defaults=workflow_defaults,
+        structure_defaults=structure_defaults,
+        user_overrides=user_overrides,
+        tags=tags,
+    )
+
+
+def _expand_quantum_jobs(
+    stage: Literal["singlepoint", "phonon"],
+    *,
+    jobs: Sequence[QuantumPhononJobConfig],
+    name_prefix: str,
+    global_defaults: InputTemplate | None,
+    workflow_defaults: InputTemplate | None,
+    structure_defaults: InputTemplate | None,
+    user_overrides: InputTemplate | None,
+    tags: tuple[str, ...],
+) -> list[JobSpec]:
+    """Expand one quantum-corrections stage: the stage-1 singlepoint or the stage-2 phonon.
+
+    The stages share labels, muonium spin seeding, override composition and the
+    source provenance. The phonon stage also checks the phonon method against
+    the pseudopotential family and records the method, its warning and the farm
+    count. The singlepoint cell base carries the muon species blocks only: the
+    phonon-specific scalars belong to stage 2 (see ``_muon_species_blocks`` for
+    why the mass has to be written in stage 1 as well).
+    """
+
+    phonon = stage == "phonon"
+    require_jobs(jobs, f"quantum {stage} job")
 
     resolved: list[JobSpec] = []
     for config in jobs:
         label = config.source.label.strip()
         if not label:
-            raise ValueError("Quantum phonon source labels must not be empty.")
-        compatible, message = phonon_method_compatibility(
-            config.method,
-            pseudopotential_family=config.pseudopotential_family,
-        )
-        if not compatible:
-            raise ValueError(message or "Incompatible CASTEP phonon method.")
+            raise ValueError(f"Quantum {stage} source labels must not be empty.")
+        method_warning: str | None = None
+        if phonon:
+            compatible, method_warning = phonon_method_compatibility(
+                config.method,
+                pseudopotential_family=config.pseudopotential_family,
+            )
+            if not compatible:
+                raise ValueError(method_warning or "Incompatible CASTEP phonon method.")
 
         structure = config.source.structure
         if is_muonium(config.source.charge_state):
             structure = _seed_muonium_spin(structure, config.muon_species)
+        base = (
+            InputTemplate(cell=_cell_base_template(config), param=_param_base_template(config))
+            if phonon
+            else InputTemplate(
+                cell=_singlepoint_cell_base_template(config),
+                param=_singlepoint_param_base_template(config),
+            )
+        )
         patch_template = compose_patch(
-            InputTemplate(cell=_cell_base_template(config), param=_param_base_template(config)),
+            base,
             InputTemplate(cell=config.cell_overrides, param=config.param_overrides),
         )
         patch = JobPatch(
@@ -268,6 +264,32 @@ def expand_quantum_phonon_jobs(
             cell=patch_template.cell,
             param=patch_template.param,
         )
+
+        provenance: dict[str, Any] = {
+            "workflow": "quantum_corrections",
+            "calc_type": QUANTUM_PHONON_CALC_TYPE if phonon else QUANTUM_SINGLEPOINT_CALC_TYPE,
+            "label": label,
+        }
+        if phonon:
+            provenance["phonon_method"] = config.method
+            provenance["phonon_kpoint_mp_grid"] = (1, 1, 1)
+        provenance["muon_species"] = config.muon_species
+        provenance["muon_mass_amu"] = MUON_MASS_AMU
+        provenance["muon_gamma_rad_s_T"] = MUON_GAMMA_RAD_S_T
+        if phonon:
+            provenance["num_farms"] = max(1, int(config.num_farms))
+        provenance["source_site_id"] = str(config.source.source_site_id)
+        provenance["source_relaxation_run_id"] = str(config.source.source_relaxation_run_id)
+        provenance["source_relaxation_job_id"] = (
+            str(config.source.source_relaxation_job_id)
+            if config.source.source_relaxation_job_id is not None
+            else None
+        )
+        provenance["charge_state"] = config.source.charge_state
+        if phonon:
+            provenance["method_warning"] = method_warning
+        provenance.update(config.source.provenance)
+
         resolved.append(
             resolve_job(
                 name=job_name(name_prefix, label),
@@ -278,28 +300,8 @@ def expand_quantum_phonon_jobs(
                 structure_defaults=structure_defaults,
                 patch=patch,
                 user_overrides=user_overrides,
-                tags=("quantum_corrections", "phonon", *tags),
-                provenance={
-                    "workflow": "quantum_corrections",
-                    "calc_type": QUANTUM_PHONON_CALC_TYPE,
-                    "label": label,
-                    "phonon_method": config.method,
-                    "phonon_kpoint_mp_grid": (1, 1, 1),
-                    "muon_species": config.muon_species,
-                    "muon_mass_amu": MUON_MASS_AMU,
-                    "muon_gamma_rad_s_T": MUON_GAMMA_RAD_S_T,
-                    "num_farms": max(1, int(config.num_farms)),
-                    "source_site_id": str(config.source.source_site_id),
-                    "source_relaxation_run_id": str(config.source.source_relaxation_run_id),
-                    "source_relaxation_job_id": (
-                        str(config.source.source_relaxation_job_id)
-                        if config.source.source_relaxation_job_id is not None
-                        else None
-                    ),
-                    "charge_state": config.source.charge_state,
-                    "method_warning": message,
-                    **dict(config.source.provenance),
-                },
+                tags=("quantum_corrections", stage, *tags),
+                provenance=provenance,
             )
         )
     return resolved
