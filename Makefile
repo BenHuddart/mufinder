@@ -14,7 +14,7 @@ PYTEST_ARGS ?=
 # planning, job lifecycle, the local runner and the main submission dialogs.
 # Override with FILES="tests/path/test_x.py ...".
 FILES ?= \
-	tests/test_castep_output_parser.py \
+	tests/castep_io/test_output_parser.py \
 	tests/app/test_workflow_submission.py \
 	tests/services/test_job_execution_controller.py \
 	tests/services/test_local_runner.py \

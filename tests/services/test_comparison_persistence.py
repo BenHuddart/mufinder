@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 from mufinder.domain.models import ComparisonTable, Structure
 from mufinder.services.project_service import ProjectService
@@ -78,6 +79,8 @@ def test_deleted_comparison_table_stays_deleted_after_save_reload(tmp_path: Path
     service.save_project(doc)
 
     service.remove_comparison_table(doc, table.id)
+    # Removing a table that is already gone is a no-op.
+    service.remove_comparison_table(doc, table.id)
     service.save_project(doc)
 
     loaded = service.load_project(root)
@@ -116,6 +119,18 @@ def test_renamed_comparison_table_roundtrips(tmp_path: Path) -> None:
     assert loaded.comparison_tables[table.id].label == "Better title"
 
 
+def test_rename_comparison_table_falls_back_to_the_default_label(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "comparison_rename_blank.mufinder", "ComparisonRenameBlank")
+    table = ComparisonTable(label="Original")
+    service.add_comparison_table(doc, table)
+
+    service.rename_comparison_table(doc, table.id, "   ")
+
+    assert table.label == "Comparison Table"
+    assert service.rename_comparison_table(doc, uuid4(), "X") is None
+
+
 def test_record_comparison_table_created_appends_provenance(tmp_path: Path) -> None:
     service = ProjectService()
     root = tmp_path / "comparison_log.mufinder"
@@ -141,5 +156,14 @@ def test_record_comparison_table_created_appends_provenance(tmp_path: Path) -> N
     service.add_comparison_table(doc, table)
     service.record_comparison_table_created(doc, table=table)
 
-    assert doc.provenance[-1].action == "create_comparison_table"
-    assert doc.provenance[-1].parameters["table_label"] == "Comparison B"
+    record = doc.provenance[-1]
+    assert record.action == "create_comparison_table"
+    assert record.parameters["table_label"] == "Comparison B"
+    assert record.parameters["dft_structure_count"] == 1
+    assert record.input_entity_ids == [host.id]
+    assert table.id in record.output_entity_ids
+
+    without_experiment = ComparisonTable(label="NoExp", dft_structure_ids=[host.id])
+    service.record_comparison_table_created(doc, table=without_experiment)
+
+    assert doc.provenance[-1].input_entity_ids == []

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -11,18 +12,39 @@ from ase import Atoms
 from ase.io import write as ase_write
 
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, MuonSite, Result, Structure, utc_now
+from mufinder.domain.models import (
+    CalculationDefinition,
+    CalculationRun,
+    ComparisonTable,
+    Job,
+    MuonSite,
+    Result,
+    Structure,
+    utc_now,
+)
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.project_service import (
     ProjectService,
     SiteHostMismatch,
     StructureHostMismatch,
+    WorkflowSupercellSelection,
     active_definition,
     definitions_for_stage,
     job_for_mapping_key,
 )
 from tests.support.structures import silicon_oxide_host
+
+
+def _document_with_host(tmp_path: Path, name: str = "project"):
+    """Return ``(service, document, host)`` with an imported O-Si-O host active."""
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / f"{name}.mufinder", name)
+    host = silicon_oxide_host(origin="imported")
+    service.add_structure(document, host)
+    document.project.host_structure_id = host.id
+    return service, document, host
 
 
 def test_create_save_and_load_roundtrip(tmp_path: Path) -> None:
@@ -212,6 +234,7 @@ def test_attached_element_generation_uses_muons_per_atom(tmp_path: Path) -> None
 
     assert len(sites) == 4
     assert all(site.generation_method == "near_element" for site in sites)
+    assert all(site.properties["target_element"] == "O" for site in sites)
     assert all(site.properties["strategy"] == "attached" for site in sites)
     assert all(site.properties["muons_per_atom"] == 2 for site in sites)
     assert all("min_muon_muon" not in site.properties for site in sites)
@@ -303,6 +326,150 @@ def test_uep_cluster_generation_creates_one_site_per_selection(tmp_path: Path) -
     assert [site.fractional_position[0] for site in sites] == pytest.approx([0.1, 0.2, 0.3])
 
 
+def test_manual_generation_wraps_fractional_coordinates(tmp_path: Path) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="manual",
+        parameters={"coord_system": "fractional", "x": 1.25, "y": -0.25, "z": 0.5},
+    )
+
+    assert sites[0].fractional_position == pytest.approx([0.25, 0.75, 0.5])
+    assert sites[0].properties["coordinate_system"] == "fractional"
+
+
+@pytest.mark.parametrize(
+    ("mode_parameters", "expected_mode"),
+    [
+        ({"selection_mode": "distance", "count": 1}, "separation"),
+        ({"mode": "number", "count": 1}, "count"),
+        ({"count": 1}, "count"),
+        ({}, "separation"),
+    ],
+    ids=["distance-alias", "number-alias", "count-implies-count", "default-separation"],
+)
+def test_random_generation_resolves_selection_mode_aliases(
+    tmp_path: Path, mode_parameters: dict[str, object], expected_mode: str
+) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={
+            **mode_parameters,
+            "min_muon_muon": 2.0,
+            "min_muon_atom": 0.8,
+            "max_attempts": 500,
+            "seed": "12",
+            "include_symmetry_equivalents": False,
+        },
+    )
+
+    assert sites
+    assert {site.properties["selection_mode"] for site in sites} == {expected_mode}
+
+
+@pytest.mark.parametrize("seed", [None, "   "], ids=["absent", "blank"])
+def test_random_generation_treats_a_blank_seed_as_unseeded(tmp_path: Path, seed: object) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="random",
+        parameters={"count": 1, "min_muon_atom": 0.8, "seed": seed, "include_symmetry_equivalents": False},
+    )
+
+    assert len(sites) == 1
+
+
+def test_random_generation_rejects_a_non_integer_seed(tmp_path: Path) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+
+    with pytest.raises(SiteGenerationError, match="seed must be an integer"):
+        service.generate_candidate_sites(doc, method="random", parameters={"count": 1, "seed": "abc"})
+
+
+def test_generation_rejects_an_unknown_method(tmp_path: Path) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+
+    with pytest.raises(SiteGenerationError, match="Unknown generation method"):
+        service.generate_candidate_sites(doc, method="bogus", parameters={})
+
+
+@pytest.mark.parametrize(
+    ("selections", "message"),
+    [
+        ([], "one or more UEP cluster rows"),
+        ([{"fractional_position": [0.1, 0.2]}], "missing valid coordinates"),
+    ],
+    ids=["no-selection", "missing-coordinates"],
+)
+def test_uep_cluster_generation_rejects_unusable_selections(
+    tmp_path: Path, selections: list[object], message: str
+) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+
+    with pytest.raises(SiteGenerationError, match=message):
+        service.generate_candidate_sites(doc, method="uep_clusters", parameters={"selections": selections})
+
+
+def test_uep_cluster_generation_creates_member_sites(tmp_path: Path) -> None:
+    service, doc, host = _document_with_host(tmp_path)
+
+    sites = service.generate_candidate_sites(
+        doc,
+        method="uep_clusters",
+        parameters={
+            "selections": [
+                {
+                    "fractional_position": [0.3, 0.3, 0.3],
+                    "cartesian_position": [3.0, 3.0, 3.0],
+                    "source_key": "key-a",
+                    "properties": {"selection_kind": "member"},
+                }
+            ]
+        },
+    )
+
+    assert len(sites) == 1
+    site = sites[0]
+    assert site.generation_method == "uep_cluster_member"
+    assert site.label == "UEP Cluster Member 1"
+    assert site.source_structure_id == host.id
+    assert site.properties["uep_source_key"] == "key-a"
+    assert site.fractional_position == pytest.approx([0.3, 0.3, 0.3])
+
+
+def test_uep_cluster_generation_treats_a_site_at_the_same_position_as_a_duplicate(
+    tmp_path: Path,
+) -> None:
+    service, doc, host = _document_with_host(tmp_path)
+    existing = MuonSite(
+        label="member",
+        status="generated",
+        generation_method="uep_cluster_member",
+        fractional_position=[0.4, 0.4, 0.4],
+        source_structure_id=host.id,
+    )
+    doc.sites[existing.id] = existing
+
+    def _selection(source_key: str, fractional: list[float]) -> dict[str, object]:
+        return {"source_key": source_key, "fractional_position": fractional, "cartesian_position": [4.0, 4.0, 4.0]}
+
+    # A new source key at an occupied position (modulo the lattice) is still a duplicate.
+    with pytest.raises(SiteGenerationError, match="already present"):
+        service.generate_candidate_sites(
+            doc, method="uep_clusters", parameters={"selections": [_selection("new-key", [1.4, 0.4, -0.6])]}
+        )
+
+    sites = service.generate_candidate_sites(
+        doc, method="uep_clusters", parameters={"selections": [_selection("new-key", [0.9, 0.1, 0.2])]}
+    )
+    assert [site.properties["uep_source_key"] for site in sites] == ["new-key"]
+
+
 def test_remove_candidate_sites_only_deletes_generated_sites(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "remove_candidates.mufinder", "RemoveCandidates")
@@ -386,6 +553,23 @@ def test_cluster_candidate_positions_does_not_rewrite_staged_sites(tmp_path: Pat
     assert doc.provenance[-1].parameters["site_labels"] == ["Generated"]
 
 
+def test_cluster_candidate_positions_rejects_unusable_requests(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_guard.mufinder", "ClusterGuard")
+    with pytest.raises(SiteGenerationError, match="Select a host structure"):
+        service.cluster_candidate_positions(doc, [uuid4()], anchor_fractional=[0.0, 0.0, 0.0])
+
+    host = silicon_oxide_host()
+    service.add_structure(doc, host)
+    doc.project.host_structure_id = host.id
+    with pytest.raises(SiteGenerationError, match="Select one or more"):
+        service.cluster_candidate_positions(doc, [], anchor_fractional=[0.0, 0.0, 0.0])
+    with pytest.raises(SiteGenerationError, match="three-component"):
+        service.cluster_candidate_positions(doc, [uuid4()], anchor_fractional=[0.0, 0.0])
+    with pytest.raises(SiteGenerationError, match="did not contain any generated"):
+        service.cluster_candidate_positions(doc, [uuid4()], anchor_fractional=[0.1, 0.1, 0.1])
+
+
 def test_stage_generated_sites_allows_already_staged_sites(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "stage_sites.mufinder", "StageSites")
@@ -402,6 +586,19 @@ def test_stage_generated_sites_allows_already_staged_sites(tmp_path: Path) -> No
     assert generated.status == "staged"
     assert staged.status == "staged"
     assert relaxed.status == "relaxed"
+
+
+def test_stage_generated_sites_without_stageable_sites_changes_nothing(tmp_path: Path) -> None:
+    service, doc, host = _document_with_host(tmp_path)
+    relaxed = MuonSite(label="R", status="relaxed", source_structure_id=host.id)
+    doc.sites[relaxed.id] = relaxed
+    before = len(doc.provenance)
+
+    staged = service.stage_generated_sites(doc, [relaxed.id, uuid4()])
+
+    assert staged == []
+    assert relaxed.status == "relaxed"
+    assert len(doc.provenance) == before
 
 
 def test_load_project_normalizes_legacy_candidate_status(tmp_path: Path) -> None:
@@ -457,6 +654,62 @@ def test_integrity_validation_detects_missing_references(tmp_path: Path) -> None
     assert any("references missing result" in issue for issue in issues)
 
 
+def test_integrity_validation_reports_every_dangling_reference_and_blocks_save(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "validate.mufinder", "Validate")
+    doc.project.host_structure_id = uuid4()
+
+    broken_asset = Structure(
+        label="BadAsset",
+        lattice_vectors=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+        properties={
+            "supercell_asset": {
+                "matrix": [[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+                "owner_workflow_stage": WorkflowStage.CONVERGENCE_CUTOFF.value,
+                "source_asset_structure_id": str(uuid4()),
+            }
+        },
+    )
+    doc.structures[broken_asset.id] = broken_asset
+    calc = CalculationDefinition(
+        workflow_stage=WorkflowStage.UEP,
+        calc_type="castep_uep_source",
+        input_structure_ids=[uuid4()],
+    )
+    doc.calculations[calc.id] = calc
+    run = CalculationRun(definition_id=uuid4(), job_id=uuid4(), result_id=uuid4())
+    doc.runs[run.id] = run
+    result = Result(calculation_run_id=uuid4(), derived_structure_ids=[uuid4()])
+    doc.results[result.id] = result
+    site = MuonSite(label="S", source_structure_id=uuid4(), relaxation_run_id=uuid4())
+    doc.sites[site.id] = site
+    table = ComparisonTable(label="T", experimental_structure_id=uuid4(), dft_structure_ids=[uuid4()])
+    doc.comparison_tables[table.id] = table
+
+    joined = "\n".join(service.validate_document(doc))
+
+    for fragment in (
+        "host_structure_id does not reference a known structure",
+        "missing parent_structure_id",
+        "references missing source asset",
+        "references missing structures",
+        "references missing calculation definition",
+        "references missing job",
+        "references missing result",
+        "references missing calculation run",
+        "references missing derived structures",
+        "references missing structure",
+        "references missing run",
+        "references missing experimental structure",
+        "references missing DFT structures",
+    ):
+        assert fragment in joined
+    with pytest.raises(ValueError, match="integrity check failed"):
+        service.save_project(doc)
+
+
 def test_job_transition_rules(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "job_rules_test.mufinder", "Jobs")
@@ -467,19 +720,55 @@ def test_job_transition_rules(tmp_path: Path) -> None:
         calc_type="castep_geom_opt",
     )
 
+    assert doc.jobs[job.id] is job
+    assert job.status == JobStatus.DEFINED
+
     service.submit_job(job)
     assert job.status == JobStatus.SUBMITTING
+    assert job.submitted_at is not None
 
     service.mark_job_queued(job, remote_job_id="123")
+    assert job.status == JobStatus.QUEUED
     service.start_job(job)
+    assert job.started_at is not None
     service.mark_job_retrieving(job)
+    assert job.status == JobStatus.RETRIEVING
     service.complete_job(job)
 
     assert job.status == JobStatus.COMPLETED
     assert job.remote_job_id == "123"
+    assert job.completed_at is not None
+    assert job.error_message is None
 
     with pytest.raises(ValueError):
         service.start_job(job)
+
+
+def test_mark_job_queued_without_a_remote_id_keeps_it_unset(tmp_path: Path) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+    job = service.add_job(doc, label="Q", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source")
+
+    service.submit_job(job)
+    service.mark_job_queued(job)
+
+    assert job.status == JobStatus.QUEUED
+    assert job.remote_job_id is None
+
+
+def test_fail_job_records_the_error_and_cancel_job_the_completion_time(tmp_path: Path) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+    failed = service.add_job(doc, label="F", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source")
+    cancelled = service.add_job(doc, label="C", workflow_stage=WorkflowStage.UEP, calc_type="castep_uep_source")
+
+    service.submit_job(failed)
+    service.start_job(failed)
+    service.fail_job(failed, "boom")
+    service.cancel_job(cancelled)
+
+    assert failed.status == JobStatus.FAILED
+    assert failed.error_message == "boom"
+    assert cancelled.status == JobStatus.CANCELLED
+    assert cancelled.completed_at is not None
 
 
 def test_reset_failed_job_sets_defined_state(tmp_path: Path) -> None:
@@ -634,11 +923,17 @@ def test_record_job_terminal_events_and_reset_append_provenance(tmp_path: Path) 
     service.record_job_terminal_event(doc, action="job_failed", job=job, error_message="Submission failed")
     service.record_job_reset(doc, job=job, cleaned_output_directory=True)
 
-    assert [record.action for record in doc.provenance[-3:]] == ["job_completed", "job_failed", "job_reset"]
-    assert doc.provenance[-3].parameters["result_total_energy"] == -500.0
-    assert doc.provenance[-3].parameters["derived_structure_count"] == 1
-    assert doc.provenance[-2].parameters["error_message"] == "Submission failed"
-    assert doc.provenance[-1].parameters["cleaned_output_directory"] is True
+    completed, failed, reset = doc.provenance[-3:]
+    assert [record.action for record in (completed, failed, reset)] == ["job_completed", "job_failed", "job_reset"]
+    assert completed.parameters["result_total_energy"] == -500.0
+    assert completed.parameters["result_max_force"] == 0.03
+    assert completed.parameters["warnings_count"] == 1
+    assert completed.parameters["derived_structure_count"] == 1
+    assert {job.id, result.id, *result.derived_structure_ids} <= set(completed.output_entity_ids)
+    assert failed.parameters["error_message"] == "Submission failed"
+    assert "failed" in failed.description.lower()
+    assert reset.parameters["cleaned_output_directory"] is True
+    assert reset.job_id == job.id
 
 
 def test_lifecycle_transitions_do_not_append_intermediate_provenance(tmp_path: Path) -> None:
@@ -946,6 +1241,89 @@ def test_workflow_supercell_asset_delete_and_matrix_update_block_frozen_definiti
         service.delete_workflow_supercell_asset(doc, asset_structure_id=asset.id)
 
 
+def test_clear_workflow_supercell_selection_restores_the_unit_cell(tmp_path: Path) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+    service.set_workflow_supercell_selection(
+        doc,
+        WorkflowStage.CONVERGENCE_CUTOFF,
+        WorkflowSupercellSelection(mode="saved_supercell", structure_id=uuid4()),
+    )
+
+    service.clear_workflow_supercell_selection(doc, WorkflowStage.CONVERGENCE_CUTOFF)
+
+    assert service.get_workflow_supercell_selection(doc, WorkflowStage.CONVERGENCE_CUTOFF).mode == "unit_cell"
+
+
+def test_workflow_supercell_asset_operations_reject_invalid_targets(tmp_path: Path) -> None:
+    service, doc, host = _document_with_host(tmp_path)
+    matrix = [[2, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+    with pytest.raises(ValueError, match="must reference a known structure"):
+        service.create_workflow_supercell_asset(
+            doc, workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF, host_structure_id=uuid4(), matrix=matrix
+        )
+    with pytest.raises(ValueError, match="3x3 integer matrix"):
+        service.create_workflow_supercell_asset(
+            doc, workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF, host_structure_id=host.id, matrix=matrix[:2]
+        )
+    asset = service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        host_structure_id=host.id,
+        matrix=matrix,
+        reuse_existing=False,
+    )
+
+    with pytest.raises(ValueError, match="not a saved supercell asset"):
+        service.rename_workflow_supercell_asset(doc, asset_structure_id=host.id, label="x")
+    with pytest.raises(ValueError, match="must not be empty"):
+        service.rename_workflow_supercell_asset(doc, asset_structure_id=asset.id, label="  ")
+    with pytest.raises(ValueError, match="does not exist"):
+        service.update_workflow_supercell_asset_matrix(doc, asset_structure_id=uuid4(), matrix=matrix)
+    with pytest.raises(ValueError, match="not a saved supercell asset"):
+        service.update_workflow_supercell_asset_matrix(doc, asset_structure_id=host.id, matrix=matrix)
+    with pytest.raises(ValueError, match="3x3 integer matrix"):
+        service.update_workflow_supercell_asset_matrix(doc, asset_structure_id=asset.id, matrix=[[2, 0, 0]])
+    with pytest.raises(ValueError, match="not a saved supercell asset"):
+        service.delete_workflow_supercell_asset(doc, asset_structure_id=host.id)
+    with pytest.raises(ValueError, match="does not exist"):
+        service.use_workflow_supercell_asset(doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=uuid4())
+    with pytest.raises(ValueError, match="not a saved supercell asset"):
+        service.use_workflow_supercell_asset(doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=host.id)
+    # Only known saved assets are ever repaired.
+    assert service.repair_supercell_asset_if_needed(doc, structure_id=uuid4()) is False
+    assert service.repair_supercell_asset_if_needed(doc, structure_id=host.id) is False
+
+
+def test_use_workflow_supercell_asset_requires_a_host(tmp_path: Path) -> None:
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "no_host.mufinder", "NoHost")
+
+    with pytest.raises(ValueError, match="Load a host structure"):
+        service.use_workflow_supercell_asset(doc, workflow_stage=WorkflowStage.UEP, asset_structure_id=uuid4())
+
+
+def test_supercell_asset_references_include_an_active_selection_without_freezing_it(
+    tmp_path: Path,
+) -> None:
+    service, doc, host = _document_with_host(tmp_path)
+    asset = service.create_workflow_supercell_asset(
+        doc,
+        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        host_structure_id=host.id,
+        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+        reuse_existing=False,
+    )
+    service.use_workflow_supercell_asset(
+        doc, workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF, asset_structure_id=asset.id
+    )
+
+    references = service.supercell_asset_references(doc, asset_structure_id=asset.id)
+
+    assert any("active selection" in reference for reference in references)
+    assert service.supercell_asset_is_frozen(doc, asset_structure_id=asset.id) is False
+
+
 def test_resolve_workflow_structure_falls_back_to_unit_cell_for_mismatched_host(tmp_path: Path) -> None:
     service = ProjectService()
     doc = service.create_project(tmp_path / "workflow_supercell_host_change.mufinder", "WorkflowHostChange")
@@ -1179,6 +1557,71 @@ def test_register_convergence_cutoff_definition_persists_snapshot(tmp_path: Path
     assert loaded_definition.parameters["job_ids_by_cutoff"] == {}
 
 
+def test_register_convergence_cutoff_definition_requires_a_known_structure(tmp_path: Path) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+
+    with pytest.raises(ValueError, match="must reference a known structure"):
+        service.register_convergence_cutoff_definition(
+            doc,
+            input_structure_id=uuid4(),
+            parameters={"cutoff_energies": [400.0]},
+            output_directory=tmp_path / "out",
+        )
+
+
+def test_register_convergence_kpoint_definition_records_the_simulation_cell(tmp_path: Path) -> None:
+    service, doc, host = _document_with_host(tmp_path)
+    # An output directory outside the project root is stored as an absolute path.
+    outside = Path("/tmp/definitely/outside/root")
+
+    definition = service.register_convergence_kpoint_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={"sweep_values": [[2, 2, 2], [4, 4, 4]]},
+        output_directory=outside,
+        job_ids_by_grid={"2 2 2": "j1"},
+        simulation_cell_mode="saved_supercell",
+        supercell_source_workflow="convergence_cutoff",
+    )
+
+    assert definition.workflow_stage == WorkflowStage.CONVERGENCE_KPOINT
+    assert definition.input_structure_ids == [host.id]
+    assert definition.parameters["output_directory"] == str(outside)
+    assert definition.parameters["job_ids_by_grid"] == {"2 2 2": "j1"}
+    assert definition.parameters["simulation_cell_mode"] == "saved_supercell"
+
+
+def test_register_uep_definition_stores_a_project_relative_output_directory(tmp_path: Path) -> None:
+    service, doc, host = _document_with_host(tmp_path)
+
+    definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={"rows": [{"label": "a"}, {"label": "b"}]},
+        output_directory=doc.project_root / "uep_out",
+    )
+
+    assert definition.calc_type == "castep_uep_source"
+    assert definition.parameters["output_directory"] == "uep_out"
+    assert doc.provenance[-1].action == "configure_uep"
+
+
+def test_register_muon_relaxation_definition_keeps_only_valid_site_ids(tmp_path: Path) -> None:
+    service, doc, host = _document_with_host(tmp_path)
+    site = MuonSite(label="S1", status="staged", source_structure_id=host.id)
+    doc.sites[site.id] = site
+
+    definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={"rows": [{"site_id": str(site.id)}, {"site_id": "not-a-uuid"}, {}]},
+        output_directory=doc.project_root / "mr_out",
+    )
+
+    assert definition.input_site_ids == [site.id]
+    assert definition.calc_type == "castep_muon_relaxation"
+
+
 def test_set_recommended_cutoff_persists_to_project_manifest(tmp_path: Path) -> None:
     service = ProjectService()
     root = tmp_path / "recommended_cutoff.mufinder"
@@ -1242,6 +1685,69 @@ def test_set_recommended_kpoint_grid_persists_to_project_manifest(tmp_path: Path
     assert loaded.project.recommended_kpoint_force_threshold == pytest.approx(0.05)
     assert loaded.project.recommended_kpoint_cell_id == "22222222-2222-2222-2222-222222222222"
     assert loaded.project.recommended_kpoint_lattice == lattice
+
+
+def test_set_recommended_cutoff_records_stress_threshold_and_trims_text(tmp_path: Path) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+
+    service.set_recommended_cutoff(doc, 450.0, method="energy", stress_threshold=0.1, cell_id=" cellA ")
+
+    assert doc.project.recommended_cutoff_stress_threshold == 0.1
+    assert doc.project.recommended_cutoff_cell_id == "cellA"
+    assert "using method 'energy'" in doc.provenance[-1].description
+
+    service.set_recommended_cutoff(doc, 500.0, method="   ", cell_id="   ")
+
+    assert doc.project.recommended_cutoff_method is None
+    assert doc.project.recommended_cutoff_cell_id is None
+    assert "using method" not in doc.provenance[-1].description
+
+
+def test_set_recommended_kpoint_grid_ignores_a_malformed_lattice(tmp_path: Path) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+
+    service.set_recommended_kpoint_grid(doc, (2, 2, 2), lattice_vectors=[[1.0, 0.0, 0.0]])
+
+    assert doc.project.recommended_kpoint_grid == (2, 2, 2)
+    assert doc.project.recommended_kpoint_lattice is None
+
+
+def test_load_project_drops_unparseable_recommended_values(tmp_path: Path) -> None:
+    service, doc, _host = _document_with_host(tmp_path)
+    service.save_project(doc)
+    manifest_path = doc.project_root / "project.json"
+    payload = json.loads(manifest_path.read_text())
+    for key in (
+        "recommended_cutoff_energy",
+        "recommended_cutoff_energy_threshold",
+        "recommended_cutoff_force_threshold",
+        "recommended_cutoff_stress_threshold",
+        "recommended_kpoint_energy_threshold",
+        "recommended_kpoint_force_threshold",
+        "recommended_kpoint_stress_threshold",
+    ):
+        payload[key] = "not-a-number"
+    for key in (
+        "recommended_cutoff_method",
+        "recommended_cutoff_cell_id",
+        "recommended_kpoint_method",
+        "recommended_kpoint_cell_id",
+    ):
+        payload[key] = "   "
+    payload["recommended_kpoint_grid"] = ["x", "y", "z"]
+    payload["recommended_kpoint_lattice"] = [[1.0, 0.0, 0.0], "bad", [0.0, 0.0, 1.0]]
+    manifest_path.write_text(json.dumps(payload))
+
+    project = service.load_project(doc.project_root).project
+
+    assert project.recommended_cutoff_energy is None
+    assert project.recommended_cutoff_energy_threshold is None
+    assert project.recommended_cutoff_method is None
+    assert project.recommended_cutoff_cell_id is None
+    assert project.recommended_kpoint_grid is None
+    assert project.recommended_kpoint_lattice is None
+    assert project.recommended_kpoint_method is None
+    assert project.recommended_kpoint_cell_id is None
 
 
 def test_register_pristine_relaxation_definition_persists_configuration(tmp_path: Path) -> None:
@@ -1352,6 +1858,33 @@ def test_register_nudged_elastic_band_definition_persists_configuration(tmp_path
     loaded = service.load_project(root)
     loaded_definition = loaded.calculations[definition.id]
     assert loaded_definition.parameters["configuration"]["sources"][0]["label"] == "siteA_to_siteB_path1_neb"
+
+
+@pytest.mark.parametrize(
+    "register",
+    ["register_quantum_phonon_definition", "register_nudged_elastic_band_definition"],
+)
+def test_multi_input_definitions_validate_structures_and_sites(tmp_path: Path, register: str) -> None:
+    service, doc, host = _document_with_host(tmp_path)
+    site = MuonSite(label="S", status="staged", source_structure_id=host.id)
+    doc.sites[site.id] = site
+    register_definition = getattr(service, register)
+
+    def _register(structure_ids, site_ids):
+        return register_definition(
+            doc,
+            input_structure_ids=structure_ids,
+            input_site_ids=site_ids,
+            parameters={},
+            output_directory=doc.project_root / "out",
+        )
+
+    with pytest.raises(ValueError, match="At least one input structure"):
+        _register([], [site.id])
+    with pytest.raises(ValueError, match="must reference known structures"):
+        _register([uuid4()], [site.id])
+    with pytest.raises(ValueError, match="must reference known sites"):
+        _register([host.id], [uuid4()])
 
 
 def test_save_project_serializes_ui_state_with_value_with_unit(tmp_path: Path) -> None:

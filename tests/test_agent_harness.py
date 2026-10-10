@@ -137,30 +137,6 @@ NON_APP_LAYER_PACKAGES = ("domain", "castep_io", "persistence", "science", "work
 # list may only shrink as the files are merged into their siblings.
 PINNED_COVERAGE_TEST_FILES = frozenset(
     {
-        "tests/science/test_convergence_analysis_coverage.py",
-        "tests/science/test_demagnetization_coverage.py",
-        "tests/science/test_kpoint_grids_coverage.py",
-        "tests/science/test_magnetic_fields_coverage.py",
-        "tests/science/test_magnetic_structure_coverage.py",
-        "tests/science/test_nuclear_relaxation_coverage.py",
-        "tests/science/test_quantum_adiabatic_coverage.py",
-        "tests/science/test_quantum_phonons_coverage.py",
-        "tests/science/test_site_generation_coverage.py",
-        "tests/science/test_structure_metrics_coverage.py",
-        "tests/science/test_symmetry_analysis_coverage.py",
-        "tests/science/test_uep_coverage.py",
-        "tests/services/test_job_execution_controller_coverage.py",
-        "tests/services/test_project_service_coverage.py",
-        "tests/services/test_ssh_client_coverage.py",
-        "tests/test_bridge_coverage.py",
-        "tests/test_castep_internal_coverage.py",
-        "tests/test_castep_validators_coverage.py",
-        "tests/test_output_parser_coverage.py",
-        "tests/test_param_writer_coverage.py",
-        "tests/test_quantum_coverage.py",
-        "tests/test_runtime_helper_coverage.py",
-        "tests/test_ts_parser_coverage.py",
-        "tests/test_validators_coverage.py",
     }
 )
 

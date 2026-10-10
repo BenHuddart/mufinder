@@ -119,6 +119,43 @@ def test_slurm_state_mapping() -> None:
     assert scheduler.map_to_job_status("F") == JobStatus.FAILED
     assert scheduler.map_to_job_status("TO") == JobStatus.STOPPED
     assert scheduler.map_to_job_status("CA") == JobStatus.CANCELLED
+    assert scheduler.map_to_job_status("node_fail") == JobStatus.FAILED
+    # An unrecognised state keeps the job tracked as running.
+    assert scheduler.map_to_job_status("mystery") == JobStatus.RUNNING
+    assert scheduler.is_terminal("completed") is True
+    assert scheduler.is_terminal("running") is False
+
+
+def test_slurm_status_without_job_ids_does_not_query_the_queue() -> None:
+    ssh = _FakeSSH([])
+
+    assert SlurmScheduler().status(ssh, []) == {}
+    assert ssh.commands == []
+
+
+def test_slurm_status_tolerates_short_and_malformed_squeue_rows() -> None:
+    scheduler = SlurmScheduler(queue_check_command_path="/usr/bin/squeue")
+    ssh = _FakeSSH([(0, "1|R\n2|PD|queued_job\nbad-line\n", "")])
+
+    statuses = scheduler.status(ssh, ["1", "2"])
+
+    assert sorted(statuses) == ["1", "2"]
+    assert statuses["1"].state == "R"
+    assert statuses["1"].elapsed_runtime == ""
+    assert statuses["1"].name == ""
+    assert statuses["2"].elapsed_runtime == ""
+    assert statuses["2"].name == "queued_job"
+
+
+def test_slurm_cancel_and_status_raise_the_scheduler_error() -> None:
+    with pytest.raises(RuntimeError, match="permission denied"):
+        SlurmScheduler(cancel_command_path="/usr/bin/scancel").cancel(
+            _FakeSSH([(1, "", "permission denied")]), "123"
+        )
+    with pytest.raises(RuntimeError, match="scheduler offline"):
+        SlurmScheduler(queue_check_command_path="/usr/bin/squeue").status(
+            _FakeSSH([(1, "", "scheduler offline")]), ["123"]
+        )
 
 
 def test_addqueue_submit_builds_expected_command() -> None:
@@ -151,6 +188,32 @@ def test_addqueue_submit_builds_expected_command() -> None:
     assert "-t" not in command
 
 
+def _addqueue_request() -> SchedulerSubmitRequest:
+    return SchedulerSubmitRequest(
+        working_dir="/remote/work",
+        seed_name="seed",
+        num_processes=4,
+        cores_per_node=32,
+        walltime="02:00:00",
+        castep_executable="castep.mpi",
+    )
+
+
+def test_addqueue_submit_reads_a_job_id_from_free_form_output() -> None:
+    scheduler = AddqueueScheduler(submit_command_path="/bin/addqueue")
+
+    job_id = scheduler.submit(_FakeSSH([(0, "job created: id=24680\n", "")]), _addqueue_request())
+
+    assert job_id == "24680"
+
+
+def test_addqueue_submit_raises_the_scheduler_error() -> None:
+    scheduler = AddqueueScheduler(submit_command_path="/bin/addqueue")
+
+    with pytest.raises(RuntimeError, match="queue unavailable"):
+        scheduler.submit(_FakeSSH([(1, "", "queue unavailable")]), _addqueue_request())
+
+
 def test_scheduler_command_resolution_uses_probe_then_fallback() -> None:
     scheduler = SlurmScheduler()
     ssh = _FakeSSH(
@@ -176,6 +239,35 @@ def test_scheduler_command_resolution_uses_probe_then_fallback() -> None:
     assert job_id == "111"
     assert ssh.commands[0].startswith("command -v sbatch")
     assert " sbatch " in ssh.commands[1]
+
+
+def test_scheduler_command_resolution_delegates_to_the_connection_once() -> None:
+    class _ResolvingSSH(_FakeSSH):
+        def __init__(self) -> None:
+            super().__init__([(0, "Submitted batch job 1\n", ""), (0, "Submitted batch job 2\n", "")])
+            self.resolved: list[tuple[str, str]] = []
+
+        def resolve_command_path(self, command_name: str, configured: str) -> str:
+            self.resolved.append((command_name, configured))
+            return f"/resolved/{command_name}"
+
+    scheduler = SlurmScheduler()
+    ssh = _ResolvingSSH()
+    request = SchedulerSubmitRequest(
+        working_dir="/remote",
+        seed_name="seed",
+        num_processes=2,
+        cores_per_node=1,
+        walltime="01:00:00",
+        castep_executable="castep.mpi",
+        script_path="/remote/run.sh",
+    )
+
+    assert scheduler.submit(ssh, request) == "1"
+    assert scheduler.submit(ssh, request) == "2"
+    # The resolved path is cached per scheduler, so the connection is asked once.
+    assert ssh.resolved == [("sbatch", "")]
+    assert all("/resolved/sbatch" in command for command in ssh.commands)
 
 
 def test_create_scheduler_factory() -> None:
