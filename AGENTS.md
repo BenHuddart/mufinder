@@ -143,12 +143,16 @@ Rules:
 
 ## Commands
 
+The `Makefile` is the executable definition; run its targets rather than spelling
+commands out.
+
 ```bash
-uv sync --extra dev --extra scientific-backends      # or: pip install -e ".[dev,scientific-backends]"
-python -m pytest --no-cov tests/app/test_convergence_widget.py   # focused tests
-python -m pytest -n 4 --dist load                    # full suite, coverage >= 85 %; foreground, at most 4 workers
-python -m sphinx -W -b html docs docs/_build/html    # docs
-python -m pytest --no-cov tests/test_agent_harness.py
+make install                          # dev + scientific-backends extras (or: uv sync --extra dev --extra scientific-backends)
+make test-fast FILES="tests/app/test_convergence_widget.py"   # focused tests, no coverage
+make test                             # full suite, coverage >= 85 %; foreground, at most 4 workers
+make lint                             # ruff
+make docs                             # sphinx -W
+make harness                          # tests/test_agent_harness.py
 ```
 
 Release steps and the CI matrix are in `docs/quality_and_automation.rst`.
