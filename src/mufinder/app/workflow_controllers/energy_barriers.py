@@ -4,18 +4,15 @@ Owns the submit → materialize → result → refresh cycle for the CASTEP
 nudged-elastic-band (NEB) diffusion-path workflow. Each selected diffusion path
 runs as a single NEB band job whose endpoints are the relaxed muon sites; the
 intermediate images are seeded by IDPP interpolation in
-:meth:`EnergyBarriersController.materialize`. This is the **last** of the seven
-Phase 4 submission-consistency migrations; after it, the per-workflow migration
-series is complete.
+:meth:`EnergyBarriersController.materialize`.
 
-Four features distinguish this migration from its six predecessors:
+Four features distinguish this controller from the others:
 
 - **Source-key provenance.** Jobs are keyed by their *diffusion-path source key*
   (not a site label or sweep point). :meth:`materialize` writes
   ``job_ids_by_label`` keyed by source key and stamps each expanded spec with
   ``provenance={"source_key": key}``, then reverse-maps ``spec_by_key`` to attach
-  the created job to the right key — a behavior-preserving move of the former
-  ``MainWindow._materialize_energy_barrier_neb_jobs``.
+  the created job to the right key.
 - **IDPP intermediate interpolation.** :meth:`materialize` calls the science-layer
   ``prepare_transition_state_structures`` to align the reactant/product endpoints
   into the pristine host, then ``idpp_intermediate_structure`` to seed the band's
@@ -36,8 +33,8 @@ Four features distinguish this migration from its six predecessors:
   :class:`~mufinder.app.workflow_controllers.base.ControllerResult` when the
   ``.ts`` output cannot be resolved (mirroring the inline guard's abort).
 
-- **Lazily-created view (sanctioned constructor-shape deviation).** Unlike the six
-  prior controllers, whose views exist at ``MainWindow.__init__``, the
+- **Lazily-created view (sanctioned constructor-shape deviation).** Unlike the
+  other controllers, whose views exist at ``MainWindow.__init__``, the
   energy-barriers view is created *lazily* — only when the workflow route is first
   opened (``_ensure_energy_barriers_view``). But the controller must still be
   constructed and registered in ``__init__`` regardless, because a completed NEB

@@ -1,7 +1,7 @@
 """Per-workflow template-precedence regression tests for the ``expand_*`` API.
 
-These pin the 5-layer template stack for the function-based workflows brought to
-parity in Phase 1 PR 2 (relaxation, energy_barriers, quantum). For each
+These pin the 5-layer template stack for the function-based workflows
+(relaxation, energy_barriers, quantum). For each
 ``expand_*`` function they prove:
 
 (a) ``structure_defaults`` is honored and sits *between* ``workflow_defaults``

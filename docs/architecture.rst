@@ -111,7 +111,9 @@ When duplicated UI code starts to encode workflow, execution, or styling
 policy, move the reusable part into the appropriate shared layer:
 
 - workflow-row planning belongs in ``mufinder.app.workflow_submission`` or a
-  lower non-UI service if it no longer depends on widgets
+  lower non-UI service once it does not depend on widgets
+- any other cross-workflow UI concern belongs in the module listed under
+  Shared workflow infrastructure below
 - job lifecycle transitions belong in ``mufinder.services``
 - scientific calculation behavior belongs in ``mufinder.science``
 - reusable PySide styling belongs in ``mufinder.app.theme``
@@ -150,178 +152,321 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
 ``adapter_common`` must remain free of PySide imports; it depends only on
 ``workflow``, ``castep_io``, ``science``, and ``domain``.
 
+Shared workflow infrastructure
+------------------------------
+
+The workflow pages are built from one set of shared helpers. Each
+cross-workflow concern has exactly one home; a workflow extends the helper there
+rather than carrying a private copy (``AGENTS.md``, Reuse before you write).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Module
+     - Owns
+   * - ``mufinder.app.workflow_table_utils``
+     - Workflow row tables (``create_workflow_table``,
+       ``set_workflow_table_item``), the shared right-click menu
+       (``standard_row_actions``, ``bind_reset_failed_context_menu``),
+       destructive confirmations (``confirm_destructive``), selection feedback
+       (``SelectionFeedback``), delete/backspace binding
+       (``bind_delete_shortcuts``) and the locked-row rule
+       (``workflow_row_is_locked``).
+   * - ``mufinder.app.selection_snapshot``
+     - Targeting for in-row controls (``SelectionSnapshotPushButton``,
+       ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
+       in-row button acts on when its row is, or is not, part of a multi-row
+       selection, and the three-way prompt.
+   * - ``mufinder.app.workflow_parameters``
+     - Parameter specs per workflow stage
+       (``build_workflow_parameter_surface``), the shared-row ordering, project
+       default seeding (``seed_xc_functional_default``), and sanitising and
+       restoring persisted parameter values.
+   * - ``mufinder.app.workflow_dialogs`` / ``mufinder.app.param_dialog``
+     - The row parameter dialog and the configure dialogs.
+   * - ``mufinder.app.adapter_common``
+     - GUI value dict to ``InputTemplate``, k-point rescaling for supercell
+       rows, and the ``AdapterExpansion`` return shape (see Workflow adapters).
+   * - ``mufinder.app.workflow_submission``
+     - Row submission planning, ``effective_row_status`` and the dismissed-row
+       rules.
+   * - ``mufinder.app.workflow_controllers.base``
+     - The submit, materialize, result and refresh cycle (see Workflow
+       controllers), derived-structure upsert and row-parameter mirroring.
+   * - ``mufinder.app.project_defaults_widget``
+     - The project-defaults strip in every workflow header (see Project
+       defaults surface).
+   * - ``mufinder.app.theme`` / ``mufinder.app.plot_canvas``
+     - Styling and status brushes; embedded plots (see Plot canvas policy).
+   * - ``mufinder.services.job_artifacts``
+     - Job output paths and parsed secondary outputs.
+
+Widget contract
+~~~~~~~~~~~~~~~
+
+A workflow widget that stages jobs follows one shape, so ``MainWindow`` and the
+controllers treat every workflow alike:
+
+- **Signals.** ``form_state_changed``, ``configure_requested``,
+  ``submit_local_requested``, ``submit_cluster_requested``, ``cancel_requested``,
+  ``inspect_failed_requested``, ``reset_failed_requested`` and
+  ``remove_requested``. The submit signals carry the selected keys, or every
+  key when nothing is selected, and the run buttons' labels say which.
+- **Methods.** ``collect_state`` / ``set_form_state`` round-trip the persisted
+  form state, and ``set_form_state`` suppresses ``form_state_changed`` while it
+  restores; ``set_runtime_states``, ``set_parameter_species_options``,
+  ``set_supercell_options``, and ``set_project_defaults`` or
+  ``set_xc_functional_default`` push project state into the widget.
+- **Persisted form state.** ``ui_state["<workflow>_form"]`` holds a job-name
+  prefix and a row list. Each row stores its label, its supercell matrix as a
+  3×3 list, its parameter values as the diff from the implicit defaults, and
+  its sorted ``added_advanced`` names.
+- **Rows.** The row id lives in the label item's ``UserRole``; per-row controls
+  are ``SelectionSnapshot`` buttons that resolve their targets through the shared
+  targeting rule; a delete-shortcut handler returns early while the table is
+  editing a cell; a row whose job is in a runtime state is locked by
+  ``workflow_row_is_locked`` and its parameter dialog opens read-only.
+- **Parameters.** Specs exclude ``task``; defaults are seeded from the schema
+  and the project defaults; effective parameters carry exactly one of
+  ``kpoint_mp_grid`` / ``kpoint_mp_spacing``; every restore passes through the
+  shared sanitiser; the shared rows come first (see Workflow parameter surface
+  policy).
+- **Layout.** A header row with the title, subtitle and project-defaults strip;
+  a controls row (``Add...``, a count label, ``Remove Selected``,
+  ``Configure Selected Parameters...``); and a run row with the job-name prefix
+  and the two run buttons.
+
+Controller naming
+~~~~~~~~~~~~~~~~~
+
+A workflow's definition stores its jobs in ``job_ids_by_<key>`` (and
+``job_seed_names_by_<key>`` when seed names differ from labels), its calc type
+is ``castep_<workflow>``, and ``build_states`` projects each job through
+``effective_row_status`` so a ``defined`` job with configured inputs reads
+``ready``.
+
 Workflow controllers
 --------------------
 
-``mufinder.app.workflow_controllers`` is a thin controller layer *within* the
-app layer, sitting between the ``MainWindow`` widgets and the
-services/workflow/science layers. Each
+``mufinder.app.workflow_controllers`` is a thin controller layer inside the app
+layer, between the ``MainWindow`` widgets and the services, workflow and science
+layers. Each
 :class:`~mufinder.app.workflow_controllers.base.WorkflowJobController` owns one
-workflow's ``submit → materialize → result → refresh`` cycle, replacing the
-per-workflow tangle of ``_on_submit_*`` / ``_materialize_*`` handlers that
-previously accreted on ``MainWindow``.
+workflow's submit, materialize, result and refresh cycle. ``MainWindow`` keeps
+only the two cross-workflow dashboard entry points, which fan out to every
+controller; ``tests/test_agent_harness.py`` pins that set and fails if a
+per-workflow ``_on_submit_*`` / ``_materialize_*`` handler appears on
+``MainWindow``.
 
-- Controllers are plain Python objects (not ``QObject``): they own no signals.
-- A controller's constructor inputs follow a three-part pattern: the shared
-  :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
-  (exactly the narrow, late-bound callables every workflow controller needs —
-  workflow-specific dependencies never go in it), an optional per-controller
-  deps dataclass of required, precisely-typed callables defined in the
-  controller's own module (e.g. ``ConvergenceCutoffDeps``), and the
-  controller's own widget/view reference. A controller holds **no** reference
-  to ``MainWindow`` and never imports the ``main_window`` module, which keeps
-  controllers unit-testable without constructing a window. The one sanctioned
-  deviation from the third part is ``EnergyBarriersController``, whose view is
-  created *lazily* (only when the workflow route is first opened): it takes a
-  ``view_getter: Callable[[], EnergyBarriersWidget | None]`` instead of a view
-  instance, and its ``refresh_view`` no-ops when the getter returns ``None``.
-  The controller is still constructed and registered in ``MainWindow.__init__``
-  regardless, so a completed NEB job dispatches through its ``build_result`` even
-  when the view was never opened.
-- :meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.submit`
-  is a template method mirroring the former
-  ``MainWindow._submit_workflow_selection`` funnel; workflow-specific behavior
-  is supplied by overriding ``normalize`` / ``build_states`` / ``jobs_for_keys``
-  / ``materialize`` / ``is_ready`` and, where needed, ``pre_submit_check`` and
-  ``submission_groups``. ``MuonRelaxationController`` is the first migration
-  exercising the latter two hooks: its ``pre_submit_check`` validates that
-  every staged site matches the active host (silently refusing the submission
-  before any plan is built when the mismatch is not resolved), and its
-  ``submission_groups`` splits a mixed job list into per-charge-state groups
-  (positive muon first, then muonium), each dispatched by the base template
-  loop as a separate backend call with no extra kwargs.
-- **Pre-dispatch reset of dismissed jobs.** Between building the plan and
-  dispatching the submission groups, ``submit`` partitions the planned jobs with
-  :func:`~mufinder.app.workflow_submission.job_is_resubmittable_after_dismissal`
-  and, when any row's bound job was dismissed from the jobs dashboard, calls the
-  shared context's ``prepare_jobs_for_resubmission`` with exactly those jobs. The
-  hook resets them back to ``defined`` (after the stale-output cleanup prompt) so
-  they clear the ``{DEFINED}`` gate in the submit backends; returning ``False``
-  (the user cancelled the prompt) aborts the submission silently. ``materialize``
-  is then re-run for the plan's ready keys, because controllers only regenerate a
-  job's input directory when the job is ``defined`` and the first pass ran before
-  the reset. This is the only step in the cycle that mutates job state before
-  dispatch, and it acts on the plan's own job objects, so a row never gains a
-  duplicate job. Non-dismissed failed jobs are never passed to the hook and keep
-  their existing behavior. See ``docs/job_lifecycle.rst`` (Dismissed rows stay
-  resubmittable).
-- Result dispatch is registry-based:
-  :func:`~mufinder.app.workflow_controllers.base.merge_controller_result`
-  consults the registered controllers in ``MainWindow._on_local_job_finished``
-  and additively merges the owning controller's
-  :class:`~mufinder.app.workflow_controllers.base.ControllerResult`. Unmigrated
-  workflows fall through to the existing inline handling unchanged.
-- **Parse-once off the GUI thread.** A completed job's *secondary* CASTEP
-  outputs (the relaxed ``-out.cell``, the ``.phonon`` file plus its derived
-  quantum quantities, and the ``.ts`` transition-state file) are parsed **once**
-  on the runner worker thread, not on the GUI thread. Each runner
-  (``LocalJobRunner`` on its ``QProcess.finished`` callback, ``ClusterJobRunner``
-  on its worker ``QThread`` in ``_retrieve_results``) calls
-  :func:`~mufinder.services.job_artifacts.collect_job_artifacts` after the
-  primary ``.castep`` parse succeeds and delivers the resulting
-  :class:`~mufinder.services.job_artifacts.ParsedJobArtifacts` as the third
-  payload of the ``job_finished`` signal, alongside the ``CastepResult``.
-  Collection is driven by the same per-calc-type retrieval flags the runners
-  already track (``retrieve_out_cell`` / ``retrieve_phonon`` / ``retrieve_ts``);
-  every failure is captured on the carrier **as data** (missing-file flags and
-  error strings) rather than raised across the Qt signal boundary.
-  ``_on_local_job_finished`` decides its failure guards purely from the carrier
-  and threads it into ``merge_controller_result`` so the owning controller's
-  ``build_result`` consumes the pre-parsed data. Non-runner callers
-  (reconciliation/retry paths, direct test invocations) pass no carrier; the
-  handler falls back to a single synchronous ``collect_job_artifacts`` call, so
-  parse-once still holds on those paths.
-- ``PristineRelaxationController`` is the first genuine
-  :meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.build_result`
-  implementation: it consumes the carrier's parsed ``relaxed_cell`` /
-  ``lattice_abc``, contributes the relaxed ``lattice_a/b/c`` payload, and creates
-  the derived relaxed structure on the document. ``MuonRelaxationController``
-  ``.build_result`` carries the richest result logic so far: in addition to the
-  lattice payload and the derived structure, it contributes the muon's final
-  fractional position in supercell and folded host coordinates, and mutates the
-  source muon site (``status``/``relaxation_run_id``/``total_energy_eV``) — a
-  sanctioned document side effect per the ``ControllerResult`` contract. Because
-  ``ControllerResult`` has no failure channel, failure-detection prologues that
-  must abort a job before any result is built (the ``geom_converged`` guard, the
-  shared ``-out.cell`` missing/unparseable guard, and the muon ``H:mu`` position
-  guard) stay inline in ``_on_local_job_finished``; they read the carrier
-  (``cell_missing`` / ``cell_error`` and the already-parsed ``relaxed_cell``)
-  rather than re-reading disk, and the controllers consume the same carried cell
-  on the success path. ``UepController`` is a simpler migration whose
-  ``build_result`` contributes only the ``density_available`` boolean flag (no
-  derived structures, no document mutation): the *guard* that fails a UEP job
-  whose ``{seed}.den_fmt`` output is missing is a missing-output guard and stays
-  inline for the same no-failure-channel reason (den_fmt is a plain
-  existence check outside the artifact carrier), while only the flag assignment
-  moves into ``build_result``. ``QuantumCorrectionsController`` is the two-stage
-  (singlepoint → phonon) migration and the richest of the first six: its
-  ``materialize`` dispatches each selected relaxed source to its current stage,
-  building singlepoint *and* phonon configs in one pass and writing the two
-  per-stage job-id mappings (``singlepoint_job_ids_by_label`` /
-  ``phonon_job_ids_by_label``) plus the shared ``job_seed_names_by_label``; its
-  ``pre_submit_check`` runs the host guard shared with the energy-barriers
-  workflow; and its ``build_result`` derives the muon ZPE, gamma-point
-  eigenvalues, mode participations, and the ``w1`` entanglement witness from the
-  carrier's parsed ``phonon`` calculation for a quantum-*phonon* job while a
-  quantum-*singlepoint* job contributes an empty result (both calc types are
-  ``handles_job``-owned so the two-stage pair is coherent). Following the
-  no-failure-channel convention, the ``.phonon`` guards (missing/unparseable
-  file, and any downstream ``PhononParseError`` from the ZPE / gamma / witness
-  computation, which the collector exercises on the worker thread) stay inline in
-  ``_on_local_job_finished`` and read the carrier (``phonon_missing`` /
-  ``phonon_error``). Task farming for the phonon stage is applied by the shared
-  ``_submit_jobs_locally`` backend (not the controller), so
-  ``QuantumCorrectionsController`` keeps the base single-group ``submission_groups``.
-  That backend resolves each job's farm count through the calc-type-dispatching
-  ``MainWindow._task_farming_for_job``, which serves both the quantum-phonon and
-  NEB workflows; the runners use it to decide whether a finished job's outputs
-  carry CASTEP's ``_farmNNN`` seedname suffix.
-  ``EnergyBarriersController`` is the seventh and **last** of the per-workflow
-  migrations. Its ``materialize`` keys jobs by their diffusion-path *source key*
-  (writing ``job_ids_by_label`` keyed by source key and stamping each expanded
-  spec with ``provenance={"source_key": key}``), aligns the reactant/product
-  endpoints into the pristine host via ``prepare_transition_state_structures`` and
-  seeds the band's middle image with ``idpp_intermediate_structure`` before
-  expanding through ``expand_nudged_elastic_band_jobs``; its ``pre_submit_check``
-  runs the former ``_check_energy_barrier_neb_host`` guard (validating the selected
-  paths' endpoint structures/sites against the active host); and its
-  ``build_result`` reads the carrier's parsed ``transition_state`` path and
-  contributes the ``transition_state_file`` / ``barrier_height_eV`` /
-  ``num_images`` / ``image_labels`` / ``reaction_coordinates`` /
-  ``image_energies_eV`` payload. Both the NEB and transition-state-search calc
-  types are ``handles_job``-owned so the ``.ts``-producing pair is coherent.
-  Following the no-failure-channel convention, the ``.ts`` guard
-  (missing/unparseable file) stays inline in ``_on_local_job_finished`` and reads
-  the carrier (``ts_missing`` / ``ts_error``).
+Construction
+~~~~~~~~~~~~
 
-- **In-place row parameter mutation.** Editing one already-submitted relaxation
-  row's CASTEP parameters goes through
-  ``PristineRelaxationController.update_row_parameters`` /
-  ``MuonRelaxationController.update_row_parameters`` (keyed by row label and by
-  the charge-qualified ``"{prefix}:{label}"`` key respectively), never through
-  ``register_*_relaxation_definition``. Registering a definition produces a *new*
-  ``CalculationDefinition`` with an empty ``job_ids_by_label``, which severs the
-  row→job binding — ``materialize`` would then mint a duplicate ``Job`` onto the
-  row's existing directory. The helpers rewrite that single row inside the
-  **active** definition's ``parameters["configuration"]`` (through the
-  serialize/deserialize pair, so the stored shape stays canonical), leaving
-  ``job_ids_by_label``, ``job_seed_names_by_label`` and every other row untouched.
-  They then mirror the same edit into the widget form state with
-  :func:`~mufinder.app.workflow_controllers.base.apply_row_parameters_to_form_state`
-  and store back the values the *widget* reports, because the tables strip
-  implicit project defaults and ``build_states`` matches each row's form
-  signature against its definition signature — pristine relaxation has no
-  active-job escape hatch, so a desynced row would fall back to a jobless
-  "ready". ``ui_state`` is refreshed from the widget and persisted through the
-  shared context.
+A controller is a plain Python object (not a ``QObject``; it owns no signals)
+built from three inputs:
 
-The set of ``_on_submit_*`` / ``_materialize_*`` handlers still on
-``MainWindow`` is pinned by ``tests/test_agent_harness.py`` as a ratchet: it may
-only shrink as workflows migrate onto controllers, and no new handler may appear
-on ``MainWindow``. With energy barriers migrated the per-workflow migration
-series is complete: the only pinned entries that remain are the two cross-workflow
-dashboard handlers (``_on_submit_from_dashboard`` / ``_on_submit_local_from_dashboard``),
-which fan out to every workflow's controller and legitimately stay on ``MainWindow``.
+1. the shared
+   :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`:
+   the narrow, late-bound callables every controller needs (document access,
+   persistence, job dispatch, status reporting,
+   ``prepare_jobs_for_resubmission``). Nothing workflow-specific goes in it;
+2. an optional per-controller deps dataclass of required, precisely typed
+   callables, defined in the controller's own module (for example
+   ``ConvergenceCutoffDeps``);
+3. the controller's own view. A controller whose view is created lazily takes
+   a ``view_getter: Callable[[], Widget | None]`` instead and makes
+   ``refresh_view`` a no-op while the getter returns ``None``; it is still
+   constructed and registered at startup so a completed job dispatches through
+   it whether or not the view was ever opened.
+
+A controller holds no reference to ``MainWindow`` and never imports the
+``main_window`` module, so it is unit-testable without a window.
+
+Hooks
+~~~~~
+
+``submit`` is a template method; a subclass supplies workflow behaviour by
+overriding these hooks.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 50 24
+
+   * - Hook
+     - Responsibility
+     - Overridden by
+   * - ``normalize(value)``
+     - Turn a widget-emitted key into the controller's canonical key.
+     - all
+   * - ``build_states()``
+     - Map every row key to its run state from the active definition's job
+       mapping and the live form state.
+     - all
+   * - ``is_ready(states, key)``
+     - Decide whether a key can be submitted.
+     - muon relaxation
+   * - ``jobs_for_keys(keys)``
+     - Resolve keys to existing ``Job`` records for cancel, inspect and reset.
+     - all
+   * - ``materialize(keys)``
+     - Register or update the definition, expand the jobs, and write input
+       directories for ``defined`` jobs only.
+     - all
+   * - ``pre_submit_check(keys)``
+     - Refuse the submission before any plan is built (host-mismatch guards).
+     - muon relaxation, quantum corrections, energy barriers
+   * - ``submission_groups(jobs)``
+     - Split the planned jobs into separately dispatched groups.
+     - muon relaxation, quantum corrections
+   * - ``handles_job(job)`` / ``build_result(...)``
+     - Own a completed job's calc types and contribute its
+       :class:`~mufinder.app.workflow_controllers.base.ControllerResult`.
+     - every controller except the two convergence sweeps
+   * - ``refresh_view()``
+     - Push the latest states into the widget.
+     - all
+   * - ``update_row_parameters(...)``
+     - Edit one submitted row's CASTEP parameters in place (below).
+     - pristine relaxation, muon relaxation
+
+Submission sequence
+~~~~~~~~~~~~~~~~~~~
+
+``submit`` runs ``pre_submit_check``, then ``build_states``, then builds the
+plan (ready keys and skipped rows), then ``materialize``, then the
+dismissed-job reset, then ``materialize`` again for the plan's ready keys, then
+one backend call per ``submission_groups`` group, and finally ``refresh_view``
+with a status message naming the skipped count.
+
+The dismissed-job reset is the only step that mutates job state before
+dispatch. ``submit`` partitions the planned jobs with
+:func:`~mufinder.app.workflow_submission.job_is_resubmittable_after_dismissal`
+and, when any row's bound job was dismissed from the dashboard, calls the
+context's ``prepare_jobs_for_resubmission`` with exactly those jobs. The hook
+runs the stale-output cleanup prompt and resets them to ``defined``; returning
+``False`` (the user cancelled) aborts the submission silently. The second
+``materialize`` pass exists because controllers only regenerate input
+directories for ``defined`` jobs and the first pass ran before the reset. Both
+steps act on the plan's own job objects, so a row never gains a duplicate job,
+and non-dismissed failed jobs are never passed to the hook (see
+:doc:`job_lifecycle`, Dismissed rows stay resubmittable).
+
+Task farming for the quantum-phonon and NEB stages is applied by the shared
+local submit backend, which resolves each job's farm count by calc type; the
+runners use the same count to decide whether a finished job's outputs carry
+CASTEP's ``_farmNNN`` seedname suffix.
+
+Result dispatch
+~~~~~~~~~~~~~~~
+
+Dispatch is registry-based: the job-finished handler calls
+:func:`~mufinder.app.workflow_controllers.base.merge_controller_result`, which
+asks the registered controllers ``handles_job`` and additively merges the
+owning controller's
+:class:`~mufinder.app.workflow_controllers.base.ControllerResult`: the result
+payload, derived structures, and sanctioned document side effects such as
+rewriting a muon site's status, run id and total energy.
+
+**Parse once, off the GUI thread.** A completed job's secondary outputs (the
+relaxed ``-out.cell``, the ``.phonon`` file with its derived quantum
+quantities, and the ``.ts`` transition-state file) are parsed once, on the
+runner worker thread. Each runner calls
+:func:`~mufinder.services.job_artifacts.collect_job_artifacts` after the primary
+``.castep`` parse succeeds and delivers a
+:class:`~mufinder.services.job_artifacts.ParsedJobArtifacts` carrier with the
+``job_finished`` signal. Collection follows the per-calc-type retrieval flags
+the runners track, and every failure travels as data (missing-file flags and
+error strings), never as an exception across the signal boundary. Callers with
+no carrier (reconciliation, retry, direct test invocation) fall back to one
+synchronous ``collect_job_artifacts`` call. ``build_result`` consumes the
+carrier and never re-reads disk.
+
+**No failure channel.** ``ControllerResult`` cannot fail a job. Guards that
+must abort a job before any result is built therefore stay in the job-finished
+handler, read the carrier, and run before dispatch:
+
+- a relaxation job whose geometry optimisation did not converge;
+- a relaxation job whose ``-out.cell`` is missing, unparseable, or older than
+  the current run (a continuation reuses its directory), or whose muon position
+  cannot be located;
+- a UEP job whose ``{seed}.den_fmt`` is missing (a plain existence check);
+- a quantum-phonon job whose ``.phonon`` is missing or unparseable, including a
+  ``PhononParseError`` from the ZPE, gamma-point or witness computation;
+- an NEB or transition-state job whose ``.ts`` is missing or unparseable.
+
+A controller whose job passes these guards contributes only the success-path
+payload. Giving ``ControllerResult`` a failure channel, so the guards can move
+onto the owning controller, is the intended next step; until then a new guard
+goes beside the existing ones and reads the carrier rather than disk.
+
+Controller summary
+~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 74
+
+   * - Controller
+     - Specifics
+   * - ``ConvergenceCutoffController`` /
+       ``ConvergenceKPointController``
+     - Sweep workflows keyed by cutoff energy and by k-point grid, with jobs
+       mapped in ``job_ids_by_cutoff`` / ``job_ids_by_grid``. No
+       ``build_result``: the convergence metrics come from the primary
+       ``.castep`` parse.
+   * - ``PristineRelaxationController``
+     - Keyed by row label. ``build_result`` reads the carrier's relaxed cell,
+       contributes ``lattice_a`` / ``lattice_b`` / ``lattice_c``, and creates
+       or refreshes the derived relaxed structure.
+   * - ``MuonRelaxationController``
+     - Keyed by ``"{charge prefix}:{label}"``. ``pre_submit_check`` requires
+       every staged site to match the active host; ``submission_groups``
+       dispatches positive-muon jobs and then muonium jobs; ``build_result``
+       adds the muon's final fractional position (supercell and folded host
+       coordinates) and rewrites the source site's status, run id and total
+       energy.
+   * - ``UepController``
+     - Keyed by row label. ``build_result`` contributes the
+       ``density_available`` flag only.
+   * - ``QuantumCorrectionsController``
+     - Two stages per source: singlepoint, then phonon. ``materialize``
+       dispatches each source to its current stage and writes
+       ``singlepoint_job_ids_by_label`` / ``phonon_job_ids_by_label`` plus
+       ``job_seed_names_by_label``; ``pre_submit_check`` runs the host guard
+       shared with energy barriers; ``build_result`` derives the muon ZPE,
+       gamma-point eigenvalues, mode participations and the ``w1`` witness from
+       the carrier's parsed phonon calculation, and a singlepoint job
+       contributes an empty result. Both calc types are ``handles_job``-owned.
+   * - ``EnergyBarriersController``
+     - Keyed by diffusion-path source key, stamped on each spec as
+       ``provenance={"source_key": key}``. ``materialize`` aligns the endpoints
+       into the pristine host and seeds the middle image by IDPP before
+       expanding the NEB band; ``pre_submit_check`` validates the endpoints
+       against the active host; ``build_result`` reads the carrier's parsed
+       transition-state path and contributes ``transition_state_file``,
+       ``barrier_height_eV``, ``num_images``, ``image_labels``,
+       ``reaction_coordinates`` and ``image_energies_eV``. Both the NEB and the
+       transition-state-search calc types are ``handles_job``-owned. Takes a
+       ``view_getter`` because its view is created on first visit.
+
+In-place row parameter edits
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Editing one already-submitted relaxation row's CASTEP parameters goes through
+``update_row_parameters`` on the pristine or muon controller (keyed by row label
+and by the charge-qualified key respectively), never through
+``register_*_relaxation_definition``. Registering produces a new
+``CalculationDefinition`` with an empty ``job_ids_by_label``, which severs the
+row-to-job binding and lets ``materialize`` mint a duplicate job onto the row's
+existing directory. The helper rewrites that single row inside the active
+definition's ``parameters["configuration"]`` through the serialize/deserialize
+pair (so the stored shape stays canonical), leaves every mapping and every
+other row untouched, mirrors the edit into the widget form state with
+:func:`~mufinder.app.workflow_controllers.base.apply_row_parameters_to_form_state`,
+and stores back the values the widget reports, because the tables strip
+implicit project defaults and ``build_states`` matches each row's form
+signature against its definition signature. ``ui_state`` is then refreshed
+from the widget and persisted through the context.
 
 Workflow parameter surface policy
 ---------------------------------

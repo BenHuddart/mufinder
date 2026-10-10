@@ -116,13 +116,17 @@ save:
 Development harness
 -------------------
 
-The repository now includes an agent-legible development harness:
+The repository is organised for development by coding agents:
 
-- ``AGENTS.md`` is a short route map to durable repository docs.
+- ``AGENTS.md`` is the canonical agent guide: binding rules plus pointers to
+  the docs that hold the rationale. ``CLAUDE.md`` imports it.
 - :doc:`agent_harness` documents the expected agent workflow and feedback loop.
-- :doc:`architecture` defines package layers and dependency directions.
-- ``tests/test_agent_harness.py`` enforces the first structural guardrails for
-  docs indexing, layer imports, and tracked bytecode artifacts.
+- :doc:`architecture` defines package layers, dependency directions, the shared
+  homes for cross-workflow code and the workflow-controller contract.
+- ``tests/test_agent_harness.py`` enforces the structural guardrails listed in
+  :doc:`quality_and_automation` (Agent harness checks): docs indexing, layer
+  imports, the ``MainWindow`` handler ratchet, the plot-canvas rules, the PR
+  template pointers and tracked bytecode artifacts.
 
 Journal view
 ------------
@@ -200,7 +204,7 @@ Import behavior currently includes:
 Host-structure visualization and magnetic editing
 -------------------------------------------------
 
-The host-structure panel now includes:
+The host-structure panel includes:
 
 - An ``Active host structure:`` selector for switching between imported host structures.
 - A resizable side-by-side splitter layout with atom table on the left and 3D structure viewer on the right.
@@ -219,7 +223,7 @@ The host-structure panel now includes:
   when there is room and wrap onto two lines when there is not, and the a/b/c
   buttons are compact. A long selection summary is shortened with an ellipsis
   (the full text is in its tooltip) instead of widening the viewer. The viewer
-  no longer needs about 610 px of width and fits in roughly 300 px, so plots
+  needs roughly 300 px of width rather than about 610 px, so plots
   beside it in the analysis dialogs get the width they need.
 - In the relaxation clustering window the viewer pane gets half the width, or
   more when its cluster summary table needs it to show the Wyckoff assignments
@@ -434,7 +438,7 @@ Convergence definition/materialization behavior:
 Compatibility behavior:
 
 - ``Project.supercell_matrix`` is retained for host preview defaults and compatibility reads.
-- ``Project.supercell_matrix`` is no longer authoritative for workflow calculation input structures.
+- ``Project.supercell_matrix`` is not authoritative for workflow calculation input structures.
 
 Legacy spin-data repair behavior:
 
@@ -479,9 +483,8 @@ Constraint handling currently includes:
   that are likely to relax to the same final site.
 - Minimum muon-host distance under periodic minimum-image convention for
   random and element-attached generation.
-- Attempt caps for random placement. The generation UI no longer exposes a
-  random seed, but internal seed parameters remain available for regression
-  tests.
+- Attempt caps for random placement. The generation UI does not expose a
+  random seed; internal seed parameters remain available for regression tests.
 
 Error handling currently includes:
 
@@ -580,8 +583,6 @@ symmetry-inequivalent candidate stopping sites. The page includes:
   exports every relaxed muon position in the workspace rather than only cluster
   representatives.
 
-The previous placeholder ``Confirmed Sites`` child page, which had no behaviour,
-has been removed in favour of this summary page.
 
 UEP clustering analysis
 -----------------------
@@ -623,7 +624,7 @@ Current clustering behavior includes:
 Calculation job framework
 -------------------------
 
-Workflow-driven CASTEP job generation now includes:
+Workflow-driven CASTEP job generation provides:
 
 - A resolved ``JobSpec`` abstraction as the canonical output of workflow expansion.
 - Separation between structure bridging (domain ``Structure`` to ``StructureSpec``) and CASTEP rendering.
@@ -636,10 +637,13 @@ Workflow-driven CASTEP job generation now includes:
 	- explicit user overrides
 
 - Explicit variation modeling with ``JobPatch`` for structure, cell, and param overrides.
-- Concrete workflow expansion for:
+- A keyword-only ``expand_*`` function per workflow in ``mufinder.workflow``:
 
 	- convergence sweeps over ``CUT_OFF_ENERGY`` and ``KPOINT_MP_GRID``
 	- muon-site sweeps over initial fractional muon positions
+	- pristine and muon relaxation jobs
+	- quantum-correction singlepoint and phonon jobs
+	- nudged-elastic-band energy-barrier jobs
 
 - Deterministic, filesystem-safe job naming and one output directory per resolved job.
 - A CASTEP rendering adapter that renders only resolved ``JobSpec`` objects.
@@ -758,7 +762,7 @@ targeting and the three-way prompt) and ``mufinder.app.workflow_table_utils``
 Workflow-aware CASTEP parameter GUI
 -----------------------------------
 
-The application now includes a metadata-driven CASTEP parameter entry framework with:
+The application provides a metadata-driven CASTEP parameter entry framework with:
 
 - Job-type-aware parameter visibility driven from CASTEP keyword metadata.
 - Basic and advanced progressive disclosure for parameter entry.
@@ -882,7 +886,7 @@ The parent ``Convergence Testing`` workflow now opens a dedicated overview page 
 Cutoff convergence GUI
 ----------------------
 
-The convergence stage now includes a cutoff convergence panel with:
+The convergence stage includes a cutoff convergence panel with:
 
 - Manual cutoff list entry and editable table-based review.
 - Range generation from start/stop/step controls.
@@ -949,7 +953,7 @@ The convergence stage now also includes a dedicated k-point convergence panel wi
 Pristine-relaxation workflow GUI
 --------------------------------
 
-The optional ``Pristine Relaxation`` stage now includes:
+The optional ``Pristine Relaxation`` stage includes:
 
 - A table-driven multi-job configuration with explicit per-row labels.
 - Per-row supercell selection from a ``Supercell`` dropdown listing ``Unit cell``, the project's saved supercells, and ``Manage Supercells...`` (which opens the :doc:`supercells`).
@@ -959,7 +963,7 @@ The optional ``Pristine Relaxation`` stage now includes:
 - Supercell-aware k-point remapping that preserves equivalent reciprocal-space sampling density relative to the recommended reference lattice by scaling each k-point component with the corresponding reciprocal-axis change and always rounding up to avoid undersampling. For example, a ``4x4x4`` default maps to ``2x2x2`` for diagonal ``2x2x2`` and ``2x2x3`` supercells.
 - Runtime status columns for each row including ``a``, ``b``, ``c`` lattice parameters extracted from relaxed outputs.
 
-Pristine-relaxation result handling now includes:
+Pristine-relaxation result handling includes:
 
 - Retrieval/listing of both ``<seed>.castep`` and ``<seed>-out.cell`` outputs.
 - Geometry-convergence gating: pristine jobs are marked failed when CASTEP reports incomplete geometry convergence.
@@ -970,7 +974,7 @@ Pristine-relaxation result handling now includes:
 Pristine-relaxation comparison tables
 -------------------------------------
 
-The ``Pristine Relaxation`` stage now includes a ``Generate Comparison Table`` feature with:
+The ``Pristine Relaxation`` stage includes a ``Generate Comparison Table`` feature with:
 
 - a dialog listing completed pristine-relaxation jobs with include tickboxes,
 - support for selecting one or more DFT jobs against the active experimental host structure,
@@ -1155,9 +1159,8 @@ Runtime behavior includes:
 	deletes them or moves them into a ``removed_from_workflow`` archive subfolder.
 - Cutoff rows that use the default parameters keep their completed jobs across a
 	project refresh or reload: adding a cutoff and running submits only the new
-	row. (A restore bug previously re-read such rows as task-only, which made the
-	next run treat every row as new and submit completed jobs again; rows saved
-	in that state are repaired on load.)
+	row. Rows saved as task-only by older builds are repaired on load (see
+	:doc:`compatibility_policy`).
 - Removing cutoff rows asks one confirmation for the whole batch (see
 	"Multi-row selection in job tables"); the file-handling prompt that follows
 	for rows with associated files still offers ``Yes to All`` / ``No to All``.

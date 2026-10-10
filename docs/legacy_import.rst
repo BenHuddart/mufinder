@@ -487,9 +487,9 @@ Parameter recovery
 Two readers are required, both in :mod:`mufinder.castep_io`. Both are
 **implemented**:
 
-- :mod:`mufinder.castep_io.param_parser` — a ``.param`` reader. None existed
-  previously, which is why the continue-relaxation keyword diff is computed by
-  re-rendering rather than parsing. ``parse_param_text`` returns a
+- :mod:`mufinder.castep_io.param_parser` — a ``.param`` reader (the
+  continue-relaxation keyword diff is computed by re-rendering rather than by
+  parsing, and does not depend on it). ``parse_param_text`` returns a
   ``ParamFile`` the writer can render again; ``parse_param_assignments`` returns
   a faithful ``{canonical name: value}`` view including keywords the runtime
   schema does not recognise; ``parse_param_observations`` splits mapped from

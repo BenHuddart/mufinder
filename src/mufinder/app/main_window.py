@@ -2197,18 +2197,15 @@ class MainWindow(QMainWindow):
             self._on_launch_quantum_phonon_analysis
         )
         self._energy_barriers_view: EnergyBarriersWidget | None = None
-        # Energy-barriers (NEB) controller: the LAST of the seven Phase 4
-        # migrations. Its view is created lazily (only when the workflow route is
-        # first opened), so the controller takes a ``view_getter`` rather than a
-        # view instance — the only sanctioned constructor-shape deviation. It is
-        # still constructed and registered here in ``__init__`` regardless, so a
-        # completed NEB job dispatches through its build_result (parsing the ``.ts``
-        # transition-state payload) even when the view was never opened; its
-        # refresh_view no-ops until the view exists. The pre_submit_check runs the
-        # former ``_check_energy_barrier_neb_host`` guard; the ``.ts`` failure guard
-        # (missing/unparseable file) stays inline in _on_local_job_finished per the
-        # base convention, only the payload moves. The submit-signal wiring happens
-        # at lazy view creation (``_ensure_energy_barriers_view``).
+        # Energy-barriers (NEB) controller. Its view is created lazily (only when
+        # the workflow route is first opened), so the controller takes a
+        # ``view_getter`` rather than a view instance. It is still constructed and
+        # registered here so a completed NEB job dispatches through its
+        # build_result even when the view was never opened; refresh_view no-ops
+        # until the view exists. The ``.ts`` failure guard stays inline in
+        # _on_local_job_finished (no failure channel on ControllerResult). The
+        # submit-signal wiring happens at lazy view creation
+        # (``_ensure_energy_barriers_view``).
         self._energy_barriers_controller = EnergyBarriersController(
             self._build_workflow_controller_context(),
             self._build_energy_barriers_deps(),
