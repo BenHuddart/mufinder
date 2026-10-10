@@ -5,7 +5,7 @@ from __future__ import annotations
 from mufinder.castep_io.types import KeywordAssignment
 from mufinder.domain.models import Structure
 from mufinder.workflow.bridge import structure_to_spec
-from mufinder.workflow.muon_site import MuonSiteWorkflow, expand_muon_site_jobs
+from mufinder.workflow.muon_site import expand_muon_site_jobs
 from mufinder.workflow.types import InputTemplate, ParamTemplate
 
 
@@ -53,16 +53,3 @@ def test_expand_muon_site_jobs_rejects_bad_position_shape() -> None:
         assert "three components" in str(exc)
     else:
         raise AssertionError("Expected ValueError for malformed muon position")
-
-
-def test_muon_site_workflow_shim_matches_function() -> None:
-    kwargs = dict(
-        host_structure=_base_structure_spec(),
-        muon_positions_frac=[(0.1, 0.2, 0.3), (0.8, 0.4, 0.6)],
-        workflow_defaults=_workflow_defaults(),
-    )
-
-    function_jobs = expand_muon_site_jobs(**kwargs)
-    shim_jobs = MuonSiteWorkflow(**kwargs).expand()
-
-    assert shim_jobs == function_jobs

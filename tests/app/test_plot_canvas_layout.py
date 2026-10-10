@@ -20,7 +20,7 @@ from PySide6.QtWidgets import QDialog, QSizePolicy
 import pytest
 
 from mufinder.app.convergence_examiner import ConvergenceExaminerDialog
-from mufinder.app.convergence_types import CutoffRunState
+from mufinder.app.convergence_types import SweepPointRunState
 from mufinder.app.magnetic_field_widget import MagneticFieldDistributionDialog
 from mufinder.app.plot_canvas import DEFAULT_MINIMUM_CANVAS_SIZE, create_plot_canvas
 from mufinder.app.relaxation_analysis_widget import (
@@ -198,7 +198,7 @@ def _field_distribution() -> QDialog:
 
 def _convergence_examiner() -> QDialog:
     states = {
-        cutoff: CutoffRunState(status="completed", total_energy=energy, max_force=force)
+        cutoff: SweepPointRunState(status="completed", total_energy=energy, max_force=force)
         for cutoff, energy, force in (
             (300.0, -10.0, 0.30),
             (400.0, -10.01, 0.20),

@@ -20,11 +20,6 @@ from mufinder.domain.models import Structure
 from mufinder.workflow import JobPatch, job_name, resolve_job
 from mufinder.workflow.types import InputTemplate, JobSpec
 
-# ``UepExpansion`` is a thin backward-compatible alias for the generic
-# :class:`~mufinder.app.adapter_common.AdapterExpansion`. The former UEP-specific
-# ``kpoint_messages`` field is exposed as a property on ``AdapterExpansion``.
-UepExpansion = AdapterExpansion
-
 
 def expand_uep_jobs(
     *,

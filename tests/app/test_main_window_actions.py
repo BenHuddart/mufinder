@@ -24,7 +24,7 @@ from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.app.comparison_job_dialog import CompletedPristineJob
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig
-from mufinder.app.convergence_types import ConvergenceConfig
+from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.main_window import MainWindow
 from mufinder.castep_setup import CastepSetup
 from mufinder.cluster_setup import ClusterConfig
@@ -8498,8 +8498,8 @@ def test_main_window_examine_convergence_launches_dialog(
     window._document = doc
 
     states = {
-        300.0: main_window_module.CutoffRunState(status="completed", total_energy=-10.0, max_force=0.2),
-        400.0: main_window_module.CutoffRunState(status="completed", total_energy=-10.02, max_force=0.15),
+        300.0: SweepPointRunState(status="completed", total_energy=-10.0, max_force=0.2),
+        400.0: SweepPointRunState(status="completed", total_energy=-10.02, max_force=0.15),
     }
     monkeypatch.setattr(window._convergence_controller, "build_states", lambda: states)
 

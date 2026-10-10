@@ -16,7 +16,7 @@ from mufinder.castep_io.types import (
 )
 from mufinder.domain.enums import WorkflowStage
 from mufinder.workflow._common import format_value_token
-from mufinder.workflow.convergence import ConvergenceWorkflow, expand_convergence_sweep_jobs
+from mufinder.workflow.convergence import expand_convergence_sweep_jobs
 from mufinder.workflow.merge import merge_templates, resolve_job
 from mufinder.workflow.naming import job_name
 from mufinder.workflow.types import (
@@ -108,43 +108,6 @@ def _template_from_values(
         context_label="convergence settings",
         forbidden=forbidden,
         kpoints_list_reset=(),
-    )
-
-
-def build_convergence_workflow(
-    *,
-    structure: StructureSpec,
-    config: ConvergenceConfig,
-) -> ConvergenceWorkflow:
-    """Build a ConvergenceWorkflow for shared-parameter-only convergence sweeps.
-
-    .. deprecated::
-        This helper predates the function-based expansion path. The GUI now
-        calls :func:`expand_convergence_jobs` (which delegates to
-        :func:`~mufinder.workflow.convergence.expand_convergence_sweep_jobs`)
-        directly, so ``build_convergence_workflow`` is orphaned on its happy
-        path and only remains as a public compatibility helper returning the
-        deprecated :class:`~mufinder.workflow.convergence.ConvergenceWorkflow`
-        shim. Prefer :func:`expand_convergence_jobs` in new code. See the
-        compatibility ledger in ``docs/compatibility_policy.rst``; this helper
-        retires together with ``ConvergenceWorkflow``.
-    """
-
-    if config.overrides:
-        raise ValueError(
-            "Per-cutoff overrides (or other per-sweep-point overrides) require expand_convergence_jobs()."
-        )
-
-    stage, tags = _stage_and_tags_for_sweep(config.sweep_parameter)
-    workflow_defaults = _template_from_values(config.shared_params, sweep_parameter=config.sweep_parameter)
-    return ConvergenceWorkflow(
-        structure=structure,
-        sweep_parameter=config.sweep_parameter,
-        sweep_values=_normalize_sweep_values(config),
-        name_prefix=config.name_prefix,
-        workflow_stage=stage,
-        workflow_defaults=workflow_defaults,
-        tags=tags,
     )
 
 

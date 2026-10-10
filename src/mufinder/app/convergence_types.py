@@ -83,7 +83,3 @@ class SweepPointRunState:
     max_stress: float | None = None
     job_id: UUID | None = None
     job_label: str | None = None
-
-
-# Backward-compatible alias used by existing cutoff tests and call sites.
-CutoffRunState = SweepPointRunState

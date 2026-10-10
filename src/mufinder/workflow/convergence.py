@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Sequence
 
 from mufinder.castep_io.types import KeywordAssignment, ValueWithUnit
@@ -100,39 +99,3 @@ def expand_convergence_sweep_jobs(
 
     return jobs
 
-
-@dataclass(slots=True)
-class ConvergenceWorkflow:
-    """Deprecated class wrapper around :func:`expand_convergence_sweep_jobs`.
-
-    Retained as a public compatibility alias for older imports; see the
-    compatibility ledger in ``docs/compatibility_policy.rst``. New code should
-    call :func:`expand_convergence_sweep_jobs` directly.
-    """
-
-    structure: StructureSpec
-    sweep_parameter: str
-    sweep_values: Sequence[float | tuple[int, int, int]]
-    name_prefix: str = "convergence"
-    workflow_stage: WorkflowStage | None = None
-    global_defaults: InputTemplate | None = None
-    workflow_defaults: InputTemplate | None = None
-    structure_defaults: InputTemplate | None = None
-    user_overrides: InputTemplate | None = None
-    tags: tuple[str, ...] = ()
-
-    def expand(self) -> list[JobSpec]:
-        """Expand sweep values into resolved JobSpec objects."""
-
-        return expand_convergence_sweep_jobs(
-            structure=self.structure,
-            sweep_parameter=self.sweep_parameter,
-            sweep_values=self.sweep_values,
-            name_prefix=self.name_prefix,
-            global_defaults=self.global_defaults,
-            workflow_defaults=self.workflow_defaults,
-            structure_defaults=self.structure_defaults,
-            user_overrides=self.user_overrides,
-            workflow_stage=self.workflow_stage,
-            tags=self.tags,
-        )

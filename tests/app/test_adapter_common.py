@@ -31,17 +31,14 @@ from mufinder.domain.models import Structure
 from mufinder.workflow.types import CellTemplate, InputTemplate, ParamTemplate
 
 
-def test_adapter_expansion_kpoint_messages_alias() -> None:
+def test_adapter_expansion_carries_messages() -> None:
     expansion = AdapterExpansion(jobs=(), messages=("note",))
     assert expansion.messages == ("note",)
-    # Backward-compatible alias for the former per-workflow field name.
-    assert expansion.kpoint_messages == ("note",)
 
 
 def test_adapter_expansion_defaults_to_empty_messages() -> None:
     expansion = AdapterExpansion(jobs=())
     assert expansion.messages == ()
-    assert expansion.kpoint_messages == ()
 
 
 def test_build_input_template_parses_param_and_cell() -> None:

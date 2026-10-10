@@ -108,12 +108,6 @@ def workflow_stage_icon(state: str) -> QIcon:
     return QIcon(pixmap)
 
 
-def workflow_tick_icon(completed: bool) -> QIcon:
-    """Return legacy workflow icon for backward-compatible call sites."""
-
-    return workflow_stage_icon("completed" if completed else "incomplete")
-
-
 def _semantic_icon(name: str) -> QIcon:
     logical_size = 64 if name == "project_home" else 22 if name == "help" else 18
     pixmap = _icon_canvas(logical_size)

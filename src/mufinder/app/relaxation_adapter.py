@@ -60,7 +60,6 @@ __all__ = [
     "MUON_RELAXATION_JOB_PREFIXES",
     "MUONIUM_CHARGE_STATE",
     "POSITIVE_MUON_CHARGE_STATE",
-    "RelaxationExpansion",
     "canonical_charge_state",
     "expand_muon_relaxation_jobs",
     "expand_pristine_relaxation_jobs",
@@ -81,12 +80,6 @@ from mufinder.domain.constants import MUON_MASS_AMU
 from mufinder.workflow.merge import merge_templates
 from mufinder.workflow.relaxation import RelaxationJobConfig, expand_relaxation_jobs
 from mufinder.workflow.types import CellTemplate, InputTemplate, JobSpec, ParamTemplate
-
-
-# ``RelaxationExpansion`` is a thin backward-compatible alias for the generic
-# :class:`~mufinder.app.adapter_common.AdapterExpansion`. The former per-workflow
-# ``kpoint_messages`` field is exposed as a property on ``AdapterExpansion``.
-RelaxationExpansion = AdapterExpansion
 
 
 def _template_from_values(values: Mapping[str, object]) -> InputTemplate:
@@ -189,7 +182,7 @@ def expand_pristine_relaxation_jobs(
     project_kpoint_grid: tuple[int, int, int] | None,
     project_kpoint_reference_lattice: list[list[float]] | None,
     project_xc_functional: str | None = None,
-) -> RelaxationExpansion:
+) -> AdapterExpansion:
     """Expand pristine-relaxation UI config to workflow job specs."""
 
     if not config.rows:
@@ -267,7 +260,7 @@ def expand_muon_relaxation_jobs(
     project_kpoint_grid: tuple[int, int, int] | None,
     project_kpoint_reference_lattice: list[list[float]] | None,
     project_xc_functional: str | None = None,
-) -> RelaxationExpansion:
+) -> AdapterExpansion:
     """Expand staged muon sites to fixed-cell CASTEP geometry-optimization jobs."""
 
     if not config.rows:

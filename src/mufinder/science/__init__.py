@@ -8,7 +8,6 @@ from mufinder.science.convergence_analysis import (
     delta_threshold_energy,
     delta_threshold_force,
     derivative_energy,
-    recommended_cutoff,
     recommended_value,
 )
 from mufinder.science.kpoint_grids import (
@@ -126,7 +125,6 @@ __all__ = [
     "delta_threshold_energy",
     "delta_threshold_force",
     "derivative_energy",
-    "recommended_cutoff",
     "recommended_value",
     "format_kpoint_grid",
     "generate_kpoint_grids",
