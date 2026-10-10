@@ -66,7 +66,7 @@ from mufinder.branding import (
     logo_path,
 )
 from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_cluster_configs
-from mufinder.castep_io.gui_metadata import make_block_section, make_keyword_assignment, normalize_gui_value
+from mufinder.castep_io.gui_metadata import make_block_section, make_keyword_assignment
 from mufinder.castep_io.schema import KeywordSpec, canonical_keyword_name, get_keyword_spec
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
@@ -277,6 +277,7 @@ from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.app.workflow_table_utils import SelectionFeedback, count_phrase, partial_count_suffix
+from mufinder.app.workflow_parameters import restore_structured_value
 from mufinder.services.perf_trace import PerfTrace
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, ProjectDocument, ProjectService
 from mufinder.services.ssh_client import (
@@ -4693,7 +4694,7 @@ class MainWindow(QMainWindow):
             return None
 
         shared_clean = {
-            str(name): self._restore_castep_param_value(str(name), raw_value)
+            str(name): restore_structured_value(None, str(name), raw_value)
             for name, raw_value in shared_params.items()
         }
 
@@ -4712,7 +4713,7 @@ class MainWindow(QMainWindow):
                 if not cutoff_group or not isinstance(params, dict):
                     continue
                 overrides[cutoff_group] = {
-                    str(name): self._restore_castep_param_value(str(name), raw_value)
+                    str(name): restore_structured_value(None, str(name), raw_value)
                     for name, raw_value in params.items()
                 }
 
@@ -4725,30 +4726,6 @@ class MainWindow(QMainWindow):
             overrides=overrides,
             name_prefix=str(payload.get("name_prefix", default_prefix)).strip() or default_prefix,
         )
-
-    def _restore_castep_param_value(self, name: str, value: object) -> object:
-        spec = get_keyword_spec("param", name) or get_keyword_spec("cell", name)
-        if spec is None:
-            return value
-
-        if isinstance(value, dict):
-            if spec.kind == "block" and "rows" in value:
-                rows = tuple(tuple(row) for row in value.get("rows", ()))
-                return BlockSection(
-                    name=str(value.get("name", spec.name)),
-                    rows=rows,
-                    unit=str(value["unit"]) if value.get("unit") is not None else None,
-                )
-            if spec.value_type in {"physical", "positive_float_with_optional_unit"} and {"value", "unit"} <= value.keys():
-                return ValueWithUnit(value=value["value"], unit=str(value["unit"]))
-
-        if isinstance(value, list) and spec.value_type in {"int_triplet", "real_vector"}:
-            value = tuple(value)
-
-        try:
-            return normalize_gui_value(spec, value)
-        except (TypeError, ValueError):
-            return value
 
     @staticmethod
     def _configuration_mapping(definition) -> dict[str, object]:
@@ -4776,7 +4753,7 @@ class MainWindow(QMainWindow):
         raw_params = raw_entry.get("parameter_values", raw_entry.get("params", {}))
         params = raw_params if isinstance(raw_params, dict) else {}
         restored_params = {
-            str(name): self._restore_castep_param_value(str(name), raw_value)
+            str(name): restore_structured_value(None, str(name), raw_value)
             for name, raw_value in params.items()
         }
         raw_advanced = raw_entry.get("added_advanced", [])
@@ -11388,7 +11365,7 @@ class MainWindow(QMainWindow):
             raw_params = entry.get("parameter_values", entry.get("params", {}))
             params = raw_params if isinstance(raw_params, dict) else {}
             restored_params = {
-                str(name): self._restore_castep_param_value(str(name), raw_value)
+                str(name): restore_structured_value(None, str(name), raw_value)
                 for name, raw_value in params.items()
             }
             raw_advanced = entry.get("added_advanced", [])
@@ -12448,7 +12425,7 @@ class MainWindow(QMainWindow):
             raw_params = entry.get("parameter_values", entry.get("params", {}))
             params = raw_params if isinstance(raw_params, dict) else {}
             restored_params = {
-                str(name): self._restore_castep_param_value(str(name), raw_value)
+                str(name): restore_structured_value(None, str(name), raw_value)
                 for name, raw_value in params.items()
             }
 
@@ -12965,7 +12942,7 @@ class MainWindow(QMainWindow):
             raw_params = entry.get("parameter_values", {})
             params = raw_params if isinstance(raw_params, dict) else {}
             restored_params = {
-                str(name): self._restore_castep_param_value(str(name), raw_value)
+                str(name): restore_structured_value(None, str(name), raw_value)
                 for name, raw_value in params.items()
             }
             raw_advanced = entry.get("added_advanced", [])

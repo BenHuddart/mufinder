@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QFrame,
     QHeaderView,
     QLabel,
@@ -24,7 +25,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mufinder.app.adapter_common import coerce_supercell_matrix, supercell_label
+from mufinder.app.relaxation_adapter import suggested_grid_for_row
+from mufinder.app.relaxation_types import SupercellMatrix
+from mufinder.app.selection_snapshot import SelectionSnapshotComboBox, resolve_target_keys
 from mufinder.app.theme import use_square_top_table_corners, use_tabbed_table_corners
+from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
+from mufinder.castep_io.types import ValueWithUnit
+from mufinder.science.kpoint_grids import spacing_from_grid
 
 #: Displayed row statuses whose job can be reset back to ``defined`` from the
 #: workflow table itself. It mirrors ``ProjectService.reset_failed_job``'s
@@ -397,7 +405,9 @@ def standard_row_actions(
     def _rows(callback: Callable[[Sequence[int]], None]) -> Callable[[Sequence[object]], None]:
         return lambda rows: callback([int(row) for row in rows])
 
-    is_ready = _status_is(lambda status: not workflow_row_is_locked(status))
+    # Run follows the submit filter, not the edit lock: a cancelled row is
+    # editable, but the dashboard's Resubmit/Reset is its way back to running.
+    is_ready = _status_is(lambda status: not status or status in READY_WORKFLOW_ROW_STATUSES)
     before: list[RowMenuAction] = []
     if run_local is not None:
         before.append(
@@ -725,8 +735,22 @@ def multi_row_outcome_text(action: str, applied: int, selected: int) -> str:
     return text
 
 
+# Row statuses whose parameters, supercell and sweep value stay editable: rows
+# with no job yet, and cancelled rows, whose job never produced a result and may
+# be edited before it runs again. Every other status locks the row.
+_UNLOCKED_ROW_STATUSES = frozenset({"", "ready", "defined", "not generated", "cancelled"})
+
+
 def workflow_row_is_locked(status: str) -> bool:
-    return str(status).strip().casefold() not in {"", "ready", "defined", "not generated"}
+    """Return whether a workflow row with ``status`` is locked against edits.
+
+    This is the one locked-row rule for every workflow table: a locked row's
+    inline cells (supercell, sweep value) are read-only and its parameter dialog
+    opens read-only. Whether a row can be submitted is a separate rule,
+    ``READY_WORKFLOW_ROW_STATUSES`` in ``workflow_submission``.
+    """
+
+    return str(status).strip().casefold() not in _UNLOCKED_ROW_STATUSES
 
 
 def style_workflow_configure_button(
@@ -761,3 +785,214 @@ def style_workflow_configure_button(
             else f"Configure {workflow_label} parameters for this {noun}."
         )
     )
+
+
+#: Last entry of every supercell combo; choosing it asks the window to open the
+#: supercell manager instead of changing the row.
+MANAGE_SUPERCELLS_TEXT = "Manage Supercells..."
+
+
+class SupercellColumn:
+    """The supercell column of a workflow table, and the k-point grid it implies.
+
+    One instance owns, for its widget, the project supercell options, each
+    row's chosen matrix (``matrices``, keyed by row id) and the k-point
+    reference (host lattice, project grid and the lattice that grid was
+    converged on). It builds and refreshes the per-row combo, applies a combo
+    choice to the targeted rows, and derives the suggested k-point grid and
+    spacing for a row from the same state.
+
+    Every combo lists ``Unit cell`` (data ``("matrix", None)``), each project
+    option (``("matrix", matrix)``), the row's own matrix when it is not one of
+    the options, and :data:`MANAGE_SUPERCELLS_TEXT` (``("create", None)``).
+
+    The widget supplies its hooks: ``manage_requested(row_id)`` when the
+    manager entry is chosen; after a choice is applied, ``normalize_rows()``
+    (when given), ``refresh_rows()`` and ``state_changed()`` in that order.
+    ``eligibility(row_id)`` filters a multi-row selection (default: every row).
+    With a ``kpoint_message`` label the column also shows the k-point grid
+    adjustment for the chosen row.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget,
+        *,
+        column: int,
+        manage_requested: Callable[[int], None],
+        refresh_rows: Callable[[], None],
+        state_changed: Callable[[], None],
+        normalize_rows: Callable[[], None] | None = None,
+        eligibility: Callable[[int], bool] | None = None,
+        kpoint_message: QLabel | None = None,
+    ) -> None:
+        self._parent = parent
+        self._column = column
+        self._manage_requested = manage_requested
+        self._refresh_rows = refresh_rows
+        self._state_changed = state_changed
+        self._normalize_rows = normalize_rows
+        self._eligibility = eligibility or (lambda _row_id: True)
+        self._kpoint_message = kpoint_message
+        self.options: list[tuple[str, SupercellMatrix]] = []
+        self.matrices: dict[int, SupercellMatrix | None] = {}
+        self.host_lattice: list[list[float]] | None = None
+        self.reference_lattice: list[list[float]] | None = None
+        self.reference_grid: tuple[int, int, int] | None = None
+
+    def set_options(self, options: Sequence[object]) -> None:
+        """Replace the project supercell options from ``{"label", "matrix"}`` entries.
+
+        Entries without a label or with a malformed matrix are skipped.
+        """
+
+        parsed: list[tuple[str, SupercellMatrix]] = []
+        for entry in options:
+            if not isinstance(entry, dict):
+                continue
+            label = str(entry.get("label", "")).strip()
+            matrix = coerce_supercell_matrix(entry.get("matrix"))
+            if label and matrix is not None:
+                parsed.append((label, matrix))
+        self.options = parsed
+
+    def set_host_lattice(self, lattice_vectors: Sequence[Sequence[float]] | None) -> None:
+        self.host_lattice = [list(row) for row in lattice_vectors] if lattice_vectors is not None else None
+
+    def set_kpoint_reference(
+        self,
+        grid: tuple[int, int, int] | None,
+        lattice: Sequence[Sequence[float]] | None,
+    ) -> None:
+        """Record the project k-point grid and the lattice it was converged on."""
+
+        self.reference_grid = grid
+        self.reference_lattice = [list(row) for row in lattice] if lattice else None
+
+    def create_combo(self, table: QTableWidget, row_id: int) -> SelectionSnapshotComboBox:
+        """Return a populated, connected supercell combo for ``row_id`` in ``table``."""
+
+        combo = SelectionSnapshotComboBox(table)
+        combo.selection_snapshot_key = row_id
+        self.populate_combo(combo, row_id)
+        combo.currentIndexChanged.connect(
+            lambda _index, table=table, combo=combo, row_id=row_id: self._on_combo_changed(table, combo, row_id)
+        )
+        return combo
+
+    def populate_combo(self, combo: QComboBox, row_id: int) -> None:
+        """Rebuild ``combo``'s entries and select the row's stored matrix, without signals."""
+
+        current = self.matrices.get(row_id)
+        previous = combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Unit cell", ("matrix", None))
+        selected_index = 0
+        for label, matrix in self.options:
+            combo.addItem(label, ("matrix", matrix))
+            if current is not None and matrix == current:
+                selected_index = combo.count() - 1
+        if current is not None and selected_index == 0:
+            combo.addItem(supercell_label(current), ("matrix", current))
+            selected_index = combo.count() - 1
+        combo.addItem(MANAGE_SUPERCELLS_TEXT, ("create", None))
+        combo.setCurrentIndex(selected_index)
+        combo.blockSignals(previous)
+
+    def suggested_grid(self, row_id: int) -> tuple[int, int, int] | None:
+        """Return the project grid rescaled to the row's supercell, or ``None``."""
+
+        if self.host_lattice is None:
+            return None
+        return suggested_grid_for_row(
+            host_lattice=self.host_lattice,
+            row_matrix=self.matrices.get(row_id),
+            reference_lattice=self.reference_lattice,
+            reference_grid=self.reference_grid,
+        )
+
+    def suggested_spacing(self) -> ValueWithUnit | None:
+        """Return the project grid expressed as a k-point spacing, or ``None``.
+
+        Seeds the configure dialog's spacing field when the user toggles to
+        "Use spacing". A 1x1x1 grid or one without a reference lattice has no
+        meaningful spacing.
+        """
+
+        if self.reference_grid is None or self.reference_lattice is None:
+            return None
+        if tuple(int(v) for v in self.reference_grid) == (1, 1, 1):
+            return None
+        try:
+            spacing = spacing_from_grid(self.reference_lattice, self.reference_grid)
+        except ValueError:
+            return None
+        return ValueWithUnit(float(spacing), "1/ang")
+
+    def kpoint_adjustment_text(self, row_id: int) -> str:
+        """Describe how the row's supercell changes the project grid ("" when it does not)."""
+
+        if self.matrices.get(row_id) is None or self.reference_grid is None or self.host_lattice is None:
+            return ""
+        suggested = self.suggested_grid(row_id)
+        if suggested is None or suggested == self.reference_grid:
+            return ""
+        reference = self.reference_grid
+        return (
+            "K-point grid adjusted from "
+            f"{reference[0]}x{reference[1]}x{reference[2]} to "
+            f"{suggested[0]}x{suggested[1]}x{suggested[2]} for equivalent density."
+        )
+
+    def update_kpoint_message(self, row_id: int, message: str | None = None) -> None:
+        """Show ``message``, or the row's k-point adjustment, in the message label."""
+
+        if self._kpoint_message is None:
+            return
+        text = message or self.kpoint_adjustment_text(row_id)
+        self._kpoint_message.setText(text)
+        self._kpoint_message.setVisible(bool(text))
+
+    def _row_id_at(self, table: QTableWidget, row: int) -> int | None:
+        key = getattr(table.cellWidget(row, self._column), "selection_snapshot_key", None)
+        return key if isinstance(key, int) else None
+
+    def _on_combo_changed(self, table: QTableWidget, combo: SelectionSnapshotComboBox, row_id: int) -> None:
+        if row_id not in self.matrices:
+            return
+        data = combo.currentData()
+        if not isinstance(data, tuple) or len(data) != 2:
+            return
+        mode, payload = data
+        if mode == "create":
+            self._manage_requested(row_id)
+            if shiboken6.isValid(combo):
+                self.populate_combo(combo, row_id)
+            return
+
+        matrix = coerce_supercell_matrix(payload)
+        snapshot_keys = [self._row_id_at(table, row) for row in combo.selection_snapshot_rows]
+        target_row_ids = resolve_target_keys(
+            combo,
+            clicked_key=row_id,
+            snapshot_keys=[key for key in snapshot_keys if key is not None],
+            eligibility=self._eligibility,
+            parent=self._parent,
+            action="Set this supercell on",
+        )
+        if not target_row_ids:
+            # Cancelled: put the combo back to the row's stored supercell.
+            self.populate_combo(combo, row_id)
+            return
+        if len(target_row_ids) > 1:
+            show_status_message(
+                self._parent,
+                multi_row_outcome_text("Supercell set on", len(target_row_ids), len(snapshot_keys)),
+            )
+        for target_row_id in target_row_ids:
+            self.matrices[target_row_id] = matrix
+        if self._normalize_rows is not None:
+            self._normalize_rows()
+        self._refresh_rows()
+        self.update_kpoint_message(row_id)
+        self._state_changed()

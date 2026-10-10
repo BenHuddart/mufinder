@@ -150,6 +150,23 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
   shape (``jobs`` plus UI-facing ``messages``) for every adapter's public
   ``expand_*`` function. ``main_window`` surfaces non-empty ``messages`` from
   the configure path.
+- The supercell adapters (pristine relaxation, muon relaxation, UEP) share one
+  expansion prologue. :func:`~mufinder.app.adapter_common.seed_workflow_defaults`
+  layers the project exchange-correlation functional and cut-off energy over
+  the workflow defaults, and
+  :func:`~mufinder.app.adapter_common.kpoint_reference_lattice` picks the
+  lattice the project grid was converged on (the recorded reference, else the
+  host cell). Per row, :func:`~mufinder.app.adapter_common.require_row_label`
+  and :func:`~mufinder.app.adapter_common.claim_unique_name` reject empty and
+  duplicate rows, and :func:`~mufinder.app.adapter_common.prepare_row` converts
+  the row structure, drops or forces the workflow-controlled values, builds the
+  row template and rescales the project grid unless the row pins its own
+  k-points.
+- :func:`~mufinder.app.adapter_common.coerce_supercell_matrix`,
+  :func:`~mufinder.app.adapter_common.is_identity_supercell` and
+  :func:`~mufinder.app.adapter_common.supercell_label` are the one parser,
+  identity test and label for a 3×3 supercell matrix, used by the adapters and
+  the workflow widgets alike.
 
 ``adapter_common`` must remain free of PySide imports; it depends only on
 ``workflow``, ``castep_io``, ``science``, and ``domain``.
@@ -173,10 +190,12 @@ workflow widget modules define, how many define it; the counts may only fall.
      - Workflow row tables (``create_workflow_table``,
        ``set_workflow_table_item``), the shared right-click menu
        (``standard_row_actions``, ``bind_reset_failed_context_menu``),
+       the supercell column and its k-point suggestions (``SupercellColumn``),
        destructive confirmations (``confirm_destructive``), selection feedback
        (``SelectionFeedback``), delete/backspace binding
        (``bind_delete_shortcuts``) and the locked-row rule
-       (``workflow_row_is_locked``).
+       (``workflow_row_is_locked``: rows with no job yet and ``cancelled``
+       rows are editable, every other status locks the row).
    * - ``mufinder.app.selection_snapshot``
      - Targeting for in-row controls (``SelectionSnapshotPushButton``,
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
@@ -184,14 +203,21 @@ workflow widget modules define, how many define it; the counts may only fall.
        selection, and the three-way prompt.
    * - ``mufinder.app.workflow_parameters``
      - Parameter specs per workflow stage
-       (``build_workflow_parameter_surface``), the shared-row ordering, project
-       default seeding (``seed_xc_functional_default``), and sanitising and
-       restoring persisted parameter values.
+       (``build_workflow_parameter_surface``, ``clone_spec_for_workflow``), the
+       shared-row ordering, schema and project defaults
+       (``workflow_default_params``, ``drop_default_conflicts``,
+       ``seed_xc_functional_default``), and sanitising and restoring persisted
+       parameter values (``sanitize_parameter_mapping``,
+       ``restore_structured_value``).
    * - ``mufinder.app.workflow_dialogs`` / ``mufinder.app.param_dialog``
-     - The row parameter dialog and the configure dialogs.
+     - The row parameter dialog (``run_row_parameter_dialog``, driven by a
+       ``RowParameterRequest`` and returning a ``RowParameterResult``) and the
+       configure dialogs.
    * - ``mufinder.app.adapter_common``
      - GUI value dict to ``InputTemplate``, k-point rescaling for supercell
-       rows, and the ``AdapterExpansion`` return shape (see Workflow adapters).
+       rows, the adapters' shared expansion prologue, supercell-matrix parsing
+       and labels, and the ``AdapterExpansion`` return shape (see Workflow
+       adapters).
    * - ``mufinder.app.workflow_submission``
      - Row submission planning, ``effective_row_status`` and the dismissed-row
        rules.
@@ -230,11 +256,32 @@ controllers treat every workflow alike:
   are ``SelectionSnapshot`` buttons that resolve their targets through the shared
   targeting rule; a delete-shortcut handler returns early while the table is
   editing a cell; a row whose job is in a runtime state is locked by
-  ``workflow_row_is_locked`` and its parameter dialog opens read-only.
+  ``workflow_row_is_locked`` and its parameter dialog opens read-only. A
+  ``cancelled`` row is editable but is not submitted from the table: the row
+  menu's Run entries follow ``READY_WORKFLOW_ROW_STATUSES``, the submit filter.
+- **Supercells.** A widget with a supercell column (pristine relaxation, muon
+  relaxation, UEP) delegates it to one ``SupercellColumn``. The column holds the
+  project supercell options, each row's matrix and the project k-point
+  reference; it builds every row's combo (``Unit cell``, the project options,
+  the row's own matrix when it is not an option, ``Manage Supercells...``),
+  applies a choice to the targeted rows through the shared targeting rule, and
+  derives the row's suggested k-point grid, the grid's equivalent spacing for
+  the parameter dialog, and the grid-adjustment message. The widget supplies
+  only its hooks: normalise row parameters, refresh rows, emit state, and the
+  manager request.
+- **Row parameter dialog.** Configure and inspect go through
+  ``run_row_parameter_dialog``. The widget supplies the targeted rows' effective
+  parameters and advanced names, the dialog seed, its locked values and
+  sanitiser; the launcher titles the dialog ``Configure …`` or ``Inspect …``,
+  applies the k-point grid/spacing preference, marks parameters that differ
+  between the rows as mixed, sanitises what the dialog returns and resolves it
+  per row, keeping each row's own value for a mixed parameter left untouched.
+  It returns ``None`` on cancel and for a read-only inspection; the widget
+  only stores the per-row result.
 - **Parameters.** Specs exclude ``task``; defaults are seeded from the schema
   and the project defaults; effective parameters carry exactly one of
   ``kpoint_mp_grid`` / ``kpoint_mp_spacing``; every restore passes through the
-  shared sanitiser; the shared rows come first (see Workflow parameter surface
+  shared sanitiser (``sanitize_parameter_mapping``); the shared rows come first (see Workflow parameter surface
   policy).
 - **Layout.** A header row with the title, subtitle and project-defaults strip;
   a controls row (``Add...``, a count label, ``Remove Selected``,
