@@ -6,8 +6,11 @@ from mufinder.app.workflow_parameters import (
     COMMON_WORKFLOW_PARAMETER_NAMES,
     STRUCTURE_CONTROLLED_CELL_KEYWORDS,
     build_workflow_parameter_surface,
+    GEOMETRY_PARAMETER_NAMES,
     clone_spec_for_workflow,
     drop_default_conflicts,
+    drop_explicit_conflicts,
+    geometry_relaxation_parameter_specs,
     kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
     restore_structured_value,
@@ -396,3 +399,36 @@ def test_clone_spec_for_workflow_adds_the_stage_and_applies_default_overrides() 
     again = clone_spec_for_workflow(cloned, workflow_stage="muon_relaxation", basic=True, advanced=False)
     assert again.basic_workflows == ("uep", "muon_relaxation")
     assert again.default_value == 300
+
+
+def test_drop_explicit_conflicts_lets_a_rows_own_choice_win() -> None:
+    # The row chose spacing; the inherited grid default goes, the cutoff stays.
+    values = {"kpoint_mp_grid": (2, 2, 2), "kpoint_mp_spacing": 0.05, "cut_off_energy": 300}
+
+    assert drop_explicit_conflicts(values, _SPECS_BY_NAME, explicit_names={"kpoint_mp_spacing"}) is values
+    assert values == {"kpoint_mp_spacing": 0.05, "cut_off_energy": 300}
+
+    # Two explicit values are both kept: only defaults give way.
+    values = {"kpoint_mp_grid": (2, 2, 2), "kpoint_mp_spacing": 0.05}
+    drop_explicit_conflicts(values, _SPECS_BY_NAME, explicit_names={"kpoint_mp_grid", "kpoint_mp_spacing"})
+    assert values == {"kpoint_mp_grid": (2, 2, 2), "kpoint_mp_spacing": 0.05}
+
+
+def test_geometry_relaxation_parameter_specs_shape_the_relaxation_surface() -> None:
+    specs = geometry_relaxation_parameter_specs(
+        workflow_stage="muon_relaxation",
+        excluded_names={"task", "fix_all_cell", "charge"},
+        default_overrides={"geom_max_iter": 300},
+    )
+    by_name = {spec.name: spec for spec in specs}
+
+    assert not {"task", "fix_all_cell", "charge"} & set(by_name)
+    # The shared rows lead, as in every workflow dialog.
+    common = [name for name in COMMON_WORKFLOW_PARAMETER_NAMES if name in by_name]
+    assert common and [spec.name for spec in specs[: len(common)]] == common
+    for name in ("kpoint_mp_grid", "kpoint_mp_spacing", *GEOMETRY_PARAMETER_NAMES):
+        if name in by_name:
+            assert "muon_relaxation" in by_name[name].basic_workflows, name
+    assert by_name["geom_max_iter"].default_value == 300
+    assert len(by_name) == len(specs)
+

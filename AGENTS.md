@@ -65,6 +65,7 @@ sibling workflow's implementation.
 | Concern | Home |
 |---|---|
 | Workflow row tables, context menus, status cells, locked-row rule, supercell column | `app/workflow_table_utils.py` |
+| Label-keyed row-table widget scaffold (rows, selection, dialog, submit, form state) | `app/workflow_row_widget.py` |
 | Selection targeting for in-row buttons and mixed selections | `app/selection_snapshot.py` |
 | Parameter specs, defaults, shared-row ordering, value sanitising | `app/workflow_parameters.py` |
 | Parameter and configure dialogs | `app/workflow_dialogs.py`, `app/param_dialog.py` |
@@ -145,8 +146,7 @@ Rules:
 
 ## Commands
 
-The `Makefile` is the executable definition; run its targets rather than spelling
-commands out.
+The `Makefile` is the executable definition; run its targets, not the raw commands.
 
 ```bash
 make install                          # dev + scientific-backends extras (or: uv sync --extra dev --extra scientific-backends)

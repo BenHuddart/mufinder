@@ -257,7 +257,7 @@ def test_relaxation_widget_delete_shortcut_removes_selected_jobs(qapp) -> None:
     remaining_label = widget._label_at_row(1)
 
     widget._table.selectRow(0)
-    widget._table_delete_shortcut.activated.emit()
+    widget._delete_shortcut.activated.emit()
 
     assert removed == [[removed_label]]
     assert widget._table.rowCount() == 1
@@ -272,7 +272,7 @@ def test_relaxation_widget_backspace_shortcut_removes_selected_jobs(qapp) -> Non
     removed_label = widget._label_at_row(0)
 
     widget._table.selectRow(0)
-    widget._table_backspace_shortcut.activated.emit()
+    widget._backspace_shortcut.activated.emit()
 
     assert removed == [[removed_label]]
     assert widget._table.rowCount() == 0
@@ -821,7 +821,7 @@ def test_relaxation_configure_button_applies_to_snapshot_rows(qapp, monkeypatch)
     second_id = widget._row_id_at(1)
     third_id = widget._row_id_at(2)
 
-    monkeypatch.setattr(widget, "_open_relaxation_parameter_dialog", _fake_dialog)
+    monkeypatch.setattr(widget, "_open_parameter_dialog", _fake_dialog)
     monkeypatch.setattr(selection_snapshot_module, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED)
 
     btn = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
@@ -837,7 +837,7 @@ def test_relaxation_configure_button_single_row_no_prompt(qapp, monkeypatch):
     opened_for: list = []
     monkeypatch.setattr(
         PristineRelaxationWidget,
-        "_open_relaxation_parameter_dialog",
+        "_open_parameter_dialog",
         lambda self, row_ids: opened_for.extend(row_ids),
     )
     prompts: list = []
@@ -964,7 +964,7 @@ def test_relaxation_batch_configure_empty_selection_shows_info(
     opened: list[int] = []
     monkeypatch.setattr(
         PristineRelaxationWidget,
-        "_open_relaxation_parameter_dialog",
+        "_open_parameter_dialog",
         lambda _self, _ids: opened.append(1),
     )
 
@@ -990,7 +990,7 @@ def test_relaxation_batch_configure_uses_selection_snapshot_not_collapsed(
     captured: list[tuple[int, ...]] = []
     monkeypatch.setattr(
         PristineRelaxationWidget,
-        "_open_relaxation_parameter_dialog",
+        "_open_parameter_dialog",
         lambda _self, ids: captured.append(ids),
     )
     # A multi-row snapshot prompts (via selection_snapshot.resolve_target_keys)
@@ -1313,7 +1313,7 @@ def test_relaxation_delete_shortcut_confirms_and_declining_removes_nothing(
     _select_relaxation_rows(widget, (0, 1))
 
     monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
-    widget._table_backspace_shortcut.activated.emit()
+    widget._backspace_shortcut.activated.emit()
     assert removed == []
     assert widget._table.rowCount() == 2
 
@@ -1322,7 +1322,7 @@ def test_relaxation_delete_shortcut_confirms_and_declining_removes_nothing(
         "confirm_destructive",
         lambda _parent, *prompt: confirmed_destructive_actions.append(prompt) or True,
     )
-    widget._table_delete_shortcut.activated.emit()
+    widget._delete_shortcut.activated.emit()
     assert widget._table.rowCount() == 0
     assert confirmed_destructive_actions == [
         ("Remove rows", "Remove 2 rows?", "1 row already has a submitted job.", "Remove 2 rows")
@@ -1490,9 +1490,25 @@ def test_relaxation_batch_configure_keeps_each_rows_own_differing_values(
 
     monkeypatch.setattr(ParameterDialog, "exec", _fake_exec)
 
-    widget._open_relaxation_parameter_dialog((first_id, second_id))
+    widget._open_parameter_dialog((first_id, second_id))
 
     assert mixed == [{"max_scf_cycles"}]
     first, second = (widget._row_parameter_values[row_id] for row_id in (first_id, second_id))
     assert (first["max_scf_cycles"], second["max_scf_cycles"]) == (80, 120)
     assert first["xc_functional"] == second["xc_functional"] == other_xc
+
+
+def test_relaxation_row_explicit_value_wins_over_an_exclusive_default(qapp) -> None:
+    # A row that chose basis_precision drops the project cut-off default it is
+    # mutually exclusive with, so the row validates and runs on its own choice.
+    widget = PristineRelaxationWidget()
+    widget.set_project_defaults(cutoff_energy=800.0, kpoint_grid=None, kpoint_reference_lattice=None)
+    widget._add_row()
+    row_id = widget._row_id_at(0)
+    widget._row_parameter_values[row_id] = {"basis_precision": "FINE"}
+
+    effective = widget._effective_params_for_row(row_id)
+
+    assert effective["basis_precision"] == "FINE"
+    assert "cut_off_energy" not in effective
+    assert widget._build_config_or_warn() is not None

@@ -518,7 +518,7 @@ def open_reset_failed_context_menu(
     if row < 0:
         return None
 
-    selected_rows = _selected_table_rows(table)
+    selected_rows = selected_table_rows(table)
     if row not in selected_rows:
         table.selectRow(row)
         selected_rows = (row,)
@@ -575,7 +575,9 @@ def bind_reset_failed_context_menu(
     )
 
 
-def _selected_table_rows(table: QTableWidget) -> tuple[int, ...]:
+def selected_table_rows(table: QTableWidget) -> tuple[int, ...]:
+    """Return the table's fully selected rows, in row order."""
+
     selection_model = table.selectionModel()
     if selection_model is None:
         return ()
@@ -665,7 +667,7 @@ class SelectionFeedback(QObject):
         # ``modelReset``) before this object is disconnected.
         if not shiboken6.isValid(self._table):
             return
-        rows = set(_selected_table_rows(self._table))
+        rows = set(selected_table_rows(self._table))
         count = len(rows)
         self._refresh_row_controls(rows)
         if self._is_active is not None and not self._is_active():
