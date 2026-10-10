@@ -12,6 +12,7 @@ from tests.support.reset_menu import install_fake_menu, open_reset_menu
 from mufinder.app import workflow_table_utils
 from mufinder.app.convergence_types import ConvergenceConfig, CutoffRunState
 from mufinder.app.convergence_widget import ConvergenceWidget, CutoffRangeDialog
+from mufinder.app.param_dialog import ParameterDialog
 
 
 def _table_values(widget: ConvergenceWidget) -> list[float]:
@@ -232,7 +233,7 @@ def test_convergence_widget_configure_button_reopens_after_first_use(
         exec_calls.append(1)
         return QDialog.DialogCode.Rejected
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
 
     configure_button = widget._cutoff_table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
@@ -251,17 +252,17 @@ def test_convergence_widget_single_cutoff_parameter_dialog_updates_row(
     widget._add_cutoff(300.0)
 
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "exec",
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
     )
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "advanced_names",
         lambda _self: ("basis_precision",),
     )
@@ -290,9 +291,9 @@ def test_convergence_widget_queued_cutoff_parameter_dialog_is_read_only(
         observed["title"] = dialog.windowTitle()
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
     )
@@ -321,9 +322,9 @@ def test_convergence_widget_cancelled_cutoff_parameters_are_editable(
         observed["title"] = dialog.windowTitle()
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
     )
@@ -343,25 +344,25 @@ def test_convergence_widget_batch_configure_selected_cutoffs(
     monkeypatch.setattr(widget, "_selected_cutoffs", lambda: (300.0, 360.0))
 
     intros: list[str | None] = []
-    original_init = convergence_widget_module.ParameterDialog.__init__
+    original_init = ParameterDialog.__init__
 
     def fake_init(self, *args, **kwargs):
         intros.append(kwargs.get("intro_text"))
         original_init(self, *args, **kwargs)
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "__init__", fake_init)
+    monkeypatch.setattr(ParameterDialog, "__init__", fake_init)
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "exec",
         lambda _self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "collect_values",
         lambda _self: {"task": "SINGLEPOINT", "xc_functional": "PBE"},
     )
     monkeypatch.setattr(
-        convergence_widget_module.ParameterDialog,
+        ParameterDialog,
         "advanced_names",
         lambda _self: (),
     )
@@ -387,7 +388,7 @@ def test_convergence_widget_parameter_dialog_places_kpoint_below_basis_controls(
         observed["names"] = names
         return QDialog.DialogCode.Rejected
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
 
     widget._open_cutoff_parameter_dialog((300.0,))
 
@@ -1023,7 +1024,7 @@ def _accept_after(monkeypatch: pytest.MonkeyPatch, edit) -> list[set[str]]:
         edit(dialog)
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(convergence_widget_module.ParameterDialog, "exec", _fake_exec)
+    monkeypatch.setattr(ParameterDialog, "exec", _fake_exec)
     return mixed
 
 

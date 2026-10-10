@@ -710,7 +710,7 @@ class TestReadOnlyDialogContents:
             read_only=True,
         )
         dialog.set_values(widget._common_params_for_rows((row_id,)))
-        dialog.set_advanced_names(widget._advanced_names_for_rows((row_id,)))
+        dialog.set_advanced_names(widget._row_added_advanced.get(row_id, set()))
         return widget, row_id, dialog
 
     def test_a_recovered_advanced_keyword_renders_without_being_listed(
