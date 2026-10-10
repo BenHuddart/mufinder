@@ -140,7 +140,8 @@ The harness tests currently verify:
   compatibility documents, and ``docs/architecture.rst`` names every layer
   package.
 - Lower package layers do not import higher package layers
-  (``FORBIDDEN_LAYER_IMPORTS``).
+  (``FORBIDDEN_LAYER_IMPORTS``), and no layer package outside ``mufinder.app``
+  imports ``PySide6.QtWidgets`` or ``PySide6.QtGui``.
 - The ``_on_submit_*`` / ``_materialize_*`` handlers on ``MainWindow`` match
   the pinned set exactly; the set may only shrink (see
   :doc:`architecture`, Workflow controllers).
@@ -148,6 +149,11 @@ The harness tests currently verify:
   that build a ``FigureCanvasQTAgg`` directly rather than through
   ``create_plot_canvas`` match a pinned set that may only shrink (see
   :doc:`architecture`, Plot canvas policy).
+- The private methods that two or more workflow widget modules define match
+  a pinned name-to-count table; a count may only fall and no new shared name
+  may appear (see :doc:`architecture`, Shared workflow infrastructure).
+- The ``*_coverage.py`` test files match a pinned list that may only shrink;
+  coverage gaps are closed in the module's own test file.
 - ``.github/PULL_REQUEST_TEMPLATE.md`` keeps its section headings and
   ``AGENTS.md`` still points to it.
 - Source, test, and docs trees do not track Python bytecode artifacts that can

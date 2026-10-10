@@ -89,9 +89,11 @@ Disallowed examples:
 - ``mufinder.domain`` importing any outer MuFinder package
 
 These boundaries are enforced by ``tests/test_agent_harness.py``
-(``FORBIDDEN_LAYER_IMPORTS``). If a future feature genuinely requires a new
-dependency direction, update this document and the structural test in the same
-change.
+(``FORBIDDEN_LAYER_IMPORTS``), which also forbids ``PySide6.QtWidgets`` and
+``PySide6.QtGui`` imports in every layer package except ``mufinder.app``
+(``PySide6.QtCore`` is allowed for signals, threads and settings). If a future
+feature genuinely requires a new dependency direction, update this document and
+the structural test in the same change.
 
 A few top-level modules sit outside the seven layers and are not checked by
 the structural test: ``mufinder.main`` (application entry point),
@@ -158,6 +160,8 @@ Shared workflow infrastructure
 The workflow pages are built from one set of shared helpers. Each
 cross-workflow concern has exactly one home; a workflow extends the helper there
 rather than carrying a private copy (``AGENTS.md``, Reuse before you write).
+``tests/test_agent_harness.py`` pins, for every private method that two or more
+workflow widget modules define, how many define it; the counts may only fall.
 
 .. list-table::
    :header-rows: 1

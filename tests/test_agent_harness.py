@@ -83,6 +83,138 @@ PINNED_DIRECT_FIGURE_CANVAS_MODULES = frozenset(
     }
 )
 
+
+# Modules whose job-staging widgets are expected to share one implementation of
+# each cross-workflow concern (docs/architecture.rst, Shared workflow
+# infrastructure). The ratchet below pins, for every private method name that
+# appears in two or more of them, how many of them define it. A count may only
+# fall and no new shared name may appear: the fix for a missing capability is
+# to extend the helper in the shared home, not to copy a sibling's method.
+WORKFLOW_WIDGET_MODULES = (
+    "convergence_widget.py",
+    "kpoint_convergence_widget.py",
+    "relaxation_widget.py",
+    "muon_relaxation_widget.py",
+    "uep_widget.py",
+    "quantum_corrections_widget.py",
+    "energy_barriers_widget.py",
+)
+
+PINNED_DUPLICATED_WIDGET_METHODS: dict[str, int] = {
+        "_add_row": 3,
+        "_advanced_names_for_rows": 2,
+        "_build_config_or_warn": 3,
+        "_build_layout": 5,
+        "_build_parameter_specs": 3,
+        "_coerce_supercell_matrix": 2,
+        "_common_params_for_rows": 3,
+        "_configure_selected_rows": 2,
+        "_confirm_removal": 3,
+        "_connect_signals": 5,
+        "_default_shared_params": 5,
+        "_delete_selected_rows": 3,
+        "_dispatch_row_action": 3,
+        "_drop_default_conflicts": 2,
+        "_effective_params_for_row": 3,
+        "_emit_config": 2,
+        "_emit_state": 5,
+        "_emit_submit_cluster": 2,
+        "_emit_submit_local": 2,
+        "_implicit_params_for_row": 2,
+        "_label_at_row": 3,
+        "_labels_at_rows": 2,
+        "_make_item": 3,
+        "_new_row_label": 2,
+        "_normalize_all_row_parameter_values": 2,
+        "_on_simulation_cell_combo_changed": 2,
+        "_on_supercell_combo_changed": 2,
+        "_on_table_item_changed": 2,
+        "_open_row_parameter_dialog": 2,
+        "_populate_supercell_combo": 2,
+        "_preferred_default_name": 2,
+        "_refresh_all_rows": 3,
+        "_refresh_batch_button_state": 5,
+        "_refresh_examine_button_state": 2,
+        "_refresh_row": 3,
+        "_remove_rows_by_id": 3,
+        "_reset_key_at_row": 2,
+        "_restore_structured_value": 5,
+        "_row_id_at": 3,
+        "_row_index_for_id": 3,
+        "_row_parameters_locked": 2,
+        "_row_status": 5,
+        "_row_supercell_is_editable": 2,
+        "_run_cluster_selected_rows": 2,
+        "_run_local_selected_rows": 2,
+        "_runtime_controls_locked": 3,
+        "_sanitize_parameter_mapping": 5,
+        "_selected_or_all_labels": 3,
+        "_selected_or_all_source_keys": 2,
+        "_selected_row_ids": 3,
+        "_selected_rows": 2,
+        "_set_float_item": 2,
+        "_set_kpoint_message_for_row": 2,
+        "_set_status_item": 2,
+        "_shared_locked_values": 2,
+        "_source_key_at_row": 2,
+        "_source_keys_at_rows": 2,
+        "_source_row_status": 2,
+        "_spec_is_blocked_by_locked": 4,
+        "_status_brush": 2,
+        "_strip_implicit_row_defaults": 2,
+        "_style_configure_button": 2,
+        "_suggested_grid_for_row": 3,
+        "_suggested_spacing_for_row": 3,
+        "_supercell_label": 2,
+        "_update_actions": 2,
+}
+
+
+# Qt widget and GUI imports are confined to ``mufinder.app``. The layer packages
+# may use ``PySide6.QtCore`` (signals, threads, settings) but never widgets, so
+# services, workflow and science code stays testable without a window and the
+# documented "services must not import PySide widgets" rule is executable.
+# ``mufinder.main`` and ``mufinder.branding`` sit outside the layers and are
+# allowed to (application entry point and icons).
+FORBIDDEN_QT_MODULES_OUTSIDE_APP = ("PySide6.QtWidgets", "PySide6.QtGui")
+
+NON_APP_LAYER_PACKAGES = ("domain", "castep_io", "persistence", "science", "workflow", "services")
+
+
+# Coverage-companion test files that exist today. Coverage gaps are closed by
+# behaviour tests in the module's own test file (AGENTS.md, Tests), so this
+# list may only shrink as the files are merged into their siblings.
+PINNED_COVERAGE_TEST_FILES = frozenset(
+    {
+        "tests/science/test_convergence_analysis_coverage.py",
+        "tests/science/test_demagnetization_coverage.py",
+        "tests/science/test_kpoint_grids_coverage.py",
+        "tests/science/test_magnetic_fields_coverage.py",
+        "tests/science/test_magnetic_structure_coverage.py",
+        "tests/science/test_nuclear_relaxation_coverage.py",
+        "tests/science/test_quantum_adiabatic_coverage.py",
+        "tests/science/test_quantum_phonons_coverage.py",
+        "tests/science/test_site_generation_coverage.py",
+        "tests/science/test_structure_io_coverage.py",
+        "tests/science/test_structure_metrics_coverage.py",
+        "tests/science/test_symmetry_analysis_coverage.py",
+        "tests/science/test_uep_coverage.py",
+        "tests/services/test_job_execution_controller_coverage.py",
+        "tests/services/test_project_service_coverage.py",
+        "tests/services/test_ssh_client_coverage.py",
+        "tests/test_bridge_coverage.py",
+        "tests/test_castep_internal_coverage.py",
+        "tests/test_castep_validators_coverage.py",
+        "tests/test_output_parser_coverage.py",
+        "tests/test_param_writer_coverage.py",
+        "tests/test_quantum_coverage.py",
+        "tests/test_runtime_helper_coverage.py",
+        "tests/test_ts_parser_coverage.py",
+        "tests/test_validators_coverage.py",
+    }
+)
+
+
 def _python_files(package: str) -> list[Path]:
     return sorted((SOURCE_ROOT / package).rglob("*.py"))
 
@@ -279,3 +411,117 @@ def test_repository_does_not_track_python_bytecode_artifacts() -> None:
         if "/__pycache__/" in line or line.endswith((".pyc", ".pyo"))
     )
     assert not tracked_bytecode, "\n".join(tracked_bytecode)
+
+
+
+def _private_method_names(path: Path) -> set[str]:
+    """Return the single-underscore method names defined on classes in ``path``."""
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for member in node.body:
+            if (
+                isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and member.name.startswith("_")
+                and not member.name.startswith("__")
+            ):
+                names.add(member.name)
+    return names
+
+
+def _duplicated_widget_methods() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for module in WORKFLOW_WIDGET_MODULES:
+        for name in _private_method_names(SOURCE_ROOT / "app" / module):
+            counts[name] = counts.get(name, 0) + 1
+    return {name: count for name, count in counts.items() if count >= 2}
+
+
+def test_workflow_widgets_do_not_grow_duplicated_private_methods() -> None:
+    """Ratchet the private methods copied between workflow widgets.
+
+    Each cross-workflow concern has one shared home (docs/architecture.rst,
+    Shared workflow infrastructure). A private method that two or more widget
+    modules define is a copy; the pinned count per name may only fall, and no
+    new shared name may appear.
+    """
+
+    actual = _duplicated_widget_methods()
+    new_names = sorted(set(actual) - set(PINNED_DUPLICATED_WIDGET_METHODS))
+    assert not new_names, (
+        f"Private method(s) {new_names} are now defined by two or more workflow "
+        "widgets. Move the shared behaviour into its home module (see "
+        "docs/architecture.rst, Shared workflow infrastructure) instead of copying it."
+    )
+    grown = sorted(
+        f"{name}: {PINNED_DUPLICATED_WIDGET_METHODS[name]} -> {count}"
+        for name, count in actual.items()
+        if count > PINNED_DUPLICATED_WIDGET_METHODS[name]
+    )
+    assert not grown, (
+        f"More workflow widgets now define {grown}. Use the shared helper instead of "
+        "adding another copy."
+    )
+    stale = sorted(
+        f"{name}: pinned {pinned}, actual {actual.get(name, 0)}"
+        for name, pinned in PINNED_DUPLICATED_WIDGET_METHODS.items()
+        if actual.get(name, 0) < pinned
+    )
+    assert not stale, (
+        f"Duplication shrank for {stale}. Lower or remove the pinned counts in "
+        "PINNED_DUPLICATED_WIDGET_METHODS so the ratchet keeps its bite."
+    )
+
+
+def _qt_modules_imported(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "PySide6":
+                modules.update(f"PySide6.{alias.name}" for alias in node.names)
+            else:
+                modules.add(module)
+    return modules
+
+
+def test_qt_widgets_are_only_imported_by_the_app_layer() -> None:
+    violations: list[str] = []
+    for package in NON_APP_LAYER_PACKAGES:
+        for path in _python_files(package):
+            offending = sorted(
+                module
+                for module in _qt_modules_imported(path)
+                if module.startswith(FORBIDDEN_QT_MODULES_OUTSIDE_APP)
+            )
+            if offending:
+                rel_path = path.relative_to(PROJECT_ROOT)
+                violations.append(f"{rel_path}: imports {', '.join(offending)}")
+
+    assert not violations, (
+        "Qt widget/GUI imports outside mufinder.app:\n" + "\n".join(violations)
+    )
+
+
+def test_coverage_companion_test_files_do_not_grow() -> None:
+    """Pin the ``*_coverage.py`` test files; the set may only shrink."""
+
+    actual = {
+        str(path.relative_to(PROJECT_ROOT))
+        for path in (PROJECT_ROOT / "tests").rglob("*_coverage.py")
+    }
+    new_files = sorted(actual - PINNED_COVERAGE_TEST_FILES)
+    assert not new_files, (
+        f"New coverage-companion test file(s) {new_files}. Close coverage gaps with "
+        "behaviour tests in the module's own test file instead."
+    )
+    merged_files = sorted(PINNED_COVERAGE_TEST_FILES - actual)
+    assert not merged_files, (
+        f"{merged_files} no longer exist. Shrink PINNED_COVERAGE_TEST_FILES."
+    )

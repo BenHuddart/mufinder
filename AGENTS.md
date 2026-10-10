@@ -130,9 +130,11 @@ Rules:
   close a coverage gap in the sibling test file.
 - Every feature covers its normal path, its validation and failure modes, and its
   persistence behaviour.
-- `tests/test_agent_harness.py` enforces layer boundaries, the `MainWindow` handler
-  ratchet, the plot-canvas rules and this file's pointers. Run it after touching docs
-  indexes, package boundaries or this file.
+- `tests/test_agent_harness.py` enforces layer boundaries (including no Qt widgets
+  outside `app`), the `MainWindow` handler ratchet, the cross-widget duplicate-method
+  ratchet, the no-new-coverage-files ratchet, the plot-canvas rules and this file's
+  pointers. Run `make harness` after touching docs indexes, package boundaries, a
+  workflow widget or this file.
 
 ## Docs
 
@@ -143,12 +145,16 @@ Rules:
 
 ## Commands
 
+The `Makefile` is the executable definition; run its targets rather than spelling
+commands out.
+
 ```bash
-uv sync --extra dev --extra scientific-backends      # or: pip install -e ".[dev,scientific-backends]"
-python -m pytest --no-cov tests/app/test_convergence_widget.py   # focused tests
-python -m pytest -n 4 --dist load                    # full suite, coverage >= 85 %; foreground, at most 4 workers
-python -m sphinx -W -b html docs docs/_build/html    # docs
-python -m pytest --no-cov tests/test_agent_harness.py
+make install                          # dev + scientific-backends extras (or: uv sync --extra dev --extra scientific-backends)
+make test-fast FILES="tests/app/test_convergence_widget.py"   # focused tests, no coverage
+make test                             # full suite, coverage >= 85 %; foreground, at most 4 workers
+make lint                             # ruff
+make docs                             # sphinx -W
+make harness                          # tests/test_agent_harness.py
 ```
 
 Release steps and the CI matrix are in `docs/quality_and_automation.rst`.
