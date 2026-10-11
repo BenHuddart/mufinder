@@ -385,6 +385,24 @@ class WorkflowJobController:
         raise NotImplementedError
 
 
+def dedupe_jobs(jobs: Sequence[Job]) -> list[Job]:
+    """Return ``jobs`` without repeats (by job id), in first-seen order.
+
+    ``materialize`` collects a selection's existing jobs and the jobs it
+    creates, and ``jobs_for_keys`` resolves several keys that may share a job;
+    both return each job once.
+    """
+
+    seen: set[UUID] = set()
+    unique: list[Job] = []
+    for job in jobs:
+        if job.id in seen:
+            continue
+        seen.add(job.id)
+        unique.append(job)
+    return unique
+
+
 def apply_row_parameters_to_form_state(
     form_state: object,
     *,
@@ -708,6 +726,7 @@ __all__ = [
     "WorkflowControllerContext",
     "WorkflowJobController",
     "apply_row_parameters_to_form_state",
+    "dedupe_jobs",
     "find_job_derived_structure",
     "merge_controller_result",
     "output_predates_run",

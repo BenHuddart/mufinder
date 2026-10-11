@@ -7246,7 +7246,6 @@ class MainWindow(QMainWindow):
             sync_equivalent_convergence_cutoff_mappings=(
                 lambda definition: self._sync_equivalent_convergence_cutoff_mappings(definition)
             ),
-            definition_for_convergence_cutoff=lambda cutoff: self._definition_for_convergence_cutoff(cutoff),
             cutoff_key=lambda value: self._cutoff_key(value),
             max_stress_for_job=lambda job_id: self._max_stress_for_job(job_id),
         )

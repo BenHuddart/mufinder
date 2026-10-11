@@ -42,7 +42,7 @@ Compatibility ledger
        relocates the marker.
    * - Task-only ``cutoff_parameter_rows`` entries
      - ``convergence_form`` UI state, read by
-       ``CutoffConvergenceWidget._set_cutoff_parameter_values``
+       ``CutoffConvergenceWidget._is_default_parameter_set``
      - A cutoff row saved with parameters of exactly ``{"task": ...}`` and no
        advanced keywords is read back as "uses the defaults". A restore bug
        wrote such entries for default rows, which made the rows stop matching
