@@ -23,6 +23,7 @@ from mufinder.domain.models import (
     utc_now,
 )
 from mufinder.castep_io.types import ValueWithUnit
+from mufinder.persistence.codec import to_jsonable
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.services.project_service import (
     ProjectService,
@@ -33,6 +34,7 @@ from mufinder.services.project_service import (
     definitions_for_stage,
     job_for_mapping_key,
 )
+from tests.support.jobs import make_job
 from tests.support.structures import silicon_oxide_host
 
 
@@ -1620,6 +1622,352 @@ def test_register_muon_relaxation_definition_keeps_only_valid_site_ids(tmp_path:
 
     assert definition.input_site_ids == [site.id]
     assert definition.calc_type == "castep_muon_relaxation"
+
+
+def _registration_snapshot(document, definition, placeholders: dict[str, str]) -> dict:
+    """Return the definition and its provenance record as JSON-ready data.
+
+    Generated ids and timestamps are dropped, and the ids a test knows are
+    replaced by ``placeholders`` so the snapshot is stable across runs.
+    """
+
+    record = document.provenance[-1]
+    payload = {
+        "definition": {
+            key: value
+            for key, value in to_jsonable(definition).items()
+            if key not in {"id", "created_at"}
+        },
+        "provenance": {
+            key: value
+            for key, value in to_jsonable(record).items()
+            if key not in {"id", "timestamp"}
+        },
+    }
+    text = json.dumps(payload)
+    for identifier, name in {str(definition.id): "<definition>", **placeholders}.items():
+        text = text.replace(identifier, name)
+    return json.loads(text)
+
+
+def test_register_definitions_persist_their_parameters_and_provenance_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Characterise the stored definition and provenance shape of every workflow."""
+
+    service, doc, host = _document_with_host(tmp_path)
+    site = MuonSite(label="S1", status="relaxed", source_structure_id=host.id)
+    doc.sites[site.id] = site
+    job = make_job("j", service=service, document=doc)
+    outside = Path("/tmp/definitely/outside/root")
+    placeholders = {str(host.id): "<host>", str(site.id): "<site>", str(job.id): "<job>"}
+    snapshots: dict[str, dict] = {}
+
+    definition = service.register_convergence_cutoff_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={"cutoff_energies": [300.0, 360.0], "shift": ValueWithUnit(0.5, "eV")},
+        output_directory=doc.project_root / "files" / "cutoff",
+        job_ids_by_cutoff={"300": str(job.id)},
+        simulation_cell_mode="saved_supercell",
+        supercell_source_workflow="muon_relaxation",
+    )
+    snapshots["cutoff"] = _registration_snapshot(doc, definition, placeholders)
+    # Filling the definition's job map later must not rewrite the recorded event.
+    definition.parameters["job_ids_by_cutoff"]["360"] = "later"
+    assert doc.provenance[-1].parameters["job_ids_by_cutoff"] == {"300": str(job.id)}
+
+    definition = service.register_convergence_kpoint_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={"sweep_values": [[2, 2, 2], [4, 4, 4], [6, 6, 6]]},
+        output_directory=outside,
+    )
+    snapshots["kpoint"] = _registration_snapshot(doc, definition, placeholders)
+
+    definition = service.register_pristine_relaxation_definition(
+        doc,
+        host_structure_id=host.id,
+        parameters={"rows": [{"label": "a"}]},
+        output_directory=doc.project_root / "pristine",
+        job_ids_by_label={"a": str(job.id)},
+    )
+    snapshots["pristine"] = _registration_snapshot(doc, definition, placeholders)
+
+    definition = service.register_muon_relaxation_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={"rows": [{"site_id": str(site.id)}, {"site_id": "bad"}, "x"]},
+        output_directory=doc.project_root / "muon",
+    )
+    snapshots["muon"] = _registration_snapshot(doc, definition, placeholders)
+
+    definition = service.register_uep_definition(
+        doc,
+        input_structure_id=host.id,
+        parameters={"rows": [{"label": "a"}, {"label": "b"}]},
+        output_directory=outside,
+        job_ids_by_label={"a": str(job.id)},
+    )
+    snapshots["uep"] = _registration_snapshot(doc, definition, placeholders)
+
+    definition = service.register_quantum_phonon_definition(
+        doc,
+        input_structure_ids=[host.id],
+        input_site_ids=[site.id],
+        parameters={
+            "singlepoint_job_ids_by_label": {"S1": str(job.id)},
+            "phonon_job_ids_by_label": ["not", "a", "mapping"],
+        },
+        output_directory=doc.project_root / "quantum",
+        job_ids_by_label={"S1": str(job.id)},
+    )
+    snapshots["quantum"] = _registration_snapshot(doc, definition, placeholders)
+
+    definition = service.register_nudged_elastic_band_definition(
+        doc,
+        input_structure_ids=[host.id],
+        input_site_ids=[site.id],
+        parameters={"method": "NEB"},
+        output_directory=doc.project_root / "neb",
+    )
+    snapshots["neb"] = _registration_snapshot(doc, definition, placeholders)
+
+    assert snapshots == _REGISTRATION_SNAPSHOTS
+    # Key order is part of the stored shape: compare the serialised text too.
+    assert json.dumps(snapshots) == json.dumps(_REGISTRATION_SNAPSHOTS)
+    assert len(doc.calculations) == 7
+    assert len(doc.provenance) == 7
+
+
+_REGISTRATION_SNAPSHOTS: dict[str, dict] = {
+    "cutoff": {
+        "definition": {
+            "workflow_stage": "convergence_cutoff",
+            "calc_type": "castep_convergence_cutoff",
+            "parameters": {
+                "configuration": {
+                    "cutoff_energies": [300.0, 360.0],
+                    "shift": {"value": 0.5, "unit": "eV"},
+                },
+                "output_directory": "files/cutoff",
+                "job_ids_by_cutoff": {"300": "<job>"},
+                "simulation_cell_mode": "saved_supercell",
+                "supercell_source_workflow": "muon_relaxation",
+            },
+            "input_structure_ids": ["<host>"],
+            "input_site_ids": [],
+            "custom_param_text": None,
+        },
+        "provenance": {
+            "action": "configure_convergence_cutoff",
+            "workflow_stage": "convergence_cutoff",
+            "actor": "user",
+            "description": "Configured cutoff convergence with 2 cutoff value(s)",
+            "parameters": {
+                "calculation_definition_id": "<definition>",
+                "configuration": {
+                    "cutoff_energies": [300.0, 360.0],
+                    "shift": {"value": 0.5, "unit": "eV"},
+                },
+                "output_directory": "files/cutoff",
+                "job_ids_by_cutoff": {"300": "<job>"},
+                "simulation_cell_mode": "saved_supercell",
+                "supercell_source_workflow": "muon_relaxation",
+            },
+            "input_entity_ids": ["<host>"],
+            "output_entity_ids": ["<definition>"],
+            "job_id": None,
+        },
+    },
+    "kpoint": {
+        "definition": {
+            "workflow_stage": "convergence_kpoint",
+            "calc_type": "castep_convergence_kpoint",
+            "parameters": {
+                "configuration": {"sweep_values": [[2, 2, 2], [4, 4, 4], [6, 6, 6]]},
+                "output_directory": "/tmp/definitely/outside/root",
+                "job_ids_by_grid": {},
+                "simulation_cell_mode": "unit_cell",
+                "supercell_source_workflow": None,
+            },
+            "input_structure_ids": ["<host>"],
+            "input_site_ids": [],
+            "custom_param_text": None,
+        },
+        "provenance": {
+            "action": "configure_convergence_kpoint",
+            "workflow_stage": "convergence_kpoint",
+            "actor": "user",
+            "description": "Configured k-point convergence with 3 grid value(s)",
+            "parameters": {
+                "calculation_definition_id": "<definition>",
+                "configuration": {"sweep_values": [[2, 2, 2], [4, 4, 4], [6, 6, 6]]},
+                "output_directory": "/tmp/definitely/outside/root",
+                "job_ids_by_grid": {},
+                "simulation_cell_mode": "unit_cell",
+                "supercell_source_workflow": None,
+            },
+            "input_entity_ids": ["<host>"],
+            "output_entity_ids": ["<definition>"],
+            "job_id": None,
+        },
+    },
+    "pristine": {
+        "definition": {
+            "workflow_stage": "pristine_relaxation",
+            "calc_type": "castep_pristine_relaxation",
+            "parameters": {
+                "configuration": {"rows": [{"label": "a"}]},
+                "output_directory": "pristine",
+                "job_ids_by_label": {"a": "<job>"},
+            },
+            "input_structure_ids": ["<host>"],
+            "input_site_ids": [],
+            "custom_param_text": None,
+        },
+        "provenance": {
+            "action": "configure_pristine_relaxation",
+            "workflow_stage": "pristine_relaxation",
+            "actor": "user",
+            "description": "Configured pristine relaxation with 1 job row(s)",
+            "parameters": {
+                "calculation_definition_id": "<definition>",
+                "configuration": {"rows": [{"label": "a"}]},
+                "output_directory": "pristine",
+                "job_ids_by_label": {"a": "<job>"},
+            },
+            "input_entity_ids": ["<host>"],
+            "output_entity_ids": ["<definition>"],
+            "job_id": None,
+        },
+    },
+    "muon": {
+        "definition": {
+            "workflow_stage": "muon_relaxation",
+            "calc_type": "castep_muon_relaxation",
+            "parameters": {
+                "configuration": {"rows": [{"site_id": "<site>"}, {"site_id": "bad"}, "x"]},
+                "output_directory": "muon",
+                "job_ids_by_label": {},
+            },
+            "input_structure_ids": ["<host>"],
+            "input_site_ids": ["<site>"],
+            "custom_param_text": None,
+        },
+        "provenance": {
+            "action": "configure_muon_relaxation",
+            "workflow_stage": "muon_relaxation",
+            "actor": "user",
+            "description": "Configured muon relaxation with 3 job row(s)",
+            "parameters": {
+                "calculation_definition_id": "<definition>",
+                "configuration": {"rows": [{"site_id": "<site>"}, {"site_id": "bad"}, "x"]},
+                "output_directory": "muon",
+                "job_ids_by_label": {},
+            },
+            "input_entity_ids": ["<host>", "<site>"],
+            "output_entity_ids": ["<definition>"],
+            "job_id": None,
+        },
+    },
+    "uep": {
+        "definition": {
+            "workflow_stage": "uep",
+            "calc_type": "castep_uep_source",
+            "parameters": {
+                "configuration": {"rows": [{"label": "a"}, {"label": "b"}]},
+                "output_directory": "/tmp/definitely/outside/root",
+                "job_ids_by_label": {"a": "<job>"},
+            },
+            "input_structure_ids": ["<host>"],
+            "input_site_ids": [],
+            "custom_param_text": None,
+        },
+        "provenance": {
+            "action": "configure_uep",
+            "workflow_stage": "uep",
+            "actor": "user",
+            "description": "Configured UEP source workflow with 2 job row(s)",
+            "parameters": {
+                "calculation_definition_id": "<definition>",
+                "configuration": {"rows": [{"label": "a"}, {"label": "b"}]},
+                "output_directory": "/tmp/definitely/outside/root",
+                "job_ids_by_label": {"a": "<job>"},
+            },
+            "input_entity_ids": ["<host>"],
+            "output_entity_ids": ["<definition>"],
+            "job_id": None,
+        },
+    },
+    "quantum": {
+        "definition": {
+            "workflow_stage": "quantum_corrections",
+            "calc_type": "castep_quantum_phonon_set",
+            "parameters": {
+                "configuration": {
+                    "singlepoint_job_ids_by_label": {"S1": "<job>"},
+                    "phonon_job_ids_by_label": ["not", "a", "mapping"],
+                },
+                "output_directory": "quantum",
+                "job_ids_by_label": {"S1": "<job>"},
+                "singlepoint_job_ids_by_label": {"S1": "<job>"},
+                "phonon_job_ids_by_label": {},
+                "job_seed_names_by_label": {},
+            },
+            "input_structure_ids": ["<host>"],
+            "input_site_ids": ["<site>"],
+            "custom_param_text": None,
+        },
+        "provenance": {
+            "action": "configure_quantum_corrections",
+            "workflow_stage": "quantum_corrections",
+            "actor": "user",
+            "description": "Configured Quantum Corrections with 1 relaxed site(s)",
+            "parameters": {
+                "calculation_definition_id": "<definition>",
+                "configuration": {
+                    "singlepoint_job_ids_by_label": {"S1": "<job>"},
+                    "phonon_job_ids_by_label": ["not", "a", "mapping"],
+                },
+                "output_directory": "quantum",
+                "job_ids_by_label": {"S1": "<job>"},
+            },
+            "input_entity_ids": ["<host>", "<site>"],
+            "output_entity_ids": ["<definition>"],
+            "job_id": None,
+        },
+    },
+    "neb": {
+        "definition": {
+            "workflow_stage": "energy_barriers",
+            "calc_type": "castep_nudged_elastic_band_set",
+            "parameters": {
+                "configuration": {"method": "NEB"},
+                "output_directory": "neb",
+                "job_ids_by_label": {},
+            },
+            "input_structure_ids": ["<host>"],
+            "input_site_ids": ["<site>"],
+            "custom_param_text": None,
+        },
+        "provenance": {
+            "action": "configure_energy_barriers",
+            "workflow_stage": "energy_barriers",
+            "actor": "user",
+            "description": "Configured Energy Barriers NEB with 1 relaxed site(s)",
+            "parameters": {
+                "calculation_definition_id": "<definition>",
+                "configuration": {"method": "NEB"},
+                "output_directory": "neb",
+                "job_ids_by_label": {},
+            },
+            "input_entity_ids": ["<host>", "<site>"],
+            "output_entity_ids": ["<definition>"],
+            "job_id": None,
+        },
+    },
+}
 
 
 def test_set_recommended_cutoff_persists_to_project_manifest(tmp_path: Path) -> None:
