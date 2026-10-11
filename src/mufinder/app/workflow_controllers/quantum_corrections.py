@@ -8,7 +8,8 @@ continuation. This is the richest migration onto
 
 - **Two-stage materialize.** :meth:`QuantumCorrectionsController.materialize`
   dispatches each selected source to its current stage
-  (:data:`QUANTUM_STAGE_SINGLEPOINT` / :data:`QUANTUM_STAGE_PHONON`) via the
+  (:data:`~mufinder.services.source_candidates.QUANTUM_STAGE_SINGLEPOINT` /
+  :data:`~mufinder.services.source_candidates.QUANTUM_STAGE_PHONON`) via the
   deps-provided ``quantum_stage_state`` helper, builds singlepoint *and* phonon
   configs, expands them through the workflow-layer
   ``expand_quantum_singlepoint_jobs`` / ``expand_quantum_phonon_jobs``, and writes
@@ -67,6 +68,10 @@ from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job
 from mufinder.services.job_artifacts import ParsedJobArtifacts
+from mufinder.services.source_candidates import (
+    QUANTUM_STAGE_PHONON,
+    QUANTUM_STAGE_SINGLEPOINT,
+)
 from mufinder.science.quantum_phonons import (
     muon_mass_warning,
     muon_zpe,
@@ -96,11 +101,6 @@ from mufinder.app.workflow_controllers.base import (
     WorkflowJobController,
 )
 
-#: Stage identifiers for a two-stage quantum-corrections source row. Defined here
-#: as the single source of truth; ``main_window`` imports them back (app→app is
-#: allowed) so the controller never needs to import ``main_window``.
-QUANTUM_STAGE_SINGLEPOINT = "singlepoint"
-QUANTUM_STAGE_PHONON = "phonon"
 
 
 def _format_phonon_eigenvalues(value: object) -> str:
@@ -204,8 +204,10 @@ class QuantumCorrectionsDeps:
     is shared with the NEB / energy-barriers workflow; the source-candidate and
     row-configuration helpers are shared across the quantum surface and the energy
     barriers path; and ``dedupe_jobs`` / ``format_energy`` are shared across
-    workflows. ``input_template_from_keyword_values`` wraps the shared
-    ``main_window`` module-level keyword→template helper. The controller reaches
+    workflows. The source-candidate callables are bound to
+    :mod:`mufinder.services.source_candidates` and
+    ``input_template_from_keyword_values`` to
+    :func:`~mufinder.app.adapter_common.build_workflow_settings_template`. The controller reaches
     them only through these required callables. Workflow-specific dependencies like
     these never go in the shared
     :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`;

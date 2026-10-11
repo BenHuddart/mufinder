@@ -78,6 +78,7 @@ from mufinder.science.relaxation_analysis import (
     scan_connected_component_tolerances,
     uep_summary_to_relaxation_clusters,
 )
+from mufinder.services.source_candidates import CompletedRelaxationAnalysisSource
 from mufinder.science.structure_io import CifMuonSite, export_structure_with_muon_sites
 from mufinder.science.wyckoff_analysis import (
     ClusterWyckoffAssignment,
@@ -130,38 +131,6 @@ class _EqualInitialHorizontalSplitter(QSplitter):
             self._stable_equal_width_passes = 0
         self._equal_initial_sizes_pending = self._stable_equal_width_passes < 2
         self._schedule_equal_initial_sizes()
-
-
-@dataclass(frozen=True, slots=True)
-class CompletedRelaxationAnalysisSource:
-    """UI source row for a completed muon structural relaxation."""
-
-    job_id: UUID
-    job_label: str
-    charge_state: str
-    structure_id: UUID
-    site_id: UUID | None
-    folded_fractional_position: tuple[float, float, float]
-    total_energy_ev: float | None
-
-    def to_relaxed_site(self, host_structure: Structure) -> RelaxedMuonSite:
-        cart = tuple(
-            float(value)
-            for value in (
-                np.asarray(self.folded_fractional_position, dtype=float)
-                @ np.asarray(host_structure.lattice_vectors, dtype=float)
-            ).tolist()
-        )
-        return RelaxedMuonSite(
-            job_id=self.job_id,
-            job_label=self.job_label,
-            charge_state=self.charge_state,
-            structure_id=self.structure_id,
-            site_id=self.site_id,
-            folded_fractional_position=self.folded_fractional_position,
-            cartesian_position_ang=cart,
-            total_energy_ev=self.total_energy_ev,
-        )
 
 
 class RelaxationAnalysisJobDialog(QDialog):

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from mufinder.castep_io.types import AtomicPosition, LatticeCart, PositionBlock
+from mufinder.castep_io.types import AtomicPosition, LatticeCart, PositionBlock, ValueWithUnit
 from mufinder.domain.enums import WorkflowStage
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     NudgedElasticBandJobConfig,
     NudgedElasticBandSource,
     expand_nudged_elastic_band_jobs,
+    merge_serialized_sources,
+    replace_serialized_sources_for_pair,
+    strip_legacy_energy_barrier_params,
 )
 from mufinder.workflow.types import StructureSpec
 
@@ -162,3 +165,53 @@ def test_expand_nudged_elastic_band_jobs_omits_num_farms_when_disabled() -> None
 
     assert _param_value(jobs[0], "num_farms") is None
     assert jobs[0].provenance["num_farms"] == 1
+
+
+def test_merge_serialized_sources_replaces_in_place_and_appends_new_keys() -> None:
+    merged = merge_serialized_sources(
+        [{"key": "a", "v": 1}, {"key": ""}, "junk", {"key": "b", "v": 2}],
+        [{"key": "b", "v": 3}, {"key": "c", "v": 4}, {"v": 5}],
+        key_field="key",
+    )
+
+    assert merged == [{"key": "a", "v": 1}, {"key": "b", "v": 3}, {"key": "c", "v": 4}]
+    assert merge_serialized_sources("not a list", [{"key": "x"}], key_field="key") == [{"key": "x"}]
+
+
+def test_replace_serialized_sources_for_pair_drops_only_that_pair() -> None:
+    existing = [
+        {"key": "r:p:1", "reactant_site_id": "r", "product_site_id": "p"},
+        {"key": "r:q:1", "reactant_site_id": "r", "product_site_id": "q"},
+        {"key": "p:r:1", "reactant_site_id": "p", "product_site_id": "r"},
+        {"key": "r:p:2", "reactant_site_id": "r", "product_site_id": "p"},
+    ]
+
+    replaced = replace_serialized_sources_for_pair(
+        existing,
+        reactant_site_id="r",
+        product_site_id="p",
+        new_sources=[{"key": "r:p:1", "reactant_site_id": "r", "product_site_id": "p", "new": True}],
+    )
+
+    assert [source["key"] for source in replaced] == ["r:q:1", "p:r:1", "r:p:1"]
+    assert replaced[-1]["new"] is True
+
+
+def test_strip_legacy_energy_barrier_params_drops_placeholders_only() -> None:
+    params = {
+        "tssearch_lst_max_iter": 10,
+        "tssearch_force_tol": ValueWithUnit(0.0, "eV/ang"),
+        "tssearch_disp_tol": -1,
+        "tssearch_energy_tol": ValueWithUnit(1e-5, "eV"),
+        "fine_cut_off_energy": 0,
+        "cut_off_energy": 0,
+        "tssearch_method": "NEB",
+        "tssearch_neb_max_iter": "not-a-number",
+    }
+
+    assert strip_legacy_energy_barrier_params(params) == {
+        "tssearch_energy_tol": ValueWithUnit(1e-5, "eV"),
+        "cut_off_energy": 0,
+        "tssearch_method": "NEB",
+        "tssearch_neb_max_iter": "not-a-number",
+    }

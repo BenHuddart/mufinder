@@ -26,6 +26,7 @@ from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRA
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
 from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel, build_collinear_component
 from mufinder.services.project_service import ProjectService
+from mufinder.services.source_candidates import energy_barrier_generated_sources
 from tests.support.qt import find_tree_item_by_route
 
 
@@ -2049,7 +2050,7 @@ def test_main_window_removes_energy_barrier_generated_path(qapp, tmp_path: Path)
 
     assert candidate.key not in {
         str(source.get("key", "")).strip()
-        for source in window._energy_barrier_generated_sources()
+        for source in energy_barrier_generated_sources(window._document)
     }
     assert candidate.key not in {
         str(source.get("key", "")).strip()
