@@ -237,5 +237,5 @@ class CutoffConvergenceWidget(SweepConvergenceWidget):
             self._set_parameter_values(cutoff, merged, advanced_names)
 
 
-# Backward-compatible export used by existing call sites.
+# Public import alias with no in-repo caller; see docs/compatibility_policy.rst.
 ConvergenceWidget = CutoffConvergenceWidget
