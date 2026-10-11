@@ -404,11 +404,10 @@ def remove_cutoff_from_definition(
 ) -> bool:
     """Drop one cutoff energy from a cutoff-sweep definition.
 
-    The first ``cutoff_energies`` entry equal to ``cutoff`` is dropped, as is
-    every equal ``sweep_values`` entry; the position of the first dropped
-    entry also drops the matching ``job_labels`` entry. Override groups lose
-    the cutoff and an emptied group is dropped; a malformed group or value in
-    one is dropped as well. The cutoff's ``mapping_name`` entry is removed.
+    Every ``sweep_values`` entry equal to ``cutoff`` is dropped; the position
+    of the first dropped entry also drops the matching ``job_labels`` entry.
+    Override groups lose the cutoff and an emptied group is dropped; a
+    malformed group or value in one is dropped as well. The cutoff's ``mapping_name`` entry is removed.
     A definition left with no cutoff is deleted, clearing
     ``ui_state[active_key]`` when it names the definition. Returns whether the
     definition was deleted.
@@ -420,21 +419,6 @@ def remove_cutoff_from_definition(
 
     cutoff_to_remove = float(cutoff)
     remove_index: int | None = None
-    cutoffs = configuration.get("cutoff_energies")
-    if isinstance(cutoffs, list):
-        updated_cutoffs: list[object] = []
-        for index, raw_value in enumerate(cutoffs):
-            try:
-                value = float(raw_value)
-            except (TypeError, ValueError):
-                updated_cutoffs.append(raw_value)
-                continue
-            if remove_index is None and value == cutoff_to_remove:
-                remove_index = index
-                continue
-            updated_cutoffs.append(value)
-        configuration["cutoff_energies"] = updated_cutoffs
-
     raw_sweep_values = configuration.get("sweep_values")
     if isinstance(raw_sweep_values, list):
         updated_sweep_values: list[object] = []
@@ -485,8 +469,7 @@ def remove_cutoff_from_definition(
     if isinstance(labels, list) and remove_index is not None and remove_index < len(labels):
         labels.pop(remove_index)
 
-    remaining_cutoffs = configuration.get("cutoff_energies", configuration.get("sweep_values"))
-    if remaining_cutoffs:
+    if configuration.get("sweep_values"):
         return False
     document.calculations.pop(definition.id, None)
     if active_key is not None and document.ui_state.get(active_key) == str(definition.id):

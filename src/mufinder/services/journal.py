@@ -292,7 +292,13 @@ def _remove_imported_relaxations_entry(record: ProvenanceRecord) -> JournalEntry
 
 
 def _configure_cutoff_entry(record: ProvenanceRecord) -> JournalEntry:
-    count = _int_param(record, "configuration_count") or _count_sequence(record, "configuration", "cutoff_energies")
+    # Records written before the schema 2 migration may hold the sweep only
+    # under the legacy ``cutoff_energies`` key; provenance is never rewritten.
+    count = (
+        _int_param(record, "configuration_count")
+        or _count_sequence(record, "configuration", "sweep_values")
+        or _count_sequence(record, "configuration", "cutoff_energies")
+    )
     return _entry(
         record,
         stamp_kind="milestone",

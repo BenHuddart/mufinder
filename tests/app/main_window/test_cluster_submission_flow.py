@@ -55,7 +55,7 @@ def test_main_window_submit_jobs_on_cluster_creates_run_and_calls_runner(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -197,7 +197,7 @@ def test_main_window_submit_jobs_on_cluster_passes_jump_host_credentials(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -309,7 +309,7 @@ def test_main_window_resubmits_failed_cluster_job_without_replacing_remote_files
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -442,7 +442,7 @@ def test_main_window_resubmit_passes_updated_resources_to_runner(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1080,7 +1080,7 @@ def test_main_window_submit_jobs_on_cluster_existing_remote_dir_yes_deletes(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1629,7 +1629,7 @@ def test_main_window_submit_jobs_on_cluster_yes_to_all_requires_confirmation(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0, 400.0],
+            "sweep_values": [300.0, 400.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1947,7 +1947,7 @@ def test_main_window_submit_jobs_on_cluster_no_to_all_skips_deletion(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -2045,7 +2045,7 @@ def test_main_window_submit_jobs_on_cluster_no_skips_submission(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -2143,7 +2143,7 @@ def test_main_window_submit_jobs_on_cluster_reuses_connection_without_success_di
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },

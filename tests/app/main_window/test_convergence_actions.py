@@ -37,7 +37,7 @@ def test_convergence_configured_registers_snapshot(
     window._document.project.host_structure_id = host.id
 
     config = ConvergenceConfig(
-        cutoff_energies=(300.0, 360.0),
+        sweep_values=(300.0, 360.0),
         shared_params={"task": "SINGLEPOINT", "xc_functional": "PBE"},
         overrides={},
         name_prefix="conv",
@@ -48,7 +48,7 @@ def test_convergence_configured_registers_snapshot(
     assert len(window._document.jobs) == 0
     assert len(window._document.calculations) == 1
     definition = next(iter(window._document.calculations.values()))
-    assert definition.parameters["configuration"]["cutoff_energies"] == [300.0, 360.0]
+    assert definition.parameters["configuration"]["sweep_values"] == [300.0, 360.0]
     assert definition.parameters["job_ids_by_cutoff"] == {}
     window.close()
 
@@ -252,7 +252,7 @@ def test_convergence_configured_uses_selected_saved_supercell(main_window, tmp_p
     window._document = doc
 
     config = ConvergenceConfig(
-        cutoff_energies=(300.0,),
+        sweep_values=(300.0,),
         shared_params={"task": "SINGLEPOINT"},
         overrides={},
         name_prefix="conv",
@@ -282,7 +282,7 @@ def test_convergence_configured_reuses_matching_definition(main_window, tmp_path
     window._document = doc
 
     config = ConvergenceConfig(
-        cutoff_energies=(300.0, 400.0),
+        sweep_values=(300.0, 400.0),
         shared_params={"task": "SINGLEPOINT"},
         overrides={},
         name_prefix="conv",
@@ -334,7 +334,7 @@ def test_materialize_convergence_jobs_writes_saved_supercell_structure(main_wind
         doc,
         input_structure_id=asset.id,
         parameters={
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
             "name_prefix": "conv",
@@ -376,7 +376,7 @@ def test_submit_convergence_ignores_stale_same_label_jobs_for_ready_cutoffs(
         doc,
         input_structure_id=host.id,
         parameters={
-            "cutoff_energies": [300.0, 1300.0, 1400.0],
+            "sweep_values": [300.0, 1300.0, 1400.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
             "name_prefix": "cutoff_convergence",
@@ -433,7 +433,7 @@ def test_convergence_states_merge_equivalent_definition_mappings(
     doc.project.host_structure_id = host.id
 
     parameters = {
-        "cutoff_energies": [300.0, 400.0, 1400.0],
+        "sweep_values": [300.0, 400.0, 1400.0],
         "shared_params": {"task": "SINGLEPOINT"},
         "overrides": [],
         "name_prefix": "cutoff_convergence",
@@ -537,7 +537,7 @@ def test_materialize_convergence_jobs_repairs_legacy_zero_spin_supercell_asset(
         doc,
         input_structure_id=asset.id,
         parameters={
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT", "spin_polarized": True},
             "overrides": [],
             "name_prefix": "conv",
@@ -608,7 +608,7 @@ def test_main_window_syncs_convergence_row_status_and_energy(main_window, tmp_pa
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0, 360.0],
+            "sweep_values": [300.0, 360.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -668,7 +668,7 @@ def test_main_window_syncs_convergence_row_max_force(main_window, tmp_path: Path
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -683,86 +683,13 @@ def test_main_window_syncs_convergence_row_max_force(main_window, tmp_path: Path
     window.close()
 
 
-def test_main_window_convergence_status_uses_cutoff_energies_when_legacy_sweep_values_are_stale(
-    main_window, tmp_path: Path
-) -> None:
-    window = main_window
-    service = ProjectService()
-    doc = service.create_project(tmp_path / "conv_stale_sweep_values.mufinder", "ConvStaleSweepValues")
-
-    host = Structure(
-        label="Host",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-    )
-    service.add_structure(doc, host)
-    doc.project.host_structure_id = host.id
-    doc.ui_state["convergence_form"] = {
-        "name_prefix": "conv",
-        "cutoff_energies": [400.0, 500.0],
-        "shared_params": {"task": "SINGLEPOINT"},
-    }
-
-    job_400 = service.add_job(
-        doc,
-        label="conv_ecut_400",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
-    )
-    job_400.status = JobStatus.COMPLETED
-    run_400 = CalculationRun(job_id=job_400.id, status=JobStatus.COMPLETED, run_index=1)
-    result_400 = Result(calculation_run_id=run_400.id, result_type="castep_singlepoint", data={"total_energy": -10.4})
-    run_400.result_id = result_400.id
-    doc.runs[run_400.id] = run_400
-    doc.results[result_400.id] = result_400
-
-    job_500 = service.add_job(
-        doc,
-        label="conv_ecut_500",
-        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
-        calc_type="castep_convergence_cutoff",
-    )
-    job_500.status = JobStatus.COMPLETED
-    run_500 = CalculationRun(job_id=job_500.id, status=JobStatus.COMPLETED, run_index=1)
-    result_500 = Result(calculation_run_id=run_500.id, result_type="castep_singlepoint", data={"total_energy": -10.5})
-    run_500.result_id = result_500.id
-    doc.runs[run_500.id] = run_500
-    doc.results[result_500.id] = result_500
-
-    service.register_convergence_cutoff_definition(
-        doc,
-        host_structure_id=host.id,
-        parameters={
-            "name_prefix": "conv",
-            "sweep_values": [300.0, 400.0, 500.0],
-            "cutoff_energies": [400.0, 500.0],
-            "shared_params": {"task": "SINGLEPOINT"},
-            "overrides": [],
-        },
-        output_directory=doc.project_root / "files" / "convergence_cutoff",
-        job_ids_by_cutoff={
-            main_window_module.MainWindow._cutoff_key(400.0): str(job_400.id),
-            main_window_module.MainWindow._cutoff_key(500.0): str(job_500.id),
-        },
-    )
-
-    window._document = doc
-    states = window._convergence_controller.build_states()
-
-    assert set(states) == {400.0, 500.0}
-    assert states[400.0].status == "completed"
-    assert states[500.0].status == "completed"
-    window.close()
-
-
 def test_main_window_deserializes_convergence_config_with_structured_values(main_window) -> None:
     window = main_window
 
     config = deserialize_convergence_config(
         {
             "name_prefix": " conv ",
-            "cutoff_energies": [300.0, 360.0],
+            "sweep_values": [300.0, 360.0],
             "shared_params": {
                 "task": "SINGLEPOINT",
                 "elec_energy_tol": {"value": 1e-6, "unit": "eV"},
@@ -785,26 +712,6 @@ def test_main_window_deserializes_convergence_config_with_structured_values(main
     assert config.shared_params["kpoint_mp_grid"] == (2, 2, 2)
     assert isinstance(config.shared_params["species_pot"], BlockSection)
     assert config.overrides[frozenset({360.0})]["elec_energy_tol"].unit == "eV"
-    window.close()
-
-
-def test_main_window_deserializes_cutoff_config_prefers_cutoff_energies_when_fields_diverge(main_window) -> None:
-    window = main_window
-
-    config = deserialize_convergence_config(
-        {
-            "name_prefix": "conv",
-            "sweep_parameter": "cut_off_energy",
-            "sweep_values": [300.0, 360.0],
-            "cutoff_energies": [360.0],
-            "shared_params": {"task": "SINGLEPOINT"},
-            "overrides": [],
-        }
-    )
-
-    assert config is not None
-    assert config.sweep_values == (360.0,)
-    assert config.cutoff_energies == (360.0,)
     window.close()
 
 
@@ -831,7 +738,7 @@ def test_main_window_convergence_definition_helpers_support_legacy_labels(main_w
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -871,7 +778,7 @@ def test_main_window_detach_convergence_job_clears_job_id_mapping(main_window, t
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -920,7 +827,7 @@ def test_main_window_build_states_merges_equivalent_convergence_definition_jobs(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -932,7 +839,7 @@ def test_main_window_build_states_merges_equivalent_convergence_definition_jobs(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -985,7 +892,7 @@ def test_convergence_states_merge_matching_cutoffs_from_reshaped_configuration(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0, 400.0],
+            "sweep_values": [300.0, 400.0],
             "shared_params": {"task": "SINGLEPOINT", "max_scf_cycles": 100},
             "overrides": [],
         },
@@ -1000,7 +907,7 @@ def test_convergence_states_merge_matching_cutoffs_from_reshaped_configuration(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0, 400.0],
+            "sweep_values": [300.0, 400.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [
                 {"cutoffs": [300.0], "params": {"max_scf_cycles": 200}},
@@ -1054,7 +961,7 @@ def test_main_window_regenerated_cutoff_list_does_not_inherit_stale_results(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1095,7 +1002,7 @@ def test_convergence_configured_without_project_shows_info(
     )
 
     window._on_convergence_configured(
-        ConvergenceConfig(cutoff_energies=(300.0,), shared_params={"task": "SINGLEPOINT"})
+        ConvergenceConfig(sweep_values=(300.0,), shared_params={"task": "SINGLEPOINT"})
     )
 
     assert infos == ["No project"]
@@ -1117,7 +1024,7 @@ def test_convergence_configured_without_host_structure_warns(
     )
 
     window._on_convergence_configured(
-        ConvergenceConfig(cutoff_energies=(300.0,), shared_params={"task": "SINGLEPOINT"})
+        ConvergenceConfig(sweep_values=(300.0,), shared_params={"task": "SINGLEPOINT"})
     )
 
     assert warnings == ["No host structure"]
@@ -1153,7 +1060,7 @@ def test_convergence_configured_handles_expansion_errors(
     )
 
     window._on_convergence_configured(
-        ConvergenceConfig(cutoff_energies=(300.0,), shared_params={"task": "SINGLEPOINT"})
+        ConvergenceConfig(sweep_values=(300.0,), shared_params={"task": "SINGLEPOINT"})
     )
 
     assert warnings == ["Convergence setup invalid"]
@@ -1177,7 +1084,7 @@ def test_convergence_configured_saves_ready_configuration_without_materializing_
     window._document = doc
 
     config = ConvergenceConfig(
-        cutoff_energies=(300.0,),
+        sweep_values=(300.0,),
         shared_params={"task": "SINGLEPOINT"},
         overrides={},
         name_prefix="conv",
@@ -1219,7 +1126,7 @@ def test_main_window_convergence_failed_handlers_forward_jobs(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1263,7 +1170,7 @@ def test_main_window_configured_cutoff_shows_ready_and_stays_off_dashboard(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1337,7 +1244,7 @@ def test_main_window_recovers_convergence_form_rows_from_definition_when_ui_stat
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0, 360.0],
+            "sweep_values": [300.0, 360.0],
             "shared_params": {"task": "SINGLEPOINT", "max_scf_cycles": 75},
             "overrides": [],
         },
@@ -1353,6 +1260,7 @@ def test_main_window_recovers_convergence_form_rows_from_definition_when_ui_stat
     assert window._convergence_view._table.item(0, window._convergence_view._KEY_COLUMN).text() == "300"
     assert window._convergence_view._table.item(1, window._convergence_view._KEY_COLUMN).text() == "360"
     assert doc.ui_state["convergence_form"]["cutoff_energies"] == [300.0, 360.0]
+    assert "sweep_values" not in doc.ui_state["convergence_form"]
     window.close()
 
 
@@ -1382,7 +1290,7 @@ def test_main_window_reset_failed_convergence_job_restores_ready_state(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1447,7 +1355,7 @@ def test_main_window_remove_convergence_cutoff_deletes_files_and_entities(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1500,7 +1408,7 @@ def test_main_window_remove_convergence_cutoff_archives_files_when_kept(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1551,7 +1459,7 @@ def test_main_window_remove_convergence_cutoff_cancel_keeps_row_and_files(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1607,7 +1515,7 @@ def test_main_window_remove_single_convergence_cutoff_warns_on_file_cleanup_erro
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1645,7 +1553,6 @@ def test_main_window_remove_cutoff_from_definition_updates_lists_and_labels(main
         parameters={
             "name_prefix": "conv",
             "sweep_values": [300.0, 360.0, "bad"],
-            "cutoff_energies": [300.0, 360.0, "bad"],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [
                 {"cutoffs": [300.0, 360.0], "params": {"max_scf_cycles": 50}},
@@ -1661,7 +1568,6 @@ def test_main_window_remove_cutoff_from_definition_updates_lists_and_labels(main
 
     window._convergence_controller.remove_cutoff_from_definition(definition, 300.0)
 
-    assert definition.parameters["configuration"]["cutoff_energies"] == [360.0, "bad"]
     assert definition.parameters["configuration"]["sweep_values"] == [360.0, "bad"]
     assert definition.parameters["configuration"]["overrides"] == [
         {"cutoffs": [360.0], "params": {"max_scf_cycles": 50}},
@@ -1693,7 +1599,7 @@ def test_main_window_remove_convergence_cutoff_clears_equivalent_definition_mapp
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1713,7 +1619,7 @@ def test_main_window_remove_convergence_cutoff_clears_equivalent_definition_mapp
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1728,7 +1634,7 @@ def test_main_window_remove_convergence_cutoff_clears_equivalent_definition_mapp
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1765,7 +1671,7 @@ def test_main_window_remove_convergence_cutoff_preserves_other_contexts(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1776,7 +1682,7 @@ def test_main_window_remove_convergence_cutoff_preserves_other_contexts(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1788,7 +1694,7 @@ def test_main_window_remove_convergence_cutoff_preserves_other_contexts(
 
     assert active_definition.id not in doc.calculations
     assert other_definition.id in doc.calculations
-    assert other_definition.parameters["configuration"]["cutoff_energies"] == [300.0]
+    assert other_definition.parameters["configuration"]["sweep_values"] == [300.0]
     window.close()
 
 
@@ -1864,7 +1770,6 @@ def test_main_window_on_cutoff_adopted_sets_project_default(main_window, tmp_pat
             "name_prefix": "conv",
             "sweep_parameter": "cut_off_energy",
             "sweep_values": [300.0, 400.0, 550.0],
-            "cutoff_energies": [300.0, 400.0, 550.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },

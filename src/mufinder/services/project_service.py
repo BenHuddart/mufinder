@@ -29,6 +29,7 @@ from mufinder.domain.models import (
 from mufinder.persistence import project_codec
 from mufinder.persistence.codec import to_jsonable
 from mufinder.persistence.json_store import ProjectStore
+from mufinder.persistence.migrations import migrate_project_payloads
 from mufinder.persistence.project_codec import normalized_xc_functional
 from mufinder.services import site_generation_service, supercell_assets
 from mufinder.services.perf_trace import PerfTrace
@@ -259,20 +260,28 @@ class ProjectService:
         """Load a project from disk into a ProjectDocument."""
         store = ProjectStore(project_root)
         manifest = store.read_json(store.project_manifest_path)
+        payloads = {
+            entity_type: store.load_entities(entity_type)
+            for entity_type in ("structures", "sites", "calculations", "runs", "results", "comparison_tables", "jobs")
+        }
+        # Projects saved at an older schema are upgraded in memory; the entity
+        # files a migration changed are left out of the dirty-tracking cache
+        # below so the next save writes them with the new manifest version.
+        migrated_keys = migrate_project_payloads(manifest, payloads)
 
         project = project_codec.project_from_dict(manifest)
         # Each entity directory is named after the ``ProjectDocument`` mapping it fills.
         entities = {
-            entity_type: {entity.id: entity for entity in map(decode, store.load_entities(entity_type))}
+            entity_type: {entity.id: entity for entity in map(decode, payloads[entity_type])}
             for entity_type, decode in project_codec.ENTITY_DECODERS.items()
         }
         provenance = [project_codec.provenance_from_dict(p) for p in store.load_provenance()]
-        job_payloads = store.load_entities("jobs")
+        job_payloads = payloads["jobs"]
         jobs = project_codec.jobs_in_creation_order(job_payloads, provenance)
         # Jobs saved before ``created_at`` existed carry a backfilled value that
         # is not on disk yet; leaving them out of the cache makes the next save
         # write it, so later loads use the persisted value.
-        backfilled_job_keys = {
+        unsaved_keys = migrated_keys | {
             ("jobs", payload["id"]) for payload in job_payloads if payload.get("created_at") is None
         }
         ui_state = store.read_json(store.state_path) if store.state_path.exists() else {}
@@ -298,7 +307,7 @@ class ProjectService:
         root_key = self._resolved_root(project_root)
         for entity_type, entities in self._entity_groups(document):
             for entity_id, entity in entities:
-                if (entity_type, entity_id) in backfilled_job_keys:
+                if (entity_type, entity_id) in unsaved_keys:
                     continue
                 self._content_hashes[(root_key, entity_type, entity_id)] = self._payload_hash(
                     to_jsonable(entity)
@@ -876,7 +885,7 @@ class ProjectService:
             action="configure_convergence_cutoff",
             description=(
                 "Configured cutoff convergence with "
-                f"{len(snapshot.get('cutoff_energies', []))} cutoff value(s)"
+                f"{len(snapshot.get('sweep_values', []))} cutoff value(s)"
             ),
             configuration=snapshot,
             output_directory=output_directory,

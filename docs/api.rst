@@ -91,6 +91,8 @@ Persistence
 .. automodule:: mufinder.persistence.project_codec
    :members:
    :undoc-members:
+.. automodule:: mufinder.persistence.migrations
+   :members:
 
 Services
 --------

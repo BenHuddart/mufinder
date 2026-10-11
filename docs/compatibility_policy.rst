@@ -17,12 +17,6 @@ Compatibility ledger
      - Location
      - Purpose
      - Expiry policy
-   * - ``cutoff_energies``
-     - ``ConvergenceConfig``
-     - Legacy cutoff-only configuration field retained while convergence
-       workflows move to generic ``sweep_parameter`` / ``sweep_values`` data.
-     - Keep until the next saved-project schema version bump includes an
-       automatic migration from ``cutoff_energies`` to ``sweep_values``.
    * - ``ConvergenceWidget``
      - ``mufinder.app.convergence_widget``
      - Import alias for ``CutoffConvergenceWidget``, also exported from
@@ -284,6 +278,50 @@ Compatibility ledger
        ``mufinder.science.uep_clustering``. Not persisted.
      - Public import alias. Keep the ``__getattr__`` hook for one minor
        release (through 0.6.x); then drop it.
+
+Saved-project schema migrations
+-------------------------------
+
+``project.json`` records the ``schema_version`` a project was saved at, and
+every save writes ``PROJECT_SCHEMA_VERSION`` (``mufinder.domain.models``).
+``ProjectService.load_project`` passes the manifest and the raw entity payloads
+to ``mufinder.persistence.migrations.migrate_project_payloads`` before it
+builds any domain object. That function applies one step per version, from the
+stored version up to the current one, and sets the manifest's version to the
+result. The entity files a step changed are left out of the dirty-tracking
+cache, so the next save rewrites them together with the new manifest version.
+Provenance is history: no step rewrites it, and readers of provenance accept
+every name a record was ever written with. A project saved at the current
+version or a newer one is loaded as it is. A manifest without
+``schema_version`` is read as schema 1.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 44 44
+
+   * - Step
+     - Payloads changed
+     - Readers that rely on it
+   * - 1 to 2
+     - Convergence-cutoff and convergence-k-point definitions
+       (``calculations`` entities with ``workflow_stage``
+       ``convergence_cutoff`` or ``convergence_kpoint``). Schema 1 stored the
+       sweep in ``parameters.configuration`` under both ``sweep_values`` and
+       the legacy ``cutoff_energies`` key, and read a cutoff sweep from
+       ``cutoff_energies`` first. The step moves the values that reader used
+       into ``sweep_values`` and removes ``cutoff_energies``.
+     - ``deserialize_convergence_config`` and
+       ``remove_cutoff_from_definition`` read only ``sweep_values``;
+       ``ConvergenceConfig`` has no ``cutoff_energies`` field. The journal
+       counts a ``configure_convergence_cutoff`` record's cutoffs from
+       ``sweep_values``, else from ``cutoff_energies``. The widget form state
+       (``ui_state["convergence_form"]``) is not part of the step and keeps its
+       own ``cutoff_energies`` key; see :doc:`architecture`.
+
+A schema bump adds ``PROJECT_SCHEMA_VERSION + 1``, one entry in
+``_MIGRATIONS`` keyed by the version it upgrades from, a row in the table
+above, and a fixture project saved at the old version under
+``tests/fixtures/projects/`` that loads, round-trips and reloads.
 
 Rules for new shims
 -------------------

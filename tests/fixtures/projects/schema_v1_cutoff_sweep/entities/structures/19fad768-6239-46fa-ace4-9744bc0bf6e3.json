@@ -1,0 +1,41 @@
+{
+  "fractional_positions": [
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.25,
+      0.25,
+      0.25
+    ]
+  ],
+  "id": "19fad768-6239-46fa-ace4-9744bc0bf6e3",
+  "label": "Si",
+  "lattice_vectors": [
+    [
+      4.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      4.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      4.0
+    ]
+  ],
+  "origin": "imported",
+  "parent_structure_id": null,
+  "properties": {},
+  "source_file": null,
+  "species": [
+    "Si",
+    "Si"
+  ]
+}

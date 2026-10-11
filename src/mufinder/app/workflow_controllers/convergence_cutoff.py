@@ -81,7 +81,7 @@ class ConvergenceCutoffController(SweepConvergenceController):
         if config.sweep_parameter != self.sweep_parameter:
             return {}
         signatures: dict[float, object] = {}
-        for value in config.cutoff_energies:
+        for value in config.sweep_values:
             cutoff = float(value)
             params = dict(config.shared_params)
             for members, override in config.overrides.items():
@@ -115,10 +115,14 @@ class ConvergenceCutoffController(SweepConvergenceController):
         configuration = self._deps.deserialize_convergence_config(
             definition.parameters.get("configuration", {})
         )
-        if not isinstance(labels, list) or configuration is None:
+        if (
+            not isinstance(labels, list)
+            or configuration is None
+            or configuration.sweep_parameter != self.sweep_parameter
+        ):
             return None
         try:
-            index = list(configuration.cutoff_energies).index(float(key))
+            index = list(configuration.sweep_values).index(float(key))
         except ValueError:
             return None
         if index >= len(labels):

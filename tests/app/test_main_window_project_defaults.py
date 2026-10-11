@@ -38,7 +38,6 @@ def _window_with_cutoff_sweep(
             "name_prefix": "conv",
             "sweep_parameter": "cut_off_energy",
             "sweep_values": [300.0, 400.0],
-            "cutoff_energies": [300.0, 400.0],
             "shared_params": shared_params,
             "overrides": overrides or [],
         },
