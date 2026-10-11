@@ -64,6 +64,7 @@ from mufinder.services.definition_mappings import (
     sync_equivalent_mappings,
 )
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, SiteHostMismatch
+from mufinder.science.relaxation_analysis import muon_fractional_position_from_cell
 from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
 
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
@@ -155,11 +156,11 @@ class MuonRelaxationDeps:
 
     These helpers stay on ``MainWindow`` because non-migrating code still calls
     them there: the definition/config/mapping helpers are shared with row
-    removal, staging, and dashboard sync; ``muon_fractional_position_from_cell``
-    locates the ``H:mu`` position in the carried, already-parsed cell for both
-    :meth:`MuonRelaxationController.validate_artifacts` and ``build_result``; and
-    ``coerce_fractional_triplet`` and ``muon_relaxation_row_key`` have other
-    view-refresh callers. The relaxed ``-out.cell`` is parsed once on the runner
+    removal, staging, and dashboard sync; and ``coerce_fractional_triplet`` and
+    ``muon_relaxation_row_key`` have other view-refresh callers. The ``H:mu``
+    position in the carried, already-parsed cell is located by
+    :func:`~mufinder.science.relaxation_analysis.muon_fractional_position_from_cell`,
+    which the controller calls directly. The relaxed ``-out.cell`` is parsed once on the runner
     worker thread and delivered to ``build_result`` via
     :class:`~mufinder.services.job_artifacts.ParsedJobArtifacts`, so no parse dep
     is needed here. The controller reaches these helpers only through required
@@ -185,9 +186,6 @@ class MuonRelaxationDeps:
     # Used by validate_artifacts and build_result:
     muon_relaxation_definition_and_row_for_job: Callable[
         [Job], tuple[CalculationDefinition | None, MuonRelaxationRow | None]
-    ]
-    muon_fractional_position_from_cell: Callable[
-        [object], tuple[float, float, float] | None
     ]
     coerce_fractional_triplet: Callable[[object], tuple[float, float, float] | None]
 
@@ -950,7 +948,7 @@ class MuonRelaxationController(WorkflowJobController):
         if failure is not None:
             return failure
         relaxed = artifacts.relaxed_cell
-        if relaxed is None or self._deps.muon_fractional_position_from_cell(relaxed) is None:
+        if relaxed is None or muon_fractional_position_from_cell(relaxed) is None:
             return f"Expected H:mu muon position was not found in {seed_name}-out.cell."
         return None
 
@@ -1003,7 +1001,7 @@ class MuonRelaxationController(WorkflowJobController):
         definition, row = self._deps.muon_relaxation_definition_and_row_for_job(job)
         if definition is None:
             definition = self.active_definition()
-        final_supercell_position = self._deps.muon_fractional_position_from_cell(relaxed)
+        final_supercell_position = muon_fractional_position_from_cell(relaxed)
         if final_supercell_position is None:
             # build_result runs only on the validated success path:
             # validate_artifacts fails muon-less cells before dispatch reaches
