@@ -64,6 +64,14 @@ Installing a catalog
 - **Use Existing File…** imports a ``castep_keywords.json`` the user already
   has.
 
+The dialog keeps the keyword catalog apart from the optional ``CASTEP on this
+computer`` paths, and states that the local executable and MPI launcher are
+used only for local runs and local keyword generation. It shows which catalog
+is in use and why a configured one was skipped. A line under the generation
+target says which settings that target uses (this computer, or a cluster as a
+scheduler job or on its login node), and a set-up cluster is preselected as the
+target when no local executable is configured.
+
 Either way the result goes through ``install_keyword_catalog``
 (``mufinder.castep_setup``), which validates the file, writes MuFinder's own
 copy into the per-user application-data directory, points the saved setup at
@@ -83,6 +91,11 @@ atomically, to a temporary file that is then moved into place.
 
 Generation always writes to a scratch directory first, so a failed or partial
 run cannot replace a working catalog.
+
+Local generation wraps the CASTEP executable in the configured MPI launcher
+(``mpirun -np 1``) when one is set. MPI-built binaries such as ``castep.mpi``
+hang when the ``-help`` queries are run directly, so without the launcher the
+progress stalls at 0%.
 
 Cluster generation
 ------------------

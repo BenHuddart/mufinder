@@ -31,6 +31,7 @@ and the quality standards that must be maintained as development expands.
    :maxdepth: 2
    :caption: User guide
 
+   host_structure
    supercells
    convergence_testing
    comparison_table
