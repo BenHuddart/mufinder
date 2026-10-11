@@ -21,7 +21,7 @@ import sys
 import pytest
 
 import mufinder.services.cluster_keyword_generator as generator_module
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus
 from mufinder.services.cluster_keyword_generator import (
     ClusterKeywordGenerationCancelled,

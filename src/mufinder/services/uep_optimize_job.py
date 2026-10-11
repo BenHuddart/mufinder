@@ -8,17 +8,19 @@ from pathlib import Path
 from typing import Any
 
 from mufinder.science.uep import (
-    UepClusteringConfig,
     UepError,
     UepField,
     UepOptimizationResult,
     UepProbeResult,
-    cluster_uep_optimizations,
-    cluster_optimized_positions,
     load_uep_source,
     optimize_muon_position,
     particle_mass_kg_from_amu,
     probe_point,
+)
+from mufinder.science.uep_clustering import (
+    UepClusteringConfig,
+    cluster_optimized_positions,
+    cluster_uep_optimizations,
 )
 
 

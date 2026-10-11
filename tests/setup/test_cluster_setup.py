@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_cluster_configs, save_cluster_configs
+import mufinder.cluster_setup as cluster_setup_module
+from mufinder.cluster_setup import load_cluster_config, load_cluster_configs, save_cluster_configs
+from mufinder.domain.cluster import ClusterConfig
 
 
 class _FakeSettings:
@@ -401,3 +403,9 @@ def test_cluster_setup_save_skips_duplicate_names_and_fills_defaults() -> None:
     assert settings.value("clusters/alpha/hostname") == "alpha.example"
     assert settings.value("clusters/alpha/default_walltime") == "01:00:00"
     assert settings.value("clusters/beta/default_memory_gb") == 7.5
+
+
+def test_cluster_setup_reexports_domain_cluster_config() -> None:
+    # Public import alias kept for one minor release; see docs/compatibility_policy.rst.
+    assert cluster_setup_module.ClusterConfig is ClusterConfig
+    assert "ClusterConfig" in cluster_setup_module.__all__

@@ -55,7 +55,7 @@ from PySide6.QtCore import (
     Slot,
 )
 
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus
 from mufinder.services.cluster_runner import ClusterJobRunner
 from mufinder.services.ssh_client import SSHCredentials

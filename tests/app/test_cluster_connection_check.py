@@ -7,7 +7,7 @@ import time
 from PySide6.QtWidgets import QWidget
 
 from mufinder.app.cluster_connection_check import ClusterConnectionCheck
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.ssh_client import SSHCredentials, SSHUnknownHostKeyError
 from tests.support.qt import pump_until
 

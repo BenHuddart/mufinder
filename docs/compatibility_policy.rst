@@ -241,6 +241,46 @@ Compatibility ledger
      - Public helper alias. Keep for one minor release (through 0.6.x); then
        move the tests to ``structure_to_ase_atoms`` and make the wrapper
        private.
+   * - ``ClusterConfig``
+     - ``mufinder.cluster_setup``
+     - Re-export of ``mufinder.domain.cluster.ClusterConfig``, so the cluster
+       record carries no Qt dependency into ``mufinder.services``. MuFinder
+       code imports it from the domain module. Not persisted: the ``QSettings``
+       keys that ``cluster_setup`` reads and writes are unchanged.
+     - Public import alias. Keep for one minor release (through 0.6.x); then
+       drop the re-export and its ``__all__`` entry.
+   * - ``FormattedDensity`` / ``IonicPseudopotential`` /
+       ``castep_total_charge``
+     - ``mufinder.science.uep``
+     - Re-exports of the CASTEP readers' records and charge reader in
+       ``mufinder.castep_io.charge_density``. Imported by the UEP science
+       tests. Not persisted.
+     - Public import alias. Keep for one minor release (through 0.6.x); then
+       move the tests to ``mufinder.castep_io.charge_density`` and drop the
+       re-exports.
+   * - ``parse_formatted_density`` / ``parse_castep_pseudopotentials``
+     - ``mufinder.science.uep``
+     - Thin wrappers over the ``mufinder.castep_io.charge_density`` readers
+       that turn ``ChargeDensityInputError`` into ``UepError``. Callers of
+       ``load_uep_source`` (the UEP wizard and job runner) and the UEP science
+       tests catch ``UepError``. Not persisted.
+     - Public import path. Keep until the callers that catch ``UepError``
+       around these readers catch ``ChargeDensityInputError`` instead; then
+       drop both wrappers.
+   * - ``UepClusterSummary`` / ``UepClusterSimilaritySummary`` /
+       ``UepBatchSummary`` / ``UepClusteringConfig`` / ``UepClusteringResult``
+       / ``UepPreparedClusteringDataset`` / ``cluster_optimized_positions`` /
+       ``relaxed_site_number_map`` / ``prepare_uep_clustering_dataset`` /
+       ``cluster_prepared_uep_dataset`` / ``cluster_uep_optimizations``
+     - ``mufinder.science.uep``
+     - Names that live in ``mufinder.science.uep_clustering``. Because that
+       module imports ``mufinder.science.uep``, the module-level
+       ``__getattr__`` in ``uep`` resolves them lazily. Imported by
+       ``mufinder.app.uep_wizard``, ``mufinder.app.uep_clustering_dialog`` and
+       the UEP science tests. Not persisted.
+     - Public import alias. Keep for one minor release (through 0.6.x); then
+       move those imports to ``mufinder.science.uep_clustering`` and drop the
+       ``__getattr__`` hook.
    * - ``_serialize_uep_config`` / ``_deserialize_uep_config`` /
        ``_serialize_pristine_relaxation_config`` /
        ``_deserialize_pristine_relaxation_config`` /

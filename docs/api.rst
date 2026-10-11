@@ -20,6 +20,10 @@ Domain
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.domain.cluster
+   :members:
+   :undoc-members:
+
 CASTEP I/O
 ----------
 
@@ -30,6 +34,10 @@ CASTEP I/O
    :undoc-members:
 
 .. automodule:: mufinder.castep_io.schema
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.starter_catalog
    :members:
    :undoc-members:
 
@@ -54,6 +62,10 @@ CASTEP I/O
    :undoc-members:
 
 .. automodule:: mufinder.castep_io.output_parser
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.charge_density
    :members:
    :undoc-members:
 

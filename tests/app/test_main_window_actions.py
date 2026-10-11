@@ -28,7 +28,7 @@ from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.main_window import MainWindow
 from mufinder.castep_setup import CastepSetup
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES
 from mufinder.domain.enums import JobStatus, WorkflowStage
