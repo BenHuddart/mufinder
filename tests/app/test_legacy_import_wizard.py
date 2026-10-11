@@ -26,6 +26,7 @@ from mufinder.services.legacy_import import scan_legacy_folder
 from mufinder.services.project_service import ProjectDocument
 
 from tests.services.test_legacy_import_scan import HOST_LATTICE, _legacy_param, build_folder
+from tests.support.qt import pump_until
 
 
 @pytest.fixture()
@@ -576,19 +577,37 @@ class TestScanRunsOnAThread:
     ) -> None:
         """A registry that never drains would leak a thread per import."""
 
-        from PySide6.QtCore import QDeadlineTimer
-
         from mufinder.app.legacy_import_dialog import _LIVE_SCANS
 
         self._run_to_completion(build_folder(tmp_path, sites=(1,)))
 
         # Cleanup is asynchronous: the loop quits on `completed`, which fires
         # before the thread has finished, so drain rather than sample once.
-        deadline = QDeadlineTimer(5000)
-        while _LIVE_SCANS and not deadline.hasExpired():
-            qapp.processEvents()
+        pump_until(lambda: not _LIVE_SCANS, timeout=5.0)
 
         assert _LIVE_SCANS == set(), "a scan leaked its thread and worker"
+
+    def test_back_to_back_scans_never_leak_a_registry_entry(
+        self, qapp, tmp_path: Path
+    ) -> None:
+        """Deleting the thread must not overtake dropping its registry entry.
+
+        The worker thread posts each queued ``finished`` connection to the GUI
+        thread separately. When the thread's own ``deleteLater`` was a separate
+        connection ahead of the discard, the GUI thread could delete the
+        ``QThread`` before the discard was posted; that tore down the discard
+        and left the entry registered for good. One scan hits that window about
+        one time in fifty, so the old wiring leaked within 150 scans in nearly
+        every run of this test.
+        """
+
+        from mufinder.app.legacy_import_dialog import _LIVE_SCANS
+
+        folder = build_folder(tmp_path, sites=(1,))
+        for attempt in range(150):
+            self._run_to_completion(folder)
+            pump_until(lambda: not _LIVE_SCANS, timeout=5.0)
+            assert _LIVE_SCANS == set(), f"scan {attempt} leaked its thread and worker"
 
 
 class TestProvenanceReachesDisk:

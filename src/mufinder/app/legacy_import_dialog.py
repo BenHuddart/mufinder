@@ -105,6 +105,14 @@ def start_legacy_scan(
     runs, and the caller waits forever on a status message that never changes.
     Qt also aborts the process if a running ``QThread`` is destroyed, so the
     thread needs the same protection.
+
+    **The registry entry is dropped before the thread is scheduled for
+    deletion**, by one handler on ``finished``. The worker thread posts each
+    queued ``finished`` connection to the GUI thread separately, so the GUI
+    thread can run a ``deleteLater`` connected ahead of the discard before the
+    discard has even been posted. Deleting the ``QThread`` tears down the
+    connections it sends, the discard is never delivered, and the entry leaks
+    with its thread and worker.
     """
 
     worker = LegacyScanWorker(root, host_lattice, host_species)
@@ -118,10 +126,14 @@ def start_legacy_scan(
     worker.completed.connect(thread.quit)
     worker.failed.connect(thread.quit)
     thread.finished.connect(worker.deleteLater)
-    thread.finished.connect(thread.deleteLater)
     entry = (thread, worker)
     _LIVE_SCANS.add(entry)
-    thread.finished.connect(lambda: _LIVE_SCANS.discard(entry))
+
+    def _release() -> None:
+        _LIVE_SCANS.discard(entry)
+        thread.deleteLater()
+
+    thread.finished.connect(_release)
     thread.start()
 
 

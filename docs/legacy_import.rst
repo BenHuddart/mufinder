@@ -919,6 +919,16 @@ Phasing
       The starter deliberately returns nothing: the thread deletes itself once
       finished, so a handle retained by a caller would dangle.
 
+      **One handler on ``finished`` drops the registry entry and then schedules
+      the thread's deletion**, in that order. The worker thread posts each
+      queued ``finished`` connection to the GUI thread separately, so a
+      ``deleteLater`` connected on its own ahead of the discard can run before
+      the discard is even posted. Deleting the ``QThread`` tears down the
+      connections it sends, the discard is never delivered, and the entry leaks
+      with its thread and worker — about one scan in fifty run back to back. The
+      worker's own ``deleteLater`` stays a separate connection: it runs on the
+      worker thread as it finishes and cannot overtake the discard.
+
       Tests that drive the worker by calling ``run()`` directly exercise the
       parsing but **not** the threading, and will not catch this. The threaded
       cases in ``tests/app/test_legacy_import_wizard.py`` run the real signal
