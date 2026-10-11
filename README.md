@@ -66,15 +66,15 @@ See `docs/castep_keyword_catalog.rst` for the full behaviour.
 Clone and install locally:
 
 ```bash
-git clone git@github.com:BenHuddart/mufinder.git
+git clone https://github.com/BenHuddart/mufinder.git
 cd mufinder
 python -m pip install .
 ```
 
-Install directly from Git for users with repository access:
+Install directly from Git:
 
 ```bash
-python -m pip install "git+ssh://git@github.com/BenHuddart/mufinder.git"
+python -m pip install "git+https://github.com/BenHuddart/mufinder.git"
 ```
 
 Install with development tooling. The test suite also needs the
@@ -122,3 +122,10 @@ These binaries ship MuFinder itself, but CASTEP and MPI remain external user-sup
 > **Intel Mac (x86_64) users:** pre-built binaries are not provided for Intel Macs. Install from source instead — see the [Install From Source](#install-from-source) section above.
 
 For ad hoc validation on any branch, use the `Preview Build` workflow to produce downloadable artifacts without publishing a release.
+
+## License
+
+MuFinder is free software released under the GNU General Public License,
+version 3 or (at your option) any later version. See [LICENSE](LICENSE).
+CASTEP is separate, proprietary software that MuFinder drives but does not
+include; obtain it under its own licence.
