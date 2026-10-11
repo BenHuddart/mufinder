@@ -1673,6 +1673,9 @@ def test_register_definitions_persist_their_parameters_and_provenance_unchanged(
         supercell_source_workflow="muon_relaxation",
     )
     snapshots["cutoff"] = _registration_snapshot(doc, definition, placeholders)
+    # Filling the definition's job map later must not rewrite the recorded event.
+    definition.parameters["job_ids_by_cutoff"]["360"] = "later"
+    assert doc.provenance[-1].parameters["job_ids_by_cutoff"] == {"300": str(job.id)}
 
     definition = service.register_convergence_kpoint_definition(
         doc,
