@@ -322,6 +322,27 @@ no two workflow widgets may define the same private method.
        labels and two-stage state, the generated diffusion paths and NEB
        results for energy barriers, and the completed pristine and muon
        relaxations offered to comparison and relaxation analysis.
+   * - ``mufinder.services.project_document``
+     - The in-memory project aggregate (``ProjectDocument``), the active host
+       (``active_host_structure``) and the read-only definition and job
+       lookups (``definitions_for_stage``, ``active_definition``,
+       ``job_for_mapping_key``; see Workflow controllers).
+       ``mufinder.services.project_service`` re-exports these names.
+   * - ``mufinder.services.supercell_assets``
+     - Saved supercell assets built from a host (create, rename, regenerate,
+       delete, the frozen rule and its references), each workflow's
+       simulation-cell selection in ``ui_state["workflow_supercells"]`` and
+       its resolution to a structure (``resolve_workflow_structure``), and
+       per-atom spins for a structure (``structure_atomic_spins``).
+       ``ProjectService`` delegates to it under the same method names.
+   * - ``mufinder.services.site_generation_service``
+     - Candidate muon-site generation for each method (manual, random by
+       separation or count, attached to an element, UEP cluster rows),
+       clustering generated sites near an anchor, removing and staging
+       generated sites, and the generated-site statuses. Each entry point
+       changes the document in memory and returns its provenance records in a
+       ``SiteGenerationOutcome``; ``ProjectService`` appends them. The
+       placement maths is ``mufinder.science.site_generation``.
    * - ``mufinder.workflow.naming``
      - Job names (``job_name``) and the remote naming of a cluster
        submission: the workflow directory fragment, the default scheduler
@@ -349,6 +370,11 @@ no two workflow widgets may define the same private method.
      - CASTEP syntax: cell and param parsing and writing, keyword metadata
        (``schema``) and validation (``validators``); see
        :doc:`castep_keyword_catalog`.
+   * - ``mufinder.persistence.project_codec``
+     - Decoding each persisted project entity into its domain record
+       (``*_from_dict``, ``ENTITY_DECODERS``, ``jobs_in_creation_order``) and
+       the read-side repairs for older projects; encoding is ``to_jsonable``
+       in ``mufinder.persistence.codec``.
    * - ``mufinder.domain.magnetic_properties``
      - Spins and propagation vectors read from ``Structure.properties``
        (``atomic_spins_from_structure``,
@@ -591,7 +617,7 @@ Three class attributes declare which calculation definitions a controller owns:
   active one (quantum corrections, energy barriers).
 
 From these the base class answers every definition and job lookup through the
-read-only queries in :mod:`mufinder.services.project_service`, so no workflow
+read-only queries in :mod:`mufinder.services.project_document`, so no workflow
 repeats them:
 
 - ``definitions()`` returns the matching definitions, newest first

@@ -166,7 +166,7 @@ class WorkflowJobController:
     def active_definition(self) -> CalculationDefinition | None:
         """Return the definition this workflow currently works on, if any.
 
-        See :func:`~mufinder.services.project_service.active_definition` for the
+        See :func:`~mufinder.services.project_document.active_definition` for the
         ``active_key`` lookup and the newest-definition fallback.
         """
 
@@ -190,7 +190,7 @@ class WorkflowJobController:
     ) -> Job | None:
         """Return the job ``definition``'s ``mapping_name`` mapping binds to ``key``.
 
-        See :func:`~mufinder.services.project_service.job_for_mapping_key`.
+        See :func:`~mufinder.services.project_document.job_for_mapping_key`.
         """
 
         document = self._context.document()
