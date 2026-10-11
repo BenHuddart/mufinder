@@ -1,7 +1,7 @@
 """Tests for reciprocal-space Monkhorst-Pack grid generation helpers.
 
 The spacing<->grid round-trip cases are the contract described in
-``docs/castep/kpoint_spacing_convention.md``.
+``docs/castep/kpoint_spacing_convention.rst``.
 """
 
 from __future__ import annotations
