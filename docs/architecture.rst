@@ -149,6 +149,10 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
   sweep-list, structure-controlled, and row-controlled keywords), and its own
   ``kpoints_list_reset`` sentinel (``()`` for convergence to clear an inherited
   list layer, ``None`` for relaxation/UEP to inherit).
+  :func:`~mufinder.app.adapter_common.build_workflow_settings_template` is the
+  same parser with the settings the quantum-corrections and energy-barriers
+  rows use: the structure-controlled cell keywords are refused and a scalar
+  k-point grid or spacing clears an inherited list.
 - :func:`~mufinder.app.adapter_common.rescale_kpoint_grid` rescales a project
   k-point grid to an equivalent reciprocal-space density for supercell rows and
   returns an optional adjustment message. Convergence sweeps a fixed structure
@@ -267,6 +271,16 @@ workflow widget modules define, how many define it; the counts may only fall.
        ``max_stress_for_job``) and the payload extractors behind them.
    * - ``mufinder.services.job_artifacts``
      - Job output paths and parsed secondary outputs.
+   * - ``mufinder.services.source_candidates``
+     - Read-only source queries over the project document: the relaxed muon
+       sites eligible for quantum corrections, their relative energies,
+       labels and two-stage state, the generated diffusion paths and NEB
+       results for energy barriers, and the completed pristine and muon
+       relaxations offered to comparison and relaxation analysis.
+   * - ``mufinder.workflow.energy_barriers``
+     - Besides NEB expansion, the merge and per-pair replacement of serialized
+       diffusion-path sources and the removal of stored placeholder
+       transition-state parameters.
    * - ``mufinder.domain.magnetic_properties``
      - Spins and propagation vectors read from ``Structure.properties``
        (``atomic_spins_from_structure``,
@@ -690,6 +704,10 @@ Controller summary
        gamma-point eigenvalues, mode participations and the ``w1`` witness from
        the carrier's parsed phonon calculation, and a singlepoint job
        contributes an empty result. Both calc types are ``handles_job``-owned.
+       Its source rows and each row's stage come from
+       :mod:`mufinder.services.source_candidates`
+       (``eligible_quantum_source_candidates``, ``quantum_stage_state``),
+       reached through ``QuantumCorrectionsDeps``.
    * - ``EnergyBarriersController``
      - Keyed by diffusion-path source key, stamped on each spec as
        ``provenance={"source_key": key}``. ``materialize`` aligns the endpoints
@@ -700,7 +718,10 @@ Controller summary
        ``barrier_height_eV``, ``num_images``, ``image_labels``,
        ``reaction_coordinates`` and ``image_energies_eV``. Both the NEB and the
        transition-state-search calc types are ``handles_job``-owned. Takes a
-       ``view_getter`` because its view is created on first visit.
+       ``view_getter`` because its view is created on first visit. Its
+       generated paths, NEB sources and completed NEB results come from
+       :mod:`mufinder.services.source_candidates`, reached through
+       ``EnergyBarriersDeps``.
 
 In-place row parameter edits
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

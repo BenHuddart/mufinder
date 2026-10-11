@@ -289,6 +289,26 @@ def build_input_template(
     return InputTemplate(cell=cell_template, param=param_template)
 
 
+def build_workflow_settings_template(values: Mapping[str, object]) -> InputTemplate:
+    """Parse quantum-corrections and energy-barriers row values into a template.
+
+    These workflows take their structure from the relaxed source, so the
+    structure-controlled cell keywords are refused, and a scalar
+    ``kpoint_mp_grid`` / ``kpoint_mp_spacing`` clears any inherited
+    ``kpoints_list`` (``kpoints_list_reset=()``).
+    """
+
+    return build_input_template(
+        values,
+        context_label="workflow settings",
+        forbidden={
+            name: f"{name} is controlled by the workflow structure and cannot be overridden."
+            for name in STRUCTURE_CONTROLLED_CELL_KEYWORDS
+        },
+        kpoints_list_reset=(),
+    )
+
+
 def template_has_explicit_kpoints(template: InputTemplate) -> bool:
     """Return true if ``template`` already pins a k-point grid, spacing, or list."""
 

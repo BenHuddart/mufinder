@@ -14,6 +14,7 @@ import pytest
 from mufinder.app.adapter_common import (
     AdapterExpansion,
     build_input_template,
+    build_workflow_settings_template,
     claim_unique_name,
     coerce_supercell_matrix,
     is_identity_supercell,
@@ -27,6 +28,7 @@ from mufinder.app.adapter_common import (
     supercell_label,
     template_has_explicit_kpoints,
 )
+from mufinder.castep_io.types import BlockSection, SpeciesPotential
 from mufinder.domain.models import Structure
 from mufinder.workflow.types import CellTemplate, InputTemplate, ParamTemplate
 
@@ -89,6 +91,33 @@ def test_build_input_template_kpoints_list_reset_sentinel() -> None:
     )
     assert inherit_template.cell is not None
     assert inherit_template.cell.kpoints_list is None
+
+
+def test_build_workflow_settings_template_locks_structure_keywords() -> None:
+    with pytest.raises(
+        ValueError,
+        match="positions_frac is controlled by the workflow structure and cannot be overridden.",
+    ):
+        build_workflow_settings_template({"positions_frac": BlockSection("positions_frac", ())})
+    with pytest.raises(ValueError, match="Unsupported CASTEP keyword 'made_up' in workflow settings."):
+        build_workflow_settings_template({"made_up": 1})
+
+
+def test_build_workflow_settings_template_clears_kpoints_list_and_types_blocks() -> None:
+    template = build_workflow_settings_template(
+        {
+            "kpoint_mp_grid": (3, 3, 3),
+            "species_pot": BlockSection("species_pot", (("Si", "Si.recpot"),)),
+            "cut_off_energy": 500.0,
+        }
+    )
+
+    assert template.cell is not None
+    assert template.cell.kpoint_mp_grid == (3, 3, 3)
+    assert template.cell.kpoints_list == ()
+    assert template.cell.species_pot == (SpeciesPotential(species="Si", potential="Si.recpot"),)
+    assert template.param is not None
+    assert [assignment.name for assignment in template.param.keywords] == ["cut_off_energy"]
 
 
 def test_template_has_explicit_kpoints() -> None:

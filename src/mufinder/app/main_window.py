@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
 import logging
@@ -66,8 +65,7 @@ from mufinder.branding import (
     logo_path,
 )
 from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_cluster_configs
-from mufinder.castep_io.gui_metadata import make_block_section, make_keyword_assignment
-from mufinder.castep_io.schema import KeywordSpec, canonical_keyword_name, get_keyword_spec
+from mufinder.castep_io.schema import KeywordSpec
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import (
@@ -84,7 +82,7 @@ from mufinder.domain.models import (
 from mufinder.app.cluster_setup_dialog import ClusterSetupDialog
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig, ClusterSubmissionDialog
-from mufinder.app.comparison_job_dialog import ComparisonJobDialog, CompletedPristineJob
+from mufinder.app.comparison_job_dialog import ComparisonJobDialog
 from mufinder.app.comparison_table_widget import ComparisonTableWidget
 from mufinder.app.cluster_ui_utils import (
     format_cluster_connection_error,
@@ -137,7 +135,7 @@ from mufinder.app.relaxation_adapter import (
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
-from mufinder.app.adapter_common import AdapterExpansion
+from mufinder.app.adapter_common import AdapterExpansion, build_workflow_settings_template
 from mufinder.app.relaxation_types import (
     MuonRelaxationConfig,
     MuonRelaxationRow,
@@ -146,7 +144,6 @@ from mufinder.app.relaxation_types import (
     RelaxationRunState,
 )
 from mufinder.app.relaxation_analysis_widget import (
-    CompletedRelaxationAnalysisSource,
     RelaxationAnalysisJobDialog,
     RelaxationAnalysisWidget,
     default_workspace_state,
@@ -253,10 +250,6 @@ from mufinder.app.workflow_controllers import (
     merge_controller_result,
     validate_controller_artifacts,
 )
-from mufinder.app.workflow_controllers.quantum_corrections import (
-    QUANTUM_STAGE_PHONON,
-    QUANTUM_STAGE_SINGLEPOINT,
-)
 from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.castep_io.param_parser import parse_param_assignments, parse_param_value, run_is_spin_polarized
@@ -304,20 +297,44 @@ from mufinder.services.project_service import (
     active_definition,
     job_for_mapping_key,
 )
+from mufinder.services.source_candidates import (
+    QUANTUM_STAGE_PHONON,
+    QUANTUM_STAGE_SINGLEPOINT,
+    CompletedPristineJob,
+    CompletedRelaxationAnalysisSource,
+    EnergyBarrierCompletedNebCandidate,
+    EnergyBarrierNebCandidate,
+    EnergyBarrierSourceCandidate,
+    MuonRelaxationRowJob,
+    QuantumSourceCandidate,
+    QuantumStageState,
+    charge_state_for_job,
+    coerce_fractional_triplet,
+    completed_energy_barrier_neb_candidates,
+    completed_muon_relaxation_sources,
+    completed_pristine_relaxation_jobs,
+    eligible_energy_barrier_source_candidates,
+    eligible_quantum_source_candidates,
+    energy_barrier_generated_sources,
+    energy_barrier_neb_source_candidates,
+    enumerate_energy_barrier_source_candidates,
+    float_from_source,
+    fractional_triplet_from_source,
+    quantum_source_candidate_by_key,
+    quantum_source_labels_by_key,
+    quantum_source_relative_energies,
+    quantum_stage_state,
+    relaxation_sources_for_labels,
+    uuid_from_source,
+)
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
     SSHCredentials,
     SSHUnknownHostKeyError,
     save_trusted_host_key,
 )
-from mufinder.science.energy_barriers import (
-    EnergyBarrierError,
-    MuonPath,
-    enumerate_distinct_muon_paths,
-)
 from mufinder.science.kpoint_grids import equivalent_grid_for_supercell, kpoint_count, most_uniform_grid
 from mufinder.science.quantum_phonons import PhononParseError
-from mufinder.science.relaxation_analysis import folded_muon_position_from_structure, grouped_relative_energies
 from mufinder.science.site_generation import SiteGenerationError, lattice_cart_to_frac
 from mufinder.science.supercell import build_supercell_structure
 from mufinder.science.uep import UepError, UepPotentialGrid, deserialize_potential_grid, serialize_potential_grid
@@ -328,15 +345,17 @@ from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_CALC_TYPE,
     TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
+    merge_serialized_sources,
+    replace_serialized_sources_for_pair,
+    strip_legacy_energy_barrier_params,
 )
 from mufinder.workflow.naming import job_name
 from mufinder.workflow.quantum import (
     QUANTUM_SINGLEPOINT_CALC_TYPE,
     QUANTUM_PHONON_CALC_TYPE,
-    quantum_source_eligibility,
 )
 from mufinder.workflow.renderer import render_job
-from mufinder.workflow.types import CellTemplate, InputTemplate, ParamTemplate
+from mufinder.workflow.types import InputTemplate
 
 
 _LOG = logging.getLogger(__name__)
@@ -385,10 +404,6 @@ _QUANTUM_GUI_TO_METHOD = {
 }
 _QUANTUM_DEFAULT_ELEC_ENERGY_TOL = ValueWithUnit(1e-9, "eV")
 _QUANTUM_METHOD_TO_GUI = {value: key for key, value in _QUANTUM_GUI_TO_METHOD.items()}
-# Stage identifiers now live in the quantum-corrections controller (single source
-# of truth); aliased here so the still-inline stage helpers keep their names.
-_QUANTUM_STAGE_SINGLEPOINT = QUANTUM_STAGE_SINGLEPOINT
-_QUANTUM_STAGE_PHONON = QUANTUM_STAGE_PHONON
 
 
 def _structure_species_options(structure: Structure | None) -> tuple[str, ...]:
@@ -480,214 +495,6 @@ def _ordered_string_list(payload: object) -> list[str]:
     return ordered
 
 
-def _merge_serialized_sources(
-    existing_sources: object,
-    new_sources: list[dict[str, object]],
-    *,
-    key_field: str,
-) -> list[dict[str, object]]:
-    merged_by_key: dict[str, dict[str, object]] = {}
-    order: list[str] = []
-    for source in tuple(existing_sources) if isinstance(existing_sources, list) else ():
-        if not isinstance(source, dict):
-            continue
-        key = str(source.get(key_field, "")).strip()
-        if not key:
-            continue
-        if key not in merged_by_key:
-            order.append(key)
-        merged_by_key[key] = dict(source)
-    for source in new_sources:
-        key = str(source.get(key_field, "")).strip()
-        if not key:
-            continue
-        if key not in merged_by_key:
-            order.append(key)
-        merged_by_key[key] = dict(source)
-    return [merged_by_key[key] for key in order]
-
-
-def _replace_serialized_sources_for_pair(
-    existing_sources: object,
-    *,
-    reactant_site_id: str,
-    product_site_id: str,
-    new_sources: list[dict[str, object]],
-) -> list[dict[str, object]]:
-    filtered: list[dict[str, object]] = []
-    for source in tuple(existing_sources) if isinstance(existing_sources, list) else ():
-        if not isinstance(source, dict):
-            continue
-        if (
-            str(source.get("reactant_site_id", "")).strip() == reactant_site_id
-            and str(source.get("product_site_id", "")).strip() == product_site_id
-        ):
-            continue
-        filtered.append(dict(source))
-    return _merge_serialized_sources(filtered, new_sources, key_field="key")
-
-
-_LEGACY_ENERGY_BARRIER_OBSOLETE_PARAMS: frozenset[str] = frozenset({"tssearch_lst_max_iter"})
-_LEGACY_ENERGY_BARRIER_ZERO_DEFAULT_PARAMS: frozenset[str] = frozenset({
-    "fine_cut_off_energy",
-    "tssearch_force_tol",
-    "tssearch_disp_tol",
-    "tssearch_energy_tol",
-})
-
-
-def _strip_legacy_energy_barrier_params(params: dict[str, object]) -> dict[str, object]:
-    """Drop params that were stored by the old TSS dialog but are now invalid.
-
-    tssearch_lst_max_iter is obsolete.  The three tolerance keywords default to
-    their GEOM_* counterparts in CASTEP; the old dialog exposed them with a
-    cross-reference default that rendered as 0, so any stored value ≤ 0 is a
-    legacy placeholder that should be omitted so CASTEP uses its own defaults.
-    fine_cut_off_energy was also persisted as a zero-value placeholder when the
-    Energy Barriers surface briefly exposed it as a regular physical editor row.
-    """
-    result: dict[str, object] = {}
-    for name, value in params.items():
-        if name in _LEGACY_ENERGY_BARRIER_OBSOLETE_PARAMS:
-            continue
-        if name in _LEGACY_ENERGY_BARRIER_ZERO_DEFAULT_PARAMS:
-            numeric = value.value if isinstance(value, ValueWithUnit) else value
-            try:
-                if float(numeric) <= 0:
-                    continue
-            except (TypeError, ValueError):
-                pass
-        result[name] = value
-    return result
-
-
-def _input_template_from_keyword_values(values: Mapping[str, object]) -> InputTemplate:
-    lattice_cart = None
-    lattice_abc = None
-    positions_frac = None
-    positions_abs = None
-    cell_scalars = []
-    cell_blocks = []
-    param_keywords = []
-    param_blocks = []
-
-    species_pot = None
-    kpoint_mp_grid = None
-    kpoint_mp_spacing = None
-    kpoints_list = None
-    symmetry_generate = None
-
-    for raw_name, raw_value in values.items():
-        spec = get_keyword_spec("param", raw_name) or get_keyword_spec("cell", raw_name)
-        if spec is None:
-            raise ValueError(f"Unsupported CASTEP keyword '{raw_name}' in workflow settings.")
-
-        canonical_name = canonical_keyword_name(spec.file, spec.name)
-        if spec.file == "cell" and canonical_name in _STRUCTURE_CONTROLLED_CELL_KEYWORDS:
-            raise ValueError(f"{canonical_name} is controlled by the workflow structure and cannot be overridden.")
-
-        if spec.kind == "block":
-            block = make_block_section(spec, raw_value)
-            if block is None:
-                continue
-            if spec.file == "cell":
-                if canonical_name == "lattice_cart":
-                    lattice_cart = block
-                    lattice_abc = None
-                    continue
-                if canonical_name == "lattice_abc":
-                    lattice_abc = block
-                    lattice_cart = None
-                    continue
-                if canonical_name == "positions_frac":
-                    positions_frac = block
-                    positions_abs = None
-                    continue
-                if canonical_name == "positions_abs":
-                    positions_abs = block
-                    positions_frac = None
-                    continue
-                if canonical_name == "species_pot":
-                    species_pot = tuple(block.rows)
-                    continue
-                if canonical_name == "kpoints_list":
-                    kpoints_list = tuple(block.rows)
-                    kpoint_mp_grid = None
-                    kpoint_mp_spacing = None
-                    continue
-                cell_blocks.append(block)
-                continue
-            param_blocks.append(block)
-            continue
-
-        if spec.file == "cell":
-            if canonical_name == "symmetry_generate":
-                symmetry_generate = bool(raw_value)
-                continue
-            if canonical_name == "kpoint_mp_grid":
-                assignment = make_keyword_assignment(spec, raw_value)
-                if assignment is None:
-                    continue
-                triplet = tuple(int(component) for component in assignment.value)  # type: ignore[arg-type]
-                if len(triplet) != 3:
-                    raise ValueError("kpoint_mp_grid requires three integer values.")
-                kpoint_mp_grid = (triplet[0], triplet[1], triplet[2])
-                kpoint_mp_spacing = None
-                kpoints_list = ()
-                continue
-            if canonical_name == "kpoint_mp_spacing":
-                assignment = make_keyword_assignment(spec, raw_value)
-                if assignment is None:
-                    continue
-                kpoint_mp_spacing = assignment.value  # type: ignore[assignment]
-                kpoint_mp_grid = None
-                kpoints_list = ()
-                continue
-
-        assignment = make_keyword_assignment(spec, raw_value)
-        if assignment is None:
-            continue
-        if spec.file == "param":
-            param_keywords.append(assignment)
-        else:
-            cell_scalars.append(assignment)
-
-    cell_template = None
-    if (
-        lattice_cart is not None
-        or lattice_abc is not None
-        or positions_frac is not None
-        or positions_abs is not None
-        or species_pot is not None
-        or kpoint_mp_grid is not None
-        or kpoint_mp_spacing is not None
-        or kpoints_list is not None
-        or symmetry_generate is not None
-        or cell_scalars
-        or cell_blocks
-    ):
-        cell_template = CellTemplate(
-            lattice_cart=lattice_cart,
-            lattice_abc=lattice_abc,
-            positions_frac=positions_frac,
-            positions_abs=positions_abs,
-            species_pot=species_pot,
-            kpoint_mp_grid=kpoint_mp_grid,
-            kpoint_mp_spacing=kpoint_mp_spacing,
-            kpoints_list=kpoints_list,
-            symmetry_generate=symmetry_generate,
-            extra_scalars=tuple(cell_scalars),
-            extra_blocks=tuple(cell_blocks),
-        )
-
-    param_template = (
-        ParamTemplate(keywords=tuple(param_keywords), extra_blocks=tuple(param_blocks))
-        if param_keywords or param_blocks
-        else None
-    )
-    return InputTemplate(cell=cell_template, param=param_template)
-
-
 def _quantum_method_from_gui_value(value: object) -> str:
     normalized = str(value).strip().upper()
     try:
@@ -699,59 +506,6 @@ def _quantum_method_from_gui_value(value: object) -> str:
 def _quantum_method_to_gui_value(value: object) -> str:
     normalized = str(value).strip().lower()
     return _QUANTUM_METHOD_TO_GUI.get(normalized, "FINITEDISPLACEMENT")
-
-
-@dataclass(frozen=True, slots=True)
-class _QuantumSourceCandidate:
-    """Internal source candidate for quantum-corrections job generation."""
-
-    key: str
-    site: MuonSite
-    run: CalculationRun
-    job: Job
-    structure: Structure
-
-
-@dataclass(frozen=True, slots=True)
-class _QuantumStageState:
-    """Current two-stage Quantum Corrections state for one source row."""
-
-    stage: str
-    status: str
-    current_job: Job | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _EnergyBarrierSourceCandidate:
-    """Internal path candidate for Energy Barriers job generation."""
-
-    key: str
-    reactant: _QuantumSourceCandidate
-    product: _QuantumSourceCandidate
-    path: MuonPath
-    path_index: int
-
-
-@dataclass(frozen=True, slots=True)
-class _EnergyBarrierNebCandidate:
-    """Endpoint path source eligible for NEB generation.
-
-    NEB is seeded directly from the two relaxed endpoints; CASTEP interpolates
-    the band between them, so no transition-state search is required.
-    """
-
-    key: str
-    source: Mapping[str, object]
-
-
-@dataclass(frozen=True, slots=True)
-class _EnergyBarrierCompletedNebCandidate:
-    """Completed NEB result eligible for preview."""
-
-    key: str
-    run: CalculationRun
-    job: Job
-    result: Result
 
 
 class MainWindow(QMainWindow):
@@ -4669,7 +4423,7 @@ class MainWindow(QMainWindow):
         key: str,
         *,
         target_lattice: list[list[float]] | None = None,
-        source_candidate: _EnergyBarrierSourceCandidate | None = None,
+        source_candidate: EnergyBarrierSourceCandidate | None = None,
         source_defaults_cache: dict[UUID, dict[str, object]] | None = None,
     ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
         # Precedence: project convergence defaults < reactant relaxation settings < user config.
@@ -4681,7 +4435,7 @@ class MainWindow(QMainWindow):
         # source_defaults_cache to avoid rebuilding the candidate list and re-reading the
         # reactant's files per key.
         params, advanced, extras = self._workflow_row_configuration(definition, key)
-        params = _strip_legacy_energy_barrier_params(params)
+        params = strip_legacy_energy_barrier_params(params)
         values = self._project_convergence_parameter_values(target_lattice=target_lattice)
         candidate = source_candidate if source_candidate is not None else self._energy_barrier_source_candidate_by_key(key)
         if candidate is not None:
@@ -4713,7 +4467,7 @@ class MainWindow(QMainWindow):
         values = self._project_convergence_parameter_values(target_lattice=target_lattice)
         if not values:
             return None
-        return _input_template_from_keyword_values(values)
+        return build_workflow_settings_template(values)
 
     @staticmethod
     def _parse_param_scalar_value(raw_value: str, spec: KeywordSpec | None) -> object:
@@ -4732,7 +4486,7 @@ class MainWindow(QMainWindow):
 
         return parse_param_assignments(text)
 
-    def _quantum_source_default_parameter_values(self, candidate: _QuantumSourceCandidate) -> dict[str, object]:
+    def _quantum_source_default_parameter_values(self, candidate: QuantumSourceCandidate) -> dict[str, object]:
         values: dict[str, object] = {}
         output_dir = self._job_output_directory(candidate.job)
         if output_dir is None:
@@ -4926,7 +4680,7 @@ class MainWindow(QMainWindow):
         pseudopotential_family = str(extras.get("pseudopotential_family", legacy_pseudopotential)).strip() or "unknown"
         return values, pseudopotential_family
 
-    def _energy_barrier_preview_structure(self, candidate: _EnergyBarrierSourceCandidate) -> Structure:
+    def _energy_barrier_preview_structure(self, candidate: EnergyBarrierSourceCandidate) -> Structure:
         if self._document is None:
             raise ValueError("No project document is loaded.")
         host_id = self._document.project.host_structure_id
@@ -4989,17 +4743,6 @@ class MainWindow(QMainWindow):
         self._main_stack.insertWidget(self._main_stack.indexOf(self._journal_view), energy_barriers_view)
         return energy_barriers_view
 
-    def _definition_for_convergence_cutoff(self, cutoff: float):
-        cutoff_value = float(cutoff)
-        active_definition = self._convergence_controller.active_definition()
-        if active_definition is None:
-            return None, None
-
-        self._sync_equivalent_convergence_cutoff_mappings(active_definition)
-        config = self._deserialize_convergence_config(active_definition.parameters.get("configuration", {}))
-        if config is not None and cutoff_value in config.cutoff_energies:
-            return active_definition, config
-        return None, None
 
     def _convergence_cutoff_definition_matches(
         self,
@@ -5470,7 +5213,7 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return True, shared_file_disposition, False
 
-        definition, config = self._definition_for_convergence_cutoff(cutoff)
+        definition, config = self._convergence_controller.definition_for_sweep_key(cutoff)
         job = self._convergence_controller.job_for_cutoff(definition, cutoff) if definition is not None else None
 
         job_label = None
@@ -7524,9 +7267,10 @@ class MainWindow(QMainWindow):
         removal, staging, and dashboard sync;
         ``_muon_fractional_position_from_cell`` locates the ``H:mu`` position
         for the controller's ``validate_artifacts`` and ``build_result``;
-        ``_coerce_fractional_triplet`` and ``_muon_relaxation_row_key`` have
-        other view-refresh callers. The controller reaches them only through
-        these late-bound wrappers.
+        ``_muon_relaxation_row_key`` has other view-refresh callers. The
+        controller reaches them only through these late-bound wrappers, and
+        ``coerce_fractional_triplet`` comes from
+        :mod:`mufinder.services.source_candidates`.
         """
 
         return MuonRelaxationDeps(
@@ -7552,9 +7296,7 @@ class MainWindow(QMainWindow):
             muon_fractional_position_from_cell=(
                 lambda cell: self._muon_fractional_position_from_cell(cell)
             ),
-            coerce_fractional_triplet=(
-                lambda value: self._coerce_fractional_triplet(value)
-            ),
+            coerce_fractional_triplet=coerce_fractional_triplet,
         )
 
     def _build_uep_deps(self) -> UepDeps:
@@ -7591,11 +7333,14 @@ class MainWindow(QMainWindow):
         workflow; the source-candidate and row-configuration helpers are shared
         across the quantum surface and the energy-barriers path; and
         ``_dedupe_jobs`` is shared across workflows (the cross-workflow job/
-        definition readers now live on the shared context). The module-level
-        ``_input_template_from_keyword_values`` / ``_format_energy``
-        helpers and the ``_quantum_method_from_gui_value`` lookup are also reached
-        through these late-bound wrappers (the controller must not import
-        ``main_window``). The controller reaches them only through these callables.
+        definition readers live on the shared context). The source-candidate
+        queries, relative energies and charge-state lookup come from
+        :mod:`mufinder.services.source_candidates`, the keyword-to-template
+        parser from :func:`~mufinder.app.adapter_common.build_workflow_settings_template`;
+        the module-level ``_format_energy`` helper and the
+        ``_quantum_method_from_gui_value`` lookup are reached through late-bound
+        wrappers (the controller must not import ``main_window``). The controller
+        reaches them only through these callables.
         """
 
         return QuantumCorrectionsDeps(
@@ -7603,13 +7348,15 @@ class MainWindow(QMainWindow):
                 lambda keys: self._ensure_quantum_corrections_definition(keys)
             ),
             eligible_quantum_source_candidates=(
-                lambda: self._eligible_quantum_source_candidates()
+                lambda: eligible_quantum_source_candidates(self._document)
             ),
             quantum_source_relative_energies=(
-                lambda: self._quantum_source_relative_energies()
+                lambda: quantum_source_relative_energies(
+                    eligible_quantum_source_candidates(self._document)
+                )
             ),
             quantum_source_candidate_by_key=(
-                lambda key: self._quantum_source_candidate_by_key(key)
+                lambda key: quantum_source_candidate_by_key(self._document, key)
             ),
             quantum_stage_state=(
                 lambda definition, candidate: self._quantum_stage_state(
@@ -7659,7 +7406,7 @@ class MainWindow(QMainWindow):
             quantum_method_from_gui_value=(
                 lambda value: _quantum_method_from_gui_value(value)
             ),
-            charge_state_for_job=lambda job: self._charge_state_for_job(job),
+            charge_state_for_job=charge_state_for_job,
             charge_state_label_for_job=(
                 lambda job: self._charge_state_label_for_job(job)
             ),
@@ -7668,9 +7415,7 @@ class MainWindow(QMainWindow):
                     definition, candidate
                 )
             ),
-            input_template_from_keyword_values=(
-                lambda values: _input_template_from_keyword_values(values)
-            ),
+            input_template_from_keyword_values=build_workflow_settings_template,
             write_quantum_job_directory=(
                 lambda spec, output_root, *, seed_name: self._write_quantum_job_directory(
                     spec, output_root, seed_name=seed_name
@@ -7701,10 +7446,12 @@ class MainWindow(QMainWindow):
         with the path-generation, source-removal, and result-configuration
         surfaces (which do NOT migrate); the host-mismatch handlers are shared
         across every host-guarded workflow; the endpoint-row / result-row / summary
-        helpers back the view the controller renders; and the source-decoding and
-        shared-workflow helpers are used across the app. The module-level
-        ``_input_template_from_keyword_values`` / ``_neb_barrier_summaries`` and the
-        ``muon_charge_state_label`` lookup are reached through these late-bound
+        helpers back the view the controller renders. The source-candidate
+        queries and the serialized-source decoders come from
+        :mod:`mufinder.services.source_candidates`, the keyword-to-template
+        parser from :func:`~mufinder.app.adapter_common.build_workflow_settings_template`;
+        the module-level ``_neb_barrier_summaries`` and the
+        ``muon_charge_state_label`` lookup are reached through late-bound
         wrappers (the controller must not import ``main_window``). The controller
         reaches them only through these callables.
         """
@@ -7717,10 +7464,10 @@ class MainWindow(QMainWindow):
                 lambda keys: self._ensure_energy_barrier_neb_definition(keys)
             ),
             energy_barrier_neb_source_candidates=(
-                lambda: self._energy_barrier_neb_source_candidates()
+                lambda: energy_barrier_neb_source_candidates(self._document)
             ),
             eligible_energy_barrier_source_candidates=(
-                lambda: self._eligible_energy_barrier_source_candidates()
+                lambda: eligible_energy_barrier_source_candidates(self._document)
             ),
             energy_barrier_neb_row_configuration_with_source_defaults=(
                 lambda definition, key, **kwargs: (
@@ -7741,15 +7488,9 @@ class MainWindow(QMainWindow):
             handle_site_host_mismatch=(
                 lambda mismatch: self._handle_site_host_mismatch(mismatch)
             ),
-            uuid_from_source=(
-                lambda source, key: self._uuid_from_source(source, key)
-            ),
-            float_from_source=(
-                lambda source, key: self._float_from_source(source, key)
-            ),
-            fractional_triplet_from_source=(
-                lambda source, key: self._fractional_triplet_from_source(source, key)
-            ),
+            uuid_from_source=uuid_from_source,
+            float_from_source=float_from_source,
+            fractional_triplet_from_source=fractional_triplet_from_source,
             fractional_position_block_from_structure=(
                 lambda structure: self._fractional_position_block_from_structure(
                     structure
@@ -7759,9 +7500,7 @@ class MainWindow(QMainWindow):
             project_convergence_input_defaults=(
                 lambda: self._project_convergence_input_defaults()
             ),
-            input_template_from_keyword_values=(
-                lambda values: _input_template_from_keyword_values(values)
-            ),
+            input_template_from_keyword_values=build_workflow_settings_template,
             workflow_row_configuration_exists=(
                 lambda definition, key: self._workflow_row_configuration_exists(
                     definition, key
@@ -7780,7 +7519,7 @@ class MainWindow(QMainWindow):
                 lambda: self._energy_barrier_max_path_length_text()
             ),
             completed_energy_barrier_neb_candidates=(
-                lambda: self._completed_energy_barrier_neb_candidates()
+                lambda: completed_energy_barrier_neb_candidates(self._document)
             ),
             energy_barrier_neb_sources_by_job_id=(
                 lambda: self._energy_barrier_neb_sources_by_job_id()
@@ -8037,83 +7776,17 @@ class MainWindow(QMainWindow):
 
         self._energy_barriers_controller.refresh_view()
 
-    def _eligible_quantum_source_candidates(self) -> list[_QuantumSourceCandidate]:
-        if self._document is None:
-            return []
-        candidates: list[_QuantumSourceCandidate] = []
-        for site in self._document.sites.values():
-            run = self._document.runs.get(site.relaxation_run_id) if site.relaxation_run_id is not None else None
-            job = self._document.jobs.get(run.job_id) if run is not None and run.job_id is not None else None
-            result = self._document.results.get(run.result_id) if run is not None and run.result_id is not None else None
-            relaxed_structure = None
-            if result is not None and result.derived_structure_ids:
-                relaxed_structure = self._document.structures.get(result.derived_structure_ids[0])
-            verdict = quantum_source_eligibility(
-                site=site,
-                run=run,
-                job=job,
-                relaxed_structure=relaxed_structure,
-            )
-            if not verdict.eligible or run is None or job is None or relaxed_structure is None:
-                continue
-            candidates.append(
-                _QuantumSourceCandidate(
-                    key=str(site.id),
-                    site=site,
-                    run=run,
-                    job=job,
-                    structure=relaxed_structure,
-                )
-            )
-        relative = self._quantum_source_relative_energies(candidates)
+    def _eligible_quantum_source_candidates(self) -> list[QuantumSourceCandidate]:
+        return eligible_quantum_source_candidates(self._document)
 
-        def order(item: _QuantumSourceCandidate) -> tuple[object, ...]:
-            energy = relative.get(item.key)
-            charge_state = self._charge_state_for_job(item.job) or ""
-            return (charge_state, energy is None, energy or 0.0, item.site.label)
+    def _quantum_source_relative_energies(self) -> dict[str, float | None]:
+        return quantum_source_relative_energies(self._eligible_quantum_source_candidates())
 
-        return sorted(candidates, key=order)
+    def _quantum_source_candidate_by_key(self, key: str) -> QuantumSourceCandidate | None:
+        return quantum_source_candidate_by_key(self._document, key)
 
-    def _quantum_source_relative_energies(
-        self,
-        candidates: list[_QuantumSourceCandidate] | None = None,
-    ) -> dict[str, float | None]:
-        """Return each relaxed source's energy relative to its comparable minimum.
-
-        ``MuonSite.total_energy_eV`` holds the relaxation's absolute final
-        total energy, which is only comparable between relaxations of the same
-        cell in the same charge state. Sources are therefore grouped by charge
-        state and cell composition (which separates different supercells), and
-        each is reported relative to the lowest-energy source in its group.
-        """
-
-        if candidates is None:
-            candidates = self._eligible_quantum_source_candidates()
-        entries: dict[str, tuple[object, float | None]] = {}
-        for candidate in candidates:
-            composition = tuple(sorted(Counter(candidate.structure.species).items()))
-            group = (self._charge_state_for_job(candidate.job), composition)
-            entries[candidate.key] = (group, candidate.site.total_energy_eV)
-        return grouped_relative_energies(entries)
-
-    def _quantum_source_candidate_by_key(self, key: str) -> _QuantumSourceCandidate | None:
-        for candidate in self._eligible_quantum_source_candidates():
-            if candidate.key == key:
-                return candidate
-        return None
-
-    def _quantum_source_labels_by_key(self) -> dict[str, str]:
-        labels_by_key: dict[str, str] = {}
-        counts: dict[str, int] = {}
-        for candidate in self._eligible_quantum_source_candidates():
-            base = str(candidate.site.label or candidate.job.label or "site").strip() or "site"
-            count = counts.get(base, 0) + 1
-            counts[base] = count
-            labels_by_key[candidate.key] = base if count == 1 else f"{base}_{count}"
-        return labels_by_key
-
-    def _quantum_source_label(self, candidate: _QuantumSourceCandidate) -> str:
-        return self._quantum_source_labels_by_key().get(candidate.key, "site")
+    def _quantum_source_label(self, candidate: QuantumSourceCandidate) -> str:
+        return quantum_source_labels_by_key(self._eligible_quantum_source_candidates()).get(candidate.key, "site")
 
     def _energy_barrier_form_state(self) -> dict[str, object]:
         if self._document is None:
@@ -8150,7 +7823,7 @@ class MainWindow(QMainWindow):
     def _energy_barrier_endpoint_rows(self) -> list[EnergyBarrierEndpointRow]:
         rows: list[EnergyBarrierEndpointRow] = []
         candidates = self._eligible_quantum_source_candidates()
-        relative = self._quantum_source_relative_energies(candidates)
+        relative = quantum_source_relative_energies(candidates)
         for candidate in candidates:
             rows.append(
                 EnergyBarrierEndpointRow(
@@ -8165,7 +7838,7 @@ class MainWindow(QMainWindow):
 
     def _serialize_energy_barrier_source_candidates(
         self,
-        candidates: list[_EnergyBarrierSourceCandidate],
+        candidates: list[EnergyBarrierSourceCandidate],
     ) -> list[dict[str, object]]:
         serialized: list[dict[str, object]] = []
         for candidate in candidates:
@@ -8190,156 +7863,16 @@ class MainWindow(QMainWindow):
             )
         return serialized
 
-    def _energy_barrier_generated_sources_from_state(self) -> list[dict[str, object]]:
-        state = self._energy_barrier_form_state()
-        raw_sources = state.get("generated_sources", [])
-        return [dict(source) for source in raw_sources if isinstance(source, dict)] if isinstance(raw_sources, list) else []
+    def _eligible_energy_barrier_source_candidates(self) -> list[EnergyBarrierSourceCandidate]:
+        return eligible_energy_barrier_source_candidates(self._document)
 
-    def _energy_barrier_generated_sources(self) -> list[dict[str, object]]:
-        sources = self._energy_barrier_generated_sources_from_state()
-        for definition in self._energy_barriers_definitions():
-            config = definition.parameters.get("configuration", {})
-            if not isinstance(config, dict):
-                continue
-            raw_sources = config.get("sources", [])
-            if not isinstance(raw_sources, list):
-                continue
-            sources = _merge_serialized_sources(
-                sources,
-                [dict(source) for source in raw_sources if isinstance(source, dict)],
-                key_field="key",
-            )
-        return sources
-
-    def _enumerate_energy_barrier_source_candidates(
-        self,
-        reactant_key: str,
-        product_key: str,
-        *,
-        max_distance_ang: float | None = None,
-    ) -> list[_EnergyBarrierSourceCandidate]:
-        if self._document is None:
-            return []
-        host_id = self._document.project.host_structure_id
-        host = self._document.structures.get(host_id) if host_id is not None else None
-        reactant = self._quantum_source_candidate_by_key(reactant_key)
-        product = self._quantum_source_candidate_by_key(product_key)
-        if host is None or reactant is None or product is None:
-            return []
-        if self._charge_state_for_job(reactant.job) != self._charge_state_for_job(product.job):
-            return []
-        if reactant.structure.parent_structure_id != host.id or product.structure.parent_structure_id != host.id:
-            return []
-        try:
-            paths = enumerate_distinct_muon_paths(
-                pristine_structure=host,
-                reactant_structure=reactant.structure,
-                product_structure=product.structure,
-                max_distance_ang=max_distance_ang,
-            )
-        except EnergyBarrierError:
-            return []
-        return [
-            _EnergyBarrierSourceCandidate(
-                key=f"{reactant.site.id}:{product.site.id}:{path_index}",
-                reactant=reactant,
-                product=product,
-                path=path,
-                path_index=path_index,
-            )
-            for path_index, path in enumerate(paths, start=1)
-        ]
-
-    def _eligible_energy_barrier_source_candidates(self) -> list[_EnergyBarrierSourceCandidate]:
-        if self._document is None:
-            return []
-        candidates: list[_EnergyBarrierSourceCandidate] = []
-        for raw_source in self._energy_barrier_generated_sources():
-            if not isinstance(raw_source, dict):
-                continue
-            reactant_site_id = self._uuid_from_source(raw_source, "reactant_site_id")
-            product_site_id = self._uuid_from_source(raw_source, "product_site_id")
-            reactant_run_id = self._uuid_from_source(raw_source, "reactant_run_id")
-            product_run_id = self._uuid_from_source(raw_source, "product_run_id")
-            reactant_job_id = self._uuid_from_source(raw_source, "reactant_job_id")
-            product_job_id = self._uuid_from_source(raw_source, "product_job_id")
-            reactant_structure_id = self._uuid_from_source(raw_source, "reactant_structure_id")
-            product_structure_id = self._uuid_from_source(raw_source, "product_structure_id")
-            if any(
-                value is None
-                for value in (
-                    reactant_site_id,
-                    product_site_id,
-                    reactant_run_id,
-                    product_run_id,
-                    reactant_job_id,
-                    product_job_id,
-                    reactant_structure_id,
-                    product_structure_id,
-                )
-            ):
-                continue
-            reactant_site = self._document.sites.get(reactant_site_id)
-            product_site = self._document.sites.get(product_site_id)
-            reactant_run = self._document.runs.get(reactant_run_id)
-            product_run = self._document.runs.get(product_run_id)
-            reactant_job = self._document.jobs.get(reactant_job_id)
-            product_job = self._document.jobs.get(product_job_id)
-            reactant_structure = self._document.structures.get(reactant_structure_id)
-            product_structure = self._document.structures.get(product_structure_id)
-            if any(
-                value is None
-                for value in (
-                    reactant_site,
-                    product_site,
-                    reactant_run,
-                    product_run,
-                    reactant_job,
-                    product_job,
-                    reactant_structure,
-                    product_structure,
-                )
-            ):
-                continue
-            try:
-                path_index = int(raw_source.get("path_index", 1))
-                path = MuonPath(
-                    start_fractional=self._fractional_triplet_from_source(raw_source, "path_start_fractional"),
-                    end_fractional=self._fractional_triplet_from_source(raw_source, "path_end_fractional"),
-                    length_ang=float(raw_source.get("path_length_ang", 0.0)),
-                )
-            except (TypeError, ValueError):
-                continue
-            candidates.append(
-                _EnergyBarrierSourceCandidate(
-                    key=str(raw_source.get("key", "")).strip(),
-                    reactant=_QuantumSourceCandidate(
-                        key=str(reactant_site.id),
-                        site=reactant_site,
-                        run=reactant_run,
-                        job=reactant_job,
-                        structure=reactant_structure,
-                    ),
-                    product=_QuantumSourceCandidate(
-                        key=str(product_site.id),
-                        site=product_site,
-                        run=product_run,
-                        job=product_job,
-                        structure=product_structure,
-                    ),
-                    path=path,
-                    path_index=path_index,
-                )
-            )
-        return candidates
-
-    def _energy_barrier_source_candidate_by_key(self, key: str) -> _EnergyBarrierSourceCandidate | None:
+    def _energy_barrier_source_candidate_by_key(self, key: str) -> EnergyBarrierSourceCandidate | None:
         for candidate in self._eligible_energy_barrier_source_candidates():
             if candidate.key == key:
                 return candidate
         return None
 
-    def _energy_barrier_source_label(self, candidate: _EnergyBarrierSourceCandidate) -> str:
+    def _energy_barrier_source_label(self, candidate: EnergyBarrierSourceCandidate) -> str:
         reactant = candidate.reactant.site.label or candidate.reactant.job.label or "reactant"
         product = candidate.product.site.label or candidate.product.job.label or "product"
         return f"{reactant}_to_{product}_path{candidate.path_index}"
@@ -9289,7 +8822,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No host structure", "Load a host structure before creating an analysis workspace.")
             return
         label_list = [str(label) for label in labels] if isinstance(labels, list) else [str(labels)]
-        sources = self._completed_muon_relaxation_sources_for_labels(label_list)
+        sources = relaxation_sources_for_labels(self._completed_muon_relaxation_sources(), label_list)
         if not sources:
             QMessageBox.information(
                 self,
@@ -12119,15 +11652,6 @@ class MainWindow(QMainWindow):
             return (float(position[0]), float(position[1]), float(position[2]))
         return None
 
-    @staticmethod
-    def _coerce_fractional_triplet(value: object) -> tuple[float, float, float] | None:
-        if not isinstance(value, (list, tuple)) or len(value) != 3:
-            return None
-        try:
-            return (float(value[0]), float(value[1]), float(value[2]))
-        except (TypeError, ValueError):
-            return None
-
     def _refresh_muon_relaxation_rows(self) -> None:
         self._muon_relaxation_controller.refresh_view()
         self._refresh_relaxation_analysis_context()
@@ -12151,68 +11675,29 @@ class MainWindow(QMainWindow):
         host = self._project_service.active_host_structure(self._document)
         if host is None:
             return []
-
-        sources: list[CompletedRelaxationAnalysisSource] = []
-        seen: set[UUID] = set()
-        for definition in self._muon_relaxation_controller.definitions():
+        controller = self._muon_relaxation_controller
+        rows: list[MuonRelaxationRowJob] = []
+        for definition in controller.definitions():
             if host.id not in definition.input_structure_ids:
                 continue
             config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
             if config is None:
                 continue
-            for row in config.rows:
-                job = self._muon_relaxation_controller.job_for_label(definition, row.label, row.charge_state)
-                if job is None or job.status != JobStatus.COMPLETED or job.id in seen:
-                    continue
-                run = self._run_for_job(job.id)
-                if run is None or run.result_id is None or run.convergence_achieved is False:
-                    continue
-                result = self._document.results.get(run.result_id)
-                if result is None or not result.derived_structure_ids:
-                    continue
-                structure_id = result.derived_structure_ids[0]
-                structure = self._document.structures.get(structure_id)
-                if structure is None:
-                    continue
-                fractional = None
-                if isinstance(result.data, dict):
-                    fractional = self._coerce_fractional_triplet(result.data.get("muon_final_fractional_position_host"))
-                if fractional is None:
-                    fractional = folded_muon_position_from_structure(structure)
-                if fractional is None:
-                    continue
-                total_energy = total_energy_for_job(self._document, job.id)
-                sources.append(
-                    CompletedRelaxationAnalysisSource(
-                        job_id=job.id,
-                        job_label=row.label,
-                        charge_state=row.charge_state,
-                        structure_id=structure_id,
-                        site_id=row.site_id,
-                        folded_fractional_position=fractional,
-                        total_energy_ev=total_energy,
-                    )
+            rows.extend(
+                (
+                    row.label,
+                    row.charge_state,
+                    row.site_id,
+                    controller.job_for_label(definition, row.label, row.charge_state),
                 )
-                seen.add(job.id)
-        return sorted(
-            sources,
-            key=lambda source: (
-                float("inf") if source.total_energy_ev is None else float(source.total_energy_ev),
-                source.job_label.casefold(),
-            ),
+                for row in config.rows
+            )
+        return completed_muon_relaxation_sources(
+            self._document,
+            rows,
+            run_for_job=self._run_for_job,
+            total_energy_for_job=partial(total_energy_for_job, self._document),
         )
-
-    def _completed_muon_relaxation_sources_for_labels(
-        self,
-        labels: list[str],
-    ) -> list[CompletedRelaxationAnalysisSource]:
-        wanted = {str(label) for label in labels}
-        selected: list[CompletedRelaxationAnalysisSource] = []
-        for source in self._completed_muon_relaxation_sources():
-            key = f"{muon_charge_state_prefix(source.charge_state)}:{source.job_label}"
-            if key in wanted or source.job_label in wanted:
-                selected.append(source)
-        return selected
 
     def _comparison_structure_options_for_relaxation_analysis(self) -> list[tuple[UUID, str, bool]]:
         if self._document is None:
@@ -12450,59 +11935,19 @@ class MainWindow(QMainWindow):
     def _completed_pristine_relaxation_jobs(self) -> list[CompletedPristineJob]:
         if self._document is None:
             return []
-
-        definition = self._pristine_relaxation_controller.active_definition()
+        controller = self._pristine_relaxation_controller
+        definition = controller.active_definition()
         if definition is None:
             return []
         config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return []
-
-        parameter_values_by_label = {
-            row.label: dict(row.parameter_values)
-            for row in config.rows
-        }
-        supercell_label_by_row: dict[str, str] = {}
-        for row in config.rows:
-            matrix = row.supercell_matrix
-            if matrix is None:
-                supercell_label_by_row[row.label] = "Unit cell"
-            else:
-                supercell_label_by_row[row.label] = "[" + "; ".join(
-                    ",".join(str(int(value)) for value in vector) for vector in matrix
-                ) + "]"
-
-        completed: list[CompletedPristineJob] = []
-        for row_label, state in sorted(self._pristine_relaxation_controller.build_states().items()):
-            if state.status != JobStatus.COMPLETED.value:
-                continue
-            if state.job_id is None:
-                continue
-
-            run = self._run_for_job(state.job_id)
-            if run is None or run.result_id is None:
-                continue
-            result = self._document.results.get(run.result_id)
-            if result is None or not result.derived_structure_ids:
-                continue
-
-            structure_id = result.derived_structure_ids[0]
-            completed.append(
-                CompletedPristineJob(
-                    job_id=state.job_id,
-                    job_label=row_label,
-                    structure_id=structure_id,
-                    supercell_label=supercell_label_by_row.get(row_label, "Unit cell"),
-                    status=state.status,
-                    total_energy=state.total_energy,
-                    lattice_a=state.lattice_a,
-                    lattice_b=state.lattice_b,
-                    lattice_c=state.lattice_c,
-                    parameter_values=parameter_values_by_label.get(row_label, {}),
-                )
-            )
-
-        return completed
+        return completed_pristine_relaxation_jobs(
+            self._document,
+            config.rows,
+            controller.build_states(),
+            run_for_job=self._run_for_job,
+        )
 
     @staticmethod
     def _format_parameter_value(value: object) -> str:
@@ -12697,7 +12142,7 @@ class MainWindow(QMainWindow):
         mapping = definition.parameters.get(key, {})
         return dict(mapping) if isinstance(mapping, dict) else {}
 
-    def _quantum_seed_name_for_candidate(self, candidate: _QuantumSourceCandidate) -> str:
+    def _quantum_seed_name_for_candidate(self, candidate: QuantumSourceCandidate) -> str:
         return job_name("quantum", self._quantum_source_label(candidate))
 
     def _quantum_seed_name_for_key(self, definition, key: str) -> str:
@@ -12730,35 +12175,22 @@ class MainWindow(QMainWindow):
             return job
         return controller.job_for_key(definition, key, calc_type=QUANTUM_PHONON_CALC_TYPE)
 
-    def _quantum_stage_state(self, definition, candidate: _QuantumSourceCandidate) -> _QuantumStageState:
-        phonon_job = self._phonon_job_for_quantum_source_key(definition, candidate.key)
-        if phonon_job is not None:
-            return _QuantumStageState(
-                stage=_QUANTUM_STAGE_PHONON,
-                status=effective_row_status(phonon_job),
-                current_job=phonon_job,
-            )
-
-        singlepoint_job = self._singlepoint_job_for_quantum_source_key(definition, candidate.key)
-        if singlepoint_job is None:
-            return _QuantumStageState(stage=_QUANTUM_STAGE_SINGLEPOINT, status="ready")
-        if singlepoint_job.status == JobStatus.COMPLETED:
-            return _QuantumStageState(stage=_QUANTUM_STAGE_PHONON, status="ready")
-        return _QuantumStageState(
-            stage=_QUANTUM_STAGE_SINGLEPOINT,
-            status=effective_row_status(singlepoint_job),
-            current_job=singlepoint_job,
+    def _quantum_stage_state(self, definition, candidate: QuantumSourceCandidate) -> QuantumStageState:
+        return quantum_stage_state(
+            singlepoint_job=self._singlepoint_job_for_quantum_source_key(definition, candidate.key),
+            phonon_job=self._phonon_job_for_quantum_source_key(definition, candidate.key),
+            row_status=effective_row_status,
         )
 
-    def _quantum_allows_farms_only_edit(self, definition, candidate: _QuantumSourceCandidate) -> bool:
+    def _quantum_allows_farms_only_edit(self, definition, candidate: QuantumSourceCandidate) -> bool:
         stage_state = self._quantum_stage_state(definition, candidate)
         return (
-            stage_state.stage == _QUANTUM_STAGE_PHONON
+            stage_state.stage == QUANTUM_STAGE_PHONON
             and stage_state.status == "ready"
             and stage_state.current_job is None
         )
 
-    def _quantum_can_reset_to_stage_one(self, definition, candidate: _QuantumSourceCandidate) -> bool:
+    def _quantum_can_reset_to_stage_one(self, definition, candidate: QuantumSourceCandidate) -> bool:
         """Return whether a Quantum Corrections row can be rewound to stage 1.
 
         Quantum Corrections is the one workflow whose recovery is a *stage*
@@ -12850,15 +12282,7 @@ class MainWindow(QMainWindow):
             )
         return serialized
 
-    @staticmethod
-    def _charge_state_for_job(job: Job | None) -> str | None:
-        if job is None:
-            return None
-        if job.calc_type == muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE):
-            return POSITIVE_MUON_CHARGE_STATE
-        if job.calc_type == muon_relaxation_calc_type(MUONIUM_CHARGE_STATE):
-            return MUONIUM_CHARGE_STATE
-        return None
+    _charge_state_for_job = staticmethod(charge_state_for_job)
 
     def _job_for_quantum_source_key(self, definition, key: str) -> Job | None:
         candidate = self._quantum_source_candidate_by_key(key)
@@ -13027,49 +12451,14 @@ class MainWindow(QMainWindow):
             self._delete_job_records(job.id)
         return True
 
-    def _energy_barrier_neb_source_candidates(self) -> list[_EnergyBarrierNebCandidate]:
-        if self._document is None:
-            return []
-        # NEB is seeded directly from each generated path (the union of form-state and
-        # committed definition sources); CASTEP interpolates the band between the endpoints.
-        # No transition-state-search definition is required.
-        candidates: list[_EnergyBarrierNebCandidate] = []
-        for source in self._energy_barrier_generated_sources():
-            key = str(source.get("key", "")).strip()
-            if not key:
-                continue
-            candidates.append(_EnergyBarrierNebCandidate(key=key, source=source))
-        return sorted(candidates, key=lambda item: item.key)
-
-    def _energy_barrier_neb_source_candidate_by_key(self, key: str) -> _EnergyBarrierNebCandidate | None:
-        for candidate in self._energy_barrier_neb_source_candidates():
+    def _energy_barrier_neb_source_candidate_by_key(self, key: str) -> EnergyBarrierNebCandidate | None:
+        for candidate in energy_barrier_neb_source_candidates(self._document):
             if candidate.key == key:
                 return candidate
         return None
 
-    def _completed_energy_barrier_neb_candidates(self) -> list[_EnergyBarrierCompletedNebCandidate]:
-        if self._document is None:
-            return []
-        candidates: list[_EnergyBarrierCompletedNebCandidate] = []
-        for result in self._document.results.values():
-            if result.result_type != NUDGED_ELASTIC_BAND_CALC_TYPE:
-                continue
-            run = self._document.runs.get(result.calculation_run_id) if result.calculation_run_id is not None else None
-            job = self._document.jobs.get(run.job_id) if run is not None and run.job_id is not None else None
-            if run is None or job is None:
-                continue
-            candidates.append(
-                _EnergyBarrierCompletedNebCandidate(
-                    key=str(result.id),
-                    run=run,
-                    job=job,
-                    result=result,
-                )
-            )
-        return sorted(candidates, key=lambda item: (item.job.label, item.key))
-
-    def _completed_energy_barrier_neb_candidate_by_key(self, key: str) -> _EnergyBarrierCompletedNebCandidate | None:
-        for candidate in self._completed_energy_barrier_neb_candidates():
+    def _completed_energy_barrier_neb_candidate_by_key(self, key: str) -> EnergyBarrierCompletedNebCandidate | None:
+        for candidate in completed_energy_barrier_neb_candidates(self._document):
             if candidate.key == key:
                 return candidate
         return None
@@ -13079,7 +12468,7 @@ class MainWindow(QMainWindow):
 
         sources_by_key = {
             str(source.get("key", "")).strip(): source
-            for source in self._energy_barrier_generated_sources()
+            for source in energy_barrier_generated_sources(self._document)
         }
         by_job_id: dict[UUID, dict[str, object]] = {}
         for definition in self._energy_barriers_controller.definitions():
@@ -13098,7 +12487,7 @@ class MainWindow(QMainWindow):
 
     def _energy_barrier_neb_result_path_label(
         self,
-        candidate: _EnergyBarrierCompletedNebCandidate,
+        candidate: EnergyBarrierCompletedNebCandidate,
         source: Mapping[str, object] | None,
     ) -> str:
         """Describe a completed NEB result as ``initial → final``, falling back to the job label."""
@@ -13106,7 +12495,7 @@ class MainWindow(QMainWindow):
         if source is not None and self._document is not None:
             labels: list[str] = []
             for field in ("reactant_site_id", "product_site_id"):
-                site_id = self._uuid_from_source(source, field)
+                site_id = uuid_from_source(source, field)
                 site = self._document.sites.get(site_id) if site_id is not None else None
                 labels.append((site.label or "").strip() if site is not None else "")
             if all(labels):
@@ -13114,7 +12503,7 @@ class MainWindow(QMainWindow):
         return candidate.job.label
 
     def _serialize_energy_barrier_neb_sources(self, keys: list[str]) -> list[dict[str, object]]:
-        candidates_by_key = {candidate.key: candidate for candidate in self._energy_barrier_neb_source_candidates()}
+        candidates_by_key = {candidate.key: candidate for candidate in energy_barrier_neb_source_candidates(self._document)}
         serialized: list[dict[str, object]] = []
         for key in keys:
             candidate = candidates_by_key.get(key)
@@ -13137,17 +12526,17 @@ class MainWindow(QMainWindow):
         if definition is not None:
             for candidate in candidates:
                 for source_key in ("reactant_structure_id", "product_structure_id"):
-                    structure_id = self._uuid_from_source(candidate.source, source_key)
+                    structure_id = uuid_from_source(candidate.source, source_key)
                     if structure_id is not None and structure_id not in definition.input_structure_ids:
                         definition.input_structure_ids.append(structure_id)
                 for source_key in ("reactant_site_id", "product_site_id"):
-                    site_id = self._uuid_from_source(candidate.source, source_key)
+                    site_id = uuid_from_source(candidate.source, source_key)
                     if site_id is not None and site_id not in definition.input_site_ids:
                         definition.input_site_ids.append(site_id)
             config = definition.parameters.setdefault("configuration", {})
             if isinstance(config, dict):
                 config.setdefault("method", "NEB")
-                config["sources"] = _merge_serialized_sources(
+                config["sources"] = merge_serialized_sources(
                     config.get("sources", []),
                     self._serialize_energy_barrier_neb_sources(source_keys),
                     key_field="key",
@@ -13160,8 +12549,8 @@ class MainWindow(QMainWindow):
                 structure_id
                 for candidate in candidates
                 for structure_id in (
-                    self._uuid_from_source(candidate.source, "reactant_structure_id"),
-                    self._uuid_from_source(candidate.source, "product_structure_id"),
+                    uuid_from_source(candidate.source, "reactant_structure_id"),
+                    uuid_from_source(candidate.source, "product_structure_id"),
                 )
                 if structure_id is not None
             )
@@ -13171,8 +12560,8 @@ class MainWindow(QMainWindow):
                 site_id
                 for candidate in candidates
                 for site_id in (
-                    self._uuid_from_source(candidate.source, "reactant_site_id"),
-                    self._uuid_from_source(candidate.source, "product_site_id"),
+                    uuid_from_source(candidate.source, "reactant_site_id"),
+                    uuid_from_source(candidate.source, "product_site_id"),
                 )
                 if site_id is not None
             )
@@ -13191,7 +12580,7 @@ class MainWindow(QMainWindow):
     def _build_energy_barrier_neb_states(self) -> dict[str, RelaxationRunState]:
         states: dict[str, RelaxationRunState] = {}
         definition = self._energy_barriers_controller.active_definition()
-        for candidate in self._energy_barrier_neb_source_candidates():
+        for candidate in energy_barrier_neb_source_candidates(self._document):
             job = self._energy_barriers_controller.job_for_neb_source_key(definition, candidate.key)
             if job is None:
                 states[candidate.key] = RelaxationRunState(status="ready")
@@ -13203,30 +12592,6 @@ class MainWindow(QMainWindow):
                 error_message=job.error_message,
             )
         return states
-
-    def _uuid_from_source(self, source: Mapping[str, object], key: str) -> UUID | None:
-        raw = source.get(key)
-        if not isinstance(raw, str) or not raw.strip():
-            return None
-        try:
-            return UUID(raw)
-        except ValueError:
-            return None
-
-    def _fractional_triplet_from_source(self, source: Mapping[str, object], key: str) -> tuple[float, float, float]:
-        raw = source.get(key)
-        if not isinstance(raw, list) or len(raw) != 3:
-            raise ValueError(f"Expected three fractional coordinates for {key}.")
-        return (float(raw[0]), float(raw[1]), float(raw[2]))
-
-    def _float_from_source(self, source: Mapping[str, object], key: str) -> float | None:
-        raw = source.get(key)
-        if raw is None:
-            return None
-        try:
-            return float(raw)
-        except (TypeError, ValueError):
-            return None
 
     def _transition_state_file_path(self, result: Result) -> Path | None:
         if not isinstance(result.data, dict):
@@ -13303,7 +12668,7 @@ class MainWindow(QMainWindow):
         first_stage_state = stage_states[0]
         farms_only = len(set(farms_only_values)) == 1 and farms_only_values[0]
         fully_editable = all(
-            stage_state.stage == _QUANTUM_STAGE_SINGLEPOINT and stage_state.status == "ready"
+            stage_state.stage == QUANTUM_STAGE_SINGLEPOINT and stage_state.status == "ready"
             for stage_state in stage_states
         )
         read_only = not fully_editable and not farms_only
@@ -13396,7 +12761,7 @@ class MainWindow(QMainWindow):
         keys = _ordered_string_list(payload)
         if not keys:
             return
-        neb_candidates_by_key = {c.key: c for c in self._energy_barrier_neb_source_candidates()}
+        neb_candidates_by_key = {c.key: c for c in energy_barrier_neb_source_candidates(self._document)}
         candidates = [c for key in keys if (c := neb_candidates_by_key.get(key)) is not None]
         if not candidates:
             return
@@ -13407,7 +12772,7 @@ class MainWindow(QMainWindow):
         advanced_names: set[str] = set()
         reactant_structures: list[Structure | None] = []
         for candidate in candidates:
-            reactant_structure = self._document.structures.get(self._uuid_from_source(candidate.source, "reactant_structure_id"))
+            reactant_structure = self._document.structures.get(uuid_from_source(candidate.source, "reactant_structure_id"))
             reactant_structures.append(reactant_structure)
             values, row_advanced_names, _extras = self._energy_barrier_neb_row_configuration_with_source_defaults(
                 definition,
@@ -13717,7 +13082,8 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid path length", str(exc))
             return
-        candidates = self._enumerate_energy_barrier_source_candidates(
+        candidates = enumerate_energy_barrier_source_candidates(
+            self._document,
             reactant_key,
             product_key,
             max_distance_ang=max_distance_ang,
@@ -13729,8 +13095,8 @@ class MainWindow(QMainWindow):
             state.pop("max_path_length_ang", None)
         else:
             state["max_path_length_ang"] = max_distance_ang
-        state["generated_sources"] = _replace_serialized_sources_for_pair(
-            self._energy_barrier_generated_sources_from_state(),
+        state["generated_sources"] = replace_serialized_sources_for_pair(
+            state.get("generated_sources", []),
             reactant_site_id=str(reactant.site.id),
             product_site_id=str(product.site.id),
             new_sources=self._serialize_energy_barrier_source_candidates(candidates),
