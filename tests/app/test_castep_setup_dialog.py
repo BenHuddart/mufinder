@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+# Example paths for the keyword-generation command tests. Nothing here is run,
+# so the paths do not need to exist: the tests only check how an MPI-built
+# CASTEP binary is wrapped in its launcher.
+MPI_CASTEP_EXECUTABLE = "/opt/castep/bin/castep.mpi"
+MPIRUN_LAUNCHER = "/opt/openmpi/bin/mpirun"
+
 from dataclasses import replace
 import os
 import sys
@@ -178,8 +184,8 @@ def test_build_castep_keyword_command_passes_serial_executable_through() -> None
 def test_build_castep_keyword_command_wraps_executable_in_mpi_launcher() -> None:
     # MPI-built binaries hang when run directly, so they must be launched via mpirun.
     assert (
-        build_castep_keyword_command("/home/ben/.local/bin/castep.mpi", "/usr/bin/mpirun")
-        == "/usr/bin/mpirun -np 1 /home/ben/.local/bin/castep.mpi"
+        build_castep_keyword_command(MPI_CASTEP_EXECUTABLE, MPIRUN_LAUNCHER)
+        == f"{MPIRUN_LAUNCHER} -np 1 {MPI_CASTEP_EXECUTABLE}"
     )
 
 
@@ -196,12 +202,12 @@ def test_generate_castep_keywords_json_wraps_command_with_mpi_launcher(
     monkeypatch.setattr("ase.calculators.castep.create_castep_keywords", fake_create)
 
     generate_castep_keywords_json(
-        executable_path="/opt/castep/bin/castep.mpi",
+        executable_path=MPI_CASTEP_EXECUTABLE,
         output_path=tmp_path / "castep_keywords.json",
-        mpirun_path="/usr/bin/mpirun",
+        mpirun_path=MPIRUN_LAUNCHER,
     )
 
-    assert commands == ["/usr/bin/mpirun -np 1 /opt/castep/bin/castep.mpi"]
+    assert commands == [f"{MPIRUN_LAUNCHER} -np 1 {MPI_CASTEP_EXECUTABLE}"]
 
 
 def test_generate_castep_keywords_json_raises_when_generation_produces_no_file(
@@ -565,11 +571,11 @@ def test_castep_setup_dialog_local_generation_wraps_executable_in_mpi_launcher(
     monkeypatch.setattr(dialog_module, "QProcess", _FakeProcess)
 
     dialog = CastepSetupDialog(settings=_FakeSettings())
-    dialog._executable_edit.setText("/home/ben/.local/bin/castep.mpi")
-    dialog._mpirun_edit.setText("/usr/bin/mpirun")
+    dialog._executable_edit.setText(MPI_CASTEP_EXECUTABLE)
+    dialog._mpirun_edit.setText(MPIRUN_LAUNCHER)
 
     dialog._start_generation_process(
-        "/home/ben/.local/bin/castep.mpi", tmp_path / "castep_keywords.json"
+        MPI_CASTEP_EXECUTABLE, tmp_path / "castep_keywords.json"
     )
 
     assert len(captured) == 1
@@ -578,8 +584,8 @@ def test_castep_setup_dialog_local_generation_wraps_executable_in_mpi_launcher(
     # argv: ["-u", "-c", <script>, <executable>, <mpirun>, <output path>]
     assert arguments[:2] == ["-u", "-c"]
     assert arguments[3:] == [
-        "/home/ben/.local/bin/castep.mpi",
-        "/usr/bin/mpirun",
+        MPI_CASTEP_EXECUTABLE,
+        MPIRUN_LAUNCHER,
         str(tmp_path / "castep_keywords.json"),
     ]
 
@@ -595,7 +601,7 @@ def test_castep_setup_dialog_local_generation_wraps_executable_in_mpi_launcher(
     exec(arguments[2], {"__name__": "__main__"})
 
     assert ase_calls == [
-        ("/usr/bin/mpirun -np 1 /home/ben/.local/bin/castep.mpi", "castep_keywords.json", str(tmp_path))
+        (f"{MPIRUN_LAUNCHER} -np 1 {MPI_CASTEP_EXECUTABLE}", "castep_keywords.json", str(tmp_path))
     ]
     dialog.close()
 
