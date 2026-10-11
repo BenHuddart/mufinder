@@ -58,7 +58,7 @@ class _SurveyCanvas(QWidget):
         self.faded = False
         self.axis = "c"
         self._hits: list[tuple[QPointF, float, str]] = []
-        self.setMinimumSize(220, 180)
+        self.setMinimumSize(220, 150)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
 
@@ -118,7 +118,7 @@ class _SurveyCanvas(QWidget):
 
     def _fit(self, projection: CellProjection):
         min_x, min_y, max_x, max_y = projection.bounds()
-        area = QRectF(self.rect()).adjusted(18.0, 14.0, -18.0, -26.0)
+        area = QRectF(self.rect()).adjusted(18.0, 24.0, -18.0, -12.0)
         span_x = max(max_x - min_x, 1e-6)
         span_y = max(max_y - min_y, 1e-6)
         scale = min(area.width() / span_x, area.height() / span_y)
@@ -249,9 +249,9 @@ class _SurveyCanvas(QWidget):
         painter.setFont(font)
         painter.setPen(QColor(palette.text_muted))
         painter.drawText(
-            QRectF(8.0, self.height() - 20.0, self.width() - 16.0, 16.0),
-            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            f"Looking down {projection.axis}: {across} across, {up} up",
+            QRectF(8.0, 2.0, self.width() - 16.0, 16.0),
+            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+            f"{across} across, {up} up",
         )
 
 

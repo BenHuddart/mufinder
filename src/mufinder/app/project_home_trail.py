@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QToolTip,
     QVBoxLayout,
@@ -51,6 +52,7 @@ from mufinder.services.project_summary import (
     StageStatus,
     StageSummary,
     group_stage_keys,
+    stage_info,
     summarize_project,
 )
 from mufinder.services.project_survey import discovered_sites_layer, survey_layers
@@ -106,7 +108,6 @@ class ProjectHomeChartWidget(QWidget):
         "quantum_corrections": (0.94, 0.42),
         "energy_barriers": (0.93, 0.80),
     }
-    _CONTOURS = ((0.31, 0.47, 0.07, 0.13), (0.84, 0.62, 0.06, 0.10), (0.56, 0.80, 0.09, 0.08))
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -114,7 +115,7 @@ class ProjectHomeChartWidget(QWidget):
         self._selected: str | None = None
         self._hovered: str | None = None
         self.setObjectName("projectHomeChart")
-        self.setMinimumSize(640, 260)
+        self.setMinimumSize(560, 220)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -248,7 +249,8 @@ class ProjectHomeChartWidget(QWidget):
         metrics = QFontMetricsF(self._label_font(bold=True))
         width = metrics.horizontalAdvance(title) + 8.0
         top = center.y() + self._node_radius() + 4.0
-        return QRectF(center.x() - width / 2.0, top, width, metrics.height() + 2.0)
+        left = min(max(2.0, center.x() - width / 2.0), self.width() - width - 2.0)
+        return QRectF(left, top, width, metrics.height() + 2.0)
 
     def _group_rects(self, centers: dict[str, QPointF]) -> dict[str, QRectF]:
         rects: dict[str, QRectF] = {}
@@ -268,6 +270,12 @@ class ProjectHomeChartWidget(QWidget):
                 rect.adjust(-(title_width - rect.width()) / 2.0, 0.0, (title_width - rect.width()) / 2.0, 0.0)
             rects[group.key] = rect
         return rects
+
+    @staticmethod
+    def _group_fill(palette) -> QColor:
+        fill = QColor(palette.bg_surface)
+        fill.setAlpha(150)
+        return fill
 
     def _group_font(self) -> QFont:
         font = QFont(heading_font_family())
@@ -291,7 +299,6 @@ class ProjectHomeChartWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.fillRect(self.rect(), QColor(palette.bg_primary))
-        self._paint_contours(painter, palette)
         if self._summary is None:
             painter.end()
             return
@@ -302,32 +309,8 @@ class ProjectHomeChartWidget(QWidget):
         for stage in self._summary.stages:
             if stage.key in centers:
                 self._paint_node(painter, palette, stage, centers[stage.key])
-        self._paint_compass(painter, palette)
         self._paint_legend(painter, palette)
         painter.end()
-
-    def _paint_contours(self, painter: QPainter, palette) -> None:
-        colour = QColor(palette.border)
-        colour.setAlpha(70)
-        painter.setPen(QPen(colour, 1.0))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        width, height = float(self.width()), float(self.height())
-        for cx, cy, rx, ry in self._CONTOURS:
-            for ring in range(3):
-                scale = 1.0 - ring * 0.3
-                path = QPainterPath()
-                for step in range(49):
-                    angle = 2.0 * math.pi * step / 48.0
-                    wobble = 1.0 + 0.08 * math.sin(3.0 * angle + cx * 10.0) + 0.05 * math.cos(5.0 * angle + cy * 7.0)
-                    point = QPointF(
-                        width * (cx + rx * scale * wobble * math.cos(angle)),
-                        height * (cy + ry * scale * wobble * math.sin(angle)),
-                    )
-                    if step == 0:
-                        path.moveTo(point)
-                    else:
-                        path.lineTo(point)
-                painter.drawPath(path)
 
     def _paint_groups(self, painter: QPainter, palette, groups: dict[str, QRectF]) -> None:
         font = self._group_font()
@@ -337,9 +320,7 @@ class ProjectHomeChartWidget(QWidget):
                 continue
             border = QColor(palette.border)
             painter.setPen(QPen(border, 1.0, Qt.PenStyle.DashLine))
-            fill = QColor(palette.bg_surface)
-            fill.setAlpha(150)
-            painter.setBrush(fill)
+            painter.setBrush(self._group_fill(palette))
             painter.drawRoundedRect(rect, 14.0, 14.0)
             painter.setFont(font)
             painter.setPen(QColor(palette.text_muted))
@@ -417,11 +398,18 @@ class ProjectHomeChartWidget(QWidget):
             self._paint_flag(painter, palette, center, radius)
 
         selected = stage.key == self._selected
+        label_rect = self._label_rect(stage.key, center)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(palette.bg_primary))
+        painter.drawRoundedRect(label_rect, 4.0, 4.0)
+        if stage_info(stage.key).group is not None:
+            painter.setBrush(self._group_fill(palette))
+            painter.drawRoundedRect(label_rect, 4.0, 4.0)
         painter.setFont(self._label_font(bold=selected))
         label_colour = QColor(palette.text_primary if stage.status != StageStatus.NOT_STARTED else palette.text_muted)
         painter.setPen(label_colour)
         painter.drawText(
-            self._label_rect(stage.key, center),
+            label_rect,
             int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextSingleLine),
             stage.title,
         )
@@ -453,27 +441,6 @@ class ProjectHomeChartWidget(QWidget):
         painter.drawPolygon(
             QPolygonF([top, QPointF(top.x() - radius * 0.95, top.y() + radius * 0.32), QPointF(top.x(), top.y() + radius * 0.64)])
         )
-
-    def _paint_compass(self, painter: QPainter, palette) -> None:
-        area = self._chart_rect()
-        center = QPointF(area.left() + area.width() * 0.655, area.top() + area.height() * 0.86)
-        size = max(12.0, min(20.0, self.height() * 0.05))
-        colour = QColor(palette.text_muted)
-        colour.setAlpha(170)
-        painter.setPen(QPen(colour, 1.0))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawEllipse(center, size * 0.8, size * 0.8)
-        for dx, dy in ((0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)):
-            tip = QPointF(center.x() + dx * size, center.y() + dy * size)
-            side_a = QPointF(center.x() - dy * size * 0.18, center.y() + dx * size * 0.18)
-            side_b = QPointF(center.x() + dy * size * 0.18, center.y() - dx * size * 0.18)
-            painter.setBrush(QColor(palette.accent) if dy == -1.0 else colour)
-            painter.drawPolygon(QPolygonF([tip, side_a, center, side_b]))
-        font = QFont(heading_font_family())
-        font.setPixelSize(round(size * 0.7))
-        painter.setFont(font)
-        painter.setPen(colour)
-        painter.drawText(QRectF(center.x() - size, center.y() - size * 2.2, 2 * size, size), int(Qt.AlignmentFlag.AlignCenter), "N")
 
     def _paint_legend(self, painter: QPainter, palette) -> None:
         font = QFont(body_font_family())
@@ -577,6 +544,18 @@ class FieldNotesPanel(QFrame):
             self.route_requested.emit(self._stage.key)
 
 
+class _FitToViewportLayout(QVBoxLayout):
+    """Page layout that fills the scroll viewport and scrolls only below its minimum.
+
+    Word-wrapped labels make a layout report height-for-width, and a resizable
+    ``QScrollArea`` then sizes its content to the preferred height instead of
+    the viewport, so the page would scroll even when it fits.
+    """
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt API naming.
+        return False
+
+
 class ProjectHomeWidget(QWidget):
     """The project home: progress line, workflow chart, field notes and cell survey.
 
@@ -592,7 +571,17 @@ class ProjectHomeWidget(QWidget):
         self._document: ProjectDocument | None = None
         self._stale = True
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(self._scroll)
+        content = QWidget(self._scroll)
+        content.setObjectName("projectHomeContent")
+        self._scroll.setWidget(content)
+
+        layout = _FitToViewportLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 

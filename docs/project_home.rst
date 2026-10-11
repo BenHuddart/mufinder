@@ -58,6 +58,10 @@ retrieving). A red flag marks the stage the user last worked on; the chart
 opens with that stage selected. A line is drawn darker once the stage it leads
 to has started.
 
+Labels stay inside the chart at every width. When the window is too short for
+the whole page, the page scrolls rather than squeezing the chart or the panels
+below it.
+
 Click a waypoint to select it; double-click it, or press Return, to open its
 page. The arrow keys move the selection through the stages in workflow order.
 
@@ -76,7 +80,8 @@ Survey of the cell
 ------------------
 
 The survey draws the active host's unit cell looking down one lattice vector,
-chosen with the ``a``, ``b`` and ``c`` buttons. Atoms on the cell faces appear
+chosen with the ``a``, ``b`` and ``c`` buttons; the corner caption names the
+lattice vectors running across and up the drawing. Atoms on the cell faces appear
 on every face they touch, atoms deeper in the cell are drawn fainter, and a key
 names each element's colour. Hovering an atom or a marker shows what it is.
 

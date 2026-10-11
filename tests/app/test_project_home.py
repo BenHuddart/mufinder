@@ -186,3 +186,26 @@ def test_survey_without_host_or_positions_says_so(qapp, tmp_path: Path) -> None:
     pixmap = QPixmap(320, 280)
     survey.render(pixmap)
     assert not pixmap.toImage().isNull()
+
+
+def test_short_window_scrolls_instead_of_squeezing_the_page(qapp, tmp_path: Path) -> None:
+    home = ProjectHomeWidget()
+    home.set_document(muon_project(tmp_path).document)
+    home.resize(1000, 360)
+    home.show()
+    qapp.processEvents()
+
+    assert home.chart.height() >= home.chart.minimumHeight()
+    assert home.survey.canvas.height() >= home.survey.canvas.minimumHeight()
+    assert home._scroll.verticalScrollBar().maximum() > 0
+    home.close()
+
+
+def test_chart_labels_stay_inside_the_chart_at_its_minimum_width(qapp, tmp_path: Path) -> None:
+    chart = _chart(tmp_path)
+    chart.resize(chart.minimumSize())
+
+    for key in ProjectHomeChartWidget.NODE_POSITIONS:
+        rect = chart._label_rect(key, chart.node_center(key))
+        assert rect.left() >= 0.0
+        assert rect.right() <= chart.width()
