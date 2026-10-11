@@ -174,6 +174,13 @@ categories.
 row inherits that relaxation's ``CUT_OFF_ENERGY``, ``KPOINT_MP_GRID``,
 ``XC_FUNCTIONAL``, and spin treatment (``SPIN_POLARIZED``), so the phonon
 calculation stays comparable with the relaxation that produced the geometry.
+The functional and cutoff come from the source ``.param`` and the grid from the
+source ``.cell``, so a later change of project default does not affect them.
+The spin treatment is taken as CASTEP ran it: the ``.param`` file's
+``SPIN_POLARIZED`` (either spelling) when present, otherwise on when the run's
+net ``SPIN`` or any per-atom ``SPIN=`` token in its ``.cell`` is non-zero. When
+the source ``.param`` cannot be read, a muonium source still defaults to
+spin-polarised, matching how its relaxation was written.
 ``SCF Energy Tolerance`` defaults to ``1e-9 eV``, tighter than for other
 workflows, because phonon forces need a well-converged ground state. Values you
 set in the dialog override the inherited defaults for that row only.

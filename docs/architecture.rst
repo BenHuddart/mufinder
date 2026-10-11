@@ -20,7 +20,11 @@ Package layers
 ``mufinder.persistence``
    JSON storage and codec helpers. Persistence may serialize domain objects but
    must not reach into UI, CASTEP I/O, services, workflow expansion, or science
-   modules.
+   modules. Saved projects carry a schema version (``PROJECT_SCHEMA_VERSION``
+   in ``mufinder.domain.models``, currently 2); ``mufinder.persistence.migrations``
+   upgrades the raw payloads of a project saved at an older version when it is
+   loaded, one version-keyed step at a time. See
+   :doc:`compatibility_policy` for each step.
 
 ``mufinder.science``
    Numerical and crystallographic algorithms, including site generation,
@@ -96,7 +100,8 @@ the structural test in the same change.
 A few top-level modules sit outside the seven layers and are not checked by
 the structural test: ``mufinder.main`` (application entry point),
 ``mufinder.branding`` (Qt icons), ``mufinder.assets`` / ``mufinder.data``
-(packaged resources, including the starter ``keyword_catalog.yaml``),
+(packaged resources, including the starter ``keyword_catalog.yaml`` and the
+shell script templates in ``mufinder/assets/shell/``),
 ``mufinder._version``, ``mufinder.castep_setup`` (saved CASTEP setup and
 keyword-catalog management, used by the app), and ``mufinder.cluster_setup``
 (the built-in cluster presets and the ``QSettings`` persistence of cluster
@@ -122,9 +127,10 @@ policy, move the reusable part into the appropriate shared layer:
   periodic deduplication) belongs in ``mufinder.science.lattice``, symmetry
   plumbing (spglib cells, cached symmetry operations, orbits) in
   ``mufinder.science.spglib_compat``, conversion to ASE ``Atoms`` in
-  ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``
-  and clustering of its optimized positions in
-  ``mufinder.science.uep_clustering``
+  ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``,
+  clustering of its optimized positions in
+  ``mufinder.science.uep_clustering`` and every ``muesr`` import in
+  ``mufinder.science._muesr_compat``
 - reading CASTEP text belongs in ``mufinder.castep_io``, including the
   formatted density, pseudopotential reports and cell charge the UEP analysis
   needs (``mufinder.castep_io.charge_density``); the keyword schema keeps
@@ -139,7 +145,9 @@ policy, move the reusable part into the appropriate shared layer:
 - shared adapter logic that turns GUI value dicts into workflow templates
   belongs in ``mufinder.app.adapter_common``
 - persisted compatibility behavior belongs in ``mufinder.persistence`` or the
-  owning service, with a ledger entry in :doc:`compatibility_policy`
+  owning service, with a ledger entry in :doc:`compatibility_policy`; a
+  rewrite of saved-project payloads is a step in
+  ``mufinder.persistence.migrations`` behind a schema version bump
 
 The preferred outcome is code that future agents can navigate by package name,
 not by remembering where a previous implementation happened to grow.
@@ -188,9 +196,42 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
   :func:`~mufinder.app.adapter_common.supercell_label` are the one parser,
   identity test and label for a 3×3 supercell matrix, used by the adapters and
   the workflow widgets alike.
+- :func:`~mufinder.app.adapter_common.project_convergence_parameter_values`
+  turns the project defaults (functional, cut-off energy in eV, k-point grid
+  rescaled to a target cell) into GUI parameter values, the lowest layer of an
+  energy-barrier path's configuration.
 
 ``adapter_common`` must remain free of PySide imports; it depends only on
 ``workflow``, ``castep_io``, ``science``, and ``domain``.
+
+Calculation job generation
+--------------------------
+
+Every CASTEP job MuFinder runs is generated the same way:
+
+- Workflow expansion produces resolved ``JobSpec`` objects, the canonical
+  description of a job. The CASTEP rendering adapter renders only resolved
+  ``JobSpec`` objects, so workflow logic never writes CASTEP syntax.
+- Structure bridging, from a domain ``Structure`` to a ``StructureSpec``, is
+  separate from CASTEP rendering.
+- Parameters are layered as ``InputTemplate`` objects in one explicit
+  precedence order: global defaults, workflow defaults, structure-derived
+  values, sweep-generated overrides, explicit user overrides (see
+  ``mufinder.workflow`` under Package layers).
+- Per-job variation is modelled with ``JobPatch``, which carries structure,
+  cell and param overrides.
+- ``mufinder.workflow`` has one keyword-only ``expand_*`` function per
+  workflow: convergence sweeps over ``CUT_OFF_ENERGY`` and
+  ``KPOINT_MP_GRID``, muon-site sweeps over initial fractional muon positions,
+  pristine and muon relaxation jobs, quantum-correction singlepoint and phonon
+  jobs, and nudged-elastic-band energy-barrier jobs.
+- Job names are deterministic and filesystem-safe, and each resolved job has
+  its own output directory.
+- Local output writing (``mufinder.workflow.output``) writes each job's
+  ``.cell`` and ``.param`` files plus a ``manifest.json`` for reproducibility
+  and debugging.
+- ``.cell`` files carry inline ``SPIN=...`` tokens on ``POSITIONS_FRAC`` rows
+  when, and only when, spin polarization is enabled.
 
 Shared workflow infrastructure
 ------------------------------
@@ -222,7 +263,8 @@ no two workflow widgets may define the same private method.
        (``SelectionFeedback``, ``selected_table_rows``), delete/backspace binding
        (``bind_delete_shortcuts``) and the locked-row rule
        (``workflow_row_is_locked``: rows with no job yet and ``cancelled``
-       rows are editable, every other status locks the row).
+       rows are editable, every other status locks the row), and energies in
+       a results table (``format_energy_ev``).
    * - ``mufinder.app.selection_snapshot``
      - Targeting for in-row controls (``SelectionSnapshotPushButton``,
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
@@ -246,20 +288,31 @@ no two workflow widgets may define the same private method.
        ``geometry_relaxation_parameter_specs``, ``clone_spec_for_workflow``),
        the shared-row ordering, schema and project defaults
        (``workflow_default_params``, ``drop_default_conflicts``,
-       ``drop_explicit_conflicts``, ``seed_xc_functional_default``), and
+       ``drop_explicit_conflicts``, ``seed_xc_functional_default``),
        sanitising and restoring persisted parameter values
-       (``sanitize_parameter_mapping``, ``restore_structured_value``).
+       (``sanitize_parameter_mapping``, ``restore_structured_value``), the
+       values rows edited together share or differ on
+       (``shared_parameter_values``, ``mixed_parameter_names``) and the
+       species-keyword options of a structure (``structure_species_options``,
+       ``merge_species_options``).
    * - ``mufinder.app.workflow_config_codecs``
      - The persistence codecs for each workflow's stored
        ``CalculationDefinition.parameters["configuration"]``
        (``serialize_*_config`` and ``deserialize_*_config`` for UEP, pristine
-       relaxation, muon relaxation and convergence) and
-       ``normalized_supercell_matrix``. It sits in ``app`` because the
-       configuration dataclasses and ``restore_structured_value`` do.
+       relaxation, muon relaxation and convergence),
+       ``normalized_supercell_matrix``, and the per-row
+       ``configuration["row_settings"]`` entries of the source-keyed workflows
+       (``workflow_row_configuration``, ``workflow_row_configuration_exists``,
+       ``num_farms_from_extras``, ``row_settings_payload``,
+       ``batch_row_payload``, ``store_workflow_row_configuration``). It sits
+       in ``app`` because the configuration dataclasses and
+       ``restore_structured_value`` do.
    * - ``mufinder.app.workflow_dialogs``
      - The row parameter dialog (``run_row_parameter_dialog``, driven by a
-       ``RowParameterRequest`` and returning a ``RowParameterResult``) and the
-       workflow configure dialogs.
+       ``RowParameterRequest`` and returning a ``RowParameterResult``), the
+       source tables' Configure dialog runner (``run_source_configure_dialog``,
+       driven by a ``SourceConfigureRequest`` and returning a
+       ``SourceConfigureResult``) and the workflow configure dialogs.
    * - ``mufinder.app.param_dialog``
      - The CASTEP parameter dialog the configure dialogs build on
        (``ParameterDialog``).
@@ -274,8 +327,9 @@ no two workflow widgets may define the same private method.
    * - ``mufinder.app.workflow_controllers.base``
      - The submit, materialize, result and refresh cycle (see Workflow
        controllers), ``dedupe_jobs`` for the jobs a ``materialize`` or
-       ``jobs_for_keys`` returns, derived-structure upsert and row-parameter
-       mirroring.
+       ``jobs_for_keys`` returns, the active-host guard on a submission's
+       structures and sites (``confirm_active_host``), derived-structure
+       upsert and row-parameter mirroring.
    * - ``mufinder.app.workflow_controllers.sweep_convergence``
      - The cycle the two convergence sweeps share
        (``SweepConvergenceController``).
@@ -304,9 +358,10 @@ no two workflow widgets may define the same private method.
      - Keeping a workflow's definitions consistent: copying job bindings from
        equivalent definitions (``sync_equivalent_mappings``, with the two
        binding priority orders), dropping rows and their bindings
-       (``remove_labels_from_definition``, ``remove_definition_if_no_rows``)
-       and the sweep and source-row equivalents (see Definition mappings and
-       row removal).
+       (``remove_labels_from_definition``, ``remove_definition_if_no_rows``),
+       the sweep and source-row equivalents, and dropping generated paths
+       from the Energy Barriers form state (``remove_generated_sources``; see
+       Definition mappings and row removal).
    * - ``mufinder.services.cluster_submission_planner``
      - The decisions of a cluster submission: stranded quantum phonon jobs,
        connection reuse, each job's remote target (start again, continuation,
@@ -316,12 +371,53 @@ no two workflow widgets may define the same private method.
        with the failed, skipped and missing jobs
        (``plan_cluster_submission``). The window keeps the dialog, the
        prompts and the message boxes.
+   * - ``mufinder.services.cluster_retrieval``
+     - Retrieving a finished cluster job's output over SSH: which remote files
+       to download (task-farm names, per-rank error files, scheduler logs),
+       ordering them against the uploaded ``{seed}.param`` so a continuation
+       never takes the previous run's output, and classifying the parsed
+       result as completed, stopped at walltime or failed, with retry-eligible
+       failures marked (``retrieve_job_outputs``, ``RetrievalResult``,
+       ``retrieve_error_files``). ``ClusterJobRunner`` keeps the signals, the
+       tracked-job state and the missing-entry attempt counter.
+   * - ``mufinder.services.shell_templates``
+     - Shell scripts MuFinder sends to a cluster, kept as templates in
+       ``mufinder/assets/shell/`` and rendered by ``render_shell_template``:
+       the ``${tpl_name}`` placeholder convention (every other ``$`` is the
+       shell's), ``##`` documentation lines, and dropping a line whose lone
+       placeholder is empty. Callers compute and shell-quote the values; the
+       templates stay plain shell, checked with ``bash -n`` by the tests.
    * - ``mufinder.services.source_candidates``
      - Read-only source queries over the project document: the relaxed muon
        sites eligible for quantum corrections, their relative energies,
-       labels and two-stage state, the generated diffusion paths and NEB
-       results for energy barriers, and the completed pristine and muon
-       relaxations offered to comparison and relaxation analysis.
+       labels, seed names, stored ``sources`` entries and two-stage state, and
+       the settings a follow-on row inherits from its source relaxation's
+       input files (``source_relaxation_parameter_values``); the generated
+       diffusion paths, their labels, stored form and preview supercell, the
+       Energy Barriers form state they live in and the NEB results for energy
+       barriers; and the completed pristine and muon relaxations offered to
+       comparison and relaxation analysis.
+   * - ``mufinder.services.project_document``
+     - The in-memory project aggregate (``ProjectDocument``), the active host
+       (``active_host_structure``) and the read-only definition and job
+       lookups (``definitions_for_stage``, ``active_definition``,
+       ``job_for_mapping_key``; see Workflow controllers).
+       ``mufinder.services.project_service`` re-exports these names.
+   * - ``mufinder.services.supercell_assets``
+     - Saved supercell assets built from a host (create, rename, regenerate,
+       delete, the frozen rule and its references), each workflow's
+       simulation-cell selection in ``ui_state["workflow_supercells"]`` and
+       its resolution to a structure (``resolve_workflow_structure``), and
+       per-atom spins for a structure (``structure_atomic_spins``).
+       ``ProjectService`` delegates to it under the same method names.
+   * - ``mufinder.services.site_generation_service``
+     - Candidate muon-site generation for each method (manual, random by
+       separation or count, attached to an element, UEP cluster rows),
+       clustering generated sites near an anchor, removing and staging
+       generated sites, and the generated-site statuses. Each entry point
+       changes the document in memory and returns its provenance records in a
+       ``SiteGenerationOutcome``; ``ProjectService`` appends them. The
+       placement maths is ``mufinder.science.site_generation``.
    * - ``mufinder.workflow.naming``
      - Job names (``job_name``) and the remote naming of a cluster
        submission: the workflow directory fragment, the default scheduler
@@ -345,10 +441,20 @@ no two workflow widgets may define the same private method.
      - Structure to ASE ``Atoms`` (``structure_to_ase_atoms`` with
        ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``) and
        the muon-label and element-symbol rules.
+   * - ``mufinder.science._muesr_compat``
+     - The ``muesr`` import boundary (``muesr_imports``): NumPy alias
+       restoration, a temporary ``cgi`` stand-in on Python 3.13+ and the
+       ``cgi`` deprecation-warning filter. Import ``muesr`` modules only inside
+       it.
    * - ``mufinder.castep_io``
      - CASTEP syntax: cell and param parsing and writing, keyword metadata
        (``schema``) and validation (``validators``); see
        :doc:`castep_keyword_catalog`.
+   * - ``mufinder.persistence.project_codec``
+     - Decoding each persisted project entity into its domain record
+       (``*_from_dict``, ``ENTITY_DECODERS``, ``jobs_in_creation_order``) and
+       the read-side repairs for older projects; encoding is ``to_jsonable``
+       in ``mufinder.persistence.codec``.
    * - ``mufinder.domain.magnetic_properties``
      - Spins and propagation vectors read from ``Structure.properties``
        (``atomic_spins_from_structure``,
@@ -591,7 +697,7 @@ Three class attributes declare which calculation definitions a controller owns:
   active one (quantum corrections, energy barriers).
 
 From these the base class answers every definition and job lookup through the
-read-only queries in :mod:`mufinder.services.project_service`, so no workflow
+read-only queries in :mod:`mufinder.services.project_document`, so no workflow
 repeats them:
 
 - ``definitions()`` returns the matching definitions, newest first
@@ -654,7 +760,7 @@ overriding these hooks.
      - Drop the named rows and their job bindings from one definition and
        report whether it was deleted for having no row left. Called by the
        ``remove_rows(labels)`` template method for each of ``definitions()``.
-     - k-point sweep, pristine and muon relaxation, UEP
+     - k-point sweep, pristine and muon relaxation, UEP, energy barriers
    * - ``row_key_matcher(labels)``
      - The predicate picking the job-mapping keys of removed rows, which the
        window's job-file cleanup uses. The default matches a key whose string
@@ -809,17 +915,19 @@ Controller summary
        ``density_available`` flag only.
    * - ``QuantumCorrectionsController``
      - Two stages per source: singlepoint, then phonon. ``materialize``
-       dispatches each source to its current stage and writes
-       ``singlepoint_job_ids_by_label`` / ``phonon_job_ids_by_label`` plus
-       ``job_seed_names_by_label``; ``pre_submit_check`` runs the host guard
-       shared with energy barriers; ``build_result`` derives the muon ZPE,
+       dispatches each source to its current stage (``stage_state``) and
+       writes ``singlepoint_job_ids_by_label`` / ``phonon_job_ids_by_label``
+       plus ``job_seed_names_by_label``; ``pre_submit_check`` checks the active
+       definition against the active host (``confirm_active_host``) and a
+       stage-2 row's stage-1 muon mass; ``build_result`` derives the muon ZPE,
        gamma-point eigenvalues, mode participations and the ``w1`` witness from
        the carrier's parsed phonon calculation, and a singlepoint job
        contributes an empty result. Both calc types are ``handles_job``-owned.
-       Its source rows and each row's stage come from
-       :mod:`mufinder.services.source_candidates`
-       (``eligible_quantum_source_candidates``, ``quantum_stage_state``),
-       reached through ``QuantumCorrectionsDeps``.
+       Its source rows come from :mod:`mufinder.services.source_candidates`.
+       It also answers, for the cluster submission, where a phonon job's
+       stage 1 ran and which remote directory it continues in
+       (``stage_one_target``, ``continuation_remote_target``), and lists the
+       rows "Reset to Stage 1" may rewind (``stage_one_resets``).
    * - ``EnergyBarriersController``
      - Keyed by diffusion-path source key, stamped on each spec as
        ``provenance={"source_key": key}``. ``materialize`` aligns the endpoints
@@ -832,8 +940,43 @@ Controller summary
        transition-state-search calc types are ``handles_job``-owned. Takes a
        ``view_getter`` because its view is created on first visit. Its
        generated paths, NEB sources and completed NEB results come from
-       :mod:`mufinder.services.source_candidates`, reached through
-       ``EnergyBarriersDeps``.
+       :mod:`mufinder.services.source_candidates`. It generates paths between
+       the selected endpoints into the form state (``generate_paths``), drops
+       them from the form state and from both its NEB definitions and the
+       transition-state-search sets older configurations stored them in
+       (``remove_rows``), and drives the path viewer and NEB preview
+       (``path_preview``, ``show_neb_preview``).
+
+Source table controllers
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The quantum-corrections and energy-barriers controllers back the two
+``SourceTableWidget`` subclasses, so they share a small contract beyond the
+hooks above:
+
+- ``candidates()`` returns the table's sources, ``ensure_definition(keys)``
+  returns the active definition with the given sources recorded (creating it
+  on first use) and ``definition_and_key_for_job(job)`` finds the row a job
+  belongs to, which the submit backends use to read the row's farm count.
+- ``configure_request(keys)`` returns the Configure dialog's seed, a
+  ``SourceConfigureRequest`` (each row's effective parameters, the dialog's
+  title and intro text, whether it opens read-only, the agreed farm count and
+  the species options); the window builds the workflow's dialog, runs it
+  through ``run_source_configure_dialog`` and passes the result to
+  ``apply_configuration(keys, result, extras)``, which stores each row's
+  ``row_settings`` entry (a mixed parameter left untouched keeps each row's
+  own value), refreshes the view and persists.
+- A row's effective parameters layer its stored ``row_settings`` over the
+  settings of its source relaxation
+  (``source_relaxation_parameter_values``); an energy-barrier path also
+  starts from the project defaults and rounds its image count up to an odd
+  number.
+
+Their deps hold only what needs the window: the host-mismatch dialogs
+(``handle_structure_host_mismatch``, ``handle_site_host_mismatch``), and a
+yes/no question (quantum corrections) or a warning (energy barriers). The
+window keeps the dialogs themselves, the job-file cleanup before a path is
+removed or a row is reset to stage 1, and the phonon analysis windows.
 
 Definition mappings and row removal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -871,7 +1014,9 @@ definitions' ids. The k-point sweep drops grids from ``sweep_values`` and
 keeps the definition; the cutoff sweep drops one cutoff at a time from the
 equivalent definitions and deletes a definition with none left; the
 energy-barrier definitions drop sources and their row settings through
-``remove_source_keys_from_definition`` and are deleted with no source left.
+``remove_source_keys_from_definition`` and are deleted with no source left,
+and the removed paths also leave the Energy Barriers form state
+(``remove_generated_sources``).
 
 In-place row parameter edits
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -993,3 +1138,129 @@ the functional. When adding a workflow that consumes project defaults, give
 its widget a strip, add it to ``MainWindow._project_defaults_strips``, and pass
 ``project_xc_functional`` to its adapter alongside the cutoff and k-point
 defaults.
+
+CASTEP parameter dialogs
+------------------------
+
+Workflow parameter entry is metadata-driven (``mufinder.app.param_dialog``,
+opened through ``mufinder.app.workflow_dialogs``):
+
+- The parameters a dialog offers depend on the job type and are read from the
+  CASTEP keyword metadata (:doc:`castep_keyword_catalog`).
+- Parameters are split into basic and advanced ones, and advanced parameters
+  are disclosed on demand.
+- Each parameter kind has its own typed widget: drop-downs, checkboxes,
+  numeric controls, triplets and unit-aware float inputs.
+- Each parameter has a help dialog sourced from the keyword metadata.
+- The dialog returns structured values that map onto ``InputTemplate`` /
+  ``JobPatch`` data, never raw text.
+- The search box only filters which rows are shown. Pressing ``OK`` with a
+  search active still validates and saves every parameter in the dialog,
+  including hidden ones and either/or pairs of which only one member matches
+  the search.
+
+Configuring several rows at once (``Configure Selected Parameters...``, a
+row's ``Configure...`` button on a multi-row selection, or ``Configure...`` in
+the row menu) opens one parameter dialog for all of them:
+
+- A parameter the rows agree on is shown with that value. A parameter on which
+  they differ is marked ``mixed``, and a note at the top of the dialog explains
+  the marker.
+- On ``OK`` each row keeps its own value for every mixed parameter that was
+  left alone, including rows that had no value for it. Everything else in the
+  dialog is written to every row.
+- Changing a mixed parameter, pressing its ``Reset``, removing its row, or
+  choosing which member of an either/or pair is active (for example k-point
+  grid or spacing) clears the marker, and that choice then applies to every
+  row. While one member of such a pair is still mixed the whole pair is left as
+  it is on each row, since the rows may differ in which member they use.
+- Accepting the dialog without changing anything leaves every mixed parameter
+  as it was on each row.
+
+This applies in the cutoff and k-point convergence, pristine and muon
+relaxation, UEP, Energy Barriers and Quantum Corrections tables. The farm count
+in the Energy Barriers and Quantum Corrections dialogs, and the pseudopotential
+family in the Quantum Corrections dialog, are not parameters in this sense: for
+a mixed selection they open at a single value (the family at ``unknown``),
+which is written to every selected row on ``OK``.
+
+Domain model and persistence
+----------------------------
+
+The core domain records are ``Project``, ``Structure``, ``MuonSite``,
+``CalculationDefinition``, ``CalculationRun``, ``Result``, ``Job`` and the
+structured ``ProvenanceRecord`` (:doc:`project_specification` lists the full
+model and the project directory layout). A project is stored as JSON, one file
+per entity under ``entities/``, alongside a project manifest, a state snapshot
+and a provenance JSONL stream. Cross-entity references are validated before
+save.
+
+``ProjectService.save_project`` tracks changes by content hash: it skips
+rewriting any entity file (and ``state.json``) whose canonical serialized
+payload is unchanged since the last save or load, guarding each skip with a
+file-existence check so an externally deleted file is always regenerated. The
+manifest is always written, because its ``modified_at`` is bumped on every
+save. This is a save-time optimization only and does not change the on-disk
+format.
+
+Saving is split between autosave and manual save:
+
+- Durable project state, such as imported structures, saved workflow assets,
+  generated and removed muon-site entities, calculation definitions, run
+  tracking and results, is autosaved, so active work is not lost if MuFinder
+  rebuilds the project view.
+- Analysis-session state stays in memory until the user chooses ``Save
+  Project``, or answers ``Yes`` to the ``Save project?`` prompt shown whenever a
+  project window is closed. Opening a different project flushes the autosave
+  but does not prompt, so unsaved analysis-session state is discarded; save
+  first.
+- The manual-save bucket holds exploratory UI state: UEP wizard tab choices,
+  clustering-window state, viewer camera and orientation, bond and spin
+  visibility, and slice and isosurface display settings.
+
+``Save Project`` is therefore the action that commits the current analysis
+layout and visualization choices for the next session, while autosave
+protects durable project and job state.
+
+Cross-platform appearance
+-------------------------
+
+MuFinder renders identically on macOS, Windows and Linux rather than inheriting
+each platform's native look:
+
+- The Qt ``Fusion`` base style is forced on every platform
+  (``mufinder.app.theme.apply_base_style``), giving the stylesheet one
+  predictable, fully styleable baseline instead of leaking native controls
+  through on unstyled widgets.
+- Typography ships with the application. The bundled families, **Fraunces**
+  for the "field-journal" headings and **Inter** for body text, live in
+  ``mufinder/assets/fonts`` and are registered at startup by
+  ``mufinder.app.theme.ensure_fonts_loaded``, so the same fonts appear whatever
+  is installed on the machine. System fonts (Helvetica Neue/Arial, Georgia)
+  remain only as a fallback.
+- Action and toolbar icons are MuFinder's own vector glyphs
+  (``mufinder.app.icons``) rather than the platform's ``QStyle.standardIcon``
+  artwork, which is used only for names without a branded glyph.
+- Checkbox and radio-button indicators are drawn by the stylesheet with bundled
+  tick and dot glyphs and tinted with the muon-red accent, instead of each
+  operating system's native artwork and accent colour. Checkable rows in tree,
+  table and list views get the same treatment, so table checkboxes match form
+  checkboxes.
+- The project-home trail map scales with the window: the artwork keeps its
+  aspect ratio and the signpost labels are sized relative to the rendered
+  banner, so they stay proportionate and legible from small laptops to large
+  high-DPI displays.
+- Embedded plots keep their labels inside the plot area at every window size
+  (see Plot canvas policy). The plots that share a window with other content,
+  namely the relaxation clustering and displacement plots, the UEP clustering
+  plots, the quantum single-particle plot and the pinned convergence plots, have
+  a pop-out button in their top-right corner. Their original spot shows a
+  ``Show here`` button while the plot is out, and the plot returns when its
+  window is closed, when Escape is pressed in it, or when the dialog closes.
+- On Linux Wayland sessions the entry point (``mufinder.main``) forces the Qt
+  ``xcb`` platform before the ``QApplication`` is created. The 3D viewers embed
+  VTK render windows that draw through X11/GLX; under a native Qt Wayland
+  window the widget has no X11 window id and VTK aborts the process with a
+  fatal ``BadWindow`` X error. Routing Qt through XWayland gives VTK real X11
+  windows. The override applies only on Linux, is skipped when the user has
+  set ``QT_QPA_PLATFORM``, and requires an XWayland ``DISPLAY``.

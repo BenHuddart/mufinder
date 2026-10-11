@@ -15,7 +15,9 @@ definitions consistent, and every workflow runs them through this module:
   values rather than rows, and the energy-barrier definitions, which list
   sources, have their own removals: :func:`remove_grid_keys_from_definition`,
   :func:`remove_cutoff_from_definition` and
-  :func:`remove_source_keys_from_definition`.
+  :func:`remove_source_keys_from_definition`; the generated paths those sources
+  come from are dropped from the Energy Barriers form state by
+  :func:`remove_generated_sources`.
 
 The functions take a workflow's configuration codec and row helpers as
 callables, because the configuration types belong to the application layer.
@@ -32,6 +34,7 @@ from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import CalculationDefinition
 from mufinder.services.job_paths import definition_output_directory
 from mufinder.services.project_service import ProjectDocument
+from mufinder.services.source_candidates import ENERGY_BARRIERS_FORM_STATE_KEY
 
 ConfigT = TypeVar("ConfigT")
 KeyT = TypeVar("KeyT", bound=Hashable)
@@ -401,11 +404,10 @@ def remove_cutoff_from_definition(
 ) -> bool:
     """Drop one cutoff energy from a cutoff-sweep definition.
 
-    The first ``cutoff_energies`` entry equal to ``cutoff`` is dropped, as is
-    every equal ``sweep_values`` entry; the position of the first dropped
-    entry also drops the matching ``job_labels`` entry. Override groups lose
-    the cutoff and an emptied group is dropped; a malformed group or value in
-    one is dropped as well. The cutoff's ``mapping_name`` entry is removed.
+    Every ``sweep_values`` entry equal to ``cutoff`` is dropped; the position
+    of the first dropped entry also drops the matching ``job_labels`` entry.
+    Override groups lose the cutoff and an emptied group is dropped; a
+    malformed group or value in one is dropped as well. The cutoff's ``mapping_name`` entry is removed.
     A definition left with no cutoff is deleted, clearing
     ``ui_state[active_key]`` when it names the definition. Returns whether the
     definition was deleted.
@@ -417,21 +419,6 @@ def remove_cutoff_from_definition(
 
     cutoff_to_remove = float(cutoff)
     remove_index: int | None = None
-    cutoffs = configuration.get("cutoff_energies")
-    if isinstance(cutoffs, list):
-        updated_cutoffs: list[object] = []
-        for index, raw_value in enumerate(cutoffs):
-            try:
-                value = float(raw_value)
-            except (TypeError, ValueError):
-                updated_cutoffs.append(raw_value)
-                continue
-            if remove_index is None and value == cutoff_to_remove:
-                remove_index = index
-                continue
-            updated_cutoffs.append(value)
-        configuration["cutoff_energies"] = updated_cutoffs
-
     raw_sweep_values = configuration.get("sweep_values")
     if isinstance(raw_sweep_values, list):
         updated_sweep_values: list[object] = []
@@ -482,8 +469,7 @@ def remove_cutoff_from_definition(
     if isinstance(labels, list) and remove_index is not None and remove_index < len(labels):
         labels.pop(remove_index)
 
-    remaining_cutoffs = configuration.get("cutoff_energies", configuration.get("sweep_values"))
-    if remaining_cutoffs:
+    if configuration.get("sweep_values"):
         return False
     document.calculations.pop(definition.id, None)
     if active_key is not None and document.ui_state.get(active_key) == str(definition.id):
@@ -535,6 +521,21 @@ def remove_source_keys_from_definition(
     document.calculations.pop(definition.id, None)
     return True
 
+
+def remove_generated_sources(document: ProjectDocument, keys: Collection[str]) -> None:
+    """Drop the generated paths ``keys`` name from the Energy Barriers form state."""
+
+    state = document.ui_state.get(ENERGY_BARRIERS_FORM_STATE_KEY, {})
+    if not isinstance(state, dict):
+        return
+    raw_sources = state.get("generated_sources", [])
+    if isinstance(raw_sources, list):
+        state["generated_sources"] = [
+            source
+            for source in raw_sources
+            if not isinstance(source, dict) or str(source.get("key", "")).strip() not in keys
+        ]
+
 __all__ = [
     "LABEL_MAPPING",
     "convergence_mapping_job_priority",
@@ -543,6 +544,7 @@ __all__ = [
     "relaxation_mapping_job_priority",
     "remove_cutoff_from_definition",
     "remove_definition_if_no_rows",
+    "remove_generated_sources",
     "remove_grid_keys_from_definition",
     "remove_labels_from_definition",
     "remove_source_keys_from_definition",

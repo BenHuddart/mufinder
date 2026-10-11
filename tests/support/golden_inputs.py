@@ -108,7 +108,6 @@ def build_convergence_cutoff() -> list[tuple[str, JobSpec]]:
     config = ConvergenceConfig(
         sweep_parameter="cut_off_energy",
         sweep_values=(300.0, 400.0),
-        cutoff_energies=(300.0, 400.0),
         shared_params={
             "task": "SINGLEPOINT",
             "xc_functional": "PBE",

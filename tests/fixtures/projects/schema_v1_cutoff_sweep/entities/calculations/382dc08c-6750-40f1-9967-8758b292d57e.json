@@ -1,0 +1,38 @@
+{
+  "calc_type": "castep_convergence_kpoint",
+  "created_at": "2026-10-11T14:36:36.183622+00:00",
+  "custom_param_text": null,
+  "id": "382dc08c-6750-40f1-9967-8758b292d57e",
+  "input_site_ids": [],
+  "input_structure_ids": [
+    "19fad768-6239-46fa-ace4-9744bc0bf6e3"
+  ],
+  "parameters": {
+    "configuration": {
+      "cutoff_energies": [],
+      "name_prefix": "kpoint",
+      "overrides": [],
+      "shared_params": {
+        "xc_functional": "PBE"
+      },
+      "sweep_parameter": "kpoint_mp_grid",
+      "sweep_values": [
+        [
+          2,
+          2,
+          2
+        ],
+        [
+          4,
+          4,
+          4
+        ]
+      ]
+    },
+    "job_ids_by_grid": {},
+    "output_directory": "files/convergence_kpoint",
+    "simulation_cell_mode": "unit_cell",
+    "supercell_source_workflow": null
+  },
+  "workflow_stage": "convergence_kpoint"
+}

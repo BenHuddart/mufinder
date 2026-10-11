@@ -17,6 +17,12 @@ from mufinder.app import selection_snapshot as selection_snapshot_module
 from mufinder.app.selection_snapshot import SelectionScope
 from mufinder.app.workflow_submission import READY_WORKFLOW_ROW_STATUSES
 from mufinder.app.main_window import MainWindow
+from mufinder.app.workflow_config_codecs import (
+    deserialize_muon_relaxation_config,
+    deserialize_pristine_relaxation_config,
+    serialize_muon_relaxation_config,
+    serialize_pristine_relaxation_config,
+)
 from mufinder.castep_setup import CastepSetup
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus, WorkflowStage
@@ -732,7 +738,7 @@ def test_dismissed_pristine_relaxation_job_row_is_resubmittable(
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(
+        parameters=serialize_pristine_relaxation_config(
             main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
         ),
         output_directory=doc.project_root / "files" / "pristine_relaxation",
@@ -808,7 +814,7 @@ def test_dismissed_convergence_cutoff_job_row_is_resubmittable(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -881,7 +887,7 @@ def test_dismissed_row_submit_aborts_when_cleanup_prompt_cancelled(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -938,7 +944,7 @@ def test_non_dismissed_failed_row_keeps_failed_status_and_is_not_reset(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -1165,7 +1171,7 @@ def test_main_window_row_reset_clears_the_displayed_status_for_a_bound_job(
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(
+        parameters=serialize_pristine_relaxation_config(
             main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
         ),
         output_directory=doc.project_root / "files" / "pristine_relaxation",
@@ -1332,7 +1338,7 @@ def _pristine_continue_fixture(tmp_path: Path):
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(
+        parameters=serialize_pristine_relaxation_config(
             main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
         ),
         output_directory=output_root,
@@ -1385,7 +1391,7 @@ def _muon_continue_fixture(tmp_path: Path):
     definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_muon_relaxation_config(
+        parameters=serialize_muon_relaxation_config(
             main_window_module.MuonRelaxationConfig(rows=(row,))
         ),
         output_directory=output_root,
@@ -1398,7 +1404,7 @@ def _muon_continue_fixture(tmp_path: Path):
     )
     definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
     doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
-    doc.ui_state["muon_relaxation_form"] = window._serialize_muon_relaxation_config(
+    doc.ui_state["muon_relaxation_form"] = serialize_muon_relaxation_config(
         main_window_module.MuonRelaxationConfig(rows=(row,))
     )
     window._refresh_ui_after_project_change()
@@ -1440,7 +1446,7 @@ def test_continue_relaxation_pristine_cluster_dismissed_failed_row_end_to_end(
     window._on_continue_relaxation_requested_from_pristine_relaxation("row_1")
 
     # Row params mutated in place.
-    config = window._deserialize_pristine_relaxation_config(definition.parameters["configuration"])
+    config = deserialize_pristine_relaxation_config(definition.parameters["configuration"])
     assert {row.label: row.parameter_values for row in config.rows} == {
         "row_1": {"geom_max_iter": 500}
     }
@@ -1486,7 +1492,7 @@ def test_continue_relaxation_muon_cluster_completed_row_end_to_end(
 
     window._on_continue_relaxation_requested_from_muon_relaxation("positivemuon:Site 1")
 
-    config = window._deserialize_muon_relaxation_config(definition.parameters["configuration"])
+    config = deserialize_muon_relaxation_config(definition.parameters["configuration"])
     assert {row.charge_state: row.parameter_values for row in config.rows} == {
         "positive_muon": {"geom_max_iter": 777}
     }

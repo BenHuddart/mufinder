@@ -35,6 +35,7 @@ from mufinder.services.project_service import ProjectDocument, ProjectService
 from mufinder.app.workflow_controllers.base import WorkflowControllerContext
 from mufinder.app.workflow_controllers.pristine_relaxation import PristineRelaxationDeps
 from mufinder.app.workflow_config_codecs import serialize_pristine_relaxation_config
+from mufinder.app.workflow_dialogs import SourceConfigureResult
 from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
 
 
@@ -177,4 +178,14 @@ def pristine_sync_definition(service, document, host, rows=("row_1",), job_ids_b
         ),
         output_directory=document.project_root / "files" / "pristine_relaxation",
         job_ids_by_label=job_ids_by_label,
+    )
+
+
+def configure_result(values=None, advanced=(), untouched=()) -> SourceConfigureResult:
+    """A source-configure dialog result with the given values and flags."""
+
+    return SourceConfigureResult(
+        values=dict(values or {}),
+        advanced_names=frozenset(advanced),
+        untouched_mixed=frozenset(untouched),
     )

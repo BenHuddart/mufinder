@@ -223,3 +223,27 @@ def test_journal_distinguishes_manual_and_cleared_defaults() -> None:
     ]
     assert "800 eV by hand" in entries[0].body
     assert "6x6x4 by hand" in entries[1].body
+
+
+def test_journal_counts_cutoffs_under_either_configuration_key() -> None:
+    # Provenance is never migrated: records from before schema 2 may hold the
+    # sweep only under the legacy ``cutoff_energies`` key.
+    def configured(configuration: dict[str, object]) -> ProvenanceRecord:
+        return ProvenanceRecord(
+            timestamp=datetime(2026, 4, 21, 9, 0, tzinfo=UTC),
+            action="configure_convergence_cutoff",
+            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+            parameters={"configuration": configuration},
+        )
+
+    records = [
+        configured({"cutoff_energies": [300.0, 360.0]}),
+        configured({"sweep_values": [300.0, 360.0, 420.0], "cutoff_energies": [300.0, 360.0, 420.0]}),
+        configured({"sweep_values": [300.0, 360.0, 420.0, 480.0]}),
+    ]
+
+    bodies = [entry.body for entry in build_journal("Cutoffs", records).days[0].entries]
+
+    assert bodies == [
+        f"Prepared a cutoff convergence sweep with {count} cutoff value(s)." for count in (2, 3, 4)
+    ]

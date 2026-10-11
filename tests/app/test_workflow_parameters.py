@@ -12,11 +12,14 @@ from mufinder.app.workflow_parameters import (
     drop_explicit_conflicts,
     geometry_relaxation_parameter_specs,
     kpoint_exclusive_hint,
+    merge_species_options,
     reorder_workflow_parameter_specs,
     restore_structured_value,
     sanitize_parameter_mapping,
     seed_xc_functional_default,
+    shared_parameter_values,
     spec_is_blocked_by_locked,
+    structure_species_options,
     workflow_basic_parameter_names,
     workflow_default_params,
 )
@@ -432,3 +435,27 @@ def test_geometry_relaxation_parameter_specs_shape_the_relaxation_surface() -> N
     assert by_name["geom_max_iter"].default_value == 300
     assert len(by_name) == len(specs)
 
+
+
+def test_shared_parameter_values_keeps_what_every_row_agrees_on() -> None:
+    rows = [
+        {"xc_functional": "PBE", "max_scf_cycles": 80, "task": "SINGLEPOINT"},
+        {"xc_functional": "PBE", "max_scf_cycles": 120},
+        {"xc_functional": "PBE", "max_scf_cycles": 80},
+    ]
+
+    assert shared_parameter_values(rows) == {"xc_functional": "PBE"}
+    assert shared_parameter_values(rows[:1]) == rows[0]
+    assert shared_parameter_values(rows[:1]) is not rows[0]
+    assert shared_parameter_values([]) == {}
+
+
+def test_species_options_list_each_species_once_in_first_seen_order() -> None:
+    from mufinder.domain.models import Structure
+
+    first = Structure(label="a", species=["Fe", " O ", "Fe", ""], fractional_positions=[[0, 0, 0]] * 4)
+    second = Structure(label="b", species=["H:mu", "O"], fractional_positions=[[0, 0, 0]] * 2)
+
+    assert structure_species_options(first) == ("Fe", "O")
+    assert structure_species_options(None) == ()
+    assert merge_species_options([first, None, second]) == ("Fe", "O", "H:mu")

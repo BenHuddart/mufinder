@@ -287,7 +287,7 @@ def test_journal_write_does_not_change_active_workflow_view_on_submission(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },

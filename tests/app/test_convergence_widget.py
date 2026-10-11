@@ -572,7 +572,7 @@ def test_convergence_widget_run_button_emits_config_and_submit_for_current_row(q
     widget._run_local_selected()
 
     assert len(configured) == 1
-    assert configured[0].cutoff_energies == (300.0,)
+    assert configured[0].sweep_values == (300.0,)
     assert submitted == [[300.0]]
 
 
@@ -589,7 +589,7 @@ def test_convergence_widget_cluster_run_emits_signal_for_current_row(qapp) -> No
     widget._run_cluster_selected()
 
     assert len(configured) == 1
-    assert configured[0].cutoff_energies == (300.0,)
+    assert configured[0].sweep_values == (300.0,)
     assert submitted == [[300.0]]
 
 

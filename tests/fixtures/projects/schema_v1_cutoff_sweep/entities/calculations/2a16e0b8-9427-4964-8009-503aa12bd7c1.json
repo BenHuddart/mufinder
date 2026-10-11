@@ -1,0 +1,44 @@
+{
+  "calc_type": "castep_convergence_cutoff",
+  "created_at": "2026-10-11T14:36:36.183452+00:00",
+  "custom_param_text": null,
+  "id": "2a16e0b8-9427-4964-8009-503aa12bd7c1",
+  "input_site_ids": [],
+  "input_structure_ids": [
+    "19fad768-6239-46fa-ace4-9744bc0bf6e3"
+  ],
+  "parameters": {
+    "configuration": {
+      "cutoff_energies": [
+        300.0,
+        400.0,
+        500.0
+      ],
+      "name_prefix": "cutoff",
+      "overrides": [
+        {
+          "cutoffs": [
+            500.0
+          ],
+          "params": {
+            "max_scf_cycles": 120
+          }
+        }
+      ],
+      "shared_params": {
+        "xc_functional": "PBE"
+      },
+      "sweep_parameter": "cut_off_energy",
+      "sweep_values": [
+        300.0,
+        400.0,
+        500.0
+      ]
+    },
+    "job_ids_by_cutoff": {},
+    "output_directory": "files/convergence_cutoff",
+    "simulation_cell_mode": "unit_cell",
+    "supercell_source_workflow": null
+  },
+  "workflow_stage": "convergence_cutoff"
+}

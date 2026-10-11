@@ -16,6 +16,10 @@ from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, MuonSite, Result, Structure
 from mufinder.services.project_service import ProjectService
+from mufinder.app.workflow_config_codecs import (
+    deserialize_muon_relaxation_config,
+    serialize_muon_relaxation_config,
+)
 
 
 def test_main_window_muon_job_uses_row_label_and_charge_seed_directory(main_window, tmp_path: Path) -> None:
@@ -783,7 +787,7 @@ def test_main_window_muon_relaxation_existing_defined_job_shows_defined(
     definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     job = service.add_job(
@@ -795,7 +799,7 @@ def test_main_window_muon_relaxation_existing_defined_job_shows_defined(
     assert job.status == JobStatus.DEFINED
     definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
     doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
-    doc.ui_state["muon_relaxation_form"] = window._serialize_muon_relaxation_config(
+    doc.ui_state["muon_relaxation_form"] = serialize_muon_relaxation_config(
         main_window_module.MuonRelaxationConfig(rows=(row,))
     )
 
@@ -831,7 +835,7 @@ def test_main_window_muon_relaxation_sync_prefers_defined_job_over_cancelled_his
         charge_state="positive_muon",
     )
     config = main_window_module.MuonRelaxationConfig(rows=(row,))
-    serialized = window._serialize_muon_relaxation_config(config)
+    serialized = serialize_muon_relaxation_config(config)
     output_directory = doc.project_root / "files" / "muon_relaxation"
     historical_definition = service.register_muon_relaxation_definition(
         doc,
@@ -897,7 +901,7 @@ def test_main_window_muon_relaxation_sync_ignores_historical_defined_jobs(
         charge_state="positive_muon",
     )
     config = main_window_module.MuonRelaxationConfig(rows=(row,))
-    serialized = window._serialize_muon_relaxation_config(config)
+    serialized = serialize_muon_relaxation_config(config)
     output_directory = doc.project_root / "files" / "muon_relaxation"
     historical_definition = service.register_muon_relaxation_definition(
         doc,
@@ -960,7 +964,7 @@ def test_main_window_muon_relaxation_recovers_active_dashboard_job_mapping(
         initial_fractional_position=(0.25, 0.25, 0.25),
         charge_state="positive_muon",
     )
-    serialized = window._serialize_muon_relaxation_config(
+    serialized = serialize_muon_relaxation_config(
         main_window_module.MuonRelaxationConfig(rows=(row,))
     )
     definition = service.register_muon_relaxation_definition(
@@ -1026,7 +1030,7 @@ def test_main_window_muon_relaxation_added_form_rows_preserve_existing_job_state
     definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_muon_relaxation_config(
+        parameters=serialize_muon_relaxation_config(
             main_window_module.MuonRelaxationConfig(rows=(existing_row,))
         ),
         output_directory=doc.project_root / "files" / "muon_relaxation",
@@ -1049,7 +1053,7 @@ def test_main_window_muon_relaxation_added_form_rows_preserve_existing_job_state
     job.remote_directory = "/remote/work/site1"
     definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
     doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
-    doc.ui_state["muon_relaxation_form"] = window._serialize_muon_relaxation_config(
+    doc.ui_state["muon_relaxation_form"] = serialize_muon_relaxation_config(
         main_window_module.MuonRelaxationConfig(rows=(existing_row, new_row))
     )
 
@@ -1090,7 +1094,7 @@ def test_muon_relaxation_preserves_running_row_across_reconfiguration(
     old_definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     running_job = service.add_job(
@@ -1107,7 +1111,7 @@ def test_muon_relaxation_preserves_running_row_across_reconfiguration(
     new_definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
@@ -1161,7 +1165,7 @@ def test_muon_relaxation_row_parameter_edit_touches_only_its_charge_state(
     definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_muon_relaxation_config(
+        parameters=serialize_muon_relaxation_config(
             main_window_module.MuonRelaxationConfig(rows=rows)
         ),
         output_directory=doc.project_root / "files" / "muon_relaxation",
@@ -1196,7 +1200,7 @@ def test_muon_relaxation_row_parameter_edit_touches_only_its_charge_state(
     assert states["positivemuon:Site 1"].job_id == job.id
     assert states["positivemuon:Site 1"].status == JobStatus.FAILED.value
 
-    config = window._deserialize_muon_relaxation_config(
+    config = deserialize_muon_relaxation_config(
         definition.parameters["configuration"]
     )
     by_charge = {row.charge_state: row for row in config.rows}
@@ -1235,7 +1239,7 @@ def test_muon_relaxation_deleted_row_does_not_reinherit_stale_status(main_window
     old_definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     running_job = service.add_job(
@@ -1252,7 +1256,7 @@ def test_muon_relaxation_deleted_row_does_not_reinherit_stale_status(main_window
     new_definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     doc.ui_state[window._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
@@ -1291,7 +1295,7 @@ def test_muon_relaxation_remove_row_archives_associated_files_and_job(
     definition = service.register_muon_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
+        parameters=serialize_muon_relaxation_config(main_window_module.MuonRelaxationConfig(rows=(row,))),
         output_directory=doc.project_root / "files" / "muon_relaxation",
     )
     job = service.add_job(

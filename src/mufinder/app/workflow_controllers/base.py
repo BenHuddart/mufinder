@@ -166,7 +166,7 @@ class WorkflowJobController:
     def active_definition(self) -> CalculationDefinition | None:
         """Return the definition this workflow currently works on, if any.
 
-        See :func:`~mufinder.services.project_service.active_definition` for the
+        See :func:`~mufinder.services.project_document.active_definition` for the
         ``active_key`` lookup and the newest-definition fallback.
         """
 
@@ -190,7 +190,7 @@ class WorkflowJobController:
     ) -> Job | None:
         """Return the job ``definition``'s ``mapping_name`` mapping binds to ``key``.
 
-        See :func:`~mufinder.services.project_service.job_for_mapping_key`.
+        See :func:`~mufinder.services.project_document.job_for_mapping_key`.
         """
 
         document = self._context.document()
@@ -642,7 +642,7 @@ def output_predates_run(path: Path | None, started_at: datetime | None) -> bool:
     unconditional download would make every retrieved file look fresh. Skipping
     that download leaves the local copy carrying the *previous* retrieval's
     mtime, which is what this comparison then rejects. The remote-side half of
-    the guard lives in ``ClusterJobRunner._retrieve_results``, which also refuses
+    the guard lives in ``cluster_retrieval.retrieve_job_outputs``, which also refuses
     to parse a ``.castep`` that predates the submission — the case this function
     cannot see, because a run that never started has no ``started_at``.
 
@@ -696,6 +696,34 @@ def relaxation_artifact_failure(
             "was written, so the previous run's geometry is still in place."
         )
     return None
+
+
+def confirm_active_host(
+    project_service: ProjectService,
+    document: ProjectDocument,
+    *,
+    structure_ids: Sequence[UUID],
+    site_ids: Sequence[UUID],
+    handle_structure_mismatch: Callable[[object], bool],
+    handle_site_mismatch: Callable[[object], bool],
+) -> bool:
+    """Return whether jobs built on these structures and sites may be submitted.
+
+    The structures are checked against the active host first, through their
+    ``parent_structure_id`` chain, then the sites. The first mismatch goes to
+    its handler, which asks the user whether to switch hosts and returns
+    whether the submission may proceed. With no mismatch, the answer is yes.
+    """
+
+    if structure_ids:
+        mismatch = project_service.validate_structures_match_active_host(document, structure_ids)
+        if mismatch is not None:
+            return handle_structure_mismatch(mismatch)
+    if site_ids:
+        mismatch = project_service.validate_sites_match_active_host(document, site_ids)
+        if mismatch is not None:
+            return handle_site_mismatch(mismatch)
+    return True
 
 
 def owning_controller(
@@ -773,6 +801,7 @@ __all__ = [
     "WorkflowControllerContext",
     "WorkflowJobController",
     "apply_row_parameters_to_form_state",
+    "confirm_active_host",
     "dedupe_jobs",
     "find_job_derived_structure",
     "merge_controller_result",

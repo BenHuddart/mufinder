@@ -167,6 +167,13 @@ Cutoff Parameters`` / ``Inspect K-Point Parameters``. A row whose job was
 cancelled stays editable. Values must be unique within a sweep; MuFinder
 refuses to run a sweep with a duplicate or non-numeric value.
 
+A sweep's rows are restored from the saved form state when the project is
+reopened, or from the active convergence definition when that state is
+incomplete. Rows that use the default parameters keep their completed jobs
+across a reload, so adding a cutoff and running submits only the new row. A
+regenerated list starts as fresh ``ready`` rows and does not inherit the status
+or results of an earlier definition.
+
 Removing a row whose job is still queued or running cancels the job after a
 confirmation. Removing a cutoff whose job directory contains files also asks
 what to do with them: ``Yes`` deletes them, ``No`` (the default) moves them into
@@ -309,7 +316,7 @@ how many atoms are used for per-atom normalization.
 The plot has an energy panel above a force panel, with the thresholds, the
 value at which each criterion converged, and the recommended value marked.
 When stress is used it is drawn on a second axis of the force panel. Hover a
-point to see its value. For a k-point sweep the horizontal axis is the
+point to see its value; on a k-point plot the tooltip also names the grid. For a k-point sweep the horizontal axis is the
 ``Number of k-points``, the product ``a x b x c`` of the grid divisions, on a
 logarithmic scale; a second axis along the top marks round ``K-point spacing
 (1/Ang)`` values at the matching positions.
@@ -358,7 +365,7 @@ For a k-point recommendation the result line also gives the grid's spacing,
 CASTEP reproduces exactly that grid on the swept cell, so it can be copied into
 a ``.cell`` file. ``1 x 1 x 1`` has no such spacing and is shown without one.
 The convention, and its round-trip guarantee, are described in
-``docs/castep/kpoint_spacing_convention.md`` in the source repository.
+:doc:`castep/kpoint_spacing_convention`.
 
 Adopting a result as a project default
 --------------------------------------
@@ -386,10 +393,15 @@ the same reciprocal-space sampling density.
 
 The ``Project Defaults`` dialog (``Edit…`` on the strip) shows, for the cutoff
 and the grid, the method, criteria, and converged-with functional, and lets you
-change any of the three defaults by hand. A cutoff or grid typed in there is
-recorded as ``Set manually``, with no criteria and no functional, and removes
-the pinned plot from the overview page. Leaving a field blank clears that
-default.
+change any of the three defaults by hand. The cutoff is entered in eV and the
+grid as three positive integers (``4 4 4`` or ``4x4x4``); invalid input is
+reported inline and the dialog stays open. A cutoff or grid typed in there is
+recorded as ``Set manually``, with no criteria and no functional, does not
+change the project functional, and removes the pinned plot from the overview
+page. A grid typed in by hand is taken to be for the host unit cell and is
+rescaled for supercell rows like an adopted one. Leaving a field blank clears
+that default. The functional can also be chosen here before any convergence
+test has run, or cleared with ``Not set``.
 
 Stale defaults
 ~~~~~~~~~~~~~~

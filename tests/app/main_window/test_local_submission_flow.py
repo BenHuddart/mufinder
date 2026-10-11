@@ -45,7 +45,7 @@ def test_main_window_submit_jobs_locally_creates_run_and_calls_runner(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
