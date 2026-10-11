@@ -87,6 +87,10 @@ Services
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.services.source_candidates
+   :members:
+   :undoc-members:
+
 .. automodule:: mufinder.services.script_template
    :members:
    :undoc-members:
