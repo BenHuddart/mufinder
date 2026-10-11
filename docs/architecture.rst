@@ -271,6 +271,19 @@ workflow widget modules define, how many define it; the counts may only fall.
        ``max_stress_for_job``) and the payload extractors behind them.
    * - ``mufinder.services.job_artifacts``
      - Job output paths and parsed secondary outputs.
+   * - ``mufinder.services.cluster_submission_planner``
+     - The decisions of a cluster submission: stranded quantum phonon jobs,
+       connection reuse, each job's remote target (start again, continuation,
+       resubmission, quantum stage-1 directory or a fresh directory), the
+       overwrite prompts to ask as data and their *Yes/No to All* resolution,
+       the protected-directory rule, and the ``ClusterJobSubmission`` items
+       with the failed, skipped and missing jobs
+       (``plan_cluster_submission``). The window keeps the dialog, the
+       prompts and the message boxes.
+   * - ``mufinder.workflow.naming``
+     - Job names (``job_name``) and the remote naming of a cluster
+       submission: the workflow directory fragment, the default scheduler
+       job-name prefix and remote path sanitising.
    * - ``mufinder.services.source_candidates``
      - Read-only source queries over the project document: the relaxed muon
        sites eligible for quantum corrections, their relative energies,

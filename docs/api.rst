@@ -119,6 +119,10 @@ Services
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.services.cluster_submission_planner
+   :members:
+   :undoc-members:
+
 Science
 -------
 
@@ -230,6 +234,10 @@ Workflow
    :undoc-members:
 
 .. automodule:: mufinder.workflow.energy_barriers
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.workflow.naming
    :members:
    :undoc-members:
 

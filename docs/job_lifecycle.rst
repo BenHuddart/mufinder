@@ -686,11 +686,18 @@ connect-with-trust retry loop — on an unknown-host-key error
 it prompts, saves the key, and reconnects, and the next attempt trusts it — so
 no cross-thread coordination is needed.
 
-Batch submission is asynchronous. The GUI computes remote targets, checks which
-remote directories already exist (on the worker), resolves any overwrite prompts
-up front, then prepares document state for each job
+Batch submission is asynchronous. ``services.cluster_submission_planner``
+(``plan_cluster_submission``) computes remote targets, has the worker check
+which remote directories already exist, resolves any overwrite prompts up front
+through the window's prompt dialogs, and builds the ``ClusterJobSubmission``
+for each job; the GUI then prepares document state for each job
 (``JobExecutionController.prepare_cluster_submission``) and hands the batch to
-``ClusterController.submit_batch``. The worker uploads and submits each job,
+``ClusterController.submit_batch``. A directory a job in the batch submits
+into as-is (a continuation's preserved ``remote_directory`` or a quantum
+phonon job's stage-1 directory) is never deleted, whatever another job's
+overwrite answer was, and a start-again job whose own directory is such a
+directory fails instead of resuming from the checkpoint it was meant to
+discard. The worker uploads and submits each job,
 emitting progress and per-job results that the GUI applies via
 ``finalize_cluster_submission``/``fail_cluster_submission``. A modal progress
 dialog reports progress and offers a Cancel button; jobs prepared but not yet

@@ -20,6 +20,7 @@ from mufinder.app.workflow_dialogs import QuantumCorrectionsConfigDialog
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.castep_io.ts_parser import TransitionStateImage, TransitionStatePath
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure
 from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE
@@ -2875,21 +2876,21 @@ def test_main_window_muon_relaxation_workflow_complete_when_table_jobs_done(
         doc,
         label="Relax A",
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
-        calc_type=main_window_module.MUON_RELAXATION_CALC_TYPES["positive_muon"],
+        calc_type=MUON_RELAXATION_CALC_TYPES["positive_muon"],
     )
     first_job.status = JobStatus.COMPLETED
     second_job = service.add_job(
         doc,
         label="Relax B",
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
-        calc_type=main_window_module.MUON_RELAXATION_CALC_TYPES["positive_muon"],
+        calc_type=MUON_RELAXATION_CALC_TYPES["positive_muon"],
     )
     second_job.status = JobStatus.QUEUED
     extra_job = service.add_job(
         doc,
         label="Historical Relax",
         workflow_stage=main_window_module.WorkflowStage.MUON_RELAXATION,
-        calc_type=main_window_module.MUON_RELAXATION_CALC_TYPES["positive_muon"],
+        calc_type=MUON_RELAXATION_CALC_TYPES["positive_muon"],
     )
     extra_job.status = JobStatus.RUNNING
     definition = CalculationDefinition(
