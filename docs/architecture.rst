@@ -213,6 +213,11 @@ workflow widget modules define, how many define it; the counts may only fall.
        relaxation and UEP subclass (``RowTableWidget``, and
        ``RelaxationRowTableWidget`` for the two geometry relaxations; see Row
        table widgets).
+   * - ``mufinder.app.sweep_convergence_widget``
+     - The sweep-keyed widget base that the cutoff and k-point convergence
+       widgets subclass (``SweepConvergenceWidget``; see Sweep convergence
+       widgets), parametrised by a ``SweepKeyCodec`` from
+       ``mufinder.app.convergence_types``.
    * - ``mufinder.app.workflow_parameters``
      - Parameter specs per workflow stage
        (``build_workflow_parameter_surface``,
@@ -236,7 +241,10 @@ workflow widget modules define, how many define it; the counts may only fall.
        rules.
    * - ``mufinder.app.workflow_controllers.base``
      - The submit, materialize, result and refresh cycle (see Workflow
-       controllers), derived-structure upsert and row-parameter mirroring.
+       controllers), ``dedupe_jobs`` for the jobs a ``materialize`` or
+       ``jobs_for_keys`` returns, derived-structure upsert and row-parameter
+       mirroring. ``workflow_controllers.sweep_convergence`` holds the cycle
+       the two convergence sweeps share (``SweepConvergenceController``).
    * - ``mufinder.app.project_defaults_widget``
      - The project-defaults strip in every workflow header (see Project
        defaults surface).
@@ -274,8 +282,10 @@ controllers treat every workflow alike:
 - **Signals.** ``form_state_changed``, ``configure_requested``,
   ``submit_local_requested``, ``submit_cluster_requested``, ``cancel_requested``,
   ``inspect_failed_requested``, ``reset_failed_requested`` and
-  ``remove_requested``. The submit signals carry the selected keys, or every
-  key when nothing is selected, and the run buttons' labels say which.
+  ``remove_requested`` (the convergence sweeps name it
+  ``remove_cutoff_requested`` / ``remove_grid_requested``). The submit
+  signals carry the selected keys, or every key when nothing is selected, and
+  the run buttons' labels say which.
 - **Methods.** ``collect_state`` / ``set_form_state`` round-trip the persisted
   form state, and ``set_form_state`` suppresses ``form_state_changed`` while it
   restores; ``set_runtime_states``, ``set_parameter_species_options``,
@@ -285,7 +295,8 @@ controllers treat every workflow alike:
   prefix and a row list. Each row stores its label, its supercell matrix as a
   3×3 list, its parameter values as the diff from the implicit defaults (a UEP
   row stores the dialog's values with its pinned task and density flag), and
-  its sorted ``added_advanced`` names.
+  its sorted ``added_advanced`` names. The two convergence sweeps keep their
+  own key-list shape instead (see Sweep convergence widgets).
 - **Rows.** The row id lives in the label item's ``UserRole``; per-row controls
   are ``SelectionSnapshot`` buttons that resolve their targets through the shared
   targeting rule; a delete-shortcut handler returns early while the table is
@@ -360,6 +371,52 @@ muon relaxation's read-only imported rows (``_row_is_read_only``,
 parameter surface and k-point rule. Never copy a base method into a
 subclass to change it; add the hook.
 
+Sweep convergence widgets
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The cutoff and k-point convergence widgets subclass one base,
+``mufinder.app.sweep_convergence_widget.SweepConvergenceWidget``. A row is keyed
+by its sweep value, typed into the key column (a cutoff energy in eV, or a
+Monkhorst-Pack grid), and is submitted, tracked and removed under that key.
+The sweep's ``SweepKeyCodec`` (``CUTOFF_KEY_CODEC``, ``KPOINT_GRID_CODEC`` in
+``mufinder.app.convergence_types``) parses and formats the key column, names a
+key in dialogs and warnings, normalises keys from signals, runtime states and
+persisted state, and gives the key's JSON form.
+
+The base owns the simulation-cell picker, the table (key, status, total
+energy, max force, Configure, remove), the selection and row menu, the delete
+shortcuts, per-row Configure and remove targeting, removal with its
+confirmation (a row whose key does not parse is dropped in place; the others
+are emitted on the widget's removal signal and removed through
+``remove_keys``), the parameter dialog, runtime refresh with the locked-row
+rule and the Examine button (enabled by two completed rows with energy and
+force), config validation (unparseable, empty and duplicate keys, then each
+row's parameters) and submission, and the form-state round trip. The
+persisted form state keeps each sweep's own field names:
+``ui_state["convergence_form"]`` holds ``cutoff_energies`` and
+``cutoff_parameter_rows`` (each row's ``cutoff``), and
+``ui_state["kpoint_convergence_form"]`` holds ``kpoint_grids`` and
+``kpoint_parameter_rows`` (each row's ``grid``); both also hold the job-name
+prefix, the generator dialog's ``range`` values, and per configured row its
+parameters and sorted ``added_advanced`` names. Restoring lists every key the
+key list or a configured row names, once, in that order.
+
+A subclass declares its codec, workflow stage, sweep keyword, persisted field
+names, removal signal name and wording as class attributes and implements
+three public hooks: ``next_key`` (the key a new row starts from),
+``prompt_new_key`` (what Add asks for: the cutoff sweep adds the next cutoff,
+the k-point sweep opens a grid dialog) and ``generate_keys`` (the range or
+spacing generator dialog). A behaviour only one sweep has is an override of a
+private base method with a default: the cutoff sweep cancels a removed row's
+queued or running job first (``_CANCEL_ACTIVE_ON_REMOVE``), titles a one-row
+dialog by its cutoff (``_dialog_subject``), reads a task-only row as the
+defaults (``_is_default_parameter_set``) and restores legacy
+``shared_params`` / ``overrides`` state (``_restore_legacy_parameters``); the
+k-point sweep persists the cell its grids were generated for and warns when
+the current cell differs (``_extra_state`` / ``_restore_extra_state``), and
+drops the shared defaults that conflict with the project cutoff
+(``set_cutoff_default``).
+
 Controller naming
 ~~~~~~~~~~~~~~~~~
 
@@ -429,10 +486,12 @@ repeats them:
   key, or ``None`` when the mapping, the id or the job is missing or the job's
   calc type differs (``job_for_mapping_key``).
 
-Controllers whose rows bind jobs differently wrap ``job_for_key``: the cutoff
-sweep reads ``job_ids_by_cutoff`` and falls back to legacy ``job_labels``,
-muon relaxation tries the charge-qualified key before the bare label, and
-energy barriers accepts only NEB jobs.
+Controllers whose rows bind jobs differently wrap ``job_for_key``: the two
+convergence sweeps read ``job_ids_by_cutoff`` / ``job_ids_by_grid`` and fall
+back, for a definition written before the mapping, to legacy ``job_labels``
+(cutoff) or the grid's job label under the configured prefix (k-point), muon
+relaxation tries the charge-qualified key before the bare label, and energy
+barriers accepts only NEB jobs.
 
 Hooks
 ~~~~~
@@ -580,10 +639,18 @@ Controller summary
    * - Controller
      - Specifics
    * - ``ConvergenceCutoffController`` /
-       ``ConvergenceKPointController``
+       ``ConvergenceKpointController``
      - Sweep workflows keyed by cutoff energy and by k-point grid, with jobs
-       mapped in ``job_ids_by_cutoff`` / ``job_ids_by_grid``. No
-       ``build_result``: the convergence metrics come from the primary
+       mapped in ``job_ids_by_cutoff`` / ``job_ids_by_grid``. Both subclass
+       ``SweepConvergenceController``
+       (``mufinder.app.workflow_controllers.sweep_convergence``), which owns
+       ``build_states``, ``jobs_for_keys``, ``materialize`` and the form
+       snapshot (the live widget state first, then the persisted form); the
+       concrete controllers declare the key codec, sweep parameter, job calc
+       type, mapping name and form-state key, and supply ``mapping_key``,
+       ``sync_mappings`` and ``legacy_job_for_key``. The definition a key
+       belongs to is the active definition when its configuration sweeps that
+       key. No ``build_result``: the convergence metrics come from the primary
        ``.castep`` parse.
    * - ``PristineRelaxationController``
      - Keyed by row label. ``build_result`` reads the carrier's relaxed cell,

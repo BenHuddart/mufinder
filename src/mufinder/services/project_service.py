@@ -83,6 +83,45 @@ def _failure_reason_from_payload(value: object) -> FailureReason | None:
     except ValueError:
         return None
 
+
+def _project_relative_path(path: Path, project_root: Path) -> str:
+    """Return ``path`` relative to the project root, or as given when outside it."""
+
+    try:
+        return str(path.relative_to(project_root))
+    except ValueError:
+        return str(path)
+
+
+def _known_input_structure(
+    document: ProjectDocument,
+    input_structure_id: UUID | None,
+    host_structure_id: UUID | None,
+) -> UUID:
+    """Resolve a definition's single input structure, falling back to the host id."""
+
+    if input_structure_id is None:
+        input_structure_id = host_structure_id
+    if input_structure_id is None or input_structure_id not in document.structures:
+        raise ValueError("input_structure_id must reference a known structure.")
+    return input_structure_id
+
+
+def _require_known_inputs(
+    document: ProjectDocument,
+    input_structure_ids: Sequence[UUID],
+    input_site_ids: Sequence[UUID],
+) -> None:
+    """Reject a multi-input definition with no structure or an unknown structure or site."""
+
+    if not input_structure_ids:
+        raise ValueError("At least one input structure is required.")
+    if any(structure_id not in document.structures for structure_id in input_structure_ids):
+        raise ValueError("input_structure_ids must reference known structures.")
+    if any(site_id not in document.sites for site_id in input_site_ids):
+        raise ValueError("input_site_ids must reference known sites.")
+
+
 #: Terminal job statuses a job can be recovered from without losing its record:
 #: :meth:`ProjectService.reset_failed_job` accepts exactly these, and
 #: :meth:`ProjectService.dismiss_job` hides exactly these from the dashboard.
@@ -1499,6 +1538,7 @@ class ProjectService:
         """
         loaded = load_structure_file(source_path)
         copied_path = self._copy_import_file(document.project_root, source_path)
+        project_copy = str(copied_path.relative_to(document.project_root))
 
         structure = Structure(
             label=label or source_path.stem,
@@ -1506,7 +1546,7 @@ class ProjectService:
             lattice_vectors=loaded.lattice_vectors,
             species=loaded.species,
             fractional_positions=loaded.fractional_positions,
-            source_file=str(copied_path.relative_to(document.project_root)),
+            source_file=project_copy,
             properties=loaded.properties,
         )
         document.structures[structure.id] = structure
@@ -1523,7 +1563,7 @@ class ProjectService:
                 description=f"Imported structure from {source_path.name}",
                 parameters={
                     "source_file": str(source_path),
-                    "project_copy": str(copied_path.relative_to(document.project_root)),
+                    "project_copy": project_copy,
                     "file_extension": source_path.suffix.lower(),
                     "make_active": make_active,
                     "has_magnetic_structure": bool(loaded.properties.get("magnetic_structure")),
@@ -1573,57 +1613,26 @@ class ProjectService:
         separate from ephemeral UI form state.
         """
 
-        if input_structure_id is None:
-            input_structure_id = host_structure_id
-
-        if input_structure_id is None or input_structure_id not in document.structures:
-            raise ValueError("input_structure_id must reference a known structure.")
-
-        relative_output = str(output_directory)
-        try:
-            relative_output = str(output_directory.relative_to(document.project_root))
-        except ValueError:
-            relative_output = str(output_directory)
-
+        structure_id = _known_input_structure(document, input_structure_id, host_structure_id)
         snapshot = to_jsonable(parameters)
-        definition = CalculationDefinition(
-            workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.CONVERGENCE_CUTOFF,
             calc_type="castep_convergence_cutoff",
-            parameters={
-                "configuration": snapshot,
-                "output_directory": relative_output,
+            action="configure_convergence_cutoff",
+            description=(
+                "Configured cutoff convergence with "
+                f"{len(snapshot.get('cutoff_energies', []))} cutoff value(s)"
+            ),
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={
                 "job_ids_by_cutoff": dict(job_ids_by_cutoff or {}),
                 "simulation_cell_mode": simulation_cell_mode,
                 "supercell_source_workflow": supercell_source_workflow,
             },
-            input_structure_ids=[input_structure_id],
+            input_structure_ids=[structure_id],
         )
-        document.calculations[definition.id] = definition
-
-        self.append_provenance(
-            document,
-            ProvenanceRecord(
-                action="configure_convergence_cutoff",
-                workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-                actor="user",
-                description=(
-                    "Configured cutoff convergence with "
-                    f"{len(snapshot.get('cutoff_energies', []))} cutoff value(s)"
-                ),
-                parameters={
-                    "calculation_definition_id": str(definition.id),
-                    "configuration": snapshot,
-                    "output_directory": relative_output,
-                    "job_ids_by_cutoff": dict(job_ids_by_cutoff or {}),
-                    "simulation_cell_mode": simulation_cell_mode,
-                    "supercell_source_workflow": supercell_source_workflow,
-                },
-                input_entity_ids=[input_structure_id],
-                output_entity_ids=[definition.id],
-            ),
-        )
-
-        return definition
 
     def register_convergence_kpoint_definition(
         self,
@@ -1639,57 +1648,26 @@ class ProjectService:
     ) -> CalculationDefinition:
         """Persist one convergence-kpoint configuration as a reusable definition."""
 
-        if input_structure_id is None:
-            input_structure_id = host_structure_id
-
-        if input_structure_id is None or input_structure_id not in document.structures:
-            raise ValueError("input_structure_id must reference a known structure.")
-
-        relative_output = str(output_directory)
-        try:
-            relative_output = str(output_directory.relative_to(document.project_root))
-        except ValueError:
-            relative_output = str(output_directory)
-
+        structure_id = _known_input_structure(document, input_structure_id, host_structure_id)
         snapshot = to_jsonable(parameters)
-        definition = CalculationDefinition(
-            workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.CONVERGENCE_KPOINT,
             calc_type="castep_convergence_kpoint",
-            parameters={
-                "configuration": snapshot,
-                "output_directory": relative_output,
+            action="configure_convergence_kpoint",
+            description=(
+                "Configured k-point convergence with "
+                f"{len(snapshot.get('sweep_values', []))} grid value(s)"
+            ),
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={
                 "job_ids_by_grid": dict(job_ids_by_grid or {}),
                 "simulation_cell_mode": simulation_cell_mode,
                 "supercell_source_workflow": supercell_source_workflow,
             },
-            input_structure_ids=[input_structure_id],
+            input_structure_ids=[structure_id],
         )
-        document.calculations[definition.id] = definition
-
-        self.append_provenance(
-            document,
-            ProvenanceRecord(
-                action="configure_convergence_kpoint",
-                workflow_stage=WorkflowStage.CONVERGENCE_KPOINT,
-                actor="user",
-                description=(
-                    "Configured k-point convergence with "
-                    f"{len(snapshot.get('sweep_values', []))} grid value(s)"
-                ),
-                parameters={
-                    "calculation_definition_id": str(definition.id),
-                    "configuration": snapshot,
-                    "output_directory": relative_output,
-                    "job_ids_by_grid": dict(job_ids_by_grid or {}),
-                    "simulation_cell_mode": simulation_cell_mode,
-                    "supercell_source_workflow": supercell_source_workflow,
-                },
-                input_entity_ids=[input_structure_id],
-                output_entity_ids=[definition.id],
-            ),
-        )
-
-        return definition
 
     def register_pristine_relaxation_definition(
         self,
@@ -1703,53 +1681,19 @@ class ProjectService:
     ) -> CalculationDefinition:
         """Persist one pristine-relaxation configuration as a reusable definition."""
 
-        if input_structure_id is None:
-            input_structure_id = host_structure_id
-
-        if input_structure_id is None or input_structure_id not in document.structures:
-            raise ValueError("input_structure_id must reference a known structure.")
-
-        relative_output = str(output_directory)
-        try:
-            relative_output = str(output_directory.relative_to(document.project_root))
-        except ValueError:
-            relative_output = str(output_directory)
-
+        structure_id = _known_input_structure(document, input_structure_id, host_structure_id)
         snapshot = to_jsonable(parameters)
-        definition = CalculationDefinition(
-            workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
-            calc_type="castep_pristine_relaxation",
-            parameters={
-                "configuration": snapshot,
-                "output_directory": relative_output,
-                "job_ids_by_label": dict(job_ids_by_label or {}),
-            },
-            input_structure_ids=[input_structure_id],
-        )
-        document.calculations[definition.id] = definition
-
-        self.append_provenance(
+        return self._register_definition(
             document,
-            ProvenanceRecord(
-                action="configure_pristine_relaxation",
-                workflow_stage=WorkflowStage.PRISTINE_RELAXATION,
-                actor="user",
-                description=(
-                    "Configured pristine relaxation with "
-                    f"{len(snapshot.get('rows', []))} job row(s)"
-                ),
-                parameters={
-                    "calculation_definition_id": str(definition.id),
-                    "configuration": snapshot,
-                    "output_directory": relative_output,
-                    "job_ids_by_label": dict(job_ids_by_label or {}),
-                },
-                input_entity_ids=[input_structure_id],
-                output_entity_ids=[definition.id],
-            ),
+            stage=WorkflowStage.PRISTINE_RELAXATION,
+            calc_type="castep_pristine_relaxation",
+            action="configure_pristine_relaxation",
+            description=f"Configured pristine relaxation with {len(snapshot.get('rows', []))} job row(s)",
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
+            input_structure_ids=[structure_id],
         )
-
-        return definition
 
     def register_muon_relaxation_definition(
         self,
@@ -1761,20 +1705,12 @@ class ProjectService:
         output_directory: Path,
         job_ids_by_label: dict[str, str] | None = None,
     ) -> CalculationDefinition:
-        """Persist one muon-relaxation configuration."""
+        """Persist one muon-relaxation configuration.
 
-        if input_structure_id is None:
-            input_structure_id = host_structure_id
+        The definition's input sites are the rows' parseable ``site_id`` values.
+        """
 
-        if input_structure_id is None or input_structure_id not in document.structures:
-            raise ValueError("input_structure_id must reference a known structure.")
-
-        relative_output = str(output_directory)
-        try:
-            relative_output = str(output_directory.relative_to(document.project_root))
-        except ValueError:
-            relative_output = str(output_directory)
-
+        structure_id = _known_input_structure(document, input_structure_id, host_structure_id)
         snapshot = to_jsonable(parameters)
         input_site_ids: list[UUID] = []
         for row in snapshot.get("rows", []):
@@ -1784,39 +1720,18 @@ class ProjectService:
                 input_site_ids.append(UUID(str(row["site_id"])))
             except ValueError:
                 continue
-
-        definition = CalculationDefinition(
-            workflow_stage=WorkflowStage.MUON_RELAXATION,
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.MUON_RELAXATION,
             calc_type="castep_muon_relaxation",
-            parameters={
-                "configuration": snapshot,
-                "output_directory": relative_output,
-                "job_ids_by_label": dict(job_ids_by_label or {}),
-            },
-            input_structure_ids=[input_structure_id],
+            action="configure_muon_relaxation",
+            description=f"Configured muon relaxation with {len(snapshot.get('rows', []))} job row(s)",
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
+            input_structure_ids=[structure_id],
             input_site_ids=input_site_ids,
         )
-        document.calculations[definition.id] = definition
-
-        self.append_provenance(
-            document,
-            ProvenanceRecord(
-                action="configure_muon_relaxation",
-                workflow_stage=WorkflowStage.MUON_RELAXATION,
-                actor="user",
-                description=f"Configured muon relaxation with {len(snapshot.get('rows', []))} job row(s)",
-                parameters={
-                    "calculation_definition_id": str(definition.id),
-                    "configuration": snapshot,
-                    "output_directory": relative_output,
-                    "job_ids_by_label": dict(job_ids_by_label or {}),
-                },
-                input_entity_ids=[input_structure_id, *definition.input_site_ids],
-                output_entity_ids=[definition.id],
-            ),
-        )
-
-        return definition
 
     def register_uep_definition(
         self,
@@ -1830,53 +1745,19 @@ class ProjectService:
     ) -> CalculationDefinition:
         """Persist one UEP source-job configuration as a reusable definition."""
 
-        if input_structure_id is None:
-            input_structure_id = host_structure_id
-
-        if input_structure_id is None or input_structure_id not in document.structures:
-            raise ValueError("input_structure_id must reference a known structure.")
-
-        relative_output = str(output_directory)
-        try:
-            relative_output = str(output_directory.relative_to(document.project_root))
-        except ValueError:
-            relative_output = str(output_directory)
-
+        structure_id = _known_input_structure(document, input_structure_id, host_structure_id)
         snapshot = to_jsonable(parameters)
-        definition = CalculationDefinition(
-            workflow_stage=WorkflowStage.UEP,
-            calc_type="castep_uep_source",
-            parameters={
-                "configuration": snapshot,
-                "output_directory": relative_output,
-                "job_ids_by_label": dict(job_ids_by_label or {}),
-            },
-            input_structure_ids=[input_structure_id],
-        )
-        document.calculations[definition.id] = definition
-
-        self.append_provenance(
+        return self._register_definition(
             document,
-            ProvenanceRecord(
-                action="configure_uep",
-                workflow_stage=WorkflowStage.UEP,
-                actor="user",
-                description=(
-                    "Configured UEP source workflow with "
-                    f"{len(snapshot.get('rows', []))} job row(s)"
-                ),
-                parameters={
-                    "calculation_definition_id": str(definition.id),
-                    "configuration": snapshot,
-                    "output_directory": relative_output,
-                    "job_ids_by_label": dict(job_ids_by_label or {}),
-                },
-                input_entity_ids=[input_structure_id],
-                output_entity_ids=[definition.id],
-            ),
+            stage=WorkflowStage.UEP,
+            calc_type="castep_uep_source",
+            action="configure_uep",
+            description=f"Configured UEP source workflow with {len(snapshot.get('rows', []))} job row(s)",
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
+            input_structure_ids=[structure_id],
         )
-
-        return definition
 
     def register_quantum_phonon_definition(
         self,
@@ -1888,68 +1769,31 @@ class ProjectService:
         output_directory: Path,
         job_ids_by_label: dict[str, str] | None = None,
     ) -> CalculationDefinition:
-        """Persist one Quantum Corrections phonon configuration."""
+        """Persist one Quantum Corrections phonon configuration.
 
-        if not input_structure_ids:
-            raise ValueError("At least one input structure is required.")
-        missing_structures = [structure_id for structure_id in input_structure_ids if structure_id not in document.structures]
-        if missing_structures:
-            raise ValueError("input_structure_ids must reference known structures.")
-        missing_sites = [site_id for site_id in input_site_ids if site_id not in document.sites]
-        if missing_sites:
-            raise ValueError("input_site_ids must reference known sites.")
+        The configuration's per-stage job and seed-name maps are also lifted to
+        top-level definition parameters; the provenance record omits them.
+        """
 
-        relative_output = str(output_directory)
-        try:
-            relative_output = str(output_directory.relative_to(document.project_root))
-        except ValueError:
-            relative_output = str(output_directory)
-
+        _require_known_inputs(document, input_structure_ids, input_site_ids)
         snapshot = to_jsonable(parameters)
-        singlepoint_job_ids_by_label = snapshot.get("singlepoint_job_ids_by_label", {})
-        phonon_job_ids_by_label = snapshot.get("phonon_job_ids_by_label", {})
-        job_seed_names_by_label = snapshot.get("job_seed_names_by_label", {})
-        definition = CalculationDefinition(
-            workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
-            calc_type="castep_quantum_phonon_set",
-            parameters={
-                "configuration": snapshot,
-                "output_directory": relative_output,
-                "job_ids_by_label": dict(job_ids_by_label or {}),
-                "singlepoint_job_ids_by_label": (
-                    dict(singlepoint_job_ids_by_label) if isinstance(singlepoint_job_ids_by_label, dict) else {}
-                ),
-                "phonon_job_ids_by_label": (
-                    dict(phonon_job_ids_by_label) if isinstance(phonon_job_ids_by_label, dict) else {}
-                ),
-                "job_seed_names_by_label": (
-                    dict(job_seed_names_by_label) if isinstance(job_seed_names_by_label, dict) else {}
-                ),
-            },
-            input_structure_ids=list(input_structure_ids),
-            input_site_ids=list(input_site_ids),
-        )
-        document.calculations[definition.id] = definition
-
-        self.append_provenance(
+        lifted_maps: dict[str, Any] = {}
+        for key in ("singlepoint_job_ids_by_label", "phonon_job_ids_by_label", "job_seed_names_by_label"):
+            value = snapshot.get(key, {})
+            lifted_maps[key] = dict(value) if isinstance(value, dict) else {}
+        return self._register_definition(
             document,
-            ProvenanceRecord(
-                action="configure_quantum_corrections",
-                workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
-                actor="user",
-                description=f"Configured Quantum Corrections with {len(input_site_ids)} relaxed site(s)",
-                parameters={
-                    "calculation_definition_id": str(definition.id),
-                    "configuration": snapshot,
-                    "output_directory": relative_output,
-                    "job_ids_by_label": dict(job_ids_by_label or {}),
-                },
-                input_entity_ids=[*input_structure_ids, *input_site_ids],
-                output_entity_ids=[definition.id],
-            ),
+            stage=WorkflowStage.QUANTUM_CORRECTIONS,
+            calc_type="castep_quantum_phonon_set",
+            action="configure_quantum_corrections",
+            description=f"Configured Quantum Corrections with {len(input_site_ids)} relaxed site(s)",
+            configuration=snapshot,
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
+            definition_only_parameters=lifted_maps,
+            input_structure_ids=input_structure_ids,
+            input_site_ids=input_site_ids,
         )
-
-        return definition
 
     def register_nudged_elastic_band_definition(
         self,
@@ -1963,29 +1807,55 @@ class ProjectService:
     ) -> CalculationDefinition:
         """Persist one Energy Barriers NEB configuration."""
 
-        if not input_structure_ids:
-            raise ValueError("At least one input structure is required.")
-        missing_structures = [structure_id for structure_id in input_structure_ids if structure_id not in document.structures]
-        if missing_structures:
-            raise ValueError("input_structure_ids must reference known structures.")
-        missing_sites = [site_id for site_id in input_site_ids if site_id not in document.sites]
-        if missing_sites:
-            raise ValueError("input_site_ids must reference known sites.")
-
-        relative_output = str(output_directory)
-        try:
-            relative_output = str(output_directory.relative_to(document.project_root))
-        except ValueError:
-            relative_output = str(output_directory)
-
-        snapshot = to_jsonable(parameters)
-        definition = CalculationDefinition(
-            workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        _require_known_inputs(document, input_structure_ids, input_site_ids)
+        return self._register_definition(
+            document,
+            stage=WorkflowStage.ENERGY_BARRIERS,
             calc_type="castep_nudged_elastic_band_set",
+            action="configure_energy_barriers",
+            description=f"Configured Energy Barriers NEB with {len(input_site_ids)} relaxed site(s)",
+            configuration=to_jsonable(parameters),
+            output_directory=output_directory,
+            extra_parameters={"job_ids_by_label": dict(job_ids_by_label or {})},
+            input_structure_ids=input_structure_ids,
+            input_site_ids=input_site_ids,
+        )
+
+    def _register_definition(
+        self,
+        document: ProjectDocument,
+        *,
+        stage: WorkflowStage,
+        calc_type: str,
+        action: str,
+        description: str,
+        configuration: Any,
+        output_directory: Path,
+        extra_parameters: dict[str, Any],
+        input_structure_ids: Sequence[UUID],
+        input_site_ids: Sequence[UUID] = (),
+        definition_only_parameters: dict[str, Any] | None = None,
+    ) -> CalculationDefinition:
+        """Store one calculation definition and append its ``configure_*`` record.
+
+        The definition's parameters are ``configuration`` (the JSON snapshot of
+        the configured form), the project-relative ``output_directory``, then
+        ``extra_parameters`` and ``definition_only_parameters`` in that order.
+        The provenance record repeats every parameter except the
+        definition-only ones, behind the new definition's id; its mapping
+        values are copies, so later edits to the definition's job maps leave
+        the recorded event unchanged.
+        """
+
+        relative_output = _project_relative_path(output_directory, document.project_root)
+        definition = CalculationDefinition(
+            workflow_stage=stage,
+            calc_type=calc_type,
             parameters={
-                "configuration": snapshot,
+                "configuration": configuration,
                 "output_directory": relative_output,
-                "job_ids_by_label": dict(job_ids_by_label or {}),
+                **extra_parameters,
+                **(definition_only_parameters or {}),
             },
             input_structure_ids=list(input_structure_ids),
             input_site_ids=list(input_site_ids),
@@ -1995,21 +1865,23 @@ class ProjectService:
         self.append_provenance(
             document,
             ProvenanceRecord(
-                action="configure_energy_barriers",
-                workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+                action=action,
+                workflow_stage=stage,
                 actor="user",
-                description=f"Configured Energy Barriers NEB with {len(input_site_ids)} relaxed site(s)",
+                description=description,
                 parameters={
                     "calculation_definition_id": str(definition.id),
-                    "configuration": snapshot,
+                    "configuration": configuration,
                     "output_directory": relative_output,
-                    "job_ids_by_label": dict(job_ids_by_label or {}),
+                    **{
+                        key: dict(value) if isinstance(value, dict) else value
+                        for key, value in extra_parameters.items()
+                    },
                 },
-                input_entity_ids=[*input_structure_ids, *input_site_ids],
+                input_entity_ids=[*definition.input_structure_ids, *definition.input_site_ids],
                 output_entity_ids=[definition.id],
             ),
         )
-
         return definition
 
     def set_recommended_cutoff(

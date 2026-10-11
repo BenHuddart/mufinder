@@ -50,6 +50,7 @@ from mufinder.app.workflow_controllers.base import (
     ControllerResult,
     WorkflowControllerContext,
     WorkflowJobController,
+    dedupe_jobs,
     apply_row_parameters_to_form_state,
     relaxation_artifact_failure,
     upsert_job_derived_structure,
@@ -274,14 +275,7 @@ class PristineRelaxationController(WorkflowJobController):
             mapping[label] = str(job.id)
             created.append(job)
 
-        deduped: list[Job] = []
-        seen: set[UUID] = set()
-        for job in created:
-            if job.id in seen:
-                continue
-            seen.add(job.id)
-            deduped.append(job)
-        return deduped
+        return dedupe_jobs(created)
 
     # --- in-place row parameter mutation ---
 

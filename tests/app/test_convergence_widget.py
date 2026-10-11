@@ -13,12 +13,13 @@ from mufinder.app import workflow_table_utils
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.convergence_widget import ConvergenceWidget, CutoffRangeDialog
 from mufinder.app.param_dialog import ParameterDialog
+from mufinder.app.theme import status_brush
 
 
 def _table_values(widget: ConvergenceWidget) -> list[float]:
     values: list[float] = []
-    for row in range(widget._cutoff_table.rowCount()):
-        item = widget._cutoff_table.item(row, widget._CUTOFF_COLUMN)
+    for row in range(widget._table.rowCount()):
+        item = widget._table.item(row, widget._KEY_COLUMN)
         if item is not None:
             values.append(float(item.text()))
     return values
@@ -69,8 +70,8 @@ def test_convergence_widget_generates_range_from_dialog(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff()
-    widget._cutoff_table.item(0, widget._CUTOFF_COLUMN).setText("280")
+    widget._add_row()
+    widget._table.item(0, widget._KEY_COLUMN).setText("280")
 
     monkeypatch.setattr(
         convergence_widget_module.CutoffRangeDialog,
@@ -93,7 +94,7 @@ def test_convergence_widget_generates_range_from_dialog(
         lambda _self: {"start": 300.0, "stop": 360.0, "step": 30.0, "replace_existing": False},
     )
 
-    widget._open_range_dialog()
+    widget._open_generator_dialog()
 
     assert _table_values(widget) == [280.0, 300.0, 330.0, 360.0]
 
@@ -192,8 +193,8 @@ def test_convergence_widget_restores_cutoffs_from_parameter_rows_when_list_missi
     widget.set_form_state(state)
 
     assert _table_values(widget) == [300.0, 360.0]
-    assert widget._cutoff_parameter_values[300.0]["max_scf_cycles"] == 80
-    assert widget._cutoff_parameter_values[360.0]["max_scf_cycles"] == 90
+    assert widget._parameter_values[300.0]["max_scf_cycles"] == 80
+    assert widget._parameter_values[360.0]["max_scf_cycles"] == 90
 
 
 def test_convergence_widget_restores_legacy_shared_and_override_state(qapp) -> None:
@@ -213,9 +214,9 @@ def test_convergence_widget_restores_legacy_shared_and_override_state(qapp) -> N
 
     widget.set_form_state(state)
 
-    assert widget._effective_params_for_cutoff(280.0)["max_scf_cycles"] == 70
-    assert widget._effective_params_for_cutoff(320.0)["max_scf_cycles"] == 120
-    assert widget._cutoff_added_advanced[320.0] == {"basis_precision", "max_scf_cycles"}
+    assert widget._effective_params_for_key(280.0)["max_scf_cycles"] == 70
+    assert widget._effective_params_for_key(320.0)["max_scf_cycles"] == 120
+    assert widget._added_advanced[320.0] == {"basis_precision", "max_scf_cycles"}
 
 
 def test_convergence_widget_configure_button_reopens_after_first_use(
@@ -225,7 +226,7 @@ def test_convergence_widget_configure_button_reopens_after_first_use(
     clickable after being used once, regardless of whether the dialog was
     accepted or dismissed."""
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
 
     exec_calls: list[int] = []
 
@@ -235,7 +236,7 @@ def test_convergence_widget_configure_button_reopens_after_first_use(
 
     monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
 
-    configure_button = widget._cutoff_table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
 
     configure_button.click()
@@ -249,7 +250,7 @@ def test_convergence_widget_single_cutoff_parameter_dialog_updates_row(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
 
     monkeypatch.setattr(
         ParameterDialog,
@@ -267,11 +268,11 @@ def test_convergence_widget_single_cutoff_parameter_dialog_updates_row(
         lambda _self: ("basis_precision",),
     )
 
-    widget._open_cutoff_parameter_dialog((300.0,))
+    widget._open_parameter_dialog((300.0,))
 
-    assert widget._cutoff_parameter_values[300.0]["max_scf_cycles"] == 99
-    assert widget._cutoff_added_advanced[300.0] == {"basis_precision"}
-    configure_button = widget._cutoff_table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert widget._parameter_values[300.0]["max_scf_cycles"] == 99
+    assert widget._added_advanced[300.0] == {"basis_precision"}
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
     assert configure_button.text() == "Configured..."
 
@@ -280,8 +281,8 @@ def test_convergence_widget_queued_cutoff_parameter_dialog_is_read_only(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._cutoff_parameter_values[300.0] = {"max_scf_cycles": 50}
+    widget._add_row(300.0)
+    widget._parameter_values[300.0] = {"max_scf_cycles": 50}
     widget.set_runtime_states({300.0: SweepPointRunState(status="queued")})
 
     observed: dict[str, object] = {}
@@ -298,11 +299,11 @@ def test_convergence_widget_queued_cutoff_parameter_dialog_is_read_only(
         lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
     )
 
-    widget._open_cutoff_parameter_dialog((300.0,))
+    widget._open_parameter_dialog((300.0,))
 
     assert observed == {"read_only": True, "title": "Inspect Parameters: 300 eV"}
-    assert widget._cutoff_parameter_values[300.0]["max_scf_cycles"] == 50
-    configure_button = widget._cutoff_table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    assert widget._parameter_values[300.0]["max_scf_cycles"] == 50
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
     assert configure_button.text() == "Configured..."
 
@@ -311,8 +312,8 @@ def test_convergence_widget_cancelled_cutoff_parameters_are_editable(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._cutoff_parameter_values[300.0] = {"max_scf_cycles": 50}
+    widget._add_row(300.0)
+    widget._parameter_values[300.0] = {"max_scf_cycles": 50}
     widget.set_runtime_states({300.0: SweepPointRunState(status="cancelled")})
 
     observed: dict[str, object] = {}
@@ -329,19 +330,19 @@ def test_convergence_widget_cancelled_cutoff_parameters_are_editable(
         lambda _self: {"task": "SINGLEPOINT", "max_scf_cycles": 99},
     )
 
-    widget._open_cutoff_parameter_dialog((300.0,))
+    widget._open_parameter_dialog((300.0,))
 
     assert observed == {"read_only": False, "title": "Configure Parameters: 300 eV"}
-    assert widget._cutoff_parameter_values[300.0]["max_scf_cycles"] == 99
+    assert widget._parameter_values[300.0]["max_scf_cycles"] == 99
 
 
 def test_convergence_widget_batch_configure_selected_cutoffs(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
-    monkeypatch.setattr(widget, "_selected_cutoffs", lambda: (300.0, 360.0))
+    widget._add_row(300.0)
+    widget._add_row(360.0)
+    monkeypatch.setattr(widget, "_selected_keys", lambda: (300.0, 360.0))
 
     intros: list[str | None] = []
     original_init = ParameterDialog.__init__
@@ -367,19 +368,19 @@ def test_convergence_widget_batch_configure_selected_cutoffs(
         lambda _self: (),
     )
 
-    widget._configure_selected_cutoffs()
+    widget._configure_selected()
 
     assert intros[-1] == "Included cutoffs: 300 eV, 360 eV"
-    assert widget._cutoff_parameter_values[300.0]["xc_functional"] == "PBE"
-    assert widget._cutoff_parameter_values[360.0]["xc_functional"] == "PBE"
+    assert widget._parameter_values[300.0]["xc_functional"] == "PBE"
+    assert widget._parameter_values[360.0]["xc_functional"] == "PBE"
 
 
 def test_convergence_widget_parameter_dialog_places_kpoint_below_basis_controls(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._cutoff_added_advanced[300.0] = {"kpoint_mp_grid"}
+    widget._add_row(300.0)
+    widget._added_advanced[300.0] = {"kpoint_mp_grid"}
 
     observed: dict[str, object] = {}
 
@@ -390,7 +391,7 @@ def test_convergence_widget_parameter_dialog_places_kpoint_below_basis_controls(
 
     monkeypatch.setattr(ParameterDialog, "exec", fake_exec)
 
-    widget._open_cutoff_parameter_dialog((300.0,))
+    widget._open_parameter_dialog((300.0,))
 
     names = observed.get("names")
     assert isinstance(names, list)
@@ -402,18 +403,18 @@ def test_convergence_widget_parameter_dialog_places_kpoint_below_basis_controls(
 
 def test_convergence_widget_add_cutoff_fallback_on_invalid_previous(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff()
-    widget._cutoff_table.item(0, widget._CUTOFF_COLUMN).setText("not-a-number")
+    widget._add_row()
+    widget._table.item(0, widget._KEY_COLUMN).setText("not-a-number")
 
-    widget._add_cutoff()
+    widget._add_row()
 
-    assert widget._cutoff_table.item(1, widget._CUTOFF_COLUMN).text() == "300"
+    assert widget._table.item(1, widget._KEY_COLUMN).text() == "300"
 
 
 def test_convergence_widget_updates_runtime_columns(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
+    widget._add_row(300.0)
+    widget._add_row(360.0)
 
     widget.set_runtime_states(
         {
@@ -422,27 +423,27 @@ def test_convergence_widget_updates_runtime_columns(qapp) -> None:
         }
     )
 
-    assert widget._cutoff_table.item(0, widget._STATUS_COLUMN).text() == "running"
+    assert widget._table.item(0, widget._STATUS_COLUMN).text() == "running"
     assert (
-        widget._cutoff_table.item(0, widget._STATUS_COLUMN).foreground().color().name()
-        == convergence_widget_module.status_brush("running").color().name()
+        widget._table.item(0, widget._STATUS_COLUMN).foreground().color().name()
+        == status_brush("running").color().name()
     )
-    assert widget._cutoff_table.item(0, widget._TOTAL_ENERGY_COLUMN).text() == ""
-    assert widget._cutoff_table.item(0, widget._MAX_FORCE_COLUMN).text() == ""
-    assert widget._cutoff_table.item(1, widget._STATUS_COLUMN).text() == "completed"
+    assert widget._table.item(0, widget._TOTAL_ENERGY_COLUMN).text() == ""
+    assert widget._table.item(0, widget._MAX_FORCE_COLUMN).text() == ""
+    assert widget._table.item(1, widget._STATUS_COLUMN).text() == "completed"
     assert (
-        widget._cutoff_table.item(1, widget._STATUS_COLUMN).foreground().color().name()
-        == convergence_widget_module.status_brush("completed").color().name()
+        widget._table.item(1, widget._STATUS_COLUMN).foreground().color().name()
+        == status_brush("completed").color().name()
     )
-    assert widget._cutoff_table.item(1, widget._TOTAL_ENERGY_COLUMN).text() == "-1234.567"
-    assert widget._cutoff_table.item(1, widget._MAX_FORCE_COLUMN).text() == "0.0123"
+    assert widget._table.item(1, widget._TOTAL_ENERGY_COLUMN).text() == "-1234.567"
+    assert widget._table.item(1, widget._MAX_FORCE_COLUMN).text() == "0.0123"
 
 
 def test_convergence_widget_ready_rows_lock_cutoff_editing(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
 
-    cutoff_item = widget._cutoff_table.item(0, widget._CUTOFF_COLUMN)
+    cutoff_item = widget._table.item(0, widget._KEY_COLUMN)
     assert cutoff_item is not None
     assert bool(cutoff_item.flags() & Qt.ItemFlag.ItemIsEditable)
 
@@ -456,7 +457,7 @@ def test_convergence_widget_ready_rows_lock_cutoff_editing(qapp) -> None:
 
 def test_convergence_widget_runtime_columns_use_higher_precision(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
 
     total_energy = -1234.56789012345
     max_force = 0.012345678901234
@@ -466,15 +467,15 @@ def test_convergence_widget_runtime_columns_use_higher_precision(qapp) -> None:
         }
     )
 
-    assert widget._cutoff_table.item(0, widget._TOTAL_ENERGY_COLUMN).text() == f"{total_energy:.12g}"
-    assert widget._cutoff_table.item(0, widget._MAX_FORCE_COLUMN).text() == f"{max_force:.12g}"
+    assert widget._table.item(0, widget._TOTAL_ENERGY_COLUMN).text() == f"{total_energy:.12g}"
+    assert widget._table.item(0, widget._MAX_FORCE_COLUMN).text() == f"{max_force:.12g}"
 
 
 def test_convergence_widget_remove_cutoff_confirms_and_reports_submitted_jobs(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
     widget.set_runtime_states({300.0: SweepPointRunState(status="completed")})
     requested: list[object] = []
     widget.remove_cutoff_requested.connect(lambda payload: requested.append(payload))
@@ -486,10 +487,10 @@ def test_convergence_widget_remove_cutoff_confirms_and_reports_submitted_jobs(
         lambda _parent, *prompt: prompts.append(prompt) or answers.pop(0),
     )
 
-    widget._request_cutoff_removals((0,))
+    widget._request_removals((0,))
     assert requested == []
 
-    widget._request_cutoff_removals((0,))
+    widget._request_removals((0,))
     assert requested == [[300.0]]
     assert prompts[1] == (
         "Remove cutoff",
@@ -503,8 +504,8 @@ def test_convergence_widget_remove_cutoff_running_emits_cancel_request(
     qapp, confirmed_destructive_actions
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
+    widget._add_row(300.0)
+    widget._add_row(360.0)
     widget.set_runtime_states(
         {
             300.0: SweepPointRunState(status="running"),
@@ -515,7 +516,7 @@ def test_convergence_widget_remove_cutoff_running_emits_cancel_request(
     cancelled: list[object] = []
     widget.cancel_requested.connect(lambda payload: cancelled.append(payload))
 
-    widget._request_cutoff_removals((0, 1))
+    widget._request_removals((0, 1))
 
     assert cancelled == [[300.0]]
     assert confirmed_destructive_actions[0]["text"] == "Remove 2 cutoffs?"
@@ -528,45 +529,45 @@ def test_convergence_widget_declined_removal_cancels_nothing(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
     widget.set_runtime_states({300.0: SweepPointRunState(status="running")})
     emitted: list[object] = []
     widget.cancel_requested.connect(emitted.append)
     widget.remove_cutoff_requested.connect(emitted.append)
     monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
 
-    widget._request_cutoff_removals((0,))
+    widget._request_removals((0,))
 
     assert emitted == []
 
 
 def test_convergence_widget_remove_button_emits_removal_request(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
 
     requested: list[object] = []
     widget.remove_cutoff_requested.connect(lambda payload: requested.append(payload))
 
-    remove_button = widget._cutoff_table.cellWidget(0, widget._REMOVE_COLUMN)
+    remove_button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
     assert isinstance(remove_button, QToolButton)
 
-    widget._remove_cutoff_button_clicked(remove_button, 300.0)
+    widget._remove_button_clicked(remove_button, 300.0)
 
     assert requested == [[300.0]]
-    assert widget._cutoff_table.rowCount() == 1
+    assert widget._table.rowCount() == 1
 
 
 def test_convergence_widget_run_button_emits_config_and_submit_for_current_row(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._cutoff_table.setCurrentCell(0, widget._CUTOFF_COLUMN)
+    widget._add_row(300.0)
+    widget._table.setCurrentCell(0, widget._KEY_COLUMN)
 
     configured: list[ConvergenceConfig] = []
     submitted: list[object] = []
     widget.configure_requested.connect(lambda payload: configured.append(payload))
     widget.submit_local_requested.connect(lambda payload: submitted.append(payload))
 
-    widget._run_local_selected_cutoffs()
+    widget._run_local_selected()
 
     assert len(configured) == 1
     assert configured[0].cutoff_energies == (300.0,)
@@ -575,15 +576,15 @@ def test_convergence_widget_run_button_emits_config_and_submit_for_current_row(q
 
 def test_convergence_widget_cluster_run_emits_signal_for_current_row(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._cutoff_table.setCurrentCell(0, widget._CUTOFF_COLUMN)
+    widget._add_row(300.0)
+    widget._table.setCurrentCell(0, widget._KEY_COLUMN)
 
     configured: list[ConvergenceConfig] = []
     submitted: list[object] = []
     widget.configure_requested.connect(lambda payload: configured.append(payload))
     widget.submit_cluster_requested.connect(lambda payload: submitted.append(payload))
 
-    widget._run_cluster_selected_cutoffs()
+    widget._run_cluster_selected()
 
     assert len(configured) == 1
     assert configured[0].cutoff_energies == (300.0,)
@@ -592,51 +593,51 @@ def test_convergence_widget_cluster_run_emits_signal_for_current_row(qapp) -> No
 
 def test_convergence_widget_run_targets_selection_else_every_row(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
+    widget._add_row(300.0)
+    widget._add_row(360.0)
 
-    widget._cutoff_table.selectRow(1)
-    assert widget._selected_or_all_cutoffs() == (360.0,)
+    widget._table.selectRow(1)
+    assert widget._selected_or_all_keys() == (360.0,)
 
     # With nothing selected the run buttons read "Run All ...": the current
     # cell is not a hidden target.
-    widget._cutoff_table.clearSelection()
-    widget._cutoff_table.setCurrentCell(0, widget._CUTOFF_COLUMN)
-    widget._cutoff_table.clearSelection()
-    assert widget._selected_or_all_cutoffs() == (300.0, 360.0)
+    widget._table.clearSelection()
+    widget._table.setCurrentCell(0, widget._KEY_COLUMN)
+    widget._table.clearSelection()
+    assert widget._selected_or_all_keys() == (300.0, 360.0)
 
 
 def test_convergence_widget_remove_selected_or_current_cutoffs_uses_selection(qapp, monkeypatch: pytest.MonkeyPatch) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
-    selection_model = widget._cutoff_table.selectionModel()
+    widget._add_row(300.0)
+    widget._add_row(360.0)
+    selection_model = widget._table.selectionModel()
     assert selection_model is not None
     selection_model.select(
-        widget._cutoff_table.model().index(0, widget._CUTOFF_COLUMN),
+        widget._table.model().index(0, widget._KEY_COLUMN),
         QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
     )
     selection_model.select(
-        widget._cutoff_table.model().index(1, widget._CUTOFF_COLUMN),
+        widget._table.model().index(1, widget._KEY_COLUMN),
         QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
     )
 
     requested_rows: list[tuple[int, ...]] = []
-    monkeypatch.setattr(widget, "_request_cutoff_removals", lambda rows: requested_rows.append(tuple(rows)))
+    monkeypatch.setattr(widget, "_request_removals", lambda rows: requested_rows.append(tuple(rows)))
 
-    widget._remove_selected_or_current_cutoffs()
+    widget._remove_selected_or_current()
 
     assert requested_rows == [(0, 1)]
 
 
 def test_convergence_widget_delete_shortcut_requests_selected_cutoff_removal(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
+    widget._add_row(300.0)
+    widget._add_row(360.0)
     requested: list[list[float]] = []
     widget.remove_cutoff_requested.connect(lambda cutoffs: requested.append(list(cutoffs)))
 
-    widget._cutoff_table.selectRow(1)
+    widget._table.selectRow(1)
     widget._delete_shortcut.activated.emit()
 
     assert requested == [[360.0]]
@@ -644,11 +645,11 @@ def test_convergence_widget_delete_shortcut_requests_selected_cutoff_removal(qap
 
 def test_convergence_widget_backspace_shortcut_requests_current_cutoff_removal(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
     requested: list[list[float]] = []
     widget.remove_cutoff_requested.connect(lambda cutoffs: requested.append(list(cutoffs)))
 
-    widget._cutoff_table.setCurrentCell(0, widget._CUTOFF_COLUMN)
+    widget._table.setCurrentCell(0, widget._KEY_COLUMN)
     widget._backspace_shortcut.activated.emit()
 
     assert requested == [[300.0]]
@@ -656,15 +657,15 @@ def test_convergence_widget_backspace_shortcut_requests_current_cutoff_removal(q
 
 def test_convergence_widget_delete_key_requests_selected_cutoff_from_child_focus(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
+    widget._add_row(300.0)
+    widget._add_row(360.0)
     requested: list[list[float]] = []
     widget.remove_cutoff_requested.connect(lambda cutoffs: requested.append(list(cutoffs)))
-    configure_button = widget._cutoff_table.cellWidget(0, widget._CONFIGURE_COLUMN)
+    configure_button = widget._table.cellWidget(0, widget._CONFIGURE_COLUMN)
     assert isinstance(configure_button, QPushButton)
 
     widget.show()
-    widget._cutoff_table.selectRow(0)
+    widget._table.selectRow(0)
     configure_button.setFocus()
     qapp.processEvents()
     QTest.keyClick(configure_button, Qt.Key.Key_Delete)
@@ -676,12 +677,12 @@ def test_convergence_widget_already_confirmed_removal_does_not_ask_again(
     qapp, confirmed_destructive_actions
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
+    widget._add_row(300.0)
+    widget._add_row(360.0)
     requested: list[object] = []
     widget.remove_cutoff_requested.connect(lambda payload: requested.append(payload))
 
-    widget._request_cutoff_removals((0, 1), confirmed=True)
+    widget._request_removals((0, 1), confirmed=True)
 
     assert requested == [[300.0, 360.0]]
     assert confirmed_destructive_actions == []
@@ -691,14 +692,14 @@ def test_convergence_widget_emit_config_groups_shared_and_override_values(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
-    widget._set_cutoff_parameter_values(
+    widget._add_row(300.0)
+    widget._add_row(360.0)
+    widget._set_parameter_values(
         300.0,
         {"task": "SINGLEPOINT", "xc_functional": "PBE", "max_scf_cycles": 80},
         set(),
     )
-    widget._set_cutoff_parameter_values(
+    widget._set_parameter_values(
         360.0,
         {"task": "SINGLEPOINT", "xc_functional": "PBE", "max_scf_cycles": 120},
         set(),
@@ -730,24 +731,24 @@ def test_convergence_widget_emit_config_warning_paths(
         lambda _parent, title, _message: warnings.append(title),
     )
 
-    widget._add_cutoff()
-    widget._cutoff_table.item(0, widget._CUTOFF_COLUMN).setText("abc")
+    widget._add_row()
+    widget._table.item(0, widget._KEY_COLUMN).setText("abc")
     widget._emit_config()
     assert warnings[-1] == "Invalid cutoff list"
 
-    widget._cutoff_table.setRowCount(0)
+    widget._table.setRowCount(0)
     widget._emit_config()
     assert warnings[-1] == "No cutoffs"
 
-    widget._add_cutoff()
-    widget._add_cutoff()
-    widget._cutoff_table.item(0, widget._CUTOFF_COLUMN).setText("300")
-    widget._cutoff_table.item(1, widget._CUTOFF_COLUMN).setText("300")
+    widget._add_row()
+    widget._add_row()
+    widget._table.item(0, widget._KEY_COLUMN).setText("300")
+    widget._table.item(1, widget._KEY_COLUMN).setText("300")
     widget._emit_config()
     assert warnings[-1] == "Duplicate cutoffs"
 
-    widget._cutoff_table.item(1, widget._CUTOFF_COLUMN).setText("360")
-    widget._set_cutoff_parameter_values(
+    widget._table.item(1, widget._KEY_COLUMN).setText("360")
+    widget._set_parameter_values(
         300.0,
         {"task": "SINGLEPOINT", "metals_method": "NOTREAL"},
         set(),
@@ -760,13 +761,13 @@ def test_convergence_widget_context_menu_emits_submit_for_ready_rows(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
     widget.set_runtime_states({300.0: SweepPointRunState(status="ready")})
     emitted: list[object] = []
     widget.submit_local_requested.connect(lambda payload: emitted.append(payload))
     install_fake_menu(monkeypatch)
 
-    menu = open_reset_menu(widget._cutoff_table)
+    menu = open_reset_menu(widget._table)
     action = menu.action("Run Local")
     assert action is not None and action.enabled
     action.triggered.emit()
@@ -778,13 +779,13 @@ def test_convergence_widget_context_menu_submit_enabled_for_not_generated_rows(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
     widget.set_runtime_states({300.0: SweepPointRunState(status="not generated")})
     emitted: list[object] = []
     widget.submit_cluster_requested.connect(lambda payload: emitted.append(payload))
     install_fake_menu(monkeypatch)
 
-    menu = open_reset_menu(widget._cutoff_table)
+    menu = open_reset_menu(widget._table)
     action = menu.action("Run on Cluster")
     assert action is not None and action.enabled
     action.triggered.emit()
@@ -796,13 +797,13 @@ def test_convergence_widget_context_menu_emits_inspect_for_failed_rows(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
     widget.set_runtime_states({300.0: SweepPointRunState(status="failed")})
     emitted: list[object] = []
     widget.inspect_failed_requested.connect(lambda payload: emitted.append(payload))
     install_fake_menu(monkeypatch)
 
-    menu = open_reset_menu(widget._cutoff_table)
+    menu = open_reset_menu(widget._table)
     action = menu.action("Inspect Failure")
     assert action is not None and action.enabled
     action.triggered.emit()
@@ -814,14 +815,14 @@ def test_convergence_widget_context_menu_emits_reset_for_failed_rows(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
     widget.set_runtime_states({300.0: SweepPointRunState(status="failed")})
     emitted: list[object] = []
     widget.reset_failed_requested.connect(lambda payload: emitted.append(payload))
     install_fake_menu(monkeypatch)
 
     # The fake menu's exec() clicks an enabled reset action, as a user would.
-    open_reset_menu(widget._cutoff_table)
+    open_reset_menu(widget._table)
 
     assert emitted == [[300.0]]
 
@@ -830,22 +831,22 @@ def test_convergence_widget_context_menu_emits_reset_for_cancelled_rows(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
     widget.set_runtime_states({300.0: SweepPointRunState(status="cancelled")})
     emitted: list[object] = []
     widget.reset_failed_requested.connect(lambda payload: emitted.append(payload))
     install_fake_menu(monkeypatch)
 
     # The fake menu's exec() clicks an enabled reset action, as a user would.
-    open_reset_menu(widget._cutoff_table)
+    open_reset_menu(widget._table)
 
     assert emitted == [[300.0]]
 
 
 def test_convergence_widget_enables_examine_button_for_completed_results(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(400.0)
+    widget._add_row(300.0)
+    widget._add_row(400.0)
 
     widget.set_runtime_states(
         {
@@ -859,8 +860,8 @@ def test_convergence_widget_enables_examine_button_for_completed_results(qapp) -
 
 def test_convergence_widget_disables_examine_button_without_complete_metrics(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(400.0)
+    widget._add_row(300.0)
+    widget._add_row(400.0)
 
     widget.set_runtime_states(
         {
@@ -886,30 +887,30 @@ def test_convergence_widget_examine_button_emits_signal(qapp) -> None:
 def test_convergence_widget_seeds_rows_with_project_xc_functional(qapp) -> None:
     widget = ConvergenceWidget()
     schema_default = widget._default_params["xc_functional"]
-    widget._add_cutoff(400.0)
+    widget._add_row(400.0)
 
     widget.set_xc_functional_default("PBE")
 
-    assert widget._effective_params_for_cutoff(400.0)["xc_functional"] == "PBE"
+    assert widget._effective_params_for_key(400.0)["xc_functional"] == "PBE"
     config = widget.build_config()
     assert config is not None
     assert config.shared_params["xc_functional"] == "PBE"
 
     # Clearing the project default restores the schema default.
     widget.set_xc_functional_default(None)
-    assert widget._effective_params_for_cutoff(400.0)["xc_functional"] == schema_default
+    assert widget._effective_params_for_key(400.0)["xc_functional"] == schema_default
 
 
 def test_convergence_widget_project_xc_functional_keeps_configured_rows(qapp) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(400.0)
+    widget._add_row(400.0)
     configured = dict(widget._default_params)
     configured["xc_functional"] = "PBESOL"
-    widget._set_cutoff_parameter_values(400.0, configured, set())
+    widget._set_parameter_values(400.0, configured, set())
 
     widget.set_xc_functional_default("PBE")
 
-    assert widget._effective_params_for_cutoff(400.0)["xc_functional"] == "PBESOL"
+    assert widget._effective_params_for_key(400.0)["xc_functional"] == "PBESOL"
 
 
 def test_convergence_widget_remove_button_scope_prompt_does_not_cover_running_jobs(
@@ -919,8 +920,8 @@ def test_convergence_widget_remove_button_scope_prompt_does_not_cover_running_jo
     from mufinder.app.selection_snapshot import SelectionScope
 
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
+    widget._add_row(300.0)
+    widget._add_row(360.0)
     monkeypatch.setattr(
         selection_snapshot, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED
     )
@@ -928,14 +929,14 @@ def test_convergence_widget_remove_button_scope_prompt_does_not_cover_running_jo
     widget.cancel_requested.connect(cancelled.append)
 
     # No running rows: the three-way prompt is the only confirmation.
-    button = widget._cutoff_table.cellWidget(0, widget._REMOVE_COLUMN)
+    button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
     button.selection_snapshot_rows = (0, 1)
     button.clicked.emit()
     assert confirmed_destructive_actions == []
 
     # A running row: the prompt said nothing about cancelling, so ask again.
     widget.set_runtime_states({300.0: SweepPointRunState(status="running")})
-    button = widget._cutoff_table.cellWidget(0, widget._REMOVE_COLUMN)
+    button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
     button.selection_snapshot_rows = (0, 1)
     button.clicked.emit()
     assert [prompt["detail"] for prompt in confirmed_destructive_actions] == [
@@ -948,8 +949,8 @@ def test_convergence_widget_context_cancel_is_confirmed(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
+    widget._add_row(300.0)
+    widget._add_row(360.0)
     widget.set_runtime_states(
         {300.0: SweepPointRunState(status="running"), 360.0: SweepPointRunState(status="queued")}
     )
@@ -963,12 +964,12 @@ def test_convergence_widget_context_cancel_is_confirmed(
         lambda _parent, *prompt: prompts.append(prompt) or answers.pop(0),
     )
     install_fake_menu(monkeypatch)
-    widget._cutoff_table.selectAll()
+    widget._table.selectAll()
 
-    open_reset_menu(widget._cutoff_table).action("Cancel").triggered.emit()
+    open_reset_menu(widget._table).action("Cancel").triggered.emit()
     assert cancelled == []
 
-    open_reset_menu(widget._cutoff_table).action("Cancel").triggered.emit()
+    open_reset_menu(widget._table).action("Cancel").triggered.emit()
     assert cancelled == [[300.0, 360.0]]
     assert prompts[0] == (
         "Cancel calculations",
@@ -983,10 +984,10 @@ def test_convergence_widget_context_menu_has_the_shared_order(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
+    widget._add_row(300.0)
     install_fake_menu(monkeypatch)
 
-    menu = open_reset_menu(widget._cutoff_table)
+    menu = open_reset_menu(widget._table)
 
     assert [action.text for action in menu.actions] == [
         "Run Local",
@@ -1005,10 +1006,10 @@ def test_convergence_widget_context_menu_has_the_shared_order(
 
 def _two_cutoffs_with_different_scf_cycles() -> ConvergenceWidget:
     widget = ConvergenceWidget()
-    widget._add_cutoff(300.0)
-    widget._add_cutoff(360.0)
+    widget._add_row(300.0)
+    widget._add_row(360.0)
     for cutoff, cycles in ((300.0, 80), (360.0, 120)):
-        widget._set_cutoff_parameter_values(
+        widget._set_parameter_values(
             cutoff, {**widget._default_params, "max_scf_cycles": cycles}, set()
         )
     return widget
@@ -1038,14 +1039,14 @@ def test_convergence_batch_configure_keeps_differing_values_when_another_field_i
         lambda dialog: dialog._rows["xc_functional"].editor.set_value(other_xc),
     )
 
-    widget._open_cutoff_parameter_dialog((300.0, 360.0))
+    widget._open_parameter_dialog((300.0, 360.0))
 
     assert mixed == [{"max_scf_cycles"}]
     # The edited field went to both cutoffs; the mixed one was left on each.
-    assert widget._effective_params_for_cutoff(300.0)["xc_functional"] == other_xc
-    assert widget._effective_params_for_cutoff(360.0)["xc_functional"] == other_xc
-    assert widget._effective_params_for_cutoff(300.0)["max_scf_cycles"] == 80
-    assert widget._effective_params_for_cutoff(360.0)["max_scf_cycles"] == 120
+    assert widget._effective_params_for_key(300.0)["xc_functional"] == other_xc
+    assert widget._effective_params_for_key(360.0)["xc_functional"] == other_xc
+    assert widget._effective_params_for_key(300.0)["max_scf_cycles"] == 80
+    assert widget._effective_params_for_key(360.0)["max_scf_cycles"] == 120
 
 
 def test_convergence_batch_configure_writes_an_edited_mixed_value_to_every_cutoff(
@@ -1057,19 +1058,19 @@ def test_convergence_batch_configure_writes_an_edited_mixed_value_to_every_cutof
         lambda dialog: dialog._rows["max_scf_cycles"].editor.set_value(150),
     )
 
-    widget._open_cutoff_parameter_dialog((300.0, 360.0))
+    widget._open_parameter_dialog((300.0, 360.0))
 
-    assert widget._effective_params_for_cutoff(300.0)["max_scf_cycles"] == 150
-    assert widget._effective_params_for_cutoff(360.0)["max_scf_cycles"] == 150
+    assert widget._effective_params_for_key(300.0)["max_scf_cycles"] == 150
+    assert widget._effective_params_for_key(360.0)["max_scf_cycles"] == 150
 
 
 def test_convergence_batch_configure_accepted_unchanged_changes_nothing(
     qapp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = _two_cutoffs_with_different_scf_cycles()
-    before = {c: widget._effective_params_for_cutoff(c) for c in (300.0, 360.0)}
+    before = {c: widget._effective_params_for_key(c) for c in (300.0, 360.0)}
     _accept_after(monkeypatch, lambda dialog: None)
 
-    widget._open_cutoff_parameter_dialog((300.0, 360.0))
+    widget._open_parameter_dialog((300.0, 360.0))
 
-    assert {c: widget._effective_params_for_cutoff(c) for c in (300.0, 360.0)} == before
+    assert {c: widget._effective_params_for_key(c) for c in (300.0, 360.0)} == before
