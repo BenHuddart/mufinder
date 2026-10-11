@@ -26,6 +26,7 @@ from uuid import uuid4
 import pytest
 
 from mufinder.app.main_window import MainWindow, job_is_imported
+from mufinder.app.workflow_config_codecs import deserialize_muon_relaxation_config
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Job, utc_now
@@ -338,7 +339,7 @@ class TestMergingABatch:
     ) -> None:
         _document, _outcome, _merged = self._import_into(window, tmp_path)
 
-        config = window._deserialize_muon_relaxation_config(
+        config = deserialize_muon_relaxation_config(
             window._muon_relaxation_controller.active_definition().parameters["configuration"]
         )
         assert config is not None
@@ -355,7 +356,7 @@ class TestMergingABatch:
 
         _document, _outcome, _merged = self._import_into(window, tmp_path)
 
-        definition_rows = window._deserialize_muon_relaxation_config(
+        definition_rows = deserialize_muon_relaxation_config(
             window._muon_relaxation_controller.active_definition().parameters["configuration"]
         ).rows
         form_rows = window._muon_relaxation_form_config().rows
@@ -552,7 +553,7 @@ class TestSignatureStability:
         return TestMergingABatch()._import_into(window, tmp_path)
 
     def _signatures(self, window: MainWindow):
-        definition_rows = window._deserialize_muon_relaxation_config(
+        definition_rows = deserialize_muon_relaxation_config(
             window._muon_relaxation_controller.active_definition().parameters["configuration"]
         ).rows
         form_rows = window._muon_relaxation_form_config().rows

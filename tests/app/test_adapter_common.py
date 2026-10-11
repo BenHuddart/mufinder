@@ -20,6 +20,7 @@ from mufinder.app.adapter_common import (
     is_identity_supercell,
     kpoint_reference_lattice,
     prepare_row,
+    project_convergence_parameter_values,
     reference_is_supercell_of,
     require_row_label,
     rescale_kpoint_grid,
@@ -362,3 +363,26 @@ def test_prepare_row_reports_an_unconvertible_structure_by_row_label() -> None:
             reference_lattice=_CUBIC_4,
             target_description="unit cell (equivalent density).",
         )
+
+
+def test_project_convergence_parameter_values_applies_only_set_defaults() -> None:
+    from mufinder.castep_io.types import ValueWithUnit
+    from mufinder.domain.models import Project
+
+    assert project_convergence_parameter_values(Project(name="P")) == {}
+
+    project = Project(
+        name="P",
+        recommended_xc_functional="PBE",
+        recommended_cutoff_energy=500,
+        recommended_kpoint_grid=(4, 4, 4),
+        recommended_kpoint_lattice=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+    )
+
+    assert project_convergence_parameter_values(project) == {
+        "xc_functional": "PBE",
+        "cut_off_energy": ValueWithUnit(500.0, "eV"),
+        "kpoint_mp_grid": (4, 4, 4),
+    }
+    doubled = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 5.0]]
+    assert project_convergence_parameter_values(project, target_lattice=doubled)["kpoint_mp_grid"] == (2, 2, 4)

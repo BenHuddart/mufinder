@@ -12,7 +12,9 @@ from mufinder.app.workflow_dialogs import (
     EnergyBarrierPathViewerDialog,
     QuantumCorrectionsConfigDialog,
     RowParameterRequest,
+    SourceConfigureRequest,
     run_row_parameter_dialog,
+    run_source_configure_dialog,
 )
 from mufinder.app.workflow_parameters import build_workflow_parameter_surface, workflow_basic_parameter_names
 from mufinder.castep_io.schema import KeywordSpec
@@ -253,3 +255,42 @@ def test_run_row_parameter_dialog_without_rows_opens_nothing(qapp, monkeypatch) 
 
     assert run_row_parameter_dialog(_row_request({}, values={})) is None
     assert opened == []
+
+
+def _source_request(*, read_only: bool = False) -> SourceConfigureRequest:
+    return SourceConfigureRequest(
+        keys=("a", "b"),
+        row_values=({"phonon_method": "DFPT"}, {"phonon_method": "LINEARRESPONSE"}),
+        advanced_names=frozenset(),
+        title="Configure Things",
+        intro_text="Selected: 2",
+        read_only=read_only,
+        num_farms=1,
+        species_options=(),
+    )
+
+
+def test_run_source_configure_dialog_seeds_shared_values_and_returns_the_edit(qapp, monkeypatch) -> None:
+    opened = _capture_exec(monkeypatch, QDialog.DialogCode.Accepted)
+    dialog = ParameterDialog(specs=_quantum_specs(), workflow_stage="quantum_corrections")
+
+    result = run_source_configure_dialog(dialog, _source_request())
+
+    assert opened == [dialog]
+    assert dialog.windowTitle() == "Configure Things"
+    assert result is not None
+    # The rows disagree on the phonon method, so the dialog marks it mixed and,
+    # left untouched, reports it so each row keeps its own.
+    assert result.untouched_mixed == frozenset({"phonon_method"})
+    assert "phonon_method" not in result.values
+    assert result.values == dialog.collect_values()
+
+
+def test_run_source_configure_dialog_returns_nothing_when_cancelled_or_read_only(qapp, monkeypatch) -> None:
+    _capture_exec(monkeypatch, QDialog.DialogCode.Rejected)
+    dialog = ParameterDialog(specs=_quantum_specs(), workflow_stage="quantum_corrections")
+    assert run_source_configure_dialog(dialog, _source_request()) is None
+
+    _capture_exec(monkeypatch, QDialog.DialogCode.Accepted)
+    dialog = ParameterDialog(specs=_quantum_specs(), workflow_stage="quantum_corrections", read_only=True)
+    assert run_source_configure_dialog(dialog, _source_request(read_only=True)) is None

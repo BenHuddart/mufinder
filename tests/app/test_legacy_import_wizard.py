@@ -21,6 +21,7 @@ from mufinder.app.legacy_import_dialog import (
     run_summary_lines,
 )
 from mufinder.app.main_window import MainWindow
+from mufinder.app.workflow_config_codecs import deserialize_muon_relaxation_config
 from mufinder.domain.models import Project, Structure
 from mufinder.services.legacy_import import scan_legacy_folder
 from mufinder.services.project_service import ProjectDocument
@@ -842,7 +843,7 @@ class TestRemoveThenReimport:
         self._remove(window, monkeypatch)
         self._import(window, tmp_path, host_structure, folder)
 
-        definition_rows = window._deserialize_muon_relaxation_config(
+        definition_rows = deserialize_muon_relaxation_config(
             window._muon_relaxation_controller.active_definition().parameters["configuration"]
         ).rows
         form_rows = window._muon_relaxation_form_config().rows

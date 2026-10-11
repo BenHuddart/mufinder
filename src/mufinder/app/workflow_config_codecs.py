@@ -8,6 +8,12 @@ later); deserialising restores every parameter value to its structured form
 through :func:`~mufinder.app.workflow_parameters.restore_structured_value`
 and skips rows it cannot read rather than failing the whole configuration.
 
+The source-keyed workflows (quantum corrections, energy barriers) have no
+configuration dataclass: each row's settings live under
+``configuration["row_settings"][key]`` as its parameter values, its sorted
+``added_advanced`` names and workflow extras such as ``num_farms``. The
+``workflow_row_configuration`` family reads and writes those entries.
+
 The module lives in ``mufinder.app`` because the configuration dataclasses
 (``mufinder.app.convergence_types``, ``relaxation_types`` and ``uep_types``)
 and the parameter restorer do. It imports no Qt.
@@ -15,8 +21,11 @@ and the parameter restorer do. It imports no Qt.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Iterable, Mapping
 from uuid import UUID
+
+from mufinder.domain.models import CalculationDefinition
+from mufinder.persistence.codec import to_jsonable
 
 from mufinder.app.adapter_common import coerce_supercell_matrix
 from mufinder.app.convergence_types import ConvergenceConfig, SweepValue
@@ -28,7 +37,11 @@ from mufinder.app.relaxation_types import (
     SupercellMatrix,
 )
 from mufinder.app.uep_types import UepConfig, UepSourceRow
-from mufinder.app.workflow_parameters import restore_structured_value
+from mufinder.app.workflow_parameters import (
+    merge_batch_advanced,
+    merge_batch_values,
+    restore_structured_value,
+)
 
 
 def normalized_supercell_matrix(matrix: SupercellMatrix | None) -> SupercellMatrix | None:
@@ -339,3 +352,139 @@ def deserialize_convergence_config(payload: object) -> ConvergenceConfig | None:
         overrides=overrides,
         name_prefix=str(payload.get("name_prefix", default_prefix)).strip() or default_prefix,
     )
+
+
+#: The row-settings keys that are not workflow extras.
+_ROW_SETTINGS_PARAMETER_KEYS = frozenset({"parameter_values", "params", "added_advanced"})
+
+
+def workflow_row_configuration(
+    definition: CalculationDefinition | None,
+    key: str,
+) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
+    """Return a source row's stored ``(parameter values, advanced names, extras)``.
+
+    Parameter values are restored to their structured form; a missing or
+    malformed entry reads as empty.
+    """
+
+    if definition is None:
+        return {}, (), {}
+    config = definition.parameters.get("configuration", {})
+    if not isinstance(config, dict):
+        return {}, (), {}
+    raw_rows = config.get("row_settings", {})
+    if not isinstance(raw_rows, dict):
+        return {}, (), {}
+    raw_entry = raw_rows.get(key, {})
+    if not isinstance(raw_entry, dict):
+        return {}, (), {}
+    extras = {
+        str(name): value
+        for name, value in raw_entry.items()
+        if name not in _ROW_SETTINGS_PARAMETER_KEYS
+    }
+    return (
+        _restore_parameter_values(raw_entry.get("parameter_values", raw_entry.get("params", {}))),
+        _deserialize_added_advanced(raw_entry.get("added_advanced", [])),
+        extras,
+    )
+
+
+def workflow_row_configuration_exists(definition: CalculationDefinition | None, key: str) -> bool:
+    """Return whether a source row stores any parameter, advanced name or non-blank extra."""
+
+    params, advanced, extras = workflow_row_configuration(definition, key)
+    return bool(params) or bool(advanced) or any(str(value).strip() for value in extras.values())
+
+
+def num_farms_from_extras(extras: Mapping[str, object]) -> int:
+    """Return a row's CASTEP task-farm count from its extras; at least 1."""
+
+    raw = extras.get("num_farms", 1)
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 1
+
+
+def row_settings_payload(
+    values: Mapping[str, object],
+    advanced_names: Iterable[str],
+    extras: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Return the ``row_settings`` entry for values a configure dialog returned.
+
+    The workflow-locked ``task`` is dropped. ``None`` means there is nothing to
+    store: no parameter value, no advanced name and no extra.
+    """
+
+    parameter_values = to_jsonable({str(name): value for name, value in values.items() if name != "task"})
+    payload: dict[str, object] = {
+        "parameter_values": parameter_values if isinstance(parameter_values, dict) else {},
+        "added_advanced": sorted(set(advanced_names)),
+    }
+    stored_extras = {str(name): value for name, value in extras.items()}
+    payload.update(stored_extras)
+    if payload["parameter_values"] or payload["added_advanced"] or stored_extras:
+        return payload
+    return None
+
+
+def batch_row_payload(
+    definition: CalculationDefinition | None,
+    key: str,
+    payload: dict[str, object] | None,
+    untouched_mixed: Collection[str],
+) -> dict[str, object] | None:
+    """Return the ``row_settings`` entry to store for one row of a batch edit.
+
+    ``payload`` is what the dialog produced for every row. Parameters that
+    differed between the rows and were left alone are taken from the row's own
+    stored configuration instead: a row that set one explicitly keeps it, and a
+    row that did not keeps deriving it from its source defaults.
+    """
+
+    if not untouched_mixed:
+        return payload
+    row_params, row_advanced, _extras = workflow_row_configuration(definition, key)
+    merged = dict(payload or {})
+    collected = merged.get("parameter_values")
+    merged["parameter_values"] = merge_batch_values(
+        collected if isinstance(collected, dict) else {},
+        to_jsonable({str(name): value for name, value in row_params.items()}) or {},
+        untouched_mixed,
+    )
+    merged["added_advanced"] = sorted(
+        merge_batch_advanced(merged.get("added_advanced", ()), row_advanced, untouched_mixed)
+    )
+    has_extras = any(name not in {"parameter_values", "added_advanced"} for name in merged)
+    if not (merged["parameter_values"] or merged["added_advanced"] or has_extras):
+        return None
+    return merged
+
+
+def store_workflow_row_configuration(
+    definition: CalculationDefinition,
+    key: str,
+    payload: Mapping[str, object] | None,
+) -> None:
+    """Store a source row's ``row_settings`` entry; ``None`` removes it.
+
+    Removing the last entry removes ``row_settings`` itself.
+    """
+
+    config = definition.parameters.setdefault("configuration", {})
+    if not isinstance(config, dict):
+        config = {}
+        definition.parameters["configuration"] = config
+    rows = config.setdefault("row_settings", {})
+    if not isinstance(rows, dict):
+        rows = {}
+        config["row_settings"] = rows
+    if payload is None:
+        rows.pop(key, None)
+        if not rows:
+            config.pop("row_settings", None)
+        return
+    rows[key] = payload

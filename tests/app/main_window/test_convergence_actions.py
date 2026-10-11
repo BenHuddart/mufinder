@@ -11,6 +11,7 @@ import pytest
 import mufinder.app.main_window as main_window_module
 from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
 from mufinder.app.main_window import MainWindow
+from mufinder.app.workflow_config_codecs import deserialize_convergence_config
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
@@ -758,7 +759,7 @@ def test_main_window_convergence_status_uses_cutoff_energies_when_legacy_sweep_v
 def test_main_window_deserializes_convergence_config_with_structured_values(main_window) -> None:
     window = main_window
 
-    config = window._deserialize_convergence_config(
+    config = deserialize_convergence_config(
         {
             "name_prefix": " conv ",
             "cutoff_energies": [300.0, 360.0],
@@ -790,7 +791,7 @@ def test_main_window_deserializes_convergence_config_with_structured_values(main
 def test_main_window_deserializes_cutoff_config_prefers_cutoff_energies_when_fields_diverge(main_window) -> None:
     window = main_window
 
-    config = window._deserialize_convergence_config(
+    config = deserialize_convergence_config(
         {
             "name_prefix": "conv",
             "sweep_parameter": "cut_off_energy",
@@ -2176,48 +2177,4 @@ def test_cutoff_rows_saved_with_task_only_parameters_are_read_back_as_defaults(
     view._run_cluster_selected()
     assert sent in ([], [[]])
     assert len(doc.jobs) == 2
-    window.close()
-
-
-def test_main_window_batch_row_payload_keeps_a_rows_own_untouched_mixed_values(main_window) -> None:
-    from types import SimpleNamespace
-
-    window = main_window
-    definition = SimpleNamespace(
-        parameters={
-            "configuration": {
-                "row_settings": {
-                    "explicit": {
-                        "parameter_values": {"max_scf_cycles": 80, "xc_functional": "LDA"},
-                        "added_advanced": ["nextra_bands"],
-                    },
-                    # "derived" has no stored value for max_scf_cycles: it takes
-                    # it from its source defaults and must keep doing so.
-                    "derived": {"parameter_values": {"xc_functional": "LDA"}, "added_advanced": []},
-                }
-            }
-        }
-    )
-    payload = {
-        "parameter_values": {"xc_functional": "PBE"},
-        "added_advanced": ["nextra_bands"],
-        "num_farms": 2,
-    }
-    untouched = {"max_scf_cycles", "nextra_bands"}
-
-    explicit = window._batch_row_payload(definition, "explicit", payload, untouched)
-    derived = window._batch_row_payload(definition, "derived", payload, untouched)
-
-    assert explicit == {
-        "parameter_values": {"xc_functional": "PBE", "max_scf_cycles": 80},
-        "added_advanced": ["nextra_bands"],
-        "num_farms": 2,
-    }
-    assert derived == {
-        "parameter_values": {"xc_functional": "PBE"},
-        "added_advanced": [],
-        "num_farms": 2,
-    }
-    # With nothing untouched the dialog's payload is stored as it is.
-    assert window._batch_row_payload(definition, "explicit", payload, set()) is payload
     window.close()

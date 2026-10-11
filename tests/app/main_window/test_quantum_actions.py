@@ -52,7 +52,7 @@ def test_main_window_reset_quantum_corrections_to_stage_one_clears_shared_job_st
     site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
 
-    definition = window._ensure_quantum_corrections_definition([str(site.id)])
+    definition = window._quantum_corrections_controller.ensure_definition([str(site.id)])
     assert definition is not None
     definition.parameters["job_seed_names_by_label"] = {str(site.id): "quantum_siteA"}
     config = definition.parameters.setdefault("configuration", {})
@@ -94,9 +94,9 @@ def test_main_window_reset_quantum_corrections_to_stage_one_clears_shared_job_st
     assert row_settings[str(site.id)]["num_farms"] == 4
     assert output_dir.exists() is False
 
-    candidate = window._quantum_source_candidate_by_key(str(site.id))
+    candidate = window._quantum_corrections_controller.candidate_by_key(str(site.id))
     assert candidate is not None
-    stage_state = window._quantum_stage_state(definition, candidate)
+    stage_state = window._quantum_corrections_controller.stage_state(definition, candidate)
     assert stage_state.stage == "singlepoint"
     assert stage_state.status == "ready"
 
@@ -123,7 +123,7 @@ def test_quantum_can_reset_to_stage_one_for_finished_bare_singlepoint(
         window, service, doc, singlepoint_status=singlepoint_status
     )
 
-    assert window._quantum_can_reset_to_stage_one(definition, candidate) is True
+    assert window._quantum_corrections_controller.can_reset_to_stage_one(definition, candidate) is True
     window.close()
 
 
@@ -143,7 +143,7 @@ def test_quantum_cannot_reset_to_stage_one_for_unfinished_bare_singlepoint(
         window, service, doc, singlepoint_status=singlepoint_status
     )
 
-    assert window._quantum_can_reset_to_stage_one(definition, candidate) is False
+    assert window._quantum_corrections_controller.can_reset_to_stage_one(definition, candidate) is False
     window.close()
 
 
@@ -175,9 +175,83 @@ def test_reset_quantum_corrections_to_stage_one_recovers_a_failed_singlepoint(
     assert definition.parameters["singlepoint_job_ids_by_label"] == {}
     assert output_dir.exists() is False
 
-    refreshed_candidate = window._quantum_source_candidate_by_key(candidate.key)
+    refreshed_candidate = window._quantum_corrections_controller.candidate_by_key(candidate.key)
     assert refreshed_candidate is not None
-    stage_state = window._quantum_stage_state(definition, refreshed_candidate)
+    stage_state = window._quantum_corrections_controller.stage_state(definition, refreshed_candidate)
     assert stage_state.stage == "singlepoint"
     assert stage_state.status == "ready"
     window.close()
+
+
+class _FakeConfigDialog:
+    """Records how a source Configure dialog was opened and accepts it."""
+
+    def __init__(self, opened: list[dict[str, object]], *, num_farms: int, **kwargs) -> None:
+        self._opened = opened
+        self._num_farms = num_farms
+        opened.append({"num_farms": num_farms, **kwargs})
+
+    def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt API naming.
+        self._opened[-1]["title"] = title
+
+    def set_values(self, values, *, preferred_exclusive=None) -> None:
+        self._opened[-1]["values"] = dict(values)
+
+    def set_advanced_names(self, names) -> None:
+        return None
+
+    def set_mixed_names(self, names) -> None:
+        return None
+
+    def exec(self):
+        from PySide6.QtWidgets import QDialog
+
+        return QDialog.DialogCode.Accepted
+
+    def collect_values(self) -> dict[str, object]:
+        return {}
+
+    def advanced_names(self) -> tuple[str, ...]:
+        return ()
+
+    def untouched_mixed_names(self) -> set[str]:
+        return set()
+
+    def pseudopotential_family(self) -> str:
+        return "unknown"
+
+    def num_farms(self) -> int:
+        return 4
+
+
+def test_configuring_a_stage_two_row_edits_only_its_farm_count(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mufinder.app.workflow_config_codecs import workflow_row_configuration
+
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_farms.mufinder", "QuantumFarms")
+    window._document = doc
+    definition, candidate, _singlepoint = stage_quantum_row_with_singlepoint(
+        window, service, doc, singlepoint_status=JobStatus.COMPLETED
+    )
+    opened: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        main_window_module,
+        "QuantumCorrectionsConfigDialog",
+        lambda **kwargs: _FakeConfigDialog(opened, **kwargs),
+    )
+
+    window._quantum_corrections_view.configure_requested.emit([candidate.key])
+
+    assert len(opened) == 1
+    assert opened[0]["title"] == "Configure Quantum Corrections Stage 2 Farms"
+    assert opened[0]["editable_param_names"] == ()
+    assert opened[0]["num_farms_editable"] is True
+    assert opened[0]["pseudopotential_editable"] is False
+    assert opened[0]["read_only"] is False
+    assert workflow_row_configuration(definition, candidate.key)[2] == {
+        "pseudopotential_family": "unknown",
+        "num_farms": 4,
+    }

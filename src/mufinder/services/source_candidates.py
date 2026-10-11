@@ -4,7 +4,9 @@ The quantum-corrections, energy-barriers and relaxation-analysis surfaces each
 start from a list of completed upstream calculations: relaxed muon sites, the
 diffusion paths generated between two of them, completed NEB results, and the
 completed pristine and muon relaxations. This module builds those lists from the
-project document. Every function here only reads the document; none mutates
+project document, together with the labels, seed names and stored ``sources``
+entries derived from them and the settings a follow-on row inherits from its
+source relaxation's input files. Every function here only reads; none mutates
 project state or touches a widget.
 
 Inputs that belong to a workflow controller (a definition's deserialized rows,
@@ -16,20 +18,31 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
 import numpy as np
 
+from mufinder.castep_io.cell_parser import CellParseError, ParsedCell, parse_cell_file
+from mufinder.castep_io.param_parser import parse_param_assignments, run_is_spin_polarized
 from mufinder.domain.charge_states import (
     MUONIUM_CHARGE_STATE,
     POSITIVE_MUON_CHARGE_STATE,
+    muon_charge_state_label,
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, Job, MuonSite, Result, Structure
+from mufinder.domain.models import (
+    CalculationDefinition,
+    CalculationRun,
+    Job,
+    MuonSite,
+    Result,
+    Structure,
+)
 from mufinder.science.energy_barriers import (
     EnergyBarrierError,
     MuonPath,
@@ -40,12 +53,15 @@ from mufinder.science.relaxation_analysis import (
     folded_muon_position_from_structure,
     grouped_relative_energies,
 )
+from mufinder.science.supercell import build_supercell_structure
+from mufinder.services.job_paths import job_seed_name
 from mufinder.services.project_service import ProjectDocument
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
     merge_serialized_sources,
 )
+from mufinder.workflow.naming import job_name
 from mufinder.workflow.quantum import quantum_source_eligibility
 
 #: Stage identifiers for a two-stage quantum-corrections source row.
@@ -232,6 +248,13 @@ def charge_state_for_job(job: Job | None) -> str | None:
     return None
 
 
+def charge_state_label_for_job(job: Job | None) -> str:
+    """Return the user-facing charge-state label of a muon-relaxation job, or ``""``."""
+
+    charge_state = charge_state_for_job(job)
+    return muon_charge_state_label(charge_state) if charge_state is not None else ""
+
+
 def eligible_quantum_source_candidates(document: ProjectDocument | None) -> list[QuantumSourceCandidate]:
     """Return every relaxed muon site that can seed a quantum-corrections row.
 
@@ -327,6 +350,114 @@ def quantum_source_labels_by_key(candidates: Iterable[QuantumSourceCandidate]) -
     return labels_by_key
 
 
+def quantum_source_label(document: ProjectDocument | None, candidate: QuantumSourceCandidate) -> str:
+    """Return ``candidate``'s unique display label among the eligible sources."""
+
+    labels = quantum_source_labels_by_key(eligible_quantum_source_candidates(document))
+    return labels.get(candidate.key, "site")
+
+
+def quantum_seed_name_for_key(
+    document: ProjectDocument | None,
+    definition: CalculationDefinition | None,
+    key: str,
+) -> str:
+    """Return the seed name both stages of a quantum-corrections row run under.
+
+    The name recorded in the definition's ``job_seed_names_by_label`` wins;
+    otherwise it is derived from the source's display label, or ``"quantum"``
+    when the source is no longer eligible.
+    """
+
+    mapping = definition.parameters.get("job_seed_names_by_label", {}) if definition is not None else {}
+    raw_seed = mapping.get(key) if isinstance(mapping, dict) else None
+    if isinstance(raw_seed, str) and raw_seed.strip():
+        return raw_seed.strip()
+    candidate = quantum_source_candidate_by_key(document, key)
+    if candidate is None:
+        return "quantum"
+    return job_name("quantum", quantum_source_label(document, candidate))
+
+
+def serialize_quantum_sources(
+    document: ProjectDocument | None,
+    site_ids: Iterable[UUID],
+) -> list[dict[str, object]]:
+    """Return the stored ``sources`` entries of the eligible sources among ``site_ids``."""
+
+    serialized: list[dict[str, object]] = []
+    for raw_site_id in site_ids:
+        candidate = quantum_source_candidate_by_key(document, str(raw_site_id))
+        if candidate is None:
+            continue
+        serialized.append(
+            {
+                "site_id": str(candidate.site.id),
+                "source_relaxation_run_id": str(candidate.run.id),
+                "source_relaxation_job_id": str(candidate.job.id),
+                "relaxed_structure_id": str(candidate.structure.id),
+                "label": quantum_source_label(document, candidate),
+                "charge_state": charge_state_for_job(candidate.job),
+            }
+        )
+    return serialized
+
+
+def source_relaxation_parameter_values(
+    job: Job,
+    output_directory: Callable[[Job], Path | None],
+) -> dict[str, object]:
+    """Return the settings a follow-on row inherits from its source relaxation.
+
+    Read from the relaxation's own ``.cell`` and ``.param``: the k-point grid,
+    the cut-off energy, the exchange-correlation functional and the spin
+    treatment, so the follow-on calculation stays comparable with the
+    relaxation. A file that is missing or does not parse contributes nothing,
+    except that a muonium source without a readable ``.param`` is taken to be
+    spin-polarised, the default its relaxation is written with.
+    """
+
+    values: dict[str, object] = {}
+    output_dir = output_directory(job)
+    if output_dir is None:
+        return values
+
+    seed_name = job_seed_name(job, output_directory)
+    cell_path = output_dir / f"{seed_name}.cell"
+    parsed_cell: ParsedCell | None = None
+    if cell_path.is_file():
+        try:
+            parsed_cell = parse_cell_file(cell_path)
+        except (CellParseError, OSError, ValueError):
+            parsed_cell = None
+        if parsed_cell is not None and parsed_cell.cell_file.kpoint_mp_grid is not None:
+            values["kpoint_mp_grid"] = tuple(int(component) for component in parsed_cell.cell_file.kpoint_mp_grid)
+
+    param_path = output_dir / f"{seed_name}.param"
+    assignments: dict[str, object] | None = None
+    if param_path.is_file():
+        try:
+            assignments = parse_param_assignments(param_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            assignments = None
+    if assignments is not None:
+        cutoff = assignments.get("cut_off_energy")
+        if cutoff is not None:
+            values["cut_off_energy"] = cutoff
+        xc_functional = assignments.get("xc_functional")
+        if xc_functional is not None:
+            values["xc_functional"] = xc_functional
+        values["spin_polarized"] = run_is_spin_polarized(
+            assignments,
+            parsed_cell.atomic_spins if parsed_cell is not None else None,
+        )
+    elif charge_state_for_job(job) == MUONIUM_CHARGE_STATE:
+        # The value also seeds the always-shown Spin Polarized checkbox, which
+        # would otherwise save an unticked box over the workflow's own default.
+        values["spin_polarized"] = True
+    return values
+
+
 def quantum_stage_state(
     *,
     singlepoint_job: Job | None,
@@ -397,6 +528,122 @@ def energy_barrier_generated_sources(document: ProjectDocument | None) -> list[d
             key_field="key",
         )
     return sources
+
+
+def energy_barrier_form_state(document: ProjectDocument | None) -> dict[str, object]:
+    """Return a copy of the Energy Barriers form state, or ``{}``."""
+
+    if document is None:
+        return {}
+    raw = document.ui_state.get(ENERGY_BARRIERS_FORM_STATE_KEY, {})
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def energy_barrier_max_path_length_text(document: ProjectDocument | None) -> str:
+    """Return the stored maximum path length as the form shows it, or ``""``."""
+
+    raw = energy_barrier_form_state(document).get("max_path_length_ang")
+    if raw in (None, ""):
+        return ""
+    try:
+        return f"{float(raw):.6g}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def selected_energy_barrier_endpoint_keys(document: ProjectDocument | None) -> tuple[str, str]:
+    """Return the ``(initial, final)`` endpoint keys the form selects.
+
+    A missing selection falls back to the first eligible source for the initial
+    endpoint and the first other eligible source for the final one.
+    """
+
+    state = energy_barrier_form_state(document)
+    reactant_key = str(state.get("selected_reactant_key", "")).strip()
+    product_key = str(state.get("selected_product_key", "")).strip()
+    if reactant_key and product_key:
+        return reactant_key, product_key
+    candidates = eligible_quantum_source_candidates(document)
+    if not reactant_key and candidates:
+        reactant_key = candidates[0].key
+    if not product_key:
+        for candidate in candidates:
+            if candidate.key != reactant_key:
+                product_key = candidate.key
+                break
+    return reactant_key, product_key
+
+
+def energy_barrier_source_label(candidate: EnergyBarrierSourceCandidate) -> str:
+    """Return a generated path's label, ``"{initial}_to_{final}_path{n}"``."""
+
+    reactant = candidate.reactant.site.label or candidate.reactant.job.label or "reactant"
+    product = candidate.product.site.label or candidate.product.job.label or "product"
+    return f"{reactant}_to_{product}_path{candidate.path_index}"
+
+
+def serialize_energy_barrier_source_candidates(
+    candidates: Iterable[EnergyBarrierSourceCandidate],
+) -> list[dict[str, object]]:
+    """Return the stored form of generated paths, as the form state holds them."""
+
+    return [
+        {
+            "key": candidate.key,
+            "label": energy_barrier_source_label(candidate),
+            "path_index": candidate.path_index,
+            "reactant_site_id": str(candidate.reactant.site.id),
+            "product_site_id": str(candidate.product.site.id),
+            "reactant_run_id": str(candidate.reactant.run.id),
+            "product_run_id": str(candidate.product.run.id),
+            "reactant_job_id": str(candidate.reactant.job.id),
+            "product_job_id": str(candidate.product.job.id),
+            "reactant_structure_id": str(candidate.reactant.structure.id),
+            "product_structure_id": str(candidate.product.structure.id),
+            "path_start_fractional": list(candidate.path.start_fractional),
+            "path_end_fractional": list(candidate.path.end_fractional),
+            "path_length_ang": candidate.path.length_ang,
+            "charge_state": charge_state_for_job(candidate.reactant.job),
+        }
+        for candidate in candidates
+    ]
+
+
+def energy_barrier_path_preview_structure(
+    document: ProjectDocument | None,
+    candidate: EnergyBarrierSourceCandidate,
+) -> Structure:
+    """Return the pristine supercell a generated path is drawn in.
+
+    The host is expanded to the initial endpoint's relaxed cell. Raises
+    ``ValueError`` with a user-facing reason when there is no document or host,
+    a lattice is malformed, or the endpoint cell is not an integer supercell of
+    the host.
+    """
+
+    if document is None:
+        raise ValueError("No project document is loaded.")
+    host_id = document.project.host_structure_id
+    host = document.structures.get(host_id) if host_id is not None else None
+    if host is None:
+        raise ValueError("A pristine host structure is required for the path preview.")
+
+    pristine_lattice = np.asarray(host.lattice_vectors, dtype=float)
+    target_lattice = np.asarray(candidate.reactant.structure.lattice_vectors, dtype=float)
+    if pristine_lattice.shape != (3, 3) or target_lattice.shape != (3, 3):
+        raise ValueError("Energy barrier path preview requires 3x3 lattice vectors.")
+
+    matrix = np.rint(target_lattice @ np.linalg.inv(pristine_lattice)).astype(int)
+    if not np.allclose(matrix @ pristine_lattice, target_lattice, atol=1e-6):
+        raise ValueError("Could not construct a pristine supercell matching the relaxed endpoint cell.")
+
+    expanded_structure, _spins = build_supercell_structure(host, matrix.tolist())
+    return replace(
+        expanded_structure,
+        label=f"{energy_barrier_source_label(candidate)} preview",
+        origin="energy_barriers_path_preview",
+        parent_structure_id=host.id,
+    )
 
 
 def enumerate_energy_barrier_source_candidates(
@@ -529,6 +776,42 @@ def energy_barrier_neb_source_candidates(document: ProjectDocument | None) -> li
     return sorted(candidates, key=lambda item: item.key)
 
 
+def serialize_energy_barrier_neb_sources(
+    document: ProjectDocument | None,
+    keys: Iterable[str],
+) -> list[dict[str, object]]:
+    """Return copies of the generated-path sources ``keys`` name, in that order."""
+
+    candidates_by_key = {candidate.key: candidate for candidate in energy_barrier_neb_source_candidates(document)}
+    return [dict(candidates_by_key[key].source) for key in keys if key in candidates_by_key]
+
+
+def energy_barrier_neb_sources_by_job_id(
+    document: ProjectDocument | None,
+    definitions: Iterable[CalculationDefinition],
+) -> dict[UUID, dict[str, object]]:
+    """Map each NEB job ``definitions`` bind back to its generated-path source."""
+
+    sources_by_key = {
+        str(source.get("key", "")).strip(): source
+        for source in energy_barrier_generated_sources(document)
+    }
+    by_job_id: dict[UUID, dict[str, object]] = {}
+    for definition in definitions:
+        mapping = definition.parameters.get("job_ids_by_label", {})
+        if not isinstance(mapping, dict):
+            continue
+        for key, raw_job_id in mapping.items():
+            source = sources_by_key.get(str(key).strip())
+            if source is None or not isinstance(raw_job_id, str):
+                continue
+            try:
+                by_job_id[UUID(raw_job_id)] = source
+            except ValueError:
+                continue
+    return by_job_id
+
+
 def completed_energy_barrier_neb_candidates(
     document: ProjectDocument | None,
 ) -> list[EnergyBarrierCompletedNebCandidate]:
@@ -553,6 +836,24 @@ def completed_energy_barrier_neb_candidates(
             )
         )
     return sorted(candidates, key=lambda item: (item.job.label, item.key))
+
+
+def energy_barrier_neb_result_path_label(
+    document: ProjectDocument | None,
+    candidate: EnergyBarrierCompletedNebCandidate,
+    source: Mapping[str, object] | None,
+) -> str:
+    """Describe a completed NEB result as ``initial → final``, else by its job label."""
+
+    if source is not None and document is not None:
+        labels: list[str] = []
+        for field in ("reactant_site_id", "product_site_id"):
+            site_id = uuid_from_source(source, field)
+            site = document.sites.get(site_id) if site_id is not None else None
+            labels.append((site.label or "").strip() if site is not None else "")
+        if all(labels):
+            return f"{labels[0]} → {labels[1]}"
+    return candidate.job.label
 
 
 # --- completed relaxations ----------------------------------------------------
@@ -714,21 +1015,35 @@ __all__ = [
     "QuantumStageState",
     "RelaxationRowStateLike",
     "charge_state_for_job",
+    "charge_state_label_for_job",
     "coerce_fractional_triplet",
     "completed_energy_barrier_neb_candidates",
     "completed_muon_relaxation_sources",
     "completed_pristine_relaxation_jobs",
     "eligible_energy_barrier_source_candidates",
     "eligible_quantum_source_candidates",
+    "energy_barrier_form_state",
     "energy_barrier_generated_sources",
+    "energy_barrier_max_path_length_text",
+    "energy_barrier_neb_result_path_label",
     "energy_barrier_neb_source_candidates",
+    "energy_barrier_neb_sources_by_job_id",
+    "energy_barrier_path_preview_structure",
+    "energy_barrier_source_label",
     "enumerate_energy_barrier_source_candidates",
     "float_from_source",
     "fractional_triplet_from_source",
+    "quantum_seed_name_for_key",
     "quantum_source_candidate_by_key",
+    "quantum_source_label",
     "quantum_source_labels_by_key",
     "quantum_source_relative_energies",
     "quantum_stage_state",
     "relaxation_sources_for_labels",
+    "selected_energy_barrier_endpoint_keys",
+    "serialize_energy_barrier_neb_sources",
+    "serialize_energy_barrier_source_candidates",
+    "serialize_quantum_sources",
+    "source_relaxation_parameter_values",
     "uuid_from_source",
 ]
