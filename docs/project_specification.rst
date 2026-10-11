@@ -315,7 +315,7 @@ Convergence testing
   method metadata used to determine it. Project-level defaults, including the
   cutoff, are visible from the GUI.
 - The k-point spacing and grid mapping follows
-  ``docs/castep/kpoint_spacing_convention.md``.
+  :doc:`castep/kpoint_spacing_convention`.
 
 Project defaults
 ~~~~~~~~~~~~~~~~

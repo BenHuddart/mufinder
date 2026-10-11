@@ -365,7 +365,7 @@ For a k-point recommendation the result line also gives the grid's spacing,
 CASTEP reproduces exactly that grid on the swept cell, so it can be copied into
 a ``.cell`` file. ``1 x 1 x 1`` has no such spacing and is shown without one.
 The convention, and its round-trip guarantee, are described in
-``docs/castep/kpoint_spacing_convention.md`` in the source repository.
+:doc:`castep/kpoint_spacing_convention`.
 
 Adopting a result as a project default
 --------------------------------------

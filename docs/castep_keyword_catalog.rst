@@ -107,6 +107,18 @@ issues them from a shell loop on the cluster that prints each description
 between marker lines, and parses that output locally. The cluster needs only
 ``bash`` and CASTEP.
 
+The scripts sent to the cluster are shell templates in
+``mufinder/assets/shell/``: ``login_command.sh`` wraps each login-node command,
+``help_loop.sh`` (with ``help_loop_timing.sh``) is the loop itself,
+``job_help_loop.sh`` adapts it to a scheduler job, and ``keyword_job.sh`` with
+one of the ``keyword_job_strategy_*.sh`` fragments is the job script.
+``mufinder.services.cluster_keyword_scripts`` works out the values that go into
+them (the cluster's setup, launcher and executable, shell-quoted, and the
+markers and limits that the parser shares), and
+``mufinder.services.shell_templates`` fills them in. Each template explains its
+own logic in ``##`` comments, which are not sent to the cluster, and the tests
+run ``bash -n`` over every script MuFinder can render.
+
 Each cluster chooses where the loop runs. The choice is offered beside the
 generation target in ``Setup > CASTEP`` (shown once a cluster is selected, and
 remembered for that cluster) and as ``Generate keywords using`` in

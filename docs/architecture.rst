@@ -96,7 +96,8 @@ the structural test in the same change.
 A few top-level modules sit outside the seven layers and are not checked by
 the structural test: ``mufinder.main`` (application entry point),
 ``mufinder.branding`` (Qt icons), ``mufinder.assets`` / ``mufinder.data``
-(packaged resources, including the starter ``keyword_catalog.yaml``),
+(packaged resources, including the starter ``keyword_catalog.yaml`` and the
+shell script templates in ``mufinder/assets/shell/``),
 ``mufinder._version``, ``mufinder.castep_setup`` (saved CASTEP setup and
 keyword-catalog management, used by the app), and ``mufinder.cluster_setup``
 (the built-in cluster presets and the ``QSettings`` persistence of cluster
@@ -122,9 +123,10 @@ policy, move the reusable part into the appropriate shared layer:
   periodic deduplication) belongs in ``mufinder.science.lattice``, symmetry
   plumbing (spglib cells, cached symmetry operations, orbits) in
   ``mufinder.science.spglib_compat``, conversion to ASE ``Atoms`` in
-  ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``
-  and clustering of its optimized positions in
-  ``mufinder.science.uep_clustering``
+  ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``,
+  clustering of its optimized positions in
+  ``mufinder.science.uep_clustering`` and every ``muesr`` import in
+  ``mufinder.science._muesr_compat``
 - reading CASTEP text belongs in ``mufinder.castep_io``, including the
   formatted density, pseudopotential reports and cell charge the UEP analysis
   needs (``mufinder.castep_io.charge_density``); the keyword schema keeps
@@ -345,6 +347,13 @@ no two workflow widgets may define the same private method.
        with the failed, skipped and missing jobs
        (``plan_cluster_submission``). The window keeps the dialog, the
        prompts and the message boxes.
+   * - ``mufinder.services.shell_templates``
+     - Shell scripts MuFinder sends to a cluster, kept as templates in
+       ``mufinder/assets/shell/`` and rendered by ``render_shell_template``:
+       the ``${tpl_name}`` placeholder convention (every other ``$`` is the
+       shell's), ``##`` documentation lines, and dropping a line whose lone
+       placeholder is empty. Callers compute and shell-quote the values; the
+       templates stay plain shell, checked with ``bash -n`` by the tests.
    * - ``mufinder.services.source_candidates``
      - Read-only source queries over the project document: the relaxed muon
        sites eligible for quantum corrections, their relative energies,
@@ -374,6 +383,11 @@ no two workflow widgets may define the same private method.
      - Structure to ASE ``Atoms`` (``structure_to_ase_atoms`` with
        ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``) and
        the muon-label and element-symbol rules.
+   * - ``mufinder.science._muesr_compat``
+     - The ``muesr`` import boundary (``muesr_imports``): NumPy alias
+       restoration, a temporary ``cgi`` stand-in on Python 3.13+ and the
+       ``cgi`` deprecation-warning filter. Import ``muesr`` modules only inside
+       it.
    * - ``mufinder.castep_io``
      - CASTEP syntax: cell and param parsing and writing, keyword metadata
        (``schema``) and validation (``validators``); see

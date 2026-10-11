@@ -21,6 +21,7 @@ import sys
 import pytest
 
 import mufinder.services.cluster_keyword_generator as generator_module
+import mufinder.services.cluster_keyword_scripts as scripts_module
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus
 from mufinder.services.cluster_keyword_generator import (
@@ -697,7 +698,7 @@ def test_addqueue_job_never_starts_castep_bare_in_the_job_step(tmp_path: Path, m
 
 
 def test_mpi_job_environment_pattern_selects_only_job_bound_variables() -> None:
-    pattern = re.compile(generator_module._MPI_JOB_ENVIRONMENT_RE)
+    pattern = re.compile(scripts_module._MPI_JOB_ENVIRONMENT_RE)
 
     for name in (
         "PMIX_NAMESPACE",
@@ -897,8 +898,8 @@ def _write_fake_castep(directory: Path, *, broken: tuple[str, ...] = ()) -> Path
 def test_help_loop_command_runs_under_real_bash(tmp_path: Path) -> None:
     executable = _write_fake_castep(tmp_path / "castep", broken=("PARAM_FILLER_2",))
     config = _direct_config(castep_executable=str(executable))
-    command = generator_module._help_loop_command(
-        generator_module._build_castep_command_with_launcher(config),
+    command = scripts_module.help_loop_command(
+        scripts_module.build_castep_command_with_launcher(config),
         ["TASK", "LATTICE_CART", "PARAM_FILLER_2"],
     )
 
@@ -942,7 +943,7 @@ def test_help_loop_runs_queries_side_by_side_and_prints_them_in_order(
     )
     executable.chmod(0o755)
     names = [f"KEY_{index}" for index in range(8)]
-    command = generator_module._help_loop_command(shlex.quote(str(executable)), names)
+    command = scripts_module.help_loop_command(shlex.quote(str(executable)), names)
 
     completed = subprocess.run(
         ["/bin/bash", "-c", f"set -e\n{command}"],
@@ -998,7 +999,7 @@ def test_help_loop_stops_grouping_queries_when_it_does_not_pay(tmp_path: Path, p
     )
     executable.chmod(0o755)
     names = [f"KEY_{index}" for index in range(13)]
-    command = generator_module._help_loop_command(shlex.quote(str(executable)), names)
+    command = scripts_module.help_loop_command(shlex.quote(str(executable)), names)
 
     env = dict(os.environ)
     if pkill != "real":
@@ -1082,7 +1083,7 @@ def test_help_loop_gives_up_on_a_castep_that_stops_responding(tmp_path: Path) ->
     )
     executable.chmod(0o755)
     names = [f"KEY_{index}" for index in range(40)]
-    command = generator_module._help_loop_command(shlex.quote(str(executable)), names)
+    command = scripts_module.help_loop_command(shlex.quote(str(executable)), names)
 
     completed = subprocess.run(
         ["/bin/bash", "-c", command],
@@ -1162,7 +1163,7 @@ def test_fast_start_settings_are_dropped_when_castep_rejects_them(tmp_path: Path
         encoding="utf-8",
     )
     executable.chmod(0o755)
-    command = generator_module._help_loop_command(shlex.quote(str(executable)), ["TASK"])
+    command = scripts_module.help_loop_command(shlex.quote(str(executable)), ["TASK"])
 
     env = {name: value for name, value in os.environ.items() if not name.startswith("OMPI_MCA_")}
     subprocess.run(["/bin/bash", "-c", command], capture_output=True, text=True, check=True, env=env)
@@ -1176,7 +1177,7 @@ def _run_scheduler_script(tmp_path: Path, config: ClusterConfig) -> tuple[str, s
     work = tmp_path / "work dir"
     work.mkdir()
     dump_path = work / "keyword_help.txt"
-    script = generator_module._scheduler_runner_script(
+    script = scripts_module.scheduler_runner_script(
         config=config,
         remote_directory=str(work),
         remote_dump_path=str(dump_path),
@@ -1192,7 +1193,7 @@ def _assert_complete_dump(text: str) -> None:
     dump = generator_module._HelpDump(cell={}, param={})
     dump.add(text)
     names = complete_keyword_names()
-    assert generator_module._DUMP_COMPLETE_MARKER in text
+    assert scripts_module.DUMP_COMPLETE_MARKER in text
     assert set(dump.cell) == set(names["cell"])
     assert set(dump.param) == set(names["param"])
     version = generator_module._VERSION_SECTION_RE.search(text)
@@ -1399,8 +1400,8 @@ def test_scheduler_job_without_a_usable_template_falls_back_to_a_generic_script(
             template_script_path=template_path,
             keyword_shell_init="export MUFINDER_TEST=1",
         )
-        assert generator_module._job_template_plan(config) is None
-        script = generator_module._scheduler_runner_script(
+        assert scripts_module.job_template_plan(config) is None
+        script = scripts_module.scheduler_runner_script(
             config=config,
             remote_directory="/work",
             remote_dump_path="/work/keyword_help.txt",
@@ -1444,23 +1445,23 @@ def test_login_node_setup_is_inferred_from_the_job_template(tmp_path: Path) -> N
     """Direct mode reuses the template's environment setup and executable."""
 
     scarf = _scheduler_config(keyword_shell_init="", keyword_execution_mode="direct")
-    plan = generator_module._job_template_plan(scarf)
+    plan = scripts_module.job_template_plan(scarf)
     assert plan.launcher == ("srun", "-n", "1")
     assert plan.executable == "castep.mpi"
     assert plan.setup_lines == ("module load CASTEP",)
-    assert generator_module._login_shell_init(scarf) == "module load CASTEP"
+    assert scripts_module.login_shell_init(scarf) == "module load CASTEP"
     # On the login node the job launcher is not used.
-    assert generator_module._build_castep_command_with_launcher(scarf, "-help", "all") == "castep.mpi -help all"
+    assert scripts_module.build_castep_command_with_launcher(scarf, "-help", "all") == "castep.mpi -help all"
 
     # An explicit shell init always wins over the inferred one.
     explicit = _scheduler_config(keyword_shell_init="module load CASTEP/25")
-    assert generator_module._login_shell_init(explicit) == "module load CASTEP/25"
+    assert scripts_module.login_shell_init(explicit) == "module load CASTEP/25"
 
     # No template at all (addqueue): nothing to infer, the config is used as is.
     redwood = _direct_config(queue_system="addqueue", castep_executable="/mnt/redwoodfs/muon/castep.mpi")
-    assert generator_module._job_template_plan(redwood) is None
-    assert generator_module._login_shell_init(redwood) == ""
-    assert generator_module._build_castep_command_with_launcher(redwood, "--version") == (
+    assert scripts_module.job_template_plan(redwood) is None
+    assert scripts_module.login_shell_init(redwood) == ""
+    assert scripts_module.build_castep_command_with_launcher(redwood, "--version") == (
         "mpirun -np 1 /mnt/redwoodfs/muon/castep.mpi --version"
     )
 
@@ -1469,7 +1470,7 @@ def test_login_node_setup_is_inferred_from_the_job_template(tmp_path: Path) -> N
     for run_line in ("srun 'unterminated $seed_name", "run_my_code $seed_name"):
         template = tmp_path / "template.sh"
         template.write_text(f"#!/bin/bash\nmodule load X\n{run_line}\n", encoding="utf-8")
-        plan = generator_module._job_template_plan(
+        plan = scripts_module.job_template_plan(
             _scheduler_config(template_script_path=str(template), castep_executable="/opt/castep")
         )
         assert (plan.launcher, plan.executable) == (("srun", "-n", "1"), "/opt/castep")
@@ -1492,7 +1493,7 @@ def test_direct_mode_runs_inferred_setup_on_the_login_node(tmp_path: Path, monke
 
 
 def test_build_shell_command_applies_working_directory_and_shell_init() -> None:
-    wrapped = generator_module._build_shell_command(
+    wrapped = scripts_module.build_shell_command(
         command="castep.mpi --version",
         working_directory="/scratch/alice",
         shell_init="module load CASTEP",
@@ -1502,6 +1503,77 @@ def test_build_shell_command_applies_working_directory_and_shell_init() -> None:
     assert "cd /scratch/alice" in wrapped
     assert "module load CASTEP" in wrapped
     assert "castep.mpi --version" in wrapped
+
+
+def test_build_shell_command_drops_unset_working_directory_and_shell_init() -> None:
+    wrapped = scripts_module.build_shell_command(command="castep.mpi --version", shell_init="  \n")
+
+    assert shlex.split(wrapped) == [
+        "/bin/bash",
+        "-lc",
+        "set -e\nsource /etc/profile >/dev/null 2>&1 || true\ncastep.mpi --version",
+    ]
+
+
+_SYNTAX_CHECK_TEMPLATE = (
+    "#!/bin/bash\n#SBATCH -J $job_name\n#SBATCH -A muons\n\nexport SITE_SETUP=1\ncd $working_directory\n$castep_command\n"
+)
+
+
+def _rendered_keyword_scripts(tmp_path: Path) -> dict[str, str]:
+    """Return every script cluster keyword generation can send, by a descriptive name."""
+
+    template = tmp_path / "site.sh"
+    template.write_text(_SYNTAX_CHECK_TEMPLATE, encoding="utf-8")
+    configs = {
+        "scarf": _scheduler_config(),
+        "site-template": _scheduler_config(template_script_path=str(template), castep_executable="/opt/it's/castep"),
+        "no-template": _scheduler_config(template_script_path=str(tmp_path / "missing.sh"), keyword_shell_init=""),
+        "addqueue": _scheduler_config(queue_system="addqueue", keyword_shell_init="module load mpi\n"),
+        "no-launcher": _scheduler_config(queue_system="pbs"),
+        "direct": _direct_config(),
+        "direct-addqueue": _direct_config(queue_system="addqueue"),
+    }
+    scripts: dict[str, str] = {"job help loop": scripts_module._job_help_loop_script()}
+    for name, config in configs.items():
+        castep = scripts_module.build_castep_command_with_launcher(config)
+        for label, command in (
+            ("list", scripts_module.build_castep_command_with_launcher(config, "-help", "all")),
+            ("batch", scripts_module.help_loop_command(castep, ["TASK", "LATTICE_CART"])),
+        ):
+            wrapped = scripts_module.build_shell_command(
+                command=command,
+                working_directory="/scratch/a b",
+                shell_init=scripts_module.login_shell_init(config),
+            )
+            scripts[f"{name} login {label}"] = shlex.split(wrapped)[2]
+        if config.keyword_execution_mode == "scheduler":
+            scripts[f"{name} job"] = scripts_module.scheduler_runner_script(
+                config=config,
+                remote_directory="/work dir/job",
+                remote_dump_path="/work dir/job/keyword_help.txt",
+                remote_log_path="/work dir/job/keyword_generation.log",
+            )
+    return scripts
+
+
+def test_every_rendered_keyword_script_is_valid_bash(tmp_path: Path) -> None:
+    """A template edit that breaks the shell syntax of any script fails here."""
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is not installed")
+    scripts = _rendered_keyword_scripts(tmp_path)
+    # Each strategy is covered: no launcher, job steps, and inside a launcher step.
+    assert "mufinder_try 'the CASTEP executable'" in scripts["no-launcher job"]
+    assert "mufinder_try 'a single job step'" in scripts["site-template job"]
+    assert "--standalone" in scripts["addqueue job"]
+
+    for name, script in scripts.items():
+        path = tmp_path / "script.sh"
+        path.write_text(script, encoding="utf-8")
+        completed = subprocess.run([bash, "-n", str(path)], capture_output=True, text=True)
+        assert completed.returncode == 0, f"{name}:\n{completed.stderr}"
 
 
 def test_run_remote_checked_prefers_stderr_then_stdout_then_command() -> None:
@@ -1557,7 +1629,7 @@ def test_remote_log_excerpt_skips_markers_and_falls_through_empty_files() -> Non
 
 
 def test_keyword_job_walltime_is_short_whatever_the_cluster_default() -> None:
-    walltime = generator_module._scheduler_walltime
+    walltime = scripts_module.scheduler_walltime
     # A production-length request would only hold the job back in the queue.
     assert walltime(_scheduler_config(default_walltime="12:00:00")) == "01:00:00"
     assert walltime(_scheduler_config(default_walltime="")) == "01:00:00"

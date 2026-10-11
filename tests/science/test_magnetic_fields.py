@@ -9,13 +9,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial
+import importlib
+import sys
+from types import ModuleType
 
 import numpy as np
 import pytest
 
 from mufinder.domain.models import MuonSite
 from mufinder.science import magnetic_fields as module
-from mufinder.science._muesr_compat import patch_numpy_aliases_for_muesr
+from mufinder.science._muesr_compat import muesr_imports, patch_numpy_aliases_for_muesr
 from mufinder.science.demagnetization import DemagnetizingSample
 from mufinder.science.magnetic_fields import (
     CONTACT_FIELD_T_PER_ANGSTROM_MINUS3_PER_MUB,
@@ -193,6 +196,32 @@ def test_load_muesr_engines_patches_numpy_aliases(monkeypatch) -> None:
     assert callable(dipten)
     assert np.complex is complex
     assert np.float is float
+
+
+
+def test_muesr_imports_supplies_cgi_while_importing_muesr_when_cgi_is_missing(monkeypatch) -> None:
+    # Python 3.13 removed cgi; a None entry makes ``import cgi`` fail on any version.
+    monkeypatch.setitem(sys.modules, "cgi", None)
+    core = importlib.import_module("muesr.core")
+    monkeypatch.setattr(core, "prettytable", core.prettytable)
+    monkeypatch.delitem(sys.modules, "muesr.core.prettytable")
+
+    with muesr_imports():
+        prettytable = importlib.import_module("muesr.core.prettytable")
+
+    assert isinstance(prettytable.cgi, ModuleType)
+    assert callable(prettytable.PrettyTable)
+    assert sys.modules["cgi"] is None
+
+
+def test_muesr_imports_keeps_an_importable_cgi(monkeypatch) -> None:
+    cgi = ModuleType("cgi")
+    monkeypatch.setitem(sys.modules, "cgi", cgi)
+
+    with muesr_imports():
+        assert sys.modules["cgi"] is cgi
+
+    assert sys.modules["cgi"] is cgi
 
 
 # Result records

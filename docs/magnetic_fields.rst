@@ -517,8 +517,18 @@ packaged desktop builds install these optional backends when they are available
 for the target platform. On Windows, MuFinder follows the older project build
 strategy and installs ``muLFC`` from the upstream Git source because PyPI does
 not currently publish a Windows wheel or source distribution for that backend.
-The import boundary also applies MuFinder's narrow compatibility shim for NumPy aliases
-that current ``muesr`` releases still use internally.
+Every ``muesr`` import goes through one compatibility boundary,
+``mufinder.science._muesr_compat.muesr_imports``, which keeps the released
+``muesr`` working on every Python version MuFinder supports:
+
+- it restores the NumPy ``complex`` and ``float`` aliases that ``muesr`` still
+  uses internally;
+- on Python 3.13 and later, where the standard library no longer ships ``cgi``,
+  it supplies an empty ``cgi`` module while ``muesr`` is imported and removes it
+  again afterwards. ``muesr`` imports ``cgi`` only for the HTML output of its
+  bundled table printer, which MuFinder never calls;
+- it silences the ``cgi`` deprecation warning that Python 3.12 raises during
+  that import.
 
 Current Scope
 -------------
