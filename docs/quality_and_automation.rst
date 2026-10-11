@@ -86,15 +86,22 @@ and so on), and ``tests/setup`` holds the tests of the top-level modules
 structural tests in ``tests/test_agent_harness.py``, the golden-input rendering
 test and ``tests/conftest.py`` stay at the top level. The test packages have no
 ``__init__.py``, so pytest imports every test module by its file name: a test
-file name must be unique across the whole ``tests`` tree.
+file name must be unique across the whole ``tests`` tree. The one exception is
+``tests/app/workflow_controllers``, which has an ``__init__.py`` so that its
+modules can take the names of the controller modules they test
+(``test_base.py``, ``test_uep.py``) without clashing with ``tests/workflow`` and
+``tests/science``.
 
 ``tests/app/main_window`` holds the integration tests that drive
 ``MainWindow`` itself, one module per subject: the jobs dashboard, job
 recovery, cluster and local submission, each workflow's actions, and the
 project, structure and site-generation actions. A workflow controller's own
-behaviour is tested through the controller in ``tests/app/test_workflow_controllers.py``;
-a window test covers what only the window does, such as its signal wiring,
-its dialogs and the real submission path.
+behaviour is tested through the controller in ``tests/app/workflow_controllers``,
+which has one module per module of ``mufinder.app.workflow_controllers``; the
+shared sweep behaviour of ``sweep_convergence`` is tested through the cutoff
+controller in ``test_convergence_cutoff.py``. A window test covers what only the
+window does, such as its signal wiring, its dialogs and the real submission
+path.
 
 ``tests/docs`` checks the structure of the Sphinx sources and their citations,
 never their wording. ``test_docs_build_inputs.py`` asserts that every page under
@@ -130,6 +137,14 @@ the call site or binds them once with ``functools.partial``.
   and ``add_cluster_input_job`` stand in for the cluster submission dialog and
   SSH runner; ``stage_quantum_row_with_singlepoint`` stages a Quantum
   Corrections row whose stage-1 singlepoint has finished.
+- ``tests/support/controllers.py``: ``RecordingBackend`` and ``make_context``
+  stand in for the submit backends and the ``WorkflowControllerContext`` a
+  workflow controller is built from; ``FakeRowState``, ``no_artifacts``,
+  ``completed_castep_result``, ``muon_host_document`` and ``job_with_status``
+  build the row states, parsed outputs, host project and jobs the controller
+  tests share; ``FakeRelaxationView``, ``stub_pristine_deps`` and
+  ``pristine_sync_definition`` stand in for the Pristine Relaxation widget,
+  dependencies and definition.
 - ``tests/conftest.py`` fixtures: ``main_window`` gives a fresh ``MainWindow``
   that the per-test Qt cleanup closes, and ``project_with_host`` gives
   ``(window, service, document)`` with the default host structure loaded.
