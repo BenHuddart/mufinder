@@ -4789,18 +4789,6 @@ class MainWindow(QMainWindow):
         self._main_stack.insertWidget(self._main_stack.indexOf(self._journal_view), energy_barriers_view)
         return energy_barriers_view
 
-    def _definition_for_convergence_cutoff(self, cutoff: float):
-        cutoff_value = float(cutoff)
-        active_definition = self._convergence_controller.active_definition()
-        if active_definition is None:
-            return None, None
-
-        self._sync_equivalent_convergence_cutoff_mappings(active_definition)
-        config = self._deserialize_convergence_config(active_definition.parameters.get("configuration", {}))
-        if config is not None and cutoff_value in config.cutoff_energies:
-            return active_definition, config
-        return None, None
-
     def _definition_output_directory(self, definition) -> Path | None:
         if self._document is None:
             return None
@@ -5281,7 +5269,7 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return True, shared_file_disposition, False
 
-        definition, config = self._definition_for_convergence_cutoff(cutoff)
+        definition, config = self._convergence_controller.definition_for_sweep_key(cutoff)
         job = self._convergence_controller.job_for_cutoff(definition, cutoff) if definition is not None else None
 
         job_label = None
