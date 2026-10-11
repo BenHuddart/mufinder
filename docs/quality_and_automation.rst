@@ -88,6 +88,14 @@ test and ``tests/conftest.py`` stay at the top level. The test packages have no
 ``__init__.py``, so pytest imports every test module by its file name: a test
 file name must be unique across the whole ``tests`` tree.
 
+``tests/app/main_window`` holds the integration tests that drive
+``MainWindow`` itself, one module per subject: the jobs dashboard, job
+recovery, cluster and local submission, each workflow's actions, and the
+project, structure and site-generation actions. A workflow controller's own
+behaviour is tested through the controller in ``tests/app/test_workflow_controllers.py``;
+a window test covers what only the window does, such as its signal wiring,
+its dialogs and the real submission path.
+
 ``tests/docs`` checks the structure of the Sphinx sources and their citations,
 never their wording. ``test_docs_build_inputs.py`` asserts that every page under
 ``docs/`` is reachable from a toctree in ``docs/index.rst`` and that each

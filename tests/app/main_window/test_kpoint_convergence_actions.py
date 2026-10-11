@@ -13,9 +13,7 @@ from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Structure
 from mufinder.services.project_service import ProjectService
-from tests.support.main_window import (
-    select_route,
-)
+from tests.support.main_window import select_route
 
 
 def test_main_window_kpoint_examiner_state_changed_updates_ui_state_without_saving_project(

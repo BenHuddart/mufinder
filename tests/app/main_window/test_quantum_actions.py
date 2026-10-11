@@ -11,9 +11,7 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Result, Structure
 from mufinder.services.project_service import ProjectService
 from mufinder.workflow.quantum import QUANTUM_SINGLEPOINT_CALC_TYPE
-from tests.support.main_window import (
-    stage_quantum_row_with_singlepoint,
-)
+from tests.support.main_window import stage_quantum_row_with_singlepoint
 
 
 def test_main_window_reset_quantum_corrections_to_stage_one_clears_shared_job_state(

@@ -16,9 +16,7 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, Result, Structure
 from mufinder.services.job_paths import definition_output_directory
 from mufinder.services.project_service import ProjectService
-from tests.support.main_window import (
-    select_route,
-)
+from tests.support.main_window import select_route
 
 
 def test_convergence_configured_registers_snapshot(
