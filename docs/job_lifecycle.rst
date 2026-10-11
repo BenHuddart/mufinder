@@ -692,8 +692,12 @@ which remote directories already exist, resolves any overwrite prompts up front
 through the window's prompt dialogs, and builds the ``ClusterJobSubmission``
 for each job; the GUI then prepares document state for each job
 (``JobExecutionController.prepare_cluster_submission``) and hands the batch to
-``ClusterController.submit_batch``. A directory a job in the batch submits
-into as-is (a continuation's preserved ``remote_directory`` or a quantum
+``ClusterController.submit_batch``. A job whose existence check raises (an SSH
+or SFTP error, or the check not completing within three minutes) is not
+submitted and keeps its state: it is listed in the "Cluster submission failed"
+message, and no overwrite prompt is shown for it, because its directory may
+hold a previous run the user was never asked to overwrite. A directory a job
+in the batch submits into as-is (a continuation's preserved ``remote_directory`` or a quantum
 phonon job's stage-1 directory) is never deleted, whatever another job's
 overwrite answer was, and a start-again job whose own directory is such a
 directory fails instead of resuming from the checkpoint it was meant to

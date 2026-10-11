@@ -688,14 +688,16 @@ whichever way they are triggered (row control, button below the table,
 right-click menu, or Delete/Backspace):
 
 - Removing rows asks once for the whole batch, stating the number of rows and
-  how many already have a submitted job (the cutoff table also states how many
-  jobs are still queued or running and will be cancelled). This includes rows
-  that were never submitted. Relaxation removals may then ask what to do with
-  each job's output files (delete or archive, with an apply-to-all choice).
+  how many already have a submitted job (the cutoff and k-point tables also
+  state how many jobs are still queued or running and will be cancelled). This
+  includes rows that were never submitted. Relaxation removals may then ask
+  what to do with each job's output files (delete or archive, with an
+  apply-to-all choice).
 - For a row control on a multi-row selection the three-way prompt is the
   confirmation, so the user is not asked twice. The exception is removing
-  cutoff rows whose job is still queued or running: that prompt does not
-  mention cancellation, so those removals are confirmed again with it stated.
+  cutoff or k-point rows whose job is still queued or running: that prompt
+  does not mention cancellation, so those removals are confirmed again with it
+  stated.
 - A single-row ``Cancel`` or ``Dismiss`` on the Job Dashboard, and ``Cancel``
   or ``Dismiss`` in a workflow table's or the dashboard's right-click menu, ask
   before acting.

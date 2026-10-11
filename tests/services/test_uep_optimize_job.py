@@ -7,12 +7,8 @@ import shutil
 
 import pytest
 
-from mufinder.science.uep import (
-    StationaryPointClassification,
-    UepClusteringConfig,
-    UepOptimizationResult,
-    UepStructure,
-)
+from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult, UepStructure
+from mufinder.science.uep_clustering import UepClusteringConfig
 from mufinder.services.uep_optimize_job import (
     parse_result_file,
     result_file_name,

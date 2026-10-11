@@ -1,9 +1,8 @@
 # MuFinder agent guide
 
 This is the one instruction file for every coding agent. Claude Code imports it from
-`CLAUDE.md`; Codex, Cursor and Copilot read it directly. The rules here are binding; the
-linked docs hold the rationale. `tests/test_agent_harness.py` keeps this file under 160
-lines and checks the pointers in it.
+`CLAUDE.md`; Codex, Cursor and Copilot read it directly. Its rules are binding; linked
+docs give the rationale. `tests/test_agent_harness.py` caps it at 140 lines and checks it.
 
 ## What MuFinder is
 
@@ -30,8 +29,7 @@ cluster and are tracked in a job dashboard.
 ## Making a change
 
 1. Branch `feature/*` or `fix/*` off `main`; never commit to `main`.
-2. Find the layer that owns the behaviour (`docs/architecture.rst`) and the shared home
-   for the concern (table below) before writing code.
+2. Find the owning layer and the concern's shared home in `docs/architecture.rst` first.
 3. Change implementation, tests and docs together. A change is incomplete until tests and
    docs both describe the new behaviour.
 4. Run the focused tests for the touched area, then the full gates before review.
@@ -59,26 +57,10 @@ Dependencies flow inward: `app` → `services` / `workflow` / `science` → `dom
 
 ## Reuse before you write
 
-Every cross-workflow concern has exactly one home. Extend the helper there; never copy a
-sibling workflow's implementation.
-
-| Concern | Home |
-|---|---|
-| Workflow row tables, context menus, status cells, locked-row rule, supercell column | `app/workflow_table_utils.py` |
-| Label-keyed row-table widget scaffold (rows, selection, dialog, submit, form state) | `app/workflow_row_widget.py` |
-| Selection targeting for in-row buttons and mixed selections | `app/selection_snapshot.py` |
-| Parameter specs, defaults, shared-row ordering, value sanitising | `app/workflow_parameters.py` |
-| Parameter and configure dialogs | `app/workflow_dialogs.py`, `app/param_dialog.py` |
-| GUI value dicts to workflow templates, k-point rescaling, adapter row prologue, supercell matrices | `app/adapter_common.py` |
-| Submit, materialize, result and refresh cycle | `app/workflow_controllers/base.py` |
-| Submission planning for workflow rows | `app/workflow_submission.py` |
-| Project-default display in workflow headers | `app/project_defaults_widget.py` |
-| Styling, palettes, status brushes | `app/theme.py` |
-| Embedded matplotlib plots | `app/plot_canvas.py` |
-| Job directories, seeds and output files; result readers; parsed secondary outputs | `services/job_paths.py`, `services/job_results.py`, `services/job_artifacts.py` |
-| Job state transitions | `services/job_execution_controller.py` |
-| Lattice maths; spglib cells, operations, orbits; ASE `Atoms`; stored spins | `science/lattice.py`, `science/spglib_compat.py`, `science/ase_bridge.py`, `domain/magnetic_properties.py` |
-| CASTEP syntax, keyword metadata, validation | `castep_io/` |
+Every cross-workflow concern has exactly one home, listed under "Shared workflow
+infrastructure" in `docs/architecture.rst`; read it before adding a helper, extend the
+helper there and never copy a sibling workflow's implementation. The harness pins
+duplication (`PINNED_DUPLICATED_WIDGET_METHODS`).
 
 Rules:
 
@@ -131,11 +113,10 @@ Rules:
   close a coverage gap in the sibling test file.
 - Every feature covers its normal path, its validation and failure modes, and its
   persistence behaviour.
-- `tests/test_agent_harness.py` enforces layer boundaries (including no Qt widgets
-  outside `app`), the `MainWindow` handler ratchet, the cross-widget duplicate-method
-  ratchet, the no-new-coverage-files ratchet, the plot-canvas rules and this file's
-  pointers. Run `make harness` after touching docs indexes, package boundaries, a
-  workflow widget or this file.
+- `tests/test_agent_harness.py` enforces layer boundaries (including no Qt widgets outside
+  `app`), the `MainWindow` handler, duplicate-method and coverage-file ratchets, the
+  plot-canvas rules, the shared-homes table and this file's pointers; run `make harness`
+  after touching docs indexes, package boundaries, a workflow widget or this file.
 
 ## Docs
 
@@ -156,5 +137,3 @@ make lint                             # ruff
 make docs                             # sphinx -W
 make harness                          # tests/test_agent_harness.py
 ```
-
-Release steps and the CI matrix are in `docs/quality_and_automation.rst`.

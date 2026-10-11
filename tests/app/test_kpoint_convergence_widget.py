@@ -771,7 +771,85 @@ def test_kpoint_widget_removal_is_confirmed_once_per_request(
     widget._request_removals((0,), confirmed=True)
 
     assert requested == [[(2, 2, 2), (3, 3, 2)], [(2, 2, 2)]]
-    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 2 rows?"]
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 2 grids?"]
+
+
+def test_kpoint_widget_remove_grid_running_emits_cancel_request(
+    qapp, confirmed_destructive_actions
+) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_row((2, 2, 2))
+    widget._add_row((3, 3, 2))
+    widget._add_row((4, 4, 3))
+    widget.set_runtime_states(
+        {
+            (2, 2, 2): SweepPointRunState(status="running"),
+            (3, 3, 2): SweepPointRunState(status="completed"),
+            (4, 4, 3): SweepPointRunState(status="queued"),
+        }
+    )
+    emitted: list[tuple[str, object]] = []
+    widget.cancel_requested.connect(lambda keys: emitted.append(("cancel", list(keys))))
+    widget.remove_grid_requested.connect(lambda grids: emitted.append(("remove", list(grids))))
+
+    widget._request_removals((0, 1, 2))
+
+    assert emitted == [
+        ("cancel", [(2, 2, 2), (4, 4, 3)]),
+        ("remove", [(2, 2, 2), (3, 3, 2), (4, 4, 3)]),
+    ]
+    assert confirmed_destructive_actions[0]["text"] == "Remove 3 grids?"
+    assert confirmed_destructive_actions[0]["detail"] == (
+        "2 jobs are queued or running and will be cancelled. 1 grid already has a submitted job."
+    )
+
+
+def test_kpoint_widget_declined_removal_cancels_nothing(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    widget = KPointConvergenceWidget()
+    widget._add_row((2, 2, 2))
+    widget.set_runtime_states({(2, 2, 2): SweepPointRunState(status="running")})
+    emitted: list[object] = []
+    widget.cancel_requested.connect(emitted.append)
+    widget.remove_grid_requested.connect(emitted.append)
+    monkeypatch.setattr(workflow_table_utils, "confirm_destructive", lambda *_a, **_k: False)
+
+    widget._request_removals((0,))
+
+    assert emitted == []
+
+
+def test_kpoint_widget_remove_button_scope_prompt_does_not_cover_running_jobs(
+    qapp, monkeypatch: pytest.MonkeyPatch, confirmed_destructive_actions
+) -> None:
+    from mufinder.app import selection_snapshot
+    from mufinder.app.selection_snapshot import SelectionScope
+
+    widget = KPointConvergenceWidget()
+    widget._add_row((2, 2, 2))
+    widget._add_row((3, 3, 2))
+    monkeypatch.setattr(
+        selection_snapshot, "ask_selection_scope", lambda *a, **kw: SelectionScope.ALL_SELECTED
+    )
+    cancelled: list[object] = []
+    widget.cancel_requested.connect(cancelled.append)
+
+    # No running rows: the three-way prompt is the only confirmation.
+    button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    button.selection_snapshot_rows = (0, 1)
+    button.clicked.emit()
+    assert confirmed_destructive_actions == []
+
+    # A running row: the prompt said nothing about cancelling, so ask again.
+    widget.set_runtime_states({(2, 2, 2): SweepPointRunState(status="running")})
+    button = widget._table.cellWidget(0, widget._REMOVE_COLUMN)
+    button.selection_snapshot_rows = (0, 1)
+    button.clicked.emit()
+    assert [prompt["detail"] for prompt in confirmed_destructive_actions] == [
+        "1 job is queued or running and will be cancelled."
+    ]
+    assert cancelled == [[(2, 2, 2)]]
 
 
 def test_kpoint_widget_removes_an_unparseable_row_without_requesting_a_grid(
@@ -788,7 +866,7 @@ def test_kpoint_widget_removes_an_unparseable_row_without_requesting_a_grid(
 
     assert _table_grids(widget) == [(3, 3, 2)]
     assert requested == [[(3, 3, 2)]]
-    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 2 rows?"]
+    assert [prompt["text"] for prompt in confirmed_destructive_actions] == ["Remove 2 grids?"]
 
 
 def test_kpoint_widget_locks_a_queued_grid_and_says_why(qapp) -> None:

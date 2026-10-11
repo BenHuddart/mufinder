@@ -903,8 +903,8 @@ def test_cluster_runner_retrieve_leaves_previously_downloaded_out_cell_untouched
 ) -> None:
     """The real continuation case: a local ``-out.cell`` fetched by the
     PREVIOUS retrieval is already on disk. Skipping the download leaves it
-    carrying that earlier retrieval's mtime, which is what re-arms
-    ``MainWindow._output_predates_run`` for cluster jobs."""
+    carrying that earlier retrieval's mtime, which is what lets
+    ``workflow_controllers.base.output_predates_run`` reject it for cluster jobs."""
 
     runner = ClusterJobRunner()
     ssh = _TimestampedFakeSSH()

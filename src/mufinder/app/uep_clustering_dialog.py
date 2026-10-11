@@ -31,11 +31,10 @@ from mufinder.app.plot_canvas import PlotFrame, create_plot_canvas
 from mufinder.app.screen_utils import clamp_to_screen, clamped_size
 from mufinder.app.theme import current_palette, style_hint_text, style_section_subtitle, style_section_title
 from mufinder.domain.models import Structure
-from mufinder.science.uep import (
+from mufinder.science.uep import UepError, UepOptimizationResult
+from mufinder.science.uep_clustering import (
     UepClusteringConfig,
     UepClusteringResult,
-    UepError,
-    UepOptimizationResult,
     cluster_prepared_uep_dataset,
     prepare_uep_clustering_dataset,
     relaxed_site_number_map,

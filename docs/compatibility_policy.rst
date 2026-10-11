@@ -25,10 +25,12 @@ Compatibility ledger
        automatic migration from ``cutoff_energies`` to ``sweep_values``.
    * - ``ConvergenceWidget``
      - ``mufinder.app.convergence_widget``
-     - Import alias for ``CutoffConvergenceWidget`` kept for public app imports
-       and old tests.
-     - Public compatibility alias. Keep until a major application release or an
-       explicitly documented API break.
+     - Import alias for ``CutoffConvergenceWidget``, also exported from
+       ``mufinder.app``, kept for external imports. No in-repo code or test
+       imports it; one test checks that it still resolves. Not persisted.
+     - Public import alias. Keep for one minor release (through 0.6.x) or until
+       the next major release, whichever comes first; then drop the alias and
+       its ``mufinder.app`` export.
    * - ``imported`` / ``import_batch_id`` row fields
      - ``MuonRelaxationRow`` / muon-relaxation definition ``configuration``
      - Mark a relaxation row ingested from a calculation performed outside
@@ -275,12 +277,11 @@ Compatibility ledger
      - ``mufinder.science.uep``
      - Names that live in ``mufinder.science.uep_clustering``. Because that
        module imports ``mufinder.science.uep``, the module-level
-       ``__getattr__`` in ``uep`` resolves them lazily. Imported by
-       ``mufinder.app.uep_wizard``, ``mufinder.app.uep_clustering_dialog`` and
-       the UEP science tests. Not persisted.
-     - Public import alias. Keep for one minor release (through 0.6.x); then
-       move those imports to ``mufinder.science.uep_clustering`` and drop the
-       ``__getattr__`` hook.
+       ``__getattr__`` in ``uep`` resolves them lazily. No in-repo caller
+       reaches them through ``uep``; MuFinder code and tests import them from
+       ``mufinder.science.uep_clustering``. Not persisted.
+     - Public import alias. Keep the ``__getattr__`` hook for one minor
+       release (through 0.6.x); then drop it.
    * - ``_serialize_uep_config`` / ``_deserialize_uep_config`` /
        ``_serialize_pristine_relaxation_config`` /
        ``_deserialize_pristine_relaxation_config`` /
