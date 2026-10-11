@@ -1,0 +1,44 @@
+{
+  "app_version": "0.5.0",
+  "created_at": "2026-10-11T14:36:36.182721+00:00",
+  "host_structure_id": "19fad768-6239-46fa-ace4-9744bc0bf6e3",
+  "id": "bd838161-dd71-4fe0-93d6-ef4912f497f7",
+  "magnetic_structure": null,
+  "modified_at": "2026-10-11T14:36:36.183727+00:00",
+  "name": "Schema 1 cutoff sweep",
+  "notes": "",
+  "recommended_cutoff_cell_id": null,
+  "recommended_cutoff_energy": null,
+  "recommended_cutoff_energy_threshold": null,
+  "recommended_cutoff_force_threshold": null,
+  "recommended_cutoff_method": null,
+  "recommended_cutoff_stress_threshold": null,
+  "recommended_cutoff_xc_functional": null,
+  "recommended_kpoint_cell_id": null,
+  "recommended_kpoint_energy_threshold": null,
+  "recommended_kpoint_force_threshold": null,
+  "recommended_kpoint_grid": null,
+  "recommended_kpoint_lattice": null,
+  "recommended_kpoint_method": null,
+  "recommended_kpoint_stress_threshold": null,
+  "recommended_kpoint_xc_functional": null,
+  "recommended_xc_functional": null,
+  "schema_version": 1,
+  "supercell_matrix": [
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0
+    ],
+    [
+      0,
+      0,
+      1
+    ]
+  ]
+}
