@@ -66,7 +66,8 @@ from mufinder.branding import (
     app_icon,
     logo_path,
 )
-from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_cluster_configs
+from mufinder.cluster_setup import load_cluster_config, load_cluster_configs
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.castep_io.gui_metadata import make_block_section, make_keyword_assignment
 from mufinder.castep_io.schema import KeywordSpec, canonical_keyword_name, get_keyword_spec
 from mufinder.domain.constants import IMPORTED_JOB_TAG

@@ -21,12 +21,11 @@ from mufinder.science.site_generation import (
     symmetry_equivalent_positions,
 )
 from mufinder.science.supercell_matching import normalize_for_comparison
-from mufinder.science.uep import (
-    StationaryPointClassification,
+from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult
+from mufinder.science.uep_clustering import (
     UepBatchSummary,
     UepClusteringConfig,
     UepClusteringResult,
-    UepOptimizationResult,
     cluster_prepared_uep_dataset,
     prepare_uep_clustering_dataset,
 )

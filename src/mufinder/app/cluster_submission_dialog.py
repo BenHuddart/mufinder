@@ -27,7 +27,7 @@ from PySide6.QtCore import Qt
 from mufinder.app.cluster_ui_utils import resolve_cluster_credentials
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.farm_validation import check_farm_counts
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.keychain import is_glamdring_keychain_supported
 from mufinder.services.ssh_client import SSHCredentials
 

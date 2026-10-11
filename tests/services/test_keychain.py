@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.keychain import (
     KeychainCredentialError,
     is_glamdring_keychain_supported,

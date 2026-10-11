@@ -25,14 +25,16 @@ from mufinder.castep_io.schema import (
     CatalogSourceInfo,
     KeywordSpec,
     SOURCE_KEYWORDS,
-    _starter_alias_map,
-    _starter_parse_requirements,
-    _starter_sequence,
     canonical_keyword_name,
     get_keyword_spec,
     keyword_catalog_source_info,
     refresh_keyword_catalog,
     serialization_order,
+)
+from mufinder.castep_io.starter_catalog import (
+    _starter_alias_map,
+    _starter_parse_requirements,
+    _starter_sequence,
 )
 
 

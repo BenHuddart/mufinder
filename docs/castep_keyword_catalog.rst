@@ -48,8 +48,10 @@ Which catalog is used
 A candidate that is missing, unreadable, not JSON, or not a keyword catalog is
 skipped rather than fatal, so a deleted or corrupted file can never stop the
 application starting. When an *explicitly configured* candidate (items 1 and 2)
-is skipped, the reason is kept and shown to the user.
-``keyword_catalog_status()`` reports the origin, path, CASTEP version, keyword
+is skipped, the reason is kept and shown to the user. When the starter catalog
+is used, ``mufinder.castep_io.starter_catalog`` translates its YAML entries,
+merged with ``catalog_overrides``, into the same keyword specs a full catalog
+produces. ``keyword_catalog_status()`` reports the origin, path, CASTEP version, keyword
 counts, whether the starter catalog is active, and any such reason.
 
 Installing a catalog

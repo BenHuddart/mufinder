@@ -9,7 +9,7 @@ import pytest
 import mufinder.app.cluster_submission_dialog as dialog_module
 import mufinder.services.keychain as keychain_module
 from mufinder.app.cluster_submission_dialog import ClusterSubmissionConfig, ClusterSubmissionDialog
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.ssh_client import SSHCredentials
 
 

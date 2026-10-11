@@ -12,7 +12,7 @@ This package implements a small, explicit subset of CASTEP `.param` keywords. Th
 
 ## Validation vs Serialization
 
-- `schema.py` builds the runtime schema from a discovered `castep_keywords.json` plus `catalog_overrides.py`, falling back to the starter catalog when none is found (see `docs/castep_keyword_catalog.rst`).
+- `schema.py` builds the runtime schema from a discovered `castep_keywords.json` plus `catalog_overrides.py`, falling back to the starter catalog (translated by `starter_catalog.py`) when none is found (see `docs/castep_keyword_catalog.rst`).
 - `validators.py` checks types, mutually exclusive keywords, missing requirements, and a small set of task-specific rules backed by local CASTEP evidence.
 - `param_writer.py` handles deterministic text rendering only.
 
