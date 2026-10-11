@@ -18,7 +18,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, 
 from PySide6.QtWidgets import QWidget
 
 from mufinder.app.theme import THEME_LIGHT, body_font_family, current_palette, heading_font_family, light_palette
-from mufinder.branding import logo_path, project_home_color_map_path, project_home_map_path
+from mufinder.branding import project_home_color_map_path, project_home_map_path
 
 if TYPE_CHECKING:
     from mufinder.services.project_service import ProjectDocument
@@ -125,7 +125,6 @@ class ProjectHomeTrailWidget(QWidget):
         "quantum_corrections": QPointF(913.0, 756.0),
         "energy_barriers": QPointF(450.0, 745.0),
     }
-    _LOGO_COVER_REGION = QRectF(34.0, 780.0, 174.0, 190.0)
     # Banner height (logical px) at a typical window; signpost label sizes are
     # scaled relative to this so they stay proportionate as the map grows/shrinks.
     _SIGN_REF_BANNER_HEIGHT = 34.0
@@ -135,7 +134,6 @@ class ProjectHomeTrailWidget(QWidget):
         self._destinations: list[ProjectTrailDestination] = []
         self._hit_rects: dict[str, QRectF] = {}
         self._hovered_route: str | None = None
-        self._logo_pixmap = QPixmap(logo_path())
         self._map_pixmap = QPixmap(project_home_map_path())
         self._color_map_pixmap = QPixmap(project_home_color_map_path())
         self.setObjectName("projectHomeTrail")
@@ -428,17 +426,6 @@ class ProjectHomeTrailWidget(QWidget):
             )
         painter.setPen(QPen(QColor(palette.border).darker(150), 1.4))
         painter.drawLine(base, QPointF(base.x(), base.y() - size * 0.7))
-
-    def _paint_logo_overlay(self, painter: QPainter, palette, map_rect: QRectF) -> None:
-        cover_rect = self._map_rect_from_source(self._LOGO_COVER_REGION, map_rect)
-        painter.setPen(QPen(QColor(palette.border).darker(135), 1.2))
-        painter.setBrush(QColor("#D6AE6B"))
-        painter.drawEllipse(cover_rect.adjusted(6.0, 10.0, -6.0, -10.0))
-
-        if self._logo_pixmap.isNull():
-            return
-        logo_rect = cover_rect.adjusted(32.0, 40.0, -32.0, -40.0)
-        painter.drawPixmap(logo_rect, self._logo_pixmap, QRectF(self._logo_pixmap.rect()))
 
     def _paint_hover_region(self, painter: QPainter, palette, map_rect: QRectF) -> None:
         if self._hovered_route is None:
