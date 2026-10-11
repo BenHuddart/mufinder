@@ -1,1407 +1,295 @@
 Implemented Functionality
 =========================
 
+This page is an index of what MuFinder can do. Each section describes one area
+of the application in a few sentences and links the page that explains it. The
+workflow sections follow the order of the stages in the project navigator; the
+sections after them cover the job system, CASTEP input and the development
+harness that every workflow shares.
+
 Application shell
 -----------------
 
-The current application provides:
+- The ``File`` menu creates, opens, reopens (``Open Recent``) and saves
+  projects, and holds ``Import Legacy Relaxations...`` and ``Remove Imported
+  Relaxations...`` (see :doc:`legacy_import`).
+- The ``Setup`` menu configures the local CASTEP installation and keyword
+  catalog (``CASTEP...``, see :doc:`castep_keyword_catalog`) and the cluster
+  profiles (``HPC Clusters...``, see :doc:`job_lifecycle`).
+- ``View -> Appearance`` switches between ``Light``, ``Dark`` and ``System``
+  themes. MuFinder bundles its own fonts, icons and control styling, so it looks
+  the same on macOS, Windows and Linux.
+- The project navigator lists the workflow stages, and a project-wide Job
+  Dashboard dock tracks every job. Analysis-workspace and saved
+  magnetic-field-workspace nodes have a right-click delete action; workflow
+  stage nodes have no context menu.
+- Durable project and job state is autosaved. Analysis layouts and viewer
+  choices are kept until ``Save Project``, which MuFinder offers whenever a
+  project window is closed.
 
-- Project create/open/save actions from the ``File`` menu (``New Project``,
-  ``Open Project``, ``Open Recent``, ``Save Project``), plus
-  ``Import Legacy Relaxations...`` and ``Remove Imported Relaxations...`` (see
-  :doc:`legacy_import`).
-- A ``Setup`` menu with ``CASTEP...`` and ``HPC Clusters...`` configuration,
-  and ``View -> Appearance`` with ``Light``, ``Dark``, and ``System`` themes.
-- A project navigator with staged workflow sections.
-- A project-wide job dashboard dock.
-- Persisted per-project UI state.
+:doc:`architecture` describes how projects are stored and saved (Domain model
+and persistence) and how the cross-platform appearance is achieved
+(Cross-platform appearance).
 
-Cross-platform appearance
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Host structure
+--------------
 
-MuFinder renders identically on macOS, Windows, and Linux rather than
-inheriting each platform's native look:
+A project starts from a host crystal structure imported from a CIF, magnetic
+CIF (``.mcif``) or CASTEP ``.cell`` file. The source file is copied into the
+project, and MCIF magnetic metadata (propagation vectors and atom-site moments)
+becomes the project magnetic structure and the host's per-atom spins. The
+``Host Structure`` panel switches between imported hosts, edits per-atom spins
+in units of ``hbar/2`` and the propagation vector in reciprocal-lattice units,
+and shows the structure in an orthographic 3D viewer with optional spin arrows,
+bonds and unit cell.
 
-- The Qt ``Fusion`` base style is forced on every platform
-  (``mufinder.app.theme.apply_base_style``), giving the stylesheet one
-  predictable, fully-styleable baseline instead of leaking native controls
-  through on unstyled widgets.
-- Typography is shipped with the application, not assumed from the host. The
-  bundled families — **Fraunces** for the "field-journal" headings and
-  **Inter** for body text — live in ``mufinder/assets/fonts`` and are
-  registered at startup by ``mufinder.app.theme.ensure_fonts_loaded``, so
-  the same fonts appear regardless of what is installed on the machine. The
-  historical system-font fallbacks (Helvetica Neue/Arial, Georgia) are
-  retained only as a safety net.
-- Action/toolbar icons prefer MuFinder's own hand-drawn vector glyphs
-  (``mufinder.app.icons``) over the platform's ``QStyle.standardIcon``
-  artwork, so icons stay on-brand and identical across operating systems. The
-  platform standard icon is used only as a fallback for names without a
-  branded glyph.
-- Checkbox and radio-button indicators are styled by the stylesheet (with
-  bundled tick/dot glyphs) and tinted with the muon-red accent, so they render
-  identically on every platform instead of falling back to each OS's native
-  control artwork and accent colour. The same treatment covers checkable
-  item-view rows (tree/table/list), so table checkboxes match the form
-  checkboxes.
-- The project-home trail map scales with the window: the artwork keeps its
-  aspect ratio and the signpost labels are sized relative to the rendered
-  banner (``ProjectHomeTrailWidget._sign_title_pixel_size``), so the labels
-  stay proportionate and legible from small laptops to large/high-DPI displays
-  instead of shrinking as the map grows.
-- Embedded plots keep their tick labels, axis labels, titles and legends
-  inside the plot area at every window size, including the minimum sizes that
-  analysis dialogs open at on small laptops. Each plot uses a constrained
-  layout that sizes its margins from the rendered labels, and has a minimum
-  size below which a splitter cannot squeeze it (see
-  ``docs/architecture.rst``, "Plot canvas policy").
-- Plots that share a window with other content (the relaxation clustering and
-  displacement plots, the UEP clustering plots, the quantum single-particle plot
-  and the pinned convergence plots) have a pop-out button in their top-right
-  corner. It opens the plot in a separate resizable window with zoom, pan and
-  save, while the original spot shows a "Show here" button. The plot keeps
-  updating and stays interactive while popped out (the dialog's own zoom/pan
-  buttons for that plot pause meanwhile), and returns when its window is closed
-  (or Escape is pressed in it) or when the dialog closes.
-- On Linux Wayland sessions the entrypoint forces the Qt ``xcb`` platform
-  before the ``QApplication`` is created
-  (``mufinder.main._force_x11_platform_on_wayland``). The 3D viewers embed VTK
-  render windows that draw through X11/GLX; under a native Qt Wayland window
-  the widget has no X11 window id, so VTK aborts the process with a fatal
-  ``BadWindow`` X error. Routing Qt through XWayland gives VTK real X11
-  windows. The override only applies on Linux, is skipped when the user has
-  already set ``QT_QPA_PLATFORM``, and requires an XWayland ``DISPLAY`` to be
-  available.
+See :doc:`host_structure`.
 
-Domain and persistence
-----------------------
+Supercells
+----------
 
-The data model includes:
+The ``Supercell Editor`` saves named, reusable supercells of the active host,
+from a diagonal ``Nx``/``Ny``/``Nz`` scaling or a full 3×3 integer matrix, with
+a preview before saving. ``Suggest…`` proposes diagonal supercells by their
+minimum periodic-image distance and recommends the cheapest one that reaches
+10 Å under 200 atoms. A supercell already frozen into a configured calculation
+is never rewritten: editing its matrix saves a new copy.
 
-- Project, Structure, MuonSite.
-- CalculationDefinition, CalculationRun, Result.
-- Job and structured ProvenanceRecord.
+Each workflow chooses its own simulation cell, the host unit cell or a saved
+supercell, and a configured calculation keeps the cell it was configured with.
 
-Persistence includes:
+See :doc:`supercells`.
 
-- JSON entity-per-file storage under ``entities/``.
-- Project manifest, state snapshot, and provenance JSONL stream.
-- Validation of cross-entity references before save.
-- Content-hash dirty tracking: ``ProjectService.save_project`` skips rewriting
-  any entity file (and ``state.json``) whose canonical serialized payload is
-  unchanged since the last save/load, guarding each skip with a file-existence
-  check so externally-deleted files are always regenerated. The manifest is
-  always written because its ``modified_at`` is bumped on every save. This is a
-  save-time optimization only and does not change the on-disk format.
-
-User-facing save behavior is intentionally split between autosave and manual
-save:
-
-- Durable project state such as imported structures, saved workflow assets,
-  generated/removed muon-site entities, calculation definitions, run tracking,
-  and results is autosaved so active work is not lost if MuFinder needs to
-  rebuild the project view.
-- Analysis-session state stays in session memory until the user explicitly
-  chooses ``Save Project`` (or answers ``Yes`` to the ``Save project?`` prompt
-  shown whenever a project window is closed). Opening a different project
-  flushes the autosave but does not prompt, so unsaved analysis-session state
-  is discarded; save first.
-- This manual-save bucket includes exploratory UI state such as UEP wizard tab
-  choices, clustering-window state, viewer camera/orientation, bond and spin
-  visibility, and slice/isosurface display settings.
-- In practice, users should treat ``Save Project`` as the action that commits
-  their current analysis layout and visualization choices to disk for the next
-  session, while autosave mainly protects durable project and job state.
-
-Development harness
+Convergence testing
 -------------------
 
-The repository is organised for development by coding agents:
-
-- ``AGENTS.md`` is the canonical agent guide: binding rules plus pointers to
-  the docs that hold the rationale. ``CLAUDE.md`` imports it.
-- :doc:`agent_harness` documents the expected agent workflow and feedback loop.
-- :doc:`architecture` defines package layers, dependency directions, the shared
-  homes for cross-workflow code and the workflow-controller contract.
-- ``tests/test_agent_harness.py`` enforces the structural guardrails listed in
-  :doc:`quality_and_automation` (Agent harness checks): docs indexing, layer
-  imports, the ``MainWindow`` handler ratchet, the plot-canvas rules, the PR
-  template pointers and tracked bytecode artifacts.
-
-Journal view
-------------
-
-The project navigator includes a ``Journal`` page (internal route
-``provenance_log``); see :doc:`journal` for details.
-
-Current Journal behavior includes:
-
-- Day-grouped rendering of persisted provenance with headers such as
-  ``Tuesday 21 April 2026``.
-- A curated notebook-style narrative focused on major workflow milestones
-  rather than a raw event ledger.
-- Milestone stamps for notable states such as defaults adopted, calculations
-  completed, warnings, and failures.
-- Export controls for:
-
-  - plain text ``.txt`` output
-  - Markdown ``.md`` output
-
-- Export output that mirrors the curated Journal content.
-
-Current Journal coverage includes:
-
-- structure import
-- convergence / pristine-relaxation / UEP configuration snapshots
-- adopted, manually entered, and cleared project defaults, including the
-  default XC functional
-- candidate-site generation (and partial generation) and UEP promotion
-- calculation submission milestones and continuation runs
-- terminal calculation outcomes (completed, failed, stopped, cancelled, reset)
-- comparison-table creation
-- legacy-relaxation import and removal of imported relaxations
-
-Current Journal limitations:
-
-- It is strictly provenance-driven and does not backfill missing older history
-  from saved job metadata.
-- Intermediate runtime states such as ``queued``, ``running``, and
-  ``retrieving`` are intentionally omitted to avoid noisy logs.
-- Some analysis-only artifacts are still not represented as first-class
-  Journal milestones.
-
-Structure import
-----------------
-
-Host-structure loading currently supports:
-
-- CIF input files (``.cif``).
-- Magnetic CIF input files (``.mcif``) via CIF parser compatibility.
-- CASTEP cell input files (``.cell``).
-
-Import behavior currently includes:
-
-- Parsing CIF/MCIF files via ASE-backed readers and ``.cell`` files with
-  MuFinder's own CASTEP cell parser (``mufinder.castep_io.cell_parser``),
-  reading only the lattice and position blocks so a CASTEP ``-out.cell``
-  imports whatever calculation keywords it carries. Inline ``SPIN=`` values
-  become per-atom spins.
-- Copying source files into project ``imports/`` for provenance.
-- Setting imported structure as active host structure by default.
-- Capturing import provenance records.
-- Extracting MCIF magnetic metadata when present, including atom labels,
-  single-vector legacy tags, ``_magnetic_propagation_vector_kxkykz`` entries,
-  and atom-site moment vectors.
-- Preserving all imported propagation vectors as reciprocal-lattice-unit
-  ``propagation_vectors_rlu`` metadata while keeping the first vector mirrored
-  to the legacy ``propagation_vector`` property.
-- Mapping imported moment labels onto atom indices by exact MCIF label match or
-  the unique ``label_...`` expansion used by mag2spectra MCIF fixtures.
-- Promoting extracted MCIF magnetic metadata to project-level magnetic structure when active host is imported.
-- Deriving per-atom scalar spins from imported magnetic metadata and storing them in host structure properties.
-- Converting MCIF-derived moments into propagation-vector components with the
-  phase correction needed for the unit-cell moment at each labelled site to
-  reconstruct the imported MCIF moment.
-- Parsing inline ``SPIN=...`` tokens from ``POSITIONS_FRAC`` rows when loading ``.cell`` files.
-
-Host-structure visualization and magnetic editing
--------------------------------------------------
-
-The host-structure panel includes:
-
-- An ``Active host structure:`` selector for switching between imported host structures.
-- A resizable side-by-side splitter layout with atom table on the left and 3D structure viewer on the right.
-- A compact two-row current-structure summary block (label/source/atom count/species) to preserve horizontal room for the viewer.
-- Orthographic-only viewing (perspective toggle removed).
-- Per-atom editable spin values in units of ``hbar/2`` via the ``Spin (hbar/2)`` table column.
-- Propagation-vector entry controls in reciprocal-lattice units.
-- 3D spin-arrow rendering in the structure viewer using fully 3D shafts/cones, centered on atom spheres with signed color mapping for up/down moments.
-- Spin rendering disabled by default, with automatic enablement when any edited/imported spin value is non-zero.
-- Atom transparency automatically applied when spin rendering is enabled.
-- Viewer fitting accounts for full atom sphere extents (not just atom centers), preventing unnecessary clipping at left/right boundaries.
-- Crystallographic axis triad rendered in a narrow column at the bottom-left of the main viewer to maximize primary structure viewport area, with viewer and triad colours refreshed from the active light/dark palette.
-- Left-clicking empty space in the viewer clears the current atom selection.
-- The viewer's controls fit narrow panes: the display toggles (Cell, Bonds,
-  Spins) and the orientation controls (Along a/b/c, Reset View) share one line
-  when there is room and wrap onto two lines when there is not, and the a/b/c
-  buttons are compact. A long selection summary is shortened with an ellipsis
-  (the full text is in its tooltip) instead of widening the viewer. The viewer
-  needs roughly 300 px of width rather than about 610 px, so plots
-  beside it in the analysis dialogs get the width they need.
-- In the relaxation clustering window the viewer pane gets half the width, or
-  more when its cluster summary table needs it to show the Wyckoff assignments
-  in full; the plot takes the rest. The split follows window resizes until the
-  user drags the handle.
-- The relaxation clustering window's connected-components graph sizes its
-  nodes, their border rings, their numbers and its edges in data units, so the
-  graph scales with its canvas: every node stays inside the plot and nodes never
-  overlap, however small the window. Node size follows the closest pair of
-  nodes, and large components are spread so neighbouring nodes keep a
-  consistent gap instead of being squeezed into a fixed box.
-- The graph uses the space it has: components are packed into rows chosen to
-  fit the canvas's shape (few long rows on a wide canvas, more short rows on a
-  tall one), kept in cluster order, with gaps tied to the node size. The packing
-  is redone when the window is resized. Nodes stop growing at about 22 pt in
-  radius, so a small graph on a large window stays readable rather than turning
-  into a few huge discs.
-- Edges thin out with the nodes. Components with more than 2.5 edges per node
-  draw thinner, translucent edges, so the edges of a dense component can still
-  be told apart.
-- A project-level supercell editor with simple diagonal controls, optional
-  advanced full 3x3 matrix entry, naming, preview, save, edit, delete,
-  minimum-image-distance supercell suggestions, and workflow selection support
-  (see :doc:`supercells`).
-- A PyVista/VTK structure-viewer backend with camera-preserving overlay updates for bonds, spins, slice planes, point markers, and UEP isosurfaces.
-
-Magnetic-field and nuclear-relaxation analysis
-----------------------------------------------
-
-The Magnetic Fields workflow currently includes:
-
-- propagation-vector magnetic-structure editing and preview, including
-  ``Build From Host Spins`` and component textures (hexagonal and square
-  skyrmions, custom Fourier textures);
-- commensurate dipolar-field calculations and incommensurate field-distribution
-  sampling, including independent multi-q phase sampling with Auto, Grid, and
-  Monte Carlo controls, active phase dimensions derived from the used
-  component wavevectors, and separate lookup-resolution and distribution-sample
-  limits;
-- demagnetizing-field corrections for none, sphere, infinite plate, advanced
-  ellipsoid, and advanced rectangular-prism sample shapes, with PyVista shape
-  preview for advanced shapes, analytic rectangular-prism tensor averaging, and
-  per-phase correction for incommensurate distributions;
-- dipolar tensor calculations for selected magnetic ions;
-- selected muon-site reuse from UEP and structural-relaxation clustering, or a
-  ``Custom fractional position``;
-- native nuclear second-moment relaxation calculations for ZF/TF and
-  single-crystal/polycrystal modes;
-- bundled natural-abundance isotope data for reproducible nuclear relaxation;
-- optional muon-induced distortion corrections when a selected
-  structural-relaxation cluster site has a derived distorted structure.
-
-See :doc:`magnetic_fields` for the workflow.
-
-Quantum Corrections
--------------------
-
-The Quantum Corrections workflow lists structurally relaxed MuFinder muon sites
-that are eligible phonon sources and runs a two-stage CASTEP calculation for
-each: a ``TASK : SINGLEPOINT`` stage with explicit ``H:mu`` mass/gamma cell
-blocks, then a Gamma-only ``TASK : PHONON`` continuation (finite displacement by
-default, with optional ``NUM_FARMS`` task farming). Completed phonon results are
-parsed from the ``.phonon`` file into muon zero-point energies, covariance and
-correlation tensors, ``w1``/``w2`` witnesses, and single-particle effective
-potentials, which can be inspected in an interactive analysis window.
-
-See :doc:`quantum_corrections` for the workflow, eligibility rules, and method
-assumptions.
-
-Energy Barriers
----------------
-
-The Energy Barriers workflow now has a dedicated project page for staged path,
-transition-state, and NEB work.
-
-Current behavior includes:
-
-- explicit selection of initial and final relaxed endpoints before path
-  generation;
-- support for generating same-site Energy Barriers hops across
-  symmetry-equivalent images, while filtering out zero-length paths;
-- an optional maximum path-length filter for Energy Barriers path generation;
-- symmetry-guided enumeration of distinct muon paths between the selected
-  endpoints;
-- generated path rows staying available after the endpoint selectors change;
-- deletion of generated path rows from the Energy Barriers workflow;
-- a path preview dialog that shows the undistorted matching pristine supercell
-  with initial/final muon positions and an optional path arrow;
-- curated per-row parameter dialogs for NEB jobs, with searchable advanced
-  CASTEP controls available on demand;
-- supercell-aware Energy Barriers k-point defaults that preserve equivalent
-  reciprocal-space sampling density relative to the recommended project
-  lattice;
-- NEB job expansion seeded directly from the two aligned relaxed endpoints,
-  with an IDPP-interpolated intermediate image;
-- per-path CASTEP task farming through ``NUM_FARMS``, with a live image-split
-  and balance hint in the configuration dialog, a ``Farms`` column in the
-  ``Diffusion Paths`` table, submission blocked when the requested cores cannot
-  serve the farm count, and farm-aware retrieval of ``*_farm001.ts`` and
-  ``*_farm001.castep`` outputs;
-- a completed-results table summarising each NEB run by endpoint pair, charge
-  state, path length, forward/reverse barrier, endpoint ``ΔE``, and image
-  count, with the trajectory file reachable via tooltip and a right-click
-  ``Open Containing Folder`` action;
-- inline NEB inspection with an annotated reaction-coordinate plot (click,
-  drag, or arrow keys to scrub), an image stepper, and a structure viewer
-  that preserves camera orientation and zoom while stepping through images
-  and can pop out into its own window.
-
-See :doc:`energy_barriers` for the user-facing workflow, assumptions, and
-current scope.
-
-Supercell editor
-----------------
-
-The project navigator and workflow tabs expose a reusable ``Supercell Editor``.
-
-Current behavior includes:
-
-- listing saved supercells for the active source structure,
-- naming saved supercells,
-- generating previews before save,
-- saving new supercells and saving copies,
-- renaming and regenerating unused saved supercells,
-- preventing deletion of supercells already frozen into configured calculations,
-- creating a new future-use copy when matrix edits are made to a frozen saved
-  supercell,
-- returning a selected saved supercell to workflow tabs opened in
-  ``Manage Supercells...`` mode,
-- a **Suggest…** button that lists diagonal scalings ``(n₁, n₂, n₃)`` whose
-  minimum muon–image distance — the shortest non-zero lattice translation over
-  all ``(m₁, m₂, m₃) ∈ {-1,0,1}³``, not simply the shortest cell edge — is at
-  least 8 Å, keeping only cells that improve on every cheaper option (columns
-  ``Scaling``, ``Atoms``, ``Min image (Å)``, ``≥ 10 Å``). It highlights as
-  ``(Recommended)`` the cheapest cell under 200 atoms that reaches 10 Å, or
-  otherwise the best cell under 200 atoms with a warning; when the primitive
-  cell already has 200 or more atoms no search is run. ``Use This Supercell``
-  writes the chosen scaling into the editor matrix controls. The simple-mode
-  diagonal range is 1–64 to accommodate small or anisotropic primitive cells.
-
-Existing configured calculations remain reproducible because their
-``CalculationDefinition.input_structure_ids`` continue to point at the original
-frozen structure snapshot.
-
-Workflow-scoped simulation-cell selection
------------------------------------------
-
-Simulation-cell selection is now workflow-scoped rather than project-global for calculation input generation.
-
-Current UI support includes:
-
-- A ``Simulation Cell`` section in the cutoff- and k-point-convergence panels.
-- A summary status label describing the active simulation-cell source.
-- A dropdown with:
-
-	- ``Single unit cell``
-	- saved supercell assets derived from the currently active host structure
-
-- ``Manage Supercells...`` action to open the project supercell editor and
-  select or create a saved structure snapshot.
-- ``Use Unit Cell`` action that returns the current workflow selection to host unit-cell mode without deleting saved assets.
-- A per-row ``Supercell`` dropdown (``Unit cell``, saved supercells, and
-  ``Manage Supercells...``) in the pristine-relaxation, muon-relaxation, and
-  UEP tables.
-
-Cross-workflow reuse behavior includes:
-
-- Saved supercell assets are project-scoped and visible across workflows for the same active host.
-- Selecting an asset owned by another workflow performs clone-on-load into the current workflow scope.
-- Clone-on-load reuses an existing current-workflow asset when an identical host+matrix asset already exists.
-
-Persistence model:
-
-- Saved supercells are persisted as standard ``Structure`` entities (no separate entity type).
-- Saved supercell structures set ``parent_structure_id`` to the active host structure id.
-- Saved supercell structures store asset metadata under ``properties["supercell_asset"]``:
-
-	- ``matrix`` (3x3 integer matrix)
-	- ``owner_workflow_stage``
-	- ``source_asset_structure_id`` (nullable, used for clone provenance)
-
-- Asset labels are auto-generated from workflow stage and matrix (for example ``convergence_cutoff 2x2x1``).
-- Per-workflow active selection is persisted in ``state.json`` under ``workflow_supercells``:
-
-.. code-block:: json
-
-   {
-     "workflow_supercells": {
-       "convergence_cutoff": { "mode": "unit_cell" },
-       "muon_relaxation": { "mode": "saved_supercell", "structure_id": "<uuid>" }
-     }
-   }
-
-Effective-structure resolution behavior:
-
-- ``unit_cell`` mode resolves to active host structure.
-- ``saved_supercell`` mode resolves to selected saved supercell structure.
-- Missing/invalid/mismatched-host saved selections safely fall back to host unit cell, with persisted state normalization when requested.
-
-Convergence definition/materialization behavior:
-
-- Convergence configuration snapshots now freeze the resolved simulation cell at configuration time:
-
-	- ``CalculationDefinition.input_structure_ids[0]`` stores selected supercell structure id, or host structure id for unit-cell mode.
-	- ``CalculationDefinition.parameters`` stores lightweight provenance including:
-
-		- ``simulation_cell_mode``
-		- ``supercell_source_workflow``
-
-- Materialized convergence ``.cell`` files are rendered from this frozen resolved structure, so expanded lattice/positions/spins are preserved even if later UI selection changes.
-
-Compatibility behavior:
-
-- ``Project.supercell_matrix`` is retained for host preview defaults and compatibility reads.
-- ``Project.supercell_matrix`` is not authoritative for workflow calculation input structures.
-
-Legacy spin-data repair behavior:
-
-- Host spin extraction now falls back to ``magnetic_structure.moments[*].vector[2]`` when scalar spin lists are missing/invalid.
-- For host structures only, all-zero scalar spins with non-zero magnetic moments are treated as stale and replaced by magnetic-moment-derived fallback spins.
-- Saved supercell assets remain authoritative for their own spin arrays (fallback does not overwrite explicit asset spins during bridging).
-- Legacy saved supercell assets with stale zero spins are automatically repaired from host magnetic data when selected/resolved/materialized, preventing missing ``SPIN=...`` tokens in generated spin-polarized convergence ``.cell`` files.
-
-Muon candidate-site generation
-------------------------------
-
-Generation methods currently implemented:
-
-- Random constrained filling in periodic cells. Random generation now evaluates
-  the full symmetry-equivalent orbit of each proposed position before
-  accepting it, following the MuFinder CPC initial-position algorithm. Users
-  can generate by specifying a muon-muon separation, or by specifying a target
-  number of initial positions and allowing MuFinder to estimate the spacing
-  from the free cell volume, symmetry multiplicity, and the historical
-  ``0.350`` random-filling factor.
-- Element-attached constrained placement around host atoms selected from a
-  dropdown populated by the active host structure. For every atom of the
-  selected element, the requested number of muons per atom is chosen
-  deterministically from local neighbour geometry and ranked by host-atom
-  clearance.
-- Manual entry in fractional or Cartesian coordinates, with fractional
-  coordinates as the canonical stored representation and a live viewer preview.
-- Clustered UEP batch-search results selected from saved UEP analysis state.
-- Selected generated rows can be clustered around a fractional anchor before
-  staging. MuFinder replaces each selected initial position by the
-  symmetry-equivalent representative closest to that anchor, helping users
-  avoid launching relaxations from different realizations of the same
-  symmetry-equivalent site.
-- Selected generated rows can be deleted from the generation table before
-  relaxation jobs are configured.
-
-Constraint handling currently includes:
-
-- Minimum muon-muon distance under periodic minimum-image convention for
-  random filling. This is a candidate-start diversity filter: every relaxation
-  input still contains only one muon, and the spacing prevents redundant starts
-  that are likely to relax to the same final site.
-- Minimum muon-host distance under periodic minimum-image convention for
-  random and element-attached generation.
-- Attempt caps for random placement. The generation UI does not expose a
-  random seed; internal seed parameters remain available for regression tests.
-
-Error handling currently includes:
-
-- Explicit exceptions for unsatisfiable constraints.
-- Explicit exceptions for unknown target elements.
-- Duplicate protection for UEP cluster rows that have already been added as generated sites.
-- UI surfacing of generation failures.
-- UI surfacing of structure import failures.
-
-UEP cluster candidates are added from the muon-generation workflow rather than
-directly from the UEP wizard. The UEP stage remains responsible for batch
-optimization, zero-point estimates, clustering, and visualization; the
-generation stage is where selected cluster representatives become initial
-positions for full structural relaxation.
-Cluster representatives use the optimized position of the lowest-energy member
-chosen by the clustering summary, not an averaged cluster position or centroid.
-
-When generated positions are turned into relaxation jobs, MuFinder asks whether
-to create positive-muon jobs, muonium jobs, or both. The structural-relaxation
-view separates those rows into ``Positive muon`` and ``Muonium`` tabs, while the
-CASTEP total charge remains locked by MuFinder for each tab.
-
-The symmetry-aware random method follows the initial-position generation
-algorithm described by Huddart *et al.*, ``MuFinder: A program to determine and
-analyse muon stopping sites``, *Computer Physics Communications* **280**,
-108488 (2022), DOI: ``10.1016/j.cpc.2022.108488``. The element-attached method
-is a deterministic seeding heuristic intended to provide chemically sensible
-starts near selected species; final site assignment still requires subsequent
-structural relaxation and clustering. For broader context on interstitial-site
-generation and defect-style candidate enumeration, see the
-``pymatgen-analysis-defects`` interstitial-generator documentation and the
-``pymuon-suite`` AIRSS/UEP workflow material referenced in the UEP workflow
-documentation.
-
-Muon Sites summary page
------------------------
-
-The parent ``Muon Sites`` workflow node now opens a dedicated summary page that
-presents the headline result of the muon-site workflow: the distinct,
-symmetry-inequivalent candidate stopping sites. The page includes:
-
-- Two horizontally arranged notebook-style cards, one per charge state
-  (``Positive muon`` and ``Muonium``), each holding one pinned analysis.
-- A ranked sites table per card ordered by relative energy (lowest first),
-  showing the relative energy, representative fractional position, and Wyckoff
-  label for each distinct clustered site.
-- A 3D preview per card rendering the host structure with the pinned muon sites
-  overlaid as ``H:mu`` atoms.
-- A ``Pin to Summary`` action added to each structural-relaxation analysis
-  workspace that snapshots the workspace's distinct clustered sites into the
-  matching charge-state card. Pinning requires that clustering has been run,
-  that the workspace's host is the active host, and that its charge state is
-  supported.
-- Navigation from the summary back into the live analysis: an
-  ``Open in Analysis →`` button jumps to the source workspace, while clicking a
-  site row or a muon in the 3D preview reveals that specific cluster. When the
-  pinned snapshot's source workspace or cluster no longer exists, MuFinder
-  opens the Analysis tab and reports that the pinned analysis has changed.
-- An adaptive, always-enabled card action rather than a disabled control: it
-  reads ``Open in Analysis →`` when a card is populated and ``Go to Analysis →``
-  when empty, so an unpinned card still routes the user to the Analysis tab.
-- An ``Unpin`` action that clears a charge state's pinned snapshot.
-- A ``Delete Analysis...`` action in each structural-relaxation analysis
-  workspace header, and on the workspace's project-tree node under
-  ``Muon Sites -> Analysis`` via right-click, so a preliminary analysis can be
-  removed once a fuller set of relaxations is available. It asks for
-  confirmation, keeps the relaxations the workspace used, removes any summary
-  pin taken from that workspace, and autosaves the project (see
-  :doc:`structural_relaxation_analysis`). Each analysis workspace has its own
-  project-tree node, kept in step with the selected tab and the workspace name,
-  and marked complete once clustering has been applied. Saved magnetic field
-  workspace nodes offer a matching ``Delete Workspace...`` right-click action;
-  workflow-stage nodes have no context menu.
-- Safe placeholder fallback when nothing is pinned, or when a persisted snapshot
-  no longer matches the current host structure.
-- Persisted summary snapshot state in
-  ``ui_state["muon_sites_summary_snapshots"]``, keyed by charge state and
-  decoupled from the live analysis workspaces (mirroring the convergence
-  overview snapshot design).
-- An ``Export CIF…`` action per card that writes the host structure plus its
-  pinned, distinct clustered muon sites (one representative per cluster) to a
-  CIF file (:func:`mufinder.science.structure_io.export_structure_with_muon_sites`).
-  Muons are written as hydrogen atoms with distinct ``Mu1``, ``Mu2``, ...
-  ``_atom_site_label`` values. The standard ``_atom_site`` loop carries no
-  MuFinder-specific columns (mixing one in was found to desynchronize column
-  counting in some CIF readers, silently shifting every atom's fields);
-  per-site relative energy and Wyckoff label instead live in a separate,
-  standalone ``_mufinder_muon_site_label`` / ``_mufinder_relative_energy_eV`` /
-  ``_mufinder_wyckoff_label`` loop that a reader can freely skip. The file is
-  written in P1 with every atom listed explicitly, since muon sites generally
-  break the host's symmetry. A ``Muon sites coincide with host atoms`` warning
-  is shown when a muon is written within 0.5 Å of a host atom. The action stays
-  disabled until a card
-  is populated. Each structural-relaxation analysis workspace also has its own
-  ``Export CIF...`` action (see :doc:`structural_relaxation_analysis`), which
-  exports every relaxed muon position in the workspace rather than only cluster
-  representatives.
-
-
-UEP clustering analysis
------------------------
-
-The UEP analysis dialog separates relaxed-site generation from clustering.
-
-Current clustering behavior includes:
-
-- Random-start batch searches that stop after generating and relaxing candidate
-  muon sites.
-- A separate ``Calculate ZPE`` action that evaluates and stores harmonic
-  zero-point energies for the successfully optimized sites in eV.
-- A separate non-modal clustering window launched with the ``Clustering``
-  button in the ``Batch Search`` tab's ``Sampling`` card.
-- Hierarchical clustering exploration through a dendrogram with a live
-  tolerance control.
-- K-means clustering exploration through a PCA projection of the normalized
-  Soprano-backed feature vectors.
-- A shared structure view that colors every relaxed muon position by its active
-  cluster assignment.
-- A shared cluster-summary bubble plot showing energy spread against average
-  cluster energy relative to the global minimum.
-- On a small window the clustering window reflows only its controls: the
-  dendrogram or PCA plot stays beside the structure view and energy-spread
-  plot, so it keeps a usable size instead of being stacked into a thin strip.
-- The clustering window's geometry, splitter sizes and camera are saved with the
-  UEP analysis state once a move, resize, splitter drag or view change settles
-  (after about a quarter of a second), not on every intermediate event, so
-  dragging stays responsive however large the potential grid is. Method,
-  tolerance, cluster-count and result changes are saved immediately.
-- The UEP analysis state saved on each change leaves out the full-cell
-  potential grid, which is stored once as the job's grid result, and keeps each
-  isosurface mesh once, serialized only when the mesh changes. Projects that
-  stored the grid in the analysis state move it into the grid result when the
-  analysis is next opened.
-- Batch-tab cluster tables that reflect the most recent separate clustering run
-  while preserving cluster-representative promotion.
-
-Calculation job framework
--------------------------
-
-Workflow-driven CASTEP job generation provides:
-
-- A resolved ``JobSpec`` abstraction as the canonical output of workflow expansion.
-- Separation between structure bridging (domain ``Structure`` to ``StructureSpec``) and CASTEP rendering.
-- Layered ``InputTemplate`` merging with explicit precedence:
-
-	- global defaults
-	- workflow defaults
-	- structure-derived values
-	- sweep-generated overrides
-	- explicit user overrides
-
-- Explicit variation modeling with ``JobPatch`` for structure, cell, and param overrides.
-- A keyword-only ``expand_*`` function per workflow in ``mufinder.workflow``:
-
-	- convergence sweeps over ``CUT_OFF_ENERGY`` and ``KPOINT_MP_GRID``
-	- muon-site sweeps over initial fractional muon positions
-	- pristine and muon relaxation jobs
-	- quantum-correction singlepoint and phonon jobs
-	- nudged-elastic-band energy-barrier jobs
-
-- Deterministic, filesystem-safe job naming and one output directory per resolved job.
-- A CASTEP rendering adapter that renders only resolved ``JobSpec`` objects.
-- Local output writing for ``.cell`` and ``.param`` files plus ``manifest.json`` for reproducibility/debugging.
-- Conditional spin serialization in ``.cell`` files by appending inline ``SPIN=...`` tokens to ``POSITIONS_FRAC`` rows when and only when spin polarization is enabled.
-
-Multi-row selection in job tables
----------------------------------
-
-The workflow job tables (cutoff and k-point convergence, pristine and muon
-relaxation, UEP, Energy Barriers, Quantum Corrections) and the Job Dashboard
-share one rule for controls embedded in a row: highlighted rows are what is
-affected.
-
-- A control on a row that is part of a multi-row selection targets the
-  selection. When at least two selected rows can take the action, MuFinder
-  asks first, with three choices: apply to all selected (or eligible) rows,
-  apply to this row only, or cancel. Cancelling changes nothing, and a
-  dropdown returns to the value it showed before. When only one selected row
-  can take it, the clicked row is acted on without a prompt.
-- A control on a row outside the selection first makes that row the selection,
-  then acts on it alone, without a prompt.
-- The prompt uses the same wording in every table. It names the action and the
-  number of rows, and when some selected rows cannot take the action (for
-  example rows locked because their job has been queued) it states how many
-  will be skipped.
-- After the prompt is answered the table selection is set to the selected
-  rows (``All``) or the clicked row (``This ... only``); cancelling restores the
-  previous selection.
-- Controls that propagate: the ``Supercell`` and ``Fix Cell`` dropdowns, the
-  per-row ``Configure`` and remove buttons, and every Job Dashboard action
-  button.
-- Controls that only make sense for one row (``Open Wizard`` in the UEP table,
-  ``View...`` in the Energy Barriers table) always act on their own row and never
-  prompt.
-
-Actions that remove, cancel, reset, dismiss or delete are always confirmed,
-whichever way they are triggered (row control, button below the table,
-right-click menu, or Delete/Backspace):
-
-- Removing rows asks once for the whole batch, stating the number of rows and
-  how many already have a submitted job (the cutoff and k-point tables also
-  state how many jobs are still queued or running and will be cancelled). This
-  includes rows that were never submitted. Relaxation removals may then ask
-  what to do with each job's output files (delete or archive, with an
-  apply-to-all choice).
-- For a row control on a multi-row selection the three-way prompt is the
-  confirmation, so the user is not asked twice. The exception is removing
-  cutoff or k-point rows whose job is still queued or running: that prompt
-  does not mention cancellation, so those removals are confirmed again with it
-  stated.
-- A single-row ``Cancel`` or ``Dismiss`` on the Job Dashboard, and ``Cancel``
-  or ``Dismiss`` in a workflow table's or the dashboard's right-click menu, ask
-  before acting.
-  ``Reset`` already asks its clean-up question, which can be cancelled.
-- In the dedicated confirmations the safe choice is the default button and the
-  one Escape selects, and the buttons are labelled with the action
-  (``Remove 3 rows``, ``Keep running``) rather than Yes/No. In the three-way
-  row-control prompt the default button is the all-selected choice.
-- Delete/Backspace in the Job Dashboard shows one summary of everything the key
-  will do to the selection (cancel running jobs, reset failed jobs, delete
-  finished job records), with the option to clean the reset jobs' output
-  directories, before anything happens. Cancelling leaves every selected job
-  untouched.
-
-What a click will affect is shown before the click, without changing any text
-inside the rows (tables have to stay usable on a small laptop screen):
-
-- While two or more rows are selected, the row controls that will act on all of
-  them are drawn with a heavier border. Single-row controls are not.
-- Each workflow table shows ``N selected`` beside its buttons. The Job Dashboard
-  shows ``N selected · row buttons apply to all selected`` above the table, only
-  while two or more rows are selected.
-- After a multi-row ``Supercell`` or ``Fix Cell`` change the status bar reports
-  how many rows were changed and how many were skipped.
-- The run buttons state their scope: ``Run All Locally`` / ``Run All on
-  Cluster`` with nothing selected, ``Run Selected Locally`` / ``Run Selected on
-  Cluster`` otherwise. With nothing selected every row is submitted; rows that
-  are not ready are skipped by the submission step.
-- The button row below each table offers the same set: ``Configure Selected
-  Parameters...``, ``Remove Selected``, and the two run buttons. Quantum
-  Corrections has no ``Remove Selected`` because its rows are derived from
-  completed relaxations, and adds a ``Reset to Stage 1`` button.
-
-Right-clicking selected rows opens the same menu in every workflow table, in
-this order: ``Run Local``, ``Run on Cluster``, ``Cancel``, ``Inspect Failure``,
-``Reset Failed Jobs...``, ``Configure...``, ``Remove``, then any table-specific
-entries below a separator (``Continue relaxation…`` in the relaxation tables;
-``Reset to Stage 1`` in Quantum Corrections, which has no failed-job reset or
-``Remove``). Right-clicking a row outside the selection selects it first.
-
-A selection may mix rows an action applies to with rows it does not (a running
-row when resetting, a completed row when running). Every action then acts on
-the rows it applies to and says how many it left out:
-
-- Run, Cancel, Inspect and Reset in the row menu are offered when at least one
-  selected row qualifies, act on those rows only, and carry the count when it is
-  partial, for example ``Reset Failed Jobs... (2 of 5)``. An entry is greyed out
-  only when no selected row qualifies. A row with no label yet has no job and
-  counts as not qualifying.
-- The run buttons and the menu's run entries submit the rows that are ready and
-  the status bar reports the rest: ``Submitted 3 local job(s); skipped 2
-  selected rows that were not ready``.
-- The three-way prompt of a row control states the same split (``Set this
-  supercell on 3 of 5 selected rows? 2 are not eligible and will be skipped.``).
-
-The Job Dashboard has a right-click menu with ``Resubmit``, ``Retry
-Retrieval``, ``Cancel``, ``Inspect``, ``Reset``, ``Dismiss`` and ``Delete...``.
-Each entry is enabled when it applies to at least one selected job, acts on
-those jobs only, as the row buttons do, and carries the count when it is partial
-(``Reset (2 of 3)``). ``Delete...`` does what Delete/Backspace
-does. The row buttons remain the primary controls.
-
-The shared implementation lives in ``mufinder.app.selection_snapshot`` (row
-targeting and the three-way prompt) and ``mufinder.app.workflow_table_utils``
-(``confirm_destructive``, ``standard_row_actions``, ``SelectionFeedback``).
-
-Workflow-aware CASTEP parameter GUI
------------------------------------
-
-The application provides a metadata-driven CASTEP parameter entry framework with:
-
-- Job-type-aware parameter visibility driven from CASTEP keyword metadata.
-- Basic and advanced progressive disclosure for parameter entry.
-- A search box that filters which parameter rows are shown. It only hides
-  rows: pressing ``OK`` with a search active still validates and saves every
-  parameter in the dialog, including hidden ones and either/or pairs where
-  only one member matches the search.
-- Typed widgets by parameter kind (dropdowns, checkboxes, numeric controls, triplets, unit-aware float inputs).
-- Parameter-level help dialogs sourced from keyword metadata.
-- Structured form output mapped to ``InputTemplate``/``JobPatch`` compatible data rather than raw text.
-
-Configuring several rows at once (``Configure Selected Parameters...``, a
-row's ``Configure...`` button on a multi-row selection, or ``Configure...`` in the row
-menu) opens one parameter dialog for all of them:
-
-- A parameter the rows agree on is shown with that value. A parameter on which
-  they differ is marked ``mixed``, and a note at the top of the dialog explains
-  the marker.
-- On ``OK`` each row keeps its own value for every mixed parameter that was left
-  alone, including rows that had no value for it. Everything else in the dialog
-  is written to every row.
-- Changing a mixed parameter, pressing its ``Reset``, removing its row, or
-  choosing which member of an either/or pair is active (for example k-point
-  grid or spacing) clears the marker, and that choice then applies to every
-  row. While one member of such a pair is still mixed the whole pair is left as
-  it is on each row, since the rows may differ in which member they use.
-- Accepting the dialog without changing anything leaves every mixed parameter as
-  it was on each row.
-
-This applies in the cutoff and k-point convergence, pristine and muon
-relaxation, UEP, Energy Barriers and Quantum Corrections tables. The farm count
-in the Energy Barriers and Quantum Corrections dialogs, and the pseudopotential
-family in the Quantum Corrections dialog, are not parameters in this sense: for
-a mixed selection they open at a single value (the family at ``unknown``),
-which is written to every selected row on ``OK``.
+Convergence testing sweeps ``CUT_OFF_ENERGY`` and then ``KPOINT_MP_GRID`` in
+single-point CASTEP calculations on the host unit cell or a saved supercell.
+Cutoffs are listed by hand or generated from a range; k-point grids are listed
+by hand or generated as every distinct grid CASTEP produces down to a minimum
+spacing. An examiner judges convergence of the energy (Delta-Threshold,
+Derivative or Asymptotic Extrapolation for cutoffs), the maximum force and,
+optionally, the maximum stress, plots the results, and recommends a value. The
+``Convergence Testing`` overview page shows both adopted defaults with the
+plots pinned when they were adopted.
+
+See :doc:`convergence_testing` and, for the grid and spacing round trip,
+``docs/castep/kpoint_spacing_convention.md``.
 
 Project defaults
 ----------------
 
 A project carries three calculation defaults that later workflows inherit: the
-XC functional, the plane-wave cutoff energy, and the Monkhorst-Pack k-point
-grid.
+XC functional, the plane-wave cutoff energy and the Monkhorst-Pack k-point
+grid. Adopting an examiner recommendation sets the cutoff or grid and the
+functional it was converged with; all three can also be set or cleared by hand
+in the ``Project Defaults`` dialog. Every workflow tab that uses them shows the
+same ``Project defaults`` strip, which flags a cutoff or grid converged with a
+different functional from the current one. Supercell rows rescale the default
+grid to the same reciprocal-space sampling density. Quantum Corrections and
+Energy Barriers rows take their functional, cutoff, grid and spin treatment
+from the relaxation they start from instead. Every change to a default is
+recorded in the Journal.
 
-- Every workflow tab that consumes them (cutoff convergence, k-point
-  convergence, pristine relaxation, UEP, muon relaxation) shows the same
-  single-line ``Project defaults`` strip in its header: ``XC``, ``Cutoff`` and
-  ``K-points``, each ``Not set`` until chosen.
-- The strip's ``Edit…`` button opens a ``Project Defaults`` dialog showing, for
-  the cutoff and the k-point grid, the convergence method, the criteria, and
-  the functional the value was converged with. The same information is
-  available as a tooltip on each value.
-- All three defaults can be edited in that dialog. The cutoff is entered in eV
-  and the grid as three positive integers (``4 4 4`` or ``4x4x4``); leaving
-  either blank clears that default. Invalid input is reported inline and the
-  dialog stays open.
-- A cutoff or grid typed in by hand is recorded with the method ``Set
-  manually``: it carries no criteria and no converged-with functional, so it is
-  never flagged as stale, and it does not change the project functional. A
-  manual grid is taken to be for the host unit cell and is rescaled for
-  supercell jobs like an adopted one. Because the pinned plot on the
-  convergence overview belongs to the adopted value, it is replaced by the
-  placeholder once the default is edited or cleared.
-- The project default XC functional is set in two ways:
+See :doc:`convergence_testing` (Adopting a result as a project default),
+:doc:`quantum_corrections` and :doc:`energy_barriers`, and :doc:`architecture`
+(Project defaults surface).
 
-  - adopting a cutoff or k-point recommendation from a convergence examiner
-    records the functional those calculations used and makes it the project
-    default;
-  - it can be chosen directly in the ``Project Defaults`` dialog (for example
-    before any convergence test has been run), or cleared with ``Not set``.
+Pristine relaxation and comparison tables
+-----------------------------------------
 
-- A convergence sweep only has a recorded functional when every point in it
-  used the same one. Adopting a sweep whose points used different functionals
-  still sets the cutoff or grid, but records no functional and leaves the
-  project default functional unchanged.
-- Adopting a result converged with a functional other than the current project
-  default asks for confirmation first, because it also switches the project
-  default functional.
-- Converged values are never discarded when the functional changes. A cutoff
-  or k-point default converged with a different functional from the project
-  default is shown in warning colour with that functional in brackets (for
-  example ``700 eV (PBE)``), and the dialog recommends re-running the
-  convergence test.
-- The project functional becomes the default ``XC_FUNCTIONAL`` for new rows in
-  every workflow parameter dialog, including new convergence sweeps, and is
-  applied to generated jobs alongside the default cutoff and k-point grid. A
-  row configured with its own functional keeps it.
-- Quantum Corrections and NEB rows take their default functional and cutoff
-  from the source relaxation's own ``.param`` file, and its k-point grid from
-  the source ``.cell`` file, so a follow-on calculation matches the structure it starts from even
-  if the project default has since changed.
-- They take their default ``Spin Polarized`` setting from the source
-  relaxation in the same way, as CASTEP ran it: the ``.param`` file's
-  ``SPIN_POLARIZED`` (either spelling) when present, otherwise on when the
-  run's net ``SPIN`` or any per-atom ``SPIN=`` token in its ``.cell`` is
-  non-zero. A follow-on calculation therefore stays on the same spin-polarised
-  or non-spin-polarised energy surface as the relaxation it starts from. When
-  the source ``.param`` cannot be read, a muonium source still defaults to
-  spin-polarised, matching how its relaxation was written.
-- Projects saved before this feature have no project functional; workflows
-  keep their previous schema-default functional until one is chosen.
-- Setting, changing, or clearing any of the three defaults is recorded in
-  provenance and appears in the Journal, which distinguishes adopted values
-  from manually entered ones.
+The optional ``Pristine Relaxation`` stage relaxes the host without a muon. Each
+labelled row chooses its own unit cell or saved supercell, whether the cell is
+fixed (``FIX_ALL_CELL``), and its CASTEP parameters. Completed rows show the
+relaxed ``a``, ``b`` and ``c``; a run whose geometry optimization did not
+converge is marked failed, and each successful run adds a relaxed structure to
+the project.
 
-Convergence overview workflow page
-----------------------------------
+``Generate Comparison Table...`` compares one or more relaxed structures with
+the experimental host, with supercell-aware atom matching, lattice,
+displacement, bonding, topology and symmetry metrics, a composite similarity
+score, the parameter differences between the selected jobs, and CSV export.
+Each table is saved as a renamable child of ``Pristine Relaxation``.
 
-See :doc:`convergence_testing` for a step-by-step guide to the convergence workflow.
+See :doc:`structural_relaxation_analysis` (Pristine Relaxation) and
+:doc:`comparison_table`.
 
-The parent ``Convergence Testing`` workflow now opens a dedicated overview page with:
+UEP screening
+-------------
 
-- A short explanation that both plane-wave cutoff energy and reciprocal-space sampling must be converged before later workflows are trusted.
-- Two horizontally arranged notebook-style cards, one for cutoff convergence and one for k-point convergence.
-- Dashed-border pinned-plot regions that visually distinguish adopted analysis snapshots from live editing views.
-- Per-card action buttons that jump directly into the corresponding child workflow page.
-- Summary rows for the stored project default, the functional it was converged with, the method, and the criteria.
-- Read-only pinned plots that update only when a user adopts a project default from the corresponding analysis dialog.
-- Safe placeholder fallback when no adopted snapshot exists yet, or when a persisted snapshot no longer matches the current host/default context.
-- Persisted overview snapshot state in ``ui_state["convergence_overview_snapshots"]`` separate from the existing examiner-dialog restore state.
+The ``UEP`` stage runs CASTEP single-point source calculations for the host
+charge density and then analyses the unperturbed electrostatic potential: full
+cell potential grids with isosurface and slice views, random-start batch
+searches for potential minima, an optional harmonic zero-point estimate, and a
+clustering window with hierarchical and k-means views. Cluster
+representatives are offered to muon-site generation.
 
-Cutoff convergence GUI
-----------------------
+See :doc:`uep_workflow`.
 
-The convergence stage includes a cutoff convergence panel with:
-
-- Manual cutoff list entry and editable table-based review.
-- Range generation from start/stop/step controls.
-- An ``Examine Cutoff Convergence`` action at the bottom-right of the sweep section, below the table's row-action controls.
-- Shared CASTEP parameter form applied by default to all cutoffs.
-- Optional subset-specific parameter overrides by selecting cutoff rows.
-- Structured validation and persistence of cutoff configurations before runtime materialization.
-- Reload-time restoration that rebuilds cutoff rows from persisted form state, with fallback to the active convergence definition when UI state is incomplete.
-- Regenerated cutoff lists are treated as fresh ``ready`` rows and do not inherit stale runtime/status result columns from prior active definitions.
-- ``ready`` row status for configured cutoffs as soon as convergence form parameters are saved.
-- Cutoff-energy cells locked from direct editing once a row has been queued for execution or has progressed through runtime states (``cancelled`` rows stay editable).
-- A dedicated convergence-examiner dialog with configurable thresholds and energy-method selection.
-- Supported energy methods include Delta-threshold (successive per-atom energy differences), derivative-based analysis (``dE/dE_cutoff``), and asymptotic extrapolation toward ``E_inf`` with fit-quality safeguards.
-- Force convergence analysis using delta-threshold checks on successive ``max_force`` values.
-- Optional max-stress convergence analysis (delta-threshold over ``max_stress`` values, default
-  threshold ``0.1 GPa`` to mirror ``GEOM_STRESS_TOL``). Exposed in the examiner via a
-  ``Stress threshold (GPa)`` tickbox that is disabled until at least two sweep rows have
-  completed and every completed row reports a stress (i.e. every job was run with
-  ``CALCULATE_STRESS=true``). When enabled, max stress is
-  plotted on a secondary y-axis sharing the force subplot, and the stress converged value
-  participates in the combined ``recommended_value`` alongside energy and force.
-- ``CALCULATE_STRESS`` exposed as a per-workflow ``flag`` parameter in both the cutoff and
-  k-point convergence parameter dialogs (basic visibility), defaulting to ``false``.
-- Method help text available directly in the examiner dialog via an info action.
-- Persisted examiner state (selected method, thresholds, text output, and plot inputs) so results and plots can be reopened without recomputation.
-- The shared ``Project defaults`` strip in the panel header (see `Project defaults`_); the method and criteria used to determine the default cutoff are in its tooltip and details dialog.
-- The examiner's ``Set as Project Default Cutoff`` button adopts its recommendation (``Set as Project Default K-Point Grid`` in the k-point examiner).
-- Adopting an examiner recommendation persists the project default cutoff energy, the convergence-method metadata used to determine it, and the XC functional the sweep was run with.
-- Adopting an examiner recommendation also freezes a parent-overview pinned snapshot keyed to the active host structure, selected simulation cell, adopted default value, and plot payload.
-
-K-point convergence GUI
------------------------
-
-The convergence stage now also includes a dedicated k-point convergence panel with a matching UI style:
-
-- Manual Monkhorst-Pack grid entry and editable table-based review.
-- Grid generation from a user-defined minimum reciprocal-space spacing (1/Ang).
-- CASTEP-compatible reciprocal-space conversion rule for maximum density:
-
-	- ``n_i = floor(|b_i| / (2*pi*spacing)) + 1``
-	- ``|b_i|`` are reciprocal-lattice-vector magnitudes from the active simulation cell.
-
-- Generated sweep enumerates the distinct CASTEP grids from ``(1,1,1)`` up to
-  the spacing-derived maximum grid by walking CASTEP's spacing trajectory; every
-  emitted grid is reproducible from some ``KPOINT_MP_SPACING``. For anisotropic
-  cells this typically produces more grids than an isotropic level ramp (each
-  axis transitions independently at its own spacing thresholds).
-- Cell-sensitive generation tracking: the panel records the simulation cell used for grid generation and warns if the simulation cell changes afterwards.
-- Shared CASTEP parameter form with per-grid override support, equivalent to cutoff convergence behavior.
-- Automatic propagation of the project default cutoff energy and XC functional into k-point convergence defaults when available.
-- K-point convergence examiner plotting total energy and max force vs number of k-points,
-  with optional max-stress secondary axis on the force subplot when ``CALCULATE_STRESS`` was
-  enabled across every grid in the sweep.
-- Hover tooltips on plotted points that show the originating Monkhorst-Pack grid.
-- Delta-threshold-only convergence decision for k-point studies (no derivative/asymptotic method selection).
-- Displayed k-point spacing for a grid is the inclusive upper bound of the
-  CASTEP-valid range, ``min_i(|b_i|/(2*pi*(N_i-1)))`` over axes with
-  ``N_i >= 2``. Feeding this value to CASTEP as ``KPOINT_MP_SPACING``
-  reproduces the displayed grid exactly. The (1, 1, 1) Gamma-only grid has
-  no single representative spacing and is shown without an annotation.
-- Persisted project defaults for adopted k-point recommendations, including method, thresholds, the cell identifier used for the recommendation, and the XC functional the sweep was run with.
-- Adopting a k-point recommendation also freezes a parent-overview pinned snapshot, including persisted grid-label metadata for compact redraw on the parent convergence page.
-
-Pristine-relaxation workflow GUI
---------------------------------
-
-The optional ``Pristine Relaxation`` stage includes:
-
-- A table-driven multi-job configuration with explicit per-row labels.
-- Per-row supercell selection from a ``Supercell`` dropdown listing ``Unit cell``, the project's saved supercells, and ``Manage Supercells...`` (which opens the :doc:`supercells`).
-- Per-row ``FIX_ALL_CELL`` control with deterministic CASTEP ``FIX_ALL_CELL`` serialization.
-- Per-row parameter configuration through the shared workflow-aware CASTEP parameter dialog.
-- Project-default propagation of XC functional, cutoff energy and k-point grid into generated pristine-relaxation jobs.
-- Supercell-aware k-point remapping that preserves equivalent reciprocal-space sampling density relative to the recommended reference lattice by scaling each k-point component with the corresponding reciprocal-axis change and always rounding up to avoid undersampling. For example, a ``4x4x4`` default maps to ``2x2x2`` for diagonal ``2x2x2`` and ``2x2x3`` supercells.
-- Runtime status columns for each row including ``a``, ``b``, ``c`` lattice parameters extracted from relaxed outputs.
-
-Pristine-relaxation result handling includes:
-
-- Retrieval/listing of both ``<seed>.castep`` and ``<seed>-out.cell`` outputs.
-- Geometry-convergence gating: pristine jobs are marked failed when CASTEP reports incomplete geometry convergence.
-- Parsing of ``-out.cell`` relaxed geometry into structured lattice/species/fractional coordinates.
-- Persistence of relaxed ``a``, ``b``, ``c`` in ``Result.data``.
-- Persistence of one derived relaxed ``Structure`` entity per successful pristine job.
-
-Pristine-relaxation comparison tables
--------------------------------------
-
-The ``Pristine Relaxation`` stage includes a ``Generate Comparison Table`` feature with:
-
-- a dialog listing completed pristine-relaxation jobs with include tickboxes,
-- support for selecting one or more DFT jobs against the active experimental host structure,
-- generation of a persisted comparison-table subtab under ``Pristine Relaxation`` in the project tree,
-- inline editing of comparison-table titles after creation, with the project-tree subtab label kept in sync,
-- deletion with the top-right ``Remove`` button in the comparison view,
-- metric rows with per-metric ``Info`` dialogs,
-- a collapsible ``DFT Parameter Differences`` section that shows only parameter values that differ across selected DFT jobs,
-- CSV export of rendered comparison data (``Export CSV...``).
-
-Comparison science currently includes:
-
-- supercell detection and experimental-structure tiling for supercell-aware comparisons,
-- periodic-boundary-aware species-partitioned atom matching,
-- lattice, displacement, bonding, topology, and symmetry metrics,
-- a composite similarity score assembled from normalized sub-metrics,
-- explicit warnings when exact matching cannot be achieved.
-
-Future extension boundary:
-
-- HPC scheduler and transport metadata is intentionally deferred.
-- Future execution metadata will accompany ``JobSpec`` rather than replacing it.
-
-Continuing a relaxation from its checkpoint
--------------------------------------------
-
-Every relaxation ``.param`` MuFinder generates already contains
-``CONTINUATION : DEFAULT``, and CASTEP resumes from a matching ``{seed}.check``
-file automatically whenever one is present in the run directory. The
-``Pristine Relaxation`` and ``Muon Relaxation`` tables expose this as a
-per-row ``Continue relaxation…`` action, available whenever the row's job is
-``completed``, ``failed``, ``stopped``, or ``cancelled``:
-
-- The action opens a dialog seeded with the row's current parameters: the
-  same shared CASTEP parameter editor used elsewhere, plus a live
-  keyword-level diff of the old vs. new rendered ``.param`` text (added,
-  changed, and removed keywords), a checkpoint-probe status line (checkpoint
-  found / not found / could not be verified), a fixed note that the ``.cell``
-  will be regenerated from the definition's structure (atomic positions are
-  not edited by this dialog), and a submit summary naming the execution
-  target and the directory that will be reused.
-- On accept, the row's parameters are mutated **in place** inside the active
-  definition — no new definition or job is created, so the workflow row keeps
-  resolving to the same job. The job is returned to ``defined`` while
-  **preserving its ``remote_directory``**, and ``.cell``/``.param`` are
-  rewritten into that same directory (local or remote).
-- The job is then resubmitted to its **original execution target**. A local
-  job goes back through the local submit path. A cluster job goes back into
-  its existing remote directory with no existence prompt and no deletion of
-  the previous contents — only if the resubmission dialog's selected cluster
-  still matches the job's original cluster; picking a different cluster falls
-  back to the normal (recomputed target, existence-checked) submission path
-  instead of carrying the old remote directory onto a cluster where it does
-  not exist.
-- A ``job_continuation`` provenance entry records each continuation. See
-  :ref:`job-continuation-primitive` in :doc:`job_lifecycle` for the full
-  technical contract (status transition, cleared/preserved fields, and why
-  this diverges from the quantum-corrections stage-1 reset).
-- Re-completion of a continued job refreshes the job's existing derived
-  ``"{label} relaxed"`` structure in place (stable structure id) rather than
-  minting a duplicate, so comparison tables and other downstream references
-  stay valid; muon site fields are refreshed from the same completion. See
-  :doc:`job_lifecycle` for the stale-``-out.cell`` guard that applies when a
-  continued run dies before writing a new one.
-- The checkpoint probe that feeds the dialog's status line is built from the
-  remote-file checkpoint primitives documented under
-  :ref:`remote-checkpoint-probe` below; local jobs are probed with a plain
-  filesystem check instead.
-
-**v1 non-goals** (documented follow-ups, not implemented): a "restart from
-latest geometry" mode that would override the continued row's structure; use
-of the CASTEP ``reuse`` keyword; and any change to the existing Reset
-action's cleanup behavior.
-
-.. warning::
-   The existing per-row ``Reset Failed Jobs...`` action's optional "clean
-   directory" cleanup still deletes local ``.check`` and ``.castep`` files
-   from the job's output directory (it preserves only the ``.cell``/``.param``
-   inputs; CASTEP's ``{seed}-out.cell`` is deleted with the other output). It
-   never cleans a folder another job still uses, such as the seed directory a
-   Quantum Corrections phonon job shares with its completed stage-1 singlepoint.
-   Resume from a checkpoint with ``Continue relaxation…``, or with the Job
-   Dashboard's ``Resubmit`` and its ``Continue from the checkpoint`` choice
-   (see :ref:`resubmit-continue-or-start-again`); neither deletes the run
-   directory's contents.
-
-Local CASTEP execution
-----------------------
-
-The application supports local CASTEP submission from every workflow job
-table (convergence, pristine and muon relaxation, UEP, Energy Barriers, and
-Quantum Corrections) for rows in the ``ready`` state. Multi-core local runs
-need a configured or discovered ``mpirun``; without one, cores per job are
-limited to 1.
-
-Setup integration includes:
-
-- CASTEP executable path persistence.
-- ``mpirun`` launcher path persistence.
-- ``mpirun`` auto-discovery through PATH/common install prefixes.
-- CASTEP keyword catalog installation (see :doc:`castep_keyword_catalog`):
-  generate the catalog from a cluster or a local CASTEP, or import an existing
-  ``castep_keywords.json``. Either way MuFinder validates the file, keeps its own
-  copy in the application-data directory, and uses it immediately; there is no
-  destination path to choose. The dialog shows which catalog is in use and why a
-  configured one was skipped, and preselects a set-up cluster as the generation
-  target when no local executable is configured.
-- The CASTEP setup dialog separates the keyword catalog from the optional
-  ``CASTEP on this computer`` paths, and states that the local executable and
-  MPI launcher are used only for local runs and local keyword generation. A
-  line under the generation target says which settings that target uses
-  (this computer, or a cluster as a scheduler job or on its login node).
-- A status-bar indicator for the catalog in use, a dismissible startup prompt
-  when none is loaded, and a warning (never a block) before submitting jobs
-  without one.
-- A missing or corrupt configured catalog falls back to the starter catalog and
-  is reported, rather than preventing startup.
-- Cluster keyword generation runs every ``castep -help`` query from a shell loop
-  on the cluster and needs no Python interpreter there. Each cluster generates
-  either through a scheduler job (the default) or on the login node. The
-  scheduler job is derived from the cluster's own job script template
-  (directives, environment setup, launcher), so no separate description of the
-  cluster is needed; ``Keyword shell init`` is optional.
-- Local keyword generation wraps the CASTEP executable in the configured MPI
-  launcher (``mpirun -np 1``) when one is set. MPI-built binaries (e.g.
-  ``castep.mpi``) hang when the ``-help`` queries are run directly, so without
-  the launcher the progress bar stalls at 0%.
-
-Submission entry points include:
-
-- Run actions under each workflow table, operating on the selected rows, or
-  on every row when nothing is selected (the buttons read
-  ``Run Selected Locally`` or ``Run All Locally`` accordingly).
-- The shared right-click row menu on every workflow table (see "Multi-row
-  selection in job tables"), including ``Reset Failed Jobs...`` on the cutoff
-  and k-point convergence, pristine and muon relaxation, UEP, and energy
-  barriers/NEB diffusion-path tables, acting on the selected rows that are
-  ``failed``/``stopped``/``cancelled``. Quantum Corrections uses its stage-1
-  reset instead, which also accepts a failed, stopped, or cancelled stage-1
-  singlepoint with no phonon job.
-- Delete/Backspace keyboard removal for the current cutoff row or a selected set of rows.
-- Per-row action buttons in the shared job dashboard table after a job has entered the queue/submission lifecycle.
-- Job dashboard rows listed in job creation order, which is kept when the project is
-  closed and reopened.
-- Failed/stopped/cancelled-job resubmit, failed/stopped cluster-job retry-retrieval,
-  failed-job inspection, reset, and terminal-job dismiss actions in the shared
-  job dashboard.
-- Dashboard ``Resubmit`` of pristine or muon relaxations asks once per
-  selection whether to continue from the checkpoint or start again from a
-  cleaned directory, preselecting the choice the recorded failure causes
-  suggest (see :ref:`resubmit-continue-or-start-again`).
-- Failure causes on failed and stopped dashboard rows (``stopped · walltime``,
-  ``failed · memory``, ``failed · CASTEP`` …), classified from the
-  scheduler state and the job's scheduler and CASTEP logs, with an explanatory
-  tooltip and a one-line-per-job summary at the top of ``Inspect`` (see
-  :ref:`job-failure-reasons`).
-
-Submission controls include:
-
-- Cores per job.
-- Sequential execution for multi-job submission.
-- Parallel execution for multi-job submission with user-selected
-	maximum concurrency.
-- Core-count guidance from local logical CPU count.
-- Oversubscription warnings when cores per job multiplied by the requested
-	concurrency exceeds logical CPU availability.
-- A task-farming check that blocks ``OK`` when a row's farm count exceeds
-	the cores per job.
-
-Runtime behavior includes:
-
-- Background execution using Qt ``QProcess`` to avoid UI blocking.
-- Input-file generation at submission time for selected ready cutoff jobs.
-- Pressing the cutoff-panel run action persists the current convergence configuration
-	snapshot and then submits the selected cutoff rows.
-- Per-job queueing/running/completion state updates reflected in UI.
-- Configured cutoff rows staying in ``ready`` until queued for execution.
-- Completed jobs leaving the shared dashboard after successful finish.
-- Cancellation for queued and running jobs.
-- Shared execution service reusable by convergence and dashboard flows.
-- Removing a cutoff entry now warns before touching associated files and either
-	deletes them or moves them into a ``removed_from_workflow`` archive subfolder.
-- Cutoff rows that use the default parameters keep their completed jobs across a
-	project refresh or reload: adding a cutoff and running submits only the new
-	row. Rows saved as task-only by older builds are repaired on load (see
-	:doc:`compatibility_policy`).
-- Removing cutoff rows asks one confirmation for the whole batch (see
-	"Multi-row selection in job tables"); the file-handling prompt that follows
-	for rows with associated files still offers ``Yes to All`` / ``No to All``.
-
-- Resetting failed jobs back to ``ready`` for rerun, with optional cleanup
-	of output files while preserving generated input files.
-- Resubmitting failed, stopped, or cancelled dashboard jobs directly, reusing existing
-	remote files for continuation runs and replacing the stored remote scheduler
-	id with the new id.
-- Save-on-close prompting for open visible projects.
-- Color-coded status text for dashboard and convergence status displays.
-- Per-job monitor metadata: every queue poll, retrieval outcome, local-runner
-  lifecycle event, and project-open reconciliation stamps ``last_checked_at``,
-  ``last_status_source``, and ``last_status_message`` on the job, so the
-  dashboard can distinguish "still queued" from "not checked recently" and
-  show what the scheduler last reported.
-- A ``Last Checked`` dashboard column showing the relative age of the last
-  queue check, with a stale marker (and tooltip reason) for active cluster
-  jobs whose cluster is disconnected or whose last check is overdue.
-- Missing-scheduler-entry grace window: a cluster job that disappears from the
-  scheduler queue is retried for up to three polls when its output cannot be
-  downloaded yet, instead of failing on the first attempt; after three failed
-  checks it fails with a diagnostic suggesting expired scheduler history, a
-  filtered queue command, or a wrong-cluster connection, and offering retry or
-  resubmission. Unreadable (downloaded but unparseable) output still fails
-  immediately.
-- Local jobs whose CASTEP process fails to start are failed immediately with a
-  diagnostic message, rather than remaining stuck in ``submitting``.
-- Retrying output retrieval for a failed/stopped cluster job from the
-  dashboard, reusing the existing remote directory without resubmitting a
-  duplicate scheduler job.
-- Dismissing failed/stopped/cancelled jobs from the active dashboard
-  (stamping ``dismissed_at``) while preserving their record, runs, results,
-  and provenance.
-- Resubmitting a dismissed job from its own workflow table row: dismissal is
-  read as acknowledgement of the failure, so the row projects ``ready`` again
-  and its submit resets the same job back to ``defined`` (after the usual
-  stale-output cleanup prompt) before dispatching it — no duplicate job is
-  created. Failed jobs that were *not* dismissed keep showing ``failed`` on
-  their row and are recovered either from the dashboard or from that row's own
-  ``Reset Failed Jobs...`` context-menu action.
-
-The shared job dashboard is intended to show jobs that still need attention.
-Ready jobs are submitted from their workflow tables. Active jobs appear in the
-dashboard while they are submitting, queued, running, or retrieving outputs.
-Completed jobs leave the dashboard after successful result handling. Failed,
-stopped, and cancelled jobs remain visible so they can be inspected,
-resubmitted, or reset. Failed or stopped cluster jobs that kept their remote
-metadata can also retry retrieval, and any terminal job can be dismissed to
-remove its row from the active dashboard without deleting its data — its
-workflow table row then becomes the recovery path and resubmits the same job.
-On project
-open, local jobs left mid-flight when MuFinder was previously closed are
-reconciled to ``stopped`` (rather than showing as running forever) and a
-status-bar message reports how many were stopped; the stopped rows remain
-visible and resettable. During a running session, an active-job watchdog
-additionally stops jobs that are left active with no runner tracking them (a
-dead local process, an untracked active cluster job) and reports how many were
-stopped in the status bar; those rows also remain visible and resettable. See
-:doc:`job_lifecycle` for the full lifecycle contract and the implemented
-stuck-row prevention measures.
-
-Failure diagnostics include:
-
-- Failed-job inspection in the shared dashboard.
-- Error-file discovery in job output directories: ``<seed>.err``,
-  ``<seed>.NNNN.err``, and scheduler ``slurm-*.out`` files.
-- Context-style excerpts around failure lines in those files.
-
-Status transitions for local execution include:
-
-- ``ready`` -> ``submitting`` -> ``running`` -> ``completed`` (passing through
-  ``queued`` only when the parallel-concurrency limit is already full)
-- ``ready``/``submitting``/``queued``/``running`` -> ``cancelled``
-- ``submitting``/``queued``/``running`` -> ``failed``
-
-Status transitions across local and cluster execution now also include:
-
-- ``running``/``retrieving`` -> ``stopped`` (for cluster walltime/time-limit
-  stops); local jobs reach ``stopped`` only through project-open
-  reconciliation or the active-job watchdog, which can also stop
-  ``submitting`` and ``queued`` jobs
-- ``failed``/``stopped``/``cancelled`` -> ``defined`` via reset for resubmission
-- ``failed``/``cancelled`` -> ``submitting`` via dashboard resubmission
-- ``failed``/``stopped`` -> ``retrieving`` via dashboard retry-retrieval
-
-Output handling includes:
-
-- In-place execution inside job directories created at submission time.
-- Post-run parsing of ``.castep`` output files.
-- Structured extraction of:
-
-	- completion/failure markers
-	- final total energy, preferring (in order) the finite-basis-corrected total
-	  energy, the dispersion-corrected ``NB est. 0K`` energy, and the
-	  ``NB est. 0K energy`` when present
-	- enthalpy (where available)
-	- force and stress blocks (latest block)
-	- maximum force magnitude and maximum stress component magnitude
-	- SCF cycle count
-	- wall time
-	- warnings and error markers
-	- geometry-convergence status markers
-
-- Persisting parsed data into ``Result`` entities and linking to
-	``CalculationRun`` records.
-- Total energy and maximum force propagation into the cutoff convergence table,
-	formatted with higher precision to support small-difference comparisons.
-
-Remote HPC execution
+Muon-site generation
 --------------------
 
-The application supports remote cluster submission from every workflow job
-table.
+``Muon Sites -> Generation`` commits initial muon positions to the project by
+four methods: symmetry-aware random filling (by muon-muon separation or by a
+target number of positions), placement around atoms of a chosen element,
+manual fractional or Cartesian coordinates, and UEP cluster representatives.
+Selected rows can be moved to the symmetry-equivalent position closest to an
+anchor (``Cluster Positions...``) or removed before relaxation jobs are created.
+Creating jobs asks for the charge state: positive muon, muonium, or both.
 
-Cluster setup and authentication includes:
+The symmetry-aware random method follows the initial-position algorithm of
+Huddart *et al.*, ``MuFinder: A program to determine and analyse muon stopping
+sites``, *Computer Physics Communications* **280**, 108488 (2022), DOI:
+``10.1016/j.cpc.2022.108488``.
 
-- Global persisted cluster profiles via Setup -> HPC Clusters, including built-in
-	SCARF and Redwood presets.
-- Configurable hostname, username, queue system, default working directory,
-	cores-per-node, default walltime, and CASTEP executable path, plus a
-	submission-script template path for SLURM profiles and a default
-	queue/partition and ``Default memory per core (GB)`` for ``addqueue``
-	profiles.
-- An optional default per-CPU memory request for SLURM profiles, used to
-	pre-seed the submission dialog. It is off by default, so an existing profile
-	keeps generating batch scripts with no memory directive.
-- Optional SSH jump-host settings for clusters behind gateways, including
-	separate jump hostname, port, username, authentication method, and key path.
-- The built-in Redwood preset targets ``glamdring.physics.ox.ac.uk`` through
-	the Physics gateway ``bastion.physics.ox.ac.uk``. MuFinder prompts separately
-	for Physics/bastion credentials and Glamdring credentials because those
-	accounts can differ.
-- On macOS, eligible Redwood/Glamdring password-auth profiles can opt into
-	read-only Keychain password lookup. The required entries use the same
-	services as ``glamdring-tools``: ``security add-generic-password -a
-	<physics_username> -s bastion -w`` and ``security add-generic-password -a
-	<glamdring_username> -s glamdring -w``.
-- Optional explicit scheduler command paths for submit/queue/cancel commands,
-	with non-interactive-shell command probing fallback.
-- SSH key authentication with password fallback support.
-- Unknown SSH host keys are never trusted automatically. MuFinder shows the
-	key's SHA-256 fingerprint and asks before trusting it, for both the jump host
-	and the target cluster host, and stores each trusted key in the user's
-	settings; bastion trust records are stored separately from Glamdring trust
-	records. A host key that differs from the trusted one stops the connection
-	and shows the stored and presented fingerprints.
-- Connection checks (the cluster setup ``Test Connection`` action and the
-	pre-flight check before cluster keyword generation) run on a worker thread
-	behind a cancellable progress dialog, so an unreachable or slow host never
-	freezes the GUI; unknown-host-key prompts appear on the GUI thread and the
-	check retries automatically once the key is trusted.
+See :doc:`site_generation`.
 
-Remote submission and monitoring includes:
+Muon relaxations
+----------------
 
-- A cluster run action under each workflow table (``Run All on Cluster`` / ``Run Selected on Cluster``).
-- Cluster selection and runtime override dialog at submission time.
-- Upload of generated ``.cell`` / ``.param`` inputs and scheduler-aware submission.
-- Cluster submission refuses job labels containing anything other than letters,
-	digits, ``.``, ``_`` and ``-``, because remote paths and scheduler commands use
-	the label directly; the cluster runner checks each seed name again before
-	submitting.
-- Remote job directories are deleted recursively over SFTP, not through a remote
-	shell command.
-- SLURM submission through ``sbatch`` with populated templates and capture of
-	scheduler job ids.
-- An optional per-CPU memory request for SLURM submissions, emitted into the
-	generated ``run.sh`` as ``#SBATCH --mem-per-cpu``. This lets jobs whose peak
-	RSS exceeds the partition's default memory per task (for example muon
-	relaxations on SCARF, which peak above the ~3.9 GB/task default) request
-	enough headroom to avoid the cgroup out-of-memory killer. Leaving it unset
-	emits no directive at all, so existing scripts are unchanged. See
-	:doc:`job_lifecycle` for the unit handling and template-precedence rules.
-- Redwood submission through ``addqueue`` with exposed runtime controls
-	``Queue or partition``, ``Memory per core (GB)``, and ``Submission note``.
-- Jump-host submissions show separate credential fields for the gateway and the
-	target cluster, so Redwood/Glamdring users can enter Physics/bastion and
-	Glamdring passwords independently.
-- When the Redwood/Glamdring macOS Keychain option is enabled in the cluster
-	profile, submission and reconnect flows use the Keychain entries instead of
-	showing manual password prompts.
-- addqueue submission uses sbatch-compatible response mode to keep scheduler
-	job-id parsing stable.
-- Dashboard columns for the execution target (``Cluster``, which reads
-	``local`` for local jobs) and remote job id, and a live ``Runtime`` column.
-- Dashboard column for per-job process count used at submission time.
-- Connection state indicator and manual queue refresh action.
-- Manual queue refresh retries disconnected sessions by attempting reconnect for
-	clusters that currently have active dashboard jobs.
-- When a matching cluster connection is already active, submission reuses that
-	connection context and does not request password/passphrase again.
-- Periodic queue polling with last-checked timestamp updates.
-- SLURM queue polling tolerates stale/expired job ids (``Invalid job id specified``)
-	by falling back to per-job status checks instead of failing the full refresh.
-- A poll failure shows the reason in a warning, updates the connection
-	indicator, and fully disconnects the runner, so the next ``Refresh Queue``
-	reconnects cleanly.
-- Cluster connection, queue refresh, submission, cancellation and polling
-	failures show a one-line summary, with the full error and recovery advice
-	under ``Details``.
+``Muon Sites -> Relaxations`` holds one fixed-cell CASTEP geometry optimization
+per staged position, in separate ``Positive muon`` and ``Muonium`` tabs. MuFinder
+sets the CASTEP charge from the tab, writes muonium rows spin-polarised by
+default, and gives each row its own supercell and parameters. Relaxations run
+outside MuFinder can be imported as read-only rows.
 
-.. _remote-checkpoint-probe:
+A completed, failed, stopped or cancelled pristine or muon relaxation can be
+continued from its CASTEP checkpoint with ``Continue relaxation…``, which edits
+the row's parameters in place and resumes the same job in the same directory.
 
-Relaxation-continuation checkpoint probe
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+See :doc:`site_generation` (Creating Relaxation Jobs),
+:ref:`continue-relaxation` and :doc:`legacy_import`.
 
-A remote-file checkpoint probe feeds the "checkpoint found / not found /
-could not be verified" line in the Continue-relaxation dialog described above
-under "Continuing a relaxation from its checkpoint":
+Relaxation analysis and the Muon Sites summary
+----------------------------------------------
 
-- ``ClusterJobRunner.remote_file_exists`` stats one remote path over the
-  existing SSH connection (the file-level analogue of
-  ``remote_directory_exists``).
-- ``ClusterController.check_remote_files`` bridges this onto the worker
-  thread for a batch of ``(job_id, remote_path)`` targets and emits
-  ``remote_files_checked`` with the paths that exist and any per-job errors,
-  mirroring the existing ``check_remote_dirs``/``remote_dirs_checked``
-  pattern so the GUI thread awaits the result instead of blocking on SSH
-  itself. The probe always runs in the controller before a dialog is
-  constructed, never inside a widget's own ``__init__``.
-- ``CheckpointProbeStatus`` (``found``/``absent``/``unavailable``) and
-  ``CheckpointProbeResult`` (built via the ``found()``/``absent()``/
-  ``unavailable(reason)`` constructors) give the three-way result its
-  vocabulary: not connected, no remote directory recorded on the job, and
-  SSH/transport errors all map to ``unavailable`` with a reason rather than
-  blocking the dialog from opening. A recorded remote directory that no longer
-  exists on the cluster reports ``absent``.
-- Local jobs use a plain ``pathlib.Path`` check for ``{seed}.check`` in the
-  local job directory instead, reporting ``found``/``absent`` (or
-  ``unavailable`` when the job's output directory cannot be resolved).
+``Muon Sites -> Analysis`` collects completed relaxations of one charge state
+into named workspaces. A workspace orders the relaxed sites by energy, clusters
+them (connected components, hierarchical or k-means) into distinct sites with
+fitted Wyckoff labels, analyses the host displacements around a site, and
+exports the relaxed positions as CIF. ``Pin to Summary`` copies a workspace's
+distinct sites to the ``Muon Sites`` summary page, which shows one card per
+charge state with a ranked site table, a 3D preview, links back into the
+analysis, and CIF export of the pinned sites.
 
-Remote lifecycle and retrieval includes:
+See :doc:`structural_relaxation_analysis`.
 
-- Scheduler state mapping to MuFinder job states (queued/running/completed/failed/cancelled/stopped).
-- Automatic retrieval of completion outputs for parser ingestion.
-- ``stopped`` state support for walltime-limited runs with reset flow.
-- Shared job execution lifecycle orchestration records submissions, creates
-  calculation runs, applies local/remote status transitions, and records
-  terminal provenance events outside the Qt window layer.
+Legacy relaxation import
+------------------------
+
+``File > Import Legacy Relaxations...`` imports muon structural relaxations
+run by the legacy MuFinder application as read-only relaxation rows, so they
+can be used in relaxation analysis, Quantum Corrections and Energy Barriers.
+``File > Remove Imported Relaxations...`` removes an import batch that nothing
+downstream still uses.
+
+See :doc:`legacy_import`.
+
+Magnetic fields
+---------------
+
+The ``Magnetic Fields`` workflow builds magnetic structures in the
+propagation-vector formalism, including from the host spins and as skyrmion or
+custom Fourier textures, and calculates at a chosen muon site:
+
+- the dipolar field of commensurate structures and the field distribution of
+  incommensurate ones, with Auto, Grid or Monte Carlo multi-q phase sampling;
+- demagnetizing-field corrections for spherical, plate, ellipsoidal and
+  rectangular-prism samples;
+- dipolar tensors for selected magnetic ions;
+- nuclear dipolar second moments in zero and transverse field, for single
+  crystals and polycrystals, from bundled natural-abundance isotope data, with
+  an optional muon-induced distortion correction.
+
+Muon sites come from UEP or relaxation clustering or a custom fractional
+position. Settings are saved as named workspaces.
+
+See :doc:`magnetic_fields`.
+
+Quantum corrections
+-------------------
+
+Quantum Corrections lists every successfully relaxed muon site and runs a
+two-stage CASTEP calculation for each: a single-point with explicit muon mass
+and gyromagnetic ratio, then a Gamma-point phonon continuation (finite
+displacement by default, with optional task farming). Completed results give
+the muon zero-point energy, covariance and correlation tensors, ``w1`` /
+``w2`` witnesses and single-particle effective potentials, shown in an
+interactive analysis window.
+
+See :doc:`quantum_corrections`.
+
+Energy barriers
+---------------
+
+Energy Barriers takes an ordered pair of relaxed muon sites, generates the
+symmetry-distinct paths between them (including same-site hops, with an
+optional maximum length), and builds a climbing-image NEB job for each chosen
+path from the two relaxed endpoints. Paths can be previewed in the pristine
+supercell, configured per row (including CASTEP task farming), and inspected
+once complete: a results table lists forward and reverse barriers and ``ΔE``,
+and an inspector scrubs the reaction-coordinate profile with a linked
+structure viewer.
+
+See :doc:`energy_barriers`.
+
+Journal
+-------
+
+The ``Journal`` is a curated, day-grouped narrative of the project's
+provenance: structure import, workflow configuration, project defaults, site
+generation, job submissions, continuations and outcomes, comparison tables and
+legacy imports. It exports as plain text or Markdown.
+
+See :doc:`journal`.
+
+Jobs and execution
+------------------
+
+Every workflow table runs its ready rows on this computer or on an HPC cluster
+and shares one set of table behaviours:
+
+- the same right-click row menu, multi-row targeting with a three-way prompt
+  for in-row controls, and a confirmation for every remove, cancel, reset,
+  dismiss or delete;
+- local runs in the background with sequential or parallel execution and
+  core-count guidance;
+- cluster profiles for SLURM and ``addqueue`` schedulers, including built-in
+  SCARF and Redwood presets, SSH jump hosts and host-key trust on first use,
+  with queue polling and automatic output retrieval;
+- a Job Dashboard of the jobs that still need attention, with per-row
+  ``Resubmit``, ``Retry retrieval``, ``Cancel``, ``Inspect``, ``Reset`` and
+  ``Dismiss``, a failure cause on each failed or stopped row, and safeguards
+  that keep no job stuck in an active state;
+- for relaxations, a choice on resubmission between continuing from the
+  checkpoint and starting again.
+
+See :doc:`job_lifecycle`, in particular Job tables and selections, Running
+jobs, :ref:`job-failure-reasons` and :ref:`resubmit-continue-or-start-again`.
+
+CASTEP input and parameters
+---------------------------
+
+Every workflow configures CASTEP through the same metadata-driven parameter
+dialog: job-type-aware basic and advanced parameters, typed controls, help
+from the keyword metadata, a search filter, and one dialog for several rows in
+which values that differ are marked ``mixed`` and kept unless edited. The
+shared parameters come first in every workflow. The keyword metadata comes
+from a CASTEP keyword catalog generated from a local or cluster CASTEP, or
+imported. Workflows expand into resolved job specifications that are rendered
+into deterministic ``.cell`` and ``.param`` files.
+
+See :doc:`castep_keyword_catalog`, :doc:`architecture` (CASTEP parameter
+dialogs, Calculation job generation, Workflow parameter surface policy) and
+``docs/castep/keyword_catalog.yaml``.
+
+Development harness
+-------------------
+
+The repository is organised for development by coding agents. ``AGENTS.md`` is
+the canonical agent guide, and ``tests/test_agent_harness.py`` enforces its
+structural rules: layer imports, docs indexing, the ``MainWindow`` handler,
+plot-canvas and duplication ratchets, and the pull-request template pointers.
+
+See :doc:`agent_harness`, :doc:`architecture` and :doc:`quality_and_automation`
+(Agent harness checks).

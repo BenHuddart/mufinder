@@ -28,7 +28,8 @@ A typical pass through the page is:
 The save button in the page header stores the current magnetic structure and
 form settings as a named magnetic-field workspace. Saved workspaces appear as
 children of ``Magnetic Fields`` in the project tree, can be renamed from their
-page title, and can be deleted from their own page.
+page title, and can be deleted from their own page or by right-clicking their
+project-tree node and choosing ``Delete Workspace...``.
 
 Magnetic Structure Representation
 ---------------------------------

@@ -26,7 +26,12 @@ The usual order of work is:
 Workspaces are stored in the project file under the saved UI state. They are
 therefore restored after a manual project save and load. Creating or editing a
 workspace is not autosaved while the application is running; deleting one is
-(see `Deleting a Workspace`_).
+(see `Deleting a Workspace`_). Each workspace's project-tree node follows the
+selected tab and the workspace name, and is marked complete once clustering has
+been applied.
+
+The `Pristine Relaxation`_ stage and `Continuing a Relaxation from Its
+Checkpoint`_ are described at the end of this page.
 
 Deleting a Workspace
 --------------------
@@ -130,6 +135,23 @@ cached per host, and each site's symmetry-equivalent positions are compared in
 one vectorised pass. Near ties are re-measured exactly, so the distances,
 cluster counts, and anchored positions match a site-by-site evaluation.
 
+The connected-components graph sizes its nodes, their border rings, their
+numbers and its edges in data units, so the graph scales with its canvas:
+every node stays inside the plot and nodes never overlap, however small the
+window. Node size follows the closest pair of nodes, and large components are
+spread so neighbouring nodes keep a consistent gap. Components are packed into
+rows chosen to fit the canvas's shape (a few long rows on a wide canvas, more
+short rows on a tall one), kept in cluster order, with gaps tied to the node
+size, and the packing is redone when the window is resized. Nodes stop growing
+at about 22 pt in radius, so a small graph on a large window stays readable.
+Components with more than 2.5 edges per node draw thinner, translucent edges,
+so the edges of a dense component can still be told apart.
+
+In the clustering window the structure viewer gets half the width, or more when
+its cluster summary table needs it to show the Wyckoff assignments in full; the
+plot takes the rest. The split follows window resizes until you drag the
+handle.
+
 The clustering summary table also reports the selected Wyckoff assignment for
 each cluster. Tooltips include the detected space group, site-symmetry symbol,
 and the maximum and mean fitted distances used to justify the assignment.
@@ -166,9 +188,12 @@ Summary**. MuFinder copies the workspace's distinct clustered sites into the car
 for the matching charge state, ranked by relative energy (lowest first), and
 shows each site's relative energy, representative fractional position, and
 Wyckoff label. A 3D preview renders the host structure with the pinned muon
-sites. Pinning requires that clustering has been run and that the workspace was
-built on the active host structure; the button reports if there is nothing to
-summarise yet or the host does not match. Use **Unpin** to clear a card.
+sites. Pinning requires that clustering has been run, that the workspace was
+built on the active host structure, and that its charge state is supported; the
+button reports if there is nothing to summarise yet or the host does not match.
+Use **Unpin** to clear a card. Pinned snapshots are saved in the project's UI
+state under ``muon_sites_summary_snapshots``, keyed by charge state and
+independent of the live workspaces.
 
 You can navigate from the summary straight into the live analysis:
 
@@ -208,7 +233,8 @@ skip entirely without touching atom parsing.
   relaxation endpoints rather than a clustered summary.
 * On the **Muon Sites** summary page, each card's **Export CIF…** button
   exports only the pinned, distinct clustered sites (one representative per
-  cluster), matching what the card's table and 3D preview show.
+  cluster), matching what the card's table and 3D preview show. It stays
+  disabled until the card is populated.
 
 If a muon site is written implausibly close to (or exactly coincident with) a
 host atom - closer than 0.5 Å, well under any real muon-implantation bond
@@ -221,6 +247,91 @@ site of this kind in another program, usually indicates that the underlying
 analysis needs another look (e.g. the wrong host or workspace charge state, or
 data pinned/added from a mismatched structure) rather than a genuine muon
 site landing on a host ion.
+
+Pristine Relaxation
+-------------------
+
+The optional ``Pristine Relaxation`` stage relaxes the host structure without a
+muon. It is a table of jobs with explicit per-row labels:
+
+- each row chooses its cell from a ``Supercell`` drop-down listing ``Unit
+  cell``, the project's saved supercells, and ``Manage Supercells...``, which
+  opens the :doc:`supercells`;
+- each row has a ``Fix Cell`` control, written deterministically as CASTEP
+  ``FIX_ALL_CELL``;
+- each row's parameters are set in the shared CASTEP parameter dialog;
+- generated jobs take the project default XC functional, cutoff energy and
+  k-point grid. For a supercell row the grid is rescaled to keep the
+  reciprocal-space sampling density of the reference lattice the grid was
+  converged on, scaling each component by the change in the matching
+  reciprocal axis and always rounding up so the cell is never undersampled.
+  For example, a ``4x4x4`` default becomes ``2x2x2`` for diagonal ``2x2x2`` and
+  ``2x2x3`` supercells;
+- the table shows each row's status and, once relaxed, its ``a``, ``b`` and
+  ``c`` lattice parameters.
+
+On completion MuFinder retrieves the ``<seed>.castep`` and ``<seed>-out.cell``
+outputs. A job whose CASTEP output reports incomplete geometry convergence is
+marked failed. The relaxed geometry in ``-out.cell`` is parsed into lattice,
+species and fractional coordinates, ``a``, ``b`` and ``c`` are stored in the
+job's result, and each successful job adds one derived relaxed ``Structure`` to
+the project. Those structures are what the :doc:`comparison_table` compares
+with the experimental host, and they can be the comparison host in
+`Displacement Analysis`_.
+
+.. _continue-relaxation:
+
+Continuing a Relaxation from Its Checkpoint
+-------------------------------------------
+
+Every relaxation ``.param`` MuFinder generates contains ``CONTINUATION :
+DEFAULT``, so CASTEP resumes from a matching ``{seed}.check`` file whenever one
+is in the run directory. The ``Pristine Relaxation`` and ``Muon Relaxation``
+tables offer this as a per-row ``Continue relaxation…`` action for rows whose
+job is ``completed``, ``failed``, ``stopped`` or ``cancelled``:
+
+- The dialog opens with the row's current parameters in the shared CASTEP
+  parameter editor, a live keyword-level diff of the old and new ``.param``
+  text (added, changed and removed keywords), a checkpoint status line
+  (checkpoint found, not found, or could not be verified; see
+  :ref:`remote-checkpoint-probe`), a note that the ``.cell`` is regenerated
+  from the definition's structure (this dialog does not edit atomic
+  positions), and a summary naming the execution target and the directory that
+  will be reused.
+- Accepting it changes the row's parameters in place in the active definition.
+  No new definition or job is created, so the row keeps its job. The job
+  returns to ``defined`` with its ``remote_directory`` kept, and the ``.cell``
+  and ``.param`` are rewritten into that same directory, locally or on the
+  cluster.
+- The job is resubmitted to its original execution target. A local job goes
+  back through local submission. A cluster job goes back into its existing
+  remote directory, with no existence prompt and nothing deleted, as long as
+  the cluster selected in the submission dialog is the job's original cluster;
+  choosing a different cluster uses the normal submission path, with a new
+  target directory and an existence check.
+- Each continuation is recorded as a ``job_continuation`` provenance entry.
+- When the continued job completes again, its existing ``"{label} relaxed"``
+  structure is refreshed in place, keeping its id, so comparison tables and
+  other references stay valid, and a muon site's fields are refreshed from the
+  same completion. A continued run that dies before writing a new
+  ``-out.cell`` fails rather than reusing the previous one.
+
+:ref:`job-continuation-primitive` in :doc:`job_lifecycle` gives the technical
+contract: the status transition, the cleared and kept fields, and why this
+differs from the Quantum Corrections stage-1 reset.
+
+The Job Dashboard's ``Resubmit`` also resumes from the checkpoint when you
+choose ``Continue from the checkpoint`` (see
+:ref:`resubmit-continue-or-start-again`). Neither route deletes the run
+directory's contents. ``Reset Failed Jobs...`` with its optional clean-up does:
+it deletes the local ``.check`` and ``.castep`` files and ``{seed}-out.cell``,
+keeping only the ``.cell`` and ``.param`` inputs, although it never cleans a
+folder another job still uses, such as the seed directory a Quantum
+Corrections phonon job shares with its completed stage-1 singlepoint.
+
+The regenerated ``.cell`` always holds the row's own structure: there is no
+mode that writes the latest relaxed geometry into it, and MuFinder does not
+use the CASTEP ``reuse`` keyword.
 
 Sources
 -------
