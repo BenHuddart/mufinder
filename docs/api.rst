@@ -88,6 +88,9 @@ Persistence
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.persistence.project_codec
+   :members:
+   :undoc-members:
 .. automodule:: mufinder.persistence.migrations
    :members:
 
@@ -95,6 +98,18 @@ Services
 --------
 
 .. automodule:: mufinder.services.project_service
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.project_document
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.supercell_assets
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.site_generation_service
    :members:
    :undoc-members:
 
@@ -139,6 +154,10 @@ Services
    :undoc-members:
 
 .. automodule:: mufinder.services.cluster_submission_planner
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.cluster_retrieval
    :members:
    :undoc-members:
 

@@ -14,6 +14,7 @@ from mufinder.castep_io.gui_metadata import (
 )
 from mufinder.castep_io.schema import KeywordSpec, get_keyword_spec
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
+from mufinder.domain.models import Structure
 
 # Cell keywords the workflow derives from the row's structure; a stored value
 # for one of them is never offered for editing or carried into a row.
@@ -51,6 +52,39 @@ def kpoint_exclusive_hint(
     if all("kpoint_mp_spacing" in p for p in params):
         return "kpoint_mp_spacing"
     return None
+
+
+def structure_species_options(structure: Structure | None) -> tuple[str, ...]:
+    """Return a structure's species labels, once each, for species-keyword editors."""
+
+    if structure is None:
+        return ()
+    return tuple(dict.fromkeys(species for item in structure.species if (species := str(item).strip())))
+
+
+def merge_species_options(structures: Iterable[Structure | None]) -> tuple[str, ...]:
+    """Return the species labels of several structures, once each, in first-seen order."""
+
+    return tuple(
+        dict.fromkeys(species for structure in structures for species in structure_species_options(structure))
+    )
+
+
+def shared_parameter_values(
+    effective_params_sequence: Iterable[Mapping[str, object]],
+) -> dict[str, object]:
+    """Return the parameters every row edited together holds with the same value.
+
+    An empty sequence shares nothing.
+    """
+
+    params = [dict(p) for p in effective_params_sequence]
+    if not params:
+        return {}
+    shared = params[0]
+    for row_values in params[1:]:
+        shared = {name: value for name, value in shared.items() if name in row_values and row_values[name] == value}
+    return shared
 
 
 def mixed_parameter_names(

@@ -9,6 +9,7 @@ import mufinder.app.main_window as main_window_module
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import Structure
 from mufinder.services.project_service import ProjectService
+from mufinder.app.workflow_config_codecs import serialize_uep_config
 
 
 def test_materialize_uep_rewrites_defined_job_inputs_when_project_defaults_change(
@@ -75,7 +76,7 @@ def test_uep_preserves_running_row_across_reconfiguration(main_window, tmp_path:
     old_definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        parameters=serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
         output_directory=doc.project_root / "files" / "uep",
     )
     running_job = service.add_job(
@@ -90,7 +91,7 @@ def test_uep_preserves_running_row_across_reconfiguration(main_window, tmp_path:
     new_definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        parameters=serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
         output_directory=doc.project_root / "files" / "uep",
     )
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(new_definition.id)
@@ -120,7 +121,7 @@ def test_uep_deleted_row_does_not_reinherit_stale_status(main_window, tmp_path: 
     old_definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        parameters=serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
         output_directory=doc.project_root / "files" / "uep",
     )
     running_job = service.add_job(
@@ -137,7 +138,7 @@ def test_uep_deleted_row_does_not_reinherit_stale_status(main_window, tmp_path: 
     new_definition = service.register_uep_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
+        parameters=serialize_uep_config(main_window_module.UepConfig(name_prefix="uep", rows=(row,))),
         output_directory=doc.project_root / "files" / "uep",
     )
     doc.ui_state[window._ACTIVE_UEP_DEFINITION_KEY] = str(new_definition.id)

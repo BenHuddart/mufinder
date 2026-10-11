@@ -15,7 +15,9 @@ definitions consistent, and every workflow runs them through this module:
   values rather than rows, and the energy-barrier definitions, which list
   sources, have their own removals: :func:`remove_grid_keys_from_definition`,
   :func:`remove_cutoff_from_definition` and
-  :func:`remove_source_keys_from_definition`.
+  :func:`remove_source_keys_from_definition`; the generated paths those sources
+  come from are dropped from the Energy Barriers form state by
+  :func:`remove_generated_sources`.
 
 The functions take a workflow's configuration codec and row helpers as
 callables, because the configuration types belong to the application layer.
@@ -32,6 +34,7 @@ from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import CalculationDefinition
 from mufinder.services.job_paths import definition_output_directory
 from mufinder.services.project_service import ProjectDocument
+from mufinder.services.source_candidates import ENERGY_BARRIERS_FORM_STATE_KEY
 
 ConfigT = TypeVar("ConfigT")
 KeyT = TypeVar("KeyT", bound=Hashable)
@@ -518,6 +521,21 @@ def remove_source_keys_from_definition(
     document.calculations.pop(definition.id, None)
     return True
 
+
+def remove_generated_sources(document: ProjectDocument, keys: Collection[str]) -> None:
+    """Drop the generated paths ``keys`` name from the Energy Barriers form state."""
+
+    state = document.ui_state.get(ENERGY_BARRIERS_FORM_STATE_KEY, {})
+    if not isinstance(state, dict):
+        return
+    raw_sources = state.get("generated_sources", [])
+    if isinstance(raw_sources, list):
+        state["generated_sources"] = [
+            source
+            for source in raw_sources
+            if not isinstance(source, dict) or str(source.get("key", "")).strip() not in keys
+        ]
+
 __all__ = [
     "LABEL_MAPPING",
     "convergence_mapping_job_priority",
@@ -526,6 +544,7 @@ __all__ = [
     "relaxation_mapping_job_priority",
     "remove_cutoff_from_definition",
     "remove_definition_if_no_rows",
+    "remove_generated_sources",
     "remove_grid_keys_from_definition",
     "remove_labels_from_definition",
     "remove_source_keys_from_definition",

@@ -48,7 +48,7 @@ Compatibility ledger
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that drops task-only rows from ``convergence_form``.
    * - ``relative_energy_eV`` muon-site key
-     - ``ProjectService._site_total_energy_from_payload``
+     - ``mufinder.persistence.project_codec`` (``site_from_dict``)
      - ``MuonSite`` stored the source relaxation's absolute final total energy
        under the misleading name ``relative_energy_eV``. The field is now
        ``total_energy_eV`` and new saves write only that key; a project saved
@@ -136,7 +136,8 @@ Compatibility ledger
      - Persisted creation timestamp that fixes a job's position in the
        dashboard across reloads (``load_project`` sorts jobs by
        ``(created_at, id)``). Job files written before the field existed are
-       backfilled on load by ``ProjectService._legacy_job_created_at``: the
+       backfilled on load by
+       ``mufinder.persistence.project_codec.jobs_in_creation_order``: the
        job's first provenance mention (plus its position within a batch
        record), else its earliest lifecycle timestamp, else the load time so
        it sorts last. Backfilled jobs are left out of the dirty-tracking cache
@@ -176,12 +177,13 @@ Compatibility ledger
        existing users to the starter catalog.
    * - ``candidate`` muon-site status
      - ``MuonSite.status`` / site entity files; read by
-       ``ProjectService._site_status_from_payload`` and
+       ``mufinder.persistence.project_codec.site_from_dict`` and
        ``MuonGenerationWidget._display_site_status``
      - Older projects stored freshly generated sites as ``candidate``. Loading
        maps the value to ``generated``, the display shows it as
-       ``generated``, and ``ProjectService`` still treats ``candidate`` as a
-       generated, stageable status (``_LEGACY_GENERATED_SITE_STATUSES``).
+       ``generated``, and ``mufinder.services.site_generation_service`` still
+       treats ``candidate`` as a generated, stageable status
+       (``LEGACY_GENERATED_SITE_STATUSES``).
      - Keep until the next saved-project schema version bump, whose migration
        can rewrite ``candidate`` to ``generated`` in every site file.
    * - ``converged_cutoff`` key in convergence-examiner result snapshots
@@ -276,21 +278,6 @@ Compatibility ledger
        ``mufinder.science.uep_clustering``. Not persisted.
      - Public import alias. Keep the ``__getattr__`` hook for one minor
        release (through 0.6.x); then drop it.
-   * - ``_serialize_uep_config`` / ``_deserialize_uep_config`` /
-       ``_serialize_pristine_relaxation_config`` /
-       ``_deserialize_pristine_relaxation_config`` /
-       ``_serialize_muon_relaxation_config`` /
-       ``_deserialize_muon_relaxation_config`` /
-       ``_serialize_convergence_config`` /
-       ``_deserialize_convergence_config``
-     - ``MainWindow``
-     - One-line forwarders to the codecs in
-       ``mufinder.app.workflow_config_codecs`` (the same names without the
-       leading underscore), kept because tests and the remaining
-       ``MainWindow`` code reach them by name. The stored configuration shape
-       is unchanged. Not persisted.
-     - Public helper alias. Keep for one minor release (through 0.6.x); then
-       move the callers to the codec functions and drop the forwarders.
 
 Saved-project schema migrations
 -------------------------------
@@ -382,6 +369,19 @@ migration; code that imported one switches to the replacement named.
   has no meaning. It was never project data; a value left in saved settings is
   ignored and needs no migration.
 
+The private forwarders below were removed without a deprecation period. They
+were one-line ``MainWindow`` methods, not part of any public import path, and
+only MuFinder's own code and tests called them.
+
+- ``_serialize_uep_config`` / ``_deserialize_uep_config`` /
+  ``_serialize_pristine_relaxation_config`` /
+  ``_deserialize_pristine_relaxation_config`` /
+  ``_serialize_muon_relaxation_config`` /
+  ``_deserialize_muon_relaxation_config`` / ``_serialize_convergence_config`` /
+  ``_deserialize_convergence_config``: call the codec of the same name without
+  the leading underscore in ``mufinder.app.workflow_config_codecs``. The stored
+  configuration shape is unchanged.
+
 The keywords below were removed without a deprecation period. They belonged to
 an unpersisted record that is not in the API reference and that only MuFinder
 constructs, so no project data or packaged build depends on them. Code that
@@ -393,3 +393,12 @@ passed one switches to the replacement named.
   last accepted in 0.5.0): pass ``retrieval=RetrievalFlags(...)`` with the
   same keyword names, or ``retrieval=RetrievalFlags.for_calc_type(...)``, from
   ``mufinder.services.job_artifacts``.
+
+The module-level names below live in another module and keep no import alias
+at their former path. That module is not in the API reference and no MuFinder
+code imported these names from it. Code that did imports them from the module
+named.
+
+- ``REMOTE_STALE_OUTPUT_SLACK_SECONDS``
+  (``mufinder.services.cluster_runner``): import it from
+  ``mufinder.services.cluster_retrieval``.

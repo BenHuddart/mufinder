@@ -62,6 +62,7 @@ from mufinder.app.workflow_parameters import (
     reorder_workflow_parameter_specs,
     sanitize_parameter_mapping,
     seed_xc_functional_default,
+    shared_parameter_values,
     workflow_default_params,
 )
 from mufinder.app.workflow_table_utils import (
@@ -783,11 +784,7 @@ class SweepConvergenceWidget(QWidget):
 
         if not maps:
             return dict(self._default_params)
-        common = dict(maps[0])
-        for candidate in maps[1:]:
-            common = {
-                name: value for name, value in common.items() if name in candidate and candidate[name] == value
-            }
+        common = shared_parameter_values(maps)
         if "task" not in common:
             common["task"] = infer_task(self._WORKFLOW_STAGE)
         return common

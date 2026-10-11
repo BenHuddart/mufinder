@@ -25,7 +25,7 @@ import pytest
 
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationRun, Job
+from mufinder.domain.models import CalculationRun, Job, Structure
 from mufinder.services.job_artifacts import ParsedJobArtifacts, collect_job_artifacts
 from mufinder.services.project_service import ProjectDocument, ProjectService
 
@@ -4132,16 +4132,14 @@ def test_uep_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -
 # quantum-*phonon* job, while a quantum-*singlepoint* job contributes an empty
 # result (but is still ``handles_job``-owned so the two-stage pair is coherent).
 # ``pre_submit_check`` runs the shared host guard; ``materialize`` dispatches each
-# selected source to its current stage. Driven below with narrow fakes (no
-# MainWindow) and a REAL ``.phonon`` fixture containing an ``H:mu`` muon.
+# selected source to its current stage. Driven below with real project documents
+# (no MainWindow) and a REAL ``.phonon`` fixture containing an ``H:mu`` muon.
 
-from dataclasses import dataclass as _dataclass
 
 from mufinder.workflow.quantum import (
     QUANTUM_PHONON_CALC_TYPE,
     QUANTUM_SINGLEPOINT_CALC_TYPE,
 )
-from mufinder.workflow.types import InputTemplate
 from mufinder.app.workflow_controllers.quantum_corrections import (
     QUANTUM_STAGE_PHONON,
     QUANTUM_STAGE_SINGLEPOINT,
@@ -4204,63 +4202,14 @@ class _FakeQuantumView:
         self.results.append(list(rows))
 
 
-@_dataclass
-class _FakeQuantumStageState:
-    stage: str
-    status: str
-    current_job: Job | None = None
-
-
-@_dataclass
-class _FakeQuantumCandidate:
-    key: str
-    site: object
-    run: object
-    job: object
-    structure: object
-
-
 def _stub_quantum_deps(**overrides) -> QuantumCorrectionsDeps:
     base = dict(
-        ensure_quantum_corrections_definition=lambda _keys: None,
-        eligible_quantum_source_candidates=lambda: [],
-        quantum_source_relative_energies=lambda: {},
-        quantum_source_candidate_by_key=lambda _key: None,
-        quantum_stage_state=lambda _definition, _candidate: _FakeQuantumStageState(
-            stage=QUANTUM_STAGE_SINGLEPOINT, status="ready"
-        ),
-        build_quantum_corrections_states=lambda: {},
-        jobs_for_quantum_source_keys=lambda _keys: [],
-        singlepoint_job_for_quantum_source_key=lambda _definition, _key: None,
-        phonon_job_for_quantum_source_key=lambda _definition, _key: None,
-        quantum_seed_name_for_key=lambda _definition, key: f"quantum_{key}",
-        quantum_runtime_configuration=lambda _definition, _key: ({}, "unknown"),
-        workflow_row_configuration=lambda _definition, _key: ({}, (), {}),
-        workflow_row_configuration_exists=lambda _definition, _key: False,
-        quantum_num_farms_from_extras=lambda _extras: 1,
-        quantum_source_label=lambda candidate: candidate.site.label,
-        quantum_method_from_gui_value=lambda _value: "finite_displacement",
-        charge_state_for_job=lambda _job: None,
-        charge_state_label_for_job=lambda _job: "",
-        quantum_can_reset_to_stage_one=lambda _definition, _candidate: False,
-        input_template_from_keyword_values=lambda _values: InputTemplate(),
-        write_quantum_job_directory=lambda _spec, _root, *, seed_name: Path("/tmp") / seed_name,
-        dedupe_jobs=lambda jobs: jobs,
-        check_definition_host=lambda _definition: True,
-        format_energy=_format_energy_stub,
+        handle_structure_host_mismatch=lambda _mismatch: True,
+        handle_site_host_mismatch=lambda _mismatch: True,
         confirm=lambda _title, _text: True,
     )
     base.update(overrides)
     return QuantumCorrectionsDeps(**base)
-
-
-def _format_energy_stub(value: object) -> str:
-    if value is None:
-        return ""
-    try:
-        return f"{float(value):.6g} eV"
-    except (TypeError, ValueError):
-        return ""
 
 
 def _quantum_job(service: ProjectService, document: ProjectDocument, label: str, calc_type: str) -> Job:
@@ -4338,10 +4287,18 @@ def test_quantum_controller_pre_submit_check_blocks_submission(tmp_path: Path) -
     returns False, so no submission plan is built and nothing is dispatched."""
 
     service = ProjectService()
-    document = service.create_project(tmp_path / "q.mufinder", "Q")
-    materialize_calls: list[list] = []
+    document, _definition, candidates, _output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    other_host = Structure(
+        label="other host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    document.structures[other_host.id] = other_host
+    document.project.host_structure_id = other_host.id
+    mismatches: list[object] = []
     deps = _stub_quantum_deps(
-        check_definition_host=lambda _definition: False,
+        handle_structure_host_mismatch=lambda mismatch: mismatches.append(mismatch) or False,
     )
     local = _RecordingBackend()
     infos: list[tuple[str, str]] = []
@@ -4349,11 +4306,13 @@ def test_quantum_controller_pre_submit_check_blocks_submission(tmp_path: Path) -
         document=document, project_service=service, local_backend=local, infos=infos
     )
     controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
-    # Prove materialize is never reached by making it record + explode if called.
+    materialize_calls: list[list] = []
+    # Prove materialize is never reached by making it record if called.
     controller.materialize = lambda keys: materialize_calls.append(list(keys)) or []  # type: ignore[assignment]
 
-    controller.submit(["site-key"], target="local")
+    controller.submit(list(candidates), target="local")
 
+    assert len(mismatches) == 1  # the relaxed structures descend from the other host
     assert local.calls == []  # nothing dispatched
     assert infos == []  # the refusal is silent (no "no ready jobs" dialog)
     assert materialize_calls == []  # no submission plan was even built
@@ -4361,12 +4320,17 @@ def test_quantum_controller_pre_submit_check_blocks_submission(tmp_path: Path) -
 
 def test_quantum_controller_pre_submit_check_passes_when_host_matches(tmp_path: Path) -> None:
     service = ProjectService()
-    document = service.create_project(tmp_path / "q.mufinder", "Q")
-    deps = _stub_quantum_deps(check_definition_host=lambda _definition: True)
+    document, _definition, candidates, _output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    mismatches: list[object] = []
+    deps = _stub_quantum_deps(
+        handle_structure_host_mismatch=lambda mismatch: mismatches.append(mismatch) or False,
+        handle_site_host_mismatch=lambda mismatch: mismatches.append(mismatch) or False,
+    )
     controller = QuantumCorrectionsController(
         _make_context(document=document, project_service=service), deps, _FakeQuantumView()
     )
-    assert controller.pre_submit_check(["site-key"]) is True
+    assert controller.pre_submit_check(list(candidates)) is True
+    assert mismatches == []
 
 
 def test_quantum_controller_build_result_singlepoint_is_empty_but_handled(tmp_path: Path) -> None:
@@ -4495,14 +4459,28 @@ def test_quantum_controller_build_result_phonon_missing_dir_is_empty(tmp_path: P
 
 
 def _seed_quantum_two_stage_document(service: ProjectService, tmp_path: Path):
-    """Seed a document with two eligible relaxed sources sharing one definition."""
+    """Seed a document with two eligible relaxed sources sharing one definition.
 
-    from mufinder.domain.models import MuonSite, Structure
+    Returns ``(document, definition, candidates, output_root)``; ``candidates``
+    maps each source key (its site id) to its real
+    :class:`~mufinder.services.source_candidates.QuantumSourceCandidate`, for
+    ``siteA`` then ``siteB``.
+    """
+
+    from mufinder.domain.models import MuonSite, Result
+    from mufinder.services.source_candidates import eligible_quantum_source_candidates
 
     document = service.create_project(tmp_path / "q2.mufinder", "Q2")
     output_root = document.project_root / "files" / "quantum_corrections"
+    host = Structure(
+        label="host",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
+    )
+    document.structures[host.id] = host
+    document.project.host_structure_id = host.id
 
-    candidates = {}
     site_ids = []
     structure_ids = []
     for label in ("siteA", "siteB"):
@@ -4512,6 +4490,7 @@ def _seed_quantum_two_stage_document(service: ProjectService, tmp_path: Path):
             lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
             species=["Si", "H:mu"],
             fractional_positions=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+            parent_structure_id=host.id,
             properties={"source_workflow_stage": WorkflowStage.MUON_RELAXATION.value},
         )
         document.structures[relaxed.id] = relaxed
@@ -4523,14 +4502,20 @@ def _seed_quantum_two_stage_document(service: ProjectService, tmp_path: Path):
         )
         source_job.status = JobStatus.COMPLETED
         run = CalculationRun(job_id=source_job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+        result = Result(calculation_run_id=run.id, derived_structure_ids=[relaxed.id])
+        run.result_id = result.id
         document.runs[run.id] = run
-        site = MuonSite(label=label, status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
+        document.results[result.id] = result
+        site = MuonSite(
+            label=label,
+            status="relaxed",
+            relaxation_run_id=run.id,
+            total_energy_eV=-1.0,
+            source_structure_id=host.id,
+        )
         document.sites[site.id] = site
         site_ids.append(site.id)
         structure_ids.append(relaxed.id)
-        candidates[str(site.id)] = _FakeQuantumCandidate(
-            key=str(site.id), site=site, run=run, job=source_job, structure=relaxed
-        )
 
     definition = service.register_quantum_phonon_definition(
         document,
@@ -4545,7 +4530,36 @@ def _seed_quantum_two_stage_document(service: ProjectService, tmp_path: Path):
         },
         output_directory=output_root,
     )
+    candidates = {candidate.key: candidate for candidate in eligible_quantum_source_candidates(document)}
+    assert [candidate.site.label for candidate in candidates.values()] == ["siteA", "siteB"]
     return document, definition, candidates, output_root
+
+
+def _complete_stage_one(
+    service: ProjectService,
+    document: ProjectDocument,
+    definition,
+    key: str,
+    *,
+    execution_target: str = "local",
+) -> Job:
+    """Bind a completed stage-1 singlepoint to ``key`` so the row is on the phonon stage."""
+
+    singlepoint = _quantum_job(service, document, f"quantum_singlepoint_{key}", QUANTUM_SINGLEPOINT_CALC_TYPE)
+    singlepoint.status = JobStatus.COMPLETED
+    singlepoint.execution_target = execution_target
+    definition.parameters["singlepoint_job_ids_by_label"][key] = str(singlepoint.id)
+    return singlepoint
+
+
+def _quantum_document_controller(service: ProjectService, document, output_root, *, deps=None, **context_kwargs):
+    context = _make_context(
+        document=document,
+        project_service=service,
+        definition_output_directory=lambda _definition: output_root,
+        **context_kwargs,
+    )
+    return QuantumCorrectionsController(context, deps or _stub_quantum_deps(), _FakeQuantumView())
 
 
 def test_quantum_controller_materialize_two_stage_mixed_keys(tmp_path: Path) -> None:
@@ -4553,55 +4567,16 @@ def test_quantum_controller_materialize_two_stage_mixed_keys(tmp_path: Path) -> 
     the phonon stage: materialize writes each key into the correct per-stage
     mapping with the correct calc_type, in one pass."""
 
-    from mufinder.app.relaxation_types import SupercellMatrix  # noqa: F401  (import parity)
-
     service = ProjectService()
     document, definition, candidates, output_root = _seed_quantum_two_stage_document(
         service, tmp_path
     )
-    keys = list(candidates.keys())
-    singlepoint_key, phonon_key = keys[0], keys[1]
+    singlepoint_key, phonon_key = list(candidates)
 
     # siteA is fresh (singlepoint stage); siteB already has a COMPLETED singlepoint
     # job, so its stage has advanced to phonon.
-    completed_singlepoint = _quantum_job(
-        service, document, "quantum_singlepoint_siteB", QUANTUM_SINGLEPOINT_CALC_TYPE
-    )
-    completed_singlepoint.status = JobStatus.COMPLETED
-    definition.parameters["singlepoint_job_ids_by_label"][phonon_key] = str(completed_singlepoint.id)
-
-    stage_by_key = {
-        singlepoint_key: _FakeQuantumStageState(stage=QUANTUM_STAGE_SINGLEPOINT, status="ready"),
-        phonon_key: _FakeQuantumStageState(stage=QUANTUM_STAGE_PHONON, status="ready"),
-    }
-
-    def write_dir(spec, root, *, seed_name):
-        job_dir = root / seed_name
-        job_dir.mkdir(parents=True, exist_ok=True)
-        return job_dir
-
-    def singlepoint_job_for_key(_definition, key):
-        job_id = _definition.parameters.get("singlepoint_job_ids_by_label", {}).get(key)
-        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
-
-    def phonon_job_for_key(_definition, key):
-        job_id = _definition.parameters.get("phonon_job_ids_by_label", {}).get(key)
-        return document.jobs.get(UUID(job_id)) if isinstance(job_id, str) else None
-
-    deps = _stub_quantum_deps(
-        ensure_quantum_corrections_definition=lambda _keys: definition,
-        quantum_source_candidate_by_key=lambda key: candidates.get(key),
-        quantum_stage_state=lambda _definition, candidate: stage_by_key[candidate.key],
-        singlepoint_job_for_quantum_source_key=singlepoint_job_for_key,
-        phonon_job_for_quantum_source_key=phonon_job_for_key,
-        write_quantum_job_directory=write_dir,
-    )
-    context = _make_context(
-        document=document,
-        project_service=service,
-        definition_output_directory=lambda _definition: output_root,
-    )
-    controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
+    completed_singlepoint = _complete_stage_one(service, document, definition, phonon_key)
+    controller = _quantum_document_controller(service, document, output_root)
 
     jobs = controller.materialize([singlepoint_key, phonon_key])
 
@@ -4620,9 +4595,11 @@ def test_quantum_controller_materialize_two_stage_mixed_keys(tmp_path: Path) -> 
     assert document.jobs[UUID(new_phonon_id)].calc_type == QUANTUM_PHONON_CALC_TYPE
     # The pre-existing completed singlepoint for siteB is untouched (not re-created).
     assert singlepoint_mapping.get(phonon_key) == str(completed_singlepoint.id)
-    # Both seed names were recorded.
+    # Both seed names were recorded, and both stages write into the seed directory.
     seed_mapping = definition.parameters["job_seed_names_by_label"]
-    assert singlepoint_key in seed_mapping and phonon_key in seed_mapping
+    assert seed_mapping == {singlepoint_key: "quantum_siteA", phonon_key: "quantum_siteB"}
+    assert (output_root / "quantum_siteA" / "quantum_siteA.param").is_file()
+    assert (output_root / "quantum_siteB" / "quantum_siteB.cell").is_file()
     # The phonon mapping stays aliased into job_ids_by_label (load-bearing fallback).
     assert definition.parameters["job_ids_by_label"] is phonon_mapping
 
@@ -4647,25 +4624,22 @@ def _write_stage_one_cell(output_root: Path, seed_name: str, *, with_species_mas
     return cell_path
 
 
-def _quantum_stage_two_guard_setup(service: ProjectService, tmp_path: Path):
-    """Return (deps-kwargs, context-kwargs, phonon_key, output_root) for the guard."""
+def _quantum_stage_two_guard_setup(service: ProjectService, tmp_path: Path, *, stage_one_done: bool = True):
+    """Return ``(controller, phonon_key, seed_name, output_root, infos)`` for the guard.
+
+    ``siteA`` is on the phonon stage (its singlepoint completed) unless
+    ``stage_one_done`` is false.
+    """
 
     document, definition, candidates, output_root = _seed_quantum_two_stage_document(
         service, tmp_path
     )
     phonon_key = list(candidates)[0]
-    deps_kwargs = dict(
-        quantum_source_candidate_by_key=lambda key: candidates.get(key),
-        quantum_stage_state=lambda _definition, _candidate: _FakeQuantumStageState(
-            stage=QUANTUM_STAGE_PHONON, status="ready"
-        ),
-    )
-    context_kwargs = dict(
-        document=document,
-        project_service=service,
-        definition_output_directory=lambda _definition: output_root,
-    )
-    return deps_kwargs, context_kwargs, phonon_key, output_root
+    if stage_one_done:
+        _complete_stage_one(service, document, definition, phonon_key)
+    infos: list[tuple[str, str]] = []
+    controller = _quantum_document_controller(service, document, output_root, infos=infos)
+    return controller, phonon_key, controller.seed_name_for_key(definition, phonon_key), output_root, infos
 
 
 def test_quantum_controller_refuses_stage_two_when_stage_one_omits_species_mass(
@@ -4678,17 +4652,10 @@ def test_quantum_controller_refuses_stage_two_when_stage_one_omits_species_mass(
     the default hydrogen mass. The refusal explains itself rather than being silent.
     """
 
-    service = ProjectService()
-    deps_kwargs, context_kwargs, phonon_key, output_root = _quantum_stage_two_guard_setup(
-        service, tmp_path
+    controller, phonon_key, seed_name, output_root, infos = _quantum_stage_two_guard_setup(
+        ProjectService(), tmp_path
     )
-    _write_stage_one_cell(output_root, f"quantum_{phonon_key}", with_species_mass=False)
-    infos: list[tuple[str, str]] = []
-    controller = QuantumCorrectionsController(
-        _make_context(infos=infos, **context_kwargs),
-        _stub_quantum_deps(**deps_kwargs),
-        _FakeQuantumView(),
-    )
+    _write_stage_one_cell(output_root, seed_name, with_species_mass=False)
 
     assert controller.pre_submit_check([phonon_key]) is False
     assert len(infos) == 1
@@ -4701,17 +4668,10 @@ def test_quantum_controller_refuses_stage_two_when_stage_one_omits_species_mass(
 def test_quantum_controller_allows_stage_two_when_stage_one_declares_species_mass(
     tmp_path: Path,
 ) -> None:
-    service = ProjectService()
-    deps_kwargs, context_kwargs, phonon_key, output_root = _quantum_stage_two_guard_setup(
-        service, tmp_path
+    controller, phonon_key, seed_name, output_root, infos = _quantum_stage_two_guard_setup(
+        ProjectService(), tmp_path
     )
-    _write_stage_one_cell(output_root, f"quantum_{phonon_key}", with_species_mass=True)
-    infos: list[tuple[str, str]] = []
-    controller = QuantumCorrectionsController(
-        _make_context(infos=infos, **context_kwargs),
-        _stub_quantum_deps(**deps_kwargs),
-        _FakeQuantumView(),
-    )
+    _write_stage_one_cell(output_root, seed_name, with_species_mass=True)
 
     assert controller.pre_submit_check([phonon_key]) is True
     assert infos == []
@@ -4722,19 +4682,12 @@ def test_quantum_controller_stage_two_guard_fails_open_without_a_stage_one_cell(
 ) -> None:
     """No readable stage-1 cell is no evidence: the guard must not block."""
 
-    service = ProjectService()
-    deps_kwargs, context_kwargs, phonon_key, output_root = _quantum_stage_two_guard_setup(
-        service, tmp_path
+    controller, phonon_key, seed_name, output_root, infos = _quantum_stage_two_guard_setup(
+        ProjectService(), tmp_path
     )
-    unreadable = output_root / f"quantum_{phonon_key}" / f"quantum_{phonon_key}.cell"
+    unreadable = output_root / seed_name / f"{seed_name}.cell"
     unreadable.parent.mkdir(parents=True, exist_ok=True)
     unreadable.write_text("this is not a cell file", encoding="utf-8")
-    infos: list[tuple[str, str]] = []
-    controller = QuantumCorrectionsController(
-        _make_context(infos=infos, **context_kwargs),
-        _stub_quantum_deps(**deps_kwargs),
-        _FakeQuantumView(),
-    )
 
     # Unparseable cell, and (below) no cell at all: both allow submission.
     assert controller.pre_submit_check([phonon_key]) is True
@@ -4746,20 +4699,10 @@ def test_quantum_controller_stage_two_guard_fails_open_without_a_stage_one_cell(
 def test_quantum_controller_stage_two_guard_ignores_stage_one_rows(tmp_path: Path) -> None:
     """A row still on stage 1 is never blocked: it has no checkpoint to inherit."""
 
-    service = ProjectService()
-    deps_kwargs, context_kwargs, phonon_key, output_root = _quantum_stage_two_guard_setup(
-        service, tmp_path
+    controller, phonon_key, seed_name, output_root, infos = _quantum_stage_two_guard_setup(
+        ProjectService(), tmp_path, stage_one_done=False
     )
-    _write_stage_one_cell(output_root, f"quantum_{phonon_key}", with_species_mass=False)
-    deps_kwargs["quantum_stage_state"] = lambda _definition, _candidate: _FakeQuantumStageState(
-        stage=QUANTUM_STAGE_SINGLEPOINT, status="ready"
-    )
-    infos: list[tuple[str, str]] = []
-    controller = QuantumCorrectionsController(
-        _make_context(infos=infos, **context_kwargs),
-        _stub_quantum_deps(**deps_kwargs),
-        _FakeQuantumView(),
-    )
+    _write_stage_one_cell(output_root, seed_name, with_species_mass=False)
 
     assert controller.pre_submit_check([phonon_key]) is True
     assert infos == []
@@ -4770,42 +4713,16 @@ def test_quantum_controller_submit_local_reaches_local_backend(tmp_path: Path) -
     jobs_for_keys → materialize → local backend, dispatched as a single group with
     no extra kwargs (task farming lives in the shared backend, not the controller)."""
 
-    from mufinder.app.relaxation_types import RelaxationRunState
-
     service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(
+    document, _definition, candidates, output_root = _seed_quantum_two_stage_document(
         service, tmp_path
     )
     key = next(iter(candidates))
-
-    stage_state = _FakeQuantumStageState(stage=QUANTUM_STAGE_SINGLEPOINT, status="ready")
-
-    def write_dir(spec, root, *, seed_name):
-        job_dir = root / seed_name
-        job_dir.mkdir(parents=True, exist_ok=True)
-        return job_dir
-
-    deps = _stub_quantum_deps(
-        ensure_quantum_corrections_definition=lambda _keys: definition,
-        eligible_quantum_source_candidates=lambda: list(candidates.values()),
-        quantum_source_candidate_by_key=lambda k: candidates.get(k),
-        quantum_stage_state=lambda _definition, _candidate: stage_state,
-        build_quantum_corrections_states=lambda: {key: RelaxationRunState(status="ready")},
-        jobs_for_quantum_source_keys=lambda _keys: [],
-        singlepoint_job_for_quantum_source_key=lambda _definition, _key: None,
-        phonon_job_for_quantum_source_key=lambda _definition, _key: None,
-        write_quantum_job_directory=write_dir,
-    )
     local = _RecordingBackend()
     cluster = _RecordingBackend()
-    context = _make_context(
-        document=document,
-        project_service=service,
-        local_backend=local,
-        cluster_backend=cluster,
-        definition_output_directory=lambda _definition: output_root,
+    controller = _quantum_document_controller(
+        service, document, output_root, local_backend=local, cluster_backend=cluster
     )
-    controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
 
     controller.submit([key], target="local")
 
@@ -4818,47 +4735,204 @@ def test_quantum_controller_submit_local_reaches_local_backend(tmp_path: Path) -
 
 
 def test_quantum_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:
-    from mufinder.app.relaxation_types import RelaxationRunState
-
     service = ProjectService()
-    document, definition, candidates, output_root = _seed_quantum_two_stage_document(
+    document, _definition, candidates, output_root = _seed_quantum_two_stage_document(
         service, tmp_path
     )
     key = next(iter(candidates))
-    stage_state = _FakeQuantumStageState(stage=QUANTUM_STAGE_SINGLEPOINT, status="ready")
-
-    def write_dir(spec, root, *, seed_name):
-        job_dir = root / seed_name
-        job_dir.mkdir(parents=True, exist_ok=True)
-        return job_dir
-
-    deps = _stub_quantum_deps(
-        ensure_quantum_corrections_definition=lambda _keys: definition,
-        eligible_quantum_source_candidates=lambda: list(candidates.values()),
-        quantum_source_candidate_by_key=lambda k: candidates.get(k),
-        quantum_stage_state=lambda _definition, _candidate: stage_state,
-        build_quantum_corrections_states=lambda: {key: RelaxationRunState(status="ready")},
-        jobs_for_quantum_source_keys=lambda _keys: [],
-        singlepoint_job_for_quantum_source_key=lambda _definition, _key: None,
-        phonon_job_for_quantum_source_key=lambda _definition, _key: None,
-        write_quantum_job_directory=write_dir,
-    )
     local = _RecordingBackend()
     cluster = _RecordingBackend()
-    context = _make_context(
-        document=document,
-        project_service=service,
-        local_backend=local,
-        cluster_backend=cluster,
-        definition_output_directory=lambda _definition: output_root,
+    controller = _quantum_document_controller(
+        service, document, output_root, local_backend=local, cluster_backend=cluster
     )
-    controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
 
     controller.submit([key], target="cluster")
 
     assert local.calls == []
     assert len(cluster.calls) == 1
     assert cluster.calls[0][0][0].calc_type == QUANTUM_SINGLEPOINT_CALC_TYPE
+
+
+def _configure_result(values=None, advanced=(), untouched=()):
+    from mufinder.app.workflow_dialogs import SourceConfigureResult
+
+    return SourceConfigureResult(
+        values=dict(values or {}),
+        advanced_names=frozenset(advanced),
+        untouched_mixed=frozenset(untouched),
+    )
+
+
+def test_quantum_controller_configure_request_opens_editable_stage_one_rows(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    controller = _quantum_document_controller(service, document, output_root)
+
+    request = controller.configure_request([*candidates, "not-a-source"])
+
+    assert request is not None
+    assert request.keys == tuple(candidates)
+    assert request.title == "Configure Quantum Corrections Parameters"
+    assert (request.read_only, request.fully_editable, request.farms_only) == (False, True, False)
+    assert request.pseudopotential_family == "unknown"
+    assert request.num_farms == 1
+    assert request.species_options == ("Si", "H:mu")
+    assert "Selected sources: 2" in request.intro_text
+    assert "Current stage: mixed/selected" in request.intro_text
+    assert "Displacements required for the phonon stage: 6" in request.intro_text
+    # Every row inherits the tight stage default and the legacy method.
+    assert all(values["phonon_method"] == "FINITEDISPLACEMENT" for values in request.row_values)
+    assert controller.configure_request(["not-a-source"]) is None
+    assert QuantumCorrectionsController(
+        _make_context(document=None), _stub_quantum_deps(), _FakeQuantumView()
+    ).configure_request(list(candidates)) is None
+
+
+def test_quantum_controller_configure_request_follows_each_rows_stage(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    stage_one_key, stage_two_key = list(candidates)
+    _complete_stage_one(service, document, definition, stage_two_key)
+    controller = _quantum_document_controller(service, document, output_root)
+
+    farms_only = controller.configure_request([stage_two_key])
+    assert farms_only is not None
+    assert farms_only.title == "Configure Quantum Corrections Stage 2 Farms"
+    assert (farms_only.read_only, farms_only.fully_editable, farms_only.farms_only) == (False, False, True)
+    assert "Current stage: phonon" in farms_only.intro_text
+
+    mixed = controller.configure_request([stage_one_key, stage_two_key])
+    assert mixed is not None
+    assert mixed.title == "Inspect Quantum Corrections Parameters"
+    assert mixed.read_only is True
+
+
+def test_quantum_controller_apply_configuration_stores_every_row(tmp_path: Path) -> None:
+    import dataclasses
+
+    from mufinder.app.workflow_config_codecs import (
+        store_workflow_row_configuration,
+        workflow_row_configuration,
+    )
+
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    first, second = list(candidates)
+    store_workflow_row_configuration(definition, first, {"parameter_values": {"max_scf_cycles": 80}})
+    persisted: list[str] = []
+    view = _FakeQuantumView()
+    context = _make_context(document=document, project_service=service)
+    controller = QuantumCorrectionsController(
+        dataclasses.replace(
+            context, persist_ui_state=lambda **kwargs: persisted.append(kwargs["failure_message"])
+        ),
+        _stub_quantum_deps(),
+        view,
+    )
+
+    controller.apply_configuration(
+        [first, second],
+        _configure_result({"task": "SINGLEPOINT", "xc_functional": "PBE"}, untouched={"max_scf_cycles"}),
+        {"pseudopotential_family": "norm_conserving", "num_farms": 2},
+    )
+
+    first_params, _advanced, first_extras = workflow_row_configuration(definition, first)
+    second_params, _advanced, second_extras = workflow_row_configuration(definition, second)
+    assert first_params == {"xc_functional": "PBE", "max_scf_cycles": 80}
+    assert second_params == {"xc_functional": "PBE"}
+    assert first_extras == second_extras == {"pseudopotential_family": "norm_conserving", "num_farms": 2}
+    assert definition.parameters["configuration"]["sources"]  # the definition now records its sources
+    assert persisted == ["Quantum Corrections configuration was updated, but autosave failed."]
+    assert view.sources  # refreshed
+
+
+def test_quantum_controller_renames_a_source_site(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key, candidate = next(iter(candidates.items()))
+    controller = _quantum_document_controller(service, document, output_root)
+
+    assert controller.rename_source(key, "  ") is False
+    assert controller.rename_source(key, "siteA") is False
+    assert controller.rename_source("missing", "renamed") is False
+    assert candidate.site.label == "siteA"
+    assert controller.rename_source(key, " renamed ") is True
+    assert document.sites[candidate.site.id].label == "renamed"
+
+
+def test_quantum_controller_lists_stage_one_resets(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    finished_key, running_key = list(candidates)
+    singlepoint = _complete_stage_one(service, document, definition, finished_key)
+    phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
+    phonon.status = JobStatus.FAILED
+    definition.parameters["phonon_job_ids_by_label"][finished_key] = str(phonon.id)
+    running = _complete_stage_one(service, document, definition, running_key)
+    running.status = JobStatus.RUNNING
+    definition.parameters["job_seed_names_by_label"][finished_key] = "quantum_siteA"
+    controller = _quantum_document_controller(service, document, output_root)
+
+    resets = controller.stage_one_resets([finished_key, running_key, "missing"])
+
+    assert resets is not None
+    assert [(reset.key, reset.label, reset.jobs) for reset in resets] == [
+        (finished_key, "siteA", (phonon, singlepoint))
+    ]
+    controller.forget_seed_name(finished_key)
+    assert finished_key not in definition.parameters["job_seed_names_by_label"]
+
+    empty = service.create_project(tmp_path / "empty.mufinder", "Empty")
+    assert _quantum_document_controller(service, empty, output_root).stage_one_resets([finished_key]) is None
+
+
+def test_quantum_controller_resolves_where_a_phonon_job_continues(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
+    key = next(iter(candidates))
+    singlepoint = _complete_stage_one(service, document, definition, key, execution_target="archer2")
+    singlepoint.remote_directory = "/work/quantum_siteA"
+    phonon = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
+    definition.parameters["phonon_job_ids_by_label"][key] = str(phonon.id)
+    controller = _quantum_document_controller(service, document, output_root)
+
+    assert controller.definition_and_key_for_job(phonon) == (definition, key)
+    assert controller.stage_one_target(phonon) == "archer2"
+    assert controller.continuation_remote_target(phonon, cluster_name="ARCHER2 ") == "/work/quantum_siteA"
+    assert controller.continuation_remote_target(phonon, cluster_name="young") == ""
+    # A singlepoint job has no stage-1 target of its own.
+    assert controller.stage_one_target(singlepoint) is None
+    assert controller.continuation_remote_target(singlepoint, cluster_name="archer2") == ""
+    singlepoint.status = JobStatus.FAILED
+    assert controller.stage_one_target(phonon) is None
+
+
+def test_quantum_controller_resolves_the_phonon_analysis_input(tmp_path: Path) -> None:
+    from mufinder.domain.models import Result
+
+    service = ProjectService()
+    document = service.create_project(tmp_path / "q.mufinder", "Q")
+    job = _quantum_job(service, document, "quantum_phonon_siteA", QUANTUM_PHONON_CALC_TYPE)
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
+    document.runs[run.id] = run
+    result = Result(calculation_run_id=run.id, result_type=QUANTUM_PHONON_CALC_TYPE, data={})
+    document.results[result.id] = result
+    controller = QuantumCorrectionsController(
+        _make_context(document=document, project_service=service), _stub_quantum_deps(), _FakeQuantumView()
+    )
+
+    assert controller.phonon_result("not-a-uuid") is None
+    assert controller.phonon_result(str(uuid4())) is None
+    assert controller.phonon_result(str(result.id)) is result
+    with pytest.raises(ValueError, match="does not reference a phonon file"):
+        controller.phonon_analysis_input(result)
+    result.data["phonon_file"] = "files/site.phonon"
+    with pytest.raises(ValueError, match="Could not find phonon file"):
+        controller.phonon_analysis_input(result)
+    phonon_path = document.project_root / "files" / "site.phonon"
+    phonon_path.parent.mkdir(parents=True, exist_ok=True)
+    phonon_path.write_text(_QUANTUM_PHONON_TEXT, encoding="utf-8")
+    assert controller.phonon_analysis_input(result) == (phonon_path, "quantum_phonon_siteA")
 
 
 # --------------------------------------------------------------------------- #
@@ -4870,7 +4944,6 @@ def test_quantum_controller_submit_cluster_reaches_cluster_backend(tmp_path: Pat
 # work with no view), the ``.ts`` payload, and source-key materialize.
 # --------------------------------------------------------------------------- #
 
-from uuid import uuid4 as _uuid4  # noqa: E402
 
 from mufinder.domain.models import CalculationDefinition as _CalculationDefinition  # noqa: E402
 from mufinder.domain.models import MuonSite as _MuonSite  # noqa: E402
@@ -4905,65 +4978,14 @@ class _FakeEnergyBarriersView:
         self.neb_results.append(list(rows))
 
 
-@_dataclass
-class _FakeNebCandidate:
-    key: str
-    source: dict
-
-
 def _stub_energy_barriers_deps(**overrides) -> EnergyBarriersDeps:
     base = dict(
-        build_energy_barrier_neb_states=lambda: {},
-        ensure_energy_barrier_neb_definition=lambda _keys: None,
-        energy_barrier_neb_source_candidates=lambda: [],
-        eligible_energy_barrier_source_candidates=lambda: [],
-        energy_barrier_neb_row_configuration_with_source_defaults=(
-            lambda _definition, _key, **_kwargs: ({}, (), {})
-        ),
         handle_structure_host_mismatch=lambda _mismatch: True,
         handle_site_host_mismatch=lambda _mismatch: True,
-        uuid_from_source=lambda source, key: _uuid_from_source_stub(source, key),
-        float_from_source=lambda source, key: _float_from_source_stub(source, key),
-        fractional_triplet_from_source=lambda source, key: tuple(
-            source.get(key, (0.0, 0.0, 0.0))
-        ),
-        fractional_position_block_from_structure=lambda structure: structure,
-        dedupe_jobs=lambda jobs: jobs,
-        project_convergence_input_defaults=lambda: None,
-        input_template_from_keyword_values=lambda _values: InputTemplate(),
-        workflow_row_configuration_exists=lambda _definition, _key: False,
-        num_farms_from_extras=lambda extras: max(1, int(extras.get("num_farms", 1))),
-        energy_barrier_neb_row_extras=lambda _definition, _key: {},
-        charge_state_label_for_job=lambda _job: "",
-        energy_barrier_endpoint_rows=lambda: [],
-        selected_energy_barrier_endpoint_keys=lambda: ("", ""),
-        energy_barrier_max_path_length_text=lambda: "",
-        completed_energy_barrier_neb_candidates=lambda: [],
-        energy_barrier_neb_sources_by_job_id=lambda: {},
-        energy_barrier_neb_result_path_label=lambda _candidate, _source: "",
-        neb_barrier_summaries=lambda _data: ("", "", ""),
-        muon_charge_state_label=lambda value: value,
+        show_warning=lambda _title, _text: None,
     )
     base.update(overrides)
     return EnergyBarriersDeps(**base)
-
-
-def _uuid_from_source_stub(source, key):
-    raw = source.get(key)
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    try:
-        return UUID(raw.strip())
-    except ValueError:
-        return None
-
-
-def _float_from_source_stub(source, key):
-    raw = source.get(key)
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return None
 
 
 def _neb_job(service: ProjectService, document: ProjectDocument, label: str, calc_type: str) -> Job:
@@ -4973,37 +4995,6 @@ def _neb_job(service: ProjectService, document: ProjectDocument, label: str, cal
         workflow_stage=WorkflowStage.ENERGY_BARRIERS,
         calc_type=calc_type,
     )
-
-
-def _neb_frac_block(structure):
-    """Mirror ``MainWindow._fractional_position_block_from_structure`` for tests."""
-
-    from mufinder.castep_io.types import AtomicPosition, PositionBlock
-
-    rows = [
-        AtomicPosition(str(species), tuple(float(v) for v in fractional))
-        for species, fractional in zip(
-            structure.species, structure.fractional_positions, strict=True
-        )
-    ]
-    return PositionBlock(positions=tuple(rows), unit="frac")
-
-
-def _neb_materialize_deps(definition, candidate, output_root, **overrides) -> EnergyBarriersDeps:
-    """Deps wired so ``materialize`` runs the real science stack and creates a job
-    for ``candidate`` — shared by the source-key and submit tests."""
-
-    base = dict(
-        ensure_energy_barrier_neb_definition=lambda _keys: definition,
-        energy_barrier_neb_source_candidates=lambda: [candidate],
-        eligible_energy_barrier_source_candidates=lambda: [],
-        fractional_position_block_from_structure=_neb_frac_block,
-        build_energy_barrier_neb_states=lambda: {
-            candidate.key: _State("ready")
-        },
-    )
-    base.update(overrides)
-    return _stub_energy_barriers_deps(**base)
 
 
 def test_energy_barriers_controller_handles_both_ts_and_neb_calc_types(tmp_path: Path) -> None:
@@ -5066,85 +5057,55 @@ def test_energy_barriers_controller_refresh_view_renders_sources_and_results(
     row, and one completed-NEB result row — exercising the full render body
     (source-row build + result-row build with barrier summaries / charge label)."""
 
+    from mufinder.domain.models import Result as _Result
+
     service = ProjectService()
-    document = service.create_project(tmp_path / "eb.mufinder", "EB")
+    document, definition, _source, output_root = _seed_energy_barriers_document(
+        service, tmp_path, row_settings={"num_farms": 3}
+    )
     job = _neb_job(service, document, "barrier_neb", NUDGED_ELASTIC_BAND_CALC_TYPE)
     job.status = JobStatus.COMPLETED
-
-    @_dataclass
-    class _Endpoint:
-        site: object
-        job: object
-
-    @_dataclass
-    class _Named:
-        label: str
-
-    @_dataclass
-    class _Path:
-        length_ang: float
-
-    @_dataclass
-    class _SourceCandidate:
-        key: str
-        reactant: object
-        product: object
-        path: object
-
-    @_dataclass
-    class _CompletedResult:
-        data: dict
-
-    @_dataclass
-    class _CompletedCandidate:
-        key: str
-        job: object
-        result: object
-
-    source_candidate = _SourceCandidate(
-        key="source-key",
-        reactant=_Endpoint(site=_Named("siteA"), job=_Named("jobA")),
-        product=_Endpoint(site=_Named("siteB"), job=_Named("jobB")),
-        path=_Path(length_ang=2.5),
+    definition.parameters["job_ids_by_label"]["source-key"] = str(job.id)
+    run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED)
+    result = _Result(
+        calculation_run_id=run.id,
+        result_type=NUDGED_ELASTIC_BAND_CALC_TYPE,
+        data={
+            "num_images": 7,
+            "transition_state_file": "/tmp/barrier.ts",
+            "image_energies_eV": [-1.0, -0.8, -0.9],
+        },
     )
-    completed = _CompletedCandidate(
-        key="result-key",
-        job=job,
-        result=_CompletedResult(
-            data={
-                "num_images": 7,
-                "transition_state_file": "/tmp/barrier.ts",
-                "image_energies_eV": [-1.0, -0.8, -0.9],
-                "charge_state": "positive",
-            }
-        ),
-    )
+    run.result_id = result.id
+    document.runs[run.id] = run
+    document.results[result.id] = result
 
     view = _FakeEnergyBarriersView()
-    deps = _stub_energy_barriers_deps(
-        eligible_energy_barrier_source_candidates=lambda: [source_candidate],
-        build_energy_barrier_neb_states=lambda: {"source-key": _State("ready")},
-        completed_energy_barrier_neb_candidates=lambda: [completed],
-        energy_barrier_neb_sources_by_job_id=lambda: {job.id: {"charge_state": "positive", "path_length_ang": 2.5}},
-        energy_barrier_neb_result_path_label=lambda _c, _s: "siteA → siteB",
-        neb_barrier_summaries=lambda _data: ("0.2 eV", "0.1 eV", "-0.1 eV"),
-        muon_charge_state_label=lambda value: f"mu+({value})",
-    )
-    controller = EnergyBarriersController(
-        _make_context(document=document, project_service=service), deps, lambda: view
-    )
+    controller = _neb_controller(service, document, output_root, view_getter=lambda: view)
 
     controller.refresh_view()
 
-    assert len(view.endpoint_calls) == 1
-    assert len(view.sources[-1]) == 1
-    assert view.sources[-1][0].reactant == "siteA"
-    assert len(view.neb_results[-1]) == 1
+    endpoint_rows, endpoint_options = view.endpoint_calls[-1]
+    assert [row.label for row in endpoint_rows] == ["siteA", "siteB"]
+    assert endpoint_options["reactant_key"] == endpoint_rows[0].key
+    assert endpoint_options["product_key"] == endpoint_rows[1].key
+    source_row = view.sources[-1][0]
+    assert (source_row.reactant, source_row.product) == ("siteA", "siteB")
+    assert source_row.charge_state == "positive muon"
+    assert source_row.path_length == "2.5 Å"
+    assert source_row.farms == "3"
+    assert source_row.configured is True
+    assert source_row.status == "completed"
     result_row = view.neb_results[-1][0]
     assert result_row.label == "siteA → siteB"
     assert result_row.images == "7"
-    assert result_row.charge_state == "mu+(positive)"
+    assert result_row.charge_state == "positive muon"
     assert result_row.path_length == "2.5 Å"
+    assert (result_row.barrier_forward, result_row.barrier_reverse, result_row.delta_energy) == (
+        "0.2 eV",
+        "0.1 eV",
+        "0.1 eV",
+    )
     # The result row carries the producing job's status so the results table can colour it.
     assert result_row.status == "completed"
 
@@ -5221,36 +5182,32 @@ def test_energy_barriers_controller_pre_submit_check_blocks_on_structure_mismatc
     returns False, so no submission plan is built and nothing is dispatched."""
 
     service = ProjectService()
-    document = service.create_project(tmp_path / "eb.mufinder", "EB")
-    structure_id = _uuid4()
-
-    class _StubService:
-        def validate_structures_match_active_host(self, _doc, _ids):
-            return object()  # a mismatch
-
-        def validate_sites_match_active_host(self, _doc, _ids):
-            return None
-
-    candidate = _FakeNebCandidate(
-        key="source-key",
-        source={
-            "reactant_structure_id": str(structure_id),
-            "product_structure_id": str(structure_id),
-        },
+    document, _definition, _source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    other_host = _Structure(
+        label="other host",
+        lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
+        species=["Si"],
+        fractional_positions=[[0.0, 0.0, 0.0]],
     )
-    deps = _stub_energy_barriers_deps(
-        energy_barrier_neb_source_candidates=lambda: [candidate],
-        handle_structure_host_mismatch=lambda _mismatch: False,
-    )
+    document.structures[other_host.id] = other_host
+    document.project.host_structure_id = other_host.id
+    mismatches: list[object] = []
     local = _RecordingBackend()
     infos: list[tuple[str, str]] = []
-    context = _make_context(
-        document=document, project_service=_StubService(), local_backend=local, infos=infos
+    controller = _neb_controller(
+        service,
+        document,
+        output_root,
+        deps=_stub_energy_barriers_deps(
+            handle_structure_host_mismatch=lambda mismatch: mismatches.append(mismatch) or False
+        ),
+        local_backend=local,
+        infos=infos,
     )
-    controller = EnergyBarriersController(context, deps, lambda: None)
 
     assert controller.pre_submit_check(["source-key"]) is False
     controller.submit(["source-key"], target="local")
+    assert len(mismatches) == 2  # once per check
     assert local.calls == []  # nothing dispatched
     assert infos == []  # silent refusal
 
@@ -5262,9 +5219,14 @@ def test_energy_barriers_controller_pre_submit_check_passes_without_document() -
     assert controller.pre_submit_check(["source-key"]) is True
 
 
-def _seed_energy_barriers_document(service: ProjectService, tmp_path: Path):
-    """Seed a document with a host, two relaxed endpoints, and a NEB definition
-    carrying one generated-path source keyed ``source-key``."""
+def _seed_energy_barriers_document(service: ProjectService, tmp_path: Path, *, row_settings=None):
+    """Seed a document with a host, two relaxed endpoints, one generated path keyed
+    ``source-key`` in the Energy Barriers form state, and a NEB definition.
+
+    ``row_settings`` is stored as the definition's per-path configuration.
+    """
+
+    from mufinder.domain.models import Result as _Result
 
     document = service.create_project(tmp_path / "eb_mat.mufinder", "EBMat")
     host = _Structure(
@@ -5277,59 +5239,75 @@ def _seed_energy_barriers_document(service: ProjectService, tmp_path: Path):
     document.structures[host.id] = host
     document.project.host_structure_id = host.id
 
-    relaxed_a = _Structure(
-        label="siteA relaxed",
-        origin="muon_relaxation",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si", "H:mu"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.25, 0.25, 0.25]],
-        parent_structure_id=host.id,
-        properties={"atomic_spins": [1.0, -1.0, 0.0]},
-    )
-    relaxed_b = _Structure(
-        label="siteB relaxed",
-        origin="muon_relaxation",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si", "Si", "H:mu"],
-        fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [0.75, 0.25, 0.25]],
-        parent_structure_id=host.id,
-        properties={"atomic_spins": [1.0, -1.0, 0.0]},
-    )
-    document.structures[relaxed_a.id] = relaxed_a
-    document.structures[relaxed_b.id] = relaxed_b
-
-    site_a = _MuonSite(label="siteA", status="relaxed")
-    site_b = _MuonSite(label="siteB", status="relaxed")
-    document.sites[site_a.id] = site_a
-    document.sites[site_b.id] = site_b
+    ids: dict[str, dict[str, str]] = {}
+    for side, label, muon in (("reactant", "siteA", 0.25), ("product", "siteB", 0.75)):
+        relaxed = _Structure(
+            label=f"{label} relaxed",
+            origin="muon_relaxation",
+            lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+            species=["Si", "Si", "H:mu"],
+            fractional_positions=[[0.0, 0.0, 0.0], [0.52, 0.5, 0.5], [muon, 0.25, 0.25]],
+            parent_structure_id=host.id,
+            properties={"atomic_spins": [1.0, -1.0, 0.0], "source_workflow_stage": "muon_relaxation"},
+        )
+        document.structures[relaxed.id] = relaxed
+        job = service.add_job(
+            document,
+            label=f"mu-{label}",
+            workflow_stage=WorkflowStage.MUON_RELAXATION,
+            calc_type="castep_positivemuon_relaxation",
+        )
+        job.status = JobStatus.COMPLETED
+        run = CalculationRun(job_id=job.id, status=JobStatus.COMPLETED, convergence_achieved=True)
+        result = _Result(calculation_run_id=run.id, derived_structure_ids=[relaxed.id])
+        run.result_id = result.id
+        document.runs[run.id] = run
+        document.results[result.id] = result
+        site = _MuonSite(label=label, status="relaxed", relaxation_run_id=run.id, source_structure_id=host.id)
+        document.sites[site.id] = site
+        ids[side] = {"site": str(site.id), "run": str(run.id), "job": str(job.id), "structure": str(relaxed.id)}
 
     source = {
         "key": "source-key",
         "label": "siteA_to_siteB_path1",
-        "reactant_site_id": str(site_a.id),
-        "product_site_id": str(site_b.id),
-        "reactant_run_id": str(_uuid4()),
-        "product_run_id": str(_uuid4()),
-        "reactant_job_id": str(_uuid4()),
-        "product_job_id": str(_uuid4()),
-        "reactant_structure_id": str(relaxed_a.id),
-        "product_structure_id": str(relaxed_b.id),
+        "path_index": 1,
+        **{f"{side}_{field}_id": value for side, fields in ids.items() for field, value in fields.items()},
         "path_start_fractional": [0.25, 0.25, 0.25],
         "path_end_fractional": [0.75, 0.25, 0.25],
         "path_length_ang": 2.5,
+        "charge_state": "positive_muon",
     }
+    document.ui_state["energy_barriers_form"] = {"generated_sources": [dict(source)]}
     output_root = document.project_root / "files" / "energy_barriers_neb"
+    configuration: dict[str, object] = {"method": "NEB", "sources": [source]}
+    if row_settings is not None:
+        configuration["row_settings"] = {"source-key": row_settings}
     definition = _CalculationDefinition(
         workflow_stage=WorkflowStage.ENERGY_BARRIERS,
         calc_type="castep_nudged_elastic_band_set",
         parameters={
             "output_directory": "files/energy_barriers_neb",
             "job_ids_by_label": {},
-            "configuration": {"method": "NEB", "sources": [source]},
+            "configuration": configuration,
         },
     )
     document.calculations[definition.id] = definition
     return document, definition, source, output_root
+
+
+def _neb_controller(service: ProjectService, document, output_root, *, deps=None, view_getter=lambda: None, **context_kwargs):
+    import dataclasses
+
+    persisted = context_kwargs.pop("persisted", None)
+    context = _make_context(
+        document=document,
+        project_service=service,
+        definition_output_directory=lambda _definition: output_root,
+        **context_kwargs,
+    )
+    if persisted is not None:
+        context = dataclasses.replace(context, persist_ui_state=lambda **_: persisted.append("persist"))
+    return EnergyBarriersController(context, deps or _stub_energy_barriers_deps(), view_getter)
 
 
 def test_energy_barriers_controller_materialize_source_key_provenance(tmp_path: Path) -> None:
@@ -5337,29 +5315,14 @@ def test_energy_barriers_controller_materialize_source_key_provenance(tmp_path: 
     spec with ``provenance={"source_key": key}`` — the NEB provenance contract.
 
     Uses the real science stack (``prepare_transition_state_structures`` /
-    ``idpp_intermediate_structure`` / ``expand_nudged_elastic_band_jobs``) with
-    only the MainWindow-side helpers stubbed via deps, so this pins the controller's
-    materialize behavior in isolation."""
+    ``idpp_intermediate_structure`` / ``expand_nudged_elastic_band_jobs``)."""
 
     service = ProjectService()
-    document, definition, source, output_root = _seed_energy_barriers_document(
+    document, definition, _source, output_root = _seed_energy_barriers_document(
         service, tmp_path
     )
-    candidate = _FakeNebCandidate(key="source-key", source=source)
-
-    import dataclasses
-
     persisted: list[str] = []
-    deps = _neb_materialize_deps(definition, candidate, output_root)
-    context = dataclasses.replace(
-        _make_context(
-            document=document,
-            project_service=service,
-            definition_output_directory=lambda _definition: output_root,
-        ),
-        persist_ui_state=lambda **_: persisted.append("persist"),
-    )
-    controller = EnergyBarriersController(context, deps, lambda: None)
+    controller = _neb_controller(service, document, output_root, persisted=persisted)
 
     jobs = controller.materialize(["source-key"])
 
@@ -5368,10 +5331,10 @@ def test_energy_barriers_controller_materialize_source_key_provenance(tmp_path: 
     assert created.calc_type == NUDGED_ELASTIC_BAND_CALC_TYPE
     # job_ids_by_label is keyed by the SOURCE KEY, mapping to the new job id.
     assert definition.parameters["job_ids_by_label"] == {"source-key": str(created.id)}
-    # Each expanded spec carried provenance={"source_key": key}; verify it round-trips
-    # by re-reading the mapping keyed by that same source key.
-    assert set(definition.parameters["job_ids_by_label"].keys()) == {"source-key"}
     assert persisted == ["persist"]
+    param_text = (output_root / created.label / f"{created.label}.param").read_text(encoding="utf-8")
+    # An unconfigured path runs the default (odd) image count.
+    assert "TSSEARCH_MAX_PATH_POINTS : 11" in param_text
 
 
 def test_energy_barriers_controller_submit_local_reaches_local_backend(tmp_path: Path) -> None:
@@ -5380,21 +5343,14 @@ def test_energy_barriers_controller_submit_local_reaches_local_backend(tmp_path:
     lazy-view submit lambda invokes."""
 
     service = ProjectService()
-    document, definition, source, output_root = _seed_energy_barriers_document(
+    document, _definition, _source, output_root = _seed_energy_barriers_document(
         service, tmp_path
     )
-    candidate = _FakeNebCandidate(key="source-key", source=source)
-    deps = _neb_materialize_deps(definition, candidate, output_root)
     local = _RecordingBackend()
     cluster = _RecordingBackend()
-    context = _make_context(
-        document=document,
-        project_service=service,
-        local_backend=local,
-        cluster_backend=cluster,
-        definition_output_directory=lambda _definition: output_root,
+    controller = _neb_controller(
+        service, document, output_root, local_backend=local, cluster_backend=cluster
     )
-    controller = EnergyBarriersController(context, deps, lambda: None)
 
     controller.submit(["source-key"], target="local")
 
@@ -5406,27 +5362,30 @@ def test_energy_barriers_controller_submit_local_reaches_local_backend(tmp_path:
 
 def test_energy_barriers_controller_submit_cluster_reaches_cluster_backend(tmp_path: Path) -> None:
     service = ProjectService()
-    document, definition, source, output_root = _seed_energy_barriers_document(
+    document, _definition, _source, output_root = _seed_energy_barriers_document(
         service, tmp_path
     )
-    candidate = _FakeNebCandidate(key="source-key", source=source)
-    deps = _neb_materialize_deps(definition, candidate, output_root)
     local = _RecordingBackend()
     cluster = _RecordingBackend()
-    context = _make_context(
-        document=document,
-        project_service=service,
-        local_backend=local,
-        cluster_backend=cluster,
-        definition_output_directory=lambda _definition: output_root,
+    controller = _neb_controller(
+        service, document, output_root, local_backend=local, cluster_backend=cluster
     )
-    controller = EnergyBarriersController(context, deps, lambda: None)
 
     controller.submit(["source-key"], target="cluster")
 
     assert local.calls == []
     assert len(cluster.calls) == 1
     assert cluster.calls[0][0][0].calc_type == NUDGED_ELASTIC_BAND_CALC_TYPE
+
+
+def _materialized_neb_param(tmp_path: Path, row_settings) -> str:
+    service = ProjectService()
+    document, _definition, _source, output_root = _seed_energy_barriers_document(
+        service, tmp_path, row_settings=row_settings
+    )
+    jobs = _neb_controller(service, document, output_root).materialize(["source-key"])
+    assert len(jobs) == 1
+    return (output_root / jobs[0].label / f"{jobs[0].label}.param").read_text(encoding="utf-8")
 
 
 def test_energy_barriers_controller_materialize_writes_num_farms(tmp_path: Path) -> None:
@@ -5437,69 +5396,13 @@ def test_energy_barriers_controller_materialize_writes_num_farms(tmp_path: Path)
     extras at materialize time -- the point at which the job directory is
     written."""
 
-    import dataclasses
-
-    service = ProjectService()
-    document, definition, source, output_root = _seed_energy_barriers_document(
-        service, tmp_path
-    )
-    candidate = _FakeNebCandidate(key="source-key", source=source)
-    deps = _neb_materialize_deps(
-        definition,
-        candidate,
-        output_root,
-        # materialize reads the row's extras from the same call that resolves the
-        # inherited cut-off/k-points, which is what MainWindow wires in production.
-        energy_barrier_neb_row_configuration_with_source_defaults=(
-            lambda _definition, _key, **_kwargs: ({}, (), {"num_farms": 3})
-        ),
-    )
-    context = dataclasses.replace(
-        _make_context(
-            document=document,
-            project_service=service,
-            definition_output_directory=lambda _definition: output_root,
-        ),
-        persist_ui_state=lambda **_: None,
-    )
-    controller = EnergyBarriersController(context, deps, lambda: None)
-
-    jobs = controller.materialize(["source-key"])
-
-    assert len(jobs) == 1
-    param_text = (output_root / jobs[0].label / f"{jobs[0].label}.param").read_text(
-        encoding="utf-8"
-    )
-    assert "NUM_FARMS : 3" in param_text
+    assert "NUM_FARMS : 3" in _materialized_neb_param(tmp_path, {"num_farms": 3})
 
 
 def test_energy_barriers_controller_materialize_omits_num_farms_when_off(
     tmp_path: Path,
 ) -> None:
-    import dataclasses
-
-    service = ProjectService()
-    document, definition, source, output_root = _seed_energy_barriers_document(
-        service, tmp_path
-    )
-    candidate = _FakeNebCandidate(key="source-key", source=source)
-    deps = _neb_materialize_deps(definition, candidate, output_root)
-    context = dataclasses.replace(
-        _make_context(
-            document=document,
-            project_service=service,
-            definition_output_directory=lambda _definition: output_root,
-        ),
-        persist_ui_state=lambda **_: None,
-    )
-    controller = EnergyBarriersController(context, deps, lambda: None)
-
-    jobs = controller.materialize(["source-key"])
-
-    param_text = (output_root / jobs[0].label / f"{jobs[0].label}.param").read_text(
-        encoding="utf-8"
-    )
-    assert "NUM_FARMS" not in param_text
+    assert "NUM_FARMS" not in _materialized_neb_param(tmp_path, None)
 
 
 def test_energy_barriers_controller_materialize_ignores_num_farms_parameter_row(
@@ -5513,42 +5416,122 @@ def test_energy_barriers_controller_materialize_ignores_num_farms_parameter_row(
     .param, CASTEP would farm one way while MuFinder assumed another -- so the
     dedicated control stays authoritative and the keyword row is dropped."""
 
-    import dataclasses
+    param_text = _materialized_neb_param(
+        tmp_path, {"parameter_values": {"num_farms": 7}, "num_farms": 3}
+    )
 
-    service = ProjectService()
-    document, definition, source, output_root = _seed_energy_barriers_document(
-        service, tmp_path
-    )
-    candidate = _FakeNebCandidate(key="source-key", source=source)
-    deps = _neb_materialize_deps(
-        definition,
-        candidate,
-        output_root,
-        energy_barrier_neb_row_configuration_with_source_defaults=(
-            lambda _definition, _key, **_kwargs: (
-                {"num_farms": 7},
-                (),
-                {"num_farms": 3},
-            )
-        ),
-    )
-    context = dataclasses.replace(
-        _make_context(
-            document=document,
-            project_service=service,
-            definition_output_directory=lambda _definition: output_root,
-        ),
-        persist_ui_state=lambda **_: None,
-    )
-    controller = EnergyBarriersController(context, deps, lambda: None)
-
-    jobs = controller.materialize(["source-key"])
-
-    param_text = (output_root / jobs[0].label / f"{jobs[0].label}.param").read_text(
-        encoding="utf-8"
-    )
     assert "NUM_FARMS : 3" in param_text
     assert "NUM_FARMS : 7" not in param_text
+
+
+def test_energy_barriers_controller_generate_paths_validates_its_inputs(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    infos: list[tuple[str, str]] = []
+    warnings: list[tuple[str, str]] = []
+    controller = _neb_controller(
+        service,
+        document,
+        output_root,
+        deps=_stub_energy_barriers_deps(show_warning=lambda title, text: warnings.append((title, text))),
+        infos=infos,
+    )
+    reactant, product = source["reactant_site_id"], source["product_site_id"]
+
+    controller.generate_paths(reactant, "")
+    assert infos[-1][0] == "Select endpoints"
+    controller.generate_paths(reactant, product, "-1")
+    assert warnings == [("Invalid path length", "Maximum path length must be greater than zero.")]
+    document.jobs[UUID(source["product_job_id"])].calc_type = "castep_muonium_relaxation"
+    controller.generate_paths(reactant, product)
+    assert infos[-1][0] == "Charge-state mismatch"
+    assert document.ui_state["energy_barriers_form"]["generated_sources"] == [source]
+
+
+def test_energy_barriers_controller_generates_and_removes_paths(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, definition, source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    persisted: list[str] = []
+    view = _FakeEnergyBarriersView()
+    controller = _neb_controller(
+        service, document, output_root, view_getter=lambda: view, persisted=persisted
+    )
+    reactant, product = source["reactant_site_id"], source["product_site_id"]
+
+    controller.select_endpoints(product, reactant)
+    state = document.ui_state["energy_barriers_form"]
+    assert (state["selected_reactant_key"], state["selected_product_key"]) == (product, reactant)
+
+    controller.generate_paths(reactant, product, "4.0")
+
+    state = document.ui_state["energy_barriers_form"]
+    assert (state["selected_reactant_key"], state["selected_product_key"]) == (reactant, product)
+    assert state["max_path_length_ang"] == 4.0
+    keys = [generated["key"] for generated in state["generated_sources"]]
+    assert keys and all(key.startswith(f"{reactant}:{product}:") for key in keys)
+    assert persisted == ["persist"]
+    assert view.endpoint_calls[-1][1]["max_path_length_text"] == "4"
+
+    # Removing the original path drops it from the form state and from the
+    # definition, which is deleted once it holds no path.
+    assert controller.remove_rows(["source-key"]) == (definition.id,)
+    assert "source-key" not in [generated["key"] for generated in state["generated_sources"]]
+    assert definition.id not in document.calculations
+
+
+def test_energy_barriers_controller_configure_request_and_apply(tmp_path: Path) -> None:
+    from mufinder.app.workflow_config_codecs import workflow_row_configuration
+
+    service = ProjectService()
+    document, definition, _source, output_root = _seed_energy_barriers_document(
+        service, tmp_path, row_settings={"num_farms": 2}
+    )
+    controller = _neb_controller(service, document, output_root)
+
+    request = controller.configure_request(["source-key", "missing"])
+
+    assert request is not None
+    assert request.keys == ("source-key",)
+    assert request.title == "Configure NEB Parameters"
+    assert request.intro_text == "Path: siteA_to_siteB_path1"
+    assert request.read_only is False
+    assert request.num_farms == 2
+    assert request.species_options == ("Si", "H:mu")
+    assert request.row_values[0]["tssearch_max_path_points"] == 11
+
+    controller.apply_configuration(request.keys, _configure_result({"tssearch_max_path_points": 8}), {"num_farms": 4})
+
+    params, _advanced, extras = workflow_row_configuration(definition, "source-key")
+    assert extras == {"num_farms": 4}
+    assert params == {"tssearch_max_path_points": 8}
+    # An even image count is rounded up for climbing-image NEB.
+    assert controller.row_configuration(definition, "source-key")[0]["tssearch_max_path_points"] == 9
+
+    job = _neb_job(service, document, "barrier_neb", NUDGED_ELASTIC_BAND_CALC_TYPE)
+    job.status = JobStatus.RUNNING
+    definition.parameters["job_ids_by_label"]["source-key"] = str(job.id)
+    inspected = controller.configure_request(["source-key"])
+    assert inspected is not None
+    assert (inspected.title, inspected.read_only) == ("Inspect NEB Parameters", True)
+    assert controller.configure_request(["missing"]) is None
+
+
+def test_energy_barriers_controller_path_preview(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, _definition, source, output_root = _seed_energy_barriers_document(service, tmp_path)
+    controller = _neb_controller(service, document, output_root)
+
+    preview = controller.path_preview("source-key")
+
+    assert preview is not None
+    assert preview.title == "siteA_to_siteB_path1 path preview"
+    assert preview.structure.origin == "energy_barriers_path_preview"
+    assert preview.start_fractional == tuple(source["path_start_fractional"])
+    assert preview.end_fractional == tuple(source["path_end_fractional"])
+    assert controller.path_preview("missing") is None
+    document.project.host_structure_id = None
+    with pytest.raises(ValueError, match="pristine host structure is required"):
+        controller.path_preview("source-key")
 
 
 def _stage_two_target_controller(
@@ -5569,28 +5552,11 @@ def _stage_two_target_controller(
 
     document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
     keys = list(candidates)[: len(stage_one_targets)]
-    singlepoints: dict[str, Job] = {}
     for key, stage_one in zip(keys, stage_one_targets, strict=True):
-        singlepoint = _quantum_job(service, document, f"quantum_singlepoint_{key}", QUANTUM_SINGLEPOINT_CALC_TYPE)
-        singlepoint.status = JobStatus.COMPLETED
-        singlepoint.execution_target = stage_one
-        singlepoints[key] = singlepoint
-    ready = _FakeQuantumStageState(stage=QUANTUM_STAGE_PHONON, status="ready")
-    deps = _stub_quantum_deps(
-        quantum_source_candidate_by_key=lambda key: candidates.get(key),
-        quantum_stage_state=lambda _definition, _candidate: ready,
-        build_quantum_corrections_states=lambda: {key: ready for key in keys},
-        singlepoint_job_for_quantum_source_key=lambda _definition, key: singlepoints.get(key),
+        _complete_stage_one(service, document, definition, key, execution_target=stage_one)
+    controller = _quantum_document_controller(
+        service, document, output_root, local_backend=local, cluster_backend=cluster, infos=infos
     )
-    context = _make_context(
-        document=document,
-        project_service=service,
-        definition_output_directory=lambda _definition: output_root,
-        local_backend=local,
-        cluster_backend=cluster,
-        infos=infos,
-    )
-    controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
     phonon_jobs = {
         key: _quantum_job(service, document, f"quantum_phonon_{key}", QUANTUM_PHONON_CALC_TYPE) for key in keys
     }
@@ -5680,13 +5646,6 @@ def test_quantum_controller_runs_local_stage_two_after_a_local_singlepoint(tmp_p
     assert local.calls[0][1] == {}
 
 
-_GUI_TO_METHOD = {
-    "FINITEDISPLACEMENT": "finite_displacement",
-    "DFPT": "dfpt",
-    "LINEARRESPONSE": "linear_response",
-}
-
-
 def _phonon_method_controller(
     service: ProjectService,
     tmp_path: Path,
@@ -5700,37 +5659,33 @@ def _phonon_method_controller(
     """Build a controller whose rows ``siteA``/``siteB`` are ready to submit.
 
     ``rows`` maps a site label to ``(stage, GUI phonon method, pseudopotential
-    family)``; materialize hands back one defined job per row so an allowed
-    submission reaches the local backend.
+    family)``, stored as the row's configuration; materialize hands back one
+    defined job per row so an allowed submission reaches the local backend.
     """
+
+    from mufinder.app.workflow_config_codecs import store_workflow_row_configuration
 
     document, definition, candidates, output_root = _seed_quantum_two_stage_document(service, tmp_path)
     by_label = {candidate.site.label: key for key, candidate in candidates.items()}
-    config = {by_label[label]: spec for label, spec in rows.items()}
-    keys = list(config)
-    deps = _stub_quantum_deps(
-        quantum_source_candidate_by_key=lambda key: candidates.get(key),
-        quantum_stage_state=lambda _definition, candidate: _FakeQuantumStageState(
-            stage=config[candidate.key][0], status="ready"
-        ),
-        build_quantum_corrections_states=lambda: {
-            key: _FakeQuantumStageState(stage=config[key][0], status="ready") for key in keys
-        },
-        quantum_runtime_configuration=lambda _definition, key: (
-            {"phonon_method": config[key][1]},
-            config[key][2],
-        ),
-        quantum_method_from_gui_value=lambda value: _GUI_TO_METHOD[str(value).upper()],
-        confirm=lambda title, text: questions.append((title, text)) or answer,
-    )
-    context = _make_context(
-        document=document,
-        project_service=service,
-        definition_output_directory=lambda _definition: output_root,
+    keys = []
+    for label, (stage, method, family) in rows.items():
+        key = by_label[label]
+        keys.append(key)
+        if stage == QUANTUM_STAGE_PHONON:
+            _complete_stage_one(service, document, definition, key)
+        store_workflow_row_configuration(
+            definition,
+            key,
+            {"parameter_values": {"phonon_method": method}, "pseudopotential_family": family},
+        )
+    controller = _quantum_document_controller(
+        service,
+        document,
+        output_root,
+        deps=_stub_quantum_deps(confirm=lambda title, text: questions.append((title, text)) or answer),
         local_backend=local,
         infos=infos,
     )
-    controller = QuantumCorrectionsController(context, deps, _FakeQuantumView())
     jobs = {key: _quantum_job(service, document, f"quantum_{key}", QUANTUM_SINGLEPOINT_CALC_TYPE) for key in keys}
     controller.materialize = lambda values: [jobs[str(value)] for value in values]  # type: ignore[assignment]
     return controller, keys

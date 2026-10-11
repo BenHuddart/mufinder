@@ -1186,7 +1186,7 @@ def test_main_window_submit_jobs_on_cluster_reuses_quantum_continuation_director
     site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
 
-    definition = window._ensure_quantum_corrections_definition([str(site.id)])
+    definition = window._quantum_corrections_controller.ensure_definition([str(site.id)])
     assert definition is not None
     definition.parameters["singlepoint_job_ids_by_label"] = {}
     definition.parameters["phonon_job_ids_by_label"] = {}
@@ -2317,7 +2317,7 @@ def _quantum_phonon_job_after_cluster_singlepoint(window: MainWindow, tmp_path: 
     site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
 
-    definition = window._ensure_quantum_corrections_definition([str(site.id)])
+    definition = window._quantum_corrections_controller.ensure_definition([str(site.id)])
     assert definition is not None
     definition.parameters["job_seed_names_by_label"] = {str(site.id): "quantum_siteA"}
     singlepoint_job = service.add_job(

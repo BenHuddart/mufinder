@@ -246,8 +246,251 @@ or ``cancelled`` rows: it edits that row's parameters in place and resumes
 the same job from its CASTEP checkpoint rather than starting over, so it is
 the recovery path that keeps a run directory's ``.check``/``.castep`` files
 intact (unlike ``Reset``, whose optional cleanup deletes them). See
-:doc:`implemented_functionality` for the full user-facing description and
+:ref:`continue-relaxation` for the user-facing description and
 :ref:`job-continuation-primitive` below for the technical contract.
+
+Job tables and selections
+-------------------------
+
+The workflow job tables (cutoff and k-point convergence, pristine and muon
+relaxation, UEP, Energy Barriers, Quantum Corrections) and the Job Dashboard
+share one rule for controls embedded in a row: highlighted rows are what is
+affected.
+
+- A control on a row that is part of a multi-row selection targets the
+  selection. When at least two selected rows can take the action, MuFinder
+  asks first, with three choices: apply to all selected (or eligible) rows,
+  apply to this row only, or cancel. Cancelling changes nothing, and a
+  drop-down returns to the value it showed before. When only one selected row
+  can take it, the clicked row is acted on without a prompt.
+- A control on a row outside the selection first makes that row the selection,
+  then acts on it alone, without a prompt.
+- The prompt uses the same wording in every table. It names the action and the
+  number of rows, and when some selected rows cannot take the action (for
+  example rows locked because their job has been queued) it states how many
+  will be skipped.
+- After the prompt is answered the table selection is set to the selected
+  rows (``All``) or the clicked row (``This ... only``); cancelling restores the
+  previous selection.
+- Controls that propagate: the ``Supercell`` and ``Fix Cell`` drop-downs, the
+  per-row ``Configure`` and remove buttons, and every Job Dashboard action
+  button.
+- Controls that only make sense for one row (``Open Wizard`` in the UEP table,
+  ``View...`` in the Energy Barriers table) always act on their own row and
+  never prompt.
+
+Actions that remove, cancel, reset, dismiss or delete are always confirmed,
+whichever way they are triggered (row control, button below the table,
+right-click menu, or Delete/Backspace):
+
+- Removing rows asks once for the whole batch, stating the number of rows and
+  how many already have a submitted job (the cutoff and k-point tables also
+  state how many jobs are still queued or running and will be cancelled). This
+  includes rows that were never submitted. Relaxation removals may then ask
+  what to do with each job's output files (delete or archive, with an
+  apply-to-all choice); for cutoff rows with associated files the file-handling
+  prompt offers ``Yes to All`` / ``No to All``.
+- For a row control on a multi-row selection the three-way prompt is the
+  confirmation, so the user is not asked twice. The exception is removing
+  cutoff or k-point rows whose job is still queued or running: that prompt
+  does not mention cancellation, so those removals are confirmed again with it
+  stated.
+- A single-row ``Cancel`` or ``Dismiss`` on the Job Dashboard, and ``Cancel``
+  or ``Dismiss`` in a workflow table's or the dashboard's right-click menu, ask
+  before acting. ``Reset`` asks its clean-up question, which can be cancelled.
+- In the dedicated confirmations the safe choice is the default button and the
+  one Escape selects, and the buttons are labelled with the action
+  (``Remove 3 rows``, ``Keep running``) rather than Yes/No. In the three-way
+  row-control prompt the default button is the all-selected choice.
+
+What a click will affect is shown before the click, without changing any text
+inside the rows, so tables stay usable on a small laptop screen:
+
+- While two or more rows are selected, the row controls that will act on all of
+  them are drawn with a heavier border. Single-row controls are not.
+- Each workflow table shows ``N selected`` beside its buttons. The Job
+  Dashboard shows ``N selected · row buttons apply to all selected`` above the
+  table, only while two or more rows are selected.
+- After a multi-row ``Supercell`` or ``Fix Cell`` change the status bar reports
+  how many rows were changed and how many were skipped.
+- The run buttons state their scope: ``Run All Locally`` / ``Run All on
+  Cluster`` with nothing selected, ``Run Selected Locally`` / ``Run Selected on
+  Cluster`` otherwise. With nothing selected every row is submitted; rows that
+  are not ready are skipped by the submission step.
+- The button row below each table offers the same set: ``Configure Selected
+  Parameters...``, ``Remove Selected``, and the two run buttons. Quantum
+  Corrections has no ``Remove Selected`` because its rows are derived from
+  completed relaxations, and adds a ``Reset to Stage 1`` button.
+
+Right-clicking selected rows opens the same menu in every workflow table, in
+this order: ``Run Local``, ``Run on Cluster``, ``Cancel``, ``Inspect Failure``,
+``Reset Failed Jobs...``, ``Configure...``, ``Remove``, then any table-specific
+entries below a separator (``Continue relaxation…`` in the relaxation tables;
+``Reset to Stage 1`` in Quantum Corrections, which has no failed-job reset or
+``Remove``). Right-clicking a row outside the selection selects it first.
+``Reset Failed Jobs...`` acts on the selected rows that are ``failed``,
+``stopped`` or ``cancelled`` (see :ref:`per-row-reset-affordance`); Quantum
+Corrections uses its stage-1 reset instead.
+
+A selection may mix rows an action applies to with rows it does not (a running
+row when resetting, a completed row when running). Every action then acts on
+the rows it applies to and says how many it left out:
+
+- Run, Cancel, Inspect and Reset in the row menu are offered when at least one
+  selected row qualifies, act on those rows only, and carry the count when it
+  is partial, for example ``Reset Failed Jobs... (2 of 5)``. An entry is greyed
+  out only when no selected row qualifies. A row with no label yet has no job
+  and counts as not qualifying.
+- The run buttons and the menu's run entries submit the rows that are ready and
+  the status bar reports the rest: ``Submitted 3 local job(s); skipped 2
+  selected rows that were not ready``.
+- The three-way prompt of a row control states the same split (``Set this
+  supercell on 3 of 5 selected rows? 2 are not eligible and will be
+  skipped.``).
+
+The Job Dashboard's right-click menu offers ``Resubmit``, ``Retry
+Retrieval``, ``Cancel``, ``Inspect``, ``Reset``, ``Dismiss`` and
+``Delete...``. Each entry is enabled when it applies to at least one selected
+job, acts on those jobs only, as the row buttons do, and carries the count when
+it is partial (``Reset (2 of 3)``). ``Delete...`` does what Delete/Backspace
+does. The row buttons remain the primary controls.
+
+The shared implementation lives in ``mufinder.app.selection_snapshot`` (row
+targeting and the three-way prompt) and ``mufinder.app.workflow_table_utils``
+(``confirm_destructive``, ``standard_row_actions``, ``SelectionFeedback``).
+
+Running jobs
+------------
+
+Every workflow job table runs its ``ready`` rows either on this computer or on
+a configured cluster. A row's inputs are written when it is submitted, not when
+it is configured: each run action first saves the workflow's current
+configuration snapshot and then submits the rows.
+
+Local execution
+~~~~~~~~~~~~~~~
+
+``Setup > CASTEP`` stores the local CASTEP executable path and the ``mpirun``
+launcher path; ``mpirun`` is also discovered on ``PATH`` and in common install
+prefixes. Multi-core local runs need a configured or discovered ``mpirun``;
+without one, cores per job are limited to 1. Installing the CASTEP keyword
+catalog from the same dialog is described in :doc:`castep_keyword_catalog`.
+
+The local submission dialog sets:
+
+- cores per job, with guidance from the logical CPU count;
+- sequential execution, or parallel execution with a user-selected maximum
+  concurrency;
+- an oversubscription warning when cores per job multiplied by the
+  concurrency exceeds the logical CPUs;
+- a task-farming check that blocks ``OK`` when a row's farm count exceeds the
+  cores per job.
+
+Jobs run in the background through Qt ``QProcess``, so the UI never blocks,
+inside the job directories created at submission time. A local job passes
+through ``queued`` only when the parallel-concurrency limit is already full.
+Status text in the dashboard and the workflow tables is colour-coded.
+
+Cluster profiles and connections
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Setup > HPC Clusters`` stores cluster profiles globally, including built-in
+SCARF and Redwood presets.
+
+- A profile sets the hostname, username, queue system, default working
+  directory, cores per node, default walltime and CASTEP executable path, plus
+  a submission-script template path for SLURM profiles and a default
+  queue/partition and ``Default memory per core (GB)`` for ``addqueue``
+  profiles.
+- A SLURM profile may set a default per-CPU memory request, which pre-seeds the
+  submission dialog. It is off by default, so a profile without it generates
+  batch scripts with no memory directive (see `SLURM memory requests`_).
+- Optional SSH jump-host settings serve clusters behind gateways, with a
+  separate jump hostname, port, username, authentication method and key path.
+- The Redwood preset targets ``glamdring.physics.ox.ac.uk`` through the Physics
+  gateway ``bastion.physics.ox.ac.uk``. MuFinder prompts separately for the
+  Physics/bastion and Glamdring credentials because those accounts can differ.
+- On macOS, eligible Redwood/Glamdring password-auth profiles can opt into
+  read-only Keychain password lookup. The entries use the same services as
+  ``glamdring-tools``: ``security add-generic-password -a <physics_username>
+  -s bastion -w`` and ``security add-generic-password -a
+  <glamdring_username> -s glamdring -w``.
+- Scheduler commands (submit, queue, cancel) can be given explicit paths. A
+  command without a configured path is located by probing the
+  non-interactive SSH shell.
+- SSH key authentication is primary, with password fallback.
+- Unknown SSH host keys are never trusted automatically. MuFinder shows the
+  key's SHA-256 fingerprint and asks before trusting it, for both the jump host
+  and the target cluster host, and stores each trusted key in the user's
+  settings; bastion trust records are stored separately from Glamdring trust
+  records. A host key that differs from the trusted one stops the connection
+  and shows the stored and presented fingerprints.
+- Connection checks (the cluster setup ``Test Connection`` action and the
+  pre-flight check before cluster keyword generation) run on a worker thread
+  behind a cancellable progress dialog, so an unreachable or slow host never
+  freezes the GUI; unknown-host-key prompts appear on the GUI thread and the
+  check retries automatically once the key is trusted.
+
+Cluster submission and monitoring
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- ``Run All on Cluster`` / ``Run Selected on Cluster`` opens a dialog that
+  chooses the cluster and overrides its runtime settings for this submission.
+- MuFinder uploads the generated ``.cell`` / ``.param`` inputs and submits
+  them to the cluster's scheduler. SLURM submission runs ``sbatch`` on a
+  populated script template and captures the scheduler job id, with an
+  optional ``#SBATCH --mem-per-cpu`` request (see `SLURM memory requests`_).
+  Redwood submission runs ``addqueue`` with the runtime controls ``Queue or
+  partition``, ``Memory per core (GB)`` and ``Submission note``, in
+  sbatch-compatible response mode so the job id parses reliably.
+- Cluster submission refuses job labels containing anything other than letters,
+  digits, ``.``, ``_`` and ``-``, because remote paths and scheduler commands
+  use the label directly; the cluster runner checks each seed name again before
+  submitting. Remote job directories are deleted recursively over SFTP, never
+  through a remote shell command.
+- Jump-host submissions show separate credential fields for the gateway and
+  the target cluster. With the macOS Keychain option enabled, submission and
+  reconnect use the Keychain entries instead of password prompts.
+- When a matching cluster connection is already active, submission reuses it
+  and does not ask for a password or passphrase again.
+- The dashboard shows each job's execution target (``Cluster``, which reads
+  ``local`` for local jobs), remote job id, a live ``Runtime`` and the process
+  count used at submission, with a connection-state indicator and a manual
+  queue refresh. A manual refresh reconnects disconnected sessions for clusters
+  that have active dashboard jobs.
+- The queue is polled periodically, updating each job's last-checked time.
+  SLURM polling tolerates stale or expired job ids (``Invalid job id
+  specified``) by falling back to per-job status checks instead of failing the
+  whole refresh.
+- Connection, queue refresh, submission, cancellation and polling failures show
+  a one-line summary, with the full error and recovery advice under
+  ``Details``.
+
+Outputs and failure diagnostics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After a run, MuFinder parses the ``.castep`` output and persists the parsed
+data as a ``Result`` linked to the job's ``CalculationRun``. The parser
+extracts:
+
+- the completion and failure markers (see *What counts as completion* under
+  `Re-completing a continued job`_);
+- the final total energy, preferring, in order, the finite-basis-corrected
+  total energy, the dispersion-corrected ``NB est. 0K`` energy, and the
+  ``NB est. 0K energy``;
+- the enthalpy, where available;
+- the latest force and stress blocks, and the maximum force magnitude and
+  maximum stress component magnitude;
+- the SCF cycle count and wall time;
+- warnings, error markers and geometry-convergence markers.
+
+The convergence tables show the total energy and maximum force with enough
+precision to compare small differences.
+
+``Inspect`` on a failed job discovers the error files in its output directory,
+``<seed>.err``, ``<seed>.NNNN.err`` and scheduler ``slurm-*.out`` files, and
+shows context excerpts around the failure lines, after the cause summary
+described in :ref:`job-failure-reasons`.
 
 Technical API behavior
 ----------------------
@@ -396,6 +639,36 @@ Deleting and re-creating would sever the row binding and abandon the directory.
 milestone, recording the job label and whether a remote directory was preserved.
 No persisted field is added, so no compatibility-ledger entry is required.
 
+.. _remote-checkpoint-probe:
+
+Checkpoint probe
+~~~~~~~~~~~~~~~~
+
+The ``Continue relaxation…`` dialog reports whether the job's checkpoint is
+there: found, not found, or could not be verified. For a cluster job the probe
+is built from remote-file primitives:
+
+- ``ClusterJobRunner.remote_file_exists`` stats one remote path over the
+  existing SSH connection (the file-level analogue of
+  ``remote_directory_exists``).
+- ``ClusterController.check_remote_files`` runs this on the worker thread for a
+  batch of ``(job_id, remote_path)`` targets and emits ``remote_files_checked``
+  with the paths that exist and any per-job errors, mirroring
+  ``check_remote_dirs`` / ``remote_dirs_checked`` so the GUI thread awaits the
+  result instead of blocking on SSH. The probe always runs in the controller
+  before a dialog is constructed, never inside a widget's ``__init__``.
+- ``CheckpointProbeStatus`` (``found`` / ``absent`` / ``unavailable``) and
+  ``CheckpointProbeResult`` (built with the ``found()`` / ``absent()`` /
+  ``unavailable(reason)`` constructors) carry the three-way result. Not
+  connected, no remote directory recorded on the job, and SSH or transport
+  errors all map to ``unavailable`` with a reason rather than stopping the
+  dialog from opening. A recorded remote directory that no longer exists on the
+  cluster reports ``absent``.
+
+A local job is probed with a plain ``pathlib.Path`` check for ``{seed}.check``
+in its job directory, reporting ``found`` or ``absent`` (or ``unavailable``
+when the job's output directory cannot be resolved).
+
 Re-completing a continued job
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -434,7 +707,8 @@ allows a few seconds of slack for filesystem mtime granularity and network-mount
 clock offsets, and skips entirely when ``started_at`` is unset — a job the poller
 never observed running fails open rather than failing on no evidence.
 
-The remote one is in ``ClusterJobRunner._retrieve_results``, and it is what makes
+The remote one is in :func:`~mufinder.services.cluster_retrieval.retrieve_job_outputs`,
+and it is what makes
 the local guard meaningful for cluster jobs at all. ``sftp.get`` stamps a
 downloaded file with the *download* time, so an unconditionally retrieved
 ``-out.cell`` always looks newer than ``started_at`` however old the remote file
@@ -766,29 +1040,38 @@ During polling:
 - Scheduler states are mapped to MuFinder states by the scheduler backend.
 - ``queued`` and ``running`` emit status updates.
 - ``cancelled`` marks the tracked job terminal and emits cancellation.
-- ``stopped`` marks the tracked job terminal and emits ``stopped``.
-- ``failed`` marks the tracked job terminal, retrieves available error files,
-  emits ``job_failed``, and emits ``failed``.
-- ``completed`` triggers retrieval of ``.castep`` plus the optional ``.den_fmt``,
+- ``stopped`` and ``failed`` mark the tracked job terminal and download the
+  available error files and scheduler log
+  (:func:`~mufinder.services.cluster_retrieval.retrieve_error_files`), so a stop
+  can be diagnosed like a failure. ``stopped`` then emits ``stopped``;
+  ``failed`` emits ``job_failed`` and ``failed``.
+- ``completed`` triggers one retrieval pass. The runner emits ``retrieving``,
+  then :func:`~mufinder.services.cluster_retrieval.retrieve_job_outputs`
+  downloads the error files, ``.castep`` and the optional ``.den_fmt``,
   ``-out.cell``, ``.phonon``, or ``.ts`` outputs that the job's retrieval flags
-  request (see Retrieval flags). Retrieval or parsing failure
-  becomes ``failed``. Parsed incomplete CASTEP output becomes ``stopped`` when
-  it looks like walltime; otherwise it becomes ``failed``. Parsed completed
-  output emits ``job_finished`` and ``completed``. The secondary outputs
-  (``-out.cell`` / ``.phonon`` / ``.ts``) are parsed once here on the worker
-  thread via :func:`~mufinder.services.job_artifacts.collect_job_artifacts` and
-  carried to the GUI as the third ``job_finished`` payload, so the completion
-  handler and controllers never re-parse them.
+  request (see Retrieval flags), parses them, and returns a
+  :class:`~mufinder.services.cluster_retrieval.RetrievalResult`. It emits
+  nothing; the runner turns the result into signals. Retrieval or parsing
+  failure becomes ``failed``. Parsed incomplete CASTEP output becomes
+  ``stopped`` when the downloaded scheduler log shows a walltime kill;
+  otherwise it becomes ``failed``. Parsed completed output emits
+  ``job_finished`` and ``completed``. The secondary outputs (``-out.cell`` /
+  ``.phonon`` / ``.ts``) are parsed once here on the worker thread via
+  :func:`~mufinder.services.job_artifacts.collect_job_artifacts` and carried to
+  the GUI as the third ``job_finished`` payload, so the completion handler and
+  controllers never re-parse them.
 - A missing scheduler entry usually means completion, so retrieval is
-  attempted immediately — but with a grace window: if the output cannot be
-  downloaded (SFTP error, missing remote ``.castep``, connection hiccup), the
-  job is *not* failed yet. The runner retries on up to
-  ``MISSING_ENTRY_RETRIEVAL_ATTEMPTS`` (3) consecutive polls, keeping the
+  attempted immediately — but with a grace window. When the output cannot be
+  downloaded (SFTP error, missing remote ``.castep``, a ``.castep`` older than
+  this submission, connection hiccup), the result's
+  :class:`~mufinder.services.cluster_retrieval.RetrievalFailure` is
+  ``retry_eligible`` and the job is *not* failed yet. The runner retries on up
+  to ``MISSING_ENTRY_RETRIEVAL_ATTEMPTS`` (3) consecutive polls, keeping the
   entry non-terminal, and only then emits ``job_failed`` with a diagnostic
   explaining that scheduler history may have expired, the queue command may be
   filtered, or the wrong cluster may be connected. Parse failures of
-  successfully downloaded output fail immediately. The attempt counter resets
-  if the job reappears in the queue.
+  successfully downloaded output are never retry-eligible and fail
+  immediately. The attempt counter resets if the job reappears in the queue.
 - Every poll emits a ``queue_checked`` snapshot carrying ``checked_at``
   (``utc_now()``), per-job elapsed runtimes, and per-job human-readable
   observations (``observations_by_job_id``) describing what the scheduler

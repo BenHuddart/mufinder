@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -29,22 +30,36 @@ from mufinder.services.source_candidates import (
     QUANTUM_STAGE_SINGLEPOINT,
     CompletedRelaxationAnalysisSource,
     charge_state_for_job,
+    charge_state_label_for_job,
     coerce_fractional_triplet,
     completed_energy_barrier_neb_candidates,
     completed_muon_relaxation_sources,
     completed_pristine_relaxation_jobs,
     eligible_energy_barrier_source_candidates,
     eligible_quantum_source_candidates,
+    energy_barrier_form_state,
     energy_barrier_generated_sources,
+    energy_barrier_max_path_length_text,
+    energy_barrier_neb_result_path_label,
     energy_barrier_neb_source_candidates,
+    energy_barrier_neb_sources_by_job_id,
+    energy_barrier_path_preview_structure,
+    energy_barrier_source_label,
     enumerate_energy_barrier_source_candidates,
     float_from_source,
     fractional_triplet_from_source,
+    quantum_seed_name_for_key,
     quantum_source_candidate_by_key,
+    quantum_source_label,
     quantum_source_labels_by_key,
     quantum_source_relative_energies,
     quantum_stage_state,
     relaxation_sources_for_labels,
+    selected_energy_barrier_endpoint_keys,
+    serialize_energy_barrier_neb_sources,
+    serialize_energy_barrier_source_candidates,
+    serialize_quantum_sources,
+    source_relaxation_parameter_values,
     uuid_from_source,
 )
 from mufinder.workflow.energy_barriers import (
@@ -255,6 +270,110 @@ def test_quantum_stage_state_resolves_each_stage() -> None:
     )
 
 
+def test_charge_state_label_for_job_names_muon_relaxations_only() -> None:
+    assert charge_state_label_for_job(Job(calc_type=muon_relaxation_calc_type(MUONIUM_CHARGE_STATE))) == "muonium"
+    assert charge_state_label_for_job(Job(calc_type=muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE))) == (
+        "positive muon"
+    )
+    assert charge_state_label_for_job(Job(calc_type="castep_uep_source")) == ""
+    assert charge_state_label_for_job(None) == ""
+
+
+def test_quantum_source_labels_seed_names_and_stored_sources(document: ProjectDocument) -> None:
+    first = _add_relaxed_source(document, "site", energy=-10.0)
+    second = _add_relaxed_source(document, "site", energy=-9.0, charge_state=POSITIVE_MUON_CHARGE_STATE)
+    second_candidate = quantum_source_candidate_by_key(document, str(second.id))
+    assert second_candidate is not None
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type="castep_quantum_phonon_set",
+        parameters={"job_seed_names_by_label": {str(first.id): " quantum_kept "}},
+    )
+
+    assert quantum_source_label(document, second_candidate) == "site_2"
+    assert quantum_seed_name_for_key(document, definition, str(first.id)) == "quantum_kept"
+    assert quantum_seed_name_for_key(document, definition, str(second.id)) == "quantum_site_2"
+    assert quantum_seed_name_for_key(document, None, "missing") == "quantum"
+    stored = serialize_quantum_sources(document, [second.id, uuid4()])
+    assert stored == [
+        {
+            "site_id": str(second.id),
+            "source_relaxation_run_id": str(second_candidate.run.id),
+            "source_relaxation_job_id": str(second_candidate.job.id),
+            "relaxed_structure_id": str(second_candidate.structure.id),
+            "label": "site_2",
+            "charge_state": POSITIVE_MUON_CHARGE_STATE,
+        }
+    ]
+
+
+def _relaxation_job_with_inputs(tmp_path: Path, *, param: str | None, cell: str | None = None, **job_fields) -> Job:
+    job = Job(label="relax_site_1", **job_fields)
+    output_dir = tmp_path / job.label
+    output_dir.mkdir()
+    if param is not None:
+        (output_dir / f"{job.label}.param").write_text(param, encoding="utf-8")
+    if cell is not None:
+        (output_dir / f"{job.label}.cell").write_text(cell, encoding="utf-8")
+    return job
+
+
+def test_follow_on_rows_inherit_the_source_relaxation_functional(tmp_path: Path) -> None:
+    job = _relaxation_job_with_inputs(
+        tmp_path, param="TASK : GEOMETRYOPTIMIZATION\nXC_FUNCTIONAL : PBESOL\nCUT_OFF_ENERGY : 650 eV\n"
+    )
+
+    values = source_relaxation_parameter_values(job, lambda _job: tmp_path / job.label)
+
+    assert values["xc_functional"] == "PBESOL"
+    assert values["cut_off_energy"].value == pytest.approx(650.0)
+
+
+_SPIN_SOURCE_CELL = (
+    "%BLOCK LATTICE_CART\n2.87 0 0\n0 2.87 0\n0 0 2.87\n%ENDBLOCK LATTICE_CART\n"
+    "%BLOCK POSITIONS_FRAC\nFe 0 0 0{spin}\nFe 0.5 0.5 0.5{spin}\n%ENDBLOCK POSITIONS_FRAC\n"
+    "KPOINT_MP_GRID 4 4 2\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("param_lines", "cell_spin", "expected"),
+    [
+        pytest.param("SPIN_POLARISED : TRUE\n", "", True, id="explicit-english-spelling"),
+        pytest.param("SPIN_POLARIZED : FALSE\n", " SPIN=2", False, id="explicit-false-wins"),
+        pytest.param("", " SPIN=2", True, id="implied-by-atomic-spins"),
+        pytest.param("SPIN : -2\n", "", True, id="implied-by-net-spin"),
+        pytest.param("", "", False, id="not-spin-polarised"),
+    ],
+)
+def test_follow_on_rows_inherit_the_source_relaxation_spin_treatment(
+    tmp_path: Path, param_lines: str, cell_spin: str, expected: bool
+) -> None:
+    job = _relaxation_job_with_inputs(
+        tmp_path,
+        param="TASK : GEOMETRYOPTIMIZATION\n" + param_lines,
+        cell=_SPIN_SOURCE_CELL.format(spin=cell_spin),
+    )
+
+    values = source_relaxation_parameter_values(job, lambda _job: tmp_path / job.label)
+
+    assert values["spin_polarized"] is expected
+    assert values["kpoint_mp_grid"] == (4, 4, 2)
+
+
+@pytest.mark.parametrize(
+    ("charge_state", "expected"),
+    [(MUONIUM_CHARGE_STATE, {"spin_polarized": True}), (POSITIVE_MUON_CHARGE_STATE, {})],
+)
+def test_unreadable_source_param_defaults_only_muonium_to_spin_polarised(
+    tmp_path: Path, charge_state: str, expected: dict[str, object]
+) -> None:
+    job = _relaxation_job_with_inputs(tmp_path, param=None, calc_type=muon_relaxation_calc_type(charge_state))
+
+    assert source_relaxation_parameter_values(job, lambda _job: tmp_path / job.label) == expected
+    assert source_relaxation_parameter_values(job, lambda _job: None) == {}
+
+
 # --- energy-barrier sources ---------------------------------------------------
 
 
@@ -345,6 +464,72 @@ def test_enumerate_energy_barrier_paths_between_two_sources(document: ProjectDoc
     assert candidates[0].reactant.site is reactant
     assert enumerate_energy_barrier_source_candidates(document, str(reactant.id), str(muonium.id)) == []
     assert enumerate_energy_barrier_source_candidates(document, str(reactant.id), "missing") == []
+
+
+def test_energy_barrier_form_state_readers(document: ProjectDocument) -> None:
+    first = _add_relaxed_source(document, "A", energy=-10.0)
+    second = _add_relaxed_source(document, "B", energy=-9.0)
+
+    assert energy_barrier_form_state(document) == {}
+    assert energy_barrier_max_path_length_text(document) == ""
+    assert selected_energy_barrier_endpoint_keys(document) == (str(first.id), str(second.id))
+
+    document.ui_state["energy_barriers_form"] = {"max_path_length_ang": 4.25, "selected_product_key": str(first.id)}
+    state = energy_barrier_form_state(document)
+    state["changed"] = True
+    assert "changed" not in document.ui_state["energy_barriers_form"]  # a copy
+    assert energy_barrier_max_path_length_text(document) == "4.25"
+    assert selected_energy_barrier_endpoint_keys(document) == (str(first.id), str(first.id))
+    document.ui_state["energy_barriers_form"] = {"max_path_length_ang": "far"}
+    assert energy_barrier_max_path_length_text(document) == ""
+    assert energy_barrier_form_state(None) == {}
+
+
+def test_generated_paths_serialize_label_and_preview(document: ProjectDocument) -> None:
+    reactant = _add_relaxed_source(document, "A", energy=-10.0)
+    product = _add_relaxed_source(document, "B", energy=-9.0, muon=(0.75, 0.25, 0.25))
+    candidates = enumerate_energy_barrier_source_candidates(document, str(reactant.id), str(product.id))
+    first = candidates[0]
+
+    assert energy_barrier_source_label(first) == "A_to_B_path1"
+    stored = serialize_energy_barrier_source_candidates(candidates)[0]
+    assert stored["key"] == first.key
+    assert stored["label"] == "A_to_B_path1"
+    assert stored["charge_state"] == POSITIVE_MUON_CHARGE_STATE
+    assert stored["path_start_fractional"] == list(first.path.start_fractional)
+
+    preview = energy_barrier_path_preview_structure(document, first)
+    assert preview.label == "A_to_B_path1 preview"
+    assert preview.origin == "energy_barriers_path_preview"
+    assert preview.parent_structure_id == document.project.host_structure_id
+    with pytest.raises(ValueError, match="No project document"):
+        energy_barrier_path_preview_structure(None, first)
+    document.project.host_structure_id = None
+    with pytest.raises(ValueError, match="pristine host structure is required"):
+        energy_barrier_path_preview_structure(document, first)
+
+
+def test_neb_sources_map_jobs_back_to_their_paths(document: ProjectDocument) -> None:
+    reactant = _add_relaxed_source(document, "A", energy=-10.0)
+    product = _add_relaxed_source(document, "B", energy=-9.0, muon=(0.75, 0.25, 0.25))
+    path = _serialized_path(reactant, product, document)
+    document.ui_state["energy_barriers_form"] = {"generated_sources": [path, {"key": "other"}]}
+    job = Job(label="barrier_neb", calc_type=NUDGED_ELASTIC_BAND_CALC_TYPE)
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type="castep_nudged_elastic_band_set",
+        parameters={"job_ids_by_label": {path["key"]: str(job.id), "other": "not-a-uuid", "gone": str(uuid4())}},
+    )
+
+    assert serialize_energy_barrier_neb_sources(document, ["missing", path["key"]]) == [path]
+    by_job_id = energy_barrier_neb_sources_by_job_id(document, [definition])
+    assert by_job_id == {job.id: path}
+
+    completed = SimpleNamespace(job=job)
+    assert energy_barrier_neb_result_path_label(document, completed, path) == "A → B"
+    assert energy_barrier_neb_result_path_label(document, completed, None) == "barrier_neb"
+    reactant.label = ""
+    assert energy_barrier_neb_result_path_label(document, completed, path) == "barrier_neb"
 
 
 def test_completed_neb_candidates_need_run_and_job(document: ProjectDocument) -> None:

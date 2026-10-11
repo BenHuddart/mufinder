@@ -98,7 +98,9 @@ its dialogs and the real submission path.
 
 ``tests/docs`` checks the structure of the Sphinx sources and their citations,
 never their wording. ``test_docs_build_inputs.py`` asserts that every page under
-``docs/`` is reachable from a toctree in ``docs/index.rst`` and that each
+``docs/`` is reStructuredText (Sphinx has no Markdown parser configured, so a
+``.md`` page would never be built), that every page is reachable from a toctree
+in ``docs/index.rst``, and that each
 literature DOI the user guides cite stays on its page; a new citation is added
 to its ``CITED_DOIS`` table. Tests do not pin prose phrases, ``conf.py`` lines
 or stylesheet values: whether a page describes the code correctly is checked in
@@ -119,6 +121,10 @@ the call site or binds them once with ``functools.partial``.
 - ``tests/support/symmetry_hosts.py``: hosts that exercise the symmetry code.
 - ``tests/support/jobs.py``: ``make_job(...)`` builds a bare ``Job``, or, given
   ``service`` and ``document``, registers one through ``ProjectService.add_job``.
+- ``tests/support/cluster_ssh.py``: ``FakeSSH`` stands in for an
+  ``SSHConnection`` whose remote filesystem is a dict;
+  ``TimestampedFakeSSH`` adds remote mtimes and ``OutputUnavailableSSH`` fails
+  every download.
 - ``tests/support/qt.py``: ``pump_until(predicate, timeout=...)`` spins the
   event loop until a queued signal has been delivered;
   ``find_tree_item_by_route`` and ``find_item_by_route`` locate project-tree

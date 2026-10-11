@@ -15,6 +15,7 @@ from mufinder.app.workflow_parameters import (
     merge_batch_advanced,
     merge_batch_values,
     mixed_parameter_names,
+    shared_parameter_values,
 )
 from mufinder.domain.models import Structure
 from mufinder.castep_io.schema import KeywordSpec
@@ -115,6 +116,66 @@ def run_row_parameter_dialog(
             key: merge_batch_advanced(advanced, request.row_advanced.get(key, ()), untouched)
             for key in request.row_values
         },
+    )
+
+
+@dataclass(frozen=True)
+class SourceConfigureRequest:
+    """What a source table's Configure dialog opens with.
+
+    ``keys`` are the targeted source rows and ``row_values`` their effective
+    parameters, in the same order; ``advanced_names`` is every advanced name
+    any of them shows. The dialog opens on the values the rows share and marks
+    the rest as mixed. ``num_farms`` is the farm count every row agrees on, else
+    1.
+    """
+
+    keys: tuple[str, ...]
+    row_values: tuple[Mapping[str, object], ...]
+    advanced_names: frozenset[str]
+    title: str
+    intro_text: str
+    read_only: bool
+    num_farms: int
+    species_options: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SourceConfigureResult:
+    """An accepted source Configure dialog: what to store for every targeted row.
+
+    ``untouched_mixed`` names the mixed parameters the user left alone, which
+    each row keeps from its own stored configuration.
+    """
+
+    values: dict[str, object]
+    advanced_names: frozenset[str]
+    untouched_mixed: frozenset[str]
+
+
+def run_source_configure_dialog(
+    dialog: ParameterDialog,
+    request: SourceConfigureRequest,
+) -> SourceConfigureResult | None:
+    """Seed ``dialog`` from ``request``, run it, and return what it produced.
+
+    Returns ``None`` when the dialog is cancelled, and when it opened read-only
+    to inspect rows that can no longer change.
+    """
+
+    dialog.setWindowTitle(request.title)
+    dialog.set_values(
+        shared_parameter_values(request.row_values),
+        preferred_exclusive=kpoint_exclusive_hint(request.row_values),
+    )
+    dialog.set_advanced_names(tuple(sorted(request.advanced_names)))
+    dialog.set_mixed_names(mixed_parameter_names(request.row_values))
+    if dialog.exec() != QDialog.DialogCode.Accepted or request.read_only:
+        return None
+    return SourceConfigureResult(
+        values=dict(dialog.collect_values()),
+        advanced_names=frozenset(dialog.advanced_names()),
+        untouched_mixed=frozenset(dialog.untouched_mixed_names()),
     )
 
 

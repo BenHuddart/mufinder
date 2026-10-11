@@ -30,8 +30,9 @@ from mufinder.castep_io.types import (
     LatticeCart,
     PositionBlock,
     SpeciesPotential,
+    ValueWithUnit,
 )
-from mufinder.domain.models import Structure
+from mufinder.domain.models import Project, Structure
 from mufinder.science.kpoint_grids import equivalent_grid_for_supercell
 from mufinder.science.supercell_matching import detect_supercell_matrix_from_lattices
 from mufinder.workflow.bridge import StructureBridgeError, structure_to_spec
@@ -455,6 +456,34 @@ def seed_workflow_defaults(
     if project_cutoff_energy is not None:
         seeded["cut_off_energy"] = float(project_cutoff_energy)
     return seeded
+
+
+def project_convergence_parameter_values(
+    project: Project,
+    *,
+    target_lattice: list[list[float]] | None = None,
+) -> dict[str, object]:
+    """Return the project defaults as GUI parameter values for a follow-on row.
+
+    The functional, the cut-off energy (in eV) and the k-point grid, each only
+    when set. With ``target_lattice`` and a recorded reference lattice, the grid
+    is rescaled to the target cell at equivalent reciprocal-space density.
+    """
+
+    values: dict[str, object] = {}
+    if project.recommended_xc_functional is not None:
+        values["xc_functional"] = project.recommended_xc_functional
+    cutoff = project.recommended_cutoff_energy
+    if cutoff is not None:
+        values["cut_off_energy"] = ValueWithUnit(value=float(cutoff), unit="eV")
+    grid = project.recommended_kpoint_grid
+    if grid is not None:
+        resolved_grid = tuple(int(component) for component in grid)
+        reference_lattice = project.recommended_kpoint_lattice
+        if target_lattice is not None and isinstance(reference_lattice, list) and len(reference_lattice) == 3:
+            resolved_grid = equivalent_grid_for_supercell(reference_lattice, resolved_grid, target_lattice)
+        values["kpoint_mp_grid"] = resolved_grid
+    return values
 
 
 def kpoint_reference_lattice(

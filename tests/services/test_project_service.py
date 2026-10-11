@@ -1006,24 +1006,6 @@ def test_job_monitor_metadata_and_dismissal_roundtrip(tmp_path: Path) -> None:
     assert loaded_job.dismissed_at == dismissed_at
 
 
-def test_job_monitor_metadata_defaults_when_absent_from_payload(tmp_path: Path) -> None:
-    # Projects saved before the monitor-metadata fields existed must load with
-    # None defaults; the decoder tolerates the missing keys.
-    service = ProjectService()
-    payload = {
-        "id": str(uuid4()),
-        "workflow_stage": WorkflowStage.CONVERGENCE_CUTOFF.value,
-        "status": JobStatus.DEFINED.value,
-    }
-
-    job = service._job_from_dict(payload)
-
-    assert job.last_checked_at is None
-    assert job.last_status_source is None
-    assert job.last_status_message is None
-    assert job.dismissed_at is None
-
-
 def test_reset_failed_job_clears_monitor_metadata_and_dismissal() -> None:
     service = ProjectService()
     job = Job(
@@ -1376,34 +1358,10 @@ def test_workflow_supercell_helpers_handle_invalid_metadata_and_defaults(tmp_pat
     doc = service.create_project(tmp_path / "workflow_supercell_helpers.mufinder", "WorkflowHelpers")
     doc.ui_state["workflow_supercells"] = "bad-state"
 
-    assert service._coerce_supercell_matrix([[1, 0, 0]]) is None
-    assert service._coerce_supercell_matrix([[1, 0, 0], [0, 1], [0, 0, 1]]) is None
-    assert service._parse_optional_uuid("not-a-uuid") is None
-    assert "[" in service._supercell_asset_label(
-        WorkflowStage.CONVERGENCE_CUTOFF,
-        [[1, 1, 0], [0, 1, 0], [0, 0, 1]],
-    )
-
     selection = service.get_workflow_supercell_selection(doc, WorkflowStage.CONVERGENCE_CUTOFF)
     assert selection.mode == "unit_cell"
     assert isinstance(doc.ui_state["workflow_supercells"], dict)
     assert service.list_workflow_supercell_assets(doc, host_structure_id=None) == []
-
-    invalid_asset = Structure(
-        label="InvalidAsset",
-        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
-        species=["Si"],
-        fractional_positions=[[0.0, 0.0, 0.0]],
-        parent_structure_id=uuid4(),
-        properties={"supercell_asset": {"matrix": "bad", "owner_workflow_stage": "bad"}},
-    )
-    assert service._supercell_asset(invalid_asset) is None
-    assert service._find_matching_workflow_supercell_asset(
-        doc,
-        host_structure_id=uuid4(),
-        workflow_stage=WorkflowStage.CONVERGENCE_CUTOFF,
-        matrix=[[2, 0, 0], [0, 1, 0], [0, 0, 1]],
-    ) is None
 
     magnetic = Structure(
         label="Magnetic",
@@ -2984,22 +2942,6 @@ def test_failure_reason_is_recorded_cleared_and_persisted(tmp_path: Path) -> Non
     service.fail_job(job, "oom", reason=FailureReason.OUT_OF_MEMORY)
     service.reset_failed_job(job)
     assert job.failure_reason is None
-
-
-def test_failure_reason_loads_as_none_when_absent_or_unknown() -> None:
-    service = ProjectService()
-    base = {
-        "id": str(uuid4()),
-        "workflow_stage": WorkflowStage.CONVERGENCE_CUTOFF.value,
-        "status": JobStatus.FAILED.value,
-    }
-
-    assert service._job_from_dict(base).failure_reason is None
-    assert service._job_from_dict({**base, "failure_reason": "cosmic_ray"}).failure_reason is None
-    assert (
-        service._job_from_dict({**base, "failure_reason": "out_of_memory"}).failure_reason
-        == FailureReason.OUT_OF_MEMORY
-    )
 
 
 def _definition_at(

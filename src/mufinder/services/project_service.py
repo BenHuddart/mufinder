@@ -3,26 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime
 import hashlib
 import logging
 from pathlib import Path
-import re
 import shutil
 from typing import Any
 from uuid import UUID
 
-from mufinder._version import current_version
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
-from mufinder.domain.magnetic_properties import (
-    atomic_spins_from_structure,
-    has_nonzero_spins,
-    propagation_vector_from_structure,
-)
+from mufinder.domain.magnetic_properties import propagation_vector_from_structure
 from mufinder.domain.models import (
     CalculationDefinition,
-    CalculationRun,
     ComparisonTable,
     Job,
     MuonSite,
@@ -33,56 +26,31 @@ from mufinder.domain.models import (
     next_job_created_at,
     utc_now,
 )
-from mufinder.persistence.codec import parse_datetime, parse_uuid, to_jsonable
+from mufinder.persistence import project_codec
+from mufinder.persistence.codec import to_jsonable
 from mufinder.persistence.json_store import ProjectStore
 from mufinder.persistence.migrations import migrate_project_payloads
+from mufinder.persistence.project_codec import normalized_xc_functional
+from mufinder.services import site_generation_service, supercell_assets
 from mufinder.services.perf_trace import PerfTrace
-from mufinder.science.site_generation import (
-    SiteGenerationError,
-    closest_symmetry_equivalent_position,
-    estimate_random_site_count_from_separation,
-    estimate_muon_muon_separation_for_count,
-    generate_attached_element_sites,
-    generate_random_sites,
-    generate_random_sites_by_distance,
-    lattice_cart_to_frac,
-    lattice_frac_to_cart,
+# The document aggregate, its read-only queries and the supercell records are
+# re-exported: callers import them from this module.
+from mufinder.services.project_document import (
+    ProjectDocument,
+    active_definition as active_definition,
+    active_host_structure,
+    definitions_for_stage as definitions_for_stage,
+    job_for_mapping_key as job_for_mapping_key,
+)
+from mufinder.services.supercell_assets import (
+    WORKFLOW_SUPERCELL_UNIT_CELL,
+    WorkflowStructureResolution,
+    WorkflowSupercellAsset,
+    WorkflowSupercellSelection,
 )
 from mufinder.science.structure_io import load_structure_file
-from mufinder.science.supercell import build_supercell_structure
 
 _LOG = logging.getLogger(__name__)
-
-_WORKFLOW_SUPERCELLS_STATE_KEY = "workflow_supercells"
-_WORKFLOW_SUPERCELL_UNIT_CELL = "unit_cell"
-_WORKFLOW_SUPERCELL_SAVED = "saved_supercell"
-_GENERATED_SITE_STATUS = "generated"
-_LEGACY_GENERATED_SITE_STATUSES = {_GENERATED_SITE_STATUS, "candidate"}
-_STAGEABLE_SITE_STATUSES = {*_LEGACY_GENERATED_SITE_STATUSES, "staged"}
-
-
-def _as_aware_utc(stamp: datetime) -> datetime:
-    """Treat a naive timestamp as UTC so it can be compared with aware ones."""
-    return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=UTC)
-
-
-def _normalized_xc_functional(value: object) -> str | None:
-    """Return an uppercase XC functional name, or ``None`` when unset/blank."""
-
-    if not isinstance(value, str) or not value.strip():
-        return None
-    return value.strip().upper()
-
-
-def _failure_reason_from_payload(value: object) -> FailureReason | None:
-    """Parse a persisted failure reason; unknown or missing values load as ``None``."""
-
-    if not isinstance(value, str):
-        return None
-    try:
-        return FailureReason(value)
-    except ValueError:
-        return None
 
 
 def _project_relative_path(path: Path, project_root: Path) -> str:
@@ -157,146 +125,6 @@ CONTINUABLE_JOB_STATUSES = frozenset(
 ORPHANED_LOCAL_JOB_STOP_MESSAGE = (
     "MuFinder was closed while this job was in progress locally; reset or resubmit it."
 )
-
-
-@dataclass(slots=True)
-class ProjectDocument:
-    """In-memory aggregate for all project content currently loaded."""
-
-    project_root: Path
-    project: Project
-    structures: dict[UUID, Structure] = field(default_factory=dict)
-    sites: dict[UUID, MuonSite] = field(default_factory=dict)
-    calculations: dict[UUID, CalculationDefinition] = field(default_factory=dict)
-    runs: dict[UUID, CalculationRun] = field(default_factory=dict)
-    results: dict[UUID, Result] = field(default_factory=dict)
-    comparison_tables: dict[UUID, ComparisonTable] = field(default_factory=dict)
-    jobs: dict[UUID, Job] = field(default_factory=dict)
-    provenance: list[ProvenanceRecord] = field(default_factory=list)
-    ui_state: dict[str, Any] = field(default_factory=dict)
-
-
-def definitions_for_stage(
-    document: ProjectDocument,
-    stage: WorkflowStage,
-    *,
-    calc_type: str | None = None,
-) -> list[CalculationDefinition]:
-    """Return ``document``'s definitions for ``stage``, newest first.
-
-    ``calc_type`` narrows the match to definitions of that calc type; ``None``
-    accepts any calc type at ``stage``. Definitions created at the same instant
-    keep their insertion order.
-    """
-
-    definitions = [
-        definition
-        for definition in document.calculations.values()
-        if definition.workflow_stage == stage
-        and (calc_type is None or definition.calc_type == calc_type)
-    ]
-    definitions.sort(key=lambda definition: definition.created_at, reverse=True)
-    return definitions
-
-
-def active_definition(
-    document: ProjectDocument,
-    stage: WorkflowStage,
-    *,
-    calc_type: str | None = None,
-    active_key: str | None = None,
-) -> CalculationDefinition | None:
-    """Return the definition a workflow currently works on.
-
-    When ``active_key`` names a ``ui_state`` entry holding the id of a
-    definition that matches ``stage`` (and ``calc_type``, when given), that
-    definition wins. Otherwise, including when ``active_key`` is ``None``, the
-    newest matching definition is returned, or ``None`` when there is none.
-    """
-
-    if active_key is not None:
-        raw_definition_id = document.ui_state.get(active_key)
-        if isinstance(raw_definition_id, str):
-            try:
-                definition_id = UUID(raw_definition_id)
-            except ValueError:
-                definition_id = None
-            definition = document.calculations.get(definition_id) if definition_id else None
-            if (
-                definition is not None
-                and definition.workflow_stage == stage
-                and (calc_type is None or definition.calc_type == calc_type)
-            ):
-                return definition
-
-    definitions = definitions_for_stage(document, stage, calc_type=calc_type)
-    return definitions[0] if definitions else None
-
-
-def job_for_mapping_key(
-    document: ProjectDocument,
-    definition: CalculationDefinition | None,
-    key: str,
-    *,
-    mapping_name: str = "job_ids_by_label",
-    calc_type: str | None = None,
-) -> Job | None:
-    """Return the job ``definition.parameters[mapping_name][key]`` points at.
-
-    Returns ``None`` when the definition is missing, the mapping is absent or
-    not a mapping, the key is unmapped, the stored id is not a UUID string, the
-    job no longer exists, or ``calc_type`` is given and the job's differs.
-    """
-
-    if definition is None:
-        return None
-    mapping = definition.parameters.get(mapping_name)
-    if not isinstance(mapping, dict):
-        return None
-    raw_job_id = mapping.get(key)
-    if not isinstance(raw_job_id, str):
-        return None
-    try:
-        job_id = UUID(raw_job_id)
-    except ValueError:
-        return None
-    job = document.jobs.get(job_id)
-    if job is None or (calc_type is not None and job.calc_type != calc_type):
-        return None
-    return job
-
-
-@dataclass(slots=True, frozen=True)
-class WorkflowSupercellSelection:
-    """Persisted workflow simulation-cell selection."""
-
-    mode: str = _WORKFLOW_SUPERCELL_UNIT_CELL
-    structure_id: UUID | None = None
-
-
-@dataclass(slots=True, frozen=True)
-class WorkflowSupercellAsset:
-    """Metadata for one saved reusable supercell structure."""
-
-    structure_id: UUID
-    label: str
-    parent_structure_id: UUID | None
-    owner_workflow_stage: WorkflowStage
-    matrix: list[list[int]]
-    source_asset_structure_id: UUID | None = None
-
-
-@dataclass(slots=True)
-class WorkflowStructureResolution:
-    """Resolved workflow structure plus UI-facing selection state."""
-
-    structure: Structure | None
-    available_assets: list[WorkflowSupercellAsset]
-    selection: WorkflowSupercellSelection
-    normalized_selection: WorkflowSupercellSelection
-    selected_asset: WorkflowSupercellAsset | None = None
-    status_message: str = ""
-    source_workflow_stage: WorkflowStage | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -441,26 +269,15 @@ class ProjectService:
         # below so the next save writes them with the new manifest version.
         migrated_keys = migrate_project_payloads(manifest, payloads)
 
-        project = self._project_from_dict(manifest)
-        structures = {
-            entity.id: entity for entity in (self._structure_from_dict(p) for p in payloads["structures"])
+        project = project_codec.project_from_dict(manifest)
+        # Each entity directory is named after the ``ProjectDocument`` mapping it fills.
+        entities = {
+            entity_type: {entity.id: entity for entity in map(decode, payloads[entity_type])}
+            for entity_type, decode in project_codec.ENTITY_DECODERS.items()
         }
-        sites = {entity.id: entity for entity in (self._site_from_dict(p) for p in payloads["sites"])}
-        calculations = {
-            entity.id: entity
-            for entity in (self._calculation_from_dict(p) for p in payloads["calculations"])
-        }
-        runs = {entity.id: entity for entity in (self._run_from_dict(p) for p in payloads["runs"])}
-        results = {
-            entity.id: entity for entity in (self._result_from_dict(p) for p in payloads["results"])
-        }
-        comparison_tables = {
-            entity.id: entity
-            for entity in (self._comparison_table_from_dict(p) for p in payloads["comparison_tables"])
-        }
-        provenance = [self._provenance_from_dict(p) for p in store.load_provenance()]
+        provenance = [project_codec.provenance_from_dict(p) for p in store.load_provenance()]
         job_payloads = payloads["jobs"]
-        jobs = self._jobs_in_creation_order(job_payloads, provenance)
+        jobs = project_codec.jobs_in_creation_order(job_payloads, provenance)
         # Jobs saved before ``created_at`` existed carry a backfilled value that
         # is not on disk yet; leaving them out of the cache makes the next save
         # write it, so later loads use the persisted value.
@@ -472,12 +289,7 @@ class ProjectService:
         document = ProjectDocument(
             project_root=project_root,
             project=project,
-            structures=structures,
-            sites=sites,
-            calculations=calculations,
-            runs=runs,
-            results=results,
-            comparison_tables=comparison_tables,
+            **entities,
             jobs=jobs,
             provenance=provenance,
             ui_state=ui_state,
@@ -608,26 +420,8 @@ class ProjectService:
 
     def remove_candidate_sites(self, document: ProjectDocument, site_ids: Sequence[UUID]) -> list[MuonSite]:
         """Remove generated muon sites by id and record the edit in provenance."""
-        removed: list[MuonSite] = []
-        for site_id in site_ids:
-            site = document.sites.get(site_id)
-            if site is None or site.status not in _LEGACY_GENERATED_SITE_STATUSES:
-                continue
-            removed.append(document.sites.pop(site_id))
-
-        if removed:
-            self.append_provenance(
-                document,
-                ProvenanceRecord(
-                    action="delete_candidates",
-                    workflow_stage=WorkflowStage.MUON_GENERATION,
-                    actor="user",
-                    description=f"Deleted {len(removed)} generated muon site(s)",
-                    parameters={"site_labels": [site.label for site in removed]},
-                    input_entity_ids=[site.id for site in removed],
-                ),
-            )
-        return removed
+        outcome = site_generation_service.remove_candidate_sites(document, site_ids)
+        return self._record_site_change(document, outcome)
 
     def cluster_candidate_positions(
         self,
@@ -637,82 +431,15 @@ class ProjectService:
         anchor_fractional: Sequence[float],
     ) -> list[MuonSite]:
         """Move selected generated muon sites to symmetry representatives near an anchor."""
-
-        host = self._active_host_structure(document)
-        if host is None:
-            raise SiteGenerationError("Select a host structure before clustering generated muon positions.")
-        if not site_ids:
-            raise SiteGenerationError("Select one or more generated muon positions to cluster.")
-        if len(anchor_fractional) != 3:
-            raise SiteGenerationError("Enter a three-component fractional anchor position.")
-
-        lattice = host.lattice_vectors
-        host_species = host.species
-        host_positions = host.fractional_positions
-        anchor = [float(value) % 1.0 for value in anchor_fractional]
-        updated: list[MuonSite] = []
-        for site_id in site_ids:
-            site = document.sites.get(site_id)
-            if site is None or site.status not in _LEGACY_GENERATED_SITE_STATUSES:
-                continue
-            if len(site.fractional_position) != 3:
-                raise SiteGenerationError(f"Muon site '{site.label}' is missing a valid fractional position.")
-            clustered = closest_symmetry_equivalent_position(
-                site.fractional_position,
-                anchor_frac=anchor,
-                lattice_vectors=lattice,
-                host_species=host_species,
-                host_positions_frac=host_positions,
-            )
-            site.fractional_position = clustered
-            site.cartesian_position = lattice_frac_to_cart(clustered, lattice)
-            updated.append(site)
-
-        if not updated:
-            raise SiteGenerationError("Selected rows did not contain any generated muon positions.")
-
-        self.append_provenance(
-            document,
-            ProvenanceRecord(
-                action="cluster_candidate_positions",
-                workflow_stage=WorkflowStage.MUON_GENERATION,
-                actor="user",
-                description=f"Clustered {len(updated)} generated muon site(s) near an anchor position",
-                parameters={
-                    "anchor_fractional": anchor,
-                    "site_labels": [site.label for site in updated],
-                },
-                input_entity_ids=[site.id for site in updated],
-                output_entity_ids=[site.id for site in updated],
-            ),
+        outcome = site_generation_service.cluster_candidate_positions(
+            document, site_ids, anchor_fractional=anchor_fractional
         )
-        return updated
+        return self._record_site_change(document, outcome)
 
     def stage_generated_sites(self, document: ProjectDocument, site_ids: Sequence[UUID]) -> list[MuonSite]:
         """Mark generated muon sites as staged for structural relaxation."""
-
-        staged: list[MuonSite] = []
-        for site_id in site_ids:
-            site = document.sites.get(site_id)
-            if site is None or site.status not in _STAGEABLE_SITE_STATUSES:
-                continue
-            site.status = "staged"
-            staged.append(site)
-
-        if staged:
-            self.append_provenance(
-                document,
-                ProvenanceRecord(
-                    action="stage_muon_relaxation_sites",
-                    workflow_stage=WorkflowStage.MUON_RELAXATION,
-                    actor="user",
-                    description=f"Staged {len(staged)} generated muon site(s) for relaxation",
-                    parameters={"site_labels": [site.label for site in staged]},
-                    input_entity_ids=[site.id for site in staged],
-                    output_entity_ids=[site.id for site in staged],
-                ),
-            )
-        return staged
+        outcome = site_generation_service.stage_generated_sites(document, site_ids)
+        return self._record_site_change(document, outcome)
 
     def record_job_submission(
         self,
@@ -929,70 +656,20 @@ class ProjectService:
             ),
         )
 
-    @staticmethod
-    def _coerce_supercell_matrix(matrix: Any) -> list[list[int]] | None:
-        if not isinstance(matrix, list) or len(matrix) != 3:
-            return None
-        parsed: list[list[int]] = []
-        for row in matrix:
-            if not isinstance(row, list) or len(row) != 3:
-                return None
-            parsed.append([int(row[0]), int(row[1]), int(row[2])])
-        return parsed
+    # Workflow supercell assets and selection live in
+    # ``mufinder.services.supercell_assets``; these methods delegate to it.
 
-    @staticmethod
-    def _parse_optional_uuid(value: Any) -> UUID | None:
-        if value is None:
-            return None
-        try:
-            return UUID(str(value))
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _supercell_asset_label(workflow_stage: WorkflowStage, matrix: list[list[int]]) -> str:
-        if (
-            matrix[0][1] == 0
-            and matrix[0][2] == 0
-            and matrix[1][0] == 0
-            and matrix[1][2] == 0
-            and matrix[2][0] == 0
-            and matrix[2][1] == 0
-        ):
-            token = f"{matrix[0][0]}x{matrix[1][1]}x{matrix[2][2]}"
-        else:
-            token = (
-                f"[{matrix[0][0]} {matrix[0][1]} {matrix[0][2]}; "
-                f"{matrix[1][0]} {matrix[1][1]} {matrix[1][2]}; "
-                f"{matrix[2][0]} {matrix[2][1]} {matrix[2][2]}]"
-            )
-        return f"{workflow_stage.value} {token}"
-
-    def _workflow_supercells_state(self, document: ProjectDocument) -> dict[str, Any]:
-        raw_state = document.ui_state.get(_WORKFLOW_SUPERCELLS_STATE_KEY)
-        if isinstance(raw_state, dict):
-            return raw_state
-        state: dict[str, Any] = {}
-        document.ui_state[_WORKFLOW_SUPERCELLS_STATE_KEY] = state
-        return state
+    def _supercell_asset(self, structure: Structure) -> WorkflowSupercellAsset | None:
+        # ``mufinder.app.supercell_dialog`` reads asset metadata through this.
+        return supercell_assets.supercell_asset(structure)
 
     def get_workflow_supercell_selection(
         self,
         document: ProjectDocument,
         workflow_stage: WorkflowStage,
     ) -> WorkflowSupercellSelection:
-        raw = self._workflow_supercells_state(document).get(workflow_stage.value, {})
-        if not isinstance(raw, dict):
-            return WorkflowSupercellSelection()
-
-        mode = str(raw.get("mode", _WORKFLOW_SUPERCELL_UNIT_CELL)).strip().lower()
-        if mode != _WORKFLOW_SUPERCELL_SAVED:
-            return WorkflowSupercellSelection()
-
-        structure_id = self._parse_optional_uuid(raw.get("structure_id"))
-        if structure_id is None:
-            return WorkflowSupercellSelection()
-        return WorkflowSupercellSelection(mode=_WORKFLOW_SUPERCELL_SAVED, structure_id=structure_id)
+        """Return ``workflow_stage``'s persisted simulation-cell selection."""
+        return supercell_assets.get_workflow_supercell_selection(document, workflow_stage)
 
     def set_workflow_supercell_selection(
         self,
@@ -1000,39 +677,8 @@ class ProjectService:
         workflow_stage: WorkflowStage,
         selection: WorkflowSupercellSelection,
     ) -> None:
-        state = self._workflow_supercells_state(document)
-        if selection.mode == _WORKFLOW_SUPERCELL_SAVED and selection.structure_id is not None:
-            state[workflow_stage.value] = {
-                "mode": _WORKFLOW_SUPERCELL_SAVED,
-                "structure_id": str(selection.structure_id),
-            }
-            return
-
-        state[workflow_stage.value] = {"mode": _WORKFLOW_SUPERCELL_UNIT_CELL}
-
-    def _supercell_asset(self, structure: Structure) -> WorkflowSupercellAsset | None:
-        raw = structure.properties.get("supercell_asset")
-        if not isinstance(raw, dict):
-            return None
-
-        matrix = self._coerce_supercell_matrix(raw.get("matrix"))
-        if matrix is None:
-            return None
-
-        owner = raw.get("owner_workflow_stage")
-        try:
-            owner_stage = WorkflowStage(str(owner))
-        except ValueError:
-            return None
-
-        return WorkflowSupercellAsset(
-            structure_id=structure.id,
-            label=structure.label,
-            parent_structure_id=structure.parent_structure_id,
-            owner_workflow_stage=owner_stage,
-            matrix=matrix,
-            source_asset_structure_id=self._parse_optional_uuid(raw.get("source_asset_structure_id")),
-        )
+        """Persist ``workflow_stage``'s simulation-cell selection."""
+        supercell_assets.set_workflow_supercell_selection(document, workflow_stage, selection)
 
     def list_workflow_supercell_assets(
         self,
@@ -1040,167 +686,16 @@ class ProjectService:
         *,
         host_structure_id: UUID | None,
     ) -> list[WorkflowSupercellAsset]:
-        if host_structure_id is None:
-            return []
+        """Return the saved supercell assets built from ``host_structure_id``."""
+        return supercell_assets.list_workflow_supercell_assets(document, host_structure_id=host_structure_id)
 
-        assets: list[WorkflowSupercellAsset] = []
-        for structure in document.structures.values():
-            if structure.parent_structure_id != host_structure_id:
-                continue
-            asset = self._supercell_asset(structure)
-            if asset is None:
-                continue
-            assets.append(asset)
-
-        assets.sort(
-            key=lambda asset: (
-                asset.owner_workflow_stage.value,
-                asset.label.casefold(),
-                str(asset.structure_id),
-            )
-        )
-        return assets
-
-    def _find_matching_workflow_supercell_asset(
-        self,
-        document: ProjectDocument,
-        *,
-        host_structure_id: UUID,
-        workflow_stage: WorkflowStage,
-        matrix: list[list[int]],
-    ) -> Structure | None:
-        for structure in document.structures.values():
-            if structure.parent_structure_id != host_structure_id:
-                continue
-            asset = self._supercell_asset(structure)
-            if asset is None:
-                continue
-            if asset.owner_workflow_stage != workflow_stage:
-                continue
-            if asset.matrix != matrix:
-                continue
-            return structure
-        return None
-
-    @staticmethod
-    def _structure_atomic_spins(structure: Structure) -> list[float]:
-        raw = structure.properties.get("atomic_spins")
-        if raw is None:
-            raw = structure.properties.get("initial_magnetic_moments")
-
-        spins = [0.0] * len(structure.species)
-        saw_numeric = False
-        if isinstance(raw, list):
-            for index, value in enumerate(raw[: len(spins)]):
-                try:
-                    spins[index] = float(value)
-                    saw_numeric = True
-                except (TypeError, ValueError):
-                    spins[index] = 0.0
-
-        fallback = atomic_spins_from_structure(structure, atom_count=len(spins))
-        if saw_numeric:
-            if isinstance(structure.properties.get("supercell_asset"), dict):
-                return spins
-            if (
-                fallback is not None
-                and not has_nonzero_spins(spins)
-                and has_nonzero_spins(fallback)
-            ):
-                return fallback
-            return spins
-
-        if fallback is not None:
-            return fallback
-        return spins
-
-    def _repair_legacy_supercell_asset_spins(
-        self,
-        *,
-        host: Structure,
-        structure: Structure,
-        asset: WorkflowSupercellAsset,
-    ) -> bool:
-        host_spins = self._structure_atomic_spins(host)
-        if not has_nonzero_spins(host_spins):
-            return False
-
-        raw = structure.properties.get("atomic_spins")
-        raw_spins = [0.0] * len(structure.species)
-        saw_numeric = False
-        if isinstance(raw, list):
-            for index, value in enumerate(raw[: len(raw_spins)]):
-                try:
-                    raw_spins[index] = float(value)
-                    saw_numeric = True
-                except (TypeError, ValueError):
-                    raw_spins[index] = 0.0
-        if saw_numeric and has_nonzero_spins(raw_spins):
-            return False
-
-        try:
-            repaired, expanded_spins = build_supercell_structure(
-                host,
-                asset.matrix,
-                atomic_spins=host_spins,
-                propagation_vector=list(propagation_vector_from_structure(host)),
-            )
-        except ValueError:
-            return False
-
-        if not has_nonzero_spins(expanded_spins):
-            return False
-
-        structure.lattice_vectors = [list(vector) for vector in repaired.lattice_vectors]
-        structure.species = list(repaired.species)
-        structure.fractional_positions = [list(position) for position in repaired.fractional_positions]
-        repaired_properties = dict(repaired.properties)
-        repaired_properties["supercell_asset"] = {
-            "matrix": [list(row) for row in asset.matrix],
-            "owner_workflow_stage": asset.owner_workflow_stage.value,
-            "source_asset_structure_id": (
-                str(asset.source_asset_structure_id) if asset.source_asset_structure_id is not None else None
-            ),
-        }
-        structure.properties = repaired_properties
-        return True
-
-    def repair_supercell_asset_if_needed(
-        self,
-        document: ProjectDocument,
-        *,
-        structure_id: UUID,
-    ) -> bool:
-        structure = document.structures.get(structure_id)
-        if structure is None:
-            return False
-        asset = self._supercell_asset(structure)
-        if asset is None:
-            return False
-        parent_id = structure.parent_structure_id
-        if parent_id is None:
-            return False
-        host = document.structures.get(parent_id)
-        if host is None:
-            return False
-        return self._repair_legacy_supercell_asset_spins(host=host, structure=structure, asset=asset)
-
-    def _refresh_supercell_asset_if_needed(
-        self,
-        *,
-        host: Structure,
-        structure: Structure,
-    ) -> None:
-        if structure.parent_structure_id != host.id:
-            return
-        asset = self._supercell_asset(structure)
-        if asset is None:
-            return
-        self._repair_legacy_supercell_asset_spins(host=host, structure=structure, asset=asset)
+    def repair_supercell_asset_if_needed(self, document: ProjectDocument, *, structure_id: UUID) -> bool:
+        """Rebuild an asset that lacks its magnetic host's spins; return whether it was rebuilt."""
+        return supercell_assets.repair_supercell_asset_if_needed(document, structure_id=structure_id)
 
     def structure_atomic_spins(self, structure: Structure) -> list[float]:
         """Return numeric per-atom spins for a structure, defaulting missing values to zero."""
-        return self._structure_atomic_spins(structure)
+        return supercell_assets.structure_atomic_spins(structure)
 
     def structure_propagation_vector(self, structure: Structure) -> list[float]:
         """Return the structure propagation vector, defaulting to [0, 0, 0]."""
@@ -1217,76 +712,24 @@ class ProjectService:
         source_asset_structure_id: UUID | None = None,
         reuse_existing: bool = True,
     ) -> Structure:
-        host = document.structures.get(host_structure_id)
-        if host is None:
-            raise ValueError("host_structure_id must reference a known structure.")
-
-        parsed_matrix = self._coerce_supercell_matrix(matrix)
-        if parsed_matrix is None:
-            raise ValueError("Supercell matrix must be a 3x3 integer matrix.")
-
-        if reuse_existing:
-            existing = self._find_matching_workflow_supercell_asset(
-                document,
-                host_structure_id=host_structure_id,
-                workflow_stage=workflow_stage,
-                matrix=parsed_matrix,
-            )
-            if existing is not None:
-                self._refresh_supercell_asset_if_needed(host=host, structure=existing)
-                return existing
-
-        structure, _expanded_spins = build_supercell_structure(
-            host,
-            parsed_matrix,
-            atomic_spins=self._structure_atomic_spins(host),
-            propagation_vector=list(propagation_vector_from_structure(host)),
+        """Build and register a supercell asset, reusing a matching one by default."""
+        return supercell_assets.create_workflow_supercell_asset(
+            document,
+            workflow_stage=workflow_stage,
+            host_structure_id=host_structure_id,
+            matrix=matrix,
+            label=label,
+            source_asset_structure_id=source_asset_structure_id,
+            reuse_existing=reuse_existing,
         )
-        structure.label = str(label or "").strip() or self._supercell_asset_label(workflow_stage, parsed_matrix)
-        structure.parent_structure_id = host_structure_id
-        structure.properties["supercell_asset"] = {
-            "matrix": [list(row) for row in parsed_matrix],
-            "owner_workflow_stage": workflow_stage.value,
-            "source_asset_structure_id": (
-                str(source_asset_structure_id) if source_asset_structure_id is not None else None
-            ),
-        }
-        document.structures[structure.id] = structure
-        return structure
 
-    def supercell_asset_references(
-        self,
-        document: ProjectDocument,
-        *,
-        asset_structure_id: UUID,
-    ) -> list[str]:
+    def supercell_asset_references(self, document: ProjectDocument, *, asset_structure_id: UUID) -> list[str]:
         """Return user-facing references to a saved supercell asset."""
+        return supercell_assets.supercell_asset_references(document, asset_structure_id=asset_structure_id)
 
-        references: list[str] = []
-        for definition in document.calculations.values():
-            if asset_structure_id in definition.input_structure_ids:
-                references.append(
-                    f"{definition.workflow_stage.value} calculation '{definition.calc_type}'"
-                )
-
-        for stage_value, raw in self._workflow_supercells_state(document).items():
-            if not isinstance(raw, dict):
-                continue
-            raw_id = self._parse_optional_uuid(raw.get("structure_id"))
-            if raw_id == asset_structure_id:
-                references.append(f"{stage_value} active selection")
-
-        return references
-
-    def supercell_asset_is_frozen(
-        self,
-        document: ProjectDocument,
-        *,
-        asset_structure_id: UUID,
-    ) -> bool:
+    def supercell_asset_is_frozen(self, document: ProjectDocument, *, asset_structure_id: UUID) -> bool:
         """Return whether the asset is frozen into a calculation definition."""
-
-        return any(asset_structure_id in definition.input_structure_ids for definition in document.calculations.values())
+        return supercell_assets.supercell_asset_is_frozen(document, asset_structure_id=asset_structure_id)
 
     def rename_workflow_supercell_asset(
         self,
@@ -1296,15 +739,9 @@ class ProjectService:
         label: str,
     ) -> Structure:
         """Rename a saved supercell asset."""
-
-        structure = document.structures.get(asset_structure_id)
-        if structure is None or self._supercell_asset(structure) is None:
-            raise ValueError("Selected structure is not a saved supercell asset.")
-        cleaned = str(label).strip()
-        if not cleaned:
-            raise ValueError("Supercell name must not be empty.")
-        structure.label = cleaned
-        return structure
+        return supercell_assets.rename_workflow_supercell_asset(
+            document, asset_structure_id=asset_structure_id, label=label
+        )
 
     def update_workflow_supercell_asset_matrix(
         self,
@@ -1315,71 +752,13 @@ class ProjectService:
         label: str | None = None,
     ) -> Structure:
         """Regenerate an unfrozen saved supercell asset with a new matrix."""
-
-        structure = document.structures.get(asset_structure_id)
-        if structure is None:
-            raise ValueError("Selected supercell does not exist in this project.")
-        asset = self._supercell_asset(structure)
-        if asset is None:
-            raise ValueError("Selected structure is not a saved supercell asset.")
-        if self.supercell_asset_is_frozen(document, asset_structure_id=asset_structure_id):
-            raise ValueError("This supercell is already used by configured calculations; save a new copy instead.")
-        if structure.parent_structure_id is None:
-            raise ValueError("Saved supercell is missing its source structure.")
-        host = document.structures.get(structure.parent_structure_id)
-        if host is None:
-            raise ValueError("Saved supercell source structure is no longer available.")
-
-        parsed_matrix = self._coerce_supercell_matrix(matrix)
-        if parsed_matrix is None:
-            raise ValueError("Supercell matrix must be a 3x3 integer matrix.")
-
-        regenerated, _expanded_spins = build_supercell_structure(
-            host,
-            parsed_matrix,
-            atomic_spins=self._structure_atomic_spins(host),
-            propagation_vector=list(propagation_vector_from_structure(host)),
+        return supercell_assets.update_workflow_supercell_asset_matrix(
+            document, asset_structure_id=asset_structure_id, matrix=matrix, label=label
         )
-        structure.lattice_vectors = [list(vector) for vector in regenerated.lattice_vectors]
-        structure.species = list(regenerated.species)
-        structure.fractional_positions = [list(position) for position in regenerated.fractional_positions]
-        structure.label = str(label or "").strip() or structure.label or self._supercell_asset_label(
-            asset.owner_workflow_stage,
-            parsed_matrix,
-        )
-        structure.properties = dict(regenerated.properties)
-        structure.properties["supercell_asset"] = {
-            "matrix": [list(row) for row in parsed_matrix],
-            "owner_workflow_stage": asset.owner_workflow_stage.value,
-            "source_asset_structure_id": (
-                str(asset.source_asset_structure_id) if asset.source_asset_structure_id is not None else None
-            ),
-        }
-        structure.parent_structure_id = host.id
-        return structure
 
-    def delete_workflow_supercell_asset(
-        self,
-        document: ProjectDocument,
-        *,
-        asset_structure_id: UUID,
-    ) -> Structure:
+    def delete_workflow_supercell_asset(self, document: ProjectDocument, *, asset_structure_id: UUID) -> Structure:
         """Delete an unused saved supercell asset and clear stale active selections."""
-
-        structure = document.structures.get(asset_structure_id)
-        if structure is None or self._supercell_asset(structure) is None:
-            raise ValueError("Selected structure is not a saved supercell asset.")
-        if self.supercell_asset_is_frozen(document, asset_structure_id=asset_structure_id):
-            raise ValueError("This supercell is already used by configured calculations and cannot be deleted.")
-
-        removed = document.structures.pop(asset_structure_id)
-        state = self._workflow_supercells_state(document)
-        for stage_value, raw in list(state.items()):
-            if not isinstance(raw, dict):
-                continue
-            if self._parse_optional_uuid(raw.get("structure_id")) == asset_structure_id:
-                state[stage_value] = {"mode": _WORKFLOW_SUPERCELL_UNIT_CELL}
-        return removed
+        return supercell_assets.delete_workflow_supercell_asset(document, asset_structure_id=asset_structure_id)
 
     def use_workflow_supercell_asset(
         self,
@@ -1388,55 +767,14 @@ class ProjectService:
         workflow_stage: WorkflowStage,
         asset_structure_id: UUID,
     ) -> Structure:
-        host = self._active_host_structure(document)
-        if host is None:
-            raise ValueError("Load a host structure before selecting a saved supercell.")
-
-        asset_structure = document.structures.get(asset_structure_id)
-        if asset_structure is None:
-            raise ValueError("Selected supercell does not exist in this project.")
-
-        asset = self._supercell_asset(asset_structure)
-        if asset is None:
-            raise ValueError("Selected structure is not a saved supercell asset.")
-        if asset_structure.parent_structure_id != host.id:
-            raise ValueError("Selected supercell does not belong to the active host structure.")
-
-        selected = asset_structure
-        if asset.owner_workflow_stage != workflow_stage:
-            selected = self._find_matching_workflow_supercell_asset(
-                document,
-                host_structure_id=host.id,
-                workflow_stage=workflow_stage,
-                matrix=asset.matrix,
-            )
-            if selected is None:
-                selected = self.create_workflow_supercell_asset(
-                    document,
-                    workflow_stage=workflow_stage,
-                    host_structure_id=host.id,
-                    matrix=asset.matrix,
-                    source_asset_structure_id=asset.structure_id,
-                    reuse_existing=False,
-                )
-        self._refresh_supercell_asset_if_needed(host=host, structure=selected)
-
-        self.set_workflow_supercell_selection(
-            document,
-            workflow_stage,
-            WorkflowSupercellSelection(
-                mode=_WORKFLOW_SUPERCELL_SAVED,
-                structure_id=selected.id,
-            ),
+        """Select a saved supercell asset for ``workflow_stage``."""
+        return supercell_assets.use_workflow_supercell_asset(
+            document, workflow_stage=workflow_stage, asset_structure_id=asset_structure_id
         )
-        return selected
 
-    def clear_workflow_supercell_selection(
-        self,
-        document: ProjectDocument,
-        workflow_stage: WorkflowStage,
-    ) -> None:
-        self.set_workflow_supercell_selection(document, workflow_stage, WorkflowSupercellSelection())
+    def clear_workflow_supercell_selection(self, document: ProjectDocument, workflow_stage: WorkflowStage) -> None:
+        """Reset ``workflow_stage`` to simulate the single unit cell."""
+        supercell_assets.clear_workflow_supercell_selection(document, workflow_stage)
 
     def resolve_workflow_structure(
         self,
@@ -1445,92 +783,8 @@ class ProjectService:
         *,
         normalize_state: bool = False,
     ) -> WorkflowStructureResolution:
-        host = self._active_host_structure(document)
-        selection = self.get_workflow_supercell_selection(document, workflow_stage)
-        normalized = selection
-        available_assets = self.list_workflow_supercell_assets(
-            document,
-            host_structure_id=host.id if host is not None else None,
-        )
-
-        if host is None:
-            normalized = WorkflowSupercellSelection()
-            if normalize_state:
-                self.set_workflow_supercell_selection(document, workflow_stage, normalized)
-            return WorkflowStructureResolution(
-                structure=None,
-                available_assets=[],
-                selection=selection,
-                normalized_selection=normalized,
-                status_message="Load a host structure to choose a simulation cell.",
-            )
-
-        if selection.mode == _WORKFLOW_SUPERCELL_SAVED and selection.structure_id is not None:
-            selected_structure = document.structures.get(selection.structure_id)
-            selected_asset = (
-                self._supercell_asset(selected_structure)
-                if selected_structure is not None
-                else None
-            )
-            if (
-                selected_structure is not None
-                and selected_asset is not None
-                and selected_structure.parent_structure_id == host.id
-            ):
-                self._refresh_supercell_asset_if_needed(host=host, structure=selected_structure)
-                selected_asset = self._supercell_asset(selected_structure)
-                if selected_asset is None:
-                    normalized = WorkflowSupercellSelection()
-                    if normalize_state:
-                        self.set_workflow_supercell_selection(document, workflow_stage, normalized)
-                    return WorkflowStructureResolution(
-                        structure=host,
-                        available_assets=available_assets,
-                        selection=selection,
-                        normalized_selection=normalized,
-                        status_message="Saved supercell unavailable for the active host; using single unit cell.",
-                    )
-                source_workflow_stage = selected_asset.owner_workflow_stage
-                if selected_asset.source_asset_structure_id is not None:
-                    source_structure = document.structures.get(selected_asset.source_asset_structure_id)
-                    source_asset = (
-                        self._supercell_asset(source_structure)
-                        if source_structure is not None
-                        else None
-                    )
-                    if source_asset is not None:
-                        source_workflow_stage = source_asset.owner_workflow_stage
-                return WorkflowStructureResolution(
-                    structure=selected_structure,
-                    available_assets=available_assets,
-                    selection=selection,
-                    normalized_selection=selection,
-                    selected_asset=selected_asset,
-                    status_message=f"Using saved supercell: {selected_structure.label}",
-                    source_workflow_stage=source_workflow_stage,
-                )
-
-            normalized = WorkflowSupercellSelection()
-            if normalize_state:
-                self.set_workflow_supercell_selection(document, workflow_stage, normalized)
-            return WorkflowStructureResolution(
-                structure=host,
-                available_assets=available_assets,
-                selection=selection,
-                normalized_selection=normalized,
-                status_message="Saved supercell unavailable for the active host; using single unit cell.",
-            )
-
-        if normalize_state and normalized != selection:
-            self.set_workflow_supercell_selection(document, workflow_stage, normalized)
-
-        return WorkflowStructureResolution(
-            structure=host,
-            available_assets=available_assets,
-            selection=selection,
-            normalized_selection=normalized,
-            status_message="Using single unit cell.",
-        )
+        """Return the structure ``workflow_stage`` simulates and its selection state."""
+        return supercell_assets.resolve_workflow_structure(document, workflow_stage, normalize_state=normalize_state)
 
     def import_structure_file(
         self,
@@ -1613,7 +867,7 @@ class ProjectService:
         parameters: dict[str, Any],
         output_directory: Path,
         job_ids_by_cutoff: dict[str, str] | None = None,
-        simulation_cell_mode: str = _WORKFLOW_SUPERCELL_UNIT_CELL,
+        simulation_cell_mode: str = WORKFLOW_SUPERCELL_UNIT_CELL,
         supercell_source_workflow: str | None = None,
     ) -> CalculationDefinition:
         """Persist one convergence-cutoff configuration as a reusable definition.
@@ -1652,7 +906,7 @@ class ProjectService:
         parameters: dict[str, Any],
         output_directory: Path,
         job_ids_by_grid: dict[str, str] | None = None,
-        simulation_cell_mode: str = _WORKFLOW_SUPERCELL_UNIT_CELL,
+        simulation_cell_mode: str = WORKFLOW_SUPERCELL_UNIT_CELL,
         supercell_source_workflow: str | None = None,
     ) -> CalculationDefinition:
         """Persist one convergence-kpoint configuration as a reusable definition."""
@@ -1927,7 +1181,7 @@ class ProjectService:
         document.project.recommended_cutoff_cell_id = (
             str(cell_id).strip() if cell_id is not None and str(cell_id).strip() else None
         )
-        document.project.recommended_cutoff_xc_functional = _normalized_xc_functional(xc_functional)
+        document.project.recommended_cutoff_xc_functional = normalized_xc_functional(xc_functional)
         if document.project.recommended_cutoff_xc_functional is not None:
             document.project.recommended_xc_functional = (
                 document.project.recommended_cutoff_xc_functional
@@ -2049,7 +1303,7 @@ class ProjectService:
         document.project.recommended_kpoint_cell_id = (
             str(cell_id).strip() if cell_id is not None and str(cell_id).strip() else None
         )
-        document.project.recommended_kpoint_xc_functional = _normalized_xc_functional(xc_functional)
+        document.project.recommended_kpoint_xc_functional = normalized_xc_functional(xc_functional)
         if document.project.recommended_kpoint_xc_functional is not None:
             document.project.recommended_xc_functional = (
                 document.project.recommended_kpoint_xc_functional
@@ -2092,7 +1346,7 @@ class ProjectService:
         discarded.
         """
 
-        functional = _normalized_xc_functional(xc_functional)
+        functional = normalized_xc_functional(xc_functional)
         document.project.recommended_xc_functional = functional
         self.append_provenance(
             document,
@@ -2354,347 +1608,26 @@ class ProjectService:
     ) -> list[MuonSite]:
         """Create generated muon sites from a generation request.
 
-        Random strategies enforce periodic muon-muon and muon-atom distance
-        constraints. Element-attached generation ranks alternative starts for
-        each selected host atom by local clearance from the surrounding host.
+        See :func:`mufinder.services.site_generation_service.generate_candidate_sites`.
         """
-        host = self._active_host_structure(document)
-        host_positions = host.fractional_positions if host else []
-        host_species = host.species if host else []
-        lattice = host.lattice_vectors if host and host.lattice_vectors else None
-
-        created_sites: list[MuonSite] = []
-        random_selection_mode = self._random_selection_mode(parameters) if method == "random" else ""
-        if method == "manual":
-            requested_count: int | None = 1
-        elif method == "random" and random_selection_mode == "separation":
-            requested_count = None
-        elif method == "uep_clusters" and isinstance(parameters.get("selections"), list):
-            requested_count = len(parameters.get("selections", []))
-        elif method == "near_element":
-            target = str(parameters.get("element", "")).strip().lower()
-            muons_per_atom_for_count = max(
-                1,
-                int(
-                    parameters.get(
-                        "muons_per_atom",
-                        parameters.get("max_candidates_per_atom", parameters.get("count", 1)),
-                    )
-                ),
-            )
-            matching_atoms = sum(1 for species in host_species if str(species).strip().lower() == target)
-            requested_count = matching_atoms * muons_per_atom_for_count if target and matching_atoms else None
-        else:
-            requested_count = int(parameters.get("count", 1))
-        attempts_used = 1
-
-        if method == "manual":
-            coord_system = str(parameters.get("coord_system", "fractional"))
-            coords = [float(parameters.get("x", 0.0)), float(parameters.get("y", 0.0)), float(parameters.get("z", 0.0))]
-            if coord_system == "cartesian":
-                fractional = lattice_cart_to_frac(coords, lattice or [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
-                fractional = [v % 1.0 for v in fractional]
-                cartesian = lattice_frac_to_cart(
-                    fractional,
-                    lattice or [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                )
-            else:
-                fractional = [v % 1.0 for v in coords]
-                cartesian = lattice_frac_to_cart(
-                    fractional,
-                    lattice or [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                )
-
-            label_prefix = "Manual Site"
-            site = MuonSite(
-                label=f"{label_prefix} {self._next_site_label_number(document, label_prefix)}",
-                status=_GENERATED_SITE_STATUS,
-                fractional_position=fractional,
-                cartesian_position=cartesian,
-                generation_method=method,
-                source_structure_id=host.id if host else None,
-                properties={"coordinate_system": coord_system},
-            )
-            created_sites.append(site)
-        elif method == "random":
-            seed = self._parse_optional_int(parameters.get("seed"), field_name="seed")
-            min_muon_atom = float(parameters.get("min_muon_atom", 1.0))
-            include_symmetry_equivalents = bool(parameters.get("include_symmetry_equivalents", True))
-            estimated_min_muon_muon: float | None = None
-            if random_selection_mode == "separation":
-                min_muon_muon = float(parameters.get("min_muon_muon", 0.8))
-                predicted_count = max(
-                    1,
-                    int(
-                        estimate_random_site_count_from_separation(
-                            lattice_vectors=lattice,
-                            host_positions_frac=host_positions,
-                            host_species=host_species,
-                            min_muon_muon=min_muon_muon,
-                            min_muon_atom=min_muon_atom,
-                            include_symmetry_equivalents=include_symmetry_equivalents,
-                        )
-                        + 0.999
-                    ),
-                )
-                points, attempts_used = generate_random_sites_by_distance(
-                    lattice_vectors=lattice,
-                    host_positions_frac=host_positions,
-                    host_species=host_species,
-                    min_muon_muon=min_muon_muon,
-                    min_muon_atom=min_muon_atom,
-                    max_attempts=int(parameters.get("max_attempts", 20000)),
-                    seed=seed,
-                    include_symmetry_equivalents=include_symmetry_equivalents,
-                    expected_count=predicted_count,
-                    progress_callback=progress_callback,
-                )
-            else:
-                target_count = max(1, int(requested_count or parameters.get("count", 1)))
-                estimated_min_muon_muon = estimate_muon_muon_separation_for_count(
-                    lattice_vectors=lattice,
-                    host_positions_frac=host_positions,
-                    host_species=host_species,
-                    target_count=target_count,
-                    min_muon_atom=min_muon_atom,
-                    include_symmetry_equivalents=include_symmetry_equivalents,
-                )
-                min_muon_muon = estimated_min_muon_muon
-                last_error: SiteGenerationError | None = None
-                for _attempt in range(6):
-                    try:
-                        points, attempts_used = generate_random_sites(
-                            lattice_vectors=lattice,
-                            host_positions_frac=host_positions,
-                            host_species=host_species,
-                            count=target_count,
-                            min_muon_muon=min_muon_muon,
-                            min_muon_atom=min_muon_atom,
-                            max_attempts=int(parameters.get("max_attempts", 20000)),
-                            seed=seed,
-                            include_symmetry_equivalents=include_symmetry_equivalents,
-                            progress_callback=progress_callback,
-                        )
-                        break
-                    except SiteGenerationError as exc:
-                        last_error = exc
-                        min_muon_muon *= 0.9
-                else:
-                    assert last_error is not None
-                    raise last_error
-            label_prefix = "Random Site"
-            start_index = self._next_site_label_number(document, label_prefix)
-            for idx, point in enumerate(points, start=1):
-                site = MuonSite(
-                    label=f"{label_prefix} {start_index + idx - 1}",
-                    status=_GENERATED_SITE_STATUS,
-                    fractional_position=point.fractional,
-                    cartesian_position=point.cartesian,
-                    generation_method=method,
-                    source_structure_id=host.id if host else None,
-                    properties={
-                        "selection_mode": random_selection_mode,
-                        "min_muon_muon": min_muon_muon,
-                        "min_muon_atom": min_muon_atom,
-                        "include_symmetry_equivalents": include_symmetry_equivalents,
-                        **({"target_count": int(requested_count or 0)} if random_selection_mode == "count" else {}),
-                        **(
-                            {"estimated_min_muon_muon": estimated_min_muon_muon}
-                            if estimated_min_muon_muon is not None
-                            else {}
-                        ),
-                    },
-                )
-                created_sites.append(site)
-        elif method == "near_element":
-            muons_per_atom = max(
-                1,
-                int(
-                    parameters.get(
-                        "muons_per_atom",
-                        parameters.get("max_candidates_per_atom", parameters.get("count", 1)),
-                    )
-                ),
-            )
-            points, attempts_used = generate_attached_element_sites(
-                lattice_vectors=lattice,
-                host_species=host_species,
-                host_positions_frac=host_positions,
-                target_element=str(parameters.get("element", "")).strip(),
-                muons_per_atom=muons_per_atom,
-                bond_distance=float(parameters.get("bond_distance", 1.0)),
-                min_muon_atom=float(parameters.get("min_muon_atom", 0.8)),
-                progress_callback=progress_callback,
-            )
-            label_prefix = f"Attached-{parameters.get('element', '').strip() or 'Element'} Site"
-            start_index = self._next_site_label_number(document, label_prefix)
-            for idx, point in enumerate(points, start=1):
-                site = MuonSite(
-                    label=f"{label_prefix} {start_index + idx - 1}",
-                    status=_GENERATED_SITE_STATUS,
-                    fractional_position=point.fractional,
-                    cartesian_position=point.cartesian,
-                    generation_method=method,
-                    source_structure_id=host.id if host else None,
-                    properties={
-                        "target_element": str(parameters.get("element", "")).strip(),
-                        "strategy": "attached",
-                        "muons_per_atom": muons_per_atom,
-                        "bond_distance": float(parameters.get("bond_distance", 1.0)),
-                        "min_muon_atom": float(parameters.get("min_muon_atom", 0.8)),
-                    },
-                )
-                created_sites.append(site)
-        elif method == "uep_clusters":
-            selections = parameters.get("selections", [])
-            if not isinstance(selections, list) or not selections:
-                raise SiteGenerationError("Select one or more UEP cluster rows to add as generated sites.")
-
-            skipped_duplicates = 0
-            for selection in selections:
-                if not isinstance(selection, dict):
-                    continue
-                fractional_raw = selection.get("fractional_position", selection.get("fractional", []))
-                cartesian_raw = selection.get("cartesian_position", selection.get("cartesian", []))
-                if (
-                    not isinstance(fractional_raw, (list, tuple))
-                    or len(fractional_raw) != 3
-                    or not isinstance(cartesian_raw, (list, tuple))
-                    or len(cartesian_raw) != 3
-                ):
-                    raise SiteGenerationError("Selected UEP cluster row is missing valid coordinates.")
-
-                fractional = [float(value) % 1.0 for value in fractional_raw]
-                cartesian = [float(value) for value in cartesian_raw]
-                source_key = str(selection.get("source_key", "")).strip()
-                if source_key and self._has_duplicate_uep_cluster_site(document, source_key, fractional):
-                    skipped_duplicates += 1
-                    continue
-
-                properties = selection.get("properties", {})
-                if not isinstance(properties, dict):
-                    properties = {}
-                method_name = str(selection.get("generation_method", "")).strip()
-                if method_name not in {"uep_cluster", "uep_cluster_member"}:
-                    method_name = "uep_cluster_member" if properties.get("selection_kind") == "member" else "uep_cluster"
-                merged_properties = dict(properties)
-                if source_key:
-                    merged_properties["uep_source_key"] = source_key
-
-                source_structure_id = None
-                raw_source_structure_id = selection.get("source_structure_id")
-                if raw_source_structure_id:
-                    try:
-                        source_structure_id = UUID(str(raw_source_structure_id))
-                    except ValueError:
-                        source_structure_id = host.id if host else None
-                elif host is not None:
-                    source_structure_id = host.id
-
-                label_hint = str(selection.get("label", "")).strip()
-                if not label_hint:
-                    label_hint = "UEP Cluster Site" if method_name == "uep_cluster" else "UEP Cluster Member"
-                label = (
-                    label_hint
-                    if str(selection.get("label", "")).strip()
-                    else f"{label_hint} {len(document.sites) + len(created_sites) + 1}"
-                )
-                site = MuonSite(
-                    label=label,
-                    status=_GENERATED_SITE_STATUS,
-                    fractional_position=fractional,
-                    cartesian_position=cartesian,
-                    generation_method=method_name,
-                    source_structure_id=source_structure_id,
-                    properties=merged_properties,
-                )
-                created_sites.append(site)
-
-            if not created_sites and skipped_duplicates:
-                raise SiteGenerationError("Selected UEP cluster rows are already present in the generated-site list.")
-            if not created_sites:
-                raise SiteGenerationError("Selected UEP cluster rows did not contain any usable generated sites.")
-        else:
-            raise SiteGenerationError(f"Unknown generation method '{method}'.")
-
-        for site in created_sites:
-            document.sites[site.id] = site
-
-        warning: str | None = None
-        if requested_count is not None and method != "manual" and len(created_sites) < requested_count:
-            reason = (
-                "Some selected UEP rows were already present."
-                if method == "uep_clusters"
-                else "Increase max attempts, reduce distance limits, or use a larger supercell."
-            )
-            warning = f"Requested {requested_count} sites but generated {len(created_sites)}. {reason}"
-
-        record = ProvenanceRecord(
-            action="generate_candidates",
-            workflow_stage=WorkflowStage.MUON_GENERATION,
-            actor="user",
-            description=f"Generated {len(created_sites)} site(s) via {method}",
-            parameters={"method": method, **parameters},
-            output_entity_ids=[site.id for site in created_sites],
+        outcome = site_generation_service.generate_candidate_sites(
+            document, method=method, parameters=parameters, progress_callback=progress_callback
         )
-        self.append_provenance(document, record)
+        return self._record_site_change(document, outcome)
 
-        if warning:
-            self.append_provenance(
-                document,
-                ProvenanceRecord(
-                    action="generation_partial",
-                    workflow_stage=WorkflowStage.MUON_GENERATION,
-                    actor="system",
-                    description=warning,
-                    parameters={"requested": requested_count, "generated": len(created_sites), "attempts": attempts_used},
-                    output_entity_ids=[site.id for site in created_sites],
-                ),
-            )
-        return created_sites
-
-    @staticmethod
-    def _has_duplicate_uep_cluster_site(document: ProjectDocument, source_key: str, fractional: Sequence[float]) -> bool:
-        for site in document.sites.values():
-            if site.properties.get("uep_source_key") == source_key:
-                return True
-            if site.generation_method not in {"uep_cluster", "uep_cluster_member", "uep_batch_cluster"}:
-                continue
-            if not site.fractional_position or len(site.fractional_position) != 3:
-                continue
-            if all(abs((float(a) - float(b) + 0.5) % 1.0 - 0.5) <= 1e-6 for a, b in zip(site.fractional_position, fractional)):
-                return True
-        return False
-
-    @staticmethod
-    def _next_site_label_number(document: ProjectDocument, prefix: str) -> int:
-        pattern = re.compile(rf"^{re.escape(prefix.strip())}\s+(\d+)$")
-        used_numbers: list[int] = []
-        for site in document.sites.values():
-            match = pattern.match(str(site.label).strip())
-            if match is not None:
-                used_numbers.append(int(match.group(1)))
-        return max(used_numbers, default=0) + 1
-
-    @staticmethod
-    def _random_selection_mode(parameters: dict[str, Any]) -> str:
-        mode = str(parameters.get("selection_mode", parameters.get("mode", ""))).strip().lower()
-        if mode in {"separation", "distance", "spacing"}:
-            return "separation"
-        if mode in {"count", "number", "target_count"}:
-            return "count"
-        return "count" if "count" in parameters else "separation"
-
-    def _active_host_structure(self, document: ProjectDocument) -> Structure | None:
-        """Return the currently selected host structure if available."""
-        host_id = document.project.host_structure_id
-        if host_id is None:
-            return None
-        return document.structures.get(host_id)
+    def _record_site_change(
+        self,
+        document: ProjectDocument,
+        outcome: site_generation_service.SiteGenerationOutcome,
+    ) -> list[MuonSite]:
+        """Append a generation step's provenance and return the sites it touched."""
+        for record in outcome.provenance:
+            self.append_provenance(document, record)
+        return outcome.sites
 
     def active_host_structure(self, document: ProjectDocument) -> Structure | None:
         """Return the current host structure, if one is selected."""
-        return self._active_host_structure(document)
+        return active_host_structure(document)
 
     def list_promotable_host_structures(self, document: ProjectDocument) -> list[PromotableHost]:
         """Return structures eligible to be the active host, ordered for display.
@@ -2717,7 +1650,7 @@ class ProjectService:
 
         promotable: list[PromotableHost] = []
         for structure in document.structures.values():
-            if self._supercell_asset(structure) is not None:
+            if supercell_assets.supercell_asset(structure) is not None:
                 continue
             if structure.origin == "imported":
                 hint = f"Imported from {structure.source_file}" if structure.source_file else "Imported structure"
@@ -2846,7 +1779,7 @@ class ProjectService:
         ensures none of them target a structure other than the active host.
         Returns None when all sites are consistent with the active host.
         """
-        host = self._active_host_structure(document)
+        host = active_host_structure(document)
         if host is None:
             return None
         offenders: list[tuple[UUID, str, UUID | None, str]] = []
@@ -2882,7 +1815,7 @@ class ProjectService:
         parent_structure_id chain to find the underlying host for each structure.
         Returns None when all structures resolve to the active host.
         """
-        host = self._active_host_structure(document)
+        host = active_host_structure(document)
         if host is None:
             return None
         offenders: list[tuple[UUID, str, UUID | None, str]] = []
@@ -2926,18 +1859,6 @@ class ProjectService:
                 return renamed
             counter += 1
 
-    def _parse_optional_int(self, value: Any, *, field_name: str) -> int | None:
-        """Parse optional integer-like input from UI payloads."""
-        if value is None:
-            return None
-        text = str(value).strip()
-        if not text:
-            return None
-        try:
-            return int(text)
-        except ValueError as exc:
-            raise SiteGenerationError(f"{field_name} must be an integer if provided.") from exc
-
     def validate_document(self, document: ProjectDocument) -> list[str]:
         """Validate cross-entity references and return detected issues."""
         issues: list[str] = []
@@ -2950,7 +1871,7 @@ class ProjectService:
                 issues.append(
                     f"structure {structure.id} references missing parent structure {structure.parent_structure_id}"
                 )
-            asset = self._supercell_asset(structure)
+            asset = supercell_assets.supercell_asset(structure)
             if asset is None:
                 continue
             if structure.parent_structure_id is None:
@@ -3062,359 +1983,3 @@ class ProjectService:
         }
         if target not in allowed[current]:
             raise ValueError(f"Invalid job transition: {current.value} -> {target.value}")
-
-    def _project_from_dict(self, payload: dict[str, Any]) -> Project:
-        raw_recommended_cutoff = payload.get("recommended_cutoff_energy")
-        try:
-            recommended_cutoff = float(raw_recommended_cutoff) if raw_recommended_cutoff is not None else None
-        except (TypeError, ValueError):
-            recommended_cutoff = None
-
-        raw_recommended_method = payload.get("recommended_cutoff_method")
-        recommended_method = None
-        if isinstance(raw_recommended_method, str) and raw_recommended_method.strip():
-            recommended_method = raw_recommended_method.strip()
-
-        raw_energy_threshold = payload.get("recommended_cutoff_energy_threshold")
-        try:
-            recommended_energy_threshold = (
-                float(raw_energy_threshold) if raw_energy_threshold is not None else None
-            )
-        except (TypeError, ValueError):
-            recommended_energy_threshold = None
-
-        raw_force_threshold = payload.get("recommended_cutoff_force_threshold")
-        try:
-            recommended_force_threshold = (
-                float(raw_force_threshold) if raw_force_threshold is not None else None
-            )
-        except (TypeError, ValueError):
-            recommended_force_threshold = None
-
-        raw_stress_threshold = payload.get("recommended_cutoff_stress_threshold")
-        try:
-            recommended_stress_threshold = (
-                float(raw_stress_threshold) if raw_stress_threshold is not None else None
-            )
-        except (TypeError, ValueError):
-            recommended_stress_threshold = None
-
-        raw_recommended_cutoff_cell_id = payload.get("recommended_cutoff_cell_id")
-        recommended_cutoff_cell_id = None
-        if isinstance(raw_recommended_cutoff_cell_id, str) and raw_recommended_cutoff_cell_id.strip():
-            recommended_cutoff_cell_id = raw_recommended_cutoff_cell_id.strip()
-
-        raw_recommended_kpoint_grid = payload.get("recommended_kpoint_grid")
-        recommended_kpoint_grid: tuple[int, int, int] | None = None
-        if isinstance(raw_recommended_kpoint_grid, list) and len(raw_recommended_kpoint_grid) == 3:
-            try:
-                recommended_kpoint_grid = (
-                    int(raw_recommended_kpoint_grid[0]),
-                    int(raw_recommended_kpoint_grid[1]),
-                    int(raw_recommended_kpoint_grid[2]),
-                )
-            except (TypeError, ValueError):
-                recommended_kpoint_grid = None
-
-        raw_recommended_kpoint_lattice = payload.get("recommended_kpoint_lattice")
-        recommended_kpoint_lattice: list[list[float]] | None = None
-        if isinstance(raw_recommended_kpoint_lattice, list) and len(raw_recommended_kpoint_lattice) == 3:
-            parsed_lattice: list[list[float]] = []
-            valid_lattice = True
-            for row in raw_recommended_kpoint_lattice:
-                if not isinstance(row, list) or len(row) != 3:
-                    valid_lattice = False
-                    break
-                try:
-                    parsed_lattice.append([float(row[0]), float(row[1]), float(row[2])])
-                except (TypeError, ValueError):
-                    valid_lattice = False
-                    break
-            if valid_lattice:
-                recommended_kpoint_lattice = parsed_lattice
-
-        raw_recommended_kpoint_method = payload.get("recommended_kpoint_method")
-        recommended_kpoint_method = None
-        if isinstance(raw_recommended_kpoint_method, str) and raw_recommended_kpoint_method.strip():
-            recommended_kpoint_method = raw_recommended_kpoint_method.strip()
-
-        raw_kpoint_energy_threshold = payload.get("recommended_kpoint_energy_threshold")
-        try:
-            recommended_kpoint_energy_threshold = (
-                float(raw_kpoint_energy_threshold) if raw_kpoint_energy_threshold is not None else None
-            )
-        except (TypeError, ValueError):
-            recommended_kpoint_energy_threshold = None
-
-        raw_kpoint_force_threshold = payload.get("recommended_kpoint_force_threshold")
-        try:
-            recommended_kpoint_force_threshold = (
-                float(raw_kpoint_force_threshold) if raw_kpoint_force_threshold is not None else None
-            )
-        except (TypeError, ValueError):
-            recommended_kpoint_force_threshold = None
-
-        raw_kpoint_stress_threshold = payload.get("recommended_kpoint_stress_threshold")
-        try:
-            recommended_kpoint_stress_threshold = (
-                float(raw_kpoint_stress_threshold) if raw_kpoint_stress_threshold is not None else None
-            )
-        except (TypeError, ValueError):
-            recommended_kpoint_stress_threshold = None
-
-        raw_recommended_kpoint_cell_id = payload.get("recommended_kpoint_cell_id")
-        recommended_kpoint_cell_id = None
-        if isinstance(raw_recommended_kpoint_cell_id, str) and raw_recommended_kpoint_cell_id.strip():
-            recommended_kpoint_cell_id = raw_recommended_kpoint_cell_id.strip()
-
-        return Project(
-            recommended_cutoff_xc_functional=_normalized_xc_functional(
-                payload.get("recommended_cutoff_xc_functional")
-            ),
-            recommended_kpoint_xc_functional=_normalized_xc_functional(
-                payload.get("recommended_kpoint_xc_functional")
-            ),
-            recommended_xc_functional=_normalized_xc_functional(
-                payload.get("recommended_xc_functional")
-            ),
-            id=UUID(payload["id"]),
-            name=payload["name"],
-            schema_version=payload["schema_version"],
-            app_version=payload.get("app_version", current_version()),
-            created_at=parse_datetime(payload["created_at"]) or utc_now(),
-            modified_at=parse_datetime(payload["modified_at"]) or utc_now(),
-            host_structure_id=parse_uuid(payload.get("host_structure_id")),
-            magnetic_structure=payload.get("magnetic_structure"),
-            supercell_matrix=payload.get("supercell_matrix", [[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
-            recommended_cutoff_energy=recommended_cutoff,
-            recommended_cutoff_method=recommended_method,
-            recommended_cutoff_energy_threshold=recommended_energy_threshold,
-            recommended_cutoff_force_threshold=recommended_force_threshold,
-            recommended_cutoff_stress_threshold=recommended_stress_threshold,
-            recommended_cutoff_cell_id=recommended_cutoff_cell_id,
-            recommended_kpoint_grid=recommended_kpoint_grid,
-            recommended_kpoint_lattice=recommended_kpoint_lattice,
-            recommended_kpoint_method=recommended_kpoint_method,
-            recommended_kpoint_energy_threshold=recommended_kpoint_energy_threshold,
-            recommended_kpoint_force_threshold=recommended_kpoint_force_threshold,
-            recommended_kpoint_stress_threshold=recommended_kpoint_stress_threshold,
-            recommended_kpoint_cell_id=recommended_kpoint_cell_id,
-            notes=payload.get("notes", ""),
-        )
-
-    def _structure_from_dict(self, payload: dict[str, Any]) -> Structure:
-        return Structure(
-            id=UUID(payload["id"]),
-            label=payload.get("label", ""),
-            origin=payload.get("origin", "imported"),
-            lattice_vectors=payload.get("lattice_vectors", []),
-            species=payload.get("species", []),
-            fractional_positions=payload.get("fractional_positions", []),
-            source_file=payload.get("source_file"),
-            parent_structure_id=parse_uuid(payload.get("parent_structure_id")),
-            properties=payload.get("properties", {}),
-        )
-
-    def _calculation_from_dict(self, payload: dict[str, Any]) -> CalculationDefinition:
-        return CalculationDefinition(
-            id=UUID(payload["id"]),
-            workflow_stage=WorkflowStage(payload["workflow_stage"]),
-            calc_type=payload.get("calc_type", ""),
-            parameters=payload.get("parameters", {}),
-            input_structure_ids=[UUID(v) for v in payload.get("input_structure_ids", [])],
-            input_site_ids=[UUID(v) for v in payload.get("input_site_ids", [])],
-            custom_param_text=payload.get("custom_param_text"),
-            created_at=parse_datetime(payload.get("created_at")) or utc_now(),
-        )
-
-    def _run_from_dict(self, payload: dict[str, Any]) -> CalculationRun:
-        return CalculationRun(
-            id=UUID(payload["id"]),
-            definition_id=parse_uuid(payload.get("definition_id")),
-            job_id=parse_uuid(payload.get("job_id")),
-            run_index=int(payload.get("run_index", 1)),
-            status=JobStatus(payload.get("status", JobStatus.DEFINED.value)),
-            started_at=parse_datetime(payload.get("started_at")),
-            completed_at=parse_datetime(payload.get("completed_at")),
-            result_id=parse_uuid(payload.get("result_id")),
-            warnings=payload.get("warnings", []),
-            convergence_achieved=payload.get("convergence_achieved"),
-        )
-
-    def _result_from_dict(self, payload: dict[str, Any]) -> Result:
-        return Result(
-            id=UUID(payload["id"]),
-            calculation_run_id=parse_uuid(payload.get("calculation_run_id")),
-            result_type=payload.get("result_type", ""),
-            data=payload.get("data", {}),
-            output_files=payload.get("output_files", []),
-            derived_structure_ids=[UUID(v) for v in payload.get("derived_structure_ids", [])],
-            created_at=parse_datetime(payload.get("created_at")) or utc_now(),
-        )
-
-    def _comparison_table_from_dict(self, payload: dict[str, Any]) -> ComparisonTable:
-        return ComparisonTable(
-            id=UUID(payload["id"]),
-            label=payload.get("label", ""),
-            experimental_structure_id=parse_uuid(payload.get("experimental_structure_id")),
-            dft_structure_ids=[UUID(v) for v in payload.get("dft_structure_ids", [])],
-            dft_labels=[str(label) for label in payload.get("dft_labels", [])],
-            result_data=payload.get("result_data", {}),
-            created_at=parse_datetime(payload.get("created_at")) or utc_now(),
-        )
-
-    def _jobs_in_creation_order(
-        self,
-        payloads: list[dict[str, Any]],
-        provenance: Sequence[ProvenanceRecord],
-    ) -> dict[UUID, Job]:
-        """Build the ``jobs`` mapping from job payloads, ordered by creation.
-
-        Job files are read back sorted by filename, which is the job's random
-        UUID, so the on-disk order carries no meaning. Sorting by
-        ``(created_at, id)`` restores the order the jobs were created in, which
-        is the order the dashboard shows them in during a session.
-
-        Payloads saved before ``created_at`` existed get it backfilled by
-        :meth:`_legacy_job_created_at`; the next save persists the value.
-        """
-
-        jobs = [self._job_from_dict(payload) for payload in payloads]
-        legacy_ids = {job.id for job, payload in zip(jobs, payloads) if payload.get("created_at") is None}
-        if legacy_ids:
-            first_mentioned = self._job_first_mentions(legacy_ids, provenance)
-            for job in jobs:
-                if job.id in legacy_ids:
-                    job.created_at = self._legacy_job_created_at(job, first_mentioned.get(job.id))
-        jobs.sort(key=lambda job: (job.created_at, str(job.id)))
-        return {job.id: job for job in jobs}
-
-    @staticmethod
-    def _job_first_mentions(
-        job_ids: set[UUID],
-        provenance: Sequence[ProvenanceRecord],
-    ) -> dict[UUID, datetime]:
-        """Return when each job in ``job_ids`` first appears in provenance.
-
-        The provenance log is append-only, so its records are chronological.
-        A batch ``submit_jobs`` record lists its jobs in submission order under
-        one timestamp; each job's position in that list is added as
-        microseconds so the batch keeps its order instead of tying.
-        """
-
-        first_mentioned: dict[UUID, datetime] = {}
-        for record in provenance:
-            mentioned = [*record.output_entity_ids, *record.input_entity_ids]
-            if record.job_id is not None:
-                mentioned.append(record.job_id)
-            for position, entity_id in enumerate(mentioned):
-                if entity_id in job_ids and entity_id not in first_mentioned:
-                    first_mentioned[entity_id] = _as_aware_utc(record.timestamp) + timedelta(
-                        microseconds=position
-                    )
-        return first_mentioned
-
-    @staticmethod
-    def _legacy_job_created_at(job: Job, first_mentioned: datetime | None) -> datetime:
-        """Estimate ``created_at`` for a job saved before the field existed.
-
-        Prefers the job's first provenance mention, then its earliest lifecycle
-        timestamp. A job with neither (never submitted, no provenance) sorts
-        after every dated job; ties fall back to the job id, which is stable.
-        """
-
-        if first_mentioned is not None:
-            return first_mentioned
-        lifecycle = [
-            _as_aware_utc(stamp)
-            for stamp in (job.submitted_at, job.started_at, job.completed_at, job.dismissed_at)
-            if stamp is not None
-        ]
-        if lifecycle:
-            return min(lifecycle)
-        return job.created_at
-
-    def _job_from_dict(self, payload: dict[str, Any]) -> Job:
-        raw_num_processes = payload.get("num_processes")
-        num_processes = None
-        if raw_num_processes is not None:
-            try:
-                parsed_num_processes = int(raw_num_processes)
-            except (TypeError, ValueError):
-                parsed_num_processes = 0
-            if parsed_num_processes > 0:
-                num_processes = parsed_num_processes
-        return Job(
-            id=UUID(payload["id"]),
-            label=payload.get("label", ""),
-            workflow_stage=WorkflowStage(payload["workflow_stage"]),
-            calc_type=payload.get("calc_type", ""),
-            status=JobStatus(payload["status"]),
-            execution_target=payload.get("execution_target", "local"),
-            created_at=_as_aware_utc(parse_datetime(payload.get("created_at")) or utc_now()),
-            submitted_at=parse_datetime(payload.get("submitted_at")),
-            started_at=parse_datetime(payload.get("started_at")),
-            completed_at=parse_datetime(payload.get("completed_at")),
-            remote_job_id=payload.get("remote_job_id"),
-            remote_directory=payload.get("remote_directory"),
-            num_processes=num_processes,
-            tags=payload.get("tags", []),
-            error_message=payload.get("error_message"),
-            failure_reason=_failure_reason_from_payload(payload.get("failure_reason")),
-            last_checked_at=parse_datetime(payload.get("last_checked_at")),
-            last_status_source=payload.get("last_status_source"),
-            last_status_message=payload.get("last_status_message"),
-            dismissed_at=parse_datetime(payload.get("dismissed_at")),
-        )
-
-    def _site_from_dict(self, payload: dict[str, Any]) -> MuonSite:
-        return MuonSite(
-            id=UUID(payload["id"]),
-            label=payload.get("label", ""),
-            status=self._site_status_from_payload(payload),
-            fractional_position=payload.get("fractional_position", [0.0, 0.0, 0.0]),
-            cartesian_position=payload.get("cartesian_position", [0.0, 0.0, 0.0]),
-            generation_method=payload.get("generation_method"),
-            source_generation_batch_id=parse_uuid(payload.get("source_generation_batch_id")),
-            source_structure_id=parse_uuid(payload.get("source_structure_id")),
-            relaxation_run_id=parse_uuid(payload.get("relaxation_run_id")),
-            total_energy_eV=self._site_total_energy_from_payload(payload),
-            host_displacement_max=payload.get("host_displacement_max"),
-            cluster_id=parse_uuid(payload.get("cluster_id")),
-            symmetry_label=payload.get("symmetry_label"),
-            properties=payload.get("properties", {}),
-        )
-
-    @staticmethod
-    def _site_total_energy_from_payload(payload: dict[str, Any]) -> float | None:
-        """Read a site's relaxation total energy, accepting the pre-rename key.
-
-        Projects saved before the field was renamed stored the same absolute
-        total energy under ``relative_energy_eV``; see the compatibility ledger.
-        """
-
-        if "total_energy_eV" in payload:
-            return payload["total_energy_eV"]
-        return payload.get("relative_energy_eV")
-
-    @staticmethod
-    def _site_status_from_payload(payload: dict[str, Any]) -> str:
-        status = str(payload.get("status", _GENERATED_SITE_STATUS) or _GENERATED_SITE_STATUS)
-        if status == "candidate":
-            return _GENERATED_SITE_STATUS
-        return status
-
-    def _provenance_from_dict(self, payload: dict[str, Any]) -> ProvenanceRecord:
-        workflow_stage = payload.get("workflow_stage")
-        return ProvenanceRecord(
-            id=UUID(payload["id"]),
-            timestamp=parse_datetime(payload.get("timestamp")) or utc_now(),
-            action=payload.get("action", ""),
-            workflow_stage=WorkflowStage(workflow_stage) if workflow_stage else None,
-            actor=payload.get("actor", "system"),
-            description=payload.get("description", ""),
-            parameters=payload.get("parameters", {}),
-            input_entity_ids=[UUID(v) for v in payload.get("input_entity_ids", [])],
-            output_entity_ids=[UUID(v) for v in payload.get("output_entity_ids", [])],
-            job_id=parse_uuid(payload.get("job_id")),
-        )

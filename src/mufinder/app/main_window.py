@@ -18,7 +18,6 @@ import time
 from typing import TypeVar
 from uuid import UUID, uuid4
 
-import numpy as np
 from PySide6.QtCore import QByteArray, QEventLoop, QSize, QSettings, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import (
     QActionGroup,
@@ -66,7 +65,6 @@ from mufinder.branding import (
 )
 from mufinder.cluster_setup import load_cluster_config, load_cluster_configs
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.castep_io.schema import KeywordSpec
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import (
@@ -112,8 +110,6 @@ from mufinder.app.convergence_types import (
 from mufinder.app.convergence_widget import CutoffConvergenceWidget
 from mufinder.app.energy_barriers_widget import (
     EnergyBarriersWidget,
-    EnergyBarrierEndpointRow,
-    EnergyBarrierPreviewImageRow,
 )
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
 from mufinder.app.legacy_import_dialog import LegacyImportDialog, start_legacy_scan
@@ -136,13 +132,12 @@ from mufinder.app.relaxation_adapter import (
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
-from mufinder.app.adapter_common import AdapterExpansion, build_workflow_settings_template
+from mufinder.app.adapter_common import AdapterExpansion
 from mufinder.app.relaxation_types import (
     MuonRelaxationConfig,
     MuonRelaxationRow,
     PristineRelaxationConfig,
     PristineRelaxationRow,
-    RelaxationRunState,
 )
 from mufinder.app.relaxation_analysis_widget import (
     RelaxationAnalysisJobDialog,
@@ -206,30 +201,27 @@ from mufinder.app.workflow_config_codecs import (
     deserialize_pristine_relaxation_config,
     deserialize_uep_config,
     normalized_supercell_matrix,
+    num_farms_from_extras,
     serialize_convergence_config,
     serialize_muon_relaxation_config,
     serialize_pristine_relaxation_config,
     serialize_uep_config,
+    workflow_row_configuration,
 )
 from mufinder.app.workflow_dialogs import (
     EnergyBarrierPathViewerDialog,
     NudgedElasticBandConfigDialog,
     QuantumCorrectionsConfigDialog,
+    run_source_configure_dialog,
 )
 from mufinder.app.workflow_parameters import (
-    merge_batch_advanced,
-    merge_batch_values,
-    mixed_parameter_names,
-    build_workflow_parameter_surface,
     kpoint_exclusive_hint,
     reorder_workflow_parameter_specs,
-    workflow_basic_parameter_names,
+    structure_species_options,
 )
 from mufinder.app.workflow_submission import (
     WorkflowSubmissionCoordinator,
-    effective_row_status,
     job_is_resubmittable_after_dismissal,
-    workflow_row_state_is_ready,
 )
 from mufinder.app.workflow_controllers import (
     ConvergenceCutoffController,
@@ -248,18 +240,12 @@ from mufinder.app.workflow_controllers import (
     UepDeps,
     WorkflowControllerContext,
     WorkflowJobController,
+    dedupe_jobs,
     merge_controller_result,
     validate_controller_artifacts,
 )
-from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.castep_io.param_parser import parse_param_assignments, parse_param_value, run_is_spin_polarized
-from mufinder.castep_io.ts_parser import (
-    TransitionStateImage,
-    TransitionStateParseError,
-    parse_transition_state_file,
-)
-from mufinder.castep_io.types import AtomicPosition, BlockSection, PositionBlock, ValueWithUnit
+from mufinder.castep_io.types import BlockSection, ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
 from mufinder.app.cluster_controller import ClusterController
 from mufinder.services.cluster_runner import CheckpointProbeResult
@@ -278,7 +264,6 @@ from mufinder.services.job_execution_controller import (
 from mufinder.services.definition_mappings import (
     ensure_job_mapping,
     relaxation_mapping_job_priority,
-    remove_source_keys_from_definition,
 )
 from mufinder.services.failure_diagnosis import (
     FailureDiagnosis,
@@ -301,7 +286,6 @@ from mufinder.services.local_runner import LocalJobRunner
 from mufinder.app import workflow_table_utils
 from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.app.workflow_table_utils import SelectionFeedback, count_phrase, partial_count_suffix
-from mufinder.app.workflow_parameters import restore_structured_value
 from mufinder.services.perf_trace import PerfTrace
 from mufinder.services.project_service import (
     CONTINUABLE_JOB_STATUSES,
@@ -311,34 +295,14 @@ from mufinder.services.project_service import (
     job_for_mapping_key,
 )
 from mufinder.services.source_candidates import (
-    QUANTUM_STAGE_PHONON,
-    QUANTUM_STAGE_SINGLEPOINT,
     CompletedPristineJob,
     CompletedRelaxationAnalysisSource,
-    EnergyBarrierCompletedNebCandidate,
-    EnergyBarrierNebCandidate,
-    EnergyBarrierSourceCandidate,
     MuonRelaxationRowJob,
-    QuantumSourceCandidate,
-    QuantumStageState,
-    charge_state_for_job,
     coerce_fractional_triplet,
-    completed_energy_barrier_neb_candidates,
     completed_muon_relaxation_sources,
     completed_pristine_relaxation_jobs,
-    eligible_energy_barrier_source_candidates,
-    eligible_quantum_source_candidates,
-    energy_barrier_generated_sources,
-    energy_barrier_neb_source_candidates,
-    enumerate_energy_barrier_source_candidates,
-    float_from_source,
-    fractional_triplet_from_source,
-    quantum_source_candidate_by_key,
-    quantum_source_labels_by_key,
-    quantum_source_relative_energies,
-    quantum_stage_state,
+    quantum_seed_name_for_key,
     relaxation_sources_for_labels,
-    uuid_from_source,
 )
 from mufinder.services.ssh_client import (
     SSHAuthenticationError,
@@ -346,10 +310,9 @@ from mufinder.services.ssh_client import (
     SSHUnknownHostKeyError,
     save_trusted_host_key,
 )
-from mufinder.science.kpoint_grids import equivalent_grid_for_supercell, kpoint_count, most_uniform_grid
+from mufinder.science.kpoint_grids import kpoint_count, most_uniform_grid
 from mufinder.science.quantum_phonons import PhononParseError
-from mufinder.science.site_generation import SiteGenerationError, lattice_cart_to_frac
-from mufinder.science.supercell import build_supercell_structure
+from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.uep import UepError, UepPotentialGrid, deserialize_potential_grid, serialize_potential_grid
 from mufinder.science.structure_comparison import DftComparisonInput, compare_structures
 from mufinder.science.structure_io import StructureLoadError
@@ -357,22 +320,14 @@ from mufinder.workflow import StructureBridgeError, structure_to_spec
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
     TRANSITION_STATE_SEARCH_CALC_TYPE,
-    TRANSITION_STATE_SEARCH_SET_CALC_TYPE,
-    merge_serialized_sources,
-    replace_serialized_sources_for_pair,
-    strip_legacy_energy_barrier_params,
 )
 from mufinder.workflow.naming import (
     cluster_workflow_directory_fragment,
     default_cluster_job_name_prefix,
-    job_name,
 )
 from mufinder.workflow.quantum import (
-    QUANTUM_SINGLEPOINT_CALC_TYPE,
     QUANTUM_PHONON_CALC_TYPE,
 )
-from mufinder.workflow.renderer import render_job
-from mufinder.workflow.types import InputTemplate
 
 
 _LOG = logging.getLogger(__name__)
@@ -380,65 +335,10 @@ _LOG = logging.getLogger(__name__)
 # Stopped jobs (walltime, orphaned) are resubmittable like failed ones: the
 # submit script is regenerated, so a longer walltime takes effect.
 _RESUBMITTABLE_JOB_STATES = {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-# Stage-1 singlepoint statuses from which a Quantum Corrections row may be rewound
-# to stage 1 while no phonon job exists. ``COMPLETED`` is the "redo stage 1 with
-# different parameters" case; the three terminal-recoverable statuses are the
-# failure escape hatch (the same set ``reset_failed_job`` accepts, spelled out
-# here because this path deletes job records rather than resetting them).
-_QUANTUM_STAGE_ONE_RESETTABLE_STATUSES = frozenset(
-    {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-)
 _VISIBLE_DASHBOARD_STATES = ACTIVE_JOB_STATUSES | {JobStatus.STOPPED} | _RESUBMITTABLE_JOB_STATES
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _WorkflowKey = TypeVar("_WorkflowKey")
 _STRUCTURE_CONTROLLED_CELL_KEYWORDS = {"lattice_cart", "lattice_abc", "positions_frac", "positions_abs"}
-_QUANTUM_CONFIG_KEYWORD_NAMES = workflow_basic_parameter_names()
-# Climbing image is locked on (see the NEB Configure dialog's locked_values): a barrier
-# calculation needs the top image driven onto the saddle, so it is not user-editable here.
-_ENERGY_BARRIER_NEB_KEYWORD_NAMES = workflow_basic_parameter_names(
-    "tssearch_max_path_points",
-    "tssearch_neb_spring_constant",
-    "tssearch_neb_tangent_mode",
-    "tssearch_neb_method",
-    "tssearch_neb_max_iter",
-    "tssearch_neb_normed",
-    "tssearch_force_tol",
-)
-# Default NEB image count (TSSEARCH_MAX_PATH_POINTS). Odd, as climbing-image NEB requires.
-# 11 gives a finer band than the CASTEP minimum: a smoother barrier path and a lower residual
-# force at the climbing image (7 images left a ~0.08 eV/Ang plateau just above the force tol).
-_ENERGY_BARRIER_NEB_DEFAULT_IMAGES = 11
-# Editable NEB force-convergence tolerance (TSSEARCH_FORCE_TOL). Default mirrors CASTEP's own
-# default (0.05 eV/Ang via GEOM_FORCE_TOL). Exposed so users can loosen it for stubborn bands whose
-# barrier is converged but whose max force component plateaus above 0.05. The keyword's canonical
-# unit is H/BOHR; we surface it in eV/Ang (what the .castep output reports) for legibility.
-_ENERGY_BARRIER_NEB_FORCE_TOL_UNIT = "eV/ang"
-_ENERGY_BARRIER_NEB_DEFAULT_FORCE_TOL = ValueWithUnit(0.05, _ENERGY_BARRIER_NEB_FORCE_TOL_UNIT)
-_QUANTUM_GUI_TO_METHOD = {
-    "FINITEDISPLACEMENT": "finite_displacement",
-    "DFPT": "dfpt",
-    "LINEARRESPONSE": "linear_response",
-}
-_QUANTUM_DEFAULT_ELEC_ENERGY_TOL = ValueWithUnit(1e-9, "eV")
-_QUANTUM_METHOD_TO_GUI = {value: key for key, value in _QUANTUM_GUI_TO_METHOD.items()}
-
-
-def _structure_species_options(structure: Structure | None) -> tuple[str, ...]:
-    if structure is None:
-        return ()
-    return tuple(dict.fromkeys(species for item in structure.species if (species := str(item).strip())))
-
-
-def _merge_species_options(structures: list[Structure | None]) -> tuple[str, ...]:
-    values: list[str] = []
-    seen: set[str] = set()
-    for structure in structures:
-        for species in _structure_species_options(structure):
-            if species in seen:
-                continue
-            seen.add(species)
-            values.append(species)
-    return tuple(values)
 
 
 def job_is_imported(job: Job) -> bool:
@@ -450,46 +350,6 @@ def job_is_imported(job: Job) -> bool:
     """
 
     return IMPORTED_JOB_TAG in (job.tags or ())
-
-
-def _format_energy(value: object) -> str:
-    if value is None:
-        return ""
-    try:
-        return f"{float(value):.6g} eV"
-    except (TypeError, ValueError):
-        return ""
-
-
-def _format_relative_energy(value: float | None) -> str:
-    """Format a site energy relative to its comparable minimum, as in the Muon Sites summary."""
-
-    return "" if value is None else f"dE {float(value):.5f} eV"
-
-
-def _neb_barrier_summaries(data: Mapping[str, object]) -> tuple[str, str, str]:
-    """Format (forward barrier, reverse barrier, endpoint ΔE) from a NEB result payload.
-
-    Both barriers and ΔE derive from the persisted per-image energies; results
-    that predate ``image_energies_eV`` fall back to the stored forward barrier
-    with blank reverse/ΔE columns.
-    """
-
-    energies_payload = data.get("image_energies_eV")
-    energies: list[float] = []
-    if isinstance(energies_payload, (list, tuple)):
-        try:
-            energies = [float(value) for value in energies_payload]
-        except (TypeError, ValueError):
-            energies = []
-    if len(energies) >= 2:
-        peak = max(energies)
-        return (
-            _format_energy(peak - energies[0]),
-            _format_energy(peak - energies[-1]),
-            _format_energy(energies[-1] - energies[0]),
-        )
-    return _format_energy(data.get("barrier_height_eV")), "", ""
 
 
 def _ordered_string_list(payload: object) -> list[str]:
@@ -510,19 +370,6 @@ def _ordered_string_list(payload: object) -> list[str]:
         seen.add(normalized)
         ordered.append(normalized)
     return ordered
-
-
-def _quantum_method_from_gui_value(value: object) -> str:
-    normalized = str(value).strip().upper()
-    try:
-        return _QUANTUM_GUI_TO_METHOD[normalized]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported phonon method '{value}'.") from exc
-
-
-def _quantum_method_to_gui_value(value: object) -> str:
-    normalized = str(value).strip().lower()
-    return _QUANTUM_METHOD_TO_GUI.get(normalized, "FINITEDISPLACEMENT")
 
 
 class MainWindow(QMainWindow):
@@ -930,13 +777,10 @@ class MainWindow(QMainWindow):
             self._on_quantum_corrections_source_label_renamed
         )
         # Quantum-corrections controller: the two-stage (singlepoint → phonon)
-        # migration. Built here (after its view exists) and appended to the
+        # workflow. Built here (after its view exists) and appended to the
         # registry so completed castep_quantum_singlepoint / castep_quantum_phonon
-        # jobs route through its build_result (phonon → ZPE/eigenvalue/witness
-        # payload; singlepoint → empty result). The pre_submit_check runs the
-        # shared ``_check_definition_host`` guard; task farming stays in the shared
-        # submit backend (not this controller). Its validate_artifacts fails a
-        # phonon job whose ``.phonon`` is missing or unparseable.
+        # jobs route through its validate_artifacts and build_result; task
+        # farming stays in the shared submit backend.
         self._quantum_corrections_controller = QuantumCorrectionsController(
             self._build_workflow_controller_context(),
             self._build_quantum_corrections_deps(),
@@ -4356,416 +4200,31 @@ class MainWindow(QMainWindow):
     def _cutoff_key(value: float) -> str:
         return f"{float(value):.12g}"
 
-    def _deserialize_convergence_config(self, payload: object) -> ConvergenceConfig | None:
-        return deserialize_convergence_config(payload)
-
-    @staticmethod
-    def _configuration_mapping(definition) -> dict[str, object]:
-        if definition is None:
-            return {}
-        config = definition.parameters.setdefault("configuration", {})
-        if isinstance(config, dict):
-            return config
-        definition.parameters["configuration"] = {}
-        return definition.parameters["configuration"]
-
-    def _workflow_row_configuration(self, definition, key: str) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
-        if definition is None:
-            return {}, (), {}
-        config = definition.parameters.get("configuration", {})
-        if not isinstance(config, dict):
-            return {}, (), {}
-        raw_rows = config.get("row_settings", {})
-        if not isinstance(raw_rows, dict):
-            return {}, (), {}
-        raw_entry = raw_rows.get(key, {})
-        if not isinstance(raw_entry, dict):
-            return {}, (), {}
-
-        raw_params = raw_entry.get("parameter_values", raw_entry.get("params", {}))
-        params = raw_params if isinstance(raw_params, dict) else {}
-        restored_params = {
-            str(name): restore_structured_value(None, str(name), raw_value)
-            for name, raw_value in params.items()
-        }
-        raw_advanced = raw_entry.get("added_advanced", [])
-        added_advanced = (
-            tuple(str(name) for name in raw_advanced if isinstance(name, str))
-            if isinstance(raw_advanced, list)
-            else ()
-        )
-        extras = {
-            str(name): value
-            for name, value in raw_entry.items()
-            if name not in {"parameter_values", "params", "added_advanced"}
-        }
-        return restored_params, added_advanced, extras
-
-    def _project_convergence_parameter_values(
-        self,
-        *,
-        target_lattice: list[list[float]] | None = None,
-    ) -> dict[str, object]:
-        if self._document is None:
-            return {}
-        values: dict[str, object] = {}
-        xc_functional = self._document.project.recommended_xc_functional
-        if xc_functional is not None:
-            values["xc_functional"] = xc_functional
-        cutoff = self._document.project.recommended_cutoff_energy
-        if cutoff is not None:
-            values["cut_off_energy"] = ValueWithUnit(value=float(cutoff), unit="eV")
-        grid = self._document.project.recommended_kpoint_grid
-        if grid is not None:
-            resolved_grid = tuple(int(component) for component in grid)
-            reference_lattice = self._document.project.recommended_kpoint_lattice
-            if (
-                target_lattice is not None
-                and isinstance(reference_lattice, list)
-                and len(reference_lattice) == 3
-            ):
-                resolved_grid = equivalent_grid_for_supercell(reference_lattice, resolved_grid, target_lattice)
-            values["kpoint_mp_grid"] = resolved_grid
-        return values
-
-    def _workflow_row_configuration_with_project_defaults(
-        self,
-        definition,
-        key: str,
-        *,
-        target_lattice: list[list[float]] | None = None,
-    ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
-        params, advanced, extras = self._workflow_row_configuration(definition, key)
-        values = self._project_convergence_parameter_values(target_lattice=target_lattice)
-        values.update(params)
-        return values, advanced, extras
-
-    def _energy_barrier_neb_row_configuration_with_source_defaults(
-        self,
-        definition,
-        key: str,
-        *,
-        target_lattice: list[list[float]] | None = None,
-        source_candidate: EnergyBarrierSourceCandidate | None = None,
-        source_defaults_cache: dict[UUID, dict[str, object]] | None = None,
-    ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
-        # Precedence: project convergence defaults < reactant relaxation settings < user config.
-        # Inheriting the reactant endpoint's kpoint grid and cut-off keeps the NEB band on the
-        # same numerical footing as the relaxed structures it connects. (When the relaxation's
-        # output .cell/.param are unavailable, the reactant defaults are simply empty and the
-        # project convergence defaults stand in — graceful by design.)
-        # Callers that loop over many keys may pass a pre-resolved source_candidate and a shared
-        # source_defaults_cache to avoid rebuilding the candidate list and re-reading the
-        # reactant's files per key.
-        params, advanced, extras = self._workflow_row_configuration(definition, key)
-        params = strip_legacy_energy_barrier_params(params)
-        values = self._project_convergence_parameter_values(target_lattice=target_lattice)
-        candidate = source_candidate if source_candidate is not None else self._energy_barrier_source_candidate_by_key(key)
-        if candidate is not None:
-            reactant_job_id = candidate.reactant.job.id
-            if source_defaults_cache is not None and reactant_job_id in source_defaults_cache:
-                reactant_defaults = source_defaults_cache[reactant_job_id]
-            else:
-                reactant_defaults = self._quantum_source_default_parameter_values(candidate.reactant)
-                if source_defaults_cache is not None:
-                    source_defaults_cache[reactant_job_id] = reactant_defaults
-            values.update(reactant_defaults)
-        # Default to an odd image count, and round any user-supplied even count up: climbing-image
-        # NEB requires an odd TSSEARCH_MAX_PATH_POINTS (CASTEP otherwise silently adds one).
-        values.setdefault("tssearch_max_path_points", _ENERGY_BARRIER_NEB_DEFAULT_IMAGES)
-        values.update(params)
-        try:
-            image_count = int(values.get("tssearch_max_path_points"))
-        except (TypeError, ValueError):
-            image_count = None
-        if image_count is not None and image_count % 2 == 0:
-            values["tssearch_max_path_points"] = image_count + 1
-        return values, advanced, extras
-
-    def _project_convergence_input_defaults(
-        self,
-        *,
-        target_lattice: list[list[float]] | None = None,
-    ) -> InputTemplate | None:
-        values = self._project_convergence_parameter_values(target_lattice=target_lattice)
-        if not values:
-            return None
-        return build_workflow_settings_template(values)
-
-    @staticmethod
-    def _parse_param_scalar_value(raw_value: str, spec: KeywordSpec | None) -> object:
-        """Delegate to :func:`mufinder.castep_io.param_parser.parse_param_value`.
-
-        Kept as a thin wrapper because existing callers reach it here; the
-        coercion itself belongs in ``castep_io`` beside the ``.param`` reader
-        that shares it.
-        """
-
-        return parse_param_value(raw_value, spec)
-
-    @staticmethod
-    def _parse_param_scalar_assignments(text: str) -> dict[str, object]:
-        """Delegate to :func:`mufinder.castep_io.param_parser.parse_param_assignments`."""
-
-        return parse_param_assignments(text)
-
-    def _quantum_source_default_parameter_values(self, candidate: QuantumSourceCandidate) -> dict[str, object]:
-        values: dict[str, object] = {}
-        output_dir = self._job_output_directory(candidate.job)
-        if output_dir is None:
-            return values
-
-        seed_name = self._job_seed_name(candidate.job)
-        cell_path = output_dir / f"{seed_name}.cell"
-        parsed_cell = None
-        if cell_path.is_file():
-            try:
-                parsed_cell = parse_cell_file(cell_path)
-            except (CellParseError, OSError, ValueError):
-                parsed_cell = None
-            if parsed_cell is not None and parsed_cell.cell_file.kpoint_mp_grid is not None:
-                values["kpoint_mp_grid"] = tuple(int(component) for component in parsed_cell.cell_file.kpoint_mp_grid)
-
-        param_path = output_dir / f"{seed_name}.param"
-        assignments: dict[str, object] | None = None
-        if param_path.is_file():
-            try:
-                assignments = self._parse_param_scalar_assignments(param_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                assignments = None
-        if assignments is not None:
-            cutoff = assignments.get("cut_off_energy")
-            if cutoff is not None:
-                values["cut_off_energy"] = cutoff
-            # A follow-on calculation is only comparable with its source
-            # relaxation when both use the same functional.
-            xc_functional = assignments.get("xc_functional")
-            if xc_functional is not None:
-                values["xc_functional"] = xc_functional
-            # ...and the same spin treatment.
-            values["spin_polarized"] = run_is_spin_polarized(
-                assignments,
-                parsed_cell.atomic_spins if parsed_cell is not None else None,
-            )
-        elif self._charge_state_for_job(candidate.job) == MUONIUM_CHARGE_STATE:
-            # Without the source's .param, fall back to the default a muonium
-            # relaxation is written with (see relaxation_adapter). The value
-            # also seeds the always-shown Spin Polarized checkbox, which would
-            # otherwise save an unticked box over the workflow's own default.
-            values["spin_polarized"] = True
-        return values
-
-    def _quantum_row_configuration_with_source_defaults(
-        self,
-        definition,
-        key: str,
-    ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
-        params, advanced, extras = self._workflow_row_configuration(definition, key)
-        candidate = self._quantum_source_candidate_by_key(key)
-        values = self._quantum_source_default_parameter_values(candidate) if candidate is not None else {}
-        legacy_method = extras.get("phonon_method")
-        if legacy_method is not None:
-            values.setdefault("phonon_method", _quantum_method_to_gui_value(legacy_method))
-        values.update(params)
-        return values, advanced, extras
-
-    @staticmethod
-    def _num_farms_from_extras(extras: Mapping[str, object]) -> int:
-        raw = extras.get("num_farms", 1)
-        try:
-            return max(1, int(raw))
-        except (TypeError, ValueError):
-            return 1
-
-    @staticmethod
-    def _quantum_phonon_method_from_extras(extras: Mapping[str, object]) -> str:
-        raw = extras.get("phonon_method", "finite_displacement")
-        normalized = str(raw).strip().lower()
-        return normalized or "finite_displacement"
-
-    def _workflow_row_configuration_exists(self, definition, key: str) -> bool:
-        params, advanced, extras = self._workflow_row_configuration(definition, key)
-        return bool(params) or bool(advanced) or any(str(value).strip() for value in extras.values())
-
-    def _store_workflow_row_configuration(self, definition, key: str, payload: dict[str, object] | None) -> None:
-        config = self._configuration_mapping(definition)
-        rows = config.setdefault("row_settings", {})
-        if not isinstance(rows, dict):
-            rows = {}
-            config["row_settings"] = rows
-        if payload is None:
-            rows.pop(key, None)
-            if not rows:
-                config.pop("row_settings", None)
-            return
-        rows[key] = payload
-
-    def _quantum_parameter_specs(self) -> list[KeywordSpec]:
-        specs = build_workflow_parameter_surface(
-            workflow_stage="quantum_corrections",
-            basic_names=_QUANTUM_CONFIG_KEYWORD_NAMES,
-        )
-        return [
-            replace(spec, default_value=_QUANTUM_DEFAULT_ELEC_ENERGY_TOL)
-            if spec.name == "elec_energy_tol"
-            else spec
-            for spec in specs
-        ]
-
-    def _energy_barrier_neb_parameter_specs(self) -> list[KeywordSpec]:
-        specs = build_workflow_parameter_surface(
-            workflow_stage="energy_barriers",
-            basic_names=_ENERGY_BARRIER_NEB_KEYWORD_NAMES,
-        )
-        # Surface TSSEARCH_FORCE_TOL in eV/Ang (its catalog unit is H/BOHR) with CASTEP's own
-        # default pre-filled, so the editor labels/edits it legibly and an untouched row reproduces
-        # CASTEP's behaviour. The physical editor forces the value's unit to spec.unit, so both the
-        # unit and the default_value must be overridden together.
-        return [
-            replace(
-                spec,
-                unit=_ENERGY_BARRIER_NEB_FORCE_TOL_UNIT,
-                default_value=_ENERGY_BARRIER_NEB_DEFAULT_FORCE_TOL,
-            )
-            if spec.name == "tssearch_force_tol"
-            else spec
-            for spec in specs
-        ]
-
-    def _workflow_dialog_payload(
-        self,
-        dialog: ParameterDialog,
-        *,
-        extra_payload: Mapping[str, object] | None = None,
-    ) -> dict[str, object] | None:
-        collected = dict(dialog.collect_values())
-        collected.pop("task", None)
-        parameter_values = self._normalized_parameter_values(collected)
-        payload = {
-            "parameter_values": parameter_values if isinstance(parameter_values, dict) else {},
-            "added_advanced": sorted(set(dialog.advanced_names())),
-        }
-        extras = {
-            str(name): value
-            for name, value in (extra_payload or {}).items()
-        }
-        payload.update(extras)
-        if payload["parameter_values"] or payload["added_advanced"] or extras:
-            return payload
-        return None
-
-    def _batch_row_payload(
-        self,
-        definition,
-        key: str,
-        payload: dict[str, object] | None,
-        untouched_mixed: set[str],
-    ) -> dict[str, object] | None:
-        """Return the configuration to store for one row of a batch edit.
-
-        ``payload`` is what the dialog produced for every row. Parameters that
-        differed between the rows and were left alone are taken from the row's
-        own stored configuration instead: a row that set one explicitly keeps
-        it, and a row that did not keeps deriving it from its source defaults.
-        """
-
-        if not untouched_mixed:
-            return payload
-        row_params, row_advanced, _extras = self._workflow_row_configuration(definition, key)
-        merged = dict(payload or {})
-        collected = merged.get("parameter_values")
-        merged["parameter_values"] = merge_batch_values(
-            collected if isinstance(collected, dict) else {},
-            self._normalized_parameter_values(dict(row_params)) or {},
-            untouched_mixed,
-        )
-        merged["added_advanced"] = sorted(
-            merge_batch_advanced(merged.get("added_advanced", ()), row_advanced, untouched_mixed)
-        )
-        has_extras = any(name not in {"parameter_values", "added_advanced"} for name in merged)
-        if not (merged["parameter_values"] or merged["added_advanced"] or has_extras):
-            return None
-        return merged
-
-    def _quantum_runtime_configuration(self, definition, key: str) -> tuple[dict[str, object], str]:
-        params, _advanced, extras = self._quantum_row_configuration_with_source_defaults(definition, key)
-        config = definition.parameters.get("configuration", {}) if definition is not None else {}
-        legacy_method = "finite_displacement"
-        legacy_pseudopotential = "unknown"
-        if isinstance(config, dict):
-            legacy_method = str(config.get("method", legacy_method)).strip() or legacy_method
-            legacy_pseudopotential = (
-                str(config.get("pseudopotential_family", legacy_pseudopotential)).strip() or legacy_pseudopotential
-            )
-        values = dict(params)
-        values.setdefault("phonon_method", _quantum_method_to_gui_value(legacy_method))
-        values.setdefault("elec_energy_tol", _QUANTUM_DEFAULT_ELEC_ENERGY_TOL)
-        pseudopotential_family = str(extras.get("pseudopotential_family", legacy_pseudopotential)).strip() or "unknown"
-        return values, pseudopotential_family
-
-    def _energy_barrier_preview_structure(self, candidate: EnergyBarrierSourceCandidate) -> Structure:
-        if self._document is None:
-            raise ValueError("No project document is loaded.")
-        host_id = self._document.project.host_structure_id
-        host = self._document.structures.get(host_id) if host_id is not None else None
-        if host is None:
-            raise ValueError("A pristine host structure is required for the path preview.")
-
-        pristine_lattice = np.asarray(host.lattice_vectors, dtype=float)
-        target_lattice = np.asarray(candidate.reactant.structure.lattice_vectors, dtype=float)
-        if pristine_lattice.shape != (3, 3) or target_lattice.shape != (3, 3):
-            raise ValueError("Energy barrier path preview requires 3x3 lattice vectors.")
-
-        matrix = np.rint(target_lattice @ np.linalg.inv(pristine_lattice)).astype(int)
-        if not np.allclose(matrix @ pristine_lattice, target_lattice, atol=1e-6):
-            raise ValueError("Could not construct a pristine supercell matching the relaxed endpoint cell.")
-
-        expanded_structure, _spins = build_supercell_structure(host, matrix.tolist())
-        return replace(
-            expanded_structure,
-            label=f"{self._energy_barrier_source_label(candidate)} preview",
-            origin="energy_barriers_path_preview",
-            parent_structure_id=host.id,
-        )
-
     def _ensure_energy_barriers_view(self) -> EnergyBarriersWidget:
         energy_barriers_view = self._energy_barriers_view
         if energy_barriers_view is not None:
             return energy_barriers_view
 
         energy_barriers_view = EnergyBarriersWidget()
-        energy_barriers_view.endpoint_selection_changed.connect(
-            self._on_energy_barrier_endpoint_selection_changed
-        )
-        energy_barriers_view.generate_paths_requested.connect(
-            self._on_generate_energy_barrier_paths
-        )
-        energy_barriers_view.remove_sources_requested.connect(
-            self._on_remove_energy_barrier_sources
-        )
-        self._connect_workflow_row_actions(energy_barriers_view, self._energy_barriers_controller)
+        controller = self._energy_barriers_controller
+        energy_barriers_view.endpoint_selection_changed.connect(controller.select_endpoints)
+        energy_barriers_view.generate_paths_requested.connect(controller.generate_paths)
+        energy_barriers_view.remove_sources_requested.connect(self._on_remove_energy_barrier_sources)
+        self._connect_workflow_row_actions(energy_barriers_view, controller)
         energy_barriers_view.view_source_requested.connect(self._on_view_energy_barrier_source)
         energy_barriers_view.configure_result_requested.connect(self._on_configure_energy_barrier_result)
-        # The controller already exists (built + registered in ``__init__`` even
-        # though this view is created lazily); wire its submit here at view
-        # creation, mirroring the six eager controllers' constructor-time wiring.
+        # The controller was built and registered in ``__init__``; its view's
+        # signals are wired here, when the view is first created.
         energy_barriers_view.submit_neb_local_requested.connect(
-            lambda values: self._energy_barriers_controller.submit(
-                values, target="local"
-            )
+            lambda values: controller.submit(values, target="local")
         )
         energy_barriers_view.submit_neb_cluster_requested.connect(
-            lambda values: self._energy_barriers_controller.submit(
-                values, target="cluster"
-            )
+            lambda values: controller.submit(values, target="cluster")
         )
-        energy_barriers_view.neb_result_selected.connect(
-            self._on_energy_barrier_neb_result_selected
-        )
+        energy_barriers_view.neb_result_selected.connect(controller.show_neb_preview)
         self._energy_barriers_view = energy_barriers_view
         self._main_stack.insertWidget(self._main_stack.indexOf(self._journal_view), energy_barriers_view)
         return energy_barriers_view
-
 
     def _convergence_cutoff_definition_matches(
         self,
@@ -5292,15 +4751,6 @@ class MainWindow(QMainWindow):
                 for key in stale_keys:
                     mapping.pop(key, None)
 
-    def _quantum_definition_and_key_for_job(self, job: Job) -> tuple[object, str] | tuple[None, None]:
-        for definition in self._quantum_corrections_controller.definitions():
-            for mapping_name in ("singlepoint_job_ids_by_label", "phonon_job_ids_by_label", "job_ids_by_label"):
-                mapping = self._quantum_job_mapping(definition, mapping_name)
-                for key, value in mapping.items():
-                    if str(value) == str(job.id):
-                        return definition, str(key)
-        return None, None
-
     def _task_farming_for_job(self, job: Job) -> tuple[bool, int | None]:
         """Return ``(farming_enabled, num_farms)`` for any farm-aware calc type.
 
@@ -5313,15 +4763,15 @@ class MainWindow(QMainWindow):
         """
 
         if job.calc_type == QUANTUM_PHONON_CALC_TYPE:
-            definition, key = self._quantum_definition_and_key_for_job(job)
+            definition, key = self._quantum_corrections_controller.definition_and_key_for_job(job)
         elif job.calc_type == NUDGED_ELASTIC_BAND_CALC_TYPE:
-            definition, key = self._energy_barrier_neb_definition_and_key_for_job(job)
+            definition, key = self._energy_barriers_controller.definition_and_key_for_job(job)
         else:
             return False, None
         if definition is None or key is None:
             return False, None
-        _params, _advanced, extras = self._workflow_row_configuration(definition, key)
-        num_farms = self._num_farms_from_extras(extras)
+        _params, _advanced, extras = workflow_row_configuration(definition, key)
+        num_farms = num_farms_from_extras(extras)
         return num_farms > 1, (num_farms if num_farms > 1 else None)
 
     def _farm_counts_for_jobs(self, jobs: Sequence[Job]) -> dict[str, int]:
@@ -5338,49 +4788,6 @@ class MainWindow(QMainWindow):
             if enabled and num_farms:
                 counts[job.label] = int(num_farms)
         return counts
-
-    def _energy_barrier_neb_definition_and_key_for_job(self, job: Job) -> tuple[object | None, str | None]:
-        """Locate the NEB definition and source key that materialized ``job``."""
-
-        for definition in self._energy_barriers_controller.definitions():
-            mapping = definition.parameters.get("job_ids_by_label", {})
-            if not isinstance(mapping, dict):
-                continue
-            for key, value in mapping.items():
-                if str(value) == str(job.id):
-                    return definition, str(key)
-        return None, None
-
-    def _quantum_stage_one_target(self, job: Job) -> str | None:
-        """Return where a quantum phonon job's stage-1 singlepoint ran.
-
-        ``None`` when ``job`` is not a quantum phonon job or its completed
-        singlepoint cannot be found; otherwise the singlepoint's
-        ``execution_target`` (``"local"`` or a cluster name).
-        """
-
-        if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
-            return None
-        definition, key = self._quantum_definition_and_key_for_job(job)
-        if definition is None or key is None:
-            return None
-        source_job = self._singlepoint_job_for_quantum_source_key(definition, key)
-        if source_job is None or source_job.status != JobStatus.COMPLETED:
-            return None
-        return (source_job.execution_target or "").strip() or "local"
-
-    def _quantum_continuation_remote_target(self, job: Job, *, cluster_name: str) -> str:
-        if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
-            return ""
-        definition, key = self._quantum_definition_and_key_for_job(job)
-        if definition is None or key is None:
-            return ""
-        source_job = self._singlepoint_job_for_quantum_source_key(definition, key)
-        if source_job is None or source_job.status != JobStatus.COMPLETED:
-            return ""
-        if source_job.execution_target.strip().casefold() != cluster_name.strip().casefold():
-            return ""
-        return (source_job.remote_directory or "").strip()
 
     def _submit_jobs_locally(
         self,
@@ -5417,7 +4824,7 @@ class MainWindow(QMainWindow):
         stranded = [
             (job, stage_one)
             for job in eligible_jobs
-            if (stage_one := self._quantum_stage_one_target(job)) is not None
+            if (stage_one := self._quantum_corrections_controller.stage_one_target(job)) is not None
             and stage_one.casefold() != "local"
         ]
         if stranded:
@@ -5566,7 +4973,7 @@ class MainWindow(QMainWindow):
             submission=submission,
             seed_name_by_job=seed_name_by_job,
             remote_job_directory=self._cluster_runner.remote_job_directory,
-            quantum_continuation_target=self._quantum_continuation_remote_target,
+            quantum_continuation_target=self._quantum_corrections_controller.continuation_remote_target,
             output_directory=self._job_output_directory,
             retrieval_flags=self._retrieval_flags_for_job,
             check_remote_directories=self._await_remote_dir_check,
@@ -5670,8 +5077,8 @@ class MainWindow(QMainWindow):
         eligible_jobs, stranded = split_stranded_quantum_jobs(
             eligible_jobs,
             cluster_name=cluster.name,
-            stage_one_target=self._quantum_stage_one_target,
-            continuation_target=self._quantum_continuation_remote_target,
+            stage_one_target=self._quantum_corrections_controller.stage_one_target,
+            continuation_target=self._quantum_corrections_controller.continuation_remote_target,
         )
         if stranded:
             QMessageBox.information(
@@ -6605,16 +6012,7 @@ class MainWindow(QMainWindow):
             autosave_failure_message="Relaxation was continued, but autosave failed.",
         )
 
-    @staticmethod
-    def _dedupe_jobs(jobs: list[Job]) -> list[Job]:
-        deduped: list[Job] = []
-        seen: set[UUID] = set()
-        for job in jobs:
-            if job.id in seen:
-                continue
-            seen.add(job.id)
-            deduped.append(job)
-        return deduped
+    _dedupe_jobs = staticmethod(dedupe_jobs)
 
     def _build_workflow_controller_context(self) -> WorkflowControllerContext:
         """Build the narrow, late-bound context shared by all workflow controllers.
@@ -6787,108 +6185,11 @@ class MainWindow(QMainWindow):
         )
 
     def _build_quantum_corrections_deps(self) -> QuantumCorrectionsDeps:
-        """Build the quantum-corrections controller's deps.
-
-        These helpers stay on ``MainWindow`` because non-migrating code still
-        calls them: the definition/stage/config helpers are shared with the
-        quantum configure path, source-label rename, and stage-one reset;
-        ``_check_definition_host`` is shared with the NEB / energy-barriers
-        workflow; the source-candidate and row-configuration helpers are shared
-        across the quantum surface and the energy-barriers path; and
-        ``_dedupe_jobs`` is shared across workflows (the cross-workflow job/
-        definition readers live on the shared context). The source-candidate
-        queries, relative energies and charge-state lookup come from
-        :mod:`mufinder.services.source_candidates`, the keyword-to-template
-        parser from :func:`~mufinder.app.adapter_common.build_workflow_settings_template`;
-        the module-level ``_format_energy`` helper and the
-        ``_quantum_method_from_gui_value`` lookup are reached through late-bound
-        wrappers (the controller must not import ``main_window``). The controller
-        reaches them only through these callables.
-        """
+        """Build the quantum-corrections controller's deps: its window dialogs."""
 
         return QuantumCorrectionsDeps(
-            ensure_quantum_corrections_definition=(
-                lambda keys: self._ensure_quantum_corrections_definition(keys)
-            ),
-            eligible_quantum_source_candidates=(
-                lambda: eligible_quantum_source_candidates(self._document)
-            ),
-            quantum_source_relative_energies=(
-                lambda: quantum_source_relative_energies(
-                    eligible_quantum_source_candidates(self._document)
-                )
-            ),
-            quantum_source_candidate_by_key=(
-                lambda key: quantum_source_candidate_by_key(self._document, key)
-            ),
-            quantum_stage_state=(
-                lambda definition, candidate: self._quantum_stage_state(
-                    definition, candidate
-                )
-            ),
-            build_quantum_corrections_states=(
-                lambda: self._build_quantum_corrections_states()
-            ),
-            jobs_for_quantum_source_keys=(
-                lambda keys: self._jobs_for_quantum_source_keys(keys)
-            ),
-            singlepoint_job_for_quantum_source_key=(
-                lambda definition, key: self._singlepoint_job_for_quantum_source_key(
-                    definition, key
-                )
-            ),
-            phonon_job_for_quantum_source_key=(
-                lambda definition, key: self._phonon_job_for_quantum_source_key(
-                    definition, key
-                )
-            ),
-            quantum_seed_name_for_key=(
-                lambda definition, key: self._quantum_seed_name_for_key(definition, key)
-            ),
-            quantum_runtime_configuration=(
-                lambda definition, key: self._quantum_runtime_configuration(
-                    definition, key
-                )
-            ),
-            workflow_row_configuration=(
-                lambda definition, key: self._workflow_row_configuration(
-                    definition, key
-                )
-            ),
-            workflow_row_configuration_exists=(
-                lambda definition, key: self._workflow_row_configuration_exists(
-                    definition, key
-                )
-            ),
-            quantum_num_farms_from_extras=(
-                lambda extras: self._num_farms_from_extras(extras)
-            ),
-            quantum_source_label=(
-                lambda candidate: self._quantum_source_label(candidate)
-            ),
-            quantum_method_from_gui_value=(
-                lambda value: _quantum_method_from_gui_value(value)
-            ),
-            charge_state_for_job=charge_state_for_job,
-            charge_state_label_for_job=(
-                lambda job: self._charge_state_label_for_job(job)
-            ),
-            quantum_can_reset_to_stage_one=(
-                lambda definition, candidate: self._quantum_can_reset_to_stage_one(
-                    definition, candidate
-                )
-            ),
-            input_template_from_keyword_values=build_workflow_settings_template,
-            write_quantum_job_directory=(
-                lambda spec, output_root, *, seed_name: self._write_quantum_job_directory(
-                    spec, output_root, seed_name=seed_name
-                )
-            ),
-            dedupe_jobs=lambda jobs: self._dedupe_jobs(jobs),
-            check_definition_host=(
-                lambda definition: self._check_definition_host(definition)
-            ),
-            format_energy=lambda value: _format_energy(value),
+            handle_structure_host_mismatch=lambda mismatch: self._handle_structure_host_mismatch(mismatch),
+            handle_site_host_mismatch=lambda mismatch: self._handle_site_host_mismatch(mismatch),
             confirm=lambda title, text: (
                 QMessageBox.question(
                     self,
@@ -6902,98 +6203,12 @@ class MainWindow(QMainWindow):
         )
 
     def _build_energy_barriers_deps(self) -> EnergyBarriersDeps:
-        """Build the energy-barriers (NEB) controller's deps.
-
-        These helpers stay on ``MainWindow`` because non-migrating code still
-        calls them: the definition/source/candidate/config helpers are shared
-        with the path-generation, source-removal, and result-configuration
-        surfaces (which do NOT migrate); the host-mismatch handlers are shared
-        across every host-guarded workflow; the endpoint-row / result-row / summary
-        helpers back the view the controller renders. The source-candidate
-        queries and the serialized-source decoders come from
-        :mod:`mufinder.services.source_candidates`, the keyword-to-template
-        parser from :func:`~mufinder.app.adapter_common.build_workflow_settings_template`;
-        the module-level ``_neb_barrier_summaries`` and the
-        ``muon_charge_state_label`` lookup are reached through late-bound
-        wrappers (the controller must not import ``main_window``). The controller
-        reaches them only through these callables.
-        """
+        """Build the energy-barriers (NEB) controller's deps: its window dialogs."""
 
         return EnergyBarriersDeps(
-            build_energy_barrier_neb_states=(
-                lambda: self._build_energy_barrier_neb_states()
-            ),
-            ensure_energy_barrier_neb_definition=(
-                lambda keys: self._ensure_energy_barrier_neb_definition(keys)
-            ),
-            energy_barrier_neb_source_candidates=(
-                lambda: energy_barrier_neb_source_candidates(self._document)
-            ),
-            eligible_energy_barrier_source_candidates=(
-                lambda: eligible_energy_barrier_source_candidates(self._document)
-            ),
-            energy_barrier_neb_row_configuration_with_source_defaults=(
-                lambda definition, key, **kwargs: (
-                    self._energy_barrier_neb_row_configuration_with_source_defaults(
-                        definition, key, **kwargs
-                    )
-                )
-            ),
-            num_farms_from_extras=(
-                lambda extras: self._num_farms_from_extras(extras)
-            ),
-            energy_barrier_neb_row_extras=(
-                lambda definition, key: self._workflow_row_configuration(definition, key)[2]
-            ),
-            handle_structure_host_mismatch=(
-                lambda mismatch: self._handle_structure_host_mismatch(mismatch)
-            ),
-            handle_site_host_mismatch=(
-                lambda mismatch: self._handle_site_host_mismatch(mismatch)
-            ),
-            uuid_from_source=uuid_from_source,
-            float_from_source=float_from_source,
-            fractional_triplet_from_source=fractional_triplet_from_source,
-            fractional_position_block_from_structure=(
-                lambda structure: self._fractional_position_block_from_structure(
-                    structure
-                )
-            ),
-            dedupe_jobs=lambda jobs: self._dedupe_jobs(jobs),
-            project_convergence_input_defaults=(
-                lambda: self._project_convergence_input_defaults()
-            ),
-            input_template_from_keyword_values=build_workflow_settings_template,
-            workflow_row_configuration_exists=(
-                lambda definition, key: self._workflow_row_configuration_exists(
-                    definition, key
-                )
-            ),
-            charge_state_label_for_job=(
-                lambda job: self._charge_state_label_for_job(job)
-            ),
-            energy_barrier_endpoint_rows=(
-                lambda: self._energy_barrier_endpoint_rows()
-            ),
-            selected_energy_barrier_endpoint_keys=(
-                lambda: self._selected_energy_barrier_endpoint_keys()
-            ),
-            energy_barrier_max_path_length_text=(
-                lambda: self._energy_barrier_max_path_length_text()
-            ),
-            completed_energy_barrier_neb_candidates=(
-                lambda: completed_energy_barrier_neb_candidates(self._document)
-            ),
-            energy_barrier_neb_sources_by_job_id=(
-                lambda: self._energy_barrier_neb_sources_by_job_id()
-            ),
-            energy_barrier_neb_result_path_label=(
-                lambda candidate, source: self._energy_barrier_neb_result_path_label(
-                    candidate, source
-                )
-            ),
-            neb_barrier_summaries=lambda data: _neb_barrier_summaries(data),
-            muon_charge_state_label=lambda value: muon_charge_state_label(value),
+            handle_structure_host_mismatch=lambda mismatch: self._handle_structure_host_mismatch(mismatch),
+            handle_site_host_mismatch=lambda mismatch: self._handle_site_host_mismatch(mismatch),
+            show_warning=lambda title, text: QMessageBox.warning(self, title, text),
         )
 
     def _submit_workflow_selection(
@@ -7205,16 +6420,6 @@ class MainWindow(QMainWindow):
             return []
         return [result for result in self._document.results.values() if result.calculation_run_id == run_id]
 
-    @staticmethod
-    def _charge_state_label_for_job(job: Job | None) -> str:
-        if job is None:
-            return ""
-        if job.calc_type == muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE):
-            return muon_charge_state_label(POSITIVE_MUON_CHARGE_STATE)
-        if job.calc_type == muon_relaxation_calc_type(MUONIUM_CHARGE_STATE):
-            return muon_charge_state_label(MUONIUM_CHARGE_STATE)
-        return ""
-
     def _refresh_quantum_corrections_view(self) -> None:
         """Re-render the quantum-corrections view via its controller.
 
@@ -7239,107 +6444,6 @@ class MainWindow(QMainWindow):
 
         self._energy_barriers_controller.refresh_view()
 
-    def _eligible_quantum_source_candidates(self) -> list[QuantumSourceCandidate]:
-        return eligible_quantum_source_candidates(self._document)
-
-    def _quantum_source_relative_energies(self) -> dict[str, float | None]:
-        return quantum_source_relative_energies(self._eligible_quantum_source_candidates())
-
-    def _quantum_source_candidate_by_key(self, key: str) -> QuantumSourceCandidate | None:
-        return quantum_source_candidate_by_key(self._document, key)
-
-    def _quantum_source_label(self, candidate: QuantumSourceCandidate) -> str:
-        return quantum_source_labels_by_key(self._eligible_quantum_source_candidates()).get(candidate.key, "site")
-
-    def _energy_barrier_form_state(self) -> dict[str, object]:
-        if self._document is None:
-            return {}
-        raw = self._document.ui_state.get("energy_barriers_form", {})
-        return dict(raw) if isinstance(raw, dict) else {}
-
-    def _energy_barrier_max_path_length_text(self) -> str:
-        state = self._energy_barrier_form_state()
-        raw = state.get("max_path_length_ang")
-        if raw in (None, ""):
-            return ""
-        try:
-            return f"{float(raw):.6g}"
-        except (TypeError, ValueError):
-            return ""
-
-    def _selected_energy_barrier_endpoint_keys(self) -> tuple[str, str]:
-        state = self._energy_barrier_form_state()
-        reactant_key = str(state.get("selected_reactant_key", "")).strip()
-        product_key = str(state.get("selected_product_key", "")).strip()
-        if reactant_key and product_key:
-            return reactant_key, product_key
-        candidates = self._eligible_quantum_source_candidates()
-        if not reactant_key and candidates:
-            reactant_key = candidates[0].key
-        if not product_key:
-            for candidate in candidates:
-                if candidate.key != reactant_key:
-                    product_key = candidate.key
-                    break
-        return reactant_key, product_key
-
-    def _energy_barrier_endpoint_rows(self) -> list[EnergyBarrierEndpointRow]:
-        rows: list[EnergyBarrierEndpointRow] = []
-        candidates = self._eligible_quantum_source_candidates()
-        relative = quantum_source_relative_energies(candidates)
-        for candidate in candidates:
-            rows.append(
-                EnergyBarrierEndpointRow(
-                    key=candidate.key,
-                    label=candidate.site.label or candidate.job.label or candidate.structure.label,
-                    charge_state=self._charge_state_label_for_job(candidate.job),
-                    source_job=candidate.job.label,
-                    relative_energy=_format_relative_energy(relative.get(candidate.key)),
-                )
-            )
-        return rows
-
-    def _serialize_energy_barrier_source_candidates(
-        self,
-        candidates: list[EnergyBarrierSourceCandidate],
-    ) -> list[dict[str, object]]:
-        serialized: list[dict[str, object]] = []
-        for candidate in candidates:
-            serialized.append(
-                {
-                    "key": candidate.key,
-                    "label": self._energy_barrier_source_label(candidate),
-                    "path_index": candidate.path_index,
-                    "reactant_site_id": str(candidate.reactant.site.id),
-                    "product_site_id": str(candidate.product.site.id),
-                    "reactant_run_id": str(candidate.reactant.run.id),
-                    "product_run_id": str(candidate.product.run.id),
-                    "reactant_job_id": str(candidate.reactant.job.id),
-                    "product_job_id": str(candidate.product.job.id),
-                    "reactant_structure_id": str(candidate.reactant.structure.id),
-                    "product_structure_id": str(candidate.product.structure.id),
-                    "path_start_fractional": list(candidate.path.start_fractional),
-                    "path_end_fractional": list(candidate.path.end_fractional),
-                    "path_length_ang": candidate.path.length_ang,
-                    "charge_state": self._charge_state_for_job(candidate.reactant.job),
-                }
-            )
-        return serialized
-
-    def _eligible_energy_barrier_source_candidates(self) -> list[EnergyBarrierSourceCandidate]:
-        return eligible_energy_barrier_source_candidates(self._document)
-
-    def _energy_barrier_source_candidate_by_key(self, key: str) -> EnergyBarrierSourceCandidate | None:
-        for candidate in self._eligible_energy_barrier_source_candidates():
-            if candidate.key == key:
-                return candidate
-        return None
-
-    def _energy_barrier_source_label(self, candidate: EnergyBarrierSourceCandidate) -> str:
-        reactant = candidate.reactant.site.label or candidate.reactant.job.label or "reactant"
-        product = candidate.product.site.label or candidate.product.job.label or "product"
-        return f"{reactant}_to_{product}_path{candidate.path_index}"
-
     def _uep_potential_grid_result_for_job(self, job_id: UUID) -> Result | None:
         run = self._run_for_job(job_id)
         if run is None:
@@ -7356,18 +6460,14 @@ class MainWindow(QMainWindow):
         return deserialize_potential_grid(result.data)
 
     def _job_output_directory(self, job: Job) -> Path | None:
-        return job_output_directory(self._document, job, quantum_seed_name=self._quantum_seed_name_for_key)
+        return job_output_directory(
+            self._document,
+            job,
+            quantum_seed_name=lambda definition, key: quantum_seed_name_for_key(self._document, definition, key),
+        )
 
     def _job_seed_name(self, job: Job) -> str:
         return job_seed_name(job, self._job_output_directory)
-
-    def _write_quantum_job_directory(self, job_spec, output_root: Path, *, seed_name: str) -> Path:
-        job_dir = output_root / seed_name
-        job_dir.mkdir(parents=True, exist_ok=True)
-        cell_text, param_text = render_job(job_spec)
-        (job_dir / f"{seed_name}.cell").write_text(cell_text, encoding="utf-8", newline="\n")
-        (job_dir / f"{seed_name}.param").write_text(param_text, encoding="utf-8", newline="\n")
-        return job_dir
 
     def _record_job_reset(self, *, job: Job, cleaned_output_directory: bool) -> None:
         if self._document is None:
@@ -7936,7 +7036,7 @@ class MainWindow(QMainWindow):
             return
 
         output_root = self._document.project_root / "files" / "convergence_cutoff"
-        serialized_config = self._serialize_convergence_config(config)
+        serialized_config = serialize_convergence_config(config)
         simulation_cell_mode = resolution.normalized_selection.mode
         supercell_source_workflow = (
             resolution.source_workflow_stage.value
@@ -8771,7 +7871,7 @@ class MainWindow(QMainWindow):
             enabled=resolution.structure is not None,
         )
         self._convergence_view.set_parameter_species_options(
-            _structure_species_options(resolution.structure)
+            structure_species_options(resolution.structure)
         )
 
     def _convergence_supercell_initial_matrix(self) -> list[list[int]]:
@@ -8946,7 +8046,7 @@ class MainWindow(QMainWindow):
         definition = self._project_service.register_convergence_kpoint_definition(
             self._document,
             input_structure_id=structure.id,
-            parameters=self._serialize_convergence_config(config),
+            parameters=serialize_convergence_config(config),
             output_directory=output_root,
             simulation_cell_mode=resolution.normalized_selection.mode,
             supercell_source_workflow=(
@@ -9007,7 +8107,7 @@ class MainWindow(QMainWindow):
             enabled=resolution.structure is not None,
         )
         self._kpoint_convergence_view.set_parameter_species_options(
-            _structure_species_options(resolution.structure)
+            structure_species_options(resolution.structure)
         )
         self._kpoint_convergence_view.set_generation_context(
             structure_id=(str(resolution.structure.id) if resolution.structure is not None else None),
@@ -9333,7 +8433,7 @@ class MainWindow(QMainWindow):
 
         if definition is None:
             return None
-        config = self._deserialize_convergence_config(
+        config = deserialize_convergence_config(
             definition.parameters.get("configuration", {})
         )
         if config is None:
@@ -9482,7 +8582,7 @@ class MainWindow(QMainWindow):
             view.set_parameter_species_options(())
         else:
             structure = self._workflow_source_structure(view)
-            view.set_parameter_species_options(_structure_species_options(structure))
+            view.set_parameter_species_options(structure_species_options(structure))
             view.set_host_lattice(
                 None if structure is None else [list(row) for row in structure.lattice_vectors]
             )
@@ -9578,7 +8678,7 @@ class MainWindow(QMainWindow):
             selected_id=selected_id,
             summary=summary,
         )
-        self._uep_view.set_parameter_species_options(_structure_species_options(selected))
+        self._uep_view.set_parameter_species_options(structure_species_options(selected))
 
     def _on_uep_form_state_changed(self, state: dict) -> None:
         if self._document is None or self._shutting_down:
@@ -9591,12 +8691,6 @@ class MainWindow(QMainWindow):
             self._refresh_workflow_defaults(self._uep_view)
         finally:
             self._handling_uep_form_state = False
-
-    def _serialize_uep_config(self, config: UepConfig) -> dict[str, object]:
-        return serialize_uep_config(config)
-
-    def _deserialize_uep_config(self, payload: object) -> UepConfig | None:
-        return deserialize_uep_config(payload)
 
     @staticmethod
     def _normalized_parameter_values(values: Mapping[str, object]) -> object:
@@ -9637,7 +8731,7 @@ class MainWindow(QMainWindow):
     def _sync_active_muon_relaxation_dashboard_jobs(self, target_definition) -> None:
         if self._document is None:
             return
-        config = self._deserialize_muon_relaxation_config(
+        config = deserialize_muon_relaxation_config(
             target_definition.parameters.get("configuration", {})
         )
         if config is None:
@@ -10182,10 +9276,10 @@ class MainWindow(QMainWindow):
         definition = self._pristine_relaxation_controller.active_definition()
         if definition is None:
             return
-        config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
+        config = deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return
-        state = self._serialize_pristine_relaxation_config(config)
+        state = serialize_pristine_relaxation_config(config)
         for row in state.get("rows", []):
             if isinstance(row, dict) and "params" not in row:
                 row["params"] = dict(row.get("parameter_values", {}))
@@ -10198,10 +9292,10 @@ class MainWindow(QMainWindow):
         definition = self._muon_relaxation_controller.active_definition()
         if definition is None:
             return
-        config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+        config = deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return
-        state = self._serialize_muon_relaxation_config(config)
+        state = serialize_muon_relaxation_config(config)
         for row in state.get("rows", []):
             if isinstance(row, dict) and "fractional_position" not in row:
                 row["fractional_position"] = list(row.get("initial_fractional_position", (0.0, 0.0, 0.0)))
@@ -10216,12 +9310,6 @@ class MainWindow(QMainWindow):
             return
         self._uep_controller.remove_rows(labels)
         self._refresh_uep_rows()
-
-    def _serialize_pristine_relaxation_config(self, config: PristineRelaxationConfig) -> dict[str, object]:
-        return serialize_pristine_relaxation_config(config)
-
-    def _deserialize_pristine_relaxation_config(self, payload: object) -> PristineRelaxationConfig | None:
-        return deserialize_pristine_relaxation_config(payload)
 
     def _on_import_legacy_relaxations(self) -> None:
         """Scan a legacy MuFinder folder and import the relaxations chosen from it."""
@@ -10330,7 +9418,7 @@ class MainWindow(QMainWindow):
         definition = self._muon_relaxation_controller.active_definition()
         existing_labels: list[str] = []
         if definition is not None:
-            config = self._deserialize_muon_relaxation_config(
+            config = deserialize_muon_relaxation_config(
                 definition.parameters.get("configuration", {})
             )
             if config is not None:
@@ -10656,19 +9744,13 @@ class MainWindow(QMainWindow):
             by_site[site_id] = entry
         return by_site
 
-    def _serialize_muon_relaxation_config(self, config: MuonRelaxationConfig) -> dict[str, object]:
-        return serialize_muon_relaxation_config(config)
-
-    def _deserialize_muon_relaxation_config(self, payload: object) -> MuonRelaxationConfig | None:
-        return deserialize_muon_relaxation_config(payload)
-
     def _definition_for_pristine_relaxation_label(self, label: str):
         definition = self._pristine_relaxation_controller.active_definition()
         if definition is None:
             return None, None
 
         self._pristine_relaxation_controller.sync_mappings(definition)
-        config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
+        config = deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return None, None
         labels = {row.label for row in config.rows}
@@ -10690,7 +9772,7 @@ class MainWindow(QMainWindow):
             form_sources.append(persisted)
 
         for form_state in form_sources:
-            config = self._deserialize_pristine_relaxation_config(form_state)
+            config = deserialize_pristine_relaxation_config(form_state)
             if config is not None and config.rows:
                 return config
         return None
@@ -10709,7 +9791,7 @@ class MainWindow(QMainWindow):
             form_sources.append(persisted)
 
         for form_state in form_sources:
-            config = self._deserialize_muon_relaxation_config(form_state)
+            config = deserialize_muon_relaxation_config(form_state)
             if config is not None and config.rows:
                 return config
         return None
@@ -10722,7 +9804,7 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return None, None
         for definition in self._muon_relaxation_controller.definitions():
-            config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+            config = deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
             if config is None:
                 continue
             for row in config.rows:
@@ -10759,7 +9841,7 @@ class MainWindow(QMainWindow):
         for definition in controller.definitions():
             if host.id not in definition.input_structure_ids:
                 continue
-            config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
+            config = deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
             if config is None:
                 continue
             rows.extend(
@@ -10790,7 +9872,7 @@ class MainWindow(QMainWindow):
         definition = self._pristine_relaxation_controller.active_definition()
         fix_all_cell_by_label: dict[str, bool] = {}
         if definition is not None:
-            config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
+            config = deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
             if config is not None:
                 fix_all_cell_by_label = {row.label: bool(row.fix_all_cell) for row in config.rows}
 
@@ -10959,7 +10041,7 @@ class MainWindow(QMainWindow):
         definition = self._project_service.register_pristine_relaxation_definition(
             self._document,
             input_structure_id=host.id,
-            parameters=self._serialize_pristine_relaxation_config(config),
+            parameters=serialize_pristine_relaxation_config(config),
             output_directory=output_root,
         )
         self._pristine_relaxation_controller.sync_mappings(definition)
@@ -11000,7 +10082,7 @@ class MainWindow(QMainWindow):
         definition = self._project_service.register_muon_relaxation_definition(
             self._document,
             input_structure_id=host.id,
-            parameters=self._serialize_muon_relaxation_config(config),
+            parameters=serialize_muon_relaxation_config(config),
             output_directory=output_root,
         )
         self._muon_relaxation_controller.sync_mappings(definition)
@@ -11018,7 +10100,7 @@ class MainWindow(QMainWindow):
         definition = controller.active_definition()
         if definition is None:
             return []
-        config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
+        config = deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return []
         return completed_pristine_relaxation_jobs(
@@ -11214,234 +10296,28 @@ class MainWindow(QMainWindow):
         self._refresh_journal_view()
         self.statusBar().showMessage(f"Generated comparison table '{table.label}'")
 
-    @staticmethod
-    def _quantum_job_mapping(definition, key: str) -> dict[str, str]:
-        if definition is None:
-            return {}
-        mapping = definition.parameters.get(key, {})
-        return dict(mapping) if isinstance(mapping, dict) else {}
-
-    def _quantum_seed_name_for_candidate(self, candidate: QuantumSourceCandidate) -> str:
-        return job_name("quantum", self._quantum_source_label(candidate))
-
-    def _quantum_seed_name_for_key(self, definition, key: str) -> str:
-        mapping = self._quantum_job_mapping(definition, "job_seed_names_by_label")
-        raw_seed = mapping.get(key)
-        if isinstance(raw_seed, str) and raw_seed.strip():
-            return raw_seed.strip()
-        candidate = self._quantum_source_candidate_by_key(key)
-        if candidate is None:
-            return "quantum"
-        return self._quantum_seed_name_for_candidate(candidate)
-
-    def _singlepoint_job_for_quantum_source_key(self, definition, key: str) -> Job | None:
-        return self._quantum_corrections_controller.job_for_key(
-            definition,
-            key,
-            mapping_name="singlepoint_job_ids_by_label",
-            calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
-        )
-
-    def _phonon_job_for_quantum_source_key(self, definition, key: str) -> Job | None:
-        controller = self._quantum_corrections_controller
-        job = controller.job_for_key(
-            definition,
-            key,
-            mapping_name="phonon_job_ids_by_label",
-            calc_type=QUANTUM_PHONON_CALC_TYPE,
-        )
-        if job is not None:
-            return job
-        return controller.job_for_key(definition, key, calc_type=QUANTUM_PHONON_CALC_TYPE)
-
-    def _quantum_stage_state(self, definition, candidate: QuantumSourceCandidate) -> QuantumStageState:
-        return quantum_stage_state(
-            singlepoint_job=self._singlepoint_job_for_quantum_source_key(definition, candidate.key),
-            phonon_job=self._phonon_job_for_quantum_source_key(definition, candidate.key),
-            row_status=effective_row_status,
-        )
-
-    def _quantum_allows_farms_only_edit(self, definition, candidate: QuantumSourceCandidate) -> bool:
-        stage_state = self._quantum_stage_state(definition, candidate)
-        return (
-            stage_state.stage == QUANTUM_STAGE_PHONON
-            and stage_state.status == "ready"
-            and stage_state.current_job is None
-        )
-
-    def _quantum_can_reset_to_stage_one(self, definition, candidate: QuantumSourceCandidate) -> bool:
-        """Return whether a Quantum Corrections row can be rewound to stage 1.
-
-        Quantum Corrections is the one workflow whose recovery is a *stage*
-        reset rather than a job reset: the row stages a singlepoint job and then
-        a phonon job into a shared output directory, so
-        :meth:`_on_reset_quantum_corrections_to_stage_one` deletes both job
-        records instead of calling ``reset_failed_job``. That makes this
-        predicate the workflow's whole in-table escape hatch.
-
-        A row qualifies once it has progressed past "nothing staged" and has no
-        job still running: either the phonon job exists and is not active, or the
-        row is still on stage 1 with a singlepoint job that has finished — which
-        includes a *failed* (or stopped/cancelled) one. Without that last case a
-        stage-1 failure with no phonon job left the row permanently stuck: it
-        showed ``"failed"``, so its Submit stayed disabled, and Reset was
-        refused too.
-        """
-
-        singlepoint_job = self._singlepoint_job_for_quantum_source_key(definition, candidate.key)
-        if singlepoint_job is None:
-            return False
-        phonon_job = self._phonon_job_for_quantum_source_key(definition, candidate.key)
-        if phonon_job is not None:
-            return phonon_job.status not in ACTIVE_JOB_STATUSES
-        return singlepoint_job.status in _QUANTUM_STAGE_ONE_RESETTABLE_STATUSES
-
-    def _ensure_quantum_corrections_definition(self, source_keys: list[str]):
-        if self._document is None:
-            return None
-        candidates = [
-            candidate
-            for key in source_keys
-            if (candidate := self._quantum_source_candidate_by_key(key)) is not None
-        ]
-        if not candidates:
-            return None
-        definition = self._quantum_corrections_controller.active_definition()
-        if definition is not None:
-            for candidate in candidates:
-                if candidate.structure.id not in definition.input_structure_ids:
-                    definition.input_structure_ids.append(candidate.structure.id)
-                if candidate.site.id not in definition.input_site_ids:
-                    definition.input_site_ids.append(candidate.site.id)
-            config = definition.parameters.setdefault("configuration", {})
-            if isinstance(config, dict):
-                config.setdefault("method", "finite_displacement")
-                config.setdefault("pseudopotential_family", "unknown")
-                config["sources"] = self._serialize_quantum_sources(definition.input_site_ids)
-            definition.parameters.setdefault("singlepoint_job_ids_by_label", {})
-            definition.parameters.setdefault("phonon_job_ids_by_label", {})
-            definition.parameters.setdefault("job_seed_names_by_label", {})
-            return definition
-
-        output_root = self._document.project_root / "files" / "quantum_corrections"
-        definition = self._project_service.register_quantum_phonon_definition(
-            self._document,
-            input_structure_ids=list(dict.fromkeys(candidate.structure.id for candidate in candidates)),
-            input_site_ids=list(dict.fromkeys(candidate.site.id for candidate in candidates)),
-            parameters={
-                "method": "finite_displacement",
-                "pseudopotential_family": "unknown",
-                "sources": self._serialize_quantum_sources([candidate.site.id for candidate in candidates]),
-                "singlepoint_job_ids_by_label": {},
-                "phonon_job_ids_by_label": {},
-                "job_seed_names_by_label": {},
-            },
-            output_directory=output_root,
-        )
-        definition.parameters.setdefault("singlepoint_job_ids_by_label", {})
-        definition.parameters.setdefault("phonon_job_ids_by_label", {})
-        definition.parameters.setdefault("job_seed_names_by_label", {})
-        return definition
-
-    def _serialize_quantum_sources(self, site_ids: list[UUID]) -> list[dict[str, object]]:
-        serialized: list[dict[str, object]] = []
-        for raw_site_id in site_ids:
-            candidate = self._quantum_source_candidate_by_key(str(raw_site_id))
-            if candidate is None:
-                continue
-            serialized.append(
-                {
-                    "site_id": str(candidate.site.id),
-                    "source_relaxation_run_id": str(candidate.run.id),
-                    "source_relaxation_job_id": str(candidate.job.id),
-                    "relaxed_structure_id": str(candidate.structure.id),
-                    "label": self._quantum_source_label(candidate),
-                    "charge_state": self._charge_state_for_job(candidate.job),
-                }
-            )
-        return serialized
-
-    _charge_state_for_job = staticmethod(charge_state_for_job)
-
-    def _job_for_quantum_source_key(self, definition, key: str) -> Job | None:
-        candidate = self._quantum_source_candidate_by_key(key)
-        if candidate is None:
-            return None
-        return self._quantum_stage_state(definition, candidate).current_job
-
-    def _quantum_job_by_label(self, label: str) -> Job | None:
-        if self._document is None:
-            return None
-        for job in self._document.jobs.values():
-            if job.calc_type in {QUANTUM_SINGLEPOINT_CALC_TYPE, QUANTUM_PHONON_CALC_TYPE} and job.label == label:
-                return job
-        return None
-
-    def _build_quantum_corrections_states(self) -> dict[str, RelaxationRunState]:
-        states: dict[str, RelaxationRunState] = {}
-        definition = self._quantum_corrections_controller.active_definition()
-        for candidate in self._eligible_quantum_source_candidates():
-            stage_state = self._quantum_stage_state(definition, candidate)
-            job = stage_state.current_job
-            if job is None:
-                states[candidate.key] = RelaxationRunState(status=stage_state.status)
-                continue
-            error_message = job.error_message
-            states[candidate.key] = RelaxationRunState(
-                status=stage_state.status,
-                job_id=job.id,
-                job_label=job.label,
-                error_message=error_message,
-            )
-        return states
-
-    def _energy_barriers_definitions(self) -> list[object]:
-        if self._document is None:
-            return []
-        return [
-            definition
-            for definition in self._document.calculations.values()
-            if definition.workflow_stage == WorkflowStage.ENERGY_BARRIERS
-            and definition.calc_type == TRANSITION_STATE_SEARCH_SET_CALC_TYPE
-        ]
-
-    def _remove_energy_barrier_sources_from_ui_state(self, keys: set[str]) -> None:
-        if self._document is None:
-            return
-        state = self._document.ui_state.get("energy_barriers_form", {})
-        if not isinstance(state, dict):
-            return
-        raw_sources = state.get("generated_sources", [])
-        if isinstance(raw_sources, list):
-            state["generated_sources"] = [
-                source
-                for source in raw_sources
-                if not isinstance(source, dict) or str(source.get("key", "")).strip() not in keys
-            ]
-
     def _cleanup_energy_barrier_source_jobs(self, keys: set[str]) -> bool:
         if self._document is None:
             return True
         targets: list[tuple[object, Job]] = []
         seen: set[UUID] = set()
-        for definitions in (self._energy_barriers_definitions(), self._energy_barriers_controller.definitions()):
-            for definition in definitions:
-                mapping = definition.parameters.get("job_ids_by_label", {})
-                if not isinstance(mapping, dict):
+        for definition in self._energy_barriers_controller.path_definitions():
+            mapping = definition.parameters.get("job_ids_by_label", {})
+            if not isinstance(mapping, dict):
+                continue
+            for key in keys:
+                raw_job_id = mapping.get(key)
+                if not isinstance(raw_job_id, str):
                     continue
-                for key in keys:
-                    raw_job_id = mapping.get(key)
-                    if not isinstance(raw_job_id, str):
-                        continue
-                    try:
-                        job_id = UUID(raw_job_id)
-                    except ValueError:
-                        continue
-                    job = self._document.jobs.get(job_id)
-                    if job is None or job.id in seen:
-                        continue
-                    targets.append((definition, job))
-                    seen.add(job.id)
+                try:
+                    job_id = UUID(raw_job_id)
+                except ValueError:
+                    continue
+                job = self._document.jobs.get(job_id)
+                if job is None or job.id in seen:
+                    continue
+                targets.append((definition, job))
+                seen.add(job.id)
 
         shared_file_disposition: str | None = None
         multi = len(targets) > 1
@@ -11475,451 +10351,83 @@ class MainWindow(QMainWindow):
             self._delete_job_records(job.id)
         return True
 
-    def _energy_barrier_neb_source_candidate_by_key(self, key: str) -> EnergyBarrierNebCandidate | None:
-        for candidate in energy_barrier_neb_source_candidates(self._document):
-            if candidate.key == key:
-                return candidate
-        return None
-
-    def _completed_energy_barrier_neb_candidate_by_key(self, key: str) -> EnergyBarrierCompletedNebCandidate | None:
-        for candidate in completed_energy_barrier_neb_candidates(self._document):
-            if candidate.key == key:
-                return candidate
-        return None
-
-    def _energy_barrier_neb_sources_by_job_id(self) -> dict[UUID, dict[str, object]]:
-        """Map each materialized NEB job back to its generated-path source metadata."""
-
-        sources_by_key = {
-            str(source.get("key", "")).strip(): source
-            for source in energy_barrier_generated_sources(self._document)
-        }
-        by_job_id: dict[UUID, dict[str, object]] = {}
-        for definition in self._energy_barriers_controller.definitions():
-            mapping = definition.parameters.get("job_ids_by_label", {})
-            if not isinstance(mapping, dict):
-                continue
-            for key, raw_job_id in mapping.items():
-                source = sources_by_key.get(str(key).strip())
-                if source is None or not isinstance(raw_job_id, str):
-                    continue
-                try:
-                    by_job_id[UUID(raw_job_id)] = source
-                except ValueError:
-                    continue
-        return by_job_id
-
-    def _energy_barrier_neb_result_path_label(
-        self,
-        candidate: EnergyBarrierCompletedNebCandidate,
-        source: Mapping[str, object] | None,
-    ) -> str:
-        """Describe a completed NEB result as ``initial → final``, falling back to the job label."""
-
-        if source is not None and self._document is not None:
-            labels: list[str] = []
-            for field in ("reactant_site_id", "product_site_id"):
-                site_id = uuid_from_source(source, field)
-                site = self._document.sites.get(site_id) if site_id is not None else None
-                labels.append((site.label or "").strip() if site is not None else "")
-            if all(labels):
-                return f"{labels[0]} → {labels[1]}"
-        return candidate.job.label
-
-    def _serialize_energy_barrier_neb_sources(self, keys: list[str]) -> list[dict[str, object]]:
-        candidates_by_key = {candidate.key: candidate for candidate in energy_barrier_neb_source_candidates(self._document)}
-        serialized: list[dict[str, object]] = []
-        for key in keys:
-            candidate = candidates_by_key.get(key)
-            if candidate is None:
-                continue
-            serialized.append(dict(candidate.source))
-        return serialized
-
-    def _ensure_energy_barrier_neb_definition(self, source_keys: list[str]):
-        if self._document is None:
-            return None
-        candidates = [
-            candidate
-            for key in source_keys
-            if (candidate := self._energy_barrier_neb_source_candidate_by_key(key)) is not None
-        ]
-        if not candidates:
-            return None
-        definition = self._energy_barriers_controller.active_definition()
-        if definition is not None:
-            for candidate in candidates:
-                for source_key in ("reactant_structure_id", "product_structure_id"):
-                    structure_id = uuid_from_source(candidate.source, source_key)
-                    if structure_id is not None and structure_id not in definition.input_structure_ids:
-                        definition.input_structure_ids.append(structure_id)
-                for source_key in ("reactant_site_id", "product_site_id"):
-                    site_id = uuid_from_source(candidate.source, source_key)
-                    if site_id is not None and site_id not in definition.input_site_ids:
-                        definition.input_site_ids.append(site_id)
-            config = definition.parameters.setdefault("configuration", {})
-            if isinstance(config, dict):
-                config.setdefault("method", "NEB")
-                config["sources"] = merge_serialized_sources(
-                    config.get("sources", []),
-                    self._serialize_energy_barrier_neb_sources(source_keys),
-                    key_field="key",
-                )
-            return definition
-
-        output_root = self._document.project_root / "files" / "energy_barriers_neb"
-        structure_ids = list(
-            dict.fromkeys(
-                structure_id
-                for candidate in candidates
-                for structure_id in (
-                    uuid_from_source(candidate.source, "reactant_structure_id"),
-                    uuid_from_source(candidate.source, "product_structure_id"),
-                )
-                if structure_id is not None
-            )
-        )
-        site_ids = list(
-            dict.fromkeys(
-                site_id
-                for candidate in candidates
-                for site_id in (
-                    uuid_from_source(candidate.source, "reactant_site_id"),
-                    uuid_from_source(candidate.source, "product_site_id"),
-                )
-                if site_id is not None
-            )
-        )
-        return self._project_service.register_nudged_elastic_band_definition(
-            self._document,
-            input_structure_ids=structure_ids,
-            input_site_ids=site_ids,
-            parameters={
-                "method": "NEB",
-                "sources": self._serialize_energy_barrier_neb_sources(source_keys),
-            },
-            output_directory=output_root,
-        )
-
-    def _build_energy_barrier_neb_states(self) -> dict[str, RelaxationRunState]:
-        states: dict[str, RelaxationRunState] = {}
-        definition = self._energy_barriers_controller.active_definition()
-        for candidate in energy_barrier_neb_source_candidates(self._document):
-            job = self._energy_barriers_controller.job_for_neb_source_key(definition, candidate.key)
-            if job is None:
-                states[candidate.key] = RelaxationRunState(status="ready")
-                continue
-            states[candidate.key] = RelaxationRunState(
-                status=effective_row_status(job),
-                job_id=job.id,
-                job_label=job.label,
-                error_message=job.error_message,
-            )
-        return states
-
-    def _transition_state_file_path(self, result: Result) -> Path | None:
-        if not isinstance(result.data, dict):
-            return None
-        raw = result.data.get("transition_state_file")
-        if not isinstance(raw, str) or not raw.strip():
-            return None
-        return Path(raw)
-
-    def _structure_from_transition_state_image(self, job_label: str, image: TransitionStateImage) -> Structure:
-        lattice = [list(vector) for vector in image.lattice_vectors]
-        fractional_positions = [
-            lattice_cart_to_frac(position, lattice)
-            for position in image.cartesian_positions
-        ]
-        host_id = self._document.project.host_structure_id if self._document is not None else None
-        return Structure(
-            label=f"{job_label} {image.label}",
-            origin="energy_barriers_neb_preview",
-            lattice_vectors=lattice,
-            species=list(image.species),
-            fractional_positions=[list(position) for position in fractional_positions],
-            parent_structure_id=host_id,
-            properties={
-                "pbc": [True, True, True],
-                "source_image_label": image.label,
-                "reaction_coordinate": image.reaction_coordinate,
-                "energy_eV": image.energy,
-            },
-        )
-    def _fractional_position_block_from_structure(self, structure: Structure) -> PositionBlock:
-        # Fractional coordinates so the NEB product/intermediate blocks use
-        # POSITIONS_FRAC_PRODUCT, whose CASTEP reader accepts tagged species like the muon "H:mu".
-        rows = [
-            AtomicPosition(str(species), tuple(float(value) for value in fractional))
-            for species, fractional in zip(structure.species, structure.fractional_positions, strict=True)
-        ]
-        return PositionBlock(positions=tuple(rows), unit="frac")
-
     def _on_configure_quantum_corrections_source(self, payload: object) -> None:
-        if self._document is None:
+        controller = self._quantum_corrections_controller
+        request = controller.configure_request(_ordered_string_list(payload))
+        if request is None:
             return
-        keys = _ordered_string_list(payload)
-        if not keys:
-            return
-        candidates = [
-            candidate
-            for key in keys
-            if (candidate := self._quantum_source_candidate_by_key(key)) is not None
-        ]
-        if not candidates:
-            return
-        definition = self._quantum_corrections_controller.active_definition()
-        key_list = [candidate.key for candidate in candidates]
-        values_by_key: list[dict[str, object]] = []
-        advanced_names: set[str] = set()
-        stage_states = []
-        pseudopotential_families: list[str | None] = []
-        farms_only_values: list[bool] = []
-        for candidate in candidates:
-            values, pseudopotential_family = self._quantum_runtime_configuration(definition, candidate.key)
-            _params, row_advanced_names, extras = self._workflow_row_configuration(definition, candidate.key)
-            values_by_key.append(values)
-            advanced_names.update(row_advanced_names)
-            stage_states.append(self._quantum_stage_state(definition, candidate))
-            pseudopotential_families.append(pseudopotential_family)
-            farms_only_values.append(self._quantum_allows_farms_only_edit(definition, candidate))
-        common_values = dict(values_by_key[0])
-        for row_values in values_by_key[1:]:
-            common_values = {
-                name: value for name, value in common_values.items() if name in row_values and row_values[name] == value
-            }
-        first_candidate = candidates[0]
-        first_stage_state = stage_states[0]
-        farms_only = len(set(farms_only_values)) == 1 and farms_only_values[0]
-        fully_editable = all(
-            stage_state.stage == QUANTUM_STAGE_SINGLEPOINT and stage_state.status == "ready"
-            for stage_state in stage_states
-        )
-        read_only = not fully_editable and not farms_only
-        common_pseudopotential_family = (
-            pseudopotential_families[0]
-            if pseudopotential_families and all(value == pseudopotential_families[0] for value in pseudopotential_families)
-            else ""
-        )
-        num_farms_values = [
-            self._num_farms_from_extras(self._workflow_row_configuration(definition, candidate.key)[2])
-            for candidate in candidates
-        ]
-        common_num_farms = (
-            num_farms_values[0] if num_farms_values and all(value == num_farms_values[0] for value in num_farms_values) else 1
-        )
-
         dialog = QuantumCorrectionsConfigDialog(
-            specs=self._quantum_parameter_specs(),
-            pseudopotential_family=common_pseudopotential_family or "unknown",
-            num_farms=common_num_farms,
-            intro_text=(
-                f"Selected sources: {len(candidates)}\n"
-                f"Current stage: {first_stage_state.stage if len(candidates) == 1 else 'mixed/selected'}\n"
-                f"Displacements required for the phonon stage: {3 * len(first_candidate.structure.species)}"
-            ),
-            read_only=read_only,
-            editable_param_names=() if farms_only else None,
-            pseudopotential_editable=fully_editable,
-            num_farms_editable=(fully_editable or farms_only),
-            species_options=_merge_species_options([candidate.structure for candidate in candidates]),
+            specs=controller.parameter_specs(),
+            pseudopotential_family=request.pseudopotential_family,
+            num_farms=request.num_farms,
+            intro_text=request.intro_text,
+            read_only=request.read_only,
+            editable_param_names=() if request.farms_only else None,
+            pseudopotential_editable=request.fully_editable,
+            num_farms_editable=request.fully_editable or request.farms_only,
+            species_options=request.species_options,
             parent=self,
         )
-        if read_only:
-            dialog.setWindowTitle("Inspect Quantum Corrections Parameters")
-        elif farms_only:
-            dialog.setWindowTitle("Configure Quantum Corrections Stage 2 Farms")
-        else:
-            dialog.setWindowTitle("Configure Quantum Corrections Parameters")
-        dialog.set_values(common_values, preferred_exclusive=kpoint_exclusive_hint(values_by_key))
-        dialog.set_advanced_names(tuple(sorted(advanced_names)))
-        dialog.set_mixed_names(mixed_parameter_names(values_by_key))
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        if read_only:
-            return
-
-        pseudopotential_family = dialog.pseudopotential_family()
-        dialog_payload = self._workflow_dialog_payload(
-            dialog,
-            extra_payload={
-                "pseudopotential_family": pseudopotential_family,
-                "num_farms": dialog.num_farms(),
-            },
-        )
-        definition = self._ensure_quantum_corrections_definition(key_list)
-        if definition is None:
-            return
-        untouched = dialog.untouched_mixed_names()
-        for key in key_list:
-            self._store_workflow_row_configuration(
-                definition,
-                key,
-                self._batch_row_payload(definition, key, dialog_payload, untouched),
+        result = run_source_configure_dialog(dialog, request)
+        if result is not None:
+            controller.apply_configuration(
+                request.keys,
+                result,
+                {"pseudopotential_family": dialog.pseudopotential_family(), "num_farms": dialog.num_farms()},
             )
-        self._refresh_quantum_corrections_view()
-        self._persist_document_ui_state(
-            failure_message="Quantum Corrections configuration was updated, but autosave failed."
-        )
 
     def _on_quantum_corrections_source_label_renamed(self, key: str, label: str) -> None:
         if self._document is None or self._shutting_down:
             return
-        candidate = self._quantum_source_candidate_by_key(key)
-        if candidate is None:
+        if not self._quantum_corrections_controller.rename_source(key, label):
             return
-        normalized = str(label).strip()
-        if not normalized or normalized == candidate.site.label:
-            self._refresh_quantum_corrections_view()
-            return
-        candidate.site.label = normalized
-        self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
         self._persist_document_ui_state(
             failure_message="Quantum Corrections site label was updated, but autosave failed."
         )
 
     def _on_configure_energy_barrier_result(self, payload: object) -> None:
-        if self._document is None:
+        controller = self._energy_barriers_controller
+        request = controller.configure_request(_ordered_string_list(payload))
+        if request is None:
             return
-        keys = _ordered_string_list(payload)
-        if not keys:
-            return
-        neb_candidates_by_key = {c.key: c for c in energy_barrier_neb_source_candidates(self._document)}
-        candidates = [c for key in keys if (c := neb_candidates_by_key.get(key)) is not None]
-        if not candidates:
-            return
-        definition = self._energy_barriers_controller.active_definition()
-        source_candidates_by_key = {c.key: c for c in self._eligible_energy_barrier_source_candidates()}
-        source_defaults_cache: dict[UUID, dict[str, object]] = {}
-        values_by_key: list[dict[str, object]] = []
-        advanced_names: set[str] = set()
-        reactant_structures: list[Structure | None] = []
-        for candidate in candidates:
-            reactant_structure = self._document.structures.get(uuid_from_source(candidate.source, "reactant_structure_id"))
-            reactant_structures.append(reactant_structure)
-            values, row_advanced_names, _extras = self._energy_barrier_neb_row_configuration_with_source_defaults(
-                definition,
-                candidate.key,
-                target_lattice=reactant_structure.lattice_vectors if reactant_structure is not None else None,
-                source_candidate=source_candidates_by_key.get(candidate.key),
-                source_defaults_cache=source_defaults_cache,
-            )
-            values_by_key.append(values)
-            advanced_names.update(row_advanced_names)
-        common_values = dict(values_by_key[0])
-        for row_values in values_by_key[1:]:
-            common_values = {
-                name: value for name, value in common_values.items() if name in row_values and row_values[name] == value
-            }
-        read_only = any(
-            not workflow_row_state_is_ready(self._build_energy_barrier_neb_states(), candidate.key)
-            for candidate in candidates
-        )
-
-        # Show a farm count only when every selected path already agrees;
-        # a mixed selection opens at 1. Accepting the dialog then writes the
-        # shown value to every selected row, as batch configure does for the
-        # parameter rows too.
-        num_farms_values = [
-            self._num_farms_from_extras(self._workflow_row_configuration(definition, candidate.key)[2])
-            for candidate in candidates
-        ]
-        common_num_farms = (
-            num_farms_values[0]
-            if num_farms_values and all(value == num_farms_values[0] for value in num_farms_values)
-            else 1
-        )
         dialog = NudgedElasticBandConfigDialog(
-            specs=self._energy_barrier_neb_parameter_specs(),
-            num_farms=common_num_farms,
-            intro_text=(
-                f"Path: {str(candidates[0].source.get('label', '')).strip() or candidates[0].key}"
-                if len(candidates) == 1
-                else f"Selected paths: {len(candidates)}"
-            ),
-            read_only=read_only,
-            species_options=_merge_species_options(reactant_structures),
+            specs=controller.parameter_specs(),
+            num_farms=request.num_farms,
+            intro_text=request.intro_text,
+            read_only=request.read_only,
+            species_options=request.species_options,
             parent=self,
         )
-        dialog.setWindowTitle(
-            "Inspect NEB Parameters" if read_only else "Configure NEB Parameters"
-        )
-        dialog.set_values(common_values, preferred_exclusive=kpoint_exclusive_hint(values_by_key))
-        dialog.set_advanced_names(tuple(sorted(advanced_names)))
-        dialog.set_mixed_names(mixed_parameter_names(values_by_key))
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        if read_only:
-            return
-
-        row_payload = self._workflow_dialog_payload(
-            dialog,
-            extra_payload={"num_farms": dialog.num_farms()},
-        )
-        definition = self._ensure_energy_barrier_neb_definition([candidate.key for candidate in candidates])
-        if definition is None:
-            return
-        untouched = dialog.untouched_mixed_names()
-        for candidate in candidates:
-            self._store_workflow_row_configuration(
-                definition,
-                candidate.key,
-                self._batch_row_payload(definition, candidate.key, row_payload, untouched),
-            )
-        self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(
-            failure_message="Energy Barriers NEB configuration was updated, but autosave failed."
-        )
+        result = run_source_configure_dialog(dialog, request)
+        if result is not None:
+            controller.apply_configuration(request.keys, result, {"num_farms": dialog.num_farms()})
 
     def _on_view_energy_barrier_source(self, key: str) -> None:
-        candidate = self._energy_barrier_source_candidate_by_key(key)
-        if candidate is None:
-            return
         try:
-            preview_structure = self._energy_barrier_preview_structure(candidate)
+            preview = self._energy_barriers_controller.path_preview(key)
         except ValueError as exc:
             QMessageBox.warning(self, "Path preview unavailable", str(exc))
             return
-
+        if preview is None:
+            return
         dialog = EnergyBarrierPathViewerDialog(
-            structure=preview_structure,
-            start_fractional=candidate.path.start_fractional,
-            end_fractional=candidate.path.end_fractional,
-            title=f"{self._energy_barrier_source_label(candidate)} path preview",
+            structure=preview.structure,
+            start_fractional=preview.start_fractional,
+            end_fractional=preview.end_fractional,
+            title=preview.title,
             parent=self,
         )
         dialog.exec()
 
-    def _jobs_for_quantum_source_keys(self, keys: list[str]) -> list[Job]:
-        if self._document is None:
-            return []
-        selected: list[Job] = []
-        seen: set[UUID] = set()
-        for definition in self._quantum_corrections_controller.definitions():
-            for key in keys:
-                job = self._job_for_quantum_source_key(definition, key)
-                if job is None or job.id in seen:
-                    continue
-                selected.append(job)
-                seen.add(job.id)
-        return selected
-
     def _on_reset_quantum_corrections_to_stage_one(self, keys: list[str]) -> None:
         if self._document is None:
             return
-        definition = self._quantum_corrections_controller.active_definition()
-        if definition is None:
+        controller = self._quantum_corrections_controller
+        resets = controller.stage_one_resets(keys)
+        if resets is None:
             return
-
-        resettable_keys: list[str] = []
-        for key in keys:
-            candidate = self._quantum_source_candidate_by_key(key)
-            if candidate is None:
-                continue
-            if self._quantum_can_reset_to_stage_one(definition, candidate):
-                resettable_keys.append(key)
-        if not resettable_keys:
+        if not resets:
             QMessageBox.information(
                 self,
                 "No resettable rows",
@@ -11932,7 +10440,7 @@ class MainWindow(QMainWindow):
         message = QMessageBox(self)
         message.setIcon(QMessageBox.Icon.Warning)
         message.setWindowTitle("Reset Quantum Corrections")
-        message.setText(f"Reset {len(resettable_keys)} Quantum Corrections row(s) to stage 1?")
+        message.setText(f"Reset {len(resets)} Quantum Corrections row(s) to stage 1?")
         message.setInformativeText(
             "This removes the staged Quantum Corrections job records and clears the shared output directory "
             "for each selected row so stage 1 can be rerun with updated parameters."
@@ -11944,43 +10452,26 @@ class MainWindow(QMainWindow):
 
         cleanup_errors: list[str] = []
         reset_count = 0
-        seed_mapping = definition.parameters.setdefault("job_seed_names_by_label", {})
-        if not isinstance(seed_mapping, dict):
-            seed_mapping = {}
-            definition.parameters["job_seed_names_by_label"] = seed_mapping
-        for key in resettable_keys:
-            candidate = self._quantum_source_candidate_by_key(key)
-            if candidate is None:
-                continue
-            singlepoint_job = self._singlepoint_job_for_quantum_source_key(definition, key)
-            phonon_job = self._phonon_job_for_quantum_source_key(definition, key)
-            owner = phonon_job or singlepoint_job
-            output_dir = self._job_output_directory(owner) if owner is not None else None
-            refusal = (
-                self._directory_ownership_refusals(
-                    [owner],
-                    shared_with={job.id for job in (phonon_job, singlepoint_job) if job is not None},
-                    check_remote=False,
-                ).get(owner.id)
-                if owner is not None
-                else None
-            )
+        for reset in resets:
+            # The phonon job, when there is one, owns the shared seed directory,
+            # which is deleted whole, so it must hold only this row's two stages.
+            owner = reset.jobs[0]
+            refusal = self._directory_ownership_refusals(
+                [owner], shared_with={job.id for job in reset.jobs}, check_remote=False
+            ).get(owner.id)
             if refusal:
-                # The whole directory is deleted below, so it must hold only
-                # this row's two stages.
                 cleanup_errors.append(f"{refusal}; the row was not reset")
                 continue
+            output_dir = self._job_output_directory(owner)
             if output_dir is not None and output_dir.exists() and output_dir.is_dir():
                 try:
                     self._delete_path(output_dir)
                 except OSError as exc:
-                    cleanup_errors.append(f"- {candidate.site.label or candidate.job.label}: {exc}")
+                    cleanup_errors.append(f"- {reset.label}: {exc}")
                     continue
-            for job in (phonon_job, singlepoint_job):
-                if job is None:
-                    continue
+            for job in reset.jobs:
                 self._delete_job_records(job.id)
-            seed_mapping.pop(key, None)
+            controller.forget_seed_name(reset.key)
             reset_count += 1
 
         self._refresh_jobs_table()
@@ -12000,14 +10491,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Reset {reset_count} Quantum Corrections row(s) to stage 1")
 
     def _on_launch_quantum_phonon_analysis(self, result_id: str) -> None:
-        if self._document is None:
-            return
-        try:
-            parsed_result_id = UUID(str(result_id))
-        except ValueError:
-            return
-        result = self._document.results.get(parsed_result_id)
-        if result is None or result.result_type != QUANTUM_PHONON_CALC_TYPE:
+        controller = self._quantum_corrections_controller
+        result = controller.phonon_result(result_id)
+        if result is None:
             return
 
         existing = self._quantum_analysis_dialogs.get(result.id)
@@ -12019,23 +10505,11 @@ class MainWindow(QMainWindow):
                 return
             self._quantum_analysis_dialogs.pop(result.id, None)
 
-        phonon_file = result.data.get("phonon_file") if isinstance(result.data, dict) else None
-        if not isinstance(phonon_file, str) or not phonon_file.strip():
-            QMessageBox.warning(self, "Phonon analysis unavailable", "The completed result does not reference a phonon file.")
+        try:
+            phonon_path, job_label = controller.phonon_analysis_input(result)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Phonon analysis unavailable", str(exc))
             return
-        phonon_path = Path(phonon_file)
-        if not phonon_path.is_absolute() and self._document is not None:
-            phonon_path = self._document.project_root / phonon_path
-        if not phonon_path.exists():
-            QMessageBox.warning(self, "Phonon analysis unavailable", f"Could not find phonon file:\n{phonon_path}")
-            return
-
-        job_label = "Quantum phonon"
-        run = self._document.runs.get(result.calculation_run_id) if result.calculation_run_id is not None else None
-        job = self._document.jobs.get(run.job_id) if run is not None and run.job_id is not None else None
-        if job is not None:
-            job_label = job.label
-
         try:
             dialog = QuantumPhononAnalysisDialog(
                 phonon_path=str(phonon_path),
@@ -12056,81 +10530,6 @@ class MainWindow(QMainWindow):
         dialog.raise_()
         dialog.activateWindow()
 
-    def _on_energy_barrier_endpoint_selection_changed(self, reactant_key: str, product_key: str) -> None:
-        if self._document is None:
-            return
-        state = self._energy_barrier_form_state()
-        state["selected_reactant_key"] = reactant_key
-        state["selected_product_key"] = product_key
-        self._document.ui_state["energy_barriers_form"] = state
-        self._refresh_energy_barriers_view()
-
-    @staticmethod
-    def _parse_energy_barrier_max_path_length(text: str) -> float | None:
-        normalized = str(text).strip()
-        if not normalized:
-            return None
-        value = float(normalized)
-        if value <= 0.0:
-            raise ValueError("Maximum path length must be greater than zero.")
-        return value
-
-    def _on_generate_energy_barrier_paths(
-        self,
-        reactant_key: str,
-        product_key: str,
-        max_path_length_text: str = "",
-    ) -> None:
-        if self._document is None:
-            return
-        if not reactant_key or not product_key:
-            QMessageBox.information(
-                self,
-                "Select endpoints",
-                "Choose initial and final relaxed structures before generating paths.",
-            )
-            return
-        reactant = self._quantum_source_candidate_by_key(reactant_key)
-        product = self._quantum_source_candidate_by_key(product_key)
-        if reactant is None or product is None:
-            return
-        if self._charge_state_for_job(reactant.job) != self._charge_state_for_job(product.job):
-            QMessageBox.information(
-                self,
-                "Charge-state mismatch",
-                "Initial and final structures must use the same muon charge state.",
-            )
-            return
-        try:
-            max_distance_ang = self._parse_energy_barrier_max_path_length(max_path_length_text)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Invalid path length", str(exc))
-            return
-        candidates = enumerate_energy_barrier_source_candidates(
-            self._document,
-            reactant_key,
-            product_key,
-            max_distance_ang=max_distance_ang,
-        )
-        state = self._energy_barrier_form_state()
-        state["selected_reactant_key"] = reactant_key
-        state["selected_product_key"] = product_key
-        if max_distance_ang is None:
-            state.pop("max_path_length_ang", None)
-        else:
-            state["max_path_length_ang"] = max_distance_ang
-        state["generated_sources"] = replace_serialized_sources_for_pair(
-            state.get("generated_sources", []),
-            reactant_site_id=str(reactant.site.id),
-            product_site_id=str(product.site.id),
-            new_sources=self._serialize_energy_barrier_source_candidates(candidates),
-        )
-        self._document.ui_state["energy_barriers_form"] = state
-        self._refresh_energy_barriers_view()
-        self._persist_document_ui_state(
-            failure_message="Energy Barriers paths were generated, but autosave failed."
-        )
-
     def _on_remove_energy_barrier_sources(self, payload: object) -> None:
         keys = self._removed_row_labels(payload)
         if self._document is None or not keys:
@@ -12138,57 +10537,13 @@ class MainWindow(QMainWindow):
         if not self._cleanup_energy_barrier_source_jobs(keys):
             self._refresh_energy_barriers_view()
             return
-        self._remove_energy_barrier_sources_from_ui_state(keys)
-        for definition in self._energy_barriers_definitions():
-            remove_source_keys_from_definition(self._document, definition, keys)
-        for definition in self._energy_barriers_controller.definitions():
-            remove_source_keys_from_definition(self._document, definition, keys)
+        self._energy_barriers_controller.remove_rows(keys)
         self._refresh_energy_barriers_view()
         self._refresh_jobs_table()
         self._refresh_journal_view()
         self.statusBar().showMessage(f"Deleted {len(keys)} energy-barrier path(s)")
         self._persist_document_ui_state(
             failure_message="Energy Barriers paths were removed, but autosave failed."
-        )
-
-    def _on_energy_barrier_neb_result_selected(self, key: str) -> None:
-        energy_barriers_view = self._energy_barriers_view
-        if energy_barriers_view is None:
-            return
-        candidate = self._completed_energy_barrier_neb_candidate_by_key(key)
-        if candidate is None:
-            energy_barriers_view.clear_neb_preview()
-            return
-        ts_path = self._transition_state_file_path(candidate.result)
-        if ts_path is None or not ts_path.exists():
-            energy_barriers_view.clear_neb_preview(title=f"{candidate.job.label} preview unavailable")
-            return
-        try:
-            transition_state = parse_transition_state_file(ts_path)
-        except TransitionStateParseError:
-            energy_barriers_view.clear_neb_preview(title=f"{candidate.job.label} preview unavailable")
-            return
-        # Report each image's energy relative to the initial image: absolute
-        # CASTEP energies are ~10⁵ eV, so differences vanish in the display.
-        initial_energy = transition_state.images[0].energy
-        image_rows = [
-            EnergyBarrierPreviewImageRow(
-                label=image.label,
-                reaction_coordinate=f"{image.reaction_coordinate:.6g}",
-                energy=f"{image.energy - initial_energy:+.4g} eV",
-                reaction_coordinate_value=image.reaction_coordinate,
-                energy_value=image.energy,
-            )
-            for image in transition_state.images
-        ]
-        structures = [
-            self._structure_from_transition_state_image(candidate.job.label, image)
-            for image in transition_state.images
-        ]
-        energy_barriers_view.set_neb_preview(
-            title=f"{candidate.job.label} ({len(transition_state.images)} images)",
-            image_rows=image_rows,
-            structures=structures,
         )
 
     def _on_uep_source_structure_selection_requested(self, payload: object) -> None:
@@ -12278,7 +10633,7 @@ class MainWindow(QMainWindow):
         definition = self._project_service.register_uep_definition(
             self._document,
             input_structure_id=source_structure.id,
-            parameters=self._serialize_uep_config(config),
+            parameters=serialize_uep_config(config),
             output_directory=output_root,
         )
         self._uep_controller.sync_mappings(definition)
@@ -12475,10 +10830,6 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._refresh_muon_generation_table)
         self._queue_raise_visible_uep_analysis_dialog(job_id)
 
-    @staticmethod
-    def _serialize_convergence_config(config: ConvergenceConfig) -> dict[str, object]:
-        return serialize_convergence_config(config)
-
     def _refresh_muon_generation_table(self) -> None:
         if self._document is None:
             self._muon_generation_view.set_sites([])
@@ -12673,28 +11024,6 @@ class MainWindow(QMainWindow):
             f"Please select only structures that share a single source host.",
         )
         return False
-
-    def _check_definition_host(self, definition) -> bool:
-        """Validate a QC / energy-barriers / NEB definition against the active host.
-
-        Checks structures first (via parent_structure_id chain walk), then
-        sites as a defence-in-depth layer.  Returns True if ok to proceed.
-        """
-        if self._document is None or definition is None:
-            return True
-        if definition.input_structure_ids:
-            struct_mismatch = self._project_service.validate_structures_match_active_host(
-                self._document, definition.input_structure_ids
-            )
-            if struct_mismatch is not None:
-                return self._handle_structure_host_mismatch(struct_mismatch)
-        if definition.input_site_ids:
-            site_mismatch = self._project_service.validate_sites_match_active_host(
-                self._document, definition.input_site_ids
-            )
-            if site_mismatch is not None:
-                return self._handle_site_host_mismatch(site_mismatch)
-        return True
 
     def _refresh_magnetic_field_view(self) -> None:
         self._magnetic_field_view.set_document(self._document)

@@ -16,6 +16,10 @@ import pytest
 
 from mufinder.app.main_window import MainWindow
 from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow
+from mufinder.app.workflow_config_codecs import (
+    deserialize_muon_relaxation_config,
+    serialize_muon_relaxation_config,
+)
 
 
 @pytest.fixture()
@@ -100,8 +104,8 @@ class TestSerializerRoundTrip:
     def test_the_marker_survives_serialize_then_deserialize(self, main_window) -> None:
         config = MuonRelaxationConfig(rows=(_imported_row(), _native_row()))
 
-        payload = main_window._serialize_muon_relaxation_config(config)
-        restored = main_window._deserialize_muon_relaxation_config(payload)
+        payload = serialize_muon_relaxation_config(config)
+        restored = deserialize_muon_relaxation_config(payload)
 
         assert restored is not None
         assert [row.imported for row in restored.rows] == [True, False]
@@ -113,14 +117,14 @@ class TestSerializerRoundTrip:
     ) -> None:
         """Older project files carry no marker at all."""
 
-        payload = main_window._serialize_muon_relaxation_config(
+        payload = serialize_muon_relaxation_config(
             MuonRelaxationConfig(rows=(_native_row(),))
         )
         for entry in payload["rows"]:
             entry.pop("imported", None)
             entry.pop("import_batch_id", None)
 
-        restored = main_window._deserialize_muon_relaxation_config(payload)
+        restored = deserialize_muon_relaxation_config(payload)
 
         assert restored is not None
         assert restored.rows[0].imported is False
@@ -128,12 +132,12 @@ class TestSerializerRoundTrip:
     def test_a_malformed_batch_id_does_not_unlock_the_row(self, main_window) -> None:
         """Losing the grouping is recoverable; losing read-only enforcement is not."""
 
-        payload = main_window._serialize_muon_relaxation_config(
+        payload = serialize_muon_relaxation_config(
             MuonRelaxationConfig(rows=(_imported_row(),))
         )
         payload["rows"][0]["import_batch_id"] = "not-a-uuid"
 
-        restored = main_window._deserialize_muon_relaxation_config(payload)
+        restored = deserialize_muon_relaxation_config(payload)
 
         assert restored is not None
         assert restored.rows[0].imported is True
@@ -196,8 +200,8 @@ class TestReconfigureLoop:
         # projected rows, so go back out through the config serialiser.
         projected = widget._build_config_or_warn()
         assert projected is not None
-        round_tripped = main_window._deserialize_muon_relaxation_config(
-            main_window._serialize_muon_relaxation_config(projected)
+        round_tripped = deserialize_muon_relaxation_config(
+            serialize_muon_relaxation_config(projected)
         )
 
         assert round_tripped is not None
