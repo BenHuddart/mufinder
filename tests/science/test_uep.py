@@ -15,6 +15,7 @@ _soprano_required = pytest.mark.skipif(
 )
 
 from mufinder.science import uep as uep_module
+from mufinder.science import uep_clustering as uep_clustering_module
 from mufinder.science.uep import (
     IonicPseudopotential,
     StationaryPointClassification,
@@ -1752,7 +1753,7 @@ def test_asymmetric_images_centre_jitters_the_lowest_energy_site() -> None:
         _fake_optimization((0.5, 0.5, 0.5), total=-1.0),
         _fake_optimization((0.1, 0.1, 0.1), total=0.0),
     ]
-    centre = uep_module._asymmetric_images_centre(optimizations)
+    centre = uep_clustering_module._asymmetric_images_centre(optimizations)
     assert centre.shape == (3,)
     assert np.all(centre != np.array([0.5, 0.5, 0.5]))
     assert np.all(np.abs(centre - 0.5) < 1e-3)

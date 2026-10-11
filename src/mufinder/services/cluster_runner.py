@@ -14,7 +14,7 @@ from uuid import UUID
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.castep_io.output_parser import CastepResult, parse_castep_output
 from mufinder.domain.enums import FailureReason, JobStatus
 from mufinder.domain.models import utc_now

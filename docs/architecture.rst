@@ -99,10 +99,12 @@ the structural test: ``mufinder.main`` (application entry point),
 (packaged resources, including the starter ``keyword_catalog.yaml``),
 ``mufinder._version``, ``mufinder.castep_setup`` (saved CASTEP setup and
 keyword-catalog management, used by the app), and ``mufinder.cluster_setup``
-(the ``ClusterConfig`` record and its ``QSettings`` persistence, used by
-services and the app). ``castep_setup`` and ``cluster_setup`` depend on
-``PySide6.QtCore`` but not on widgets; keep new code out of this top level
-unless it is genuinely cross-cutting configuration.
+(the built-in cluster presets and the ``QSettings`` persistence of cluster
+configurations, used by the app). ``castep_setup`` and ``cluster_setup``
+depend on ``PySide6.QtCore`` but not on widgets, so no layer package imports
+them; the ``ClusterConfig`` record that services consume lives in
+``mufinder.domain.cluster``. Keep new code out of this top level unless it is
+genuinely cross-cutting configuration.
 
 Refactoring policy
 ------------------
@@ -119,8 +121,16 @@ policy, move the reusable part into the appropriate shared layer:
   lattice maths (fractional/Cartesian conversion, minimum-image distances,
   periodic deduplication) belongs in ``mufinder.science.lattice``, symmetry
   plumbing (spglib cells, cached symmetry operations, orbits) in
-  ``mufinder.science.spglib_compat``, and conversion to ASE ``Atoms`` in
-  ``mufinder.science.ase_bridge``
+  ``mufinder.science.spglib_compat``, conversion to ASE ``Atoms`` in
+  ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``
+  and clustering of its optimized positions in
+  ``mufinder.science.uep_clustering``
+- reading CASTEP text belongs in ``mufinder.castep_io``, including the
+  formatted density, pseudopotential reports and cell charge the UEP analysis
+  needs (``mufinder.castep_io.charge_density``); the keyword schema keeps
+  catalog discovery, loading and the lookup API in
+  ``mufinder.castep_io.schema`` and the bundled starter-catalog translation in
+  ``mufinder.castep_io.starter_catalog``
 - reading the magnetic metadata persisted on a structure (per-atom spins,
   moment-derived spins, the propagation vector) belongs in
   ``mufinder.domain.magnetic_properties``, so the workflow bridge, services and
@@ -278,6 +288,19 @@ workflow widget modules define, how many define it; the counts may only fall.
        (``remove_labels_from_definition``, ``remove_definition_if_no_rows``)
        and the sweep and source-row equivalents (see Definition mappings and
        row removal).
+   * - ``mufinder.services.cluster_submission_planner``
+     - The decisions of a cluster submission: stranded quantum phonon jobs,
+       connection reuse, each job's remote target (start again, continuation,
+       resubmission, quantum stage-1 directory or a fresh directory), the
+       overwrite prompts to ask as data and their *Yes/No to All* resolution,
+       the protected-directory rule, and the ``ClusterJobSubmission`` items
+       with the failed, skipped and missing jobs
+       (``plan_cluster_submission``). The window keeps the dialog, the
+       prompts and the message boxes.
+   * - ``mufinder.workflow.naming``
+     - Job names (``job_name``) and the remote naming of a cluster
+       submission: the workflow directory fragment, the default scheduler
+       job-name prefix and remote path sanitising.
    * - ``mufinder.services.source_candidates``
      - Read-only source queries over the project document: the relaxed muon
        sites eligible for quantum corrections, their relative energies,

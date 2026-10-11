@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.keychain import (
     KeychainCredentialError,
     is_glamdring_keychain_supported,

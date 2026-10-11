@@ -37,7 +37,8 @@ from mufinder.app.cluster_ui_utils import (
     show_detailed_warning,
 )
 from mufinder.app.keyword_catalog_notice import catalog_source_description
-from mufinder.cluster_setup import ClusterConfig, load_cluster_configs, save_cluster_configs
+from mufinder.cluster_setup import load_cluster_configs, save_cluster_configs
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.castep_setup import (
     CastepSetup,
     apply_castep_environment,

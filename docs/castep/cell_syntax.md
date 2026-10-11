@@ -19,7 +19,7 @@ This package implements a conservative subset of CASTEP `.cell` syntax for libra
 
 ## Validation vs Serialization
 
-- `src/mufinder/castep_io/schema.py` builds the runtime schema from a discovered `castep_keywords.json` plus `catalog_overrides.py`, and falls back to the starter catalog when none is found (see `docs/castep_keyword_catalog.rst`).
+- `src/mufinder/castep_io/schema.py` builds the runtime schema from a discovered `castep_keywords.json` plus `catalog_overrides.py`, and falls back to the starter catalog, translated by `src/mufinder/castep_io/starter_catalog.py`, when none is found (see `docs/castep_keyword_catalog.rst`).
 - `src/mufinder/castep_io/validators.py` performs structure, type, exclusivity, and task-aware checks.
 - `src/mufinder/castep_io/cell_writer.py` only serializes already-validated objects.
 

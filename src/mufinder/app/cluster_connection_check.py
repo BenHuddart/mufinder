@@ -18,7 +18,7 @@ from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtWidgets import QProgressDialog, QWidget
 
 from mufinder.app.cluster_ui_utils import prompt_to_trust_host_key
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.ssh_client import (
     SSHConnection,
     SSHCredentials,

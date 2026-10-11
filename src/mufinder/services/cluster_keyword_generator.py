@@ -28,7 +28,7 @@ from mufinder.castep_io.keyword_catalog_file import (
     validate_keyword_catalog_payload,
     write_keyword_catalog_file,
 )
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus
 from mufinder.services.scheduler import SchedulerSubmitRequest, create_scheduler
 from mufinder.services.script_template import load_template_for_cluster, populate_template

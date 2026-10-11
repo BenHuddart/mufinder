@@ -8,7 +8,7 @@ import subprocess
 import sys
 from typing import Callable
 
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.ssh_client import SSHCredentials
 
 _GLAMDRING_HOSTNAME = "glamdring.physics.ox.ac.uk"

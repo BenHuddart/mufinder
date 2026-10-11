@@ -20,6 +20,10 @@ Domain
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.domain.cluster
+   :members:
+   :undoc-members:
+
 CASTEP I/O
 ----------
 
@@ -30,6 +34,10 @@ CASTEP I/O
    :undoc-members:
 
 .. automodule:: mufinder.castep_io.schema
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.starter_catalog
    :members:
    :undoc-members:
 
@@ -54,6 +62,10 @@ CASTEP I/O
    :undoc-members:
 
 .. automodule:: mufinder.castep_io.output_parser
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.castep_io.charge_density
    :members:
    :undoc-members:
 
@@ -120,6 +132,10 @@ Services
    :undoc-members:
 
 .. automodule:: mufinder.services.definition_mappings
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.cluster_submission_planner
    :members:
    :undoc-members:
 
@@ -234,6 +250,10 @@ Workflow
    :undoc-members:
 
 .. automodule:: mufinder.workflow.energy_barriers
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.workflow.naming
    :members:
    :undoc-members:
 

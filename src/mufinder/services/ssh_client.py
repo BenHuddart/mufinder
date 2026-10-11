@@ -13,7 +13,7 @@ import shlex
 import stat as stat_module
 from typing import Any
 
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 
 
 _LOG = logging.getLogger(__name__)

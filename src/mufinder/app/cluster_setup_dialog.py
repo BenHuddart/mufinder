@@ -34,7 +34,8 @@ from mufinder.app.cluster_ui_utils import (
 )
 from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.theme import style_help_button, style_inline_group
-from mufinder.cluster_setup import ClusterConfig, load_cluster_configs, save_cluster_configs
+from mufinder.cluster_setup import load_cluster_configs, save_cluster_configs
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.keychain import is_glamdring_keychain_supported, keychain_setup_help
 from mufinder.services.ssh_client import SSHConnection
 
