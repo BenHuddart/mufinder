@@ -256,8 +256,15 @@ continuous integration and tag-driven publishing:
   and deploys it to GitHub Pages.
 
 - ``Claude Code`` (``.github/workflows/claude.yml``) runs the Claude Code agent
-  when an issue, pull-request comment, or review mentions ``@claude``. It is
-  not a quality gate.
+  when an issue, pull-request comment, or review mentions ``@claude``. The job
+  only starts when the author is the repository owner, an organisation member
+  or an invited collaborator; mentions from anyone else are ignored. It is not
+  a quality gate.
+
+The repository's default ``GITHUB_TOKEN`` permission for workflows is
+read-only. A workflow that needs to write (``Pages``, ``Release Publish``,
+``Claude Code``) declares the exact permissions it needs in a ``permissions``
+block; ``CI`` declares ``contents: read``.
 
 Merges should be blocked when either gate fails.
 

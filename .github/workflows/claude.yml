@@ -12,11 +12,22 @@ on:
 
 jobs:
   claude:
+    # Only the repository owner, organisation members and invited collaborators
+    # can start the agent. The action also refuses actors without write access,
+    # but checking the author association here means the job never starts for
+    # anyone else, so a public repository cannot have its runs triggered by
+    # arbitrary issue or comment authors.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+        (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      ) && (
+        (github.event_name == 'issues' && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)) ||
+        (github.event_name == 'pull_request_review' && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.review.author_association)) ||
+        (github.event_name != 'issues' && github.event_name != 'pull_request_review' && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+      )
     runs-on: ubuntu-latest
     # The agent has a bounded execution window. Fail loudly if it is exhausted
     # rather than silently ending mid-run with the work uncommitted.

@@ -7,6 +7,11 @@ on:
       - main
   workflow_dispatch:
 
+# The quality gates only read the checkout; the repository's default token
+# permission is read-only as well, so this block is the explicit contract.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
