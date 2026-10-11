@@ -28,7 +28,7 @@ See ``docs/architecture.rst`` (Workflow controllers) for the layer contract.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -198,6 +198,53 @@ class WorkflowJobController:
             return None
         return job_for_mapping_key(
             document, definition, key, mapping_name=mapping_name, calc_type=calc_type
+        )
+
+    # --- definition maintenance ---
+
+    def sync_mappings(self, definition: CalculationDefinition) -> None:
+        """Copy job bindings from definitions equivalent to ``definition`` into it.
+
+        Workflows that keep a job mapping override this with a call to
+        :func:`~mufinder.services.definition_mappings.sync_equivalent_mappings`.
+        Default: nothing to sync.
+        """
+
+    def row_key_matcher(self, labels: Collection[str]) -> Callable[[object], bool]:
+        """Return a predicate picking the job-mapping keys of the rows ``labels`` name.
+
+        Default: a key matches when its string form is one of ``labels``.
+        """
+
+        return lambda key: str(key) in labels
+
+    def remove_labels_from_definition(
+        self, definition: CalculationDefinition, labels: Collection[str]
+    ) -> bool:
+        """Drop the rows ``labels`` name from ``definition``; return whether it was deleted.
+
+        Workflows that support row removal override this with a call to
+        :func:`~mufinder.services.definition_mappings.remove_labels_from_definition`.
+        """
+
+        raise NotImplementedError
+
+    def remove_rows(self, labels: Iterable[str]) -> tuple[UUID, ...]:
+        """Template method: drop the rows ``labels`` name from every definition.
+
+        Calls :meth:`remove_labels_from_definition` on each of
+        :meth:`definitions` and returns the ids of the definitions it deleted
+        because no row was left. Confirmation and job-file cleanup happen
+        before this, in the window; refreshing and persisting happen after.
+        """
+
+        if self._context.document() is None:
+            return ()
+        removed = set(labels)
+        return tuple(
+            definition.id
+            for definition in self.definitions()
+            if self.remove_labels_from_definition(definition, removed)
         )
 
     # --- submission contract (mirrors _submit_workflow_selection today) ---

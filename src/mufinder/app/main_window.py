@@ -107,6 +107,7 @@ from mufinder.app.convergence_types import (
     ConvergenceConfig,
     SweepPointRunState,
     convergence_config_xc_functional,
+    parse_grid_mapping_key,
 )
 from mufinder.app.convergence_widget import ConvergenceWidget
 from mufinder.app.energy_barriers_widget import (
@@ -272,6 +273,11 @@ from mufinder.services.cluster_submission_planner import (
 from mufinder.services.job_execution_controller import (
     JobExecutionController,
     PreparedClusterSubmission,
+)
+from mufinder.services.definition_mappings import (
+    ensure_job_mapping,
+    relaxation_mapping_job_priority,
+    remove_source_keys_from_definition,
 )
 from mufinder.services.failure_diagnosis import (
     FailureDiagnosis,
@@ -4788,74 +4794,6 @@ class MainWindow(QMainWindow):
             and definition.parameters.get("supercell_source_workflow") == supercell_source_workflow
         )
 
-    @staticmethod
-    def _convergence_effective_params_for_cutoff(
-        config: ConvergenceConfig,
-        cutoff: float,
-    ) -> dict[str, object] | None:
-        cutoff_value = float(cutoff)
-        if cutoff_value not in tuple(float(value) for value in config.cutoff_energies):
-            return None
-
-        params = dict(config.shared_params)
-        for members, override in config.overrides.items():
-            if cutoff_value in {float(value) for value in members}:
-                params.update(override)
-        return params
-
-    def _convergence_cutoff_configs_match_for_value(
-        self,
-        target: ConvergenceConfig,
-        source: ConvergenceConfig,
-        cutoff: float,
-    ) -> bool:
-        if target.sweep_parameter != "cut_off_energy" or source.sweep_parameter != "cut_off_energy":
-            return False
-        if target.name_prefix != source.name_prefix:
-            return False
-        target_params = self._convergence_effective_params_for_cutoff(target, cutoff)
-        source_params = self._convergence_effective_params_for_cutoff(source, cutoff)
-        return target_params is not None and source_params is not None and target_params == source_params
-
-    @staticmethod
-    def _convergence_effective_params_for_grid(
-        config: ConvergenceConfig,
-        grid: tuple[int, int, int],
-    ) -> dict[str, object] | None:
-        normalized_grid = tuple(int(value) for value in grid)
-        normalized_values = {
-            tuple(int(component) for component in value)
-            for value in config.sweep_values
-            if isinstance(value, tuple) and len(value) == 3
-        }
-        if normalized_grid not in normalized_values:
-            return None
-
-        params = dict(config.shared_params)
-        for members, override in config.overrides.items():
-            normalized_members = {
-                tuple(int(component) for component in value)
-                for value in members
-                if isinstance(value, tuple) and len(value) == 3
-            }
-            if normalized_grid in normalized_members:
-                params.update(override)
-        return params
-
-    def _convergence_kpoint_configs_match_for_grid(
-        self,
-        target: ConvergenceConfig,
-        source: ConvergenceConfig,
-        grid: tuple[int, int, int],
-    ) -> bool:
-        if target.sweep_parameter != "kpoint_mp_grid" or source.sweep_parameter != "kpoint_mp_grid":
-            return False
-        if target.name_prefix != source.name_prefix:
-            return False
-        target_params = self._convergence_effective_params_for_grid(target, grid)
-        source_params = self._convergence_effective_params_for_grid(source, grid)
-        return target_params is not None and source_params is not None and target_params == source_params
-
     def _matching_convergence_cutoff_definition(
         self,
         *,
@@ -4886,195 +4824,6 @@ class MainWindow(QMainWindow):
             ):
                 return definition
         return None
-
-    def _sync_equivalent_convergence_kpoint_mappings(self, target_definition) -> None:
-        if self._document is None:
-            return
-
-        target_config = self._deserialize_convergence_config(target_definition.parameters.get("configuration", {}))
-        if (
-            target_config is None
-            or target_config.sweep_parameter != "kpoint_mp_grid"
-            or not target_definition.input_structure_ids
-        ):
-            return
-
-        input_structure_id = target_definition.input_structure_ids[0]
-        output_directory = definition_output_directory(self._document, target_definition)
-        if output_directory is None:
-            return
-
-        simulation_cell_mode = str(target_definition.parameters.get("simulation_cell_mode", "unit_cell"))
-        supercell_source_workflow = target_definition.parameters.get("supercell_source_workflow")
-
-        candidates: dict[str, str] = {}
-        for definition in self._kpoint_convergence_controller.definitions():
-            if not self._convergence_cutoff_definition_context_matches(
-                definition,
-                input_structure_id=input_structure_id,
-                output_directory=output_directory,
-                simulation_cell_mode=simulation_cell_mode,
-                supercell_source_workflow=supercell_source_workflow,
-            ):
-                continue
-            source_config = self._deserialize_convergence_config(definition.parameters.get("configuration", {}))
-            if source_config is None or source_config.sweep_parameter != "kpoint_mp_grid":
-                continue
-            mapping = definition.parameters.get("job_ids_by_grid", {})
-            if not isinstance(mapping, dict):
-                continue
-            for key, raw_job_id in mapping.items():
-                if not isinstance(key, str) or not isinstance(raw_job_id, str):
-                    continue
-                grid = self._parse_grid_key(key)
-                if grid is None:
-                    continue
-                if not self._convergence_kpoint_configs_match_for_grid(
-                    target_config,
-                    source_config,
-                    grid,
-                ):
-                    continue
-                normalized_key = self._grid_key(grid)
-                existing = candidates.get(normalized_key)
-                if (
-                    existing is None
-                    or self._convergence_mapping_job_priority(raw_job_id)
-                    > self._convergence_mapping_job_priority(existing)
-                ):
-                    candidates[normalized_key] = raw_job_id
-
-        if not candidates:
-            return
-
-        target_mapping = target_definition.parameters.setdefault("job_ids_by_grid", {})
-        if not isinstance(target_mapping, dict):
-            target_mapping = {}
-            target_definition.parameters["job_ids_by_grid"] = target_mapping
-
-        for key, raw_job_id in candidates.items():
-            existing = target_mapping.get(key)
-            if (
-                not isinstance(existing, str)
-                or self._convergence_mapping_job_priority(raw_job_id)
-                > self._convergence_mapping_job_priority(existing)
-            ):
-                target_mapping[key] = raw_job_id
-
-    def _sync_equivalent_convergence_cutoff_mappings(self, target_definition) -> None:
-        """Merge mappings from duplicate cutoff definitions into the active one."""
-        if self._document is None:
-            return
-
-        target_config = self._deserialize_convergence_config(target_definition.parameters.get("configuration", {}))
-        if target_config is None or not target_definition.input_structure_ids:
-            return
-
-        input_structure_id = target_definition.input_structure_ids[0]
-        output_directory = definition_output_directory(self._document, target_definition)
-        if output_directory is None:
-            return
-
-        simulation_cell_mode = str(target_definition.parameters.get("simulation_cell_mode", "unit_cell"))
-        supercell_source_workflow = target_definition.parameters.get("supercell_source_workflow")
-        parameters = target_definition.parameters.get("configuration")
-        if not isinstance(parameters, dict):
-            return
-
-        candidates: dict[str, str] = {}
-        for definition in self._convergence_controller.definitions():
-            if not self._convergence_cutoff_definition_context_matches(
-                definition,
-                input_structure_id=input_structure_id,
-                output_directory=output_directory,
-                simulation_cell_mode=simulation_cell_mode,
-                supercell_source_workflow=supercell_source_workflow,
-            ):
-                continue
-            source_config = self._deserialize_convergence_config(definition.parameters.get("configuration", {}))
-            if source_config is None:
-                continue
-            mapping = definition.parameters.get("job_ids_by_cutoff", {})
-            if not isinstance(mapping, dict):
-                continue
-            for key, raw_job_id in mapping.items():
-                if not isinstance(raw_job_id, str):
-                    continue
-                try:
-                    cutoff = float(key)
-                except (TypeError, ValueError):
-                    continue
-                if not self._convergence_cutoff_configs_match_for_value(
-                    target_config,
-                    source_config,
-                    cutoff,
-                ):
-                    continue
-                normalized_key = self._cutoff_key(cutoff)
-                existing = candidates.get(normalized_key)
-                if (
-                    existing is None
-                    or self._convergence_mapping_job_priority(raw_job_id)
-                    > self._convergence_mapping_job_priority(existing)
-                ):
-                    candidates[normalized_key] = raw_job_id
-
-        if not candidates:
-            return
-
-        target_mapping = target_definition.parameters.setdefault("job_ids_by_cutoff", {})
-        if not isinstance(target_mapping, dict):
-            target_mapping = {}
-            target_definition.parameters["job_ids_by_cutoff"] = target_mapping
-
-        for key, raw_job_id in candidates.items():
-            existing = target_mapping.get(key)
-            if (
-                not isinstance(existing, str)
-                or self._convergence_mapping_job_priority(raw_job_id)
-                > self._convergence_mapping_job_priority(existing)
-            ):
-                target_mapping[key] = raw_job_id
-
-    def _convergence_mapping_job_priority(self, raw_job_id: str) -> int:
-        if self._document is None:
-            return 0
-        try:
-            job_id = UUID(str(raw_job_id))
-        except ValueError:
-            return 0
-        job = self._document.jobs.get(job_id)
-        if job is None:
-            return 0
-        if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING}:
-            return 50
-        if job.status == JobStatus.COMPLETED:
-            return 40
-        if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}:
-            return 30
-        if job.status == JobStatus.DEFINED:
-            return 10
-        return 0
-
-    def _relaxation_mapping_job_priority(self, raw_job_id: str) -> int:
-        if self._document is None:
-            return 0
-        try:
-            job_id = UUID(str(raw_job_id))
-        except ValueError:
-            return 0
-        job = self._document.jobs.get(job_id)
-        if job is None:
-            return 0
-        if job.status in {JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING}:
-            return 50
-        if job.status == JobStatus.COMPLETED:
-            return 40
-        if job.status == JobStatus.DEFINED:
-            return 35
-        if job.status in {JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}:
-            return 30
-        return 0
 
     @staticmethod
     def _job_submission_sort_key(job: Job) -> float:
@@ -5278,13 +5027,13 @@ class MainWindow(QMainWindow):
             return
 
         if not source_definition.input_structure_ids:
-            self._remove_cutoff_from_definition(source_definition, cutoff)
+            self._convergence_controller.remove_cutoff_from_definition(source_definition, cutoff)
             return
 
         input_structure_id = source_definition.input_structure_ids[0]
         output_directory = definition_output_directory(self._document, source_definition)
         if output_directory is None:
-            self._remove_cutoff_from_definition(source_definition, cutoff)
+            self._convergence_controller.remove_cutoff_from_definition(source_definition, cutoff)
             return
 
         simulation_cell_mode = str(source_definition.parameters.get("simulation_cell_mode", "unit_cell"))
@@ -5298,88 +5047,7 @@ class MainWindow(QMainWindow):
                 supercell_source_workflow=supercell_source_workflow,
             ):
                 continue
-            self._remove_cutoff_from_definition(definition, cutoff)
-
-    def _remove_cutoff_from_definition(self, definition, cutoff: float) -> None:
-        if self._document is None:
-            return
-
-        configuration = definition.parameters.get("configuration")
-        if not isinstance(configuration, dict):
-            return
-
-        cutoff_to_remove = float(cutoff)
-        remove_index: int | None = None
-        cutoffs = configuration.get("cutoff_energies")
-        if isinstance(cutoffs, list):
-            updated_cutoffs: list[object] = []
-            for index, raw_value in enumerate(cutoffs):
-                try:
-                    value = float(raw_value)
-                except (TypeError, ValueError):
-                    updated_cutoffs.append(raw_value)
-                    continue
-                if remove_index is None and value == cutoff_to_remove:
-                    remove_index = index
-                    continue
-                updated_cutoffs.append(value)
-            configuration["cutoff_energies"] = updated_cutoffs
-
-        raw_sweep_values = configuration.get("sweep_values")
-        if isinstance(raw_sweep_values, list):
-            updated_sweep_values: list[object] = []
-            for index, raw_value in enumerate(raw_sweep_values):
-                try:
-                    value = float(raw_value)
-                except (TypeError, ValueError):
-                    updated_sweep_values.append(raw_value)
-                    continue
-                if value == cutoff_to_remove:
-                    if remove_index is None:
-                        remove_index = index
-                    continue
-                updated_sweep_values.append(value)
-            configuration["sweep_values"] = updated_sweep_values
-
-        raw_overrides = configuration.get("overrides", [])
-        if isinstance(raw_overrides, list):
-            updated_overrides: list[dict[str, object]] = []
-            for entry in raw_overrides:
-                if not isinstance(entry, dict):
-                    continue
-                group_key = "cutoffs" if "cutoffs" in entry else "sweep_values"
-                raw_group = entry.get(group_key, [])
-                if not isinstance(raw_group, list):
-                    continue
-                remaining: list[float] = []
-                for raw_value in raw_group:
-                    try:
-                        value = float(raw_value)
-                    except (TypeError, ValueError):
-                        continue
-                    if value == cutoff_to_remove:
-                        continue
-                    remaining.append(value)
-                if not remaining:
-                    continue
-                updated_entry = dict(entry)
-                updated_entry[group_key] = remaining
-                updated_overrides.append(updated_entry)
-            configuration["overrides"] = updated_overrides
-
-        mapping = definition.parameters.get("job_ids_by_cutoff", {})
-        if isinstance(mapping, dict):
-            mapping.pop(self._cutoff_key(cutoff), None)
-
-        labels = definition.parameters.get("job_labels", [])
-        if isinstance(labels, list) and remove_index is not None and remove_index < len(labels):
-            labels.pop(remove_index)
-
-        remaining_cutoffs = configuration.get("cutoff_energies", configuration.get("sweep_values"))
-        if not remaining_cutoffs:
-            self._document.calculations.pop(definition.id, None)
-            if self._document.ui_state.get(self._ACTIVE_CONVERGENCE_DEFINITION_KEY) == str(definition.id):
-                self._document.ui_state.pop(self._ACTIVE_CONVERGENCE_DEFINITION_KEY, None)
+            self._convergence_controller.remove_cutoff_from_definition(definition, cutoff)
 
     _FILESYSTEM_RETRY_DELAYS: tuple[float, ...] = (0.1, 0.25, 0.5, 1.0)
 
@@ -6921,9 +6589,6 @@ class MainWindow(QMainWindow):
 
         return ConvergenceCutoffDeps(
             deserialize_convergence_config=deserialize_convergence_config,
-            sync_equivalent_convergence_cutoff_mappings=(
-                lambda definition: self._sync_equivalent_convergence_cutoff_mappings(definition)
-            ),
             cutoff_key=lambda value: self._cutoff_key(value),
             max_stress_for_job=lambda job_id: max_stress_for_job(self._document, job_id),
         )
@@ -6942,9 +6607,6 @@ class MainWindow(QMainWindow):
 
         return ConvergenceKpointDeps(
             deserialize_convergence_config=deserialize_convergence_config,
-            sync_equivalent_convergence_kpoint_mappings=(
-                lambda definition: self._sync_equivalent_convergence_kpoint_mappings(definition)
-            ),
             grid_key=lambda grid: self._grid_key(grid),
             max_stress_for_job=lambda job_id: max_stress_for_job(self._document, job_id),
         )
@@ -6965,9 +6627,6 @@ class MainWindow(QMainWindow):
         return PristineRelaxationDeps(
             deserialize_pristine_relaxation_config=deserialize_pristine_relaxation_config,
             serialize_pristine_relaxation_config=serialize_pristine_relaxation_config,
-            sync_equivalent_pristine_relaxation_mappings=(
-                lambda definition: self._sync_equivalent_pristine_relaxation_mappings(definition)
-            ),
             pristine_relaxation_form_config=lambda: self._pristine_relaxation_form_config(),
             pristine_relaxation_row_signature=(
                 lambda row: self._pristine_relaxation_row_signature(row)
@@ -7022,9 +6681,6 @@ class MainWindow(QMainWindow):
         return MuonRelaxationDeps(
             deserialize_muon_relaxation_config=deserialize_muon_relaxation_config,
             serialize_muon_relaxation_config=serialize_muon_relaxation_config,
-            sync_equivalent_muon_relaxation_mappings=(
-                lambda definition: self._sync_equivalent_muon_relaxation_mappings(definition)
-            ),
             sync_active_muon_relaxation_dashboard_jobs=(
                 lambda definition: self._sync_active_muon_relaxation_dashboard_jobs(definition)
             ),
@@ -7061,9 +6717,8 @@ class MainWindow(QMainWindow):
 
         return UepDeps(
             deserialize_uep_config=deserialize_uep_config,
-            sync_equivalent_uep_mappings=(
-                lambda definition: self._sync_equivalent_uep_mappings(definition)
-            ),
+            serialize_uep_config=serialize_uep_config,
+            uep_row_signature=lambda row: self._uep_row_signature(row),
             uep_potential_grid_result_for_job=(
                 lambda job_id: self._uep_potential_grid_result_for_job(job_id)
             ),
@@ -8235,7 +7890,7 @@ class MainWindow(QMainWindow):
             supercell_source_workflow=supercell_source_workflow,
         )
         if matching_definition is not None:
-            self._sync_equivalent_convergence_cutoff_mappings(matching_definition)
+            self._convergence_controller.sync_mappings(matching_definition)
             self._document.ui_state[self._ACTIVE_CONVERGENCE_DEFINITION_KEY] = str(matching_definition.id)
             self._refresh_jobs_table()
             self._convergence_controller.refresh_view()
@@ -9198,19 +8853,6 @@ class MainWindow(QMainWindow):
     def _grid_key(grid: tuple[int, int, int]) -> str:
         return f"{int(grid[0])}x{int(grid[1])}x{int(grid[2])}"
 
-    @staticmethod
-    def _parse_grid_key(value: str) -> tuple[int, int, int] | None:
-        parts = value.strip().split("x")
-        if len(parts) != 3:
-            return None
-        try:
-            grid = (int(parts[0]), int(parts[1]), int(parts[2]))
-        except ValueError:
-            return None
-        if grid[0] <= 0 or grid[1] <= 0 or grid[2] <= 0:
-            return None
-        return grid
-
     def _on_kpoint_convergence_configured(self, config: ConvergenceConfig) -> None:
         if self._document is None:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -9251,7 +8893,7 @@ class MainWindow(QMainWindow):
                 else None
             ),
         )
-        self._sync_equivalent_convergence_kpoint_mappings(definition)
+        self._kpoint_convergence_controller.sync_mappings(definition)
         self._document.ui_state[self._ACTIVE_KPOINT_DEFINITION_KEY] = str(definition.id)
 
         self._refresh_jobs_table()
@@ -9401,39 +9043,10 @@ class MainWindow(QMainWindow):
             self._kpoint_convergence_view.remove_grids(grids)
             return
 
-        target_keys = {self._grid_key(grid) for grid in grids}
-        for definition in self._kpoint_convergence_controller.definitions():
-            self._remove_kpoint_grids_from_definition(definition, target_keys)
+        self._kpoint_convergence_controller.remove_rows({self._grid_key(grid) for grid in grids})
 
         self._kpoint_convergence_view.remove_grids(grids)
         self._kpoint_convergence_controller.refresh_view()
-
-    def _remove_kpoint_grids_from_definition(self, definition, target_keys: set[str]) -> None:
-        if self._document is None or not target_keys:
-            return
-        configuration = definition.parameters.get("configuration")
-        if isinstance(configuration, dict):
-            raw_values = configuration.get("sweep_values", [])
-            updated_values: list[object] = []
-            if isinstance(raw_values, list):
-                for raw_value in raw_values:
-                    if not isinstance(raw_value, list) or len(raw_value) != 3:
-                        updated_values.append(raw_value)
-                        continue
-                    try:
-                        key = self._grid_key((int(raw_value[0]), int(raw_value[1]), int(raw_value[2])))
-                    except (TypeError, ValueError):
-                        updated_values.append(raw_value)
-                        continue
-                    if key in target_keys:
-                        continue
-                    updated_values.append(raw_value)
-                configuration["sweep_values"] = updated_values
-
-        mapping = definition.parameters.get("job_ids_by_grid", {})
-        if isinstance(mapping, dict):
-            for key in target_keys:
-                mapping.pop(key, None)
 
     def _on_examine_kpoint_convergence(self) -> None:
         if self._document is None:
@@ -9556,7 +9169,7 @@ class MainWindow(QMainWindow):
         grid = None
         if label.startswith("Grid:"):
             payload = label.split(":", maxsplit=1)[1].strip().replace(" ", "")
-            grid = self._parse_grid_key(payload.replace("x", "x"))
+            grid = parse_grid_mapping_key(payload.replace("x", "x"))
 
         if grid is None:
             QMessageBox.warning(
@@ -9959,151 +9572,6 @@ class MainWindow(QMainWindow):
             tuple(str(name) for name in row.added_advanced),
         )
 
-    def _definition_workflow_context_matches(self, source_definition, target_definition) -> bool:
-        return (
-            source_definition.workflow_stage == target_definition.workflow_stage
-            and source_definition.calc_type == target_definition.calc_type
-            and source_definition.input_structure_ids == target_definition.input_structure_ids
-            and definition_output_directory(self._document, source_definition)
-            == definition_output_directory(self._document, target_definition)
-        )
-
-    @staticmethod
-    def _ensure_label_mapping(definition) -> dict[str, object]:
-        mapping = definition.parameters.setdefault("job_ids_by_label", {})
-        if not isinstance(mapping, dict):
-            mapping = {}
-            definition.parameters["job_ids_by_label"] = mapping
-        return mapping
-
-    def _sync_equivalent_pristine_relaxation_mappings(self, target_definition) -> None:
-        if self._document is None:
-            return
-        target_config = self._deserialize_pristine_relaxation_config(
-            target_definition.parameters.get("configuration", {})
-        )
-        if target_config is None:
-            return
-
-        target_signatures = {
-            row.label: self._pristine_relaxation_row_signature(row)
-            for row in target_config.rows
-        }
-        candidates: dict[str, str] = {}
-        for definition in self._pristine_relaxation_controller.definitions():
-            if not self._definition_workflow_context_matches(definition, target_definition):
-                continue
-            source_config = self._deserialize_pristine_relaxation_config(
-                definition.parameters.get("configuration", {})
-            )
-            if source_config is None:
-                continue
-            source_signatures = {
-                row.label: self._pristine_relaxation_row_signature(row)
-                for row in source_config.rows
-            }
-            mapping = definition.parameters.get("job_ids_by_label", {})
-            if not isinstance(mapping, dict):
-                continue
-            for label, raw_job_id in mapping.items():
-                if not isinstance(label, str) or not isinstance(raw_job_id, str):
-                    continue
-                if target_signatures.get(label) != source_signatures.get(label):
-                    continue
-                existing = candidates.get(label)
-                if (
-                    existing is None
-                    or self._relaxation_mapping_job_priority(raw_job_id)
-                    > self._relaxation_mapping_job_priority(existing)
-                ):
-                    candidates[label] = raw_job_id
-
-        if not candidates:
-            return
-        target_mapping = self._ensure_label_mapping(target_definition)
-        for label, raw_job_id in candidates.items():
-            existing = target_mapping.get(label)
-            if (
-                not isinstance(existing, str)
-                or self._relaxation_mapping_job_priority(raw_job_id)
-                > self._relaxation_mapping_job_priority(existing)
-            ):
-                target_mapping[label] = raw_job_id
-
-    def _sync_equivalent_muon_relaxation_mappings(self, target_definition) -> None:
-        if self._document is None:
-            return
-        target_config = self._deserialize_muon_relaxation_config(
-            target_definition.parameters.get("configuration", {})
-        )
-        if target_config is None:
-            return
-
-        target_signatures = {
-            f"{muon_charge_state_prefix(row.charge_state)}:{row.label}": self._muon_relaxation_row_signature(row)
-            for row in target_config.rows
-        }
-        candidates: dict[str, str] = {}
-        seed_candidates: dict[str, str] = {}
-        for definition in self._muon_relaxation_controller.definitions():
-            if not self._definition_workflow_context_matches(definition, target_definition):
-                continue
-            source_config = self._deserialize_muon_relaxation_config(
-                definition.parameters.get("configuration", {})
-            )
-            if source_config is None:
-                continue
-            source_signatures: dict[str, tuple[object, ...]] = {}
-            legacy_key_by_row_label: dict[str, str] = {}
-            for row in source_config.rows:
-                key = f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
-                source_signatures[key] = self._muon_relaxation_row_signature(row)
-                legacy_key_by_row_label[row.label] = key
-
-            mapping = definition.parameters.get("job_ids_by_label", {})
-            if not isinstance(mapping, dict):
-                continue
-            seed_mapping = definition.parameters.get("job_seed_names_by_label", {})
-            for raw_key, raw_job_id in mapping.items():
-                if not isinstance(raw_key, str) or not isinstance(raw_job_id, str):
-                    continue
-                key = raw_key if ":" in raw_key else legacy_key_by_row_label.get(raw_key, raw_key)
-                if target_signatures.get(key) != source_signatures.get(key):
-                    continue
-                job = self._muon_relaxation_job_for_mapping_value(key, raw_job_id)
-                if job is None or job.status == JobStatus.DEFINED:
-                    continue
-                existing = candidates.get(key)
-                if (
-                    existing is None
-                    or self._relaxation_mapping_job_priority(raw_job_id)
-                    > self._relaxation_mapping_job_priority(existing)
-                ):
-                    candidates[key] = raw_job_id
-                    if isinstance(seed_mapping, dict):
-                        raw_seed = seed_mapping.get(raw_key, seed_mapping.get(key))
-                        if isinstance(raw_seed, str) and raw_seed.strip():
-                            seed_candidates[key] = raw_seed.strip()
-
-        if not candidates:
-            return
-        target_mapping = self._ensure_label_mapping(target_definition)
-        target_seed_mapping = target_definition.parameters.setdefault("job_seed_names_by_label", {})
-        if not isinstance(target_seed_mapping, dict):
-            target_seed_mapping = {}
-            target_definition.parameters["job_seed_names_by_label"] = target_seed_mapping
-        for key, raw_job_id in candidates.items():
-            existing = target_mapping.get(key)
-            if (
-                not isinstance(existing, str)
-                or self._relaxation_mapping_job_priority(raw_job_id)
-                > self._relaxation_mapping_job_priority(existing)
-            ):
-                target_mapping[key] = raw_job_id
-                raw_seed = seed_candidates.get(key)
-                if raw_seed:
-                    target_seed_mapping[key] = raw_seed
-
     def _sync_active_muon_relaxation_dashboard_jobs(self, target_definition) -> None:
         if self._document is None:
             return
@@ -10113,11 +9581,11 @@ class MainWindow(QMainWindow):
         if config is None:
             return
 
-        mapping = self._ensure_label_mapping(target_definition)
+        mapping = ensure_job_mapping(target_definition)
         for row in config.rows:
             key = self._muon_relaxation_row_key(row)
             existing = mapping.get(key)
-            if isinstance(existing, str) and self._muon_relaxation_job_for_mapping_value(key, existing) is not None:
+            if isinstance(existing, str) and self._muon_relaxation_controller.job_for_mapping_value(key, existing) is not None:
                 continue
 
             expected_calc_type = muon_relaxation_calc_type(row.charge_state)
@@ -10135,61 +9603,11 @@ class MainWindow(QMainWindow):
             job = max(
                 candidates,
                 key=lambda candidate: (
-                    self._relaxation_mapping_job_priority(str(candidate.id)),
+                    relaxation_mapping_job_priority(self._document, str(candidate.id)),
                     self._job_submission_sort_key(candidate),
                 ),
             )
             mapping[key] = str(job.id)
-
-    def _sync_equivalent_uep_mappings(self, target_definition) -> None:
-        if self._document is None:
-            return
-        target_config = self._deserialize_uep_config(target_definition.parameters.get("configuration", {}))
-        if target_config is None:
-            return
-
-        target_signatures = {
-            row.label: self._uep_row_signature(row)
-            for row in target_config.rows
-        }
-        candidates: dict[str, str] = {}
-        for definition in self._uep_controller.definitions():
-            if not self._definition_workflow_context_matches(definition, target_definition):
-                continue
-            source_config = self._deserialize_uep_config(definition.parameters.get("configuration", {}))
-            if source_config is None:
-                continue
-            source_signatures = {
-                row.label: self._uep_row_signature(row)
-                for row in source_config.rows
-            }
-            mapping = definition.parameters.get("job_ids_by_label", {})
-            if not isinstance(mapping, dict):
-                continue
-            for label, raw_job_id in mapping.items():
-                if not isinstance(label, str) or not isinstance(raw_job_id, str):
-                    continue
-                if target_signatures.get(label) != source_signatures.get(label):
-                    continue
-                existing = candidates.get(label)
-                if (
-                    existing is None
-                    or self._convergence_mapping_job_priority(raw_job_id)
-                    > self._convergence_mapping_job_priority(existing)
-                ):
-                    candidates[label] = raw_job_id
-
-        if not candidates:
-            return
-        target_mapping = self._ensure_label_mapping(target_definition)
-        for label, raw_job_id in candidates.items():
-            existing = target_mapping.get(label)
-            if (
-                not isinstance(existing, str)
-                or self._convergence_mapping_job_priority(raw_job_id)
-                > self._convergence_mapping_job_priority(existing)
-            ):
-                target_mapping[label] = raw_job_id
 
     def _uep_source_structure_id_for_job(self, job_id: UUID) -> UUID | None:
         if self._document is None:
@@ -10212,7 +9630,7 @@ class MainWindow(QMainWindow):
         definition = self._uep_controller.active_definition()
         if definition is None:
             return set()
-        self._sync_equivalent_uep_mappings(definition)
+        self._uep_controller.sync_mappings(definition)
         mapping = definition.parameters.get("job_ids_by_label", {})
         if not isinstance(mapping, dict):
             return set()
@@ -10393,51 +9811,33 @@ class MainWindow(QMainWindow):
         labels = self._removed_row_labels(payload)
         if self._document is None or not labels:
             return
-        definitions = self._pristine_relaxation_controller.definitions()
-        should_autosave = self._relaxation_removal_touches_project_files(
-            definitions,
-            lambda key: str(key) in labels,
-        )
-        if not self._cleanup_pristine_relaxation_rows(definitions, labels):
+        controller = self._pristine_relaxation_controller
+        definitions = controller.definitions()
+        key_matches = controller.row_key_matcher(labels)
+        should_autosave = self._relaxation_removal_touches_project_files(definitions, key_matches)
+        if not self._cleanup_relaxation_rows(definitions, key_matches):
             self._restore_pristine_relaxation_form_from_definition()
             return
-        for definition in definitions:
-            self._remove_pristine_relaxation_labels_from_definition(definition, labels)
-        self._pristine_relaxation_controller.refresh_view()
+        controller.remove_rows(labels)
+        controller.refresh_view()
         if should_autosave:
             self._persist_document_ui_state(
                 failure_message="Pristine relaxation rows were removed, but autosave failed."
             )
 
-    def _remove_pristine_relaxation_labels_from_definition(self, definition, labels: set[str]) -> None:
-        config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
-        if config is not None:
-            rows = tuple(row for row in config.rows if row.label not in labels)
-            if len(rows) != len(config.rows):
-                definition.parameters["configuration"] = self._serialize_pristine_relaxation_config(
-                    replace(config, rows=rows)
-                )
-
-        mapping = definition.parameters.get("job_ids_by_label", {})
-        if isinstance(mapping, dict):
-            for label in labels:
-                mapping.pop(label, None)
-
-        self._remove_definition_if_no_rows(definition, self._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY)
-
     def _on_remove_muon_relaxation_rows(self, payload: object) -> None:
         labels = self._removed_row_labels(payload)
         if self._document is None or not labels:
             return
-        definitions = self._muon_relaxation_controller.definitions()
-        key_matches = self._muon_relaxation_label_matcher(labels)
+        controller = self._muon_relaxation_controller
+        definitions = controller.definitions()
+        key_matches = controller.row_key_matcher(labels)
         removed_site_ids = self._muon_relaxation_site_ids_for_removed_rows(definitions, labels)
         should_autosave = self._relaxation_removal_touches_project_files(definitions, key_matches)
-        if not self._cleanup_muon_relaxation_rows(definitions, labels):
+        if not self._cleanup_relaxation_rows(definitions, key_matches):
             self._restore_muon_relaxation_form_from_definition()
             return
-        for definition in definitions:
-            self._remove_muon_relaxation_labels_from_definition(definition, labels)
+        controller.remove_rows(labels)
         self._remove_muon_relaxation_labels_from_ui_state(labels)
         site_status_changed = self._restore_removed_muon_relaxation_sites(removed_site_ids)
         self._refresh_muon_relaxation_rows()
@@ -10445,39 +9845,6 @@ class MainWindow(QMainWindow):
             self._persist_document_ui_state(
                 failure_message="Muon relaxation rows were removed, but autosave failed."
             )
-
-    def _cleanup_pristine_relaxation_rows(self, definitions: list, labels: set[str]) -> bool:
-        return self._cleanup_relaxation_row_jobs(
-            definitions,
-            lambda key: str(key) in labels,
-            title="Remove relaxation job with files",
-            text_for_job=lambda job: f"Relaxation job '{job.label}' has associated files.",
-            keep_text="or Cancel to keep the relaxation row.",
-        )
-
-    def _cleanup_muon_relaxation_rows(self, definitions: list, labels: set[str]) -> bool:
-        return self._cleanup_relaxation_row_jobs(
-            definitions,
-            self._muon_relaxation_label_matcher(labels),
-            title="Remove relaxation job with files",
-            text_for_job=lambda job: f"Relaxation job '{job.label}' has associated files.",
-            keep_text="or Cancel to keep the relaxation row.",
-        )
-
-    def _muon_relaxation_label_matcher(self, labels: set[str]) -> Callable[[object], bool]:
-        unqualified_labels = {label for label in labels if ":" not in label}
-        full_key_labels = {label.partition(":")[2] for label in labels if ":" in label}
-
-        def matches(key: object) -> bool:
-            if not isinstance(key, str):
-                return False
-            return (
-                key in labels
-                or (":" in key and key.partition(":")[2] in unqualified_labels)
-                or (":" not in key and key in full_key_labels)
-            )
-
-        return matches
 
     def _muon_relaxation_site_ids_for_removed_rows(
         self,
@@ -10487,7 +9854,7 @@ class MainWindow(QMainWindow):
         if self._document is None:
             return set()
 
-        key_matches = self._muon_relaxation_label_matcher(labels)
+        key_matches = self._muon_relaxation_controller.row_key_matcher(labels)
         site_ids: set[UUID] = set()
 
         def collect_from_rows(rows: object) -> None:
@@ -10575,7 +9942,7 @@ class MainWindow(QMainWindow):
         rows = state.get("rows", [])
         if not isinstance(rows, list):
             return
-        key_matches = self._muon_relaxation_label_matcher(labels)
+        key_matches = self._muon_relaxation_controller.row_key_matcher(labels)
         kept: list[object] = []
         for row in rows:
             if not isinstance(row, dict):
@@ -10659,15 +10026,19 @@ class MainWindow(QMainWindow):
             return Path("")
         return self._document.project_root / "entities" / entity_type / f"{entity_id}.json"
 
-    def _cleanup_relaxation_row_jobs(
+    def _cleanup_relaxation_rows(
         self,
         definitions: list,
         key_matches: Callable[[object], bool],
-        *,
-        title: str,
-        text_for_job: Callable[[Job], str],
-        keep_text: str,
     ) -> bool:
+        """Delete the jobs bound to the removed relaxation rows, asking what to do with their files.
+
+        ``key_matches`` picks the removed rows' ``job_ids_by_label`` keys (a
+        controller's ``row_key_matcher``). Returns ``False`` when the user
+        cancels a file prompt or a file operation fails, leaving the rows in
+        place.
+        """
+
         if self._document is None:
             return True
 
@@ -10698,9 +10069,9 @@ class MainWindow(QMainWindow):
                 disposition = shared_file_disposition
                 if disposition is None:
                     disposition = self._prompt_job_file_disposition(
-                        title=title,
-                        text=f"{text_for_job(job)}\n\n{job_dir}",
-                        keep_text=keep_text,
+                        title="Remove relaxation job with files",
+                        text=f"Relaxation job '{job.label}' has associated files.\n\n{job_dir}",
+                        keep_text="or Cancel to keep the relaxation row.",
                         include_apply_all=multi,
                     )
                 if disposition is None:
@@ -10777,79 +10148,12 @@ class MainWindow(QMainWindow):
             self._document.ui_state["muon_relaxation_form"] = state
         self._refresh_muon_relaxation_rows()
 
-    def _remove_muon_relaxation_labels_from_definition(self, definition, labels: set[str]) -> None:
-        unqualified_labels = {label for label in labels if ":" not in label}
-        full_key_labels = {label.partition(":")[2] for label in labels if ":" in label}
-
-        def row_matches(row: MuonRelaxationRow) -> bool:
-            key = f"{muon_charge_state_prefix(row.charge_state)}:{row.label}"
-            return key in labels or row.label in unqualified_labels
-
-        config = self._deserialize_muon_relaxation_config(definition.parameters.get("configuration", {}))
-        if config is not None:
-            rows = tuple(row for row in config.rows if not row_matches(row))
-            if len(rows) != len(config.rows):
-                definition.parameters["configuration"] = self._serialize_muon_relaxation_config(
-                    replace(config, rows=rows)
-                )
-
-        for mapping_name in ("job_ids_by_label", "job_seed_names_by_label"):
-            mapping = definition.parameters.get(mapping_name, {})
-            if not isinstance(mapping, dict):
-                continue
-            stale_keys = [
-                key
-                for key in mapping
-                if isinstance(key, str)
-                and (
-                    key in labels
-                    or (":" in key and key.partition(":")[2] in unqualified_labels)
-                    or (":" not in key and key in full_key_labels)
-                )
-            ]
-            for key in stale_keys:
-                mapping.pop(key, None)
-
-        self._remove_definition_if_no_rows(definition, self._ACTIVE_MUON_RELAXATION_DEFINITION_KEY)
-
     def _on_remove_uep_rows(self, payload: object) -> None:
         labels = self._removed_row_labels(payload)
         if self._document is None or not labels:
             return
-        for definition in self._uep_controller.definitions():
-            self._remove_uep_labels_from_definition(definition, labels)
+        self._uep_controller.remove_rows(labels)
         self._refresh_uep_rows()
-
-    def _remove_uep_labels_from_definition(self, definition, labels: set[str]) -> None:
-        config = self._deserialize_uep_config(definition.parameters.get("configuration", {}))
-        if config is not None:
-            rows = tuple(row for row in config.rows if row.label not in labels)
-            if len(rows) != len(config.rows):
-                definition.parameters["configuration"] = self._serialize_uep_config(
-                    replace(config, rows=rows)
-                )
-
-        mapping = definition.parameters.get("job_ids_by_label", {})
-        if isinstance(mapping, dict):
-            for label in labels:
-                mapping.pop(label, None)
-
-        self._remove_definition_if_no_rows(definition, self._ACTIVE_UEP_DEFINITION_KEY)
-
-    def _remove_definition_if_no_rows(self, definition, active_key: str) -> None:
-        if self._document is None:
-            return
-        configuration = definition.parameters.get("configuration")
-        if not isinstance(configuration, dict):
-            return
-        rows = configuration.get("rows")
-        if not isinstance(rows, list):
-            return
-        if rows:
-            return
-        self._document.calculations.pop(definition.id, None)
-        if self._document.ui_state.get(active_key) == str(definition.id):
-            self._document.ui_state.pop(active_key, None)
 
     def _serialize_pristine_relaxation_config(self, config: PristineRelaxationConfig) -> dict[str, object]:
         return serialize_pristine_relaxation_config(config)
@@ -11206,7 +10510,7 @@ class MainWindow(QMainWindow):
             rows = []
             configuration["rows"] = rows
 
-        mapping = self._ensure_label_mapping(definition)
+        mapping = ensure_job_mapping(definition)
         seed_mapping = definition.parameters.setdefault("job_seed_names_by_label", {})
         if not isinstance(seed_mapping, dict):
             seed_mapping = {}
@@ -11301,7 +10605,7 @@ class MainWindow(QMainWindow):
         if definition is None:
             return None, None
 
-        self._sync_equivalent_pristine_relaxation_mappings(definition)
+        self._pristine_relaxation_controller.sync_mappings(definition)
         config = self._deserialize_pristine_relaxation_config(definition.parameters.get("configuration", {}))
         if config is None:
             return None, None
@@ -11328,27 +10632,6 @@ class MainWindow(QMainWindow):
             if config is not None and config.rows:
                 return config
         return None
-
-    def _muon_relaxation_job_for_mapping_value(self, key: str, raw_job_id: str) -> Job | None:
-        if self._document is None:
-            return None
-        try:
-            job_id = UUID(str(raw_job_id))
-        except ValueError:
-            return None
-        job = self._document.jobs.get(job_id)
-        if job is None or not is_muon_relaxation_calc_type(job.calc_type):
-            return None
-        prefix, separator, _label = str(key).partition(":")
-        if not separator:
-            return job
-        if prefix == muon_charge_state_prefix(POSITIVE_MUON_CHARGE_STATE):
-            expected = muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE)
-        elif prefix == muon_charge_state_prefix(MUONIUM_CHARGE_STATE):
-            expected = muon_relaxation_calc_type(MUONIUM_CHARGE_STATE)
-        else:
-            return None
-        return job if job.calc_type == expected else None
 
     def _muon_relaxation_form_config(self) -> MuonRelaxationConfig | None:
         if self._document is None:
@@ -11629,7 +10912,7 @@ class MainWindow(QMainWindow):
             parameters=self._serialize_pristine_relaxation_config(config),
             output_directory=output_root,
         )
-        self._sync_equivalent_pristine_relaxation_mappings(definition)
+        self._pristine_relaxation_controller.sync_mappings(definition)
         self._document.ui_state[self._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(definition.id)
 
         self._pristine_relaxation_controller.refresh_view()
@@ -11670,7 +10953,7 @@ class MainWindow(QMainWindow):
             parameters=self._serialize_muon_relaxation_config(config),
             output_directory=output_root,
         )
-        self._sync_equivalent_muon_relaxation_mappings(definition)
+        self._muon_relaxation_controller.sync_mappings(definition)
         self._document.ui_state[self._ACTIVE_MUON_RELAXATION_DEFINITION_KEY] = str(definition.id)
         self._refresh_muon_relaxation_rows()
         self._refresh_journal_view()
@@ -12085,61 +11368,6 @@ class MainWindow(QMainWindow):
                 for source in raw_sources
                 if not isinstance(source, dict) or str(source.get("key", "")).strip() not in keys
             ]
-
-    def _remove_energy_barrier_sources_from_definition(self, definition, keys: set[str]) -> None:
-        config = definition.parameters.get("configuration", {})
-        if isinstance(config, dict):
-            raw_sources = config.get("sources", [])
-            if isinstance(raw_sources, list):
-                config["sources"] = [
-                    source
-                    for source in raw_sources
-                    if not isinstance(source, dict) or str(source.get("key", "")).strip() not in keys
-                ]
-            row_settings = config.get("row_settings", {})
-            if isinstance(row_settings, dict):
-                for key in keys:
-                    row_settings.pop(key, None)
-                if not row_settings:
-                    config.pop("row_settings", None)
-        mapping = definition.parameters.get("job_ids_by_label", {})
-        if isinstance(mapping, dict):
-            for key in keys:
-                mapping.pop(key, None)
-        self._remove_energy_barrier_definition_if_no_sources(definition)
-
-    def _remove_energy_barrier_neb_sources_from_definition(self, definition, keys: set[str]) -> None:
-        config = definition.parameters.get("configuration", {})
-        if isinstance(config, dict):
-            raw_sources = config.get("sources", [])
-            if isinstance(raw_sources, list):
-                config["sources"] = [
-                    source
-                    for source in raw_sources
-                    if not isinstance(source, dict) or str(source.get("key", "")).strip() not in keys
-                ]
-            row_settings = config.get("row_settings", {})
-            if isinstance(row_settings, dict):
-                for key in keys:
-                    row_settings.pop(key, None)
-                if not row_settings:
-                    config.pop("row_settings", None)
-        mapping = definition.parameters.get("job_ids_by_label", {})
-        if isinstance(mapping, dict):
-            for key in keys:
-                mapping.pop(key, None)
-        self._remove_energy_barrier_definition_if_no_sources(definition)
-
-    def _remove_energy_barrier_definition_if_no_sources(self, definition) -> None:
-        if self._document is None:
-            return
-        config = definition.parameters.get("configuration", {})
-        if not isinstance(config, dict):
-            return
-        raw_sources = config.get("sources", [])
-        if isinstance(raw_sources, list) and raw_sources:
-            return
-        self._document.calculations.pop(definition.id, None)
 
     def _cleanup_energy_barrier_source_jobs(self, keys: set[str]) -> bool:
         if self._document is None:
@@ -12862,9 +12090,9 @@ class MainWindow(QMainWindow):
             return
         self._remove_energy_barrier_sources_from_ui_state(keys)
         for definition in self._energy_barriers_definitions():
-            self._remove_energy_barrier_sources_from_definition(definition, keys)
+            remove_source_keys_from_definition(self._document, definition, keys)
         for definition in self._energy_barriers_controller.definitions():
-            self._remove_energy_barrier_neb_sources_from_definition(definition, keys)
+            remove_source_keys_from_definition(self._document, definition, keys)
         self._refresh_energy_barriers_view()
         self._refresh_jobs_table()
         self._refresh_journal_view()
@@ -13003,7 +12231,7 @@ class MainWindow(QMainWindow):
             parameters=self._serialize_uep_config(config),
             output_directory=output_root,
         )
-        self._sync_equivalent_uep_mappings(definition)
+        self._uep_controller.sync_mappings(definition)
         self._document.ui_state[self._ACTIVE_UEP_DEFINITION_KEY] = str(definition.id)
         self._refresh_uep_rows()
         self._refresh_journal_view()

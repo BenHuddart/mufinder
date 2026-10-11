@@ -44,7 +44,7 @@ per-controller-deps + view pattern documented in
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from uuid import UUID
 
@@ -57,12 +57,20 @@ from mufinder.domain.models import (
     CalculationRun,
     Job,
 )
+from mufinder.services.definition_mappings import (
+    LABEL_MAPPING,
+    relaxation_mapping_job_priority,
+    remove_labels_from_definition,
+    sync_equivalent_mappings,
+)
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, SiteHostMismatch
 from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
 
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.relaxation_adapter import (
     MUON_RELAXATION_CALC_TYPES,
+    MUONIUM_CHARGE_STATE,
+    POSITIVE_MUON_CHARGE_STATE,
     expand_muon_relaxation_jobs,
     is_muon_relaxation_calc_type,
     muon_charge_state_prefix,
@@ -84,6 +92,10 @@ from mufinder.app.workflow_controllers.base import (
     upsert_job_derived_structure,
 )
 from mufinder.app.workflow_submission import effective_row_status
+
+
+#: The definition mapping that holds each row's job seed name.
+SEED_NAME_MAPPING = "job_seed_names_by_label"
 
 
 def _without_imported_rows(config: MuonRelaxationConfig) -> MuonRelaxationConfig:
@@ -165,7 +177,6 @@ class MuonRelaxationDeps:
     serialize_muon_relaxation_config: Callable[
         [MuonRelaxationConfig], dict[str, object]
     ]
-    sync_equivalent_muon_relaxation_mappings: Callable[[CalculationDefinition], None]
     sync_active_muon_relaxation_dashboard_jobs: Callable[[CalculationDefinition], None]
     muon_relaxation_form_config: Callable[[], MuonRelaxationConfig | None]
     muon_relaxation_row_signature: Callable[[MuonRelaxationRow], tuple[object, ...]]
@@ -228,6 +239,122 @@ class MuonRelaxationController(WorkflowJobController):
         if job is None or not is_muon_relaxation_calc_type(job.calc_type):
             return None
         return job
+
+    def job_for_mapping_value(self, key: str, raw_job_id: str) -> Job | None:
+        """Return the muon-relaxation job ``raw_job_id`` names, when it fits ``key``.
+
+        A charge-qualified ``key`` (``"{prefix}:{label}"``) needs a job of that
+        charge state's calc type and an unknown prefix fits none; a bare label
+        fits a job of any muon-relaxation calc type.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return None
+        try:
+            job_id = UUID(str(raw_job_id))
+        except ValueError:
+            return None
+        job = document.jobs.get(job_id)
+        if job is None or not is_muon_relaxation_calc_type(job.calc_type):
+            return None
+        prefix, separator, _label = str(key).partition(":")
+        if not separator:
+            return job
+        if prefix == muon_charge_state_prefix(POSITIVE_MUON_CHARGE_STATE):
+            expected = muon_relaxation_calc_type(POSITIVE_MUON_CHARGE_STATE)
+        elif prefix == muon_charge_state_prefix(MUONIUM_CHARGE_STATE):
+            expected = muon_relaxation_calc_type(MUONIUM_CHARGE_STATE)
+        else:
+            return None
+        return job if job.calc_type == expected else None
+
+    # --- definition maintenance ---
+
+    def sync_mappings(self, definition: CalculationDefinition) -> None:
+        """Copy job bindings and seed names into ``definition`` from equivalent definitions.
+
+        Rows are keyed ``"{prefix}:{label}"``; a source's bare-label key, from
+        before rows were charge-qualified, is read as its row's qualified key.
+        A row carries over when its signature is unchanged and its job exists,
+        fits the key's charge state (:meth:`job_for_mapping_value`) and has left
+        ``defined``; candidates rank by
+        :func:`~mufinder.services.definition_mappings.relaxation_mapping_job_priority`,
+        and a winner's ``job_seed_names_by_label`` entry travels with it.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return
+        row_key = self._deps.muon_relaxation_row_key
+
+        def accept_job(key: str, raw_job_id: str) -> bool:
+            job = self.job_for_mapping_value(key, raw_job_id)
+            return job is not None and job.status != JobStatus.DEFINED
+
+        sync_equivalent_mappings(
+            document,
+            self.definitions(),
+            definition,
+            deserialize=self._deps.deserialize_muon_relaxation_config,
+            signatures=lambda config: {
+                row_key(row): self._deps.muon_relaxation_row_signature(row) for row in config.rows
+            },
+            priority=relaxation_mapping_job_priority,
+            accept_job=accept_job,
+            legacy_keys=lambda config: {
+                row.label: row_key(row) for row in config.rows if ":" not in row.label
+            },
+            seed_mapping_name=SEED_NAME_MAPPING,
+        )
+
+    def row_key_matcher(self, labels: Collection[str]) -> Callable[[object], bool]:
+        """Match a mapping key to removed rows across both key spellings.
+
+        A key matches when it is one of ``labels``, when it is charge-qualified
+        and its label is a bare entry of ``labels``, or when it is a bare label
+        and ``labels`` holds a charge-qualified key for it.
+        """
+
+        unqualified_labels = {label for label in labels if ":" not in label}
+        full_key_labels = {label.partition(":")[2] for label in labels if ":" in label}
+
+        def matches(key: object) -> bool:
+            if not isinstance(key, str):
+                return False
+            return (
+                key in labels
+                or (":" in key and key.partition(":")[2] in unqualified_labels)
+                or (":" not in key and key in full_key_labels)
+            )
+
+        return matches
+
+    def remove_labels_from_definition(
+        self, definition: CalculationDefinition, labels: Collection[str]
+    ) -> bool:
+        """Drop the rows ``labels`` name, and their job and seed-name bindings.
+
+        A row goes when its qualified key is in ``labels`` or its label is a
+        bare entry of ``labels``; mapping keys go by :meth:`row_key_matcher`.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return False
+        unqualified_labels = {label for label in labels if ":" not in label}
+        row_key = self._deps.muon_relaxation_row_key
+        return remove_labels_from_definition(
+            document,
+            definition,
+            labels,
+            deserialize=self._deps.deserialize_muon_relaxation_config,
+            serialize=self._deps.serialize_muon_relaxation_config,
+            active_key=self.active_key,
+            row_matches=lambda row: row_key(row) in labels or row.label in unqualified_labels,
+            key_matches=self.row_key_matcher(labels),
+            mapping_names=(LABEL_MAPPING, SEED_NAME_MAPPING),
+        )
 
     # --- submission contract ---
 
@@ -318,7 +445,7 @@ class MuonRelaxationController(WorkflowJobController):
         definition = self.active_definition()
         if definition is None:
             return states
-        self._deps.sync_equivalent_muon_relaxation_mappings(definition)
+        self.sync_mappings(definition)
         self._deps.sync_active_muon_relaxation_dashboard_jobs(definition)
         config = self._deps.deserialize_muon_relaxation_config(
             definition.parameters.get("configuration", {})
@@ -400,7 +527,7 @@ class MuonRelaxationController(WorkflowJobController):
         definition = self.active_definition()
         if definition is None:
             return []
-        self._deps.sync_equivalent_muon_relaxation_mappings(definition)
+        self.sync_mappings(definition)
         self._deps.sync_active_muon_relaxation_dashboard_jobs(definition)
         config = self._deps.deserialize_muon_relaxation_config(
             definition.parameters.get("configuration", {})
@@ -431,7 +558,7 @@ class MuonRelaxationController(WorkflowJobController):
         definition = self.active_definition()
         if definition is None:
             return []
-        self._deps.sync_equivalent_muon_relaxation_mappings(definition)
+        self.sync_mappings(definition)
         self._deps.sync_active_muon_relaxation_dashboard_jobs(definition)
         config = self._deps.deserialize_muon_relaxation_config(
             definition.parameters.get("configuration", {})

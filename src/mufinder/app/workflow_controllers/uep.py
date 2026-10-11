@@ -34,18 +34,23 @@ reached via :class:`UepDeps`, following the shared-context + per-controller-deps
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from uuid import UUID
 
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
+from mufinder.services.definition_mappings import (
+    convergence_mapping_job_priority,
+    remove_labels_from_definition,
+    sync_equivalent_mappings,
+)
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.workflow import StructureBridgeError, write_job_directory
 
 from mufinder.app.uep_adapter import expand_uep_jobs
-from mufinder.app.uep_types import UepConfig, UepRunState
+from mufinder.app.uep_types import UepConfig, UepRunState, UepSourceRow
 from mufinder.app.uep_widget import UEPWidget
 from mufinder.app.workflow_controllers.base import (
     ControllerResult,
@@ -61,8 +66,8 @@ class UepDeps:
     """UEP-specific handles, late-bound to ``MainWindow`` helpers.
 
     These helpers stay on ``MainWindow`` because non-migrating code still calls
-    them there: ``deserialize_uep_config`` / ``sync_equivalent_uep_mappings``
-    are shared with the UEP configure path, row removal, the analysis wizard, and dashboard
+    them there: the configuration codec and ``uep_row_signature`` are shared
+    with the UEP configure path, the analysis wizard, and dashboard
     cluster-source sync; and ``uep_potential_grid_result_for_job`` still feeds
     the analysis wizard's "already analysed" detection. The controller reaches
     them only through these required callables. Workflow-specific dependencies
@@ -74,7 +79,8 @@ class UepDeps:
     """
 
     deserialize_uep_config: Callable[[object], UepConfig | None]
-    sync_equivalent_uep_mappings: Callable[[CalculationDefinition], None]
+    serialize_uep_config: Callable[[UepConfig], dict[str, object]]
+    uep_row_signature: Callable[[UepSourceRow], tuple[object, ...]]
     uep_potential_grid_result_for_job: Callable[[UUID], Result | None]
 
 
@@ -98,6 +104,44 @@ class UepController(WorkflowJobController):
         self._deps = deps
         self._view = view
 
+    # --- definition maintenance ---
+
+    def sync_mappings(self, definition: CalculationDefinition) -> None:
+        """Copy job bindings into ``definition`` from equivalent UEP definitions.
+
+        A row carries over when its signature is unchanged; candidates rank by
+        :func:`~mufinder.services.definition_mappings.convergence_mapping_job_priority`.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return
+        sync_equivalent_mappings(
+            document,
+            self.definitions(),
+            definition,
+            deserialize=self._deps.deserialize_uep_config,
+            signatures=lambda config: {
+                row.label: self._deps.uep_row_signature(row) for row in config.rows
+            },
+            priority=convergence_mapping_job_priority,
+        )
+
+    def remove_labels_from_definition(
+        self, definition: CalculationDefinition, labels: Collection[str]
+    ) -> bool:
+        document = self._context.document()
+        if document is None:
+            return False
+        return remove_labels_from_definition(
+            document,
+            definition,
+            labels,
+            deserialize=self._deps.deserialize_uep_config,
+            serialize=self._deps.serialize_uep_config,
+            active_key=self.active_key,
+        )
+
     # --- submission contract ---
     #
     # normalize=str and the base-default ``is_ready`` (workflow_row_state_is_ready)
@@ -115,7 +159,7 @@ class UepController(WorkflowJobController):
         definition = self.active_definition()
         if definition is None:
             return states
-        self._deps.sync_equivalent_uep_mappings(definition)
+        self.sync_mappings(definition)
         config = self._deps.deserialize_uep_config(
             definition.parameters.get("configuration", {})
         )
@@ -161,7 +205,7 @@ class UepController(WorkflowJobController):
         definition = self.active_definition()
         if definition is None:
             return []
-        self._deps.sync_equivalent_uep_mappings(definition)
+        self.sync_mappings(definition)
         selected: list[Job] = []
         seen: set[UUID] = set()
         for label in keys:
@@ -179,7 +223,7 @@ class UepController(WorkflowJobController):
         definition = self.active_definition()
         if definition is None or not definition.input_structure_ids:
             return []
-        self._deps.sync_equivalent_uep_mappings(definition)
+        self.sync_mappings(definition)
         config = self._deps.deserialize_uep_config(
             definition.parameters.get("configuration", {})
         )

@@ -13,14 +13,21 @@ the shared-context + per-controller-deps + view pattern documented in
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from uuid import UUID
 
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job
 
-from mufinder.app.convergence_types import KPOINT_GRID_CODEC, ConvergenceConfig, KPointGrid
+from mufinder.services.definition_mappings import remove_grid_keys_from_definition
+
+from mufinder.app.convergence_types import (
+    KPOINT_GRID_CODEC,
+    ConvergenceConfig,
+    KPointGrid,
+    parse_grid_mapping_key,
+)
 from mufinder.app.kpoint_convergence_widget import KPointConvergenceWidget
 from mufinder.app.workflow_controllers.sweep_convergence import SweepConvergenceController
 
@@ -39,7 +46,6 @@ class ConvergenceKpointDeps:
     """
 
     deserialize_convergence_config: Callable[[object], ConvergenceConfig | None]
-    sync_equivalent_convergence_kpoint_mappings: Callable[[CalculationDefinition], None]
     grid_key: Callable[[KPointGrid], str]
     max_stress_for_job: Callable[[UUID], float | None]
 
@@ -68,8 +74,44 @@ class ConvergenceKpointController(SweepConvergenceController):
     def mapping_key(self, key: KPointGrid) -> str:
         return self._deps.grid_key(key)
 
-    def sync_mappings(self, definition: CalculationDefinition) -> None:
-        self._deps.sync_equivalent_convergence_kpoint_mappings(definition)
+    def parse_mapping_key(self, raw: object) -> KPointGrid | None:
+        return parse_grid_mapping_key(raw) if isinstance(raw, str) else None
+
+    def sweep_point_signatures(self, config: ConvergenceConfig) -> dict[KPointGrid, object]:
+        """Map each grid to its job-name prefix and its effective parameters.
+
+        A grid's effective parameters are the shared parameters updated by
+        every override group listing it.
+        """
+
+        if config.sweep_parameter != self.sweep_parameter:
+            return {}
+        signatures: dict[KPointGrid, object] = {}
+        for value in config.sweep_values:
+            if not isinstance(value, tuple) or len(value) != 3:
+                continue
+            grid = (int(value[0]), int(value[1]), int(value[2]))
+            params = dict(config.shared_params)
+            for members, override in config.overrides.items():
+                member_grids = {
+                    tuple(int(component) for component in member)
+                    for member in members
+                    if isinstance(member, tuple) and len(member) == 3
+                }
+                if grid in member_grids:
+                    params.update(override)
+            signatures[grid] = (config.name_prefix, params)
+        return signatures
+
+    def remove_labels_from_definition(
+        self, definition: CalculationDefinition, labels: Collection[str]
+    ) -> bool:
+        """Drop the grids whose mapping keys are ``labels``; the definition is always kept."""
+
+        remove_grid_keys_from_definition(
+            definition, labels, mapping_name=self.mapping_name, mapping_key=self.mapping_key
+        )
+        return False
 
     def legacy_job_for_key(self, definition: CalculationDefinition, key: KPointGrid) -> Job | None:
         """Return the newest job labelled as the grid's job under the definition's prefix."""
