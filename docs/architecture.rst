@@ -466,8 +466,7 @@ three public hooks: ``next_key`` (the key a new row starts from),
 ``prompt_new_key`` (what Add asks for: the cutoff sweep adds the next cutoff,
 the k-point sweep opens a grid dialog) and ``generate_keys`` (the range or
 spacing generator dialog). A behaviour only one sweep has is an override of a
-private base method with a default: the cutoff sweep cancels a removed row's
-queued or running job first (``_CANCEL_ACTIVE_ON_REMOVE``), titles a one-row
+private base method with a default: the cutoff sweep titles a one-row
 dialog by its cutoff (``_dialog_subject``), reads a task-only row as the
 defaults (``_is_default_parameter_set``) and restores legacy
 ``shared_params`` / ``overrides`` state (``_restore_legacy_parameters``); the
