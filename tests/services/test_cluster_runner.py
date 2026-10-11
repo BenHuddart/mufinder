@@ -7,51 +7,19 @@ from uuid import uuid4
 
 import pytest
 
+import mufinder.services.cluster_retrieval as cluster_retrieval_module
 import mufinder.services.cluster_runner as cluster_runner_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
+from mufinder.services.cluster_retrieval import (
+    RetrievalFailure,
+    RetrievalOutcome,
+    RetrievalResult,
+)
 from mufinder.services.cluster_runner import ClusterJobRunner
-from mufinder.services.job_artifacts import RetrievalFlags
+from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags
 from mufinder.services.scheduler import SchedulerJobInfo
-
-
-class _FakeSSH:
-    def __init__(self) -> None:
-        self.is_connected = True
-        self.commands: list[tuple[str, object]] = []
-        self.remote_files: dict[str, bytes] = {}
-
-    def mkdir(self, path: str, exist_ok: bool = True) -> None:
-        self.commands.append(("mkdir", (path, exist_ok)))
-
-    def put(self, local_path: Path, remote_path: str) -> None:
-        self.commands.append(("put", remote_path))
-        self.remote_files[remote_path] = Path(local_path).read_bytes()
-
-    def chmod(self, remote_path: str, mode: int) -> None:
-        self.commands.append(("chmod", (remote_path, mode)))
-
-    def get(self, remote_path: str, local_path: Path) -> None:
-        self.commands.append(("get", remote_path))
-        local_path.write_bytes(self.remote_files.get(remote_path, b"ok"))
-
-    def exists(self, remote_path: str) -> bool:
-        return remote_path in self.remote_files
-
-    def listdir(self, remote_path: str) -> list[str]:
-        prefix = remote_path.rstrip("/") + "/"
-        entries: list[str] = []
-        for path in self.remote_files:
-            if path.startswith(prefix):
-                entries.append(path[len(prefix):].split("/", 1)[0])
-        return sorted(set(entries))
-
-    def disconnect(self) -> None:
-        self.is_connected = False
-
-    def connect(self, password: str | None = None) -> None:
-        _ = password
-        self.is_connected = True
+from tests.support.cluster_ssh import FakeSSH, OutputUnavailableSSH
 
 
 class _FakeScheduler:
@@ -122,7 +90,7 @@ def test_cluster_runner_polls_queue_once_per_minute(qapp) -> None:
 
 def test_cluster_runner_submit_uploads_files_and_emits_queued(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._scheduler = _FakeScheduler()
 
     job_id = uuid4()
@@ -156,7 +124,7 @@ def test_cluster_runner_submit_uploads_files_and_emits_queued(qapp, tmp_path: Pa
 
 def test_cluster_runner_submit_can_reuse_existing_remote_files(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
 
@@ -196,7 +164,7 @@ def test_cluster_runner_submit_can_reuse_existing_remote_files(qapp, tmp_path: P
 
 def test_cluster_runner_poll_moves_running_and_completed(qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
 
@@ -223,7 +191,7 @@ def test_cluster_runner_poll_moves_running_and_completed(qapp, monkeypatch: pyte
     runner.job_finished.connect(lambda jid, parsed: finished.append((jid, parsed)))
 
     monkeypatch.setattr(
-        cluster_runner_module,
+        cluster_retrieval_module,
         "parse_castep_output",
         lambda _path: CastepResult(completed=True, total_energy=-1.0),
     )
@@ -242,7 +210,7 @@ def test_cluster_runner_poll_moves_running_and_completed(qapp, monkeypatch: pyte
 
 def test_cluster_runner_poll_marks_timeout_as_stopped(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
 
@@ -273,7 +241,7 @@ def test_cluster_runner_poll_marks_timeout_as_stopped(qapp, tmp_path: Path) -> N
 
 def test_cluster_runner_cancel_emits_cancelled(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._scheduler = _FakeScheduler()
 
     job_id = uuid4()
@@ -350,7 +318,7 @@ def test_cluster_runner_connect_disconnect_emits_status(
 
 def test_cluster_runner_poll_handles_scheduler_failure(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._scheduler = _RaisingScheduler()
     runner._config = cluster_runner_module.ClusterConfig(
         name="alpha",
@@ -383,7 +351,7 @@ def test_cluster_runner_poll_handles_scheduler_failure(qapp, tmp_path: Path) -> 
 
 def test_cluster_runner_poll_handles_cancelled_and_failed_states(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
 
@@ -419,7 +387,7 @@ def test_cluster_runner_poll_handles_cancelled_and_failed_states(qapp, tmp_path:
 
 def test_cluster_runner_poll_failed_downloads_numbered_error_files(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    ssh = _FakeSSH()
+    ssh = FakeSSH()
     runner._ssh = ssh
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
@@ -444,7 +412,7 @@ def test_cluster_runner_poll_failed_downloads_numbered_error_files(qapp, tmp_pat
 
 def test_cluster_runner_poll_failed_downloads_slurm_output(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    ssh = _FakeSSH()
+    ssh = FakeSSH()
     runner._ssh = ssh
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
@@ -467,7 +435,7 @@ def test_cluster_runner_poll_failed_downloads_slurm_output(qapp, tmp_path: Path)
 
 def test_cluster_runner_poll_failed_downloads_scheduler_job_output(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    ssh = _FakeSSH()
+    ssh = FakeSSH()
     runner._ssh = ssh
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
@@ -488,585 +456,6 @@ def test_cluster_runner_poll_failed_downloads_scheduler_job_output(qapp, tmp_pat
     assert (tmp_path / "castep.mpi-703535.out").read_bytes() == b"scheduler failure details"
 
 
-def test_cluster_runner_retrieve_incomplete_output_marks_failed(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="120",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=False, error_message="not converged"),
-    )
-
-    failures: list[str] = []
-    statuses: list[str] = []
-    runner.job_failed.connect(lambda _jid, message: failures.append(message))
-    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
-
-    runner._retrieve_results(entry)
-
-    assert failures == ["not converged"]
-    assert statuses[-1] == JobStatus.FAILED.value
-
-
-def test_cluster_runner_missing_job_cut_off_during_stress_is_not_completed(
-    qapp, tmp_path: Path
-) -> None:
-    # Regression: a job that vanished from the queue (walltime, OOM, or a
-    # transient squeue omission) while CASTEP was computing the stress tensor
-    # has "Final energy" in its output but no stress and no closing summary.
-    # It must not reach the analysis as a completed run.
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-    runner._ssh.remote_files["/remote/job/seed.castep"] = (
-        b" Run started: Fri, 02 Oct 2026 10:00:00 +0100\n"
-        b" stress calculation                             : on\n"
-        b"Final energy, E             =  -1363.109714972     eV\n"
-        b"NB est. 0K energy (E-0.5TS)      =  -1363.109714972     eV\n"
-        b" ******************************** Symmetrised Forces ********************************\n"
-        b" * Si              1      0.00000      0.00000      0.00000 *\n"
-        b" ************************************************************************************\n"
-    )
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="121",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-
-    finished: list[object] = []
-    statuses: list[str] = []
-    runner.job_finished.connect(lambda _jid, parsed, _artifacts: finished.append(parsed))
-    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
-
-    runner._retrieve_results(entry, missing_from_queue=True)
-
-    assert finished == []
-    assert JobStatus.COMPLETED.value not in statuses
-    assert statuses[-1] == JobStatus.FAILED.value
-
-
-def test_cluster_runner_retrieve_downloads_numbered_error_files(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    ssh = _FakeSSH()
-    runner._ssh = ssh
-    runner._scheduler = _FakeScheduler()
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="125",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-    ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
-    ssh.remote_files["/remote/job/seed.0001.err"] = b"rank one"
-    ssh.remote_files["/remote/job/seed.0002.err"] = b"rank two"
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    runner._retrieve_results(entry)
-
-    assert (tmp_path / "seed.0001.err").read_bytes() == b"rank one"
-    assert (tmp_path / "seed.0002.err").read_bytes() == b"rank two"
-
-
-def test_cluster_runner_retrieve_downloads_optional_formatted_density(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="125",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        retrieval=RetrievalFlags(retrieve_den_fmt=True),
-    )
-    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
-    runner._ssh.remote_files["/remote/job/seed.den_fmt"] = b"density output"
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    runner._retrieve_results(entry)
-
-    assert (tmp_path / "seed.den_fmt").read_bytes() == b"density output"
-
-
-def test_cluster_runner_retrieve_downloads_optional_phonon(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="125",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        retrieval=RetrievalFlags(retrieve_phonon=True),
-    )
-    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
-    runner._ssh.remote_files["/remote/job/seed.phonon"] = b"phonon output"
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    runner._retrieve_results(entry)
-
-    assert (tmp_path / "seed.phonon").read_bytes() == b"phonon output"
-
-
-def test_cluster_runner_retrieve_uses_task_farm_primary_output(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="125",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        retrieval=RetrievalFlags(retrieve_phonon=True, task_farming_enabled=True, num_farms=4),
-    )
-    runner._ssh.remote_files["/remote/job/seed.castep"] = b"minimal output"
-    runner._ssh.remote_files["/remote/job/seed_farm001.castep"] = b"farmed output"
-    runner._ssh.remote_files["/remote/job/seed.phonon"] = b"phonon output"
-
-    seen_paths: list[Path] = []
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda path: (seen_paths.append(Path(path)), CastepResult(completed=True, total_energy=-1.0))[1],
-    )
-
-    runner._retrieve_results(entry)
-
-    assert seen_paths == [tmp_path / "seed_farm001.castep"]
-    assert (tmp_path / "seed_farm001.castep").read_bytes() == b"farmed output"
-
-
-def test_cluster_runner_retrieve_downloads_optional_ts_file(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="125",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        retrieval=RetrievalFlags(retrieve_ts=True),
-    )
-    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
-    runner._ssh.remote_files["/remote/job/seed.ts"] = b"ts output"
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    runner._retrieve_results(entry)
-
-    assert (tmp_path / "seed.ts").read_bytes() == b"ts output"
-
-
-def test_cluster_runner_retrieve_downloads_farmed_ts_file(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    # A farmed NEB run writes the band to seed_farm001.ts and no seed.ts at all,
-    # so retrieval must ask for the farmed name or the job fails with a missing
-    # .ts despite having completed successfully.
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="125",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        retrieval=RetrievalFlags(retrieve_ts=True, task_farming_enabled=True, num_farms=3),
-    )
-    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
-    runner._ssh.remote_files["/remote/job/seed_farm001.castep"] = b"farmed output"
-    runner._ssh.remote_files["/remote/job/seed_farm001.ts"] = b"farmed ts output"
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    runner._retrieve_results(entry)
-
-    assert (tmp_path / "seed_farm001.ts").read_bytes() == b"farmed ts output"
-    assert not (tmp_path / "seed.ts").exists()
-
-
-def test_cluster_runner_retrieve_downloads_farmed_error_files(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    # Task farming rewrites the seedname before stderr is opened, so error files
-    # gain a _farmNNN infix on top of the usual MPI-rank suffix.
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="125",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        retrieval=RetrievalFlags(task_farming_enabled=True, num_farms=2),
-    )
-    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
-    runner._ssh.remote_files["/remote/job/seed_farm001.0000.err"] = b"farm 1 stderr"
-    runner._ssh.remote_files["/remote/job/seed_farm002.0001.err"] = b"farm 2 stderr"
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    runner._retrieve_results(entry)
-
-    assert (tmp_path / "seed_farm001.0000.err").read_bytes() == b"farm 1 stderr"
-    assert (tmp_path / "seed_farm002.0001.err").read_bytes() == b"farm 2 stderr"
-
-
-def test_cluster_runner_retrieve_skips_optional_files_when_not_requested(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="126",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        retrieval=RetrievalFlags(retrieve_den_fmt=False, retrieve_out_cell=False),
-    )
-    runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
-    runner._ssh.remote_files["/remote/job/seed.den_fmt"] = b"density output"
-    runner._ssh.remote_files["/remote/job/seed-out.cell"] = b"relaxed cell"
-    runner._ssh.remote_files["/remote/job/seed.phonon"] = b"phonon output"
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    runner._retrieve_results(entry)
-
-    assert not (tmp_path / "seed.den_fmt").exists()
-    assert not (tmp_path / "seed-out.cell").exists()
-    assert not (tmp_path / "seed.phonon").exists()
-
-
-class _TimestampedFakeSSH(_FakeSSH):
-    """A fake whose remote paths can carry explicit remote mtimes.
-
-    Only paths seeded in ``mtimes`` report one; every other path returns
-    ``None``, so a test that does not opt in keeps the fail-open behaviour of
-    the plain ``_FakeSSH`` (which has no ``mtime`` attribute at all, standing
-    in for an SFTP server or connection object that cannot report one).
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.mtimes: dict[str, float] = {}
-
-    def mtime(self, remote_path: str) -> float | None:
-        return self.mtimes.get(remote_path)
-
-
-def _continuation_entry(tmp_path: Path) -> object:
-    return cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="900",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-        retrieval=RetrievalFlags(retrieve_out_cell=True),
-    )
-
-
-def _seed_continuation_files(
-    ssh: _TimestampedFakeSSH,
-    *,
-    submitted_at: float,
-    castep_offset: float,
-    out_cell_offset: float,
-) -> None:
-    """Seed a reused remote directory relative to the submission marker.
-
-    ``{seed}.param`` is uploaded fresh at submission, so its remote mtime is
-    the marker every output of this run must postdate. Offsets are relative to
-    it, on the cluster's own clock.
-    """
-
-    ssh.remote_files["/remote/job/seed.param"] = b"param"
-    ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
-    ssh.remote_files["/remote/job/seed-out.cell"] = b"relaxed cell"
-    ssh.mtimes["/remote/job/seed.param"] = submitted_at
-    ssh.mtimes["/remote/job/seed.castep"] = submitted_at + castep_offset
-    ssh.mtimes["/remote/job/seed-out.cell"] = submitted_at + out_cell_offset
-
-
-def test_cluster_runner_retrieve_skips_out_cell_predating_this_submission(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A continuation reuses its remote directory, so the previous run's
-    ``-out.cell`` is still there. Downloading it would restamp the local copy
-    with the retrieval time and defeat MainWindow's local staleness guard, so
-    an ``-out.cell`` older than this submission's ``.param`` is treated as
-    absent."""
-
-    runner = ClusterJobRunner()
-    ssh = _TimestampedFakeSSH()
-    runner._ssh = ssh
-    runner._scheduler = _FakeScheduler()
-    _seed_continuation_files(
-        ssh, submitted_at=1_700_000_000.0, castep_offset=120.0, out_cell_offset=-3600.0
-    )
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-    finished: list[tuple[object, object]] = []
-    runner.job_finished.connect(
-        lambda _jid, parsed, artifacts: finished.append((parsed, artifacts))
-    )
-
-    runner._retrieve_results(_continuation_entry(tmp_path))
-
-    assert ("get", "/remote/job/seed-out.cell") not in ssh.commands
-    assert not (tmp_path / "seed-out.cell").exists()
-    # The .castep is this run's, so the job still completes at the runner
-    # level; the relaxed cell is reported missing exactly as it would be if
-    # the remote file did not exist, which is what the workflow layer fails on.
-    assert len(finished) == 1
-    assert finished[0][1].cell_missing is True
-
-
-def test_cluster_runner_retrieve_leaves_previously_downloaded_out_cell_untouched(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The real continuation case: a local ``-out.cell`` fetched by the
-    PREVIOUS retrieval is already on disk. Skipping the download leaves it
-    carrying that earlier retrieval's mtime, which is what lets
-    ``workflow_controllers.base.output_predates_run`` reject it for cluster jobs."""
-
-    runner = ClusterJobRunner()
-    ssh = _TimestampedFakeSSH()
-    runner._ssh = ssh
-    runner._scheduler = _FakeScheduler()
-    _seed_continuation_files(
-        ssh, submitted_at=1_700_000_000.0, castep_offset=120.0, out_cell_offset=-3600.0
-    )
-    local_out_cell = tmp_path / "seed-out.cell"
-    local_out_cell.write_bytes(b"previous run geometry")
-    modified_before = local_out_cell.stat().st_mtime
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    runner._retrieve_results(_continuation_entry(tmp_path))
-
-    assert local_out_cell.read_bytes() == b"previous run geometry"
-    assert local_out_cell.stat().st_mtime == modified_before
-
-
-@pytest.mark.parametrize("out_cell_offset", [0.0, 60.0, 3600.0])
-def test_cluster_runner_retrieve_downloads_out_cell_written_by_this_run(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, out_cell_offset: float
-) -> None:
-    """The other direction of the comparison: an ``-out.cell`` at or after the
-    submission marker is this run's output and is downloaded normally."""
-
-    runner = ClusterJobRunner()
-    ssh = _TimestampedFakeSSH()
-    runner._ssh = ssh
-    runner._scheduler = _FakeScheduler()
-    _seed_continuation_files(
-        ssh,
-        submitted_at=1_700_000_000.0,
-        castep_offset=out_cell_offset,
-        out_cell_offset=out_cell_offset,
-    )
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    runner._retrieve_results(_continuation_entry(tmp_path))
-
-    assert (tmp_path / "seed-out.cell").read_bytes() == b"relaxed cell"
-
-
-def test_cluster_runner_retrieve_fails_when_castep_predates_this_submission(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The failed-to-start continuation: CASTEP never ran, so the ``.castep``
-    left in the reused directory still ends with the PREVIOUS run's success
-    banner. Parsing it would complete the job on the old geometry under
-    parameters that were never applied, so retrieval aborts before the parse."""
-
-    runner = ClusterJobRunner()
-    ssh = _TimestampedFakeSSH()
-    runner._ssh = ssh
-    runner._scheduler = _FakeScheduler()
-    _seed_continuation_files(
-        ssh, submitted_at=1_700_000_000.0, castep_offset=-3600.0, out_cell_offset=-3600.0
-    )
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-    failures: list[str] = []
-    finished: list[object] = []
-    statuses: list[str] = []
-    runner.job_failed.connect(lambda _jid, message: failures.append(message))
-    runner.job_finished.connect(lambda *args: finished.append(args))
-    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
-
-    runner._retrieve_results(_continuation_entry(tmp_path))
-
-    assert finished == []
-    assert len(failures) == 1
-    assert "predates this submission" in failures[0]
-    assert statuses[-1] == JobStatus.FAILED.value
-
-
-def test_cluster_runner_stale_castep_defers_while_missing_from_queue(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A stale ``.castep`` is an output-unavailable condition, so a job that is
-    merely missing from the scheduler queue keeps its existing grace window
-    rather than failing on the first poll."""
-
-    runner = ClusterJobRunner()
-    ssh = _TimestampedFakeSSH()
-    runner._ssh = ssh
-    runner._scheduler = _FakeScheduler()
-    _seed_continuation_files(
-        ssh, submitted_at=1_700_000_000.0, castep_offset=-3600.0, out_cell_offset=-3600.0
-    )
-    entry = _continuation_entry(tmp_path)
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-    failures: list[str] = []
-    runner.job_failed.connect(lambda _jid, message: failures.append(message))
-
-    first = runner._retrieve_results(entry, missing_from_queue=True)
-
-    assert failures == []
-    assert "waiting for output" in first
-
-    for _ in range(cluster_runner_module.MISSING_ENTRY_RETRIEVAL_ATTEMPTS - 1):
-        runner._retrieve_results(entry, missing_from_queue=True)
-
-    assert failures == [cluster_runner_module.MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE]
-
-
-def test_cluster_runner_retrieve_fails_open_without_remote_mtimes(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """No marker, no ordering: a connection that cannot report mtimes (or a
-    ``reuse_existing_files`` resubmission that never re-uploaded the ``.param``)
-    keeps the pre-existing behaviour of trusting whatever is in the directory."""
-
-    runner = ClusterJobRunner()
-    ssh = _TimestampedFakeSSH()
-    runner._ssh = ssh
-    runner._scheduler = _FakeScheduler()
-    ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
-    ssh.remote_files["/remote/job/seed-out.cell"] = b"relaxed cell"
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=True, total_energy=-1.0),
-    )
-
-    runner._retrieve_results(_continuation_entry(tmp_path))
-
-    assert (tmp_path / "seed-out.cell").read_bytes() == b"relaxed cell"
-
-    # Same outcome for a connection object with no ``mtime`` primitive at all.
-    plain = _FakeSSH()
-    plain.remote_files["/remote/job/seed.castep"] = b"castep output"
-    plain.remote_files["/remote/job/seed-out.cell"] = b"relaxed cell"
-    runner._ssh = plain
-    other_dir = tmp_path / "plain"
-    other_dir.mkdir()
-    entry = _continuation_entry(other_dir)
-
-    runner._retrieve_results(entry)
-
-    assert (other_dir / "seed-out.cell").read_bytes() == b"relaxed cell"
-
-
 def test_cluster_runner_addqueue_submission_uploads_the_staleness_marker(
     qapp, tmp_path: Path
 ) -> None:
@@ -1075,7 +464,7 @@ def test_cluster_runner_addqueue_submission_uploads_the_staleness_marker(
     submission whatever the queue system, which is why it is the marker."""
 
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._scheduler = _FakeScheduler()
     runner._config = cluster_runner_module.ClusterConfig(
         name="Redwood",
@@ -1108,81 +497,9 @@ def test_cluster_runner_addqueue_submission_uploads_the_staleness_marker(
     assert all(not upload.endswith("run.sh") for upload in uploads)
 
 
-def test_cluster_runner_retrieve_incomplete_walltime_marks_stopped(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="130",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-
-    # A walltime kill leaves nothing in the .castep file; only the scheduler
-    # log (downloaded during retrieval) records it.
-    runner._ssh.remote_files["/remote/job/seed.castep"] = b"partial"
-    runner._ssh.remote_files["/remote/job/slurm-130.out"] = (
-        b"slurmstepd: error: *** JOB 130 ON node01 CANCELLED AT 2026-10-04T10:00:00 "
-        b"DUE TO TIME LIMIT ***\n"
-    )
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=False, error_message=None),
-    )
-
-    statuses: list[str] = []
-    failures: list[str] = []
-    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
-    runner.job_failed.connect(lambda _jid, message: failures.append(message))
-
-    runner._retrieve_results(entry)
-
-    assert statuses[-1] == JobStatus.STOPPED.value
-    assert failures == []
-
-
-def test_cluster_runner_retrieve_incomplete_without_scheduler_evidence_fails(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A CASTEP error that merely mentions wall time is not a walltime stop."""
-
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="131",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-    runner._ssh.remote_files["/remote/job/seed.castep"] = b"partial"
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=False, error_message="ERROR: wall clock estimate failed"),
-    )
-
-    statuses: list[str] = []
-    failures: list[str] = []
-    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
-    runner.job_failed.connect(lambda _jid, message: failures.append(message))
-
-    runner._retrieve_results(entry)
-
-    assert statuses[-1] == JobStatus.FAILED.value
-    assert failures == ["ERROR: wall clock estimate failed"]
-
-
 def test_cluster_runner_poll_names_the_scheduler_failure_state(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
     job_id = uuid4()
@@ -1207,7 +524,7 @@ def test_cluster_runner_poll_timeout_downloads_scheduler_log(qapp, tmp_path: Pat
     """A TIMEOUT stop downloads the scheduler log so the stop can be diagnosed."""
 
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
     job_id = uuid4()
@@ -1272,7 +589,7 @@ def test_cluster_runner_connect_to_same_config_is_noop(
 
 def test_cluster_runner_submit_validation_errors(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._scheduler = _FakeScheduler()
 
     missing_dir = tmp_path / "missing"
@@ -1338,7 +655,7 @@ def test_cluster_runner_poll_no_connection_and_no_active_jobs(qapp) -> None:
     runner._poll_queue()
 
     # Connected but nothing active branch
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._scheduler = _FakeScheduler()
     checked: list[object] = []
     runner.queue_checked.connect(lambda value: checked.append(value))
@@ -1350,7 +667,7 @@ def test_cluster_runner_poll_no_connection_and_no_active_jobs(qapp) -> None:
 
 def test_cluster_runner_queue_snapshot_includes_elapsed_runtime(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
 
@@ -1377,7 +694,7 @@ def test_cluster_runner_queue_snapshot_includes_elapsed_runtime(qapp, tmp_path: 
 
 def test_cluster_runner_poll_queued_state_and_same_state(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
 
@@ -1405,48 +722,20 @@ def test_cluster_runner_poll_queued_state_and_same_state(qapp, tmp_path: Path) -
     assert statuses == statuses_before
 
 
-def test_cluster_runner_retrieve_parse_exception_marks_failed(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="130",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: (_ for _ in ()).throw(ValueError("parse boom")),
-    )
-
-    failures: list[str] = []
-    runner.job_failed.connect(lambda _jid, message: failures.append(message))
-    runner._retrieve_results(entry)
-
-    assert "Failed to retrieve or parse remote output" in failures[0]
-
-
 def test_cluster_runner_helper_guards(qapp) -> None:
     runner = ClusterJobRunner()
 
     with pytest.raises(ConnectionError, match="not active"):
         runner._require_ssh()
 
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     with pytest.raises(ConnectionError, match="not configured"):
         runner._require_scheduler()
 
 
 def test_cluster_runner_cancel_ignores_terminal_job(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._scheduler = _FakeScheduler()
 
     job_id = uuid4()
@@ -1477,7 +766,7 @@ def test_cluster_runner_submit_uses_builtin_scarf_template_when_unset(
     tmp_path: Path,
 ) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._scheduler = _FakeScheduler()
     runner._config = cluster_runner_module.ClusterConfig(
         name="SCARF",
@@ -1519,7 +808,7 @@ def test_cluster_runner_connected_properties_and_remote_directory_helpers(qapp) 
     assert runner.connected_cluster_name is None
     assert runner.connected_username is None
 
-    class _SSHWithIsDir(_FakeSSH):
+    class _SSHWithIsDir(FakeSSH):
         def __init__(self) -> None:
             super().__init__()
             self._dirs: set[str] = set()
@@ -1559,7 +848,7 @@ def test_cluster_runner_connected_properties_and_remote_directory_helpers(qapp) 
 def test_cluster_runner_remote_file_exists_delegates_to_ssh_is_file(qapp) -> None:
     runner = ClusterJobRunner()
 
-    class _SSHWithIsFile(_FakeSSH):
+    class _SSHWithIsFile(FakeSSH):
         def __init__(self) -> None:
             super().__init__()
             self._files: set[str] = set()
@@ -1588,7 +877,7 @@ def test_cluster_runner_remote_file_exists_requires_active_connection(qapp) -> N
 def test_cluster_runner_remote_file_exists_propagates_ssh_errors(qapp) -> None:
     runner = ClusterJobRunner()
 
-    class _SSHRaisingOnIsFile(_FakeSSH):
+    class _SSHRaisingOnIsFile(FakeSSH):
         def is_file(self, path: str) -> bool:
             raise ConnectionError("stat failed")
 
@@ -1601,7 +890,7 @@ def test_cluster_runner_remote_file_exists_propagates_ssh_errors(qapp) -> None:
 def test_cluster_runner_remove_remote_directory_delegates_to_ssh(qapp) -> None:
     runner = ClusterJobRunner()
 
-    class _SSHWithRmtree(_FakeSSH):
+    class _SSHWithRmtree(FakeSSH):
         def __init__(self) -> None:
             super().__init__()
             self.removed: list[str] = []
@@ -1708,7 +997,7 @@ def test_cluster_runner_submit_addqueue_forwards_runtime_options(
     tmp_path: Path,
 ) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
     runner._config = cluster_runner_module.ClusterConfig(
@@ -1781,7 +1070,7 @@ def test_cluster_runner_track_existing_job_starts_polling_when_connected(
     qapp, tmp_path: Path
 ) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._config = cluster_runner_module.ClusterConfig(
         name="Redwood",
         hostname="redwood.example",
@@ -1815,7 +1104,7 @@ def test_cluster_runner_connect_starts_polling_for_existing_active_jobs(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     runner = ClusterJobRunner()
-    fake_ssh = _FakeSSH()
+    fake_ssh = FakeSSH()
     fake_scheduler = _FakeScheduler()
 
     monkeypatch.setattr(cluster_runner_module, "SSHConnection", lambda config, settings=None: fake_ssh)
@@ -1854,7 +1143,7 @@ def test_cluster_runner_connect_starts_polling_for_existing_active_jobs(
 
 def test_cluster_runner_poll_only_updates_jobs_for_connected_cluster(qapp, tmp_path: Path) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
     runner._config = cluster_runner_module.ClusterConfig(
@@ -1906,23 +1195,156 @@ def test_cluster_runner_poll_only_updates_jobs_for_connected_cluster(qapp, tmp_p
 
 
 # ---------------------------------------------------------------------------
+# Retrieval signal flow: each RetrievalResult becomes one signal sequence.
+# ---------------------------------------------------------------------------
+
+
+def _runner_with_canned_retrieval(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, result: RetrievalResult
+) -> tuple[ClusterJobRunner, object, list[dict[str, object]]]:
+    runner = ClusterJobRunner()
+    runner._ssh = FakeSSH()
+    runner._scheduler = _FakeScheduler()
+    entry = cluster_runner_module._TrackedClusterJob(
+        job_id=uuid4(),
+        remote_job_id="120",
+        remote_dir="/remote/job",
+        seed_name="seed",
+        local_output_dir=tmp_path,
+        retrieval=RetrievalFlags(retrieve_out_cell=True),
+    )
+    calls: list[dict[str, object]] = []
+
+    def _retrieve(_ssh, **fields):
+        calls.append(fields)
+        return result
+
+    monkeypatch.setattr(cluster_runner_module, "retrieve_job_outputs", _retrieve)
+    return runner, entry, calls
+
+
+def _record_signals(runner: ClusterJobRunner) -> dict[str, list[object]]:
+    events: dict[str, list[object]] = {"status": [], "failed": [], "finished": []}
+    runner.status_changed.connect(lambda _jid, status: events["status"].append(status))
+    runner.job_failed.connect(lambda _jid, message: events["failed"].append(message))
+    runner.job_finished.connect(
+        lambda _jid, parsed, artifacts: events["finished"].append((parsed, artifacts))
+    )
+    return events
+
+
+def test_cluster_runner_retrieval_passes_the_tracked_fields(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = RetrievalResult(RetrievalOutcome.STOPPED, "stopped")
+    runner, entry, calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
+
+    runner._retrieve_results(entry, missing_from_queue=True)
+
+    assert calls == [
+        {
+            "remote_job_id": "120",
+            "remote_dir": "/remote/job",
+            "seed_name": "seed",
+            "local_output_dir": tmp_path,
+            "retrieval": RetrievalFlags(retrieve_out_cell=True),
+            "missing_from_queue": True,
+        }
+    ]
+
+
+def test_cluster_runner_completed_retrieval_emits_finished_then_completed(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parsed = CastepResult(completed=True, total_energy=-1.0)
+    artifacts = ParsedJobArtifacts()
+    result = RetrievalResult(RetrievalOutcome.COMPLETED, "output retrieved and parsed", parsed, artifacts)
+    runner, entry, _calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
+    events = _record_signals(runner)
+
+    observation = runner._retrieve_results(entry)
+
+    assert observation == "output retrieved and parsed"
+    assert events["status"] == [JobStatus.RETRIEVING.value, JobStatus.COMPLETED.value]
+    assert events["finished"] == [(parsed, artifacts)]
+    assert events["failed"] == []
+    assert entry.terminal is True
+
+
+def test_cluster_runner_stopped_retrieval_emits_stopped_without_failure(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = RetrievalResult(RetrievalOutcome.STOPPED, "output incomplete; stopped (walltime)")
+    runner, entry, _calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
+    events = _record_signals(runner)
+
+    observation = runner._retrieve_results(entry)
+
+    assert observation == "output incomplete; stopped (walltime)"
+    assert events["status"] == [JobStatus.RETRIEVING.value, JobStatus.STOPPED.value]
+    assert events["failed"] == []
+    assert events["finished"] == []
+    assert entry.terminal is True
+
+
+def test_cluster_runner_final_retrieval_failure_fails_immediately(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = RetrievalResult(
+        RetrievalOutcome.FAILED,
+        "missing from scheduler queue; output parsing failed",
+        failure=RetrievalFailure("Failed to retrieve or parse remote output: boom"),
+    )
+    runner, entry, _calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
+    events = _record_signals(runner)
+
+    observation = runner._retrieve_results(entry, missing_from_queue=True)
+
+    assert observation == "missing from scheduler queue; output parsing failed"
+    assert events["failed"] == ["Failed to retrieve or parse remote output: boom"]
+    assert events["status"] == [JobStatus.RETRIEVING.value, JobStatus.FAILED.value]
+    assert entry.terminal is True
+    assert entry.missing_retrieval_attempts == 0
+
+
+def test_cluster_runner_retry_eligible_failure_counts_attempts_then_fails(
+    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = RetrievalResult(
+        RetrievalOutcome.FAILED,
+        "missing from scheduler queue; output retrieval failed",
+        failure=RetrievalFailure("Failed to retrieve or parse remote output: gone", retry_eligible=True),
+    )
+    runner, entry, _calls = _runner_with_canned_retrieval(monkeypatch, tmp_path, result)
+    events = _record_signals(runner)
+    limit = cluster_runner_module.MISSING_ENTRY_RETRIEVAL_ATTEMPTS
+
+    observations = [runner._retrieve_results(entry, missing_from_queue=True) for _ in range(limit)]
+
+    assert observations[:-1] == [
+        f"missing from scheduler queue; waiting for output (attempt {attempt} of {limit})"
+        for attempt in range(1, limit)
+    ]
+    assert observations[-1] == (
+        f"missing from scheduler queue; output could not be retrieved after {limit} checks"
+    )
+    assert events["failed"] == [cluster_runner_module.MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE]
+    assert events["status"] == [JobStatus.RETRIEVING.value] * limit + [JobStatus.FAILED.value]
+    assert entry.missing_retrieval_attempts == limit
+    assert entry.terminal is True
+
+
+# ---------------------------------------------------------------------------
 # Missing-scheduler-entry grace window (job-lifecycle hardening, rec #5) and
 # per-job poll observations (rec #2).
 # ---------------------------------------------------------------------------
 
 
-class _OutputUnavailableSSH(_FakeSSH):
-    """SSH stub whose downloads fail, simulating unavailable remote output."""
-
-    def get(self, remote_path: str, local_path: Path) -> None:
-        raise OSError(f"SFTP download failed: {remote_path}")
-
-
 def _submitted_runner(
-    tmp_path: Path, seed: str, *, ssh: _FakeSSH | None = None
+    tmp_path: Path, seed: str, *, ssh: FakeSSH | None = None
 ) -> tuple[ClusterJobRunner, _FakeScheduler, object]:
     runner = ClusterJobRunner()
-    runner._ssh = ssh or _FakeSSH()
+    runner._ssh = ssh or FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
     job_id = uuid4()
@@ -1945,7 +1367,7 @@ def test_cluster_runner_missing_entry_defers_failure_within_grace_window(
     qapp, tmp_path: Path
 ) -> None:
     runner, scheduler, job_id = _submitted_runner(
-        tmp_path, "grace_seed", ssh=_OutputUnavailableSSH()
+        tmp_path, "grace_seed", ssh=OutputUnavailableSSH()
     )
     scheduler._states["12345"] = "MISSING"
 
@@ -1993,7 +1415,7 @@ def test_cluster_runner_missing_entry_reappearance_resets_counter(
     qapp, tmp_path: Path
 ) -> None:
     runner, scheduler, job_id = _submitted_runner(
-        tmp_path, "reappear_seed", ssh=_OutputUnavailableSSH()
+        tmp_path, "reappear_seed", ssh=OutputUnavailableSSH()
     )
     snapshots: list[object] = []
     runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
@@ -2027,7 +1449,7 @@ def test_cluster_runner_missing_entry_parse_failure_fails_immediately(
     def _raise(_path: Path) -> CastepResult:
         raise ValueError("bad output")
 
-    monkeypatch.setattr(cluster_runner_module, "parse_castep_output", _raise)
+    monkeypatch.setattr(cluster_retrieval_module, "parse_castep_output", _raise)
 
     failed: list[tuple[object, str]] = []
     snapshots: list[object] = []
@@ -2050,7 +1472,7 @@ def test_cluster_runner_missing_entry_successful_retrieval_completes(
     runner, scheduler, job_id = _submitted_runner(tmp_path, "late_success_seed")
     scheduler._states["12345"] = "MISSING"
     monkeypatch.setattr(
-        cluster_runner_module,
+        cluster_retrieval_module,
         "parse_castep_output",
         lambda _path: CastepResult(completed=True, total_energy=-1.0),
     )
@@ -2128,7 +1550,7 @@ def _submit_scarf_job(
     """Submit one SLURM job through the runner and return the uploaded run.sh."""
 
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._scheduler = _FakeScheduler()
     runner._config = cluster_runner_module.ClusterConfig(
         name="SCARF",
@@ -2182,7 +1604,7 @@ def _slurm_runner() -> ClusterJobRunner:
     """Return a runner wired to a SLURM cluster profile and one persistent fake SSH."""
 
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._scheduler = _FakeScheduler()
     runner._config = cluster_runner_module.ClusterConfig(
         name="Test SLURM",
@@ -2293,7 +1715,7 @@ def test_checkpoint_probe_result_is_frozen() -> None:
 
 def test_scheduler_job_is_active_reads_the_scheduler_state(qapp) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     scheduler = _FakeScheduler()
     runner._scheduler = scheduler
     scheduler._states.update({"1": "R", "2": "PD", "3": "TO", "4": "MISSING"})
@@ -2306,37 +1728,3 @@ def test_scheduler_job_is_active_reads_the_scheduler_state(qapp) -> None:
     assert runner.scheduler_job_is_active("4") is False
 
 
-def test_cluster_runner_ignores_an_earlier_runs_scheduler_log_when_classifying(
-    qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A continuation reuses its directory; the previous run's walltime log is not this run's."""
-
-    import os
-
-    runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
-    runner._scheduler = _FakeScheduler()
-    entry = cluster_runner_module._TrackedClusterJob(
-        job_id=uuid4(),
-        remote_job_id="201",
-        remote_dir="/remote/job",
-        seed_name="seed",
-        local_output_dir=tmp_path,
-    )
-    runner._ssh.remote_files["/remote/job/seed.castep"] = b"partial"
-    stale_log = tmp_path / "slurm-200.out"
-    stale_log.write_text("slurmstepd: error: *** JOB 200 CANCELLED DUE TO TIME LIMIT ***\n", encoding="utf-8")
-    an_hour_ago = stale_log.stat().st_mtime - 3600
-    os.utime(stale_log, (an_hour_ago, an_hour_ago))
-    monkeypatch.setattr(
-        cluster_runner_module,
-        "parse_castep_output",
-        lambda _path: CastepResult(completed=False, error_message=None),
-    )
-
-    statuses: list[str] = []
-    runner.status_changed.connect(lambda _jid, status: statuses.append(status))
-
-    runner._retrieve_results(entry)
-
-    assert statuses[-1] == JobStatus.FAILED.value

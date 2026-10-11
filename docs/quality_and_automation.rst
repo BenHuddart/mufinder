@@ -121,6 +121,10 @@ the call site or binds them once with ``functools.partial``.
 - ``tests/support/symmetry_hosts.py``: hosts that exercise the symmetry code.
 - ``tests/support/jobs.py``: ``make_job(...)`` builds a bare ``Job``, or, given
   ``service`` and ``document``, registers one through ``ProjectService.add_job``.
+- ``tests/support/cluster_ssh.py``: ``FakeSSH`` stands in for an
+  ``SSHConnection`` whose remote filesystem is a dict;
+  ``TimestampedFakeSSH`` adds remote mtimes and ``OutputUnavailableSSH`` fails
+  every download.
 - ``tests/support/qt.py``: ``pump_until(predicate, timeout=...)`` spins the
   event loop until a queued signal has been delivered;
   ``find_tree_item_by_route`` and ``find_item_by_route`` locate project-tree

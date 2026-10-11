@@ -365,6 +365,15 @@ no two workflow widgets may define the same private method.
        with the failed, skipped and missing jobs
        (``plan_cluster_submission``). The window keeps the dialog, the
        prompts and the message boxes.
+   * - ``mufinder.services.cluster_retrieval``
+     - Retrieving a finished cluster job's output over SSH: which remote files
+       to download (task-farm names, per-rank error files, scheduler logs),
+       ordering them against the uploaded ``{seed}.param`` so a continuation
+       never takes the previous run's output, and classifying the parsed
+       result as completed, stopped at walltime or failed, with retry-eligible
+       failures marked (``retrieve_job_outputs``, ``RetrievalResult``,
+       ``retrieve_error_files``). ``ClusterJobRunner`` keeps the signals, the
+       tracked-job state and the missing-entry attempt counter.
    * - ``mufinder.services.shell_templates``
      - Shell scripts MuFinder sends to a cluster, kept as templates in
        ``mufinder/assets/shell/`` and rendered by ``render_shell_template``:
