@@ -198,6 +198,11 @@ Shared workflow infrastructure
 The workflow pages are built from one set of shared helpers. Each
 cross-workflow concern has exactly one home; a workflow extends the helper there
 rather than carrying a private copy (``AGENTS.md``, Reuse before you write).
+The table below is the complete inventory of those homes, grouped by layer from
+``app`` inwards; read it before adding a helper, and add a row in the same
+change that creates a home. ``tests/test_agent_harness.py`` checks that every
+``mufinder.*`` path in this section names a module or package under
+``src/mufinder``.
 ``tests/test_agent_harness.py`` pins, for every private method that two or more
 workflow widget modules define, how many define it; the counts may only fall.
 
@@ -248,10 +253,13 @@ workflow widget modules define, how many define it; the counts may only fall.
        relaxation, muon relaxation and convergence) and
        ``normalized_supercell_matrix``. It sits in ``app`` because the
        configuration dataclasses and ``restore_structured_value`` do.
-   * - ``mufinder.app.workflow_dialogs`` / ``mufinder.app.param_dialog``
+   * - ``mufinder.app.workflow_dialogs``
      - The row parameter dialog (``run_row_parameter_dialog``, driven by a
        ``RowParameterRequest`` and returning a ``RowParameterResult``) and the
-       configure dialogs.
+       workflow configure dialogs.
+   * - ``mufinder.app.param_dialog``
+     - The CASTEP parameter dialog the configure dialogs build on
+       (``ParameterDialog``).
    * - ``mufinder.app.adapter_common``
      - GUI value dict to ``InputTemplate``, k-point rescaling for supercell
        rows, the adapters' shared expansion prologue, supercell-matrix parsing
@@ -264,13 +272,21 @@ workflow widget modules define, how many define it; the counts may only fall.
      - The submit, materialize, result and refresh cycle (see Workflow
        controllers), ``dedupe_jobs`` for the jobs a ``materialize`` or
        ``jobs_for_keys`` returns, derived-structure upsert and row-parameter
-       mirroring. ``workflow_controllers.sweep_convergence`` holds the cycle
-       the two convergence sweeps share (``SweepConvergenceController``).
+       mirroring.
+   * - ``mufinder.app.workflow_controllers.sweep_convergence``
+     - The cycle the two convergence sweeps share
+       (``SweepConvergenceController``).
    * - ``mufinder.app.project_defaults_widget``
      - The project-defaults strip in every workflow header (see Project
        defaults surface).
-   * - ``mufinder.app.theme`` / ``mufinder.app.plot_canvas``
-     - Styling and status brushes; embedded plots (see Plot canvas policy).
+   * - ``mufinder.app.theme``
+     - Reusable styling, palettes and status brushes.
+   * - ``mufinder.app.plot_canvas``
+     - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
+       canvas policy).
+   * - ``mufinder.services.job_execution_controller``
+     - Job state transitions: submission, start, completion, failure, cancellation
+       and retrieval (``JobExecutionController``; see :doc:`job_lifecycle`).
    * - ``mufinder.services.job_paths``
      - Where a job's files live: ``definition_output_directory``,
        ``job_output_directory`` (the definition mappings that claim a job, then
@@ -297,25 +313,20 @@ workflow widget modules define, how many define it; the counts may only fall.
        with the failed, skipped and missing jobs
        (``plan_cluster_submission``). The window keeps the dialog, the
        prompts and the message boxes.
-   * - ``mufinder.workflow.naming``
-     - Job names (``job_name``) and the remote naming of a cluster
-       submission: the workflow directory fragment, the default scheduler
-       job-name prefix and remote path sanitising.
    * - ``mufinder.services.source_candidates``
      - Read-only source queries over the project document: the relaxed muon
        sites eligible for quantum corrections, their relative energies,
        labels and two-stage state, the generated diffusion paths and NEB
        results for energy barriers, and the completed pristine and muon
        relaxations offered to comparison and relaxation analysis.
+   * - ``mufinder.workflow.naming``
+     - Job names (``job_name``) and the remote naming of a cluster
+       submission: the workflow directory fragment, the default scheduler
+       job-name prefix and remote path sanitising.
    * - ``mufinder.workflow.energy_barriers``
      - Besides NEB expansion, the merge and per-pair replacement of serialized
        diffusion-path sources and the removal of stored placeholder
        transition-state parameters.
-   * - ``mufinder.domain.magnetic_properties``
-     - Spins and propagation vectors read from ``Structure.properties``
-       (``atomic_spins_from_structure``,
-       ``atomic_spins_from_magnetic_moments``,
-       ``propagation_vector_from_structure``, ``has_nonzero_spins``).
    * - ``mufinder.science.lattice``
      - Lattice algebra: scalar and broadcast fractional/Cartesian conversion,
        lattice inversion, minimum-image displacements and distances
@@ -331,6 +342,15 @@ workflow widget modules define, how many define it; the counts may only fall.
      - Structure to ASE ``Atoms`` (``structure_to_ase_atoms`` with
        ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``) and
        the muon-label and element-symbol rules.
+   * - ``mufinder.castep_io``
+     - CASTEP syntax: cell and param parsing and writing, keyword metadata
+       (``schema``) and validation (``validators``); see
+       :doc:`castep_keyword_catalog`.
+   * - ``mufinder.domain.magnetic_properties``
+     - Spins and propagation vectors read from ``Structure.properties``
+       (``atomic_spins_from_structure``,
+       ``atomic_spins_from_magnetic_moments``,
+       ``propagation_vector_from_structure``, ``has_nonzero_spins``).
 
 Widget contract
 ~~~~~~~~~~~~~~~
