@@ -139,6 +139,10 @@ Services
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.services.cluster_retrieval
+   :members:
+   :undoc-members:
+
 Science
 -------
 
