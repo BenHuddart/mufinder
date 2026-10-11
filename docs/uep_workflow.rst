@@ -175,9 +175,17 @@ window opens. The current MuFinder implementation includes:
 - muon markers that can be added to the isosurface and slice viewers with
   ``Add / remove muon``, either from clustered batch-search results or from
   custom fractional coordinates;
-- a separate clustering window with hierarchical dendrogram exploration of the
-  Soprano-backed feature space and a k-means PCA view with live cluster-count
-  updates;
+- a separate clustering window, opened with the ``Clustering`` button in the
+  ``Batch Search`` tab's ``Sampling`` card, with hierarchical dendrogram
+  exploration of the Soprano-backed feature space with a live tolerance
+  control, a k-means PCA view with live cluster-count updates, a shared
+  structure view that colours every relaxed muon position by its cluster, and
+  the cluster-summary bubble plot (see `Interpreting Batch Searches`_). On a
+  small window it reflows only its controls, so the dendrogram or PCA plot stays
+  beside the structure view and energy-spread plot instead of being stacked
+  into a thin strip;
+- ``Batch Search`` cluster tables that reflect the most recent clustering run
+  and keep promotion of cluster representatives;
 - exposure of clustered batch-search results to the ``Muon Sites ->
   Generation`` page, where selected UEP rows can be committed as candidate
   muon-site inputs for structural relaxation.
@@ -196,6 +204,15 @@ MuFinder documents the save boundary explicitly:
 - this manual-save state includes the current wizard tab, cached analysis UI
   choices, clustering-window state, selected viewer orientation/zoom, bond and
   spin visibility, and slice/isosurface presentation settings.
+
+The clustering window's geometry, splitter sizes and camera are saved with the
+UEP analysis state once a move, resize, splitter drag or view change settles
+(after about a quarter of a second), not on every intermediate event, so
+dragging stays responsive however large the potential grid is. Method,
+tolerance, cluster-count and result changes are saved immediately. The saved
+analysis state leaves out the full-cell potential grid, which is stored once as
+the job's grid result, and keeps each isosurface mesh once, serialized only
+when the mesh changes.
 
 Users can therefore explore candidate sites, refresh overlays, or compare
 clustering views without immediately rewriting the project on disk. To restore

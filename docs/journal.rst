@@ -29,8 +29,9 @@ Each entry carries a stamp: ``Milestone``, ``Completed``, ``Attention``, or
 ``Failed``. Entries tied to a workflow also name it (for example
 ``Cutoff Convergence`` or ``Muon Relaxations``).
 
-Entries are grouped by local calendar day and use human-readable date headers.
-The Journal intentionally does not show precise clock times.
+Entries are grouped by local calendar day under human-readable date headers
+such as ``Tuesday 21 April 2026``. The Journal intentionally does not show
+precise clock times.
 
 What the Journal omits
 ----------------------
@@ -53,6 +54,8 @@ Two formats are available:
 
 - ``Plain text (.txt)``
 - ``Markdown (.md)``
+
+Both mirror the curated Journal content rather than the raw provenance records.
 
 The suggested filename is ``<project-name>-journal`` with the extension for the
 selected format; characters other than letters, digits, ``-`` and ``_`` in the
