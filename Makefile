@@ -21,7 +21,7 @@ FILES ?= \
 	tests/app/test_submission_dialog.py \
 	tests/app/test_castep_setup_dialog.py \
 	tests/app/test_convergence_widget.py \
-	tests/app/test_main_window_actions.py
+	tests/app/main_window
 
 .PHONY: install test test-fast harness docs lint quality
 

@@ -88,6 +88,14 @@ test and ``tests/conftest.py`` stay at the top level. The test packages have no
 ``__init__.py``, so pytest imports every test module by its file name: a test
 file name must be unique across the whole ``tests`` tree.
 
+``tests/app/main_window`` holds the integration tests that drive
+``MainWindow`` itself, one module per subject: the jobs dashboard, job
+recovery, cluster and local submission, each workflow's actions, and the
+project, structure and site-generation actions. A workflow controller's own
+behaviour is tested through the controller in ``tests/app/test_workflow_controllers.py``;
+a window test covers what only the window does, such as its signal wiring,
+its dialogs and the real submission path.
+
 ``tests/docs`` checks the structure of the Sphinx sources and their citations,
 never their wording. ``test_docs_build_inputs.py`` asserts that every page under
 ``docs/`` is reachable from a toctree in ``docs/index.rst`` and that each
@@ -117,7 +125,11 @@ the call site or binds them once with ``functools.partial``.
   items by route.
 - ``tests/support/main_window.py``: ``open_project_with_host`` and
   ``window_with_host`` open a project with a host structure in a
-  ``MainWindow``.
+  ``MainWindow``; ``select_route`` selects a project-tree route;
+  ``patch_continuation_cluster_dialog``, ``patch_continuation_cluster_runner``
+  and ``add_cluster_input_job`` stand in for the cluster submission dialog and
+  SSH runner; ``stage_quantum_row_with_singlepoint`` stages a Quantum
+  Corrections row whose stage-1 singlepoint has finished.
 - ``tests/conftest.py`` fixtures: ``main_window`` gives a fresh ``MainWindow``
   that the per-test Qt cleanup closes, and ``project_with_host`` gives
   ``(window, service, document)`` with the default host structure loaded.

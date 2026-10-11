@@ -19,7 +19,7 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.services.project_service import ProjectService
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
 from tests.app.test_fresh_start_safety import ALL_FILES, SEED, _job_directory, _pristine_job
-from tests.app.test_main_window_actions import _stage_quantum_row_with_singlepoint
+from tests.support.main_window import stage_quantum_row_with_singlepoint
 
 QUANTUM_SEED = "quantum_siteA"
 QUANTUM_FILES = sorted(
@@ -41,7 +41,7 @@ def _quantum_row(tmp_path: Path, *, singlepoint_status: JobStatus, phonon_status
     service = ProjectService()
     doc = service.create_project(tmp_path / "quantum_reset.mufinder", "QuantumReset")
     window._document = doc
-    definition, candidate, singlepoint = _stage_quantum_row_with_singlepoint(
+    definition, candidate, singlepoint = stage_quantum_row_with_singlepoint(
         window, service, doc, singlepoint_status=singlepoint_status
     )
     definition.parameters["job_seed_names_by_label"] = {candidate.key: QUANTUM_SEED}

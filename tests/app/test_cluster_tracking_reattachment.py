@@ -8,7 +8,7 @@ cluster jobs with the cluster runner when a project is loaded. These tests pin:
 - and the remote-id / remote-dir gating.
 
 The full main window is heavy; following the pattern in
-``tests/app/test_main_window_actions.py`` we build a ``MainWindow`` instance,
+``tests/app/main_window/`` we build a ``MainWindow`` instance,
 attach a document directly, record the cluster runner's ``track_existing_job``
 calls, and stub the per-job output-directory / seed-name helpers so the test
 isolates the status-and-target gating that this method owns.
