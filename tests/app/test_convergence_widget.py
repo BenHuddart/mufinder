@@ -506,22 +506,24 @@ def test_convergence_widget_remove_cutoff_running_emits_cancel_request(
     widget = CutoffConvergenceWidget()
     widget._add_row(300.0)
     widget._add_row(360.0)
+    widget._add_row(420.0)
     widget.set_runtime_states(
         {
             300.0: SweepPointRunState(status="running"),
             360.0: SweepPointRunState(status="completed"),
+            420.0: SweepPointRunState(status="queued"),
         }
     )
 
     cancelled: list[object] = []
     widget.cancel_requested.connect(lambda payload: cancelled.append(payload))
 
-    widget._request_removals((0, 1))
+    widget._request_removals((0, 1, 2))
 
-    assert cancelled == [[300.0]]
-    assert confirmed_destructive_actions[0]["text"] == "Remove 2 cutoffs?"
+    assert cancelled == [[300.0, 420.0]]
+    assert confirmed_destructive_actions[0]["text"] == "Remove 3 cutoffs?"
     assert confirmed_destructive_actions[0]["detail"] == (
-        "1 job is queued or running and will be cancelled. 1 cutoff already has a submitted job."
+        "2 jobs are queued or running and will be cancelled. 1 cutoff already has a submitted job."
     )
 
 

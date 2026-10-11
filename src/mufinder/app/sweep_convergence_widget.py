@@ -109,11 +109,11 @@ class SweepConvergenceWidget(QWidget):
       nouns, the dialog subject and intro, and the warning messages.
 
     Behaviour one sweep alone has is a private override: the cutoff sweep
-    cancels a removed row's running job (``_CANCEL_ACTIVE_ON_REMOVE``), titles a
-    single-row dialog by its cutoff (``_dialog_subject``), repairs task-only
-    rows (``_is_default_parameter_set``) and restores legacy shared/override
-    state (``_restore_legacy_parameters``); the k-point sweep persists the cell
-    its grids were generated for (``_extra_state`` / ``_restore_extra_state``).
+    titles a single-row dialog by its cutoff (``_dialog_subject``), repairs
+    task-only rows (``_is_default_parameter_set``) and restores legacy
+    shared/override state (``_restore_legacy_parameters``); the k-point sweep
+    persists the cell its grids were generated for (``_extra_state`` /
+    ``_restore_extra_state``).
     """
 
     configure_requested = Signal(object)
@@ -162,7 +162,6 @@ class SweepConvergenceWidget(QWidget):
     _REMOVE_ROW_TOOLTIP = ""
     _CONFIGURE_NOUN = "row"
     _REMOVAL_NOUN: tuple[str, str] = ("row", "rows")
-    _CANCEL_ACTIVE_ON_REMOVE = False
     _DIALOG_SUBJECT = "Parameters"
     _DIALOG_INTRO_PREFIX = "Included rows: "
     _INVALID_PARAMETERS_PREFIX = "Row"
@@ -853,8 +852,6 @@ class SweepConvergenceWidget(QWidget):
     # -- Removal -----------------------------------------------------------------
 
     def _active_keys(self, rows: Sequence[int]) -> list[Any]:
-        if not self._CANCEL_ACTIVE_ON_REMOVE:
-            return []
         return [
             key
             for row in rows
@@ -894,9 +891,8 @@ class SweepConvergenceWidget(QWidget):
     def _request_removals(self, rows: tuple[int, ...], *, confirmed: bool = False) -> None:
         """Remove ``rows`` after one confirmation covering the whole batch.
 
-        With ``_CANCEL_ACTIVE_ON_REMOVE``, rows whose job is still queued or
-        running have it cancelled first; the confirmation says how many, so
-        nothing is cancelled unannounced. A row whose key does not parse is
+        Rows whose job is still queued or running have it cancelled first; the
+        confirmation says how many, so nothing is cancelled unannounced. A row whose key does not parse is
         dropped here; the others are emitted on the removal signal, and the
         window removes them through :meth:`remove_keys`. ``confirmed`` skips
         the prompt for a caller that has already asked.
