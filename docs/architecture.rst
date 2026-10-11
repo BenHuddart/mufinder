@@ -123,9 +123,10 @@ policy, move the reusable part into the appropriate shared layer:
   periodic deduplication) belongs in ``mufinder.science.lattice``, symmetry
   plumbing (spglib cells, cached symmetry operations, orbits) in
   ``mufinder.science.spglib_compat``, conversion to ASE ``Atoms`` in
-  ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``
-  and clustering of its optimized positions in
-  ``mufinder.science.uep_clustering``
+  ``mufinder.science.ase_bridge``, the UEP field in ``mufinder.science.uep``,
+  clustering of its optimized positions in
+  ``mufinder.science.uep_clustering`` and every ``muesr`` import in
+  ``mufinder.science._muesr_compat``
 - reading CASTEP text belongs in ``mufinder.castep_io``, including the
   formatted density, pseudopotential reports and cell charge the UEP analysis
   needs (``mufinder.castep_io.charge_density``); the keyword schema keeps
@@ -353,6 +354,11 @@ no two workflow widgets may define the same private method.
      - Structure to ASE ``Atoms`` (``structure_to_ase_atoms`` with
        ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``) and
        the muon-label and element-symbol rules.
+   * - ``mufinder.science._muesr_compat``
+     - The ``muesr`` import boundary (``muesr_imports``): NumPy alias
+       restoration, a temporary ``cgi`` stand-in on Python 3.13+ and the
+       ``cgi`` deprecation-warning filter. Import ``muesr`` modules only inside
+       it.
    * - ``mufinder.castep_io``
      - CASTEP syntax: cell and param parsing and writing, keyword metadata
        (``schema``) and validation (``validators``); see
