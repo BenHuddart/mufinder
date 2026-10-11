@@ -397,6 +397,19 @@ no two workflow widgets may define the same private method.
        Energy Barriers form state they live in and the NEB results for energy
        barriers; and the completed pristine and muon relaxations offered to
        comparison and relaxation analysis.
+   * - ``mufinder.services.project_summary``
+     - The workflow-stage catalogue the navigator and the project home are built
+       from (``WORKFLOW_STAGES``, ``STAGE_GROUPS``: titles, completion goals and
+       guidance), the dependency graph between stages (``STAGE_DEPENDENCIES``),
+       each stage's completion rule (``COMPLETION_CHECKS`` and the ``*_complete``
+       functions), the muon-relaxation row and job lookups those rules share
+       (``muon_relaxation_row_jobs``, ``muon_relaxation_job_for_row``) and the
+       per-stage project summary (``summarize_project``; see
+       :doc:`project_home`).
+   * - ``mufinder.services.project_survey``
+     - The positions each stage has found, in the active host's cell, for the
+       project home's cell survey (``survey_layers``,
+       ``discovered_sites_layer``).
    * - ``mufinder.services.project_document``
      - The in-memory project aggregate (``ProjectDocument``), the active host
        (``active_host_structure``) and the read-only definition and job
@@ -432,6 +445,10 @@ no two workflow widgets may define the same private method.
        (``minimum_image_distance``, ``minimum_image_distance_matrix``,
        ``nearest_image_distance``) and periodic deduplication
        (``deduplicate_periodic_positions``).
+   * - ``mufinder.science.cell_projection``
+     - Flat projections of a unit cell down one lattice vector for 2D drawings
+       (``cell_projection``, ``CellProjection``) and the periodic images of an
+       atom on the cell faces (``periodic_boundary_images``).
    * - ``mufinder.science.spglib_compat``
      - spglib access: the ``(lattice, positions, numbers)`` cell
        (``spglib_cell``), cached symmetry operations
@@ -1246,10 +1263,11 @@ each platform's native look:
   operating system's native artwork and accent colour. Checkable rows in tree,
   table and list views get the same treatment, so table checkboxes match form
   checkboxes.
-- The project-home trail map scales with the window: the artwork keeps its
-  aspect ratio and the signpost labels are sized relative to the rendered
-  banner, so they stay proportionate and legible from small laptops to large
-  high-DPI displays.
+- The project home (``mufinder.app.project_home_trail``) is painted from data,
+  not artwork: waypoint positions are fractions of the chart area and label,
+  node and region sizes follow the widget's size within fixed bounds, so the
+  chart stays legible from small laptops to large high-DPI displays. Its
+  summary is recomputed only while the page is visible.
 - Embedded plots keep their labels inside the plot area at every window size
   (see Plot canvas policy). The plots that share a window with other content,
   namely the relaxation clustering and displacement plots, the UEP clustering

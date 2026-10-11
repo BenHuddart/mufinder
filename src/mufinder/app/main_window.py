@@ -127,7 +127,6 @@ from mufinder.app.relaxation_adapter import (
     canonical_charge_state,
     expand_muon_relaxation_jobs,
     expand_pristine_relaxation_jobs,
-    is_muon_relaxation_calc_type,
     muon_charge_state_label,
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
@@ -171,8 +170,7 @@ from mufinder.app.muon_generation_support import MuonChargeStateDialog
 from mufinder.app.muon_generation_support import MuonGenerationThread as _MuonGenerationThread
 from mufinder.app.project_home_trail import (
     ConstructionSignWidget,  # noqa: F401 - re-export only
-    ProjectHomeTrailWidget,
-    ProjectTrailDestination,
+    ProjectHomeWidget,
     WorkflowDefinition,
 )
 from mufinder.app.quantum_analysis_dialog import QuantumPhononAnalysisDialog
@@ -291,8 +289,15 @@ from mufinder.services.project_service import (
     CONTINUABLE_JOB_STATUSES,
     ProjectDocument,
     ProjectService,
-    active_definition,
-    job_for_mapping_key,
+)
+from mufinder.services.project_summary import (
+    COMPLETION_CHECKS,
+    PROJECT_HOME_STAGE_KEY,
+    WORKFLOW_STAGES,
+    magnetic_field_workspace_complete,
+    relaxation_analysis_workspace_clustered,
+    stage_group,
+    stage_info,
 )
 from mufinder.services.source_candidates import (
     CompletedPristineJob,
@@ -319,7 +324,6 @@ from mufinder.science.structure_io import StructureLoadError
 from mufinder.workflow import StructureBridgeError, structure_to_spec
 from mufinder.workflow.energy_barriers import (
     NUDGED_ELASTIC_BAND_CALC_TYPE,
-    TRANSITION_STATE_SEARCH_CALC_TYPE,
 )
 from mufinder.workflow.naming import (
     cluster_workflow_directory_fragment,
@@ -419,6 +423,7 @@ class MainWindow(QMainWindow):
     _UEP_POTENTIAL_GRID_RESULT_TYPE = "uep_potential_grid"
     _MAGNETIC_FIELD_FORM_KEY = "magnetic_field_form"
     _MAGNETIC_FIELD_WORKSPACES_KEY = "magnetic_field_workspaces"
+    _HOME_STAGE_KEYS = frozenset(stage.key for stage in WORKFLOW_STAGES)
     _MAGNETIC_FIELD_WORKSPACE_ROUTE_PREFIX = "magnetic_fields/workspace/"
     _RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX = "muon_analysis/workspace/"
     _CONVERGENCE_OVERVIEW_SNAPSHOTS_KEY = "convergence_overview_snapshots"
@@ -497,7 +502,7 @@ class MainWindow(QMainWindow):
         self._home_content_stack: QStackedWidget | None = None
         self._home_welcome_page: QWidget | None = None
         self._project_home_page: QWidget | None = None
-        self._project_home_trail: ProjectHomeTrailWidget | None = None
+        self._project_home: ProjectHomeWidget | None = None
         self._project_home_button: QToolButton | None = None
         self._cluster_connected = False
         self._comparison_widgets: dict[UUID, ComparisonTableWidget] = {}
@@ -1185,7 +1190,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._home_content_stack, 1)
 
         self._refresh_home_recent_projects()
-        self._sync_project_home_trail()
+        self._sync_project_home()
         self._sync_home_content_page()
         return page
 
@@ -1247,9 +1252,9 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._project_home_trail = ProjectHomeTrailWidget(page)
-        self._project_home_trail.route_requested.connect(self._set_active_route)
-        layout.addWidget(self._project_home_trail, 1)
+        self._project_home = ProjectHomeWidget(page)
+        self._project_home.route_requested.connect(self._set_active_route)
+        layout.addWidget(self._project_home, 1)
         return page
 
     def _build_supercell_editor_page(self) -> QWidget:
@@ -1370,7 +1375,7 @@ class MainWindow(QMainWindow):
             apply_theme(app, mode)
         self._refresh_cluster_connection_label_colour()
         self._refresh_workflow_stage_icons()
-        self._sync_project_home_trail()
+        self._sync_project_home()
 
     def _new_project(self) -> None:
         project_name, ok = QInputDialog.getText(self, "New Project", "Project name:")
@@ -1699,7 +1704,7 @@ class MainWindow(QMainWindow):
 
         self._main_title.setText(f"Project: {self._document.project.name}")
         self._main_body.setText(
-            "Follow the workflow trail, or return here from the project home button."
+            "Pick a stage on the chart to see where it stands; double-click it to open it."
         )
         self._project_tree_title.setText(f"Project: {self._document.project.name}")
         self._sync_comparison_table_views()
@@ -1988,130 +1993,6 @@ class MainWindow(QMainWindow):
 
         return recovered
 
-    @staticmethod
-    def _workflow_host_complete(document: ProjectDocument) -> bool:
-        return document.project.host_structure_id is not None
-
-    def _workflow_supercell_editor_complete(self, document: ProjectDocument) -> bool:
-        return bool(
-            self._project_service.list_workflow_supercell_assets(
-                document,
-                host_structure_id=document.project.host_structure_id,
-            )
-        )
-
-    @staticmethod
-    def _workflow_cutoff_complete(document: ProjectDocument) -> bool:
-        return document.project.recommended_cutoff_energy is not None
-
-    @staticmethod
-    def _workflow_kpoint_complete(document: ProjectDocument) -> bool:
-        return document.project.recommended_kpoint_grid is not None
-
-    @staticmethod
-    def _workflow_muon_candidates_complete(document: ProjectDocument) -> bool:
-        return bool(document.sites)
-
-    @staticmethod
-    def _workflow_convergence_complete(document: ProjectDocument) -> bool:
-        return (
-            document.project.recommended_cutoff_energy is not None
-            and document.project.recommended_kpoint_grid is not None
-        )
-
-    @staticmethod
-    def _workflow_pristine_relaxation_complete(document: ProjectDocument) -> bool:
-        return bool(document.comparison_tables)
-
-    @staticmethod
-    def _workflow_uep_complete(document: ProjectDocument) -> bool:
-        return any(
-            job.workflow_stage == WorkflowStage.UEP and job.status == JobStatus.COMPLETED
-            for job in document.jobs.values()
-        )
-
-    @staticmethod
-    def _workflow_quantum_corrections_complete(document: ProjectDocument) -> bool:
-        return any(result.result_type == QUANTUM_PHONON_CALC_TYPE for result in document.results.values())
-
-    @staticmethod
-    def _workflow_energy_barriers_complete(document: ProjectDocument) -> bool:
-        return any(result.result_type == TRANSITION_STATE_SEARCH_CALC_TYPE for result in document.results.values())
-
-    @staticmethod
-    def _muon_relaxation_job_for_table_row(
-        document: ProjectDocument,
-        definition,
-        label: str,
-        charge_state: str,
-    ) -> Job | None:
-        keys = (f"{muon_charge_state_prefix(charge_state)}:{label}", label)
-        calc_type = muon_relaxation_calc_type(charge_state) if charge_state else None
-        for key in keys:
-            job = job_for_mapping_key(document, definition, key, calc_type=calc_type)
-            if job is not None and is_muon_relaxation_calc_type(job.calc_type):
-                return job
-        return None
-
-    @staticmethod
-    def _latest_run_for_document_job(document: ProjectDocument, job_id: UUID) -> CalculationRun | None:
-        runs = [run for run in document.runs.values() if run.job_id == job_id]
-        return max(runs, key=lambda run: run.run_index) if runs else None
-
-    @staticmethod
-    def _workflow_muon_relaxations_complete(document: ProjectDocument) -> bool:
-        definition = active_definition(
-            document,
-            MuonRelaxationController.stage,
-            calc_type=MuonRelaxationController.definition_calc_type,
-            active_key=MuonRelaxationController.active_key,
-        )
-        if definition is None:
-            return False
-        configuration = definition.parameters.get("configuration", {})
-        rows = configuration.get("rows", []) if isinstance(configuration, dict) else []
-        if not isinstance(rows, list):
-            return False
-
-        saw_row = False
-        for entry in rows:
-            if not isinstance(entry, dict):
-                continue
-            label = str(entry.get("label", "")).strip()
-            if not label:
-                continue
-            saw_row = True
-            charge_state = str(entry.get("charge_state", "positive_muon"))
-            job = MainWindow._muon_relaxation_job_for_table_row(
-                document,
-                definition,
-                label,
-                charge_state,
-            )
-            if job is None or job.status != JobStatus.COMPLETED:
-                return False
-            latest_run = MainWindow._latest_run_for_document_job(document, job.id)
-            if latest_run is not None and latest_run.convergence_achieved is False:
-                return False
-
-        return saw_row
-
-    @staticmethod
-    def _workflow_relaxation_analysis_complete(document: ProjectDocument) -> bool:
-        workspaces = document.ui_state.get(_RELAXATION_ANALYSIS_STATE_KEY)
-        return isinstance(workspaces, list) and any(isinstance(workspace, dict) for workspace in workspaces)
-
-    @staticmethod
-    def _workflow_magnetic_fields_complete(document: ProjectDocument) -> bool:
-        magnetic_structure = document.project.magnetic_structure
-        if not isinstance(magnetic_structure, dict):
-            return False
-        components = magnetic_structure.get("components")
-        if isinstance(components, list):
-            return any(isinstance(component, dict) for component in components)
-        moments = magnetic_structure.get("moments")
-        return isinstance(moments, list) and bool(moments)
-
     def _magnetic_field_workspaces_state(self) -> list[dict[str, object]]:
         if self._document is None:
             return []
@@ -2138,60 +2019,31 @@ class MainWindow(QMainWindow):
         workspace_id = route[len(self._RELAXATION_ANALYSIS_WORKSPACE_ROUTE_PREFIX) :].strip()
         return workspace_id or None
 
-    @staticmethod
-    def _relaxation_analysis_workspace_clustered(document: ProjectDocument, workspace_id: str) -> bool:
-        workspaces = document.ui_state.get(_RELAXATION_ANALYSIS_STATE_KEY)
-        if not isinstance(workspaces, list):
-            return False
-        for workspace in workspaces:
-            if isinstance(workspace, dict) and str(workspace.get("id", "")) == workspace_id:
-                clustering = workspace.get("clustering")
-                return isinstance(clustering, dict) and clustering.get("result") is not None
-        return False
-
-    @staticmethod
-    def _magnetic_workspace_has_structure(workspace: Mapping[str, object]) -> bool:
-        magnetic_structure = workspace.get("magnetic_structure")
-        if not isinstance(magnetic_structure, Mapping):
-            return False
-        components = magnetic_structure.get("components")
-        if isinstance(components, list):
-            return any(isinstance(component, dict) for component in components)
-        moments = magnetic_structure.get("moments")
-        return isinstance(moments, list) and bool(moments)
-
-    def _workflow_magnetic_field_workspace_complete(self, workspace_id: str) -> bool:
-        for workspace in self._magnetic_field_workspaces_state():
-            if str(workspace.get("id", "")).strip() == workspace_id:
-                return self._magnetic_workspace_has_structure(workspace)
-        return False
-
     def _workflow_definitions(self) -> tuple[WorkflowDefinition, ...]:
-        cutoff = WorkflowDefinition(
-            key="convergence_cutoff",
-            title="Cutoff Energy",
-            subtitle="Accuracy check",
-            route="convergence_cutoff",
-            completion_goal="Set a project default cutoff value.",
-            completion_check=self._workflow_cutoff_complete,
-        )
-        kpoint = WorkflowDefinition(
-            key="convergence_kpoint",
-            title="K-Point Grid",
-            subtitle="Sampling check",
-            route="convergence_kpoint",
-            completion_goal="Set a project default k-point grid.",
-            completion_check=self._workflow_kpoint_complete,
-        )
-        convergence = WorkflowDefinition(
-            key="convergence",
-            title="Convergence Testing",
-            subtitle="Find stable settings",
-            route="convergence",
-            completion_goal="Set both project default convergence values (cutoff and k-point).",
-            completion_check=self._workflow_convergence_complete,
-            children=(cutoff, kpoint),
-        )
+        def stage(key: str, subtitle: str = "", children: tuple[WorkflowDefinition, ...] = ()) -> WorkflowDefinition:
+            info = stage_info(key)
+            return WorkflowDefinition(
+                key=key,
+                title=info.title,
+                subtitle=subtitle,
+                route=key,
+                completion_goal=info.completion_goal,
+                completion_check=COMPLETION_CHECKS[key],
+                children=children,
+            )
+
+        def group(key: str, subtitle: str, children: tuple[WorkflowDefinition, ...]) -> WorkflowDefinition:
+            info = stage_group(key)
+            return WorkflowDefinition(
+                key=key,
+                title=info.title,
+                subtitle=subtitle,
+                route=key,
+                completion_goal=info.completion_goal,
+                completion_check=COMPLETION_CHECKS[key],
+                children=children,
+            )
+
         magnetic_workspaces = tuple(
             WorkflowDefinition(
                 key=f"magnetic_field_workspace_{str(workspace.get('id', '')).strip()}",
@@ -2199,8 +2051,8 @@ class MainWindow(QMainWindow):
                 route=self._magnetic_field_workspace_route(str(workspace.get("id", "")).strip()),
                 completion_goal="Define at least one magnetic component in this saved workspace.",
                 completion_check=(
-                    lambda _document, workspace_id=str(workspace.get("id", "")).strip(): (
-                        self._workflow_magnetic_field_workspace_complete(workspace_id)
+                    lambda document, workspace_id=str(workspace.get("id", "")).strip(): (
+                        magnetic_field_workspace_complete(document, workspace_id)
                     )
                 ),
             )
@@ -2215,7 +2067,7 @@ class MainWindow(QMainWindow):
                 completion_goal="Apply clustering to this analysis.",
                 completion_check=(
                     lambda document, workspace_id=str(workspace["id"]): (
-                        self._relaxation_analysis_workspace_clustered(document, workspace_id)
+                        relaxation_analysis_workspace_clustered(document, workspace_id)
                     )
                 ),
             )
@@ -2224,94 +2076,27 @@ class MainWindow(QMainWindow):
         )
 
         return (
-            WorkflowDefinition(
-                key="host_structure",
-                title="Host Structure",
-                subtitle="Load and inspect crystal",
-                route="host_structure",
-                completion_goal="Load a host structure.",
-                completion_check=self._workflow_host_complete,
+            stage("host_structure", "Load and inspect crystal"),
+            stage("supercell_editor", "Reusable cells"),
+            group(
+                "convergence",
+                "Find stable settings",
+                (stage("convergence_cutoff", "Accuracy check"), stage("convergence_kpoint", "Sampling check")),
             ),
-            WorkflowDefinition(
-                key="supercell_editor",
-                title="Supercell Editor",
-                subtitle="Reusable cells",
-                route="supercell_editor",
-                completion_goal="Save reusable supercells for workflow setup.",
-                completion_check=self._workflow_supercell_editor_complete,
-            ),
-            convergence,
-            WorkflowDefinition(
-                key="pristine_relaxation",
-                title="Pristine Relaxation",
-                subtitle="Optional cleanup",
-                route="pristine_relaxation",
-                completion_goal="Generate at least one comparison table.",
-                completion_check=self._workflow_pristine_relaxation_complete,
-            ),
-            WorkflowDefinition(
-                key="uep",
-                title="UEP",
-                subtitle="Electrostatic screening",
-                route="uep",
-                completion_goal="Complete at least one UEP source job.",
-                completion_check=self._workflow_uep_complete,
-            ),
-            WorkflowDefinition(
-                key="muon_sites",
-                title="Muon Sites",
-                subtitle="Place and refine muons",
-                route="muon_sites",
-                completion_goal="Generate at least one muon site.",
-                completion_check=self._workflow_muon_candidates_complete,
-                children=(
-                    WorkflowDefinition(
-                        key="muon_candidates",
-                        title="Generation",
-                        route="muon_candidates",
-                        completion_goal="Generate at least one muon site.",
-                        completion_check=self._workflow_muon_candidates_complete,
-                    ),
-                    WorkflowDefinition(
-                        key="muon_relaxations",
-                        title="Relaxations",
-                        route="muon_relaxations",
-                        completion_goal="All structural relaxations completed.",
-                        completion_check=self._workflow_muon_relaxations_complete,
-                    ),
-                    WorkflowDefinition(
-                        key="muon_analysis",
-                        title="Analysis",
-                        route="muon_analysis",
-                        completion_goal="Create at least one structural-relaxation analysis workspace.",
-                        completion_check=self._workflow_relaxation_analysis_complete,
-                        children=analysis_workspaces,
-                    ),
+            stage("pristine_relaxation", "Optional cleanup"),
+            stage("uep", "Electrostatic screening"),
+            group(
+                "muon_sites",
+                "Place and refine muons",
+                (
+                    stage("muon_candidates"),
+                    stage("muon_relaxations"),
+                    stage("muon_analysis", children=analysis_workspaces),
                 ),
             ),
-            WorkflowDefinition(
-                key="magnetic_fields",
-                title="Magnetic Fields",
-                subtitle="Build magnetic model",
-                route="magnetic_fields",
-                completion_goal="Define at least one magnetic component.",
-                completion_check=self._workflow_magnetic_fields_complete,
-                children=magnetic_workspaces,
-            ),
-            WorkflowDefinition(
-                key="quantum_corrections",
-                title="Quantum Corrections",
-                route="quantum_corrections",
-                completion_goal="Complete at least one quantum phonon analysis.",
-                completion_check=self._workflow_quantum_corrections_complete,
-            ),
-            WorkflowDefinition(
-                key="energy_barriers",
-                title="Energy Barriers",
-                route="energy_barriers",
-                completion_goal="Complete at least one transition-state search.",
-                completion_check=self._workflow_energy_barriers_complete,
-            ),
+            stage("magnetic_fields", "Build magnetic model", magnetic_workspaces),
+            stage("quantum_corrections"),
+            stage("energy_barriers"),
             WorkflowDefinition(key="provenance_log", title="Journal", route="provenance_log"),
         )
 
@@ -2427,7 +2212,7 @@ class MainWindow(QMainWindow):
         else:
             self._project_tree.setCurrentItem(selected_item)
         self._refresh_workflow_stage_icons()
-        self._sync_project_home_trail()
+        self._sync_project_home()
 
     def _refresh_jobs_table(self) -> None:
         if self._document is None:
@@ -2466,7 +2251,7 @@ class MainWindow(QMainWindow):
         self._refresh_muon_relaxation_rows()
         self._refresh_uep_rows()
         self._refresh_workflow_stage_icons()
-        self._sync_project_home_trail()
+        self._sync_project_home()
 
     def _job_button_specs(self, job: Job) -> tuple[tuple[int, str, str, bool], ...]:
         """Return ``(column, text, action_kind, enabled)`` for each action button.
@@ -3187,11 +2972,30 @@ class MainWindow(QMainWindow):
             if table_id is not None:
                 target = self._comparison_widgets.get(table_id, self._pristine_relaxation_view)
         self._main_stack.setCurrentWidget(target)
+        self._remember_project_home_stage(route)
         # Navigation does not mutate the document, so workflow completion state
         # cannot change here. Stage icons are kept current by tree construction
         # and by the mutation-driven refresh calls, so recomputing every check
         # on each tab switch (which scans jobs/results) is wasted work.
-        self._sync_project_home_trail()
+        self._sync_project_home()
+
+    def _remember_project_home_stage(self, route: object) -> None:
+        """Record the workflow stage a route belongs to, so the project home opens on it."""
+
+        if self._document is None or not isinstance(route, str):
+            return
+        if route in self._HOME_STAGE_KEYS:
+            stage_key: str | None = route
+        elif route == "muon_sites" or self._relaxation_analysis_workspace_id_from_route(route) is not None:
+            stage_key = "muon_analysis"
+        elif self._magnetic_field_workspace_id_from_route(route) is not None:
+            stage_key = "magnetic_fields"
+        elif self._comparison_table_id_from_route(route) is not None:
+            stage_key = "pristine_relaxation"
+        else:
+            stage_key = None
+        if stage_key is not None and self._document.ui_state.get(PROJECT_HOME_STAGE_KEY) != stage_key:
+            self._document.ui_state[PROJECT_HOME_STAGE_KEY] = stage_key
 
     def _comparison_route(self, table_id: UUID) -> str:
         return f"{self._COMPARISON_ROUTE_PREFIX}{table_id}"
@@ -3388,7 +3192,7 @@ class MainWindow(QMainWindow):
         self._main_stack.setCurrentWidget(self._home_page)
         self._sync_home_content_page()
         self._refresh_workflow_stage_icons()
-        self._sync_project_home_trail()
+        self._sync_project_home()
 
     def _sync_home_content_page(self) -> None:
         if self._home_content_stack is None:
@@ -3399,93 +3203,10 @@ class MainWindow(QMainWindow):
         if self._project_home_button is not None:
             self._project_home_button.setEnabled(self._document is not None)
 
-    def _project_home_destinations(self) -> list[ProjectTrailDestination]:
-        if self._document is None:
-            return []
-
-        return [
-            ProjectTrailDestination(
-                title="Host Structure",
-                route="host_structure",
-                theme="house",
-                completed=self._workflow_host_complete(self._document),
-                completion_goal="Load a host structure.",
-            ),
-            ProjectTrailDestination(
-                title="Supercell Generation",
-                route="supercell_editor",
-                theme="castle",
-                completed=self._workflow_supercell_editor_complete(self._document),
-                completion_goal="Save reusable supercells for workflow setup.",
-            ),
-            ProjectTrailDestination(
-                title="Cutoff Convergence",
-                route="convergence_cutoff",
-                theme="ocean",
-                completed=self._workflow_cutoff_complete(self._document),
-                completion_goal="Set a project default cutoff value.",
-            ),
-            ProjectTrailDestination(
-                title="K-Point Grid",
-                route="convergence_kpoint",
-                theme="cube",
-                completed=self._workflow_kpoint_complete(self._document),
-                completion_goal="Set a project default k-point grid.",
-            ),
-            ProjectTrailDestination(
-                title="Pristine Relaxation",
-                route="pristine_relaxation",
-                theme="hammock",
-                completed=self._workflow_pristine_relaxation_complete(self._document),
-                completion_goal="Generate at least one comparison table.",
-            ),
-            ProjectTrailDestination(
-                title="UEP",
-                route="uep",
-                theme="storm",
-                completed=self._workflow_uep_complete(self._document),
-                completion_goal="Complete at least one UEP source job.",
-            ),
-            ProjectTrailDestination(
-                title="Muon Sites",
-                route="muon_candidates",
-                theme="muon",
-                completed=self._workflow_muon_candidates_complete(self._document),
-                completion_goal="Generate at least one muon site.",
-            ),
-            ProjectTrailDestination(
-                title="Magnetic Fields",
-                route="magnetic_fields",
-                theme="magnet",
-                completed=self._workflow_magnetic_fields_complete(self._document),
-                completion_goal="Define at least one magnetic component.",
-            ),
-            ProjectTrailDestination(
-                title="Quantum Corrections",
-                route="quantum_corrections",
-                theme="cat",
-                completed=self._workflow_quantum_corrections_complete(self._document),
-                completion_goal="Complete at least one quantum phonon analysis.",
-            ),
-            ProjectTrailDestination(
-                title="Energy Barriers",
-                route="energy_barriers",
-                theme="mountains",
-                completed=self._workflow_energy_barriers_complete(self._document),
-                completion_goal="Complete at least one transition-state search.",
-            ),
-            ProjectTrailDestination(
-                title="Journal",
-                route="provenance_log",
-                theme="journal",
-                placement="journal",
-            ),
-        ]
-
-    def _sync_project_home_trail(self) -> None:
-        if self._project_home_trail is None:
+    def _sync_project_home(self) -> None:
+        if self._project_home is None:
             return
-        self._project_home_trail.set_destinations(self._project_home_destinations())
+        self._project_home.set_document(self._document)
 
     def _refresh_workflow_stage_icons(self) -> None:
         completion_checks = self._workflow_completion_checks_by_route()
@@ -10862,7 +10583,7 @@ class MainWindow(QMainWindow):
         self._muon_generation_view.set_sites(rows)
         self._muon_generation_view.set_uep_cluster_sources(self._uep_cluster_source_rows())
         self._refresh_workflow_stage_icons()
-        self._sync_project_home_trail()
+        self._sync_project_home()
 
     @staticmethod
     def _natural_label_sort_key(label: str) -> tuple[tuple[int, object], ...]:

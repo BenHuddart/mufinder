@@ -66,6 +66,10 @@ from mufinder.services.definition_mappings import (
 from mufinder.services.project_service import CONTINUABLE_JOB_STATUSES, SiteHostMismatch
 from mufinder.science.relaxation_analysis import muon_fractional_position_from_cell
 from mufinder.workflow import StructureBridgeError, render_job, write_job_directory
+from mufinder.workflow.muon_site import (
+    ACTIVE_MUON_RELAXATION_DEFINITION_KEY,
+    MUON_RELAXATION_DEFINITION_CALC_TYPE,
+)
 
 from mufinder.app.muon_relaxation_widget import MuonRelaxationWidget
 from mufinder.app.relaxation_adapter import (
@@ -195,8 +199,8 @@ class MuonRelaxationController(WorkflowJobController):
 
     calc_types = frozenset(MUON_RELAXATION_CALC_TYPES.values())
     stage = WorkflowStage.MUON_RELAXATION
-    definition_calc_type = "castep_muon_relaxation"
-    active_key = "active_muon_relaxation_definition_id"
+    definition_calc_type = MUON_RELAXATION_DEFINITION_CALC_TYPE
+    active_key = ACTIVE_MUON_RELAXATION_DEFINITION_KEY
     no_ready_message = (
         "Only configured muon-relaxation rows that have not yet been submitted can be submitted."
     )

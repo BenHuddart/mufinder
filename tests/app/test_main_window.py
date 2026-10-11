@@ -14,7 +14,6 @@ import mufinder.app.magnetic_field_widget as magnetic_field_widget_module
 import mufinder.app.main_window as main_window_module
 import mufinder.app.workflow_controllers.energy_barriers as energy_barriers_controller_module
 import mufinder.services.job_artifacts as job_artifacts_module
-from mufinder.app import theme as theme_module
 import mufinder.castep_io.schema as schema_module
 from mufinder.app.main_window import MainWindow
 from mufinder.app.workflow_dialogs import QuantumCorrectionsConfigDialog
@@ -28,6 +27,7 @@ from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRA
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
 from mufinder.science.magnetic_structure import AtomSelector, MagneticStructureModel, build_collinear_component
 from mufinder.services.project_service import ProjectService
+from mufinder.services.project_summary import StageStatus, summarize_project
 from mufinder.services.source_candidates import energy_barrier_generated_sources, quantum_source_relative_energies
 from tests.support.qt import find_tree_item_by_route
 
@@ -2598,82 +2598,69 @@ def test_main_window_project_tree_header_shows_project_name_without_root_item(qa
     window.close()
 
 
-def test_project_home_trail_destinations_include_journal(qapp, tmp_path: Path) -> None:
+def test_project_home_shows_the_workflow_chart_and_opens_the_journal(qapp, tmp_path: Path) -> None:
     window = MainWindow()
 
-    doc = ProjectService().create_project(tmp_path / "project_home_trail_doc.mufinder", "Trail")
+    doc = ProjectService().create_project(tmp_path / "project_home_chart_doc.mufinder", "Chart")
     window._document = doc
     window._refresh_ui_after_project_change()
+    window._show_project_home()
+    window._project_home.refresh()
 
-    destinations = window._project_home_destinations()
-
-    assert [destination.title for destination in destinations] == [
-        "Host Structure",
-        "Supercell Generation",
-        "Cutoff Convergence",
-        "K-Point Grid",
-        "Pristine Relaxation",
-        "UEP",
-        "Muon Sites",
-        "Magnetic Fields",
-        "Quantum Corrections",
-        "Energy Barriers",
-        "Journal",
+    summary = window._project_home.chart.summary()
+    assert summary is not None
+    assert [stage.key for stage in summary.stages] == [
+        "host_structure",
+        "supercell_editor",
+        "convergence_cutoff",
+        "convergence_kpoint",
+        "pristine_relaxation",
+        "uep",
+        "muon_candidates",
+        "muon_relaxations",
+        "muon_analysis",
+        "magnetic_fields",
+        "quantum_corrections",
+        "energy_barriers",
     ]
-    assert destinations[-1].route == "provenance_log"
-    assert destinations[-1].placement == "journal"
-    assert window.findChildren(main_window_module.ProjectHomeTrailWidget)
-    assert not hasattr(main_window_module, "ExpeditionTrailWidget")
-    assert window._project_home_trail._map_pixmap.isNull() is False
-    assert window._project_home_trail._color_map_pixmap.isNull() is False
+    assert not hasattr(main_window_module, "ProjectHomeTrailWidget")
+    assert window._project_home.chart.selected_stage() == "host_structure"
 
-    pixmap = QPixmap(900, 520)
-    window._project_home_trail.resize(900, 520)
-    assert window._project_home_trail._map_rect().width() > 850
-    assert "provenance_log" not in main_window_module.ProjectHomeTrailWidget._SIGN_REGIONS
-    host_target = window._project_home_trail._map_rect_from_source(
-        main_window_module.ProjectHomeTrailWidget._LANDMARK_REGIONS["host_structure"]
-    ).center()
-    assert window._project_home_trail._route_at(host_target) == "host_structure"
-    journal_target = window._project_home_trail._map_rect_from_source(
-        main_window_module.ProjectHomeTrailWidget._LANDMARK_REGIONS["provenance_log"]
-    ).center()
-    assert window._project_home_trail._route_at(journal_target) == "provenance_log"
-    window._project_home_trail.render(pixmap)
+    pixmap = QPixmap(960, 620)
+    window._project_home.resize(960, 620)
+    window._project_home.render(pixmap)
     assert not pixmap.isNull()
 
-    window._project_home_trail._hovered_route = "host_structure"
-    window._project_home_trail.render(pixmap)
-    assert not pixmap.isNull()
+    window._project_home._journal_button.click()
+    assert window._main_stack.currentWidget() is window._journal_view
 
     window.close()
 
 
-def test_sign_title_pixel_size_scales_with_banner_height() -> None:
-    trail = main_window_module.ProjectHomeTrailWidget
-    ref = trail._SIGN_REF_BANNER_HEIGHT
+def test_project_home_field_notes_open_the_stage_and_remember_it(qapp, tmp_path: Path) -> None:
+    window = MainWindow()
 
-    # At the reference banner height the tuned base size is preserved.
-    assert trail._sign_title_pixel_size("host_structure", "Host Structure", ref) == 13
-    # Larger banners (large/high-DPI windows) yield larger, still-legible labels;
-    # smaller banners shrink but never below the legibility floor.
-    small = trail._sign_title_pixel_size("host_structure", "Host Structure", ref * 0.5)
-    large = trail._sign_title_pixel_size("host_structure", "Host Structure", ref * 1.6)
-    assert large > 13 > small
-    assert small >= 11  # legibility floor
-    assert large <= 13 * 2  # capped so it never overwhelms the banner
+    doc = ProjectService().create_project(tmp_path / "project_home_notes_doc.mufinder", "Notes")
+    window._document = doc
+    window._refresh_ui_after_project_change()
+    window._show_project_home()
+    window._project_home.refresh()
 
+    window._project_home.chart.select_stage("uep")
+    assert window._project_home.field_notes.stage().key == "uep"
+    window._project_home.field_notes._open_button.click()
 
-def test_project_home_trail_scroll_labels_keep_dark_ink_in_dark_mode(qapp) -> None:
-    theme_module.apply_theme(qapp, theme_module.THEME_DARK)
-    try:
-        dark_palette = theme_module.current_palette()
-        label_color = main_window_module.ProjectHomeTrailWidget._workflow_scroll_label_color()
+    assert window._main_stack.currentWidget() is window._uep_view
+    assert doc.ui_state["project_home_stage"] == "uep"
 
-        assert label_color.name().lower() == theme_module.light_palette().text_primary.lower()
-        assert label_color.name().lower() != dark_palette.text_primary.lower()
-    finally:
-        theme_module.apply_theme(qapp, theme_module.THEME_LIGHT)
+    window._project_home_button.click()
+    window._project_home.refresh()
+    assert window._project_home.chart.summary().current_stage == "uep"
+
+    window._set_active_route("provenance_log")
+    assert doc.ui_state["project_home_stage"] == "uep"
+
+    window.close()
 
 
 def test_project_home_button_returns_to_project_home(qapp, tmp_path: Path) -> None:
@@ -2797,9 +2784,9 @@ def test_main_window_refreshes_uep_and_muon_site_completion_from_live_document(
     assert uep_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is True
     assert muon_item.data(0, window._WORKFLOW_COMPLETE_ROLE) is True
 
-    destinations = {destination.route: destination for destination in window._project_home_destinations()}
-    assert destinations["uep"].completed is True
-    assert destinations["muon_candidates"].completed is True
+    summary = summarize_project(doc)
+    assert summary.stage("uep").status == StageStatus.COMPLETE
+    assert summary.stage("muon_candidates").status == StageStatus.COMPLETE
 
     window.close()
 

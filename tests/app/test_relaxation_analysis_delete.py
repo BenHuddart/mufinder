@@ -13,6 +13,7 @@ from mufinder.app.main_window import MainWindow
 from mufinder.app.relaxation_analysis_widget import RelaxationAnalysisWidget, default_workspace_state
 from mufinder.domain.charge_states import MUONIUM_CHARGE_STATE, POSITIVE_MUON_CHARGE_STATE
 from mufinder.domain.models import Structure
+from mufinder.services.project_summary import relaxation_analysis_complete
 from tests.support.main_window import window_with_host
 from tests.support.structures import host_structure
 
@@ -126,11 +127,11 @@ def test_deleting_the_last_workspace_clears_the_analysis_stage(qapp, tmp_path: P
     try:
         workspace = _workspace(host, "Preliminary analysis")
         window._set_relaxation_analysis_workspaces([workspace])
-        assert window._workflow_relaxation_analysis_complete(doc)
+        assert relaxation_analysis_complete(doc)
 
         window._delete_relaxation_analysis_workspace(str(workspace["id"]))
 
-        assert not window._workflow_relaxation_analysis_complete(doc)
+        assert not relaxation_analysis_complete(doc)
         assert window._relaxation_analysis_view._workspace_tabs.count() == 0
     finally:
         window.close()

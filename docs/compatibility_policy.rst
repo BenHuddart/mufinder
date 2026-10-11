@@ -196,8 +196,7 @@ Compatibility ledger
        ``converged_cutoff`` when ``converged_value`` is absent.
      - Keep until the next saved-project schema version bump, whose migration
        can rename the key to ``converged_value``.
-   * - ``ProjectHomeTrailWidget`` / ``ConstructionSignWidget`` /
-       ``ProjectTrailDestination`` / ``WorkflowDefinition`` /
+   * - ``ConstructionSignWidget`` / ``WorkflowDefinition`` /
        ``MuonChargeStateDialog``
      - ``mufinder.app.main_window``
      - Import path kept for names that live in

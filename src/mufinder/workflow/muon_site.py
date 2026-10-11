@@ -12,6 +12,11 @@ from .merge import resolve_job
 from .naming import job_name
 from .types import InputTemplate, JobPatch, JobSpec, StructureSpec
 
+#: Calc type of the definition that holds a host's muon-relaxation rows.
+MUON_RELAXATION_DEFINITION_CALC_TYPE = "castep_muon_relaxation"
+#: ``ui_state`` key naming the muon-relaxation definition the workflow works on.
+ACTIVE_MUON_RELAXATION_DEFINITION_KEY = "active_muon_relaxation_definition_id"
+
 
 def _append_muon(
     structure: StructureSpec,

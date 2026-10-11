@@ -23,6 +23,7 @@ from mufinder.services.project_service import (
     ORPHANED_LOCAL_JOB_STOP_MESSAGE,
     ProjectService,
 )
+from mufinder.services.project_summary import muon_relaxation_job_for_row
 
 
 def _seed_project_with_jobs(tmp_path: Path):
@@ -210,7 +211,7 @@ def test_stopped_local_muon_job_stays_linked_and_resettable(qapp, tmp_path, monk
     assert [j.id for j in reconciled] == [job.id]
 
     reloaded_definition = reloaded.calculations[definition.id]
-    resolved = MainWindow._muon_relaxation_job_for_table_row(
+    resolved = muon_relaxation_job_for_row(
         reloaded, reloaded_definition, "Site 1", "positive_muon"
     )
     assert resolved is not None

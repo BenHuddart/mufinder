@@ -49,6 +49,7 @@ from mufinder.services.supercell_assets import (
     WorkflowSupercellSelection,
 )
 from mufinder.science.structure_io import load_structure_file
+from mufinder.workflow.muon_site import MUON_RELAXATION_DEFINITION_CALC_TYPE
 
 _LOG = logging.getLogger(__name__)
 
@@ -986,7 +987,7 @@ class ProjectService:
         return self._register_definition(
             document,
             stage=WorkflowStage.MUON_RELAXATION,
-            calc_type="castep_muon_relaxation",
+            calc_type=MUON_RELAXATION_DEFINITION_CALC_TYPE,
             action="configure_muon_relaxation",
             description=f"Configured muon relaxation with {len(snapshot.get('rows', []))} job row(s)",
             configuration=snapshot,
