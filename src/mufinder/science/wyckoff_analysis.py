@@ -6,24 +6,29 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 
-from ase.data import atomic_numbers
 import numpy as np
 
 from mufinder.domain.models import Structure
-from mufinder.science.spglib_compat import get_crystal_symmetry, get_crystal_symmetry_dataset
+from mufinder.science.lattice import (
+    deduplicate_periodic_positions,
+    lattice_frac_to_cart,
+    minimum_image_delta,
+    minimum_image_distance,
+    minimum_image_distance_matrix,
+)
 from mufinder.science.relaxation_analysis import (
     RelaxationClusterSummary,
     RelaxedMuonSite,
-    _fractional_delta_minimum_image,
-    _pbc_distance,
     _wrap_fractional,
     anchored_sites,
     normalize_site_energies,
 )
-from mufinder.science.site_generation import (
-    _greedy_unique_indexes,
-    _pbc_distance_matrix,
-    lattice_frac_to_cart,
+from mufinder.science.spglib_compat import (
+    get_crystal_symmetry_dataset,
+    operation_images,
+    spglib_cell,
+    symmetry_operations,
+    symmetry_orbit,
 )
 
 
@@ -65,68 +70,17 @@ class _CandidateLabel:
     space_group_symbol: str
 
 
-def _species_to_numbers(species: Sequence[str]) -> list[int] | None:
-    numbers: list[int] = []
-    for symbol in species:
-        key = str(symbol).strip().capitalize()
-        number = atomic_numbers.get(key)
-        if number is None:
-            return None
-        numbers.append(int(number))
-    return numbers
-
-
-def _host_cell(structure: Structure) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-    numbers = _species_to_numbers(structure.species)
-    if numbers is None:
-        return None
-    if len(numbers) != len(structure.fractional_positions):
-        return None
-    return (
-        np.asarray(structure.lattice_vectors, dtype=float),
-        np.asarray(structure.fractional_positions, dtype=float),
-        np.asarray(numbers, dtype=int),
-    )
-
-
-def _operation_images(
-    position: Sequence[float],
-    rotations: Sequence[np.ndarray] | np.ndarray,
-    translations: Sequence[np.ndarray] | np.ndarray,
-) -> np.ndarray:
-    """Apply every symmetry operation to ``position`` at once (unwrapped images, one per row)."""
-
-    count = min(len(rotations), len(translations))
-    if count == 0:
-        return np.empty((0, 3), dtype=float)
-    rotation_stack = np.asarray(rotations[:count], dtype=float).reshape(count, 3, 3)
-    translation_stack = np.asarray(translations[:count], dtype=float).reshape(count, 3)
-    return rotation_stack @ np.asarray(position, dtype=float) + translation_stack
-
-
 def _deduplicate_positions(
     positions: Sequence[Sequence[float]] | np.ndarray,
     lattice: Sequence[Sequence[float]],
     *,
     tolerance_ang: float,
 ) -> tuple[tuple[float, float, float], ...]:
-    # Dropping exact repeats first cannot change the result: a repeat is always within
-    # tolerance of whatever kept entry covered (or was) its first occurrence.
-    wrapped = list(dict.fromkeys(_wrap_fractional(position) for position in positions))
-    if not wrapped:
-        return ()
-    distances = _pbc_distance_matrix(wrapped, wrapped, lattice)
-    return tuple(wrapped[index] for index in _greedy_unique_indexes(distances <= tolerance_ang))
+    return _as_tuples(deduplicate_periodic_positions(positions, lattice, tolerance=tolerance_ang))
 
 
-def _orbit_from_images(
-    images: np.ndarray,
-    lattice: Sequence[Sequence[float]],
-    *,
-    tolerance_ang: float,
-) -> tuple[tuple[float, float, float], ...]:
-    # ``np.mod`` matches Python's ``%``; each image is wrapped once here and once more on deduplication.
-    return _deduplicate_positions(np.mod(images, 1.0), lattice, tolerance_ang=tolerance_ang)
+def _as_tuples(positions: Sequence[Sequence[float]]) -> tuple[tuple[float, float, float], ...]:
+    return tuple((float(position[0]), float(position[1]), float(position[2])) for position in positions)
 
 
 def _dummy_atomic_number(host_numbers: Sequence[int]) -> int:
@@ -179,7 +133,7 @@ def _orbit_is_occupied(
 ) -> bool:
     if not orbit or not host_positions:
         return False
-    distances = _pbc_distance_matrix(orbit, host_positions, lattice)
+    distances = minimum_image_distance_matrix(orbit, host_positions, lattice)
     return bool(np.any(distances <= float(tolerance_ang)))
 
 
@@ -326,7 +280,7 @@ def _project_nearby_special_candidates(
 
     if not candidates:
         return ()
-    distances = _pbc_distance_matrix([reference], candidates, lattice)[0]
+    distances = minimum_image_distance_matrix([reference], candidates, lattice)[0]
     nearby = [candidate for candidate, distance in zip(candidates, distances, strict=True) if distance <= cutoff]
     return _deduplicate_positions(nearby, lattice, tolerance_ang=1e-4)
 
@@ -338,7 +292,7 @@ def _cluster_reference(
         return (0.0, 0.0, 0.0)
     anchor = np.asarray(_wrap_fractional(positions[0]), dtype=float)
     deltas = [
-        _fractional_delta_minimum_image(anchor, _wrap_fractional(position))
+        minimum_image_delta(_wrap_fractional(position), anchor)
         for position in positions
     ]
     return _wrap_fractional(anchor + np.mean(np.asarray(deltas, dtype=float), axis=0))
@@ -375,38 +329,8 @@ def _match_distances_to_orbit(
     orbit: Sequence[Sequence[float]],
     lattice: Sequence[Sequence[float]],
 ) -> tuple[float, ...]:
-    distances = _pbc_distance_matrix(member_positions, orbit, lattice)
+    distances = minimum_image_distance_matrix(member_positions, orbit, lattice)
     return tuple(float(value) for value in distances.min(axis=1))
-
-
-@lru_cache(maxsize=32)
-def _host_symmetry_operations(
-    lattice: tuple[tuple[float, ...], ...],
-    positions: tuple[tuple[float, ...], ...],
-    numbers: tuple[int, ...],
-    symprec: float,
-) -> tuple[np.ndarray, np.ndarray] | None:
-    """Return the host's stacked rotations and translations, cached so repeated assignments skip spglib.
-
-    The returned arrays are read-only because they are shared between callers.
-    """
-
-    host_cell = (
-        np.asarray(lattice, dtype=float),
-        np.asarray(positions, dtype=float),
-        np.asarray(numbers, dtype=int),
-    )
-    try:
-        symmetry = get_crystal_symmetry(host_cell, symprec=symprec)
-    except Exception:  # noqa: BLE001 - spglib can fail on malformed cells.
-        return None
-    if symmetry is None:
-        return None
-    rotations = np.asarray(symmetry.get("rotations", []), dtype=float).reshape(-1, 3, 3)
-    translations = np.asarray(symmetry.get("translations", []), dtype=float).reshape(-1, 3)
-    rotations.setflags(write=False)
-    translations.setflags(write=False)
-    return rotations, translations
 
 
 def assign_cluster_wyckoff_sites(
@@ -437,7 +361,7 @@ def assign_cluster_wyckoff_sites(
     except Exception:  # noqa: BLE001 - fall back to unshifted display positions.
         anchored = tuple()
 
-    host_cell = _host_cell(host_structure)
+    host_cell = spglib_cell(host_structure)
     if host_cell is None:
         return tuple(
             ClusterWyckoffAssignment(
@@ -453,7 +377,7 @@ def assign_cluster_wyckoff_sites(
         tuple(tuple(float(value) for value in row) for row in host_positions),
         tuple(int(value) for value in host_numbers),
     )
-    if _host_symmetry_operations(*host_key, float(symprec)) is None:
+    if symmetry_operations(host_cell, symprec=float(symprec)) is None:
         return tuple(
             ClusterWyckoffAssignment(
                 cluster_index=int(cluster.cluster_index),
@@ -510,15 +434,15 @@ def _match_cluster(
     """
 
     lattice, host_positions, host_numbers = host_key
-    operations = _host_symmetry_operations(lattice, host_positions, host_numbers, symprec)
-    if operations is None:  # pragma: no cover - the caller checks this first.
-        return _unavailable_match("Host symmetry could not be identified by spglib.")
-    rotations, translations = operations
     host_cell = (
         np.asarray(lattice, dtype=float),
         np.asarray(host_positions, dtype=float),
         np.asarray(host_numbers, dtype=int),
     )
+    operations = symmetry_operations(host_cell, symprec=symprec)
+    if operations is None:  # pragma: no cover - the caller checks this first.
+        return _unavailable_match("Host symmetry could not be identified by spglib.")
+    rotations, translations = operations
     symmetry_count = max(1, len(rotations))
 
     reference = _cluster_reference(member_positions)
@@ -535,8 +459,9 @@ def _match_cluster(
     # first one spglib can label. Python's sort is stable, so ties keep candidate order.
     ranked: list[tuple[tuple[float, float, float, float], tuple[tuple[float, float, float], ...], tuple[float, ...], float, float | None, bool]] = []
     for candidate in candidates:
-        images = _operation_images(candidate, rotations, translations)
-        orbit = _orbit_from_images(images, lattice, tolerance_ang=max(symprec, 1e-5))
+        orbit = _as_tuples(
+            symmetry_orbit(candidate, operations, lattice_vectors=lattice, tolerance=max(symprec, 1e-5))
+        )
         if not orbit:
             continue
         distances = _match_distances_to_orbit(member_positions, orbit, lattice)
@@ -549,11 +474,14 @@ def _match_cluster(
         # Operations mapping the candidate onto itself (images wrapped once).
         stabilizer = int(
             np.count_nonzero(
-                _pbc_distance_matrix(np.mod(images, 1.0), [candidate], lattice) <= max(symprec * 10.0, 1e-4)
+                minimum_image_distance_matrix(
+                    np.mod(operation_images(candidate, rotations, translations), 1.0), [candidate], lattice
+                )
+                <= max(symprec * 10.0, 1e-4)
             )
         )
         special = stabilizer > 1 or len(orbit) < symmetry_count
-        is_reference = _pbc_distance(candidate, reference, lattice) <= 1e-7
+        is_reference = minimum_image_distance(candidate, reference, lattice) <= 1e-7
         if is_reference and not special and raw_candidates:
             continue
         rank = (

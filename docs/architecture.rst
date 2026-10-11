@@ -115,7 +115,16 @@ policy, move the reusable part into the appropriate shared layer:
 - any other cross-workflow UI concern belongs in the module listed under
   Shared workflow infrastructure below
 - job lifecycle transitions belong in ``mufinder.services``
-- scientific calculation behavior belongs in ``mufinder.science``
+- scientific calculation behavior belongs in ``mufinder.science``; within it,
+  lattice maths (fractional/Cartesian conversion, minimum-image distances,
+  periodic deduplication) belongs in ``mufinder.science.lattice``, symmetry
+  plumbing (spglib cells, cached symmetry operations, orbits) in
+  ``mufinder.science.spglib_compat``, and conversion to ASE ``Atoms`` in
+  ``mufinder.science.ase_bridge``
+- reading the magnetic metadata persisted on a structure (per-atom spins,
+  moment-derived spins, the propagation vector) belongs in
+  ``mufinder.domain.magnetic_properties``, so the workflow bridge, services and
+  science modules interpret those properties the same way
 - reusable PySide styling belongs in ``mufinder.app.theme``
 - shared adapter logic that turns GUI value dicts into workflow templates
   belongs in ``mufinder.app.adapter_common``
@@ -243,6 +252,26 @@ workflow widget modules define, how many define it; the counts may only fall.
      - Styling and status brushes; embedded plots (see Plot canvas policy).
    * - ``mufinder.services.job_artifacts``
      - Job output paths and parsed secondary outputs.
+   * - ``mufinder.domain.magnetic_properties``
+     - Spins and propagation vectors read from ``Structure.properties``
+       (``atomic_spins_from_structure``,
+       ``atomic_spins_from_magnetic_moments``,
+       ``propagation_vector_from_structure``, ``has_nonzero_spins``).
+   * - ``mufinder.science.lattice``
+     - Lattice algebra: scalar and broadcast fractional/Cartesian conversion,
+       lattice inversion, minimum-image displacements and distances
+       (``minimum_image_distance``, ``minimum_image_distance_matrix``,
+       ``nearest_image_distance``) and periodic deduplication
+       (``deduplicate_periodic_positions``).
+   * - ``mufinder.science.spglib_compat``
+     - spglib access: the ``(lattice, positions, numbers)`` cell
+       (``spglib_cell``), cached symmetry operations
+       (``symmetry_operations``) and symmetry orbits (``symmetry_orbit``),
+       with tolerances passed by each caller.
+   * - ``mufinder.science.ase_bridge``
+     - Structure to ASE ``Atoms`` (``structure_to_ase_atoms`` with
+       ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``) and
+       the muon-label and element-symbol rules.
 
 Widget contract
 ~~~~~~~~~~~~~~~

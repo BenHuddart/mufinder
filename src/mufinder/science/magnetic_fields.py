@@ -10,7 +10,7 @@ import warnings
 import numpy as np
 
 from mufinder.domain.models import MuonSite, Structure
-from mufinder.science.spglib_compat import get_crystal_symmetry
+from mufinder.science.spglib_compat import spglib_cell, symmetry_operations, symmetry_orbit
 from mufinder.science.demagnetization import DemagnetizingSample, demagnetizing_tensor
 from mufinder.science._muesr_compat import patch_numpy_aliases_for_muesr
 from mufinder.science.magnetic_structure import (
@@ -19,7 +19,6 @@ from mufinder.science.magnetic_structure import (
     get_muesr_model_data,
     resolve_atom_selector,
     split_muesr_model_data_into_helices,
-    structure_to_ase_atoms,
 )
 
 MU0_OVER_4PI = 1e-7
@@ -232,25 +231,15 @@ def find_equivalent_muon_sites(
     """Return unique symmetry-equivalent fractional muon positions."""
 
     mu = _canonical_fractional(muon_position)
-    atoms = structure_to_ase_atoms(structure)
-    symmetry = get_crystal_symmetry(
-        (
-            np.asarray(structure.lattice_vectors, dtype=float),
-            np.asarray(structure.fractional_positions, dtype=float),
-            np.asarray(atoms.get_atomic_numbers(), dtype=int),
-        )
-    )
-    if symmetry is None:
+    cell = spglib_cell(structure)
+    if cell is None:
+        raise MagneticFieldError("spglib could not determine symmetry operations: a species is not an element")
+    operations = symmetry_operations(cell, symprec=1e-5)
+    if operations is None:
         raise MagneticFieldError("spglib could not determine symmetry operations")
-    rotations = np.asarray(symmetry["rotations"], dtype=int)
-    translations = np.asarray(symmetry["translations"], dtype=float)
-    unique: list[np.ndarray] = []
-    for rotation, translation in zip(rotations, translations):
-        candidate = _canonical_fractional(rotation @ mu + translation)
-        if any(_fractional_distance(candidate, existing) <= tolerance for existing in unique):
-            continue
-        unique.append(candidate)
-    return tuple(_tuple3(value) for value in unique)
+    # ``tolerance`` is a fractional-coordinate distance, so the orbit is deduplicated without a lattice.
+    unique = symmetry_orbit(mu, operations, lattice_vectors=None, tolerance=tolerance)
+    return tuple(_tuple3(_canonical_fractional(value)) for value in unique)
 
 
 def calculate_finite_dipolar_field(
@@ -906,11 +895,6 @@ def _canonical_fractional(position: Sequence[float]) -> np.ndarray:
     out = np.mod(arr, 1.0)
     out[np.isclose(out, 1.0, atol=1e-10)] = 0.0
     return out
-
-
-def _fractional_distance(a: np.ndarray, b: np.ndarray) -> float:
-    delta = np.mod(np.asarray(a, dtype=float) - np.asarray(b, dtype=float) + 0.5, 1.0) - 0.5
-    return float(np.linalg.norm(delta))
 
 
 def _as_vector(values: Sequence[float], name: str) -> np.ndarray:

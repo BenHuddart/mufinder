@@ -8,7 +8,8 @@ import math
 import numpy as np
 import pytest
 
-from mufinder.science import site_generation
+from mufinder.science import site_generation, spglib_compat
+from mufinder.science.lattice import minimum_image_distance
 from mufinder.science.site_generation import (
     SiteGenerationError,
     closest_symmetry_equivalent_position,
@@ -40,8 +41,15 @@ def _pbc_distance(a: list[float], b: list[float], lattice: list[list[float]]) ->
 # Lattice conversions
 
 
-def test_fractional_cartesian_roundtrip() -> None:
-    lattice = [[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]]
+@pytest.mark.parametrize(
+    "lattice",
+    [
+        [[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
+        [[3.0, 0.0, 0.0], [-1.5, 2.598, 0.0], [0.0, 0.0, 5.0]],
+    ],
+    ids=["orthorhombic", "hexagonal"],
+)
+def test_fractional_cartesian_roundtrip(lattice: list[list[float]]) -> None:
     frac = [0.25, 0.5, 0.75]
     cart = lattice_frac_to_cart(frac, lattice)
     recovered = lattice_cart_to_frac(cart, lattice)
@@ -102,22 +110,22 @@ def test_symmetry_equivalent_positions_species_count_mismatch_returns_single_rep
 
 
 def test_host_symmetry_is_detected_once_per_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    site_generation._cached_symmetry_operations.cache_clear()
+    spglib_compat.clear_symmetry_operations_cache()
     calls: list[float] = []
-    real = site_generation.get_crystal_symmetry
+    real = spglib_compat.get_crystal_symmetry
 
     def counting(cell, *, symprec):
         calls.append(symprec)
         return real(cell, symprec=symprec)
 
-    monkeypatch.setattr(site_generation, "get_crystal_symmetry", counting)
+    monkeypatch.setattr(spglib_compat, "get_crystal_symmetry", counting)
     host = {"lattice_vectors": _CUBIC, "host_species": ["Si", "Si"], "host_positions_frac": [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]}
     try:
         first = symmetry_equivalent_positions([0.1, 0.1, 0.1], **host)
         second = symmetry_equivalent_positions([0.3, 0.2, 0.1], **host)
         operations = site_generation._symmetry_operations(**host)
     finally:
-        site_generation._cached_symmetry_operations.cache_clear()
+        spglib_compat.clear_symmetry_operations_cache()
 
     assert len(first) == 16
     assert len(second) == 96
@@ -128,8 +136,8 @@ def test_host_symmetry_is_detected_once_per_host(monkeypatch: pytest.MonkeyPatch
 
 
 def test_symmetry_equivalents_fall_back_to_input_when_spglib_finds_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    site_generation._cached_symmetry_operations.cache_clear()
-    monkeypatch.setattr(site_generation, "get_crystal_symmetry", lambda cell, *, symprec: None)
+    spglib_compat.clear_symmetry_operations_cache()
+    monkeypatch.setattr(spglib_compat, "get_crystal_symmetry", lambda cell, *, symprec: None)
     try:
         equivalents = symmetry_equivalent_positions(
             [1.1, -0.2, 0.3],
@@ -138,7 +146,7 @@ def test_symmetry_equivalents_fall_back_to_input_when_spglib_finds_nothing(monke
             host_positions_frac=[[0.0, 0.0, 0.0]],
         )
     finally:
-        site_generation._cached_symmetry_operations.cache_clear()
+        spglib_compat.clear_symmetry_operations_cache()
 
     assert equivalents == [pytest.approx([0.1, 0.8, 0.3])]
 
@@ -391,9 +399,7 @@ def test_random_generation_checks_whole_orbits_when_identity_is_not_first(monkey
 
     assert points
     orbits = [
-        site_generation._equivalent_positions_from_operations(
-            point.fractional, lattice_vectors=_CUBIC, operations=identity_last(**host)
-        )
+        spglib_compat.symmetry_orbit(point.fractional, identity_last(**host), lattice_vectors=_CUBIC, tolerance=1e-5)
         for point in points
     ]
     for orbit in orbits:
@@ -620,6 +626,29 @@ def test_generate_attached_element_sites_uses_host_geometry_per_atom() -> None:
         assert sum(distance == pytest.approx(1.0) for distance in distances) == 2
 
 
+def test_attached_sites_sit_at_the_bond_distance_in_a_non_orthogonal_cell() -> None:
+    # Hexagonal axes: converting the bonded Cartesian point back to fractional must use the
+    # inverse lattice the right way round, or the site lands away from its anchor.
+    a, c = 6.0, 7.0
+    lattice = [[a, 0.0, 0.0], [-a / 2.0, a * 3.0**0.5 / 2.0, 0.0], [0.0, 0.0, c]]
+    anchor = [1.0 / 3.0, 2.0 / 3.0, 0.25]
+
+    points, _attempts = generate_attached_element_sites(
+        lattice_vectors=lattice,
+        host_species=["O"],
+        host_positions_frac=[anchor],
+        target_element="O",
+        muons_per_atom=3,
+        bond_distance=1.0,
+        min_muon_atom=0.5,
+    )
+
+    assert len(points) == 3
+    for point in points:
+        assert _pbc_distance(point.fractional, anchor, lattice) == pytest.approx(1.0)
+        assert lattice_cart_to_frac(point.cartesian, lattice) == pytest.approx(point.fractional, abs=1e-12)
+
+
 def test_attached_sites_none_lattice_uses_neighbour_geometry() -> None:
     # lattice_vectors=None -> identity cell; the nearby Si neighbour drives the
     # neighbour-direction and summed-away branches before placement succeeds.
@@ -717,34 +746,12 @@ def test_attached_sites_raises_when_no_candidate_clears_hosts() -> None:
         )
 
 
-# Deduplication and spacing checks
-
-
-def test_deduplication_tolerance_is_inclusive_at_the_exact_pair_distance() -> None:
-    first, second = [0.1, 0.2, 0.3], [0.1 + 3e-7, 0.2 - 1e-7, 0.3 + 2e-7]
-    pair_distance = site_generation._pbc_distance(second, first, _CUBIC)
-
-    def deduplicate(tolerance: float) -> list[list[float]]:
-        return site_generation._deduplicate_fractional_positions([first, second], _CUBIC, tolerance_ang=tolerance)
-
-    # Broadcast norms can be an ulp off, so decisions this close are re-measured with ``_pbc_distance``.
-    assert deduplicate(pair_distance) == [first]
-    assert deduplicate(math.nextafter(pair_distance, 0.0)) == [first, second]
-    assert deduplicate(math.nextafter(pair_distance, 1.0)) == [first]
-    assert site_generation._deduplicate_fractional_positions([], _CUBIC) == []
-
-
-def test_deduplication_keeps_first_occurrence_and_drops_exact_repeats() -> None:
-    positions = [[1.25, -0.5, 0.0], [0.5, 0.5, 0.5], [0.25, 0.5, 0.0], [0.5, 0.5, 0.5 + 1e-7]]
-
-    unique = site_generation._deduplicate_fractional_positions(positions, _CUBIC)
-
-    assert unique == [[0.25, 0.5, 0.0], [0.5, 0.5, 0.5]]
+# Spacing checks
 
 
 def test_broadcast_spacing_check_decides_exactly_at_the_limit() -> None:
     point, reference = [0.1, 0.2, 0.3], [0.4, 0.45, 0.9]
-    limit = site_generation._pbc_distance(point, reference, _CUBIC)
+    limit = minimum_image_distance(point, reference, _CUBIC)
     points, references = np.asarray([point]), np.asarray([reference])
 
     # ``_pbc_distance(point, reference) < limit`` decides, so the exact distance is not "closer".

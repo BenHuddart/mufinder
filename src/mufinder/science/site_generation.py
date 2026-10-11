@@ -3,16 +3,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
 import math
 import random
 from collections.abc import Callable
 from typing import Sequence
 
-from ase.data import atomic_numbers
 import numpy as np
 
-from mufinder.science.spglib_compat import get_crystal_symmetry
+from mufinder.science.lattice import (
+    NEAR_TIE_RTOL,
+    cell_volume,
+    lattice_rows,
+    minimum_image_cartesian_delta,
+    minimum_image_distance,
+    minimum_image_distance_matrix,
+    near_minimum_indexes,
+    vector_length,
+    wrap_fractional,
+)
+from mufinder.science.lattice import lattice_cart_to_frac as _lattice_cart_to_frac
+from mufinder.science.lattice import lattice_frac_to_cart as _lattice_frac_to_cart
+from mufinder.science.spglib_compat import SymmetryOperations, spglib_cell, symmetry_operations, symmetry_orbit
 
 
 class SiteGenerationError(ValueError):
@@ -33,205 +44,37 @@ class GeneratedPoint:
 
 
 def _validate_lattice(lattice_vectors: Sequence[Sequence[float]]) -> list[list[float]]:
-    if len(lattice_vectors) != 3 or any(len(v) != 3 for v in lattice_vectors):
-        raise SiteGenerationError("Lattice vectors must be a 3x3 matrix.")
-    return [[float(c) for c in vec] for vec in lattice_vectors]
+    return lattice_rows(lattice_vectors, error=SiteGenerationError)
 
 
 def _identity_lattice() -> list[list[float]]:
     return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 
 
-def _wrap_fractional(position: Sequence[float]) -> list[float]:
-    return [float(v) % 1.0 for v in position]
-
-
-def _species_to_numbers(host_species: Sequence[str]) -> list[int] | None:
-    numbers: list[int] = []
-    for symbol in host_species:
-        number = atomic_numbers.get(str(symbol).strip().capitalize())
-        if number is None:
-            return None
-        numbers.append(int(number))
-    return numbers
-
-
 def lattice_frac_to_cart(fractional: Sequence[float], lattice_vectors: Sequence[Sequence[float]]) -> list[float]:
-    """Convert fractional coordinate to Cartesian coordinate."""
-    lattice = _validate_lattice(lattice_vectors)
-    x = fractional[0] * lattice[0][0] + fractional[1] * lattice[1][0] + fractional[2] * lattice[2][0]
-    y = fractional[0] * lattice[0][1] + fractional[1] * lattice[1][1] + fractional[2] * lattice[2][1]
-    z = fractional[0] * lattice[0][2] + fractional[1] * lattice[1][2] + fractional[2] * lattice[2][2]
-    return [x, y, z]
+    """Convert fractional coordinate to Cartesian coordinate.
+
+    See :func:`mufinder.science.lattice.lattice_frac_to_cart`; this name raises
+    :class:`SiteGenerationError` for a malformed lattice.
+    """
+    return _lattice_frac_to_cart(fractional, lattice_vectors, error=SiteGenerationError)
 
 
-def _determinant3(m: Sequence[Sequence[float]]) -> float:
-    return (
-        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
-    )
+def lattice_cart_to_frac(cartesian: Sequence[float], lattice_vectors: Sequence[Sequence[float]]) -> list[float]:
+    """Convert Cartesian coordinate to fractional coordinate.
 
-
-def _cell_volume(lattice_vectors: Sequence[Sequence[float]]) -> float:
-    return abs(_determinant3(lattice_vectors))
+    See :func:`mufinder.science.lattice.lattice_cart_to_frac`; this name raises
+    :class:`SiteGenerationError` for a malformed or singular lattice.
+    """
+    return _lattice_cart_to_frac(cartesian, lattice_vectors, error=SiteGenerationError)
 
 
 def _sphere_volume(radius: float) -> float:
     return 4.0 * math.pi * float(radius) ** 3 / 3.0
 
 
-def _inverse3(m: Sequence[Sequence[float]]) -> list[list[float]]:
-    det = _determinant3(m)
-    if math.isclose(det, 0.0, abs_tol=1e-12):
-        raise SiteGenerationError("Lattice matrix is singular and cannot be inverted.")
-
-    inv_det = 1.0 / det
-    return [
-        [
-            (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * inv_det,
-            -(m[0][1] * m[2][2] - m[0][2] * m[2][1]) * inv_det,
-            (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * inv_det,
-        ],
-        [
-            -(m[1][0] * m[2][2] - m[1][2] * m[2][0]) * inv_det,
-            (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * inv_det,
-            -(m[0][0] * m[1][2] - m[0][2] * m[1][0]) * inv_det,
-        ],
-        [
-            (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * inv_det,
-            -(m[0][0] * m[2][1] - m[0][1] * m[2][0]) * inv_det,
-            (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * inv_det,
-        ],
-    ]
-
-
-def lattice_cart_to_frac(cartesian: Sequence[float], lattice_vectors: Sequence[Sequence[float]]) -> list[float]:
-    """Convert Cartesian coordinate to fractional coordinate."""
-    lattice = _validate_lattice(lattice_vectors)
-    inv = _inverse3(lattice)
-    x = inv[0][0] * cartesian[0] + inv[0][1] * cartesian[1] + inv[0][2] * cartesian[2]
-    y = inv[1][0] * cartesian[0] + inv[1][1] * cartesian[1] + inv[1][2] * cartesian[2]
-    z = inv[2][0] * cartesian[0] + inv[2][1] * cartesian[1] + inv[2][2] * cartesian[2]
-    return [x, y, z]
-
-
-def _minimum_image_delta(a: Sequence[float], b: Sequence[float]) -> list[float]:
-    delta = [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-    return [d - round(d) for d in delta]
-
-
-def _pbc_distance(
-    a_frac: Sequence[float],
-    b_frac: Sequence[float],
-    lattice_vectors: Sequence[Sequence[float]],
-) -> float:
-    delta_frac = _minimum_image_delta(a_frac, b_frac)
-    delta_cart = lattice_frac_to_cart(delta_frac, lattice_vectors)
-    return math.sqrt(delta_cart[0] ** 2 + delta_cart[1] ** 2 + delta_cart[2] ** 2)
-
-
-def _pbc_distance_matrix(
-    left: Sequence[Sequence[float]] | np.ndarray,
-    right: Sequence[Sequence[float]] | np.ndarray,
-    lattice: Sequence[Sequence[float]] | np.ndarray,
-) -> np.ndarray:
-    """Return ``_pbc_distance(right[j], left[i], lattice)`` for every pair, by broadcasting.
-
-    The Cartesian components are bit-for-bit those of the scalar helpers; only the
-    final norm may differ from theirs in the last bit or so (see ``_near_minimum_indexes``).
-    """
-
-    left_array = np.asarray(left, dtype=float).reshape(-1, 3)
-    right_array = np.asarray(right, dtype=float).reshape(-1, 3)
-    vectors = np.asarray(lattice, dtype=float)
-    delta = right_array[None, :, :] - left_array[:, None, :]
-    delta = delta - np.round(delta)
-    # Same term order as ``lattice_frac_to_cart`` so values agree with ``_pbc_distance``.
-    cartesian = (
-        delta[..., 0, None] * vectors[0]
-        + delta[..., 1, None] * vectors[1]
-        + delta[..., 2, None] * vectors[2]
-    )
-    return np.linalg.norm(cartesian, axis=-1)
-
-
-# Broadcast norms can differ from a scalar helper's by a few ulp, so anything this close
-# (relatively) to a decision boundary is re-measured with the scalar helper itself.
-_NEAR_TIE_RTOL = 1e-9
-
-
-def _near_minimum_indexes(distances: np.ndarray) -> np.ndarray:
-    """Indexes of broadcast ``distances`` that could hold the scalar helper's minimum."""
-
-    minimum = float(distances.min())
-    return np.flatnonzero(distances <= minimum + minimum * _NEAR_TIE_RTOL)
-
-
-def _greedy_unique_indexes(within_tolerance: np.ndarray) -> list[int]:
-    """Indexes kept by a first-wins scan that drops anything within tolerance of a kept entry.
-
-    ``within_tolerance[i, j]`` says whether entry ``j`` lies within tolerance of entry ``i``.
-    """
-
-    covered = np.zeros(within_tolerance.shape[0], dtype=bool)
-    kept: list[int] = []
-    for index in range(within_tolerance.shape[0]):
-        if covered[index]:
-            continue
-        kept.append(index)
-        covered |= within_tolerance[index]
-    return kept
-
-
-def _deduplicate_fractional_positions(
-    positions: Sequence[Sequence[float]],
-    lattice_vectors: Sequence[Sequence[float]],
-    *,
-    tolerance_ang: float = 1e-5,
-) -> list[list[float]]:
-    """Wrap ``positions`` and keep each one not within ``tolerance_ang`` of an earlier kept one."""
-
-    tolerance = float(tolerance_ang)
-    wrapped = [_wrap_fractional(position) for position in positions]
-    if tolerance >= 0.0:
-        # Dropping exact repeats first cannot change the result: a repeat is always within
-        # tolerance of whatever kept entry covered (or was) its first occurrence.
-        wrapped = [list(position) for position in dict.fromkeys(tuple(position) for position in wrapped)]
-    if not wrapped:
-        return []
-    distances = _pbc_distance_matrix(wrapped, wrapped, lattice_vectors)
-    within = distances <= tolerance
-    for left, right in np.argwhere(np.abs(distances - tolerance) <= abs(tolerance) * _NEAR_TIE_RTOL):
-        # The scan compares each new position against the kept ones: ``_pbc_distance(new, kept)``.
-        within[left, right] = _pbc_distance(wrapped[right], wrapped[left], lattice_vectors) <= tolerance
-    return [wrapped[index] for index in _greedy_unique_indexes(within)]
-
-
-@lru_cache(maxsize=32)
-def _cached_symmetry_operations(
-    lattice: tuple[tuple[float, ...], ...],
-    positions: tuple[tuple[float, ...], ...],
-    numbers: tuple[int, ...],
-    symprec: float,
-) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]] | None:
-    """Run spglib once per host; the arrays are read-only because callers share them."""
-
-    symmetry = get_crystal_symmetry(
-        (
-            np.asarray(lattice, dtype=float),
-            np.asarray(positions, dtype=float),
-            np.asarray(numbers, dtype=int),
-        ),
-        symprec=symprec,
-    )
-    if symmetry is None:
-        return None
-    rotations = tuple(np.asarray(rotation, dtype=float) for rotation in symmetry.get("rotations", []))
-    translations = tuple(np.asarray(translation, dtype=float) for translation in symmetry.get("translations", []))
-    for array in (*rotations, *translations):
-        array.setflags(write=False)
-    return rotations, translations
+#: Deduplication tolerance (Angstrom) for the images of one candidate's symmetry orbit.
+_ORBIT_TOLERANCE_ANG = 1e-5
 
 
 def _symmetry_operations(
@@ -240,38 +83,12 @@ def _symmetry_operations(
     host_species: Sequence[str],
     host_positions_frac: Sequence[Sequence[float]],
     symprec: float = 1e-5,
-) -> tuple[list[np.ndarray], list[np.ndarray]] | None:
+) -> SymmetryOperations | None:
     lattice = _validate_lattice(lattice_vectors)
-    numbers = _species_to_numbers(host_species)
-    if numbers is None or len(numbers) != len(host_positions_frac):
+    cell = spglib_cell(lattice_vectors=lattice, species=host_species, fractional_positions=host_positions_frac)
+    if cell is None:
         return None
-    operations = _cached_symmetry_operations(
-        tuple(tuple(row) for row in lattice),
-        tuple(tuple(float(value) for value in position) for position in host_positions_frac),
-        tuple(numbers),
-        float(symprec),
-    )
-    if operations is None:
-        return None
-    rotations, translations = operations
-    return list(rotations), list(translations)
-
-
-def _equivalent_positions_from_operations(
-    position_frac: Sequence[float],
-    *,
-    lattice_vectors: Sequence[Sequence[float]],
-    operations: tuple[list[np.ndarray], list[np.ndarray]] | None,
-) -> list[list[float]]:
-    if operations is None:
-        return [_wrap_fractional(position_frac)]
-    rotations, translations = operations
-    position = np.asarray(position_frac, dtype=float)
-    equivalents = [
-        _wrap_fractional(np.dot(rotation, position) + translation)
-        for rotation, translation in zip(rotations, translations)
-    ]
-    return _deduplicate_fractional_positions(equivalents, lattice_vectors)
+    return symmetry_operations(cell, symprec=float(symprec))
 
 
 def symmetry_equivalent_positions(
@@ -295,7 +112,7 @@ def symmetry_equivalent_positions(
         host_positions_frac=host_positions_frac,
         symprec=symprec,
     )
-    return _equivalent_positions_from_operations(position_frac, lattice_vectors=lattice, operations=operations)
+    return symmetry_orbit(position_frac, operations, lattice_vectors=lattice, tolerance=_ORBIT_TOLERANCE_ANG)
 
 
 def closest_symmetry_equivalent_position(
@@ -310,7 +127,7 @@ def closest_symmetry_equivalent_position(
     """Return the symmetry-equivalent representative closest to an anchor."""
 
     lattice = _validate_lattice(lattice_vectors)
-    anchor = _wrap_fractional(anchor_frac)
+    anchor = wrap_fractional(anchor_frac)
     equivalents = symmetry_equivalent_positions(
         position_frac,
         lattice_vectors=lattice,
@@ -318,9 +135,9 @@ def closest_symmetry_equivalent_position(
         host_positions_frac=host_positions_frac,
         symprec=symprec,
     )
-    candidates = _near_minimum_indexes(_pbc_distance_matrix([anchor], equivalents, lattice)[0])
+    candidates = near_minimum_indexes(minimum_image_distance_matrix([anchor], equivalents, lattice)[0])
     # Ascending candidates keep ``min``'s first-wins tie-break over the full list.
-    best = min(candidates.tolist(), key=lambda index: _pbc_distance(equivalents[index], anchor, lattice))
+    best = min(candidates.tolist(), key=lambda index: minimum_image_distance(equivalents[index], anchor, lattice))
     return equivalents[best]
 
 
@@ -361,7 +178,7 @@ def estimate_free_volume(
     """
 
     lattice = _validate_lattice(lattice_vectors) if lattice_vectors else _identity_lattice()
-    volume = _cell_volume(lattice)
+    volume = cell_volume(lattice)
     if exclusion_radius <= 0.0 or not host_positions_frac:
         return volume
     if volume <= 0.0:
@@ -370,7 +187,7 @@ def estimate_free_volume(
     resolution = max(4, int(grid_resolution))
     axis = (np.arange(resolution, dtype=float) + 0.5) / float(resolution)
     grid = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(-1, 3)
-    hosts = np.asarray([_wrap_fractional(position) for position in host_positions_frac], dtype=float)
+    hosts = np.asarray([wrap_fractional(position) for position in host_positions_frac], dtype=float)
     lattice_array = np.asarray(lattice, dtype=float)
     delta_frac = grid[:, None, :] - hosts[None, :, :]
     delta_frac -= np.rint(delta_frac)
@@ -483,32 +300,32 @@ def _any_closer_than(
     lattice_vectors: Sequence[Sequence[float]],
     limit: float,
 ) -> bool:
-    """Whether ``_pbc_distance(point, reference) < limit`` for any pair, decided exactly as that helper would."""
+    """Whether ``minimum_image_distance(point, reference) < limit`` for any pair, decided exactly as that helper would."""
 
     if len(points) == 0 or len(references) == 0:
         return False
-    margin = abs(limit) * _NEAR_TIE_RTOL
+    margin = abs(limit) * NEAR_TIE_RTOL
     block = max(1, _DISTANCE_CHECK_BLOCK // len(references))
     for start in range(0, len(points), block):
         chunk = points[start : start + block]
-        distances = _pbc_distance_matrix(references, chunk, lattice_vectors)
+        distances = minimum_image_distance_matrix(references, chunk, lattice_vectors)
         if np.any(distances < limit - margin):
             return True
         for reference_index, point_index in np.argwhere(np.abs(distances - limit) <= margin):
             # ``tolist`` hands the scalar helper Python floats, as the generators always did.
             point = chunk[point_index].tolist()
-            if _pbc_distance(point, references[reference_index].tolist(), lattice_vectors) < limit:
+            if minimum_image_distance(point, references[reference_index].tolist(), lattice_vectors) < limit:
                 return True
     return False
 
 
-def _identity_leads(operations: tuple[list[np.ndarray], list[np.ndarray]] | None) -> bool:
+def _identity_leads(operations: tuple[Sequence[np.ndarray], Sequence[np.ndarray]] | None) -> bool:
     """Whether the first operation is the identity, so every orbit starts with the position itself."""
 
     if operations is None:
         return False
     rotations, translations = operations
-    if not rotations or not translations:
+    if len(rotations) == 0 or len(translations) == 0:
         return False
     return bool(np.array_equal(rotations[0], np.eye(3)) and not np.any(translations[0]))
 
@@ -517,7 +334,7 @@ def _valid_candidate_orbit(
     candidate_frac: list[float],
     *,
     lattice_vectors: Sequence[Sequence[float]],
-    operations: tuple[list[np.ndarray], list[np.ndarray]] | None,
+    operations: tuple[Sequence[np.ndarray], Sequence[np.ndarray]] | None,
     identity_leads: bool,
     host_positions: np.ndarray,
     accepted_positions: np.ndarray,
@@ -541,9 +358,7 @@ def _valid_candidate_orbit(
     if identity_leads and violates(np.asarray([candidate_frac], dtype=float)):
         return None
     orbit = (
-        _equivalent_positions_from_operations(candidate_frac, lattice_vectors=lattice_vectors, operations=operations)
-        if operations is not None
-        else [_wrap_fractional(candidate_frac)]
+        symmetry_orbit(candidate_frac, operations, lattice_vectors=lattice_vectors, tolerance=_ORBIT_TOLERANCE_ANG)
     )
     if violates(np.asarray(orbit, dtype=float).reshape(-1, 3)):
         return None
@@ -559,23 +374,11 @@ def _host_position_array(host_positions_frac: Sequence[Sequence[float]]) -> np.n
     return hosts
 
 
-def _norm(vector: Sequence[float]) -> float:
-    return math.sqrt(sum(float(value) * float(value) for value in vector))
-
-
 def _normalized(vector: Sequence[float]) -> list[float] | None:
-    norm = _norm(vector)
+    norm = vector_length(vector)
     if norm <= 1e-12:
         return None
     return [float(value) / norm for value in vector]
-
-
-def _minimum_image_cartesian_delta(
-    a_frac: Sequence[float],
-    b_frac: Sequence[float],
-    lattice_vectors: Sequence[Sequence[float]],
-) -> list[float]:
-    return lattice_frac_to_cart(_minimum_image_delta(a_frac, b_frac), lattice_vectors)
 
 
 def _host_clearance(
@@ -585,7 +388,7 @@ def _host_clearance(
 ) -> float:
     if not host_positions_frac:
         return math.inf
-    return min(_pbc_distance(candidate_frac, host, lattice_vectors) for host in host_positions_frac)
+    return min(minimum_image_distance(candidate_frac, host, lattice_vectors) for host in host_positions_frac)
 
 
 def generate_random_sites(
@@ -652,7 +455,7 @@ def generate_random_sites(
         accepted_positions = np.concatenate([accepted_positions, np.asarray(candidate_orbit, dtype=float)])
         accepted_points.append(
             GeneratedPoint(
-                fractional=_wrap_fractional(candidate_frac),
+                fractional=wrap_fractional(candidate_frac),
                 cartesian=lattice_frac_to_cart(candidate_frac, lattice),
             )
         )
@@ -740,7 +543,7 @@ def generate_random_sites_by_distance(
         accepted_positions = np.concatenate([accepted_positions, np.asarray(candidate_orbit, dtype=float)])
         accepted_points.append(
             GeneratedPoint(
-                fractional=_wrap_fractional(candidate_frac),
+                fractional=wrap_fractional(candidate_frac),
                 cartesian=lattice_frac_to_cart(candidate_frac, lattice),
             )
         )
@@ -776,7 +579,7 @@ def _host_clearance_excluding_index(
     excluded_index: int,
 ) -> float:
     clearances = [
-        _pbc_distance(candidate_frac, host, lattice_vectors)
+        minimum_image_distance(candidate_frac, host, lattice_vectors)
         for index, host in enumerate(host_positions_frac)
         if index != excluded_index
     ]
@@ -844,8 +647,8 @@ def generate_attached_element_sites(
         for other_index, other_frac in enumerate(host_positions_frac):
             if other_index == target_index:
                 continue
-            delta = _minimum_image_cartesian_delta(other_frac, anchor_frac, lattice)
-            distance = _norm(delta)
+            delta = minimum_image_cartesian_delta(other_frac, anchor_frac, lattice)
+            distance = vector_length(delta)
             if 1e-8 < distance <= neighbor_cutoff:
                 direction = _normalized(delta)
                 if direction is not None:
@@ -874,7 +677,7 @@ def generate_attached_element_sites(
         per_atom: list[tuple[float, list[float]]] = []
         for direction in unique_dirs:
             candidate_cart = [anchor_cart[axis] + direction[axis] * bond_distance for axis in range(3)]
-            candidate_frac = _wrap_fractional(lattice_cart_to_frac(candidate_cart, lattice))
+            candidate_frac = wrap_fractional(lattice_cart_to_frac(candidate_cart, lattice))
             attempts += 1
             if _host_clearance(candidate_frac, host_positions_frac, lattice) < min_muon_atom - 1e-8:
                 continue
@@ -888,7 +691,7 @@ def generate_attached_element_sites(
         per_atom.sort(key=lambda item: item[0], reverse=True)
         selected_for_atom: list[list[float]] = []
         for _clearance, candidate_frac in per_atom:
-            if any(_pbc_distance(candidate_frac, accepted, lattice) < 1e-5 for accepted in selected_for_atom):
+            if any(minimum_image_distance(candidate_frac, accepted, lattice) < 1e-5 for accepted in selected_for_atom):
                 continue
             selected_for_atom.append(candidate_frac)
             accepted_points.append(

@@ -10,11 +10,14 @@ import numpy as np
 
 from mufinder.domain.models import Structure
 from mufinder.science.atom_matching import match_structures
+from mufinder.science.lattice import (
+    minimum_image_cartesian_delta,
+    minimum_image_distance,
+    minimum_image_distance_matrix,
+    near_minimum_indexes,
+)
 from mufinder.science.site_generation import (
-    _near_minimum_indexes,
-    _pbc_distance_matrix,
     closest_symmetry_equivalent_position,
-    lattice_frac_to_cart,
     symmetry_equivalent_positions,
 )
 from mufinder.science.supercell_matching import normalize_for_comparison
@@ -111,33 +114,6 @@ def _wrap_fractional(position: Sequence[float]) -> tuple[float, float, float]:
     if len(position) != 3:
         raise RelaxationAnalysisError("Fractional positions must contain exactly three components.")
     return (float(position[0]) % 1.0, float(position[1]) % 1.0, float(position[2]) % 1.0)
-
-
-def _fractional_delta_minimum_image(
-    left: Sequence[float],
-    right: Sequence[float],
-) -> np.ndarray:
-    delta = np.asarray(right, dtype=float) - np.asarray(left, dtype=float)
-    return delta - np.round(delta)
-
-
-def _pbc_distance(
-    left: Sequence[float],
-    right: Sequence[float],
-    lattice_vectors: Sequence[Sequence[float]],
-) -> float:
-    delta = _fractional_delta_minimum_image(left, right)
-    cart = np.asarray(lattice_frac_to_cart(delta.tolist(), lattice_vectors), dtype=float)
-    return float(np.linalg.norm(cart))
-
-
-def _pbc_delta_cartesian(
-    left: Sequence[float],
-    right: Sequence[float],
-    lattice_vectors: Sequence[Sequence[float]],
-) -> np.ndarray:
-    delta = _fractional_delta_minimum_image(left, right)
-    return np.asarray(lattice_frac_to_cart(delta.tolist(), lattice_vectors), dtype=float)
 
 
 def _muon_position_in_normalized_frame(
@@ -255,16 +231,16 @@ def symmetry_distance_matrix(
     for right_index in range(1, count):
         equivalents = equivalents_by_index[right_index]
         # Every earlier site against every equivalent of this one, in one broadcast.
-        screened = _pbc_distance_matrix(positions[:right_index], equivalents, lattice) if equivalents else None
+        screened = minimum_image_distance_matrix(positions[:right_index], equivalents, lattice) if equivalents else None
         for left_index in range(right_index):
             left = positions[left_index]
             if screened is None:
-                distance = _pbc_distance(left, positions[right_index], lattice)
+                distance = minimum_image_distance(left, positions[right_index], lattice)
             else:
-                # Re-measure the near-minimal equivalents with ``_pbc_distance`` so the value is bit-identical.
+                # Re-measure the near-minimal equivalents with the scalar helper so the value is bit-identical.
                 distance = min(
-                    _pbc_distance(left, equivalents[index], lattice)
-                    for index in _near_minimum_indexes(screened[left_index]).tolist()
+                    minimum_image_distance(left, equivalents[index], lattice)
+                    for index in near_minimum_indexes(screened[left_index]).tolist()
                 )
             matrix[left_index, right_index] = distance
             matrix[right_index, left_index] = distance
@@ -475,7 +451,7 @@ def anchored_sites(
             symprec=symprec,
         )
         original = site.folded_fractional_position
-        is_shifted = _pbc_distance(original, shifted, host_structure.lattice_vectors) > float(tolerance)
+        is_shifted = minimum_image_distance(original, shifted, host_structure.lattice_vectors) > float(tolerance)
         anchored.append(
             AnchoredRelaxedSite(
                 site_index=index,
@@ -631,8 +607,8 @@ def analyze_displacements(
     for pair in matching.pairs:
         comparison_frac = normalized.experimental.fractional_positions[pair.experimental_index]
         relaxed_frac = normalized.dft.fractional_positions[pair.dft_index]
-        displacement_vector = _pbc_delta_cartesian(comparison_frac, relaxed_frac, lattice)
-        muon_to_comparison = _pbc_delta_cartesian(muon, comparison_frac, lattice)
+        displacement_vector = np.asarray(minimum_image_cartesian_delta(relaxed_frac, comparison_frac, lattice), dtype=float)
+        muon_to_comparison = np.asarray(minimum_image_cartesian_delta(comparison_frac, muon, lattice), dtype=float)
         distance = float(np.linalg.norm(muon_to_comparison))
         if distance <= 1e-12:
             radial = 0.0

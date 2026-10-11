@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from math import cos, pi
 
-from ase import Atoms
 from ase.build import make_supercell
 import numpy as np
 
 from mufinder.domain.models import Structure
+from mufinder.science.ase_bridge import structure_to_ase_atoms
 
 
 def normalize_supercell_matrix(matrix: Sequence[Sequence[int]]) -> np.ndarray:
@@ -42,7 +42,7 @@ def build_supercell_structure(
     """Expand a structure and propagate per-atom spins across the supercell."""
 
     matrix = normalize_supercell_matrix(supercell_matrix)
-    base_atoms = _to_atoms(structure)
+    base_atoms = structure_to_ase_atoms(structure)
     expanded_atoms = make_supercell(base_atoms, matrix)
 
     expanded_frac = np.asarray(expanded_atoms.get_scaled_positions(wrap=True), dtype=float)
@@ -83,19 +83,6 @@ def build_supercell_structure(
         properties=properties,
     )
     return expanded_structure, expanded_spins
-
-
-def _to_atoms(structure: Structure) -> Atoms:
-    lattice = np.asarray(structure.lattice_vectors, dtype=float)
-    if lattice.shape != (3, 3):
-        raise ValueError("Structure lattice vectors must form a 3x3 matrix.")
-
-    return Atoms(
-        symbols=structure.species,
-        scaled_positions=structure.fractional_positions,
-        cell=lattice,
-        pbc=[True, True, True],
-    )
 
 
 def _normalized_spins(spins: Sequence[float] | None, count: int) -> np.ndarray:

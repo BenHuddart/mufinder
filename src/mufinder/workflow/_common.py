@@ -28,19 +28,6 @@ def format_value_token(value: float) -> str:
     return token
 
 
-def has_nonzero_spins(spins: Sequence[float] | None) -> bool:
-    """Return whether ``spins`` contains any nonzero moment.
-
-    Returns ``False`` for ``None`` (no spins supplied) or an all-zero sequence.
-    A moment counts as nonzero when its magnitude exceeds ``1e-12``, matching the
-    tolerance used at every call site this consolidates.
-    """
-
-    if spins is None:
-        return False
-    return any(abs(float(value)) > 1e-12 for value in spins)
-
-
 def require_jobs(items: Sequence[object], what: str) -> None:
     """Raise ``ValueError`` if ``items`` is empty.
 
