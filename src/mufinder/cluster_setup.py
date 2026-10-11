@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Iterable
 
 from PySide6.QtCore import QSettings
 
+# ``ClusterConfig`` lives in ``mufinder.domain.cluster``; this module re-exports
+# it as a public import alias (see docs/compatibility_policy.rst).
+from mufinder.domain.cluster import (
+    DEFAULT_CASTEP_EXECUTABLE as _DEFAULT_CASTEP_EXECUTABLE,
+    DEFAULT_KEYWORD_EXECUTION_MODE as _DEFAULT_KEYWORD_EXECUTION_MODE,
+    ClusterConfig,
+)
+
+__all__ = ["ClusterConfig", "load_cluster_config", "load_cluster_configs", "save_cluster_configs"]
+
 
 _CLUSTER_NAMES_KEY = "clusters/names"
 _SCARF_TEMPLATE_TOKEN = "builtin:scarf-slurm"
-_DEFAULT_CASTEP_EXECUTABLE = "castep.mpi"
 _REDWOOD_PARTITION = "redwood"
 _REDWOOD_ADDQUEUE = "/bin/addqueue"
 _REDWOOD_SQUEUE = "/usr/local/shared/slurm/bin//squeue"
@@ -18,14 +26,10 @@ _REDWOOD_SCANCEL = "/usr/local/shared/slurm/bin//scancel"
 _REDWOOD_PRESET_NAME = "Redwood"
 _REDWOOD_HOSTNAME = "glamdring.physics.ox.ac.uk"
 _REDWOOD_JUMP_HOSTNAME = "bastion.physics.ox.ac.uk"
-# Keyword generation runs as a scheduler job unless the user opts for the login
-# node: many sites forbid or discourage running CASTEP there, and a scheduler job
-# can reuse the cluster's own job script.
-_DEFAULT_KEYWORD_EXECUTION_MODE = "scheduler"
 _SCARF_KEYWORD_SHELL_INIT = "module load CASTEP"
 
 
-def _default_clusters() -> list["ClusterConfig"]:
+def _default_clusters() -> list[ClusterConfig]:
     return [
         ClusterConfig(
             name="SCARF",
@@ -77,39 +81,6 @@ def _default_clusters() -> list["ClusterConfig"]:
             keyword_shell_init="",
         )
     ]
-
-
-@dataclass(frozen=True, slots=True)
-class ClusterConfig:
-    """Persisted configuration for one remote HPC cluster."""
-
-    name: str
-    hostname: str
-    port: int = 22
-    username: str = ""
-    auth_method: str = "key"
-    key_path: str = ""
-    jump_host_enabled: bool = False
-    jump_hostname: str = ""
-    jump_port: int = 22
-    jump_username: str = ""
-    jump_auth_method: str = "key"
-    jump_key_path: str = ""
-    use_macos_keychain_passwords: bool = False
-    default_working_directory: str = ""
-    queue_system: str = "slurm"
-    cores_per_node: int = 1
-    default_walltime: str = "01:00:00"
-    template_script_path: str = ""
-    castep_executable: str = _DEFAULT_CASTEP_EXECUTABLE
-    default_queue_name: str = ""
-    default_memory_gb: float | None = None
-    default_mem_per_cpu_gb: float | None = None
-    submit_command_path: str = ""
-    queue_check_command_path: str = ""
-    cancel_command_path: str = ""
-    keyword_execution_mode: str = _DEFAULT_KEYWORD_EXECUTION_MODE
-    keyword_shell_init: str = ""
 
 
 def _builtin_cluster_by_name(name: str) -> ClusterConfig | None:
@@ -185,7 +156,7 @@ def _normalise_auth_method(value: str, *, default: str = "key") -> str:
     return default if default in {"key", "password"} else "key"
 
 
-def _should_inherit_builtin_jump_defaults(builtin: "ClusterConfig | None", hostname: str) -> bool:
+def _should_inherit_builtin_jump_defaults(builtin: ClusterConfig | None, hostname: str) -> bool:
     if builtin is None or not builtin.jump_host_enabled:
         return False
     return hostname.strip().casefold() == builtin.hostname.strip().casefold()

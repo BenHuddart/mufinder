@@ -64,7 +64,8 @@ from mufinder.branding import (
     app_icon,
     logo_path,
 )
-from mufinder.cluster_setup import ClusterConfig, load_cluster_config, load_cluster_configs
+from mufinder.cluster_setup import load_cluster_config, load_cluster_configs
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.castep_io.schema import KeywordSpec
 from mufinder.domain.constants import IMPORTED_JOB_TAG
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage

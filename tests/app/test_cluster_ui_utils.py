@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import mufinder.app.cluster_ui_utils as ui_module
-from mufinder.cluster_setup import ClusterConfig
+from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.keychain import KeychainCredentialError, KeychainCredentialIssue
 from mufinder.services.ssh_client import (
     SSHCredentials,
