@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from uuid import UUID
 
 from PySide6.QtCore import Qt
@@ -20,22 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.workflow_table_utils import create_workflow_table
-
-
-@dataclass(frozen=True, slots=True)
-class CompletedPristineJob:
-    """Display row describing one completed pristine-relaxation job."""
-
-    job_id: UUID
-    job_label: str
-    structure_id: UUID
-    supercell_label: str
-    status: str
-    total_energy: float | None
-    lattice_a: float | None
-    lattice_b: float | None
-    lattice_c: float | None
-    parameter_values: dict[str, object]
+from mufinder.services.source_candidates import CompletedPristineJob
 
 
 class ComparisonJobDialog(QDialog):

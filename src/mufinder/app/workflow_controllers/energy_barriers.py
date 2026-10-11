@@ -113,8 +113,10 @@ class EnergyBarriersDeps:
     source-decoding helpers (``uuid_from_source`` / ``float_from_source`` /
     ``fractional_triplet_from_source`` / ``fractional_position_block_from_structure``)
     and ``energy_barrier_neb_row_configuration_with_source_defaults`` are shared
-    with the same non-migrating surfaces. ``input_template_from_keyword_values``
-    wraps the shared module-level keyword→template helper, and
+    with the same non-migrating surfaces; the candidate and source-decoding
+    callables are bound to :mod:`mufinder.services.source_candidates`.
+    ``input_template_from_keyword_values`` is bound to
+    :func:`~mufinder.app.adapter_common.build_workflow_settings_template`, and
     ``neb_barrier_summaries`` / ``muon_charge_state_label`` wrap module-level
     formatting helpers (the controller must not import ``main_window``). The
     controller reaches them only through these required callables. Workflow-specific

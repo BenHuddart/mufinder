@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
-from mufinder.castep_io.types import AtomicPosition, BlockSection, KeywordAssignment, PositionBlock
+from mufinder.castep_io.types import AtomicPosition, BlockSection, KeywordAssignment, PositionBlock, ValueWithUnit
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.magnetic_properties import has_nonzero_spins
 
@@ -20,6 +20,100 @@ TRANSITION_STATE_SEARCH_CALC_TYPE = "castep_transition_state_search"
 TRANSITION_STATE_SEARCH_SET_CALC_TYPE = "castep_transition_state_search_set"
 NUDGED_ELASTIC_BAND_CALC_TYPE = "castep_nudged_elastic_band"
 NUDGED_ELASTIC_BAND_SET_CALC_TYPE = "castep_nudged_elastic_band_set"
+
+
+def merge_serialized_sources(
+    existing_sources: object,
+    new_sources: list[dict[str, object]],
+    *,
+    key_field: str,
+) -> list[dict[str, object]]:
+    """Merge serialized path sources by ``key_field``, keeping first-seen order.
+
+    ``existing_sources`` may be any stored payload; only a list of dicts is read
+    and entries without a key are dropped. A source in ``new_sources`` replaces an
+    existing source with the same key in place, and new keys are appended.
+    """
+
+    merged_by_key: dict[str, dict[str, object]] = {}
+    order: list[str] = []
+    for source in tuple(existing_sources) if isinstance(existing_sources, list) else ():
+        if not isinstance(source, dict):
+            continue
+        key = str(source.get(key_field, "")).strip()
+        if not key:
+            continue
+        if key not in merged_by_key:
+            order.append(key)
+        merged_by_key[key] = dict(source)
+    for source in new_sources:
+        key = str(source.get(key_field, "")).strip()
+        if not key:
+            continue
+        if key not in merged_by_key:
+            order.append(key)
+        merged_by_key[key] = dict(source)
+    return [merged_by_key[key] for key in order]
+
+
+def replace_serialized_sources_for_pair(
+    existing_sources: object,
+    *,
+    reactant_site_id: str,
+    product_site_id: str,
+    new_sources: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Replace every stored path source of one reactant/product pair.
+
+    Sources of other endpoint pairs are kept in order; ``new_sources`` are then
+    merged in by ``key``.
+    """
+
+    filtered: list[dict[str, object]] = []
+    for source in tuple(existing_sources) if isinstance(existing_sources, list) else ():
+        if not isinstance(source, dict):
+            continue
+        if (
+            str(source.get("reactant_site_id", "")).strip() == reactant_site_id
+            and str(source.get("product_site_id", "")).strip() == product_site_id
+        ):
+            continue
+        filtered.append(dict(source))
+    return merge_serialized_sources(filtered, new_sources, key_field="key")
+
+
+_LEGACY_ENERGY_BARRIER_OBSOLETE_PARAMS: frozenset[str] = frozenset({"tssearch_lst_max_iter"})
+_LEGACY_ENERGY_BARRIER_ZERO_DEFAULT_PARAMS: frozenset[str] = frozenset({
+    "fine_cut_off_energy",
+    "tssearch_force_tol",
+    "tssearch_disp_tol",
+    "tssearch_energy_tol",
+})
+
+
+def strip_legacy_energy_barrier_params(params: dict[str, object]) -> dict[str, object]:
+    """Drop stored Energy Barriers params that CASTEP must not receive.
+
+    ``tssearch_lst_max_iter`` is obsolete. ``tssearch_force_tol``,
+    ``tssearch_disp_tol`` and ``tssearch_energy_tol`` default to their ``GEOM_*``
+    counterparts in CASTEP, and ``fine_cut_off_energy`` has its own CASTEP
+    default, so a stored value of zero or less for any of them is a placeholder
+    and is omitted. Every other entry is returned unchanged.
+    """
+
+    result: dict[str, object] = {}
+    for name, value in params.items():
+        if name in _LEGACY_ENERGY_BARRIER_OBSOLETE_PARAMS:
+            continue
+        if name in _LEGACY_ENERGY_BARRIER_ZERO_DEFAULT_PARAMS:
+            numeric = value.value if isinstance(value, ValueWithUnit) else value
+            try:
+                if float(numeric) <= 0:
+                    continue
+            except (TypeError, ValueError):
+                pass
+        result[name] = value
+    return result
 
 
 @dataclass(frozen=True, slots=True)
