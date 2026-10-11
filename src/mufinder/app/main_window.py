@@ -125,7 +125,6 @@ from mufinder.services.legacy_import_removal import (
     remove_imported_relaxations,
 )
 from mufinder.app.relaxation_adapter import (
-    MUON_RELAXATION_CALC_TYPES,
     MUONIUM_CHARGE_STATE,
     POSITIVE_MUON_CHARGE_STATE,
     canonical_charge_state,
@@ -263,8 +262,14 @@ from mufinder.castep_io.types import AtomicPosition, BlockSection, PositionBlock
 from mufinder.persistence.codec import to_jsonable
 from mufinder.app.cluster_controller import ClusterController
 from mufinder.services.cluster_runner import CheckpointProbeResult
+from mufinder.services.cluster_submission_planner import (
+    can_reuse_cluster_connection,
+    plan_cluster_submission,
+    split_stranded_quantum_jobs,
+    stranded_quantum_jobs_message,
+    unsafe_job_labels_message,
+)
 from mufinder.services.job_execution_controller import (
-    ClusterJobSubmission,
     JobExecutionController,
     PreparedClusterSubmission,
 )
@@ -350,7 +355,11 @@ from mufinder.workflow.energy_barriers import (
     replace_serialized_sources_for_pair,
     strip_legacy_energy_barrier_params,
 )
-from mufinder.workflow.naming import job_name
+from mufinder.workflow.naming import (
+    cluster_workflow_directory_fragment,
+    default_cluster_job_name_prefix,
+    job_name,
+)
 from mufinder.workflow.quantum import (
     QUANTUM_SINGLEPOINT_CALC_TYPE,
     QUANTUM_PHONON_CALC_TYPE,
@@ -5844,10 +5853,12 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Submit ``jobs`` to a cluster chosen in the cluster submission dialog.
 
-        Jobs in ``fresh_start_job_ids`` start again: on their own cluster, their
-        remote directory is deleted and their inputs uploaded afresh, without the
-        overwrite prompt (the user already chose to discard the previous run),
-        and their local output is cleared as Reset would clear it.
+        The decisions live in ``services.cluster_submission_planner``; this
+        method shows the dialog, connects, asks the overwrite prompts the plan
+        lists and reports the outcome. Jobs in ``fresh_start_job_ids`` start
+        again: on their own cluster, their remote directory is deleted and
+        their inputs uploaded afresh, without the overwrite prompt, and their
+        local output is cleared as Reset would clear it.
         """
 
         if self._document is None or not jobs:
@@ -5856,11 +5867,7 @@ class MainWindow(QMainWindow):
         allowed_statuses = eligible_statuses or {JobStatus.DEFINED}
         eligible_jobs = [job for job in self._dedupe_jobs(jobs) if job.status in allowed_statuses]
         if not eligible_jobs:
-            QMessageBox.information(
-                self,
-                "No eligible jobs",
-                no_eligible_message,
-            )
+            QMessageBox.information(self, "No eligible jobs", no_eligible_message)
             return
 
         cluster_configs = load_cluster_configs(self._settings)
@@ -5874,17 +5881,13 @@ class MainWindow(QMainWindow):
         if not self._keyword_catalog_guard.confirm_submission():
             return
 
-        workflow_type = self._cluster_workflow_directory_fragment(eligible_jobs)
+        workflow_type = cluster_workflow_directory_fragment(eligible_jobs)
         last_submission = self._load_last_cluster_submission_config(workflow_type=workflow_type)
-        initial_cluster_name = (
-            default_cluster_name
-            or (last_submission.cluster_name if last_submission is not None else None)
-        )
-
         dialog = ClusterSubmissionDialog(
             job_labels=[job.label for job in eligible_jobs],
             cluster_configs=cluster_configs,
-            default_cluster_name=initial_cluster_name,
+            default_cluster_name=default_cluster_name
+            or (last_submission.cluster_name if last_submission is not None else None),
             initial_config=last_submission,
             project_name=self._document.project.name,
             workflow_type=workflow_type,
@@ -5910,29 +5913,19 @@ class MainWindow(QMainWindow):
         if runtime_username and runtime_username != selected_cluster.username:
             selected_cluster = replace(selected_cluster, username=runtime_username)
 
-        # A quantum phonon job must continue in the remote directory holding its
-        # stage-1 checkpoint. Submitted anywhere else it would start cold in a
-        # fresh directory and CASTEP would fail for want of the .check file, so
-        # refuse it here, after the dialog, where a different cluster may have
-        # been picked than the one the Quantum Corrections page preselected.
-        stranded = [
-            (job, stage_one)
-            for job in eligible_jobs
-            if (stage_one := self._quantum_stage_one_target(job)) is not None
-            and not self._quantum_continuation_remote_target(job, cluster_name=selected_cluster.name)
-        ]
+        # Checked after the dialog, where a different cluster may have been picked
+        # than the one the Quantum Corrections page preselected.
+        eligible_jobs, stranded = split_stranded_quantum_jobs(
+            eligible_jobs,
+            cluster_name=selected_cluster.name,
+            stage_one_target=self._quantum_stage_one_target,
+            continuation_target=self._quantum_continuation_remote_target,
+        )
         if stranded:
-            stranded_ids = {job.id for job, _stage_one in stranded}
-            eligible_jobs = [job for job in eligible_jobs if job.id not in stranded_ids]
             QMessageBox.information(
                 self,
                 "Phonon stage must run where stage 1 ran",
-                f"These phonon jobs were not submitted to {selected_cluster.name} because "
-                "their stage-1 checkpoint (.check) is not in a directory there:\n\n"
-                + "\n".join(
-                    f"  - {job.label} (stage 1 ran {'on this computer' if stage_one.casefold() == 'local' else 'on ' + stage_one})"
-                    for job, stage_one in stranded
-                ),
+                stranded_quantum_jobs_message(selected_cluster.name, stranded),
             )
             if not eligible_jobs:
                 return
@@ -5943,276 +5936,38 @@ class MainWindow(QMainWindow):
             show_detailed_warning(
                 self,
                 "Unsafe job labels",
-                (
-                    "Cluster job labels may contain only letters, numbers, dot, underscore, and hyphen.\n\n"
-                    "Rename the following jobs before cluster submission:\n"
-                    + "\n".join(f"- {label}" for label in invalid_labels)
-                ),
+                unsafe_job_labels_message(invalid_labels),
                 informative_text="Remote paths and scheduler commands use these labels directly.",
             )
             return
 
-        connected_name = (self._cluster_runner.connected_cluster_name or "").strip().casefold()
-        connected_user = (self._cluster_runner.connected_username or "").strip()
-        reusing_connection = (
-            self._cluster_runner.is_connected
-            and connected_name == selected_cluster.name.strip().casefold()
-            and (not connected_user or connected_user == selected_cluster.username.strip())
+        if not self._connect_for_cluster_submission(selected_cluster, dialog_credentials):
+            return
+
+        # The existence check runs on the worker thread; every prompt is answered
+        # here, before the batch starts, so none interrupts it.
+        plan = plan_cluster_submission(
+            eligible_jobs,
+            cluster=selected_cluster,
+            submission=submission,
+            seed_name_by_job=seed_name_by_job,
+            remote_job_directory=self._cluster_runner.remote_job_directory,
+            quantum_continuation_target=self._quantum_continuation_remote_target,
+            output_directory=self._job_output_directory,
+            retrieval_flags=self._retrieval_flags_for_job,
+            check_remote_directories=self._await_remote_dir_check,
+            ask_overwrite=self._prompt_remote_directory_overwrite,
+            confirm_bulk_delete=self._confirm_bulk_remote_delete,
+            clear_fresh_outputs=self._clear_outputs_for_fresh_start,
+            fresh_start_job_ids=fresh_start_job_ids,
+            reuse_existing_remote_files=reuse_existing_remote_files,
         )
+        failed_submit = list(plan.failed)
+        submit_items, prepared_by_job = plan.prepare_batch(self._job_execution.prepare_cluster_submission)
 
-        credentials = SSHCredentials() if reusing_connection else dialog_credentials
-        if credentials is None:
-            QMessageBox.warning(self, "Missing credentials", "Credentials are required for cluster submission.")
-            return
-
-        try:
-            self._connect_to_cluster_with_trust(selected_cluster, credentials=credentials)
-        except Exception as exc:  # noqa: BLE001
-            show_detailed_warning(
-                self,
-                "Cluster connection failed",
-                format_cluster_connection_error(selected_cluster, exc),
-                informative_text="Open Details for the full connection error and recovery guidance.",
-            )
-            return
-
-        if not reusing_connection:
-            QMessageBox.information(
-                self,
-                "Cluster connection successful",
-                f"Connected to {selected_cluster.name} as {selected_cluster.username}.",
-            )
-
-        missing_paths: list[str] = []
-        submitted = 0
         submitted_jobs: list[Job] = []
-        failed_submit: list[str] = []
-        skipped_submit: list[str] = []
-
-        # 1. Compute remote targets for every job (no SSH; GUI thread).
-        remote_target_by_job: dict[UUID, str] = {}
-        reuse_existing_files_by_job: dict[UUID, bool] = {}
-        allow_existing_remote_directory_by_job: dict[UUID, bool] = {}
-        targets_to_check: list[tuple[UUID, str]] = []
-        fresh_delete_job_ids: set[UUID] = set()
-        previous_remote_job_id_by_job: dict[UUID, str] = {}
-        for job in eligible_jobs:
-            fresh_target = (
-                (job.remote_directory or "").strip()
-                if job.id in fresh_start_job_ids
-                and (job.execution_target or "").strip().casefold()
-                == selected_cluster.name.strip().casefold()
-                else ""
-            )
-            if fresh_target:
-                # Start again in the job's own directory: delete it and upload the
-                # inputs afresh, so no checkpoint or output of the previous run
-                # survives for CONTINUATION : DEFAULT to pick up.
-                remote_target_by_job[job.id] = fresh_target
-                reuse_existing_files_by_job[job.id] = False
-                allow_existing_remote_directory_by_job[job.id] = False
-                fresh_delete_job_ids.add(job.id)
-                # A stopped job may still be running (the watchdog stops jobs
-                # this session lost track of without cancelling them), so the
-                # worker deletes the directory only once the scheduler confirms
-                # the previous run has finished.
-                previous_remote_job_id_by_job[job.id] = (job.remote_job_id or "").strip()
-                continue
-            allow_existing_remote_directory = False
-            # A DEFINED job that still carries a remote directory is a continuation.
-            # Only ProjectService.prepare_job_continuation produces that combination
-            # (see its docstring for the writer audit), and it preserves the directory
-            # precisely so CASTEP resumes from the ``.check`` file already there. Reuse
-            # the directory verbatim and upload fresh inputs into it.
-            #
-            # Apart from the start-again branch above, whose jobs are never DEFINED,
-            # this branch is evaluated first and cannot steal either path below.
-            # ``reuse_existing_remote_files`` is passed only by the dashboard resubmit
-            # action, whose eligible statuses are {FAILED, STOPPED, CANCELLED}, so DEFINED jobs
-            # never reach the loop on that call. The quantum branch needs a quantum
-            # phonon calc type with a COMPLETED singlepoint source; a continued phonon
-            # job would satisfy both, but its own preserved remote directory is the
-            # source directory that branch would have returned, so the two agree.
-            #
-            # The cluster in this call is only *preselected* to the job's original
-            # ``execution_target`` (see the Continue-relaxation caller): the
-            # submission dialog still lets the user pick a different one. A
-            # continuation must never carry ``job.remote_directory`` onto a
-            # DIFFERENT cluster — that path does not exist there, so
-            # ``allow_existing_remote_directory=True`` would submit a cold run into
-            # a foreign directory string, silently rewrite ``execution_target``, and
-            # orphan the checkpoint the continuation was meant to resume. Guarding on
-            # a cluster-name match makes a same-cluster continuation behave exactly
-            # as before and makes an off-cluster continuation fall through to the
-            # normal path (recomputed target, normal existence check).
-            continued_remote_target = (
-                (job.remote_directory or "").strip()
-                if job.status == JobStatus.DEFINED
-                and (job.execution_target or "").strip().casefold()
-                == selected_cluster.name.strip().casefold()
-                else ""
-            )
-            if continued_remote_target:
-                remote_target = continued_remote_target
-                allow_existing_remote_directory = True
-            else:
-                remote_target = (
-                    (job.remote_directory or "").strip()
-                    if reuse_existing_remote_files and job.id not in fresh_start_job_ids
-                    else ""
-                )
-                if not remote_target:
-                    continuation_target = self._quantum_continuation_remote_target(
-                        job, cluster_name=selected_cluster.name
-                    )
-                    if continuation_target:
-                        remote_target = continuation_target
-                        allow_existing_remote_directory = True
-            reuse_existing_files_for_job = bool(remote_target)
-            if allow_existing_remote_directory:
-                reuse_existing_files_for_job = False
-            if not remote_target:
-                remote_target = self._cluster_runner.remote_job_directory(
-                    working_directory=submission.working_directory,
-                    seed_name=seed_name_by_job.get(job.id, job.label),
-                )
-            remote_target_by_job[job.id] = remote_target
-            reuse_existing_files_by_job[job.id] = reuse_existing_files_for_job
-            allow_existing_remote_directory_by_job[job.id] = allow_existing_remote_directory
-            if not reuse_existing_files_for_job and not allow_existing_remote_directory:
-                targets_to_check.append((job.id, remote_target))
-
-        # 2. Check existing remote directories on the worker thread.
-        existing_remote_targets: list[str] = []
-        if targets_to_check:
-            check_result = self._await_remote_dir_check(targets_to_check)
-            existing_remote_targets = list(check_result.get("existing", []))
-            errors = check_result.get("errors", {})
-            for job in eligible_jobs:
-                error = errors.get(job.id)
-                if error:
-                    failed_submit.append(f"- {job.label}: Failed to check remote directory ({error})")
-
-        # 3. Resolve overwrite decisions up front (GUI thread), so no modal prompt
-        #    interrupts the submission loop running on the worker thread.
-        decision_by_job: dict[UUID, str] = {}
-        overwrite_mode: str | None = None
-        for job in eligible_jobs:
-            if job.id in fresh_delete_job_ids:
-                decision_by_job[job.id] = "delete"
-                continue
-            # Directories we deliberately submit into are never candidates for the
-            # overwrite prompt, whatever another job in the batch resolved to: this
-            # loop matches by target string, so without the guard a second job whose
-            # computed target collides with a preserved directory could mark it for
-            # deletion.
-            if allow_existing_remote_directory_by_job.get(job.id, False):
-                continue
-            remote_target = remote_target_by_job.get(job.id)
-            if not (remote_target and remote_target in existing_remote_targets):
-                continue
-            if overwrite_mode is None:
-                choice = self._prompt_remote_directory_overwrite(job.label, remote_target)
-                if choice == "yes_to_all":
-                    confirmed = self._confirm_bulk_remote_delete(existing_remote_targets)
-                    overwrite_mode = "yes_to_all" if confirmed else "no_to_all"
-                    choice = overwrite_mode
-                elif choice == "no_to_all":
-                    overwrite_mode = "no_to_all"
-            else:
-                choice = overwrite_mode
-            if choice in {"yes", "yes_to_all"}:
-                decision_by_job[job.id] = "delete"
-            else:
-                decision_by_job[job.id] = "skip"
-                skipped_submit.append(
-                    f"- {job.label}: Submission skipped because remote directory already exists ({remote_target})"
-                )
-
-        # 4. Prepare document state (GUI thread) and build the worker batch.
-        # Directories another job in the batch is submitting into as-is are never
-        # deleted, however that job's own overwrite prompt was answered: the
-        # decision belongs to the colliding job, but the deletion would land on a
-        # preserved continuation directory holding the run's ``.check`` file.
-        protected_remote_targets = {
-            remote_target_by_job[job_id]
-            for job_id, allowed in allow_existing_remote_directory_by_job.items()
-            if allowed and remote_target_by_job.get(job_id)
-        }
-        fresh_jobs = [
-            job
-            for job in eligible_jobs
-            if job.id in fresh_start_job_ids and decision_by_job.get(job.id) != "skip"
-        ]
-        not_cleaned_job_ids: set[UUID] = set()
-        if fresh_jobs:
-            cleaned, cleanup_errors = self._clear_outputs_for_fresh_start(fresh_jobs)
-            failed_submit.extend(cleanup_errors)
-            not_cleaned_job_ids = {job.id for job in fresh_jobs} - {job.id for job in cleaned}
-        prepared_by_job: dict[UUID, PreparedClusterSubmission] = {}
-        submit_items: list[dict[str, object]] = []
-        for job in eligible_jobs:
-            if decision_by_job.get(job.id) == "skip" or job.id in not_cleaned_job_ids:
-                continue
-            if job.id in fresh_delete_job_ids and remote_target_by_job[job.id] in protected_remote_targets:
-                # Its directory cannot be deleted, so submitting would resume
-                # from the checkpoint the user chose to discard.
-                failed_submit.append(
-                    f"- {job.label}: another job in this submission is continuing in its "
-                    f"directory ({remote_target_by_job[job.id]}), so it was not started again"
-                )
-                continue
-            output_dir = self._job_output_directory(job)
-            if output_dir is None:
-                missing_paths.append(job.label)
-                continue
-            seed_name = seed_name_by_job.get(job.id, self._job_seed_name(job))
-            remote_target = remote_target_by_job.get(job.id)
-            prepared = self._job_execution.prepare_cluster_submission(
-                ClusterJobSubmission(
-                    job=job,
-                    output_dir=output_dir,
-                    seed_name=seed_name,
-                    remote_target=remote_target,
-                    execution_target=selected_cluster.name,
-                    num_processes=submission.num_processes,
-                    walltime=submission.walltime,
-                    working_directory=submission.working_directory,
-                    template_script_path=selected_cluster.template_script_path,
-                    cores_per_node=selected_cluster.cores_per_node,
-                    memory_gb=getattr(submission, "memory_gb", None),
-                    mem_per_cpu_gb=getattr(submission, "mem_per_cpu_gb", None),
-                    queue_name=getattr(submission, "queue_name", ""),
-                    comment=getattr(submission, "comment", ""),
-                    castep_executable=selected_cluster.castep_executable,
-                    reuse_existing_files=reuse_existing_files_by_job.get(job.id, False),
-                    allow_existing_remote_directory=allow_existing_remote_directory_by_job.get(job.id, False),
-                    retrieval=self._retrieval_flags_for_job(job),
-                )
-            )
-            if prepared is None:
-                continue
-            prepared_by_job[job.id] = prepared
-            submit_items.append(
-                {
-                    "job_id": job.id,
-                    "label": job.label,
-                    "submit_kwargs": prepared.submit_kwargs,
-                    "remote_dir_to_delete": (
-                        remote_target
-                        if decision_by_job.get(job.id) == "delete"
-                        and remote_target not in protected_remote_targets
-                        else None
-                    ),
-                    "delete_only_if_finished": previous_remote_job_id_by_job.get(job.id) or None,
-                }
-            )
-
-        # 5. Run the batch on the worker thread with a cancellable progress dialog.
         if submit_items:
-            batch_submitted, batch_failed = self._run_cluster_submit_batch(submit_items, prepared_by_job)
-            submitted = len(batch_submitted)
-            submitted_jobs = batch_submitted
+            submitted_jobs, batch_failed = self._run_cluster_submit_batch(submit_items, prepared_by_job)
             failed_submit.extend(batch_failed)
 
         self._refresh_jobs_table()
@@ -6221,14 +5976,13 @@ class MainWindow(QMainWindow):
         self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
 
-        if missing_paths:
+        if plan.missing:
             QMessageBox.warning(
                 self,
                 "Missing job directories",
                 "Could not locate generated input directories for:\n"
-                + "\n".join(f"- {label}" for label in missing_paths),
+                + "\n".join(f"- {label}" for label in plan.missing),
             )
-
         if failed_submit:
             show_detailed_warning(
                 self,
@@ -6236,27 +5990,61 @@ class MainWindow(QMainWindow):
                 "Some jobs failed to submit:\n" + "\n".join(failed_submit),
                 informative_text="Open Details to inspect the full submission failures.",
             )
-
-        if skipped_submit:
+        if plan.skipped:
             QMessageBox.information(
                 self,
                 "Cluster submission skipped",
                 "Some jobs were not submitted because their remote directories already exist:\n"
-                + "\n".join(skipped_submit),
+                + "\n".join(plan.skipped),
             )
-
-        if submitted:
+        if submitted_jobs:
             if self._job_execution.record_submission(submitted_jobs, selected_cluster.name):
                 self._refresh_journal_view()
-            self._persist_document_ui_state(
-                failure_message="Submitted cluster jobs, but autosave failed.",
-            )
+            self._persist_document_ui_state(failure_message="Submitted cluster jobs, but autosave failed.")
+            submitted = len(submitted_jobs)
             message = (
                 success_message(submitted, selected_cluster.name)
                 if success_message is not None
                 else f"Submitted {submitted} cluster job(s) on {selected_cluster.name}"
             )
             self.statusBar().showMessage(message)
+
+    def _connect_for_cluster_submission(
+        self, cluster: ClusterConfig, dialog_credentials: SSHCredentials | None
+    ) -> bool:
+        """Connect to ``cluster`` for a submission, reusing a matching open connection.
+
+        Returns ``False`` after telling the user why when there are no
+        credentials or the connection fails.
+        """
+
+        reusing_connection = can_reuse_cluster_connection(
+            cluster,
+            is_connected=self._cluster_runner.is_connected,
+            connected_cluster_name=self._cluster_runner.connected_cluster_name,
+            connected_username=self._cluster_runner.connected_username,
+        )
+        credentials = SSHCredentials() if reusing_connection else dialog_credentials
+        if credentials is None:
+            QMessageBox.warning(self, "Missing credentials", "Credentials are required for cluster submission.")
+            return False
+        try:
+            self._connect_to_cluster_with_trust(cluster, credentials=credentials)
+        except Exception as exc:  # noqa: BLE001
+            show_detailed_warning(
+                self,
+                "Cluster connection failed",
+                format_cluster_connection_error(cluster, exc),
+                informative_text="Open Details for the full connection error and recovery guidance.",
+            )
+            return False
+        if not reusing_connection:
+            QMessageBox.information(
+                self,
+                "Cluster connection successful",
+                f"Connected to {cluster.name} as {cluster.username}.",
+            )
+        return True
 
     def _load_last_cluster_submission_config(
         self,
@@ -6301,7 +6089,7 @@ class MainWindow(QMainWindow):
             or not persisted_workflow_type
             or workflow_type == persisted_workflow_type
         )
-        default_job_name_prefix = self._default_cluster_job_name_prefix(workflow_type)
+        default_job_name_prefix = default_cluster_job_name_prefix(workflow_type)
 
         return ClusterSubmissionConfig(
             cluster_name=cluster_name,
@@ -6589,51 +6377,8 @@ class MainWindow(QMainWindow):
         message.setDefaultButton(QMessageBox.StandardButton.No)
         return message.exec() == QMessageBox.StandardButton.Yes
 
-    @staticmethod
-    def _sanitize_remote_path_component(value: str) -> str:
-        cleaned = re.sub(r"\s+", "_", value.strip())
-        cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", cleaned)
-        return cleaned.strip("_") or "workflow"
-
-    @classmethod
-    def _sanitize_remote_path_fragment(cls, value: str) -> str:
-        parts = [
-            cls._sanitize_remote_path_component(part)
-            for part in value.strip().split("/")
-            if part.strip()
-        ]
-        return "/".join(parts) or "workflow"
-
-    @staticmethod
-    def _default_cluster_job_name_prefix(workflow_type: str | None) -> str:
-        normalized = (workflow_type or "").strip().strip("/")
-        workflow_defaults = {
-            "pristine_relaxation": "pristine_relax",
-            "uep": "uep",
-        }
-        if normalized in workflow_defaults:
-            return workflow_defaults[normalized]
-        last_component = normalized.rsplit("/", 1)[-1]
-        if last_component in {"positivemuon", "muonium"}:
-            return last_component
-        return "convergence"
-
     def _cluster_workflow_directory_fragment(self, jobs: list[Job]) -> str:
-        muon_calc_types = {job.calc_type for job in jobs if is_muon_relaxation_calc_type(job.calc_type)}
-        if muon_calc_types and len(muon_calc_types) == len({job.calc_type for job in jobs}):
-            if len(muon_calc_types) == 1:
-                calc_type = next(iter(muon_calc_types))
-                prefix = (
-                    "positivemuon"
-                    if calc_type == MUON_RELAXATION_CALC_TYPES["positive_muon"]
-                    else "muonium"
-                )
-                return self._sanitize_remote_path_fragment(f"muon_relaxation/{prefix}")
-            return "muon_relaxation_mixed_charge_states"
-        workflow_values = {job.workflow_stage.value for job in jobs}
-        if len(workflow_values) == 1:
-            return self._sanitize_remote_path_component(next(iter(workflow_values)))
-        return "mixed_workflows"
+        return cluster_workflow_directory_fragment(jobs)
 
     def _cancel_jobs(self, jobs: list[Job]) -> None:
         if self._document is None:

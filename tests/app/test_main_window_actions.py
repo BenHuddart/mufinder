@@ -30,6 +30,7 @@ from mufinder.app.main_window import MainWindow
 from mufinder.castep_setup import CastepSetup
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.castep_io.types import BlockSection, ValueWithUnit
+from mufinder.domain.charge_states import MUON_RELAXATION_CALC_TYPES
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure
 from mufinder.science.site_generation import SiteGenerationError
@@ -5700,7 +5701,7 @@ def test_main_window_muon_job_recovers_legacy_sanitized_seed_directory(
         doc,
         label="Random Site 16",
         workflow_stage=WorkflowStage.MUON_RELAXATION,
-        calc_type=main_window_module.MUON_RELAXATION_CALC_TYPES["positive_muon"],
+        calc_type=MUON_RELAXATION_CALC_TYPES["positive_muon"],
     )
     definition = CalculationDefinition(
         workflow_stage=WorkflowStage.MUON_RELAXATION,
