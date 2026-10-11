@@ -65,11 +65,6 @@ from mufinder.domain.models import Structure
 from mufinder.science.site_generation import generate_random_sites, lattice_frac_to_cart
 from mufinder.science.uep import (
     StationaryPointClassification,
-    UepBatchSummary,
-    UepClusterSummary,
-    UepClusterSimilaritySummary,
-    UepClusteringConfig,
-    UepClusteringResult,
     UepError,
     UepField,
     UepGridSliceSample,
@@ -83,8 +78,6 @@ from mufinder.science.uep import (
     UepSourceData,
     cartesian_normal_to_lattice_plane_components,
     calculate_optimization_zero_point_energy,
-    cluster_optimized_positions,
-    cluster_uep_optimizations,
     deserialize_potential_grid,
     extract_isosurface,
     load_uep_source,
@@ -95,12 +88,21 @@ from mufinder.science.uep import (
     potential_grid,
     preview_potential_grid,
     probe_point,
-    relaxed_site_number_map,
     sample_line,
     sample_plane,
     sample_grid_slice,
     serialize_potential_grid,
     write_potential_grid_xsf,
+)
+from mufinder.science.uep_clustering import (
+    UepBatchSummary,
+    UepClusterSummary,
+    UepClusterSimilaritySummary,
+    UepClusteringConfig,
+    UepClusteringResult,
+    cluster_optimized_positions,
+    cluster_uep_optimizations,
+    relaxed_site_number_map,
 )
 
 _ISOSURFACE_PREVIEW_MAX_GRID_POINTS = 28

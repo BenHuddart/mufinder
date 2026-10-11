@@ -192,8 +192,11 @@ boundaries, or shared architecture:
 
 The harness tests currently verify:
 
-- ``AGENTS.md`` stays under 160 lines and points to the durable docs it depends
+- ``AGENTS.md`` stays within 140 lines and points to the durable docs it depends
   on; ``CLAUDE.md`` imports it.
+- Every ``mufinder.*`` path in the shared-homes table (:doc:`architecture`,
+  Shared workflow infrastructure) names a module or package under
+  ``src/mufinder``; the check reads the file system and imports nothing.
 - The Sphinx index includes the agent harness, architecture, quality, and
   compatibility documents, and ``docs/architecture.rst`` names every layer
   package.

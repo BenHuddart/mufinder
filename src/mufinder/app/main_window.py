@@ -109,7 +109,7 @@ from mufinder.app.convergence_types import (
     convergence_config_xc_functional,
     parse_grid_mapping_key,
 )
-from mufinder.app.convergence_widget import ConvergenceWidget
+from mufinder.app.convergence_widget import CutoffConvergenceWidget
 from mufinder.app.energy_barriers_widget import (
     EnergyBarriersWidget,
     EnergyBarrierEndpointRow,
@@ -264,6 +264,7 @@ from mufinder.persistence.codec import to_jsonable
 from mufinder.app.cluster_controller import ClusterController
 from mufinder.services.cluster_runner import CheckpointProbeResult
 from mufinder.services.cluster_submission_planner import (
+    ClusterSubmissionPlan,
     can_reuse_cluster_connection,
     plan_cluster_submission,
     split_stranded_quantum_jobs,
@@ -705,7 +706,7 @@ class MainWindow(QMainWindow):
         self._convergence_overview_view.open_kpoint_requested.connect(
             lambda: self._set_active_route("convergence_kpoint")
         )
-        self._convergence_view = ConvergenceWidget()
+        self._convergence_view = CutoffConvergenceWidget()
         self._convergence_view.configure_requested.connect(self._on_convergence_configured)
         self._convergence_view.examine_requested.connect(self._on_examine_convergence)
         self._convergence_view.form_state_changed.connect(self._on_convergence_form_state_changed)
@@ -5538,76 +5539,15 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No eligible jobs", no_eligible_message)
             return
 
-        cluster_configs = load_cluster_configs(self._settings)
-        if not cluster_configs:
-            QMessageBox.warning(
-                self,
-                "No configured clusters",
-                "Configure at least one cluster in Setup -> HPC Clusters before submitting.",
-            )
+        chosen = self._choose_cluster_submission(eligible_jobs, default_cluster_name)
+        if chosen is None:
             return
-        if not self._keyword_catalog_guard.confirm_submission():
-            return
+        submission, selected_cluster, dialog_credentials = chosen
 
-        workflow_type = cluster_workflow_directory_fragment(eligible_jobs)
-        last_submission = self._load_last_cluster_submission_config(workflow_type=workflow_type)
-        dialog = ClusterSubmissionDialog(
-            job_labels=[job.label for job in eligible_jobs],
-            cluster_configs=cluster_configs,
-            default_cluster_name=default_cluster_name
-            or (last_submission.cluster_name if last_submission is not None else None),
-            initial_config=last_submission,
-            project_name=self._document.project.name,
-            workflow_type=workflow_type,
-            connected_cluster_name=self._cluster_runner.connected_cluster_name,
-            connected_username=self._cluster_runner.connected_username,
-            farm_counts=self._farm_counts_for_jobs(eligible_jobs),
-            parent=self,
-        )
-        if dialog.exec() != dialog.DialogCode.Accepted:
+        screened = self._screen_cluster_submission_jobs(eligible_jobs, selected_cluster)
+        if screened is None:
             return
-
-        submission = dialog.config()
-        self._persist_last_cluster_submission_config(submission, workflow_type=workflow_type)
-        if hasattr(dialog, "credentials"):
-            dialog_credentials = dialog.credentials()
-        else:
-            dialog_credentials = SSHCredentials(target_secret=dialog.password().strip() or None)
-        selected_cluster = load_cluster_config(self._settings, submission.cluster_name)
-        if selected_cluster is None:
-            QMessageBox.warning(self, "Cluster not found", "Selected cluster is no longer configured.")
-            return
-        runtime_username = submission.username.strip()
-        if runtime_username and runtime_username != selected_cluster.username:
-            selected_cluster = replace(selected_cluster, username=runtime_username)
-
-        # Checked after the dialog, where a different cluster may have been picked
-        # than the one the Quantum Corrections page preselected.
-        eligible_jobs, stranded = split_stranded_quantum_jobs(
-            eligible_jobs,
-            cluster_name=selected_cluster.name,
-            stage_one_target=self._quantum_stage_one_target,
-            continuation_target=self._quantum_continuation_remote_target,
-        )
-        if stranded:
-            QMessageBox.information(
-                self,
-                "Phonon stage must run where stage 1 ran",
-                stranded_quantum_jobs_message(selected_cluster.name, stranded),
-            )
-            if not eligible_jobs:
-                return
-
-        seed_name_by_job = {job.id: self._job_seed_name(job) for job in eligible_jobs}
-        invalid_labels = self._cluster_runner.invalid_remote_job_labels(list(seed_name_by_job.values()))
-        if invalid_labels:
-            show_detailed_warning(
-                self,
-                "Unsafe job labels",
-                unsafe_job_labels_message(invalid_labels),
-                informative_text="Remote paths and scheduler commands use these labels directly.",
-            )
-            return
+        eligible_jobs, seed_name_by_job = screened
 
         if not self._connect_for_cluster_submission(selected_cluster, dialog_credentials):
             return
@@ -5644,6 +5584,127 @@ class MainWindow(QMainWindow):
         self._refresh_quantum_corrections_view()
         self._refresh_energy_barriers_view()
 
+        self._report_cluster_submission(
+            plan,
+            submitted_jobs=submitted_jobs,
+            failed_submit=failed_submit,
+            cluster_name=selected_cluster.name,
+            success_message=success_message,
+        )
+
+    def _choose_cluster_submission(
+        self, eligible_jobs: list[Job], default_cluster_name: str | None
+    ) -> tuple[ClusterSubmissionConfig, ClusterConfig, SSHCredentials | None] | None:
+        """Show the cluster submission dialog and resolve the chosen cluster.
+
+        Returns the accepted submission settings, the selected cluster (with the
+        dialog's username applied) and the dialog's credentials, or ``None``
+        after telling the user why when no cluster is configured, the keyword
+        catalog guard declines, the dialog is cancelled or the chosen cluster
+        has since been removed.
+        """
+
+        cluster_configs = load_cluster_configs(self._settings)
+        if not cluster_configs:
+            QMessageBox.warning(
+                self,
+                "No configured clusters",
+                "Configure at least one cluster in Setup -> HPC Clusters before submitting.",
+            )
+            return None
+        if not self._keyword_catalog_guard.confirm_submission():
+            return None
+
+        workflow_type = cluster_workflow_directory_fragment(eligible_jobs)
+        last_submission = self._load_last_cluster_submission_config(workflow_type=workflow_type)
+        dialog = ClusterSubmissionDialog(
+            job_labels=[job.label for job in eligible_jobs],
+            cluster_configs=cluster_configs,
+            default_cluster_name=default_cluster_name
+            or (last_submission.cluster_name if last_submission is not None else None),
+            initial_config=last_submission,
+            project_name=self._document.project.name,
+            workflow_type=workflow_type,
+            connected_cluster_name=self._cluster_runner.connected_cluster_name,
+            connected_username=self._cluster_runner.connected_username,
+            farm_counts=self._farm_counts_for_jobs(eligible_jobs),
+            parent=self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return None
+
+        submission = dialog.config()
+        self._persist_last_cluster_submission_config(submission, workflow_type=workflow_type)
+        if hasattr(dialog, "credentials"):
+            dialog_credentials = dialog.credentials()
+        else:
+            dialog_credentials = SSHCredentials(target_secret=dialog.password().strip() or None)
+        selected_cluster = load_cluster_config(self._settings, submission.cluster_name)
+        if selected_cluster is None:
+            QMessageBox.warning(self, "Cluster not found", "Selected cluster is no longer configured.")
+            return None
+        runtime_username = submission.username.strip()
+        if runtime_username and runtime_username != selected_cluster.username:
+            selected_cluster = replace(selected_cluster, username=runtime_username)
+        return submission, selected_cluster, dialog_credentials
+
+    def _screen_cluster_submission_jobs(
+        self, eligible_jobs: list[Job], cluster: ClusterConfig
+    ) -> tuple[list[Job], dict[UUID, str]] | None:
+        """Drop the jobs that cannot go to ``cluster`` and map the rest to seeds.
+
+        Quantum phonon jobs stranded away from their stage-1 cluster are
+        reported and dropped. Returns the remaining jobs with their seed names,
+        or ``None`` when none remain or a seed name is unsafe for remote paths
+        (which is reported and aborts the whole submission).
+        """
+
+        # Checked after the dialog, where a different cluster may have been picked
+        # than the one the Quantum Corrections page preselected.
+        eligible_jobs, stranded = split_stranded_quantum_jobs(
+            eligible_jobs,
+            cluster_name=cluster.name,
+            stage_one_target=self._quantum_stage_one_target,
+            continuation_target=self._quantum_continuation_remote_target,
+        )
+        if stranded:
+            QMessageBox.information(
+                self,
+                "Phonon stage must run where stage 1 ran",
+                stranded_quantum_jobs_message(cluster.name, stranded),
+            )
+            if not eligible_jobs:
+                return None
+
+        seed_name_by_job = {job.id: self._job_seed_name(job) for job in eligible_jobs}
+        invalid_labels = self._cluster_runner.invalid_remote_job_labels(list(seed_name_by_job.values()))
+        if invalid_labels:
+            show_detailed_warning(
+                self,
+                "Unsafe job labels",
+                unsafe_job_labels_message(invalid_labels),
+                informative_text="Remote paths and scheduler commands use these labels directly.",
+            )
+            return None
+        return eligible_jobs, seed_name_by_job
+
+    def _report_cluster_submission(
+        self,
+        plan: ClusterSubmissionPlan,
+        *,
+        submitted_jobs: list[Job],
+        failed_submit: list[str],
+        cluster_name: str,
+        success_message: Callable[[int, str], str] | None,
+    ) -> None:
+        """Report a dispatched cluster submission and record what was submitted.
+
+        Warns about the plan's missing input directories and every failed
+        submission, lists the jobs skipped because their remote directory
+        already exists, then records the submitted jobs in the journal, autosaves
+        and shows the status-bar summary (``success_message`` when given).
+        """
+
         if plan.missing:
             QMessageBox.warning(
                 self,
@@ -5666,14 +5727,14 @@ class MainWindow(QMainWindow):
                 + "\n".join(plan.skipped),
             )
         if submitted_jobs:
-            if self._job_execution.record_submission(submitted_jobs, selected_cluster.name):
+            if self._job_execution.record_submission(submitted_jobs, cluster_name):
                 self._refresh_journal_view()
             self._persist_document_ui_state(failure_message="Submitted cluster jobs, but autosave failed.")
             submitted = len(submitted_jobs)
             message = (
-                success_message(submitted, selected_cluster.name)
+                success_message(submitted, cluster_name)
                 if success_message is not None
-                else f"Submitted {submitted} cluster job(s) on {selected_cluster.name}"
+                else f"Submitted {submitted} cluster job(s) on {cluster_name}"
             )
             self.statusBar().showMessage(message)
 
@@ -6669,10 +6730,8 @@ class MainWindow(QMainWindow):
 
         These helpers stay on ``MainWindow`` because non-migrating code still
         calls them: the definition/config/mapping helpers are shared with row
-        removal, staging, and dashboard sync;
-        ``_muon_fractional_position_from_cell`` locates the ``H:mu`` position
-        for the controller's ``validate_artifacts`` and ``build_result``;
-        ``_muon_relaxation_row_key`` has other view-refresh callers. The
+        removal, staging, and dashboard sync; ``_muon_relaxation_row_key`` has
+        other view-refresh callers. The
         controller reaches them only through these late-bound wrappers, and
         ``coerce_fractional_triplet`` comes from
         :mod:`mufinder.services.source_candidates`.
@@ -6694,9 +6753,6 @@ class MainWindow(QMainWindow):
             ),
             muon_relaxation_definition_and_row_for_job=(
                 lambda job: self._muon_relaxation_definition_and_row_for_job(job)
-            ),
-            muon_fractional_position_from_cell=(
-                lambda cell: self._muon_fractional_position_from_cell(cell)
             ),
             coerce_fractional_triplet=coerce_fractional_triplet,
         )
@@ -10668,18 +10724,6 @@ class MainWindow(QMainWindow):
                 if candidate is not None and candidate.id == job.id:
                     return definition, row
         return None, None
-
-    @staticmethod
-    def _muon_fractional_position_from_cell(cell: object) -> tuple[float, float, float] | None:
-        species = getattr(cell, "species", ())
-        positions = getattr(cell, "fractional_positions", ())
-        for atom_species, position in reversed(list(zip(species, positions, strict=False))):
-            if str(atom_species).strip().casefold() != "h:mu":
-                continue
-            if not isinstance(position, (list, tuple)) or len(position) != 3:
-                return None
-            return (float(position[0]), float(position[1]), float(position[2]))
-        return None
 
     def _refresh_muon_relaxation_rows(self) -> None:
         self._muon_relaxation_controller.refresh_view()

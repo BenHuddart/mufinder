@@ -548,6 +548,27 @@ def uep_summary_to_relaxation_clusters(
     return tuple(clusters)
 
 
+def muon_fractional_position_from_cell(cell: object) -> tuple[float, float, float] | None:
+    """Return the last ``H:mu`` fractional coordinate in a parsed cell, unwrapped.
+
+    ``cell`` is anything with parallel ``species`` and ``fractional_positions``
+    sequences, such as a parsed relaxed ``-out.cell``. The coordinate is
+    returned as written, without folding into the unit cell. ``None`` when the
+    cell has no ``H:mu`` atom or the last one does not carry a three-component
+    list or tuple position.
+    """
+
+    species = getattr(cell, "species", ())
+    positions = getattr(cell, "fractional_positions", ())
+    for atom_species, position in reversed(list(zip(species, positions, strict=False))):
+        if str(atom_species).strip().casefold() != "h:mu":
+            continue
+        if not isinstance(position, (list, tuple)) or len(position) != 3:
+            return None
+        return (float(position[0]), float(position[1]), float(position[2]))
+    return None
+
+
 def folded_muon_position_from_structure(structure: Structure) -> tuple[float, float, float] | None:
     """Return the last H:mu fractional coordinate in a relaxed structure."""
 

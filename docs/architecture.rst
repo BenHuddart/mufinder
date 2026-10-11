@@ -198,8 +198,14 @@ Shared workflow infrastructure
 The workflow pages are built from one set of shared helpers. Each
 cross-workflow concern has exactly one home; a workflow extends the helper there
 rather than carrying a private copy (``AGENTS.md``, Reuse before you write).
+The table below is the complete inventory of those homes, grouped by layer from
+``app`` inwards; read it before adding a helper, and add a row in the same
+change that creates a home. ``tests/test_agent_harness.py`` checks that every
+``mufinder.*`` path in this section names a module or package under
+``src/mufinder``.
 ``tests/test_agent_harness.py`` pins, for every private method that two or more
-workflow widget modules define, how many define it; the counts may only fall.
+workflow widget modules define, how many define it; the pin table is empty, so
+no two workflow widgets may define the same private method.
 
 .. list-table::
    :header-rows: 1
@@ -226,7 +232,9 @@ workflow widget modules define, how many define it; the counts may only fall.
      - The label-keyed row-table widget base that pristine relaxation, muon
        relaxation and UEP subclass (``RowTableWidget``, and
        ``RelaxationRowTableWidget`` for the two geometry relaxations; see Row
-       table widgets).
+       table widgets), and the source-keyed table base that quantum
+       corrections and energy barriers subclass (``SourceTableWidget``; see
+       Source table widgets).
    * - ``mufinder.app.sweep_convergence_widget``
      - The sweep-keyed widget base that the cutoff and k-point convergence
        widgets subclass (``SweepConvergenceWidget``; see Sweep convergence
@@ -248,10 +256,13 @@ workflow widget modules define, how many define it; the counts may only fall.
        relaxation, muon relaxation and convergence) and
        ``normalized_supercell_matrix``. It sits in ``app`` because the
        configuration dataclasses and ``restore_structured_value`` do.
-   * - ``mufinder.app.workflow_dialogs`` / ``mufinder.app.param_dialog``
+   * - ``mufinder.app.workflow_dialogs``
      - The row parameter dialog (``run_row_parameter_dialog``, driven by a
        ``RowParameterRequest`` and returning a ``RowParameterResult``) and the
-       configure dialogs.
+       workflow configure dialogs.
+   * - ``mufinder.app.param_dialog``
+     - The CASTEP parameter dialog the configure dialogs build on
+       (``ParameterDialog``).
    * - ``mufinder.app.adapter_common``
      - GUI value dict to ``InputTemplate``, k-point rescaling for supercell
        rows, the adapters' shared expansion prologue, supercell-matrix parsing
@@ -264,13 +275,21 @@ workflow widget modules define, how many define it; the counts may only fall.
      - The submit, materialize, result and refresh cycle (see Workflow
        controllers), ``dedupe_jobs`` for the jobs a ``materialize`` or
        ``jobs_for_keys`` returns, derived-structure upsert and row-parameter
-       mirroring. ``workflow_controllers.sweep_convergence`` holds the cycle
-       the two convergence sweeps share (``SweepConvergenceController``).
+       mirroring.
+   * - ``mufinder.app.workflow_controllers.sweep_convergence``
+     - The cycle the two convergence sweeps share
+       (``SweepConvergenceController``).
    * - ``mufinder.app.project_defaults_widget``
      - The project-defaults strip in every workflow header (see Project
        defaults surface).
-   * - ``mufinder.app.theme`` / ``mufinder.app.plot_canvas``
-     - Styling and status brushes; embedded plots (see Plot canvas policy).
+   * - ``mufinder.app.theme``
+     - Reusable styling, palettes and status brushes.
+   * - ``mufinder.app.plot_canvas``
+     - Embedded matplotlib plots (``create_plot_canvas``, ``PlotFrame``; see Plot
+       canvas policy).
+   * - ``mufinder.services.job_execution_controller``
+     - Job state transitions: submission, start, completion, failure, cancellation
+       and retrieval (``JobExecutionController``; see :doc:`job_lifecycle`).
    * - ``mufinder.services.job_paths``
      - Where a job's files live: ``definition_output_directory``,
        ``job_output_directory`` (the definition mappings that claim a job, then
@@ -297,25 +316,20 @@ workflow widget modules define, how many define it; the counts may only fall.
        with the failed, skipped and missing jobs
        (``plan_cluster_submission``). The window keeps the dialog, the
        prompts and the message boxes.
-   * - ``mufinder.workflow.naming``
-     - Job names (``job_name``) and the remote naming of a cluster
-       submission: the workflow directory fragment, the default scheduler
-       job-name prefix and remote path sanitising.
    * - ``mufinder.services.source_candidates``
      - Read-only source queries over the project document: the relaxed muon
        sites eligible for quantum corrections, their relative energies,
        labels and two-stage state, the generated diffusion paths and NEB
        results for energy barriers, and the completed pristine and muon
        relaxations offered to comparison and relaxation analysis.
+   * - ``mufinder.workflow.naming``
+     - Job names (``job_name``) and the remote naming of a cluster
+       submission: the workflow directory fragment, the default scheduler
+       job-name prefix and remote path sanitising.
    * - ``mufinder.workflow.energy_barriers``
      - Besides NEB expansion, the merge and per-pair replacement of serialized
        diffusion-path sources and the removal of stored placeholder
        transition-state parameters.
-   * - ``mufinder.domain.magnetic_properties``
-     - Spins and propagation vectors read from ``Structure.properties``
-       (``atomic_spins_from_structure``,
-       ``atomic_spins_from_magnetic_moments``,
-       ``propagation_vector_from_structure``, ``has_nonzero_spins``).
    * - ``mufinder.science.lattice``
      - Lattice algebra: scalar and broadcast fractional/Cartesian conversion,
        lattice inversion, minimum-image displacements and distances
@@ -331,6 +345,15 @@ workflow widget modules define, how many define it; the counts may only fall.
      - Structure to ASE ``Atoms`` (``structure_to_ase_atoms`` with
        ``skip_muon``, ``sanitize_symbols`` and ``record_species_labels``) and
        the muon-label and element-symbol rules.
+   * - ``mufinder.castep_io``
+     - CASTEP syntax: cell and param parsing and writing, keyword metadata
+       (``schema``) and validation (``validators``); see
+       :doc:`castep_keyword_catalog`.
+   * - ``mufinder.domain.magnetic_properties``
+     - Spins and propagation vectors read from ``Structure.properties``
+       (``atomic_spins_from_structure``,
+       ``atomic_spins_from_magnetic_moments``,
+       ``propagation_vector_from_structure``, ``has_nonzero_spins``).
 
 Widget contract
 ~~~~~~~~~~~~~~~
@@ -393,6 +416,11 @@ controllers treat every workflow alike:
   ``Configure Selected Parameters...``); and a run row with the job-name prefix
   and the two run buttons.
 
+The quantum-corrections and energy-barriers widgets list project sources
+rather than staged rows, so they follow the run, Configure and row-menu parts
+of this contract through ``SourceTableWidget`` (see Source table widgets) and
+have no form state, supercell column or Add button.
+
 Row table widgets
 ~~~~~~~~~~~~~~~~~
 
@@ -430,6 +458,37 @@ muon relaxation's read-only imported rows (``_row_is_read_only``,
 parameter surface and k-point rule. Never copy a base method into a
 subclass to change it; add the hook.
 
+Source table widgets
+~~~~~~~~~~~~~~~~~~~~
+
+Quantum corrections and energy barriers subclass one base,
+``mufinder.app.workflow_row_widget.SourceTableWidget``. Their rows are not
+staged by the user: each row is a source read from the project through
+``mufinder.services.source_candidates`` (a relaxed muon site, a diffusion
+path), shown in the order the widget's ``set_sources`` receives, and
+submitted, configured and tracked under the row's source key. The source
+rows are frozen dataclasses carrying at least ``key``, ``status`` and
+``configured``.
+
+The base owns the key lookups (``selected_source_keys``, the key at a row,
+the keys at a set of rows), the run targeting (the selection, else every
+row), Configure Selected, the source table's row menu (Run, Cancel, Inspect,
+Configure, an optional Remove and failed-job reset, then the widget's extra
+entries), the table fill with the per-status colour of the Status cell and
+the per-row Configure button with the shared targeting rule, and the
+action-state refresh that enables Configure Selected from the selection.
+
+A subclass declares its status and Configure columns, the workflow named on
+the Configure button and the names of its configure and run signals as class
+attributes, so each widget keeps its own signal names. It implements three
+public hooks: ``source_row_values`` (the text of the leading columns),
+``create_source_row_cells`` (its own cells) and ``refresh_source_actions``
+(its own actions for the selected rows). Quantum corrections adds the stage
+and farm columns, the editable site label and "Reset to Stage 1"; energy
+barriers adds the endpoint pair that generates paths, the View column, path
+removal and the NEB inspector, and its view is created lazily (see
+Construction).
+
 Sweep convergence widgets
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -466,8 +525,7 @@ three public hooks: ``next_key`` (the key a new row starts from),
 ``prompt_new_key`` (what Add asks for: the cutoff sweep adds the next cutoff,
 the k-point sweep opens a grid dialog) and ``generate_keys`` (the range or
 spacing generator dialog). A behaviour only one sweep has is an override of a
-private base method with a default: the cutoff sweep cancels a removed row's
-queued or running job first (``_CANCEL_ACTIVE_ON_REMOVE``), titles a one-row
+private base method with a default: the cutoff sweep titles a one-row
 dialog by its cutoff (``_dialog_subject``), reads a task-only row as the
 defaults (``_is_default_parameter_set``) and restores legacy
 ``shared_params`` / ``overrides`` state (``_restore_legacy_parameters``); the

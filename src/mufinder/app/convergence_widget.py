@@ -154,8 +154,6 @@ class CutoffConvergenceWidget(SweepConvergenceWidget):
     _REMOVE_ROW_TOOLTIP = "Remove this cutoff"
     _CONFIGURE_NOUN = "cutoff"
     _REMOVAL_NOUN = ("cutoff", "cutoffs")
-    # Removing a cutoff whose job is queued or running cancels the job first.
-    _CANCEL_ACTIVE_ON_REMOVE = True
     _DIALOG_SUBJECT = "Cutoff Parameters"
     _DIALOG_INTRO_PREFIX = "Included cutoffs: "
     _INVALID_PARAMETERS_PREFIX = "Cutoff"
@@ -237,5 +235,5 @@ class CutoffConvergenceWidget(SweepConvergenceWidget):
             self._set_parameter_values(cutoff, merged, advanced_names)
 
 
-# Backward-compatible export used by existing call sites.
+# Public import alias with no in-repo caller; see docs/compatibility_policy.rst.
 ConvergenceWidget = CutoffConvergenceWidget

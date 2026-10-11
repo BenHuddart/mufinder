@@ -118,8 +118,7 @@ class LocalJobRunner(QObject):
 
         pending = self._remove_pending_job(job_id)
         if pending is not None:
-            self.job_cancelled.emit(job_id)
-            self.status_changed.emit(job_id, JobStatus.CANCELLED.value)
+            self._cancelled(job_id)
             return
 
         active = self._active.get(job_id)
@@ -134,8 +133,7 @@ class LocalJobRunner(QObject):
 
         while self._pending:
             request = self._pending.popleft()
-            self.job_cancelled.emit(request.job_id)
-            self.status_changed.emit(request.job_id, JobStatus.CANCELLED.value)
+            self._cancelled(request.job_id)
 
         for job_id in list(self._active):
             self.cancel(job_id)
@@ -241,8 +239,7 @@ class LocalJobRunner(QObject):
         request = active.request
         if job_id in self._cancel_requested:
             self._cancel_requested.remove(job_id)
-            self.job_cancelled.emit(job_id)
-            self.status_changed.emit(job_id, JobStatus.CANCELLED.value)
+            self._cancelled(job_id)
             return
 
         if exit_code != 0:
@@ -277,6 +274,12 @@ class LocalJobRunner(QObject):
         artifacts = request.retrieval.collect(request.job_dir, request.seed_name)
         self.job_finished.emit(job_id, result, artifacts)
         self.status_changed.emit(job_id, JobStatus.COMPLETED.value)
+
+    def _cancelled(self, job_id: UUID) -> None:
+        """Report ``job_id`` as cancelled: ``job_cancelled`` then ``status_changed``."""
+
+        self.job_cancelled.emit(job_id)
+        self.status_changed.emit(job_id, JobStatus.CANCELLED.value)
 
     def _fail(self, job_id: UUID, message: str) -> None:
         """Report ``job_id`` as failed: ``job_failed`` then ``status_changed``."""

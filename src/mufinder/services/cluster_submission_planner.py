@@ -17,7 +17,10 @@ prompts and the local clean-up:
    (submitted into as-is), a resubmitted job's previous directory (its files
    reused), or a fresh directory under the working directory.
    :meth:`ClusterTargetPlan.targets_to_check` lists the fresh directories whose
-   existence the worker checks.
+   existence the worker checks. A job whose check raises is not submitted:
+   :func:`remote_check_failures` reports it and
+   :meth:`ClusterTargetPlan.without_jobs` drops it from the plan, since its
+   directory may hold a previous run the user was never asked to overwrite.
 2. :meth:`ClusterTargetPlan.overwrite_prompts` lists, as data, the "remote
    directory exists" questions to ask, and :func:`resolve_overwrite_decisions`
    walks them with the window's prompt callbacks, honouring *Yes to All* and
@@ -43,7 +46,7 @@ Layering: this lives in ``mufinder.services`` and imports ``domain``,
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, Protocol
 from uuid import UUID
@@ -224,6 +227,11 @@ class ClusterTargetPlan:
             and target.remote_target in existing_remote_targets
         ]
 
+    def without_jobs(self, job_ids: Collection[UUID]) -> ClusterTargetPlan:
+        """Return this plan without the targets of ``job_ids``."""
+
+        return replace(self, targets=[target for target in self.targets if target.job.id not in job_ids])
+
     def fresh_start_jobs(self, decisions: OverwriteDecisions) -> list[Job]:
         """Return the start-again jobs going ahead, whose local output is cleared first."""
 
@@ -310,13 +318,18 @@ def plan_remote_targets(
     return ClusterTargetPlan(targets=targets, seed_name_by_job=dict(seed_name_by_job), fresh_start_job_ids=fresh_ids)
 
 
-def remote_check_failures(plan: ClusterTargetPlan, errors: dict[UUID, str]) -> list[str]:
-    """Return a failure message for each job whose directory check raised ``errors[job.id]``."""
+def remote_check_failures(plan: ClusterTargetPlan, errors: Mapping[UUID, str]) -> list[str]:
+    """Return a failure message for each job in ``errors``, whose directory check raised.
+
+    Such a job is not submitted. A job is in ``errors`` even when the exception
+    carried no message.
+    """
 
     return [
-        f"- {target.job.label}: Failed to check remote directory ({errors[target.job.id]})"
+        f"- {target.job.label}: not submitted because its remote directory could not be checked "
+        f"({errors[target.job.id] or 'no error message'})"
         for target in plan.targets
-        if errors.get(target.job.id)
+        if target.job.id in errors
     ]
 
 
@@ -510,7 +523,7 @@ def plan_cluster_submission(
     The callbacks are the steps only the caller can perform:
     ``check_remote_directories(targets)`` returns ``{"existing": [...],
     "errors": {job_id: message}}`` for the fresh targets (called only when
-    there are any), ``ask_overwrite`` and ``confirm_bulk_delete`` answer the
+    there are any); a job in ``errors`` is not submitted. ``ask_overwrite`` and ``confirm_bulk_delete`` answer the
     overwrite prompts (see :func:`resolve_overwrite_decisions`), and
     ``clear_fresh_outputs(jobs)`` clears the local output of the start-again
     jobs going ahead, returning the jobs it cleared and an error line for each
@@ -535,7 +548,9 @@ def plan_cluster_submission(
     if targets_to_check := target_plan.targets_to_check():
         check_result = check_remote_directories(targets_to_check)
         existing_remote_targets = list(check_result.get("existing", []))
-        failed.extend(remote_check_failures(target_plan, check_result.get("errors", {})))
+        check_errors: Mapping[UUID, str] = check_result.get("errors", {})
+        failed.extend(remote_check_failures(target_plan, check_errors))
+        target_plan = target_plan.without_jobs(check_errors)
     decisions = resolve_overwrite_decisions(
         target_plan,
         existing_remote_targets,

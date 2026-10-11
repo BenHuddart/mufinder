@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QTabWidget,
-    QTableWidget,
     QToolButton,
     QToolTip,
     QVBoxLayout,
@@ -39,7 +38,6 @@ from PySide6.QtWidgets import (
 )
 
 from mufinder.app.atomic_structure_viewer import AtomicStructureViewer
-from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.app.theme import (
     arrow_icon,
     current_palette,
@@ -48,18 +46,15 @@ from mufinder.app.theme import (
     style_section_subtitle,
     style_section_title,
 )
+from mufinder.app.workflow_row_widget import SourceTableWidget
 from mufinder.app.workflow_table_utils import (
     REMOVE_SELECTED_TEXT,
     SelectionFeedback,
     bind_delete_shortcuts,
-    bind_reset_failed_context_menu,
     confirm_row_removal,
     create_workflow_table,
-    standard_row_actions,
     set_workflow_table_item,
-    style_workflow_configure_button,
     workflow_row_is_locked,
-    workflow_row_status_text,
 )
 from mufinder.domain.models import Structure
 
@@ -536,8 +531,13 @@ class _ViewerPopoutWindow(QWidget):
         super().closeEvent(event)
 
 
-class EnergyBarriersWidget(QWidget):
-    """Display eligible path sources and completed transition-state results."""
+class EnergyBarriersWidget(SourceTableWidget):
+    """Display eligible path sources and completed transition-state results.
+
+    The Diffusion Paths table and its targeting come from
+    :class:`SourceTableWidget`; this widget adds the endpoint pair that
+    generates paths, the View column, path removal and the NEB inspector.
+    """
 
     endpoint_selection_changed = Signal(str, str)
     generate_paths_requested = Signal(str, str, str)
@@ -551,11 +551,21 @@ class EnergyBarriersWidget(QWidget):
     submit_neb_cluster_requested = Signal(list)
     neb_result_selected = Signal(str)
 
+    # Diffusion Paths columns: reactant, product, charge, path length, farms,
+    # then status, Parameters and View.
+    _SOURCE_STATUS_COLUMN = 5
+    _SOURCE_CONFIGURE_COLUMN = 6
+    _VIEW_COLUMN = 7
+    _SOURCE_WORKFLOW_LABEL = "Energy Barriers"
+    _CONFIGURE_SIGNAL = "configure_result_requested"
+    _SUBMIT_LOCAL_SIGNAL = "submit_neb_local_requested"
+    _SUBMIT_CLUSTER_SIGNAL = "submit_neb_cluster_requested"
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAccessibleName("Energy Barriers workflow")
         self._endpoint_rows: list[EnergyBarrierEndpointRow] = []
-        self._source_rows: list[EnergyBarrierSourceRow] = []
+        self._source_rows: list[EnergyBarrierSourceRow]
         self._neb_result_rows: list[EnergyBarrierNebResultRow] = []
         self._preview_structures: list[Structure] = []
         self._preview_rows: list[EnergyBarrierPreviewImageRow] = []
@@ -664,31 +674,15 @@ class EnergyBarriersWidget(QWidget):
         )
         self._sources_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sources_table.itemSelectionChanged.connect(self._update_actions)
-        # A right-click makes the rows under it the selection, so the menu's
-        # run/configure/remove entries reuse the selection-based handlers.
-        leading_actions, trailing_actions = standard_row_actions(
-            status_for_row=self._source_row_status,
-            run_local=lambda _rows: self._emit_submit_neb_local(),
-            run_cluster=lambda _rows: self._emit_submit_neb_cluster(),
-            cancel=lambda rows: self.cancel_requested.emit(self._source_keys_at_rows(rows)),
-            inspect=lambda rows: self.inspect_failed_requested.emit(self._source_keys_at_rows(rows)),
-            configure=lambda _rows: self._emit_batch_configure_results(),
+        self._bind_source_row_menu(
             remove=lambda _rows: self._delete_selected_sources(),
-            confirm_parent=self,
-        )
-        bind_reset_failed_context_menu(
-            self._sources_table,
-            key_for_row=self._source_key_at_row,
-            status_for_row=self._source_row_status,
             emit_reset=self.reset_failed_requested.emit,
-            leading_actions=leading_actions,
-            additional_actions=trailing_actions,
         )
         sources_layout.addWidget(self._sources_table, 1)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
-        self._batch_configure_results_button = QPushButton("Configure Selected Parameters...")
+        self._batch_configure_button = QPushButton("Configure Selected Parameters...")
         self._remove_sources_button = QPushButton(REMOVE_SELECTED_TEXT)
         self._selection_count_label = QLabel("")
         style_hint_text(self._selection_count_label)
@@ -696,16 +690,16 @@ class EnergyBarriersWidget(QWidget):
         # Selected ...") and enables Remove Selected from the selection.
         self._submit_neb_local_button = QPushButton()
         self._submit_neb_cluster_button = QPushButton()
-        self._batch_configure_results_button.clicked.connect(self._emit_batch_configure_results)
+        self._batch_configure_button.clicked.connect(self._emit_batch_configure)
         self._remove_sources_button.clicked.connect(self._delete_selected_sources)
-        self._submit_neb_local_button.clicked.connect(self._emit_submit_neb_local)
-        self._submit_neb_cluster_button.clicked.connect(self._emit_submit_neb_cluster)
+        self._submit_neb_local_button.clicked.connect(self._emit_submit_local)
+        self._submit_neb_cluster_button.clicked.connect(self._emit_submit_cluster)
         actions.addWidget(self._remove_sources_button)
         actions.addWidget(self._submit_neb_local_button)
         actions.addWidget(self._submit_neb_cluster_button)
         actions.addStretch(1)
         actions.addWidget(self._selection_count_label)
-        actions.addWidget(self._batch_configure_results_button)
+        actions.addWidget(self._batch_configure_button)
         sources_layout.addLayout(actions)
         self._sources_feedback = SelectionFeedback(
             self._sources_table,
@@ -870,17 +864,22 @@ class EnergyBarriersWidget(QWidget):
         self._update_actions()
 
     def set_sources(self, rows: list[EnergyBarrierSourceRow]) -> None:
-        self._source_rows = list(rows)
         self._sources_group.setTitle(f"Diffusion Paths ({len(rows)})")
-        _fill_source_table(
-            self._sources_table,
-            rows,
-            configure_requested=self.configure_result_requested.emit,
-            view_requested=self.view_source_requested.emit,
-        )
-        self._update_actions()
-        # The rebuild replaced every row's cell widgets.
-        self._sources_feedback.refresh()
+        self._set_source_rows(rows)
+
+    def source_row_values(self, row: EnergyBarrierSourceRow) -> tuple[str, ...]:
+        return (row.reactant, row.product, row.charge_state, row.path_length, row.farms, row.status)
+
+    def create_source_row_cells(self, row_index: int, row: EnergyBarrierSourceRow) -> None:
+        view_button = QPushButton("View...", self._sources_table)
+        view_button.setToolTip("Open the path viewer for this diffusion path.")
+        view_button.clicked.connect(lambda _checked=False, key=row.key: self.view_source_requested.emit(key))
+        self._sources_table.setCellWidget(row_index, self._VIEW_COLUMN, view_button)
+
+    def refresh_source_actions(self, selected_rows: Sequence[EnergyBarrierSourceRow]) -> None:
+        reactant_key, product_key = self.selected_endpoint_keys()
+        can_generate = bool(reactant_key and product_key and len(self._endpoint_rows) >= 1)
+        self._generate_paths_button.setEnabled(can_generate)
 
     def set_neb_results(self, rows: list[EnergyBarrierNebResultRow]) -> None:
         previous_key = next(iter(self.selected_neb_result_keys()), "")
@@ -983,22 +982,6 @@ class EnergyBarriersWidget(QWidget):
             str(product) if isinstance(product, str) else "",
         )
 
-    def selected_source_keys(self) -> list[str]:
-        indexes = sorted({index.row() for index in self._sources_table.selectedIndexes()})
-        keys: list[str] = []
-        for row in indexes:
-            if 0 <= row < len(self._source_rows):
-                keys.append(self._source_rows[row].key)
-        return keys
-
-    def _source_key_at_row(self, row: int) -> str | None:
-        if not (0 <= row < len(self._source_rows)):
-            return None
-        return self._source_rows[row].key or None
-
-    def _source_row_status(self, row: int) -> str:
-        return workflow_row_status_text(self._sources_table, row, _NEB_STATUS_COLUMN)
-
     def _emit_endpoint_selection_changed(self) -> None:
         reactant_key, product_key = self.selected_endpoint_keys()
         self.endpoint_selection_changed.emit(reactant_key, product_key)
@@ -1023,25 +1006,6 @@ class EnergyBarriersWidget(QWidget):
         removed = set(keys)
         self.set_sources([row for row in self._source_rows if row.key not in removed])
         self.remove_sources_requested.emit(keys)
-
-    def _selected_or_all_source_keys(self) -> list[str]:
-        """Return the paths the run buttons act on: the selection, else every row."""
-
-        return self.selected_source_keys() or [row.key for row in self._source_rows if row.key]
-
-    def _source_keys_at_rows(self, rows: Sequence[int]) -> list[str]:
-        return [key for row in rows if (key := self._source_key_at_row(row))]
-
-    def _emit_submit_neb_local(self) -> None:
-        self.submit_neb_local_requested.emit(self._selected_or_all_source_keys())
-
-    def _emit_batch_configure_results(self) -> None:
-        keys = self.selected_source_keys()
-        if keys:
-            self.configure_result_requested.emit(keys)
-
-    def _emit_submit_neb_cluster(self) -> None:
-        self.submit_neb_cluster_requested.emit(self._selected_or_all_source_keys())
 
     def selected_neb_result_keys(self) -> list[str]:
         indexes = sorted({index.row() for index in self._neb_results_table.selectedIndexes()})
@@ -1166,14 +1130,6 @@ class EnergyBarriersWidget(QWidget):
             pass
         self._preview_viewer = None
 
-    def _update_actions(self) -> None:
-        reactant_key, product_key = self.selected_endpoint_keys()
-        source_enabled = bool(self.selected_source_keys())
-        can_generate = bool(reactant_key and product_key and len(self._endpoint_rows) >= 1)
-        self._generate_paths_button.setEnabled(can_generate)
-        # The run and remove buttons follow the selection through SelectionFeedback.
-        self._batch_configure_results_button.setEnabled(source_enabled)
-
     @staticmethod
     def _set_combo_key(combo: QComboBox, key: str, *, fallback_index: int) -> None:
         if key:
@@ -1185,10 +1141,6 @@ class EnergyBarriersWidget(QWidget):
         if combo.count():
             combo.setCurrentIndex(max(0, min(fallback_index, combo.count() - 1)))
 
-# Column index of the "Status" header in the Diffusion Paths table (see create_workflow_table
-# call); the row tuple writes reactant, product, charge, path length, then status.
-_NEB_STATUS_COLUMN = 5
-
 # Column index of the "Status" header in the Completed NEB Calculations table (see
 # create_workflow_table call); the row tuple writes path, charge, length, barriers, ΔE,
 # images, then status.
@@ -1197,55 +1149,6 @@ _NEB_RESULT_STATUS_COLUMN = 7
 
 def _open_containing_folder(path_text: str) -> None:
     QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path_text).parent)))
-
-
-def _fill_source_table(
-    table: QTableWidget,
-    rows: list[EnergyBarrierSourceRow],
-    *,
-    configure_requested,
-    view_requested,
-) -> None:
-    table.setRowCount(len(rows))
-    key_by_row: dict[int, str] = {i: row.key for i, row in enumerate(rows)}
-    for row_index, row in enumerate(rows):
-        for column, value in enumerate(
-            (row.reactant, row.product, row.charge_state, row.path_length, row.farms, row.status)
-        ):
-            set_workflow_table_item(table, row_index, column, value)
-        # Colour the Status cell with the project-standard per-status palette (matching the
-        # relaxation/convergence tables), so a path's state reads at a glance.
-        status_item = table.item(row_index, _NEB_STATUS_COLUMN)
-        if status_item is not None:
-            status_item.setForeground(status_brush(row.status))
-        configure_button = SelectionSnapshotPushButton(table)
-        configure_button.selection_snapshot_key = row.key
-        style_workflow_configure_button(
-            configure_button,
-            workflow_label="Energy Barriers",
-            configured=row.configured,
-            locked=workflow_row_is_locked(row.status),
-        )
-        def _on_configure_clicked(_checked: bool = False, key=row.key, btn=configure_button) -> None:
-            keys = resolve_target_keys(
-                btn,
-                clicked_key=key,
-                snapshot_keys=[key_by_row[r] for r in btn.selection_snapshot_rows if r in key_by_row],
-                eligibility=lambda k: True,
-                parent=table,
-                action="Configure parameters for",
-            )
-            if keys:
-                configure_requested(list(keys))
-
-        configure_button.clicked.connect(_on_configure_clicked)
-        table.setCellWidget(row_index, 6, configure_button)
-
-        view_button = QPushButton("View...", table)
-        view_button.setToolTip("Open the path viewer for this diffusion path.")
-        view_button.clicked.connect(lambda _checked=False, key=row.key: view_requested(key))
-        table.setCellWidget(row_index, 7, view_button)
-    table.resizeRowsToContents()
 
 
 def _muon_atom_indexes(structure: Structure) -> list[int]:
