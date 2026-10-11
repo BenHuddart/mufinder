@@ -14,7 +14,8 @@ from PySide6.QtWidgets import QApplication, QLabel, QSizePolicy
 
 from mufinder.app.atomic_structure_viewer import MUON_VIEWER_RADIUS_ANG, _CameraState
 from mufinder.app.uep_clustering_dialog import _GEOMETRY_STATE_EMIT_DELAY_MS, UepClusteringDialog
-from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult, relaxed_site_number_map
+from mufinder.science.uep import StationaryPointClassification, UepOptimizationResult
+from mufinder.science.uep_clustering import relaxed_site_number_map
 from tests.support.structures import QUARTER_DIAGONAL, host_structure
 
 
