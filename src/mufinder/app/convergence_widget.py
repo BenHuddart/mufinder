@@ -5,75 +5,30 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QGroupBox,
-    QHeaderView,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
     QMessageBox,
-    QPushButton,
-    QSizePolicy,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
+from mufinder.app.convergence_types import CUTOFF_KEY_CODEC
 from mufinder.app.decimal_input import DecimalLineEdit
-from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
-from mufinder.app.workflow_parameters import (
-    reorder_workflow_parameter_specs,
-    seed_xc_functional_default,
-)
-from mufinder.app.workflow_table_utils import (
-    REMOVE_SELECTED_TEXT,
-    SelectionFeedback,
-    bind_delete_shortcuts,
-    bind_reset_failed_context_menu,
-    confirm_row_removal,
-    create_workflow_table,
-    standard_row_actions,
-    style_workflow_configure_button,
-    workflow_row_status_text,
-)
-from mufinder.app.theme import (
-    status_brush,
-    style_hint_text,
-    style_section_subtitle,
-    style_section_title,
-)
-from mufinder.castep_io.gui_metadata import (
-    get_gui_keyword_specs_for_files,
-    infer_task,
-    keyword_locked_in_workflow,
-    validate_gui_values,
-)
-from mufinder.castep_io.schema import KeywordSpec
-from mufinder.app.selection_snapshot import (
-    SelectionSnapshotPushButton,
-    SelectionSnapshotToolButton,
-    resolve_target_keys,
-)
-from mufinder.app.workflow_dialogs import RowParameterRequest, run_row_parameter_dialog
-from mufinder.app.workflow_parameters import STRUCTURE_CONTROLLED_CELL_KEYWORDS
-from mufinder.app.workflow_parameters import sanitize_parameter_mapping
-from mufinder.app.workflow_parameters import workflow_default_params
-from mufinder.app.workflow_table_utils import workflow_row_is_locked
+from mufinder.app.sweep_convergence_widget import SweepConvergenceWidget
+from mufinder.castep_io.gui_metadata import infer_task
 
-_ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
-_PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
-
-
-def _reorder_specs_with_kpoint_anchor(specs: list[KeywordSpec]) -> list[KeywordSpec]:
-    return reorder_workflow_parameter_specs(specs)
+_DEFAULT_CUTOFF_RANGE: Mapping[str, object] = {
+    "start": 300.0,
+    "stop": 1400.0,
+    "step": 100.0,
+    "replace_existing": False,
+}
+_FIRST_CUTOFF = 300.0
+_CUTOFF_STEP = 20.0
 
 
 class CutoffRangeDialog(QDialog):
@@ -166,868 +121,97 @@ class CutoffRangeDialog(QDialog):
         self.accept()
 
 
-class CutoffConvergenceWidget(QWidget):
+class CutoffConvergenceWidget(SweepConvergenceWidget):
     """UI for configuring cutoff convergence sweeps and per-cutoff parameters."""
 
-    _CUTOFF_COLUMN = 0
-    _STATUS_COLUMN = 1
-    _TOTAL_ENERGY_COLUMN = 2
-    _MAX_FORCE_COLUMN = 3
-    _CONFIGURE_COLUMN = 4
-    _REMOVE_COLUMN = 5
-    _ROW_HEIGHT = 32
-    _CUTOFF_COLUMN_WIDTH = 132
-    _CONFIGURE_COLUMN_MIN_WIDTH = 136
-    _REMOVE_COLUMN_WIDTH = 34
-
-    configure_requested = Signal(object)
-    submit_local_requested = Signal(object)
-    submit_cluster_requested = Signal(object)
-    cancel_requested = Signal(object)
-    inspect_failed_requested = Signal(object)
-    reset_failed_requested = Signal(object)
     remove_cutoff_requested = Signal(object)
-    examine_requested = Signal()
-    form_state_changed = Signal(dict)
-    simulation_cell_create_requested = Signal()
-    simulation_cell_selection_requested = Signal(object)
-    simulation_cell_use_unit_cell_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
+    _CODEC = CUTOFF_KEY_CODEC
+    _WORKFLOW_STAGE = "convergence_cutoff"
+    _SWEEP_PARAMETER = "cut_off_energy"
+    _KEYS_STATE_FIELD = "cutoff_energies"
+    _ROWS_STATE_FIELD = "cutoff_parameter_rows"
+    _ROW_KEY_FIELD = "cutoff"
+    _NAME_PREFIX_DEFAULT = "cutoff_convergence"
+    _DEFAULT_RANGE_STATE = _DEFAULT_CUTOFF_RANGE
+    _REMOVE_SIGNAL = "remove_cutoff_requested"
 
-        self._add_cutoff_button = QPushButton("Add Cutoff")
-        self._generate_range_button = QPushButton("Generate From Range...")
-        self._batch_configure_button = QPushButton("Configure Selected Parameters...")
-        self._batch_configure_button.setEnabled(False)
-        self._remove_selected_button = QPushButton(REMOVE_SELECTED_TEXT)
-        self._selection_count_label = QLabel("")
-        style_hint_text(self._selection_count_label)
-        self._examine_button = QPushButton("Examine Cutoff Convergence")
-        self._examine_button.setEnabled(False)
-        self.project_defaults_strip = ProjectDefaultsStrip()
-        self._range_state: dict[str, object] = {
-            "start": 300.0,
-            "stop": 1400.0,
-            "step": 100.0,
-            "replace_existing": False,
-        }
-        self._parameter_species_options: tuple[str, ...] = ()
+    _TITLE = "Cutoff Convergence"
+    _SUBTITLE = "Check whether cutoff settings are accurate enough before production runs."
+    _SWEEP_GROUP_TITLE = "Cutoff Sweep"
+    _KEY_COLUMN_LABEL = "Cutoff Energy (eV)"
+    _ADD_BUTTON_TEXT = "Add Cutoff"
+    _GENERATE_BUTTON_TEXT = "Generate From Range..."
+    _EXAMINE_BUTTON_TEXT = "Examine Cutoff Convergence"
+    _EXAMINE_READY_TOOLTIP = "Analyse completed cutoff energy and force trends."
+    _EXAMINE_WAITING_TOOLTIP = (
+        "Need at least two completed cutoffs with both total energy and max-force results."
+    )
+    _LOCKED_KEY_TOOLTIP = (
+        "Cutoff value is locked once this row has been queued for execution or has entered "
+        "execution history."
+    )
+    _REMOVE_ROW_TOOLTIP = "Remove this cutoff"
+    _CONFIGURE_NOUN = "cutoff"
+    _REMOVAL_NOUN = ("cutoff", "cutoffs")
+    # Removing a cutoff whose job is queued or running cancels the job first.
+    _CANCEL_ACTIVE_ON_REMOVE = True
+    _DIALOG_SUBJECT = "Cutoff Parameters"
+    _DIALOG_INTRO_PREFIX = "Included cutoffs: "
+    _INVALID_PARAMETERS_PREFIX = "Cutoff"
+    _NO_SELECTION_MESSAGE = ("No cutoffs selected", "Select one or more cutoff rows first.")
+    _INVALID_KEYS_MESSAGE = ("Invalid cutoff list", "Cutoff values must be numeric.")
+    _NO_KEYS_MESSAGE = ("No cutoffs", "Add one or more cutoff energies first.")
+    _DUPLICATE_KEYS_MESSAGE = ("Duplicate cutoffs", "Cutoff energies must be unique.")
 
-        self._cutoff_table = create_workflow_table(
-            (
-                "Cutoff Energy (eV)",
-                "Status",
-                "Total Energy (eV)",
-                "Max |Force| (eV/Ang)",
-                "Parameters",
-                "",
-            )
-        )
-        # Per-widget settings the shared helper does not cover (or that this
-        # editable table overrides): extended multi-select, in-place editing,
-        # a fixed row height, a custom context menu, per-column resize modes,
-        # and a non-stretching last (Remove) column.
-        self._cutoff_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._cutoff_table.setEditTriggers(
-            QAbstractItemView.EditTrigger.DoubleClicked
-            | QAbstractItemView.EditTrigger.EditKeyPressed
-            | QAbstractItemView.EditTrigger.SelectedClicked
-        )
-        self._cutoff_table.verticalHeader().setDefaultSectionSize(self._ROW_HEIGHT)
-        header = self._cutoff_table.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(self._CUTOFF_COLUMN, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(self._STATUS_COLUMN, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(self._TOTAL_ENERGY_COLUMN, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(self._MAX_FORCE_COLUMN, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(self._CONFIGURE_COLUMN, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(self._REMOVE_COLUMN, QHeaderView.ResizeMode.Fixed)
-        self._cutoff_table.setColumnWidth(self._CUTOFF_COLUMN, self._CUTOFF_COLUMN_WIDTH)
-        self._cutoff_table.setColumnWidth(self._CONFIGURE_COLUMN, self._CONFIGURE_COLUMN_MIN_WIDTH)
-        self._cutoff_table.setColumnWidth(self._REMOVE_COLUMN, self._REMOVE_COLUMN_WIDTH)
+    # -- Sweep hooks -------------------------------------------------------------
 
-        self._cutoff_runtime_states: dict[float, SweepPointRunState] = {}
-        self._cutoff_parameter_values: dict[float, dict[str, Any]] = {}
-        self._cutoff_added_advanced: dict[float, set[str]] = {}
-        self._restoring_form_state = False
-        self._updating_simulation_cell = False
+    def next_key(self, previous: float | None) -> float:
+        return _FIRST_CUTOFF if previous is None else previous + _CUTOFF_STEP
 
-        self._name_prefix = QLineEdit("cutoff_convergence")
-        self._simulation_cell_summary = QLabel("Using single unit cell.")
-        self._simulation_cell_summary.setWordWrap(True)
-        self._simulation_cell_combo = QComboBox()
-        self._simulation_cell_create_button = QPushButton("Manage Supercells...")
-        self._simulation_cell_use_unit_button = QPushButton("Use Unit Cell")
-
-        specs = get_gui_keyword_specs_for_files(
-            files=("param", "cell"),
-            workflow_stage="convergence_cutoff",
-            include_advanced=True,
-        )
-        self._specs = [spec for spec in specs if spec.name not in {"task", "spin_polarised"}]
-        self._specs = _reorder_specs_with_kpoint_anchor(self._specs)
-        self._specs_by_name = {spec.name: spec for spec in self._specs}
-        self._default_params = workflow_default_params(
-            self._specs,
-            workflow_stage="convergence_cutoff",
-            locked_names=set(self._shared_locked_values()),
-        )
-        self._schema_xc_functional = self._default_params.get("xc_functional")
-
-        self._build_layout()
-        self._connect_signals()
-        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
-            self, self._remove_selected_or_current_cutoffs
-        )
-
-    def _build_layout(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
-
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
-        header_row.setSpacing(10)
-        title_column = QVBoxLayout()
-        title_column.setContentsMargins(0, 0, 0, 0)
-        title_column.setSpacing(3)
-        title = QLabel("Cutoff Convergence")
-        style_section_title(title)
-        title_column.addWidget(title)
-
-        subtitle = QLabel("Check whether cutoff settings are accurate enough before production runs.")
-        style_section_subtitle(subtitle)
-        subtitle.setWordWrap(True)
-        title_column.addWidget(subtitle)
-
-        header_row.addLayout(title_column, 1)
-        header_row.addWidget(self.project_defaults_strip, 0, Qt.AlignmentFlag.AlignTop)
-        layout.addLayout(header_row)
-
-        simulation_group = QGroupBox("Simulation Cell")
-        simulation_layout = QVBoxLayout(simulation_group)
-        simulation_layout.setContentsMargins(10, 8, 10, 8)
-        simulation_layout.setSpacing(6)
-        simulation_layout.addWidget(self._simulation_cell_summary)
-
-        simulation_row = QHBoxLayout()
-        simulation_row.setSpacing(8)
-        simulation_row.addWidget(QLabel("Saved supercells"))
-        simulation_row.addWidget(self._simulation_cell_combo, 1)
-        simulation_row.addWidget(self._simulation_cell_create_button)
-        simulation_row.addWidget(self._simulation_cell_use_unit_button)
-        simulation_layout.addLayout(simulation_row)
-
-        layout.addWidget(simulation_group)
-
-        sweep_group = QGroupBox("Cutoff Sweep")
-        sweep_layout = QVBoxLayout(sweep_group)
-        sweep_layout.setContentsMargins(10, 8, 10, 8)
-        sweep_layout.setSpacing(6)
-        sweep_layout.addWidget(self._cutoff_table)
-
-        controls_row = QHBoxLayout()
-        controls_row.setSpacing(6)
-        controls_left = QHBoxLayout()
-        controls_left.setSpacing(6)
-        controls_left.addWidget(self._add_cutoff_button)
-        controls_left.addWidget(self._generate_range_button)
-        controls_row.addLayout(controls_left)
-        controls_row.addStretch(1)
-        controls_row.addWidget(self._selection_count_label)
-        controls_row.addWidget(self._remove_selected_button)
-        controls_row.addWidget(self._batch_configure_button)
-        sweep_layout.addLayout(controls_row)
-
-        examine_row = QHBoxLayout()
-        examine_row.addStretch(1)
-        examine_row.addWidget(self._examine_button)
-        sweep_layout.addLayout(examine_row)
-
-        layout.addWidget(sweep_group, 1)
-
-        run_group = QGroupBox("Run Jobs")
-        run_layout = QVBoxLayout(run_group)
-        run_layout.setContentsMargins(10, 8, 10, 8)
-        run_layout.setSpacing(6)
-
-        run_row = QHBoxLayout()
-        run_row.setSpacing(8)
-        run_row.addWidget(QLabel("Job name prefix"))
-        run_row.addWidget(self._name_prefix, 1)
-        # SelectionFeedback sets the run buttons' text ("Run All ..." / "Run
-        # Selected ...") from the selection.
-        self._run_local_button = QPushButton()
-        self._run_cluster_button = QPushButton()
-        run_row.addWidget(self._run_local_button)
-        run_row.addWidget(self._run_cluster_button)
-        run_layout.addLayout(run_row)
-
-        layout.addWidget(run_group)
-
-    def _connect_signals(self) -> None:
-        self._add_cutoff_button.clicked.connect(self._add_cutoff)
-        self._generate_range_button.clicked.connect(self._open_range_dialog)
-        self._batch_configure_button.clicked.connect(self._configure_selected_cutoffs)
-
-        self._cutoff_table.itemChanged.connect(self._on_cutoff_table_changed)
-        self._remove_selected_button.clicked.connect(self._remove_selected_or_current_cutoffs)
-        self._cutoff_table.setToolTip(
-            "Right-click selected rows to run, cancel, inspect, reset, configure, or remove them."
-        )
-        # A right-click makes the rows under it the selection, so the menu's
-        # run/configure/remove entries reuse the selection-based handlers.
-        leading_actions, trailing_actions = standard_row_actions(
-            status_for_row=self._row_status,
-            run_local=lambda _rows: self._run_local_selected_cutoffs(),
-            run_cluster=lambda _rows: self._run_cluster_selected_cutoffs(),
-            cancel=lambda rows: self.cancel_requested.emit(self._cutoffs_at_rows(rows)),
-            inspect=lambda rows: self.inspect_failed_requested.emit(self._cutoffs_at_rows(rows)),
-            configure=lambda _rows: self._configure_selected_cutoffs(),
-            remove=lambda _rows: self._remove_selected_or_current_cutoffs(),
-            confirm_parent=self,
-        )
-        bind_reset_failed_context_menu(
-            self._cutoff_table,
-            key_for_row=lambda row: self._cutoff_value_at_row(row, strict=False),
-            status_for_row=self._row_status,
-            emit_reset=self.reset_failed_requested.emit,
-            leading_actions=leading_actions,
-            additional_actions=trailing_actions,
-        )
-        selection_model = self._cutoff_table.selectionModel()
-        if selection_model is not None:
-            selection_model.selectionChanged.connect(lambda *_: self._refresh_batch_button_state())
-        self._name_prefix.textChanged.connect(self._emit_state)
-        self._examine_button.clicked.connect(self.examine_requested.emit)
-        self._run_local_button.clicked.connect(self._run_local_selected_cutoffs)
-        self._run_cluster_button.clicked.connect(self._run_cluster_selected_cutoffs)
-        self._selection_feedback = SelectionFeedback(
-            self._cutoff_table,
-            count_label=self._selection_count_label,
-            run_local_button=self._run_local_button,
-            run_cluster_button=self._run_cluster_button,
-            selection_buttons=(self._remove_selected_button,),
-        )
-        self._simulation_cell_combo.currentIndexChanged.connect(self._on_simulation_cell_combo_changed)
-        self._simulation_cell_create_button.clicked.connect(self.simulation_cell_create_requested.emit)
-        self._simulation_cell_use_unit_button.clicked.connect(
-            self.simulation_cell_use_unit_cell_requested.emit
-        )
-
-    def set_xc_functional_default(self, xc_functional: str | None) -> None:
-        """Use the project default XC functional for rows without their own value."""
-        seed_xc_functional_default(
-            self._default_params,
-            xc_functional,
-            schema_default=self._schema_xc_functional,
-        )
-
-    def set_simulation_cell_options(
-        self,
-        *,
-        summary: str,
-        assets: list[dict[str, str]],
-        selected_structure_id: str | None,
-        enabled: bool,
-    ) -> None:
-        self._updating_simulation_cell = True
-        try:
-            self._simulation_cell_summary.setText(summary)
-            self._simulation_cell_combo.clear()
-            self._simulation_cell_combo.addItem("Single unit cell", None)
-            for asset in assets:
-                label = str(asset.get("label", "")).strip() or "Saved supercell"
-                structure_id = str(asset.get("structure_id", "")).strip()
-                self._simulation_cell_combo.addItem(label, structure_id)
-
-            selected_index = 0
-            if selected_structure_id:
-                matched = self._simulation_cell_combo.findData(str(selected_structure_id))
-                if matched >= 0:
-                    selected_index = matched
-            self._simulation_cell_combo.setCurrentIndex(selected_index)
-
-            self._simulation_cell_combo.setEnabled(enabled)
-            self._simulation_cell_create_button.setEnabled(enabled)
-            self._simulation_cell_use_unit_button.setEnabled(enabled)
-        finally:
-            self._updating_simulation_cell = False
-
-    def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
-        self._parameter_species_options = tuple(
-            dict.fromkeys(option for item in species_options if (option := str(item).strip()))
-        )
-
-    def _on_simulation_cell_combo_changed(self, index: int) -> None:
-        if self._updating_simulation_cell:
-            return
-        data = self._simulation_cell_combo.itemData(index)
-        if not data:
-            self.simulation_cell_use_unit_cell_requested.emit()
-            return
-        self.simulation_cell_selection_requested.emit(str(data))
-
-    def _shared_locked_values(self) -> dict[str, str]:
-        locked: dict[str, str] = {}
-        for spec in self._specs:
-            if keyword_locked_in_workflow(spec, workflow_stage="convergence_cutoff"):
-                locked[spec.name] = "Variable (set by workflow)"
-
-        if "cut_off_energy" in {spec.name for spec in self._specs}:
-            locked["cut_off_energy"] = "Variable (set by sweep)"
-
-        return locked
-
-    def _make_table_item(self, text: str, *, editable: bool) -> QTableWidgetItem:
-        item = QTableWidgetItem(text)
-        flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-        if editable:
-            flags |= Qt.ItemFlag.ItemIsEditable
-        item.setFlags(flags)
-        return item
-
-    @staticmethod
-    def _status_brush(status_value: str):
-        return status_brush(status_value)
-
-    def _next_cutoff_guess(self) -> float:
-        guess = 300.0
-        if self._cutoff_table.rowCount() == 0:
-            return guess
-
-        previous = self._cutoff_value_at_row(self._cutoff_table.rowCount() - 1, strict=False)
-        if previous is None:
-            return guess
-        return previous + 20.0
-
-    def _insert_cutoff_row(self, value: float) -> None:
-        row = self._cutoff_table.rowCount()
-        self._cutoff_table.insertRow(row)
-        self._cutoff_table.setItem(
-            row,
-            self._CUTOFF_COLUMN,
-            self._make_table_item(f"{float(value):.8g}", editable=True),
-        )
-        self._cutoff_table.setItem(
-            row,
-            self._STATUS_COLUMN,
-            self._make_table_item("not generated", editable=False),
-        )
-        self._cutoff_table.setItem(
-            row,
-            self._TOTAL_ENERGY_COLUMN,
-            self._make_table_item("", editable=False),
-        )
-        self._cutoff_table.setItem(
-            row,
-            self._MAX_FORCE_COLUMN,
-            self._make_table_item("", editable=False),
-        )
-
-        configure_button = SelectionSnapshotPushButton(self._cutoff_table)
-        configure_button.selection_snapshot_key = value
-        self._style_configure_button(configure_button)
-        configure_button.clicked.connect(
-            lambda _checked=False, key=value, btn=configure_button: self._configure_cutoff_button_clicked(btn, key)
-        )
-        self._cutoff_table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
-
-        remove_button = SelectionSnapshotToolButton(self._cutoff_table)
-        remove_button.selection_snapshot_key = value
-        remove_button.setText("x")
-        remove_button.setAutoRaise(True)
-        remove_button.setToolTip("Remove this cutoff")
-        remove_button.clicked.connect(
-            lambda _checked=False, key=value, btn=remove_button: self._remove_cutoff_button_clicked(btn, key)
-        )
-        self._cutoff_table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
-        self._refresh_cutoff_row(row)
-
-    def _style_configure_button(self, button: QPushButton) -> None:
-        metrics = button.fontMetrics()
-        label_width = max(
-            metrics.horizontalAdvance("Configure..."),
-            metrics.horizontalAdvance("Configured..."),
-        )
-        button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
-        button.setMinimumWidth(max(self._CONFIGURE_COLUMN_MIN_WIDTH, label_width + 24))
-        button.setMinimumHeight(max(24, metrics.height() + 10))
-
-    def _set_cutoff_values(self, values: tuple[float, ...]) -> None:
-        self._cutoff_table.blockSignals(True)
-        self._cutoff_table.setRowCount(0)
-        for value in values:
-            self._insert_cutoff_row(value)
-        self._cutoff_table.blockSignals(False)
-        self._prune_cutoff_configs()
-        self._refresh_all_cutoff_rows()
-        self._refresh_batch_button_state()
-
-    def _add_cutoff(self, value: float | None = None) -> None:
-        self._cutoff_table.blockSignals(True)
-        self._insert_cutoff_row(self._next_cutoff_guess() if value is None else float(value))
-        self._cutoff_table.blockSignals(False)
-        self._refresh_all_cutoff_rows()
-        self._emit_state()
-
-    def _open_range_dialog(self) -> None:
+    def generate_keys(self) -> tuple[tuple[float, ...], bool] | None:
         dialog = CutoffRangeDialog(self._range_state, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            self._range_state = dialog.defaults_state()
-            return
-
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
         self._range_state = dialog.defaults_state()
-        generated = dialog.values()
-        if dialog.replace_existing():
-            merged = generated
-        else:
-            merged = tuple(dict.fromkeys(self._collect_cutoffs(strict=False) + generated))
+        if not accepted:
+            return None
+        return dialog.values(), dialog.replace_existing()
 
-        self._set_cutoff_values(merged)
-        self._emit_state()
+    def remove_cutoffs(self, cutoffs: Sequence[float]) -> None:
+        """Remove the rows for ``cutoffs`` and forget their parameters."""
 
-    def _format_cutoff_list(self, cutoffs: tuple[float, ...]) -> str:
-        return ", ".join(f"{value:.8g} eV" for value in cutoffs)
+        self.remove_keys(cutoffs)
 
-    def _configure_cutoff_button_clicked(self, button: SelectionSnapshotPushButton, clicked_cutoff: float) -> None:
-        snapshot_keys = [
-            self._cutoff_value_at_row(r, strict=False)
-            for r in button.selection_snapshot_rows
-        ]
-        cutoffs = resolve_target_keys(
-            button,
-            clicked_key=clicked_cutoff,
-            snapshot_keys=[c for c in snapshot_keys if c is not None],
-            eligibility=lambda c: True,
-            parent=self,
-            action="Configure parameters for",
-        )
-        if cutoffs:
-            self._open_cutoff_parameter_dialog(cutoffs)
+    # -- Cutoff-only behaviour ---------------------------------------------------
 
-    def _configure_selected_cutoffs(self) -> None:
-        cutoffs = self._selected_cutoffs()
-        if not cutoffs:
-            QMessageBox.information(
-                self,
-                "No cutoffs selected",
-                "Select one or more cutoff rows first.",
-            )
-            return
-        self._open_cutoff_parameter_dialog(cutoffs)
+    def _dialog_subject(self, keys: tuple[Any, ...]) -> str:
+        if len(keys) == 1:
+            return f"Parameters: {self._CODEC.describe(keys[0])}"
+        return self._DIALOG_SUBJECT
 
-    def _open_cutoff_parameter_dialog(self, cutoffs: tuple[float, ...]) -> None:
-        if not cutoffs:
-            return
-
-        subject = "Cutoff Parameters" if len(cutoffs) > 1 else f"Parameters: {cutoffs[0]:.8g} eV"
-        result = run_row_parameter_dialog(
-            RowParameterRequest(
-                specs=self._specs,
-                workflow_stage="convergence_cutoff",
-                subject=subject,
-                values=self._common_parameter_values_for_cutoffs(cutoffs),
-                row_values={c: self._effective_params_for_cutoff(c) for c in cutoffs},
-                row_advanced={c: self._cutoff_added_advanced.get(c, set()) for c in cutoffs},
-                sanitize=lambda values: sanitize_parameter_mapping(
-                    values,
-                    self._specs_by_name,
-                    keep=("task",),
-                    drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
-                ),
-                locked_values=self._shared_locked_values(),
-                read_only=self._cutoff_parameters_locked(cutoffs),
-                intro_text=f"Included cutoffs: {self._format_cutoff_list(tuple(sorted(cutoffs)))}",
-                species_options=self._parameter_species_options,
-            ),
-            parent=self,
-        )
-        if result is None:
-            return
-        for cutoff, values in result.row_values.items():
-            self._set_cutoff_parameter_values(cutoff, values, result.row_advanced[cutoff])
-
-        self._refresh_all_cutoff_rows()
-        self._emit_state()
-
-    def _effective_params_for_cutoff(self, cutoff: float) -> dict[str, Any]:
-        values = self._cutoff_parameter_values.get(cutoff)
-        if values is None:
-            return dict(self._default_params)
-        return dict(values)
-
-    def _set_cutoff_parameter_values(
-        self, cutoff: float, values: dict[str, Any], advanced_names: set[str]
-    ) -> None:
-        normalized = sanitize_parameter_mapping(
-            values,
-            self._specs_by_name,
-            keep=("task",),
-            drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
-        )
+    def _is_default_parameter_set(self, values: Mapping[str, Any]) -> bool:
         # A task-only mapping is what the legacy-restore path used to write for
-        # a default row (see set_form_state); the parameter dialog cannot
-        # produce one. Reading it back as "defaults" repairs rows saved that
-        # way, so they match the definition their jobs ran under again.
-        task_only = {"task": self._default_params.get("task", infer_task("convergence_cutoff"))}
-        if normalized in (self._default_params, task_only) and not advanced_names:
-            self._cutoff_parameter_values.pop(cutoff, None)
-            self._cutoff_added_advanced.pop(cutoff, None)
-            return
+        # a default row; the parameter dialog cannot produce one. Reading it
+        # back as "defaults" repairs rows saved that way, so they match the
+        # definition their jobs ran under again.
+        task_only = {"task": self._default_params.get("task", infer_task(self._WORKFLOW_STAGE))}
+        return values in (self._default_params, task_only)
 
-        self._cutoff_parameter_values[cutoff] = dict(normalized)
-        if advanced_names:
-            self._cutoff_added_advanced[cutoff] = set(advanced_names)
-        else:
-            self._cutoff_added_advanced.pop(cutoff, None)
-
-    def _common_parameter_values_for_cutoffs(self, cutoffs: tuple[float, ...]) -> dict[str, Any]:
-        effective_maps = [self._effective_params_for_cutoff(cutoff) for cutoff in cutoffs]
-        if not effective_maps:
-            return dict(self._default_params)
-
-        common = dict(effective_maps[0])
-        for candidate in effective_maps[1:]:
-            common = {
-                name: value
-                for name, value in common.items()
-                if name in candidate and candidate[name] == value
-            }
-
-        if "task" not in common:
-            common["task"] = infer_task("convergence_cutoff")
-        return common
-
-    def _is_cutoff_customized(self, cutoff: float) -> bool:
-        return cutoff in self._cutoff_parameter_values or cutoff in self._cutoff_added_advanced
-
-    def _cutoff_parameters_locked(self, cutoffs: tuple[float, ...]) -> bool:
-        for cutoff in cutoffs:
-            runtime = self._cutoff_runtime_states.get(float(cutoff))
-            status = "" if runtime is None else runtime.status.strip().lower()
-            if workflow_row_is_locked(status):
-                return True
-        return False
-
-    def _remove_cutoff_button_clicked(self, button: SelectionSnapshotToolButton, clicked_cutoff: float) -> None:
-        snapshot_keys = [
-            self._cutoff_value_at_row(r, strict=False)
-            for r in button.selection_snapshot_rows
-        ]
-        asked_single: list[bool] = []
-        cutoffs = resolve_target_keys(
-            button,
-            clicked_key=clicked_cutoff,
-            snapshot_keys=[c for c in snapshot_keys if c is not None],
-            eligibility=lambda c: True,
-            parent=self,
-            action="Remove",
-            confirm_unprompted=lambda: asked_single.append(True)
-            or self._confirm_cutoff_removal(self._rows_for_cutoffs((clicked_cutoff,))),
-        )
-        rows = self._rows_for_cutoffs(cutoffs)
-        if rows:
-            # The three-way prompt is the confirmation for a multi-row removal,
-            # but it says nothing about running jobs, so it is not consent to
-            # cancel them: those rows are confirmed again with that spelled out.
-            self._request_cutoff_removals(
-                rows,
-                confirmed=bool(asked_single) or not self._active_cutoffs(rows),
-            )
-
-    def _rows_for_cutoffs(self, cutoffs: Sequence[float]) -> tuple[int, ...]:
-        return tuple(
-            r
-            for r in range(self._cutoff_table.rowCount())
-            if self._cutoff_value_at_row(r, strict=False) in cutoffs
-        )
-
-    def _cutoff_status_at_row(self, row: int) -> str:
-        cutoff = self._cutoff_value_at_row(row, strict=False)
-        runtime = self._cutoff_runtime_states.get(cutoff) if cutoff is not None else None
-        return (runtime.status if runtime is not None else "").strip().lower()
-
-    def _active_cutoffs(self, rows: Sequence[int]) -> list[float]:
-        active: list[float] = []
-        for row in rows:
-            cutoff = self._cutoff_value_at_row(row, strict=False)
-            if cutoff is not None and self._cutoff_status_at_row(row) in _ACTIVE_JOB_STATUSES:
-                active.append(cutoff)
-        return active
-
-    def _confirm_cutoff_removal(self, rows: Sequence[int]) -> bool:
-        submitted = sum(
-            1 for row in rows if self._cutoff_status_at_row(row) in _PROGRESSED_JOB_STATUSES
-        )
-        return confirm_row_removal(
-            self,
-            len(rows),
-            noun=("cutoff", "cutoffs"),
-            submitted_count=submitted,
-            cancelling_count=len(self._active_cutoffs(rows)),
-        )
-
-    def _request_cutoff_removals(self, rows: tuple[int, ...], *, confirmed: bool = False) -> None:
-        """Remove ``rows`` after one confirmation covering the whole batch.
-
-        Rows whose job is still queued or running have it cancelled first; the
-        confirmation says how many, so nothing is cancelled unannounced.
-        ``confirmed`` skips the prompt for a caller that has already asked.
-        """
-
-        if not rows:
-            return
-        if not confirmed and not self._confirm_cutoff_removal(rows):
-            return
-
-        active = self._active_cutoffs(rows)
-        if active:
-            self.cancel_requested.emit(active)
-
-        cutoffs = [
-            cutoff
-            for row in rows
-            if (cutoff := self._cutoff_value_at_row(row, strict=False)) is not None
-        ]
-        invalid_rows = [row for row in rows if self._cutoff_value_at_row(row, strict=False) is None]
-        for row in sorted(invalid_rows, reverse=True):
-            self._remove_cutoff_row(row)
-
-        if cutoffs:
-            self.remove_cutoff_requested.emit(cutoffs)
-
-    def _remove_selected_or_current_cutoffs(self) -> None:
-        if self._cutoff_table.state() == QAbstractItemView.State.EditingState:
-            return
-        selected_rows = self._selected_rows()
-        if selected_rows:
-            self._request_cutoff_removals(selected_rows)
-            return
-
-        current_row = self._cutoff_table.currentRow()
-        if current_row >= 0:
-            self._request_cutoff_removals((current_row,))
-
-    def _remove_cutoff_row(self, row: int) -> None:
-        cutoff = self._cutoff_value_at_row(row, strict=False)
-        if cutoff is not None:
-            self._cutoff_parameter_values.pop(cutoff, None)
-            self._cutoff_added_advanced.pop(cutoff, None)
-        self._cutoff_table.removeRow(row)
-        self._prune_cutoff_configs()
-        self._refresh_batch_button_state()
-        self._emit_state()
-
-    def remove_cutoffs(self, cutoffs: list[float] | tuple[float, ...]) -> None:
-        targets = {float(value) for value in cutoffs}
-        if not targets:
-            return
-        for row in reversed(range(self._cutoff_table.rowCount())):
-            cutoff = self._cutoff_value_at_row(row, strict=False)
-            if cutoff is None or cutoff not in targets:
-                continue
-            self._remove_cutoff_row(row)
-
-    def _cutoff_value_at_row(self, row: int, *, strict: bool) -> float | None:
-        item = self._cutoff_table.item(row, self._CUTOFF_COLUMN)
-        if item is None:
-            return None
-        text = item.text().strip()
-        if not text:
-            return None
-        try:
-            return float(text)
-        except ValueError:
-            if strict:
-                raise
-            return None
-
-    def _collect_cutoffs(self, *, strict: bool = True) -> tuple[float, ...]:
-        values: list[float] = []
-        for row in range(self._cutoff_table.rowCount()):
-            value = self._cutoff_value_at_row(row, strict=strict)
-            if value is not None:
-                values.append(value)
-        return tuple(values)
-
-    def _selected_cutoffs(self) -> tuple[float, ...]:
-        selection_model = self._cutoff_table.selectionModel()
-        if selection_model is None:
-            return ()
-        rows = sorted(index.row() for index in selection_model.selectedRows())
-        selected: list[float] = []
-        for row in rows:
-            value = self._cutoff_value_at_row(row, strict=False)
-            if value is not None:
-                selected.append(value)
-        return tuple(selected)
-
-    def _selected_rows(self) -> tuple[int, ...]:
-        selection_model = self._cutoff_table.selectionModel()
-        if selection_model is None:
-            return ()
-        rows = sorted(index.row() for index in selection_model.selectedRows())
-        return tuple(rows)
-
-    def _selected_or_all_cutoffs(self) -> tuple[float, ...]:
-        """Return the cutoffs the run buttons act on: the selection, else every row.
-
-        The buttons read "Run Selected ..." or "Run All ..." to match, so what
-        they run is always stated on the button.
-        """
-
-        selected = self._selected_cutoffs()
-        if selected:
-            return selected
-        return self._collect_cutoffs(strict=False)
-
-    def _cutoffs_at_rows(self, rows: Sequence[int]) -> list[float]:
-        return [
-            cutoff
-            for row in rows
-            if (cutoff := self._cutoff_value_at_row(row, strict=False)) is not None
-        ]
-
-    def _row_status(self, row: int) -> str:
-        return workflow_row_status_text(self._cutoff_table, row, self._STATUS_COLUMN)
-
-    def set_runtime_states(self, states: Mapping[float, SweepPointRunState]) -> None:
-        """Update row status/energy display using project job/result state."""
-        self._cutoff_runtime_states = {float(key): value for key, value in states.items()}
-        self._refresh_all_cutoff_rows()
-        self._refresh_examine_button_state()
-
-    def _refresh_all_cutoff_rows(self) -> None:
-        self._cutoff_table.blockSignals(True)
-        for row in range(self._cutoff_table.rowCount()):
-            self._refresh_cutoff_row(row)
-        self._cutoff_table.blockSignals(False)
-
-    def _refresh_cutoff_row(self, row: int) -> None:
-        cutoff = self._cutoff_value_at_row(row, strict=False)
-        runtime = self._cutoff_runtime_states.get(cutoff) if cutoff is not None else None
-
-        status_text = "not generated"
-        energy_text = ""
-        max_force_text = ""
-        if runtime is not None:
-            if runtime.status:
-                status_text = runtime.status
-            if runtime.total_energy is not None:
-                energy_text = f"{runtime.total_energy:.12g}"
-            if runtime.max_force is not None:
-                max_force_text = f"{runtime.max_force:.12g}"
-
-        status_normalized = status_text.strip().lower()
-
-        cutoff_item = self._cutoff_table.item(row, self._CUTOFF_COLUMN)
-        if cutoff_item is not None:
-            flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-            if not workflow_row_is_locked(status_normalized):
-                flags |= Qt.ItemFlag.ItemIsEditable
-                cutoff_item.setToolTip("")
-            else:
-                cutoff_item.setToolTip(
-                    "Cutoff value is locked once this row has been queued for execution or has entered execution history."
-                )
-            cutoff_item.setFlags(flags)
-
-        status_item = self._cutoff_table.item(row, self._STATUS_COLUMN)
-        if status_item is None:
-            status_item = self._make_table_item(status_text, editable=False)
-            self._cutoff_table.setItem(row, self._STATUS_COLUMN, status_item)
-        else:
-            status_item.setText(status_text)
-        status_item.setForeground(self._status_brush(status_text))
-
-        energy_item = self._cutoff_table.item(row, self._TOTAL_ENERGY_COLUMN)
-        if energy_item is None:
-            energy_item = self._make_table_item(energy_text, editable=False)
-            self._cutoff_table.setItem(row, self._TOTAL_ENERGY_COLUMN, energy_item)
-        else:
-            energy_item.setText(energy_text)
-
-        max_force_item = self._cutoff_table.item(row, self._MAX_FORCE_COLUMN)
-        if max_force_item is None:
-            max_force_item = self._make_table_item(max_force_text, editable=False)
-            self._cutoff_table.setItem(row, self._MAX_FORCE_COLUMN, max_force_item)
-        else:
-            max_force_item.setText(max_force_text)
-
-        configure_button = self._cutoff_table.cellWidget(row, self._CONFIGURE_COLUMN)
-        if isinstance(configure_button, QPushButton):
-            customized = cutoff is not None and self._is_cutoff_customized(cutoff)
-            locked = workflow_row_is_locked(status_normalized)
-            style_workflow_configure_button(
-                configure_button,
-                workflow_label="CASTEP",
-                configured=customized,
-                locked=locked,
-                noun="cutoff",
-                used=True,
-            )
-
-    def _refresh_batch_button_state(self) -> None:
-        self._batch_configure_button.setEnabled(bool(self._selected_cutoffs()))
-
-    def _refresh_examine_button_state(self) -> None:
-        completed_with_results = 0
-        for runtime in self._cutoff_runtime_states.values():
-            if runtime.status.strip().lower() != "completed":
-                continue
-            if runtime.total_energy is None or runtime.max_force is None:
-                continue
-            completed_with_results += 1
-
-        enabled = completed_with_results >= 2
-        self._examine_button.setEnabled(enabled)
-        if enabled:
-            self._examine_button.setToolTip("Analyse completed cutoff energy and force trends.")
-        else:
-            self._examine_button.setToolTip(
-                "Need at least two completed cutoffs with both total energy and max-force results."
-            )
-
-    def _prune_cutoff_configs(self) -> None:
-        available = set(self._collect_cutoffs(strict=False))
-        stale = [cutoff for cutoff in self._cutoff_parameter_values if cutoff not in available]
-        for cutoff in stale:
-            self._cutoff_parameter_values.pop(cutoff, None)
-            self._cutoff_added_advanced.pop(cutoff, None)
-
-        stale_advanced = [cutoff for cutoff in self._cutoff_added_advanced if cutoff not in available]
-        for cutoff in stale_advanced:
-            self._cutoff_added_advanced.pop(cutoff, None)
-
-    def _on_cutoff_table_changed(self, item: QTableWidgetItem) -> None:
-        if item.column() != self._CUTOFF_COLUMN:
-            return
-        self._prune_cutoff_configs()
-        self._refresh_all_cutoff_rows()
-        self._emit_state()
-
-    def _emit_state(self) -> None:
-        if self._restoring_form_state:
-            return
-        self.form_state_changed.emit(self.collect_state())
-
-    def _restore_legacy_cutoff_configs(self, state: dict[str, Any], cutoffs: tuple[float, ...]) -> None:
+    def _restore_legacy_parameters(self, state: Mapping[str, Any], keys: tuple[Any, ...]) -> None:
+        # Only a legacy state (or a definition's configuration) carries
+        # shared_params/overrides. A current state whose rows all use the
+        # defaults has no cutoff_parameter_rows and no shared_params, so it
+        # never reaches here: reading it as legacy would pin every row to an
+        # explicit task-only parameter set, so the rows would stop matching the
+        # definition their jobs ran under and be submitted again.
         shared = state.get("shared_params", {})
         shared_clean = (
-            sanitize_parameter_mapping(
-                {str(name): raw for name, raw in shared.items()},
-                self._specs_by_name,
-                keep=("task",),
-                drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
-            )
+            self._sanitize({str(name): raw for name, raw in shared.items()})
             if isinstance(shared, dict)
             else dict(self._default_params)
         )
         if "task" not in shared_clean:
-            shared_clean["task"] = infer_task("convergence_cutoff")
-
+            shared_clean["task"] = infer_task(self._WORKFLOW_STAGE)
         shared_advanced = {
             str(name) for name in state.get("shared_added_advanced", []) if isinstance(name, str)
         }
@@ -1037,265 +221,20 @@ class CutoffConvergenceWidget(QWidget):
         for entry in state.get("overrides", []):
             if not isinstance(entry, dict):
                 continue
-            params = sanitize_parameter_mapping(
-                {str(name): raw for name, raw in dict(entry.get("params", {})).items()},
-                self._specs_by_name,
-                keep=("task",),
-                drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
-            )
+            params = self._sanitize({str(name): raw for name, raw in dict(entry.get("params", {})).items()})
             advanced = {name for name in params if name in self._specs_by_name and params[name] is not None}
             for raw_cutoff in entry.get("cutoffs", []):
-                try:
-                    cutoff = float(raw_cutoff)
-                except (TypeError, ValueError):
+                cutoff = self._CODEC.coerce(raw_cutoff)
+                if cutoff is None:
                     continue
                 overrides_by_cutoff[cutoff] = dict(params)
                 override_advanced[cutoff] = set(advanced)
 
-        for cutoff in cutoffs:
+        for cutoff in keys:
             merged = dict(shared_clean)
             merged.update(overrides_by_cutoff.get(cutoff, {}))
             advanced_names = set(shared_advanced).union(override_advanced.get(cutoff, set()))
-            self._set_cutoff_parameter_values(cutoff, merged, advanced_names)
-
-    def collect_state(self) -> dict[str, Any]:
-        return {
-            "mode": "manual",
-            "name_prefix": self._name_prefix.text().strip() or "cutoff_convergence",
-            "range": dict(self._range_state),
-            "cutoff_energies": list(self._collect_cutoffs(strict=False)),
-            "cutoff_parameter_rows": [
-                {
-                    "cutoff": cutoff,
-                    "params": dict(self._cutoff_parameter_values[cutoff]),
-                    "added_advanced": sorted(self._cutoff_added_advanced.get(cutoff, set())),
-                }
-                for cutoff in sorted(self._cutoff_parameter_values)
-            ],
-        }
-
-    @staticmethod
-    def _coerce_cutoff_values(raw_values: object) -> tuple[float, ...]:
-        values: list[float] = []
-        if isinstance(raw_values, list):
-            for value in raw_values:
-                try:
-                    values.append(float(value))
-                except (TypeError, ValueError):
-                    continue
-        return tuple(values)
-
-    @staticmethod
-    def _coerce_cutoffs_from_rows(raw_rows: object) -> tuple[float, ...]:
-        values: list[float] = []
-        if isinstance(raw_rows, list):
-            for entry in raw_rows:
-                if not isinstance(entry, dict):
-                    continue
-                try:
-                    values.append(float(entry.get("cutoff")))
-                except (TypeError, ValueError):
-                    continue
-        return tuple(values)
-
-    def set_form_state(self, state: dict[str, Any]) -> None:
-        self._restoring_form_state = True
-        try:
-            self._range_state = {
-                "start": 300.0,
-                "stop": 1400.0,
-                "step": 100.0,
-                "replace_existing": False,
-            }
-            self._cutoff_parameter_values = {}
-            self._cutoff_added_advanced = {}
-
-            previous_block = self._name_prefix.blockSignals(True)
-            self._name_prefix.setText("cutoff_convergence")
-            self._name_prefix.blockSignals(previous_block)
-
-            cutoffs: tuple[float, ...] = ()
-            cutoff_rows: list[dict[str, Any]] = []
-            if state:
-                previous_block = self._name_prefix.blockSignals(True)
-                self._name_prefix.setText(str(state.get("name_prefix", "cutoff_convergence")))
-                self._name_prefix.blockSignals(previous_block)
-
-                range_state = state.get("range", {})
-                if isinstance(range_state, dict):
-                    for key in ("start", "stop", "step"):
-                        try:
-                            self._range_state[key] = float(range_state.get(key, self._range_state[key]))
-                        except (TypeError, ValueError):
-                            continue
-                    self._range_state["replace_existing"] = bool(
-                        range_state.get("replace_existing", self._range_state["replace_existing"])
-                    )
-
-                from_list = self._coerce_cutoff_values(state.get("cutoff_energies", []))
-                from_rows = self._coerce_cutoffs_from_rows(state.get("cutoff_parameter_rows", []))
-                cutoffs = tuple(dict.fromkeys(from_list + from_rows))
-
-                raw_cutoff_rows = state.get("cutoff_parameter_rows", [])
-                if isinstance(raw_cutoff_rows, list):
-                    cutoff_rows = [entry for entry in raw_cutoff_rows if isinstance(entry, dict)]
-
-            self._set_cutoff_values(cutoffs)
-
-            if cutoff_rows:
-                for entry in cutoff_rows:
-                    try:
-                        cutoff = float(entry.get("cutoff"))
-                    except (TypeError, ValueError):
-                        continue
-                    params = sanitize_parameter_mapping(
-                        {str(name): raw for name, raw in dict(entry.get("params", {})).items()},
-                        self._specs_by_name,
-                        keep=("task",),
-                        drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
-                    )
-                    advanced_names = {
-                        str(name) for name in entry.get("added_advanced", []) if isinstance(name, str)
-                    }
-                    self._set_cutoff_parameter_values(cutoff, params, advanced_names)
-            elif "shared_params" in state or "overrides" in state:
-                # Only a legacy state (or a definition's configuration) carries
-                # shared_params/overrides. A current state whose rows all use the
-                # defaults has no cutoff_parameter_rows at all, and must be left
-                # alone: reading it as legacy would pin every row to an explicit
-                # task-only parameter set, so the rows would stop matching the
-                # definition their jobs ran under and be submitted again.
-                self._restore_legacy_cutoff_configs(state, cutoffs)
-
-            self._refresh_all_cutoff_rows()
-            self._refresh_batch_button_state()
-        finally:
-            self._restoring_form_state = False
-
-        self._emit_state()
-
-    def _effective_params_by_cutoff(self, cutoffs: tuple[float, ...]) -> dict[float, dict[str, Any]]:
-        return {cutoff: self._effective_params_for_cutoff(cutoff) for cutoff in cutoffs}
-
-    def _shared_params_from_effective(self, effective: dict[float, dict[str, Any]]) -> dict[str, Any]:
-        if not effective:
-            return dict(self._default_params)
-
-        maps = list(effective.values())
-        shared = dict(maps[0])
-        for candidate in maps[1:]:
-            shared = {
-                name: value
-                for name, value in shared.items()
-                if name in candidate and candidate[name] == value
-            }
-        if "task" not in shared:
-            shared["task"] = infer_task("convergence_cutoff")
-        return shared
-
-    def _overrides_from_effective(
-        self, cutoffs: tuple[float, ...], effective: dict[float, dict[str, Any]], shared: dict[str, Any]
-    ) -> dict[frozenset[float], dict[str, object]]:
-        grouped: list[tuple[set[float], dict[str, object]]] = []
-        for cutoff in cutoffs:
-            diff = {
-                name: value
-                for name, value in effective[cutoff].items()
-                if shared.get(name) != value
-            }
-            if not diff:
-                continue
-            for members, payload in grouped:
-                if payload == diff:
-                    members.add(cutoff)
-                    break
-            else:
-                grouped.append(({cutoff}, diff))
-
-        return {frozenset(members): payload for members, payload in grouped}
-
-    def build_config(self) -> ConvergenceConfig | None:
-        try:
-            cutoffs = self._collect_cutoffs()
-        except ValueError:
-            QMessageBox.warning(self, "Invalid cutoff list", "Cutoff values must be numeric.")
-            return None
-
-        if not cutoffs:
-            QMessageBox.warning(self, "No cutoffs", "Add one or more cutoff energies first.")
-            return None
-
-        if len(set(cutoffs)) != len(cutoffs):
-            QMessageBox.warning(self, "Duplicate cutoffs", "Cutoff energies must be unique.")
-            return None
-
-        effective = self._effective_params_by_cutoff(cutoffs)
-        for cutoff, values in effective.items():
-            task = str(values.get("task", infer_task("convergence_cutoff")))
-            errors = validate_gui_values(values, self._specs_by_name, task=task)
-            if errors:
-                QMessageBox.warning(
-                    self,
-                    "Invalid parameters",
-                    f"Cutoff {cutoff:.8g} eV:\n" + "\n".join(errors),
-                )
-                return None
-
-        shared_params = self._shared_params_from_effective(effective)
-        overrides = self._overrides_from_effective(cutoffs, effective, shared_params)
-
-        return ConvergenceConfig(
-            sweep_parameter="cut_off_energy",
-            sweep_values=cutoffs,
-            cutoff_energies=cutoffs,
-            shared_params=shared_params,
-            overrides=overrides,
-            name_prefix=self._name_prefix.text().strip() or "cutoff_convergence",
-        )
-
-    def _emit_config(self) -> None:
-        config = self.build_config()
-        if config is None:
-            return
-        self.configure_requested.emit(config)
-        self._emit_state()
-
-
-    def _run_local_selected_cutoffs(self) -> None:
-        config = self.build_config()
-        if config is None:
-            return
-
-        selected_cutoffs = tuple(dict.fromkeys(self._selected_or_all_cutoffs()))
-        if not selected_cutoffs:
-            QMessageBox.information(
-                self,
-                "No cutoffs selected",
-                "Select one or more cutoff rows first.",
-            )
-            return
-
-        self.configure_requested.emit(config)
-        self.submit_local_requested.emit(list(selected_cutoffs))
-        self._emit_state()
-
-    def _run_cluster_selected_cutoffs(self) -> None:
-        config = self.build_config()
-        if config is None:
-            return
-
-        selected_cutoffs = tuple(dict.fromkeys(self._selected_or_all_cutoffs()))
-        if not selected_cutoffs:
-            QMessageBox.information(
-                self,
-                "No cutoffs selected",
-                "Select one or more cutoff rows first.",
-            )
-            return
-
-        self.configure_requested.emit(config)
-        self.submit_cluster_requested.emit(list(selected_cutoffs))
-        self._emit_state()
+            self._set_parameter_values(cutoff, merged, advanced_names)
 
 
 # Backward-compatible export used by existing call sites.

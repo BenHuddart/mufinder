@@ -3,83 +3,31 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-import re
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QGroupBox,
-    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPushButton,
-    QSizePolicy,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from mufinder.app.convergence_types import ConvergenceConfig, SweepPointRunState
+from mufinder.app.convergence_types import KPOINT_GRID_CODEC, KPointGrid
 from mufinder.app.decimal_input import DecimalLineEdit
-from mufinder.app.project_defaults_widget import ProjectDefaultsStrip
-from mufinder.app.workflow_parameters import (
-    reorder_workflow_parameter_specs,
-    seed_xc_functional_default,
-)
-from mufinder.app.workflow_table_utils import (
-    REMOVE_SELECTED_TEXT,
-    SelectionFeedback,
-    bind_delete_shortcuts,
-    bind_reset_failed_context_menu,
-    confirm_row_removal,
-    create_workflow_table,
-    standard_row_actions,
-    style_workflow_configure_button,
-    workflow_row_status_text,
-)
-from mufinder.app.theme import (
-    status_brush,
-    style_hint_text,
-    style_section_subtitle,
-    style_section_title,
-    style_warning_text,
-)
-from mufinder.castep_io.gui_metadata import (
-    get_gui_keyword_specs_for_files,
-    infer_task,
-    keyword_locked_in_workflow,
-    validate_gui_values,
-)
-from mufinder.castep_io.schema import KeywordSpec
+from mufinder.app.sweep_convergence_widget import SweepConvergenceWidget
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.science.kpoint_grids import generate_kpoint_grids, lattice_matches
-from mufinder.app.selection_snapshot import (
-    SelectionSnapshotPushButton,
-    SelectionSnapshotToolButton,
-    resolve_target_keys,
-)
-from mufinder.app.workflow_dialogs import RowParameterRequest, run_row_parameter_dialog
-from mufinder.app.workflow_parameters import STRUCTURE_CONTROLLED_CELL_KEYWORDS
-from mufinder.app.workflow_parameters import sanitize_parameter_mapping
-from mufinder.app.workflow_parameters import workflow_default_params
-from mufinder.app.workflow_table_utils import workflow_row_is_locked
 
-_ACTIVE_JOB_STATUSES = {"submitting", "queued", "running", "retrieving"}
-_PROGRESSED_JOB_STATUSES = _ACTIVE_JOB_STATUSES | {"stopped", "completed", "failed", "cancelled"}
 _DEFAULT_KPOINT_SPACING = 0.02
-
-
-def _reorder_specs_with_kpoint_anchor(specs: list[KeywordSpec]) -> list[KeywordSpec]:
-    return reorder_workflow_parameter_specs(specs)
+_FIRST_GRID: KPointGrid = (1, 1, 1)
 
 
 class KPointSpacingDialog(QDialog):
@@ -138,7 +86,7 @@ class KPointSpacingDialog(QDialog):
 class KPointGridDialog(QDialog):
     """Small helper dialog for entering one Monkhorst-Pack grid triplet."""
 
-    def __init__(self, grid: tuple[int, int, int] = (1, 1, 1), parent: QWidget | None = None) -> None:
+    def __init__(self, grid: KPointGrid = _FIRST_GRID, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Add K-Point Grid")
 
@@ -187,300 +135,98 @@ class KPointGridDialog(QDialog):
             and bool(self._nz.hasAcceptableInput())
         )
 
-    def grid(self) -> tuple[int, int, int]:
+    def grid(self) -> KPointGrid:
         return (int(self._nx.text()), int(self._ny.text()), int(self._nz.text()))
 
 
-class KPointConvergenceWidget(QWidget):
+class KPointConvergenceWidget(SweepConvergenceWidget):
     """UI for configuring k-point convergence sweeps and per-grid parameters."""
 
-    _GRID_COLUMN = 0
-    _STATUS_COLUMN = 1
-    _TOTAL_ENERGY_COLUMN = 2
-    _MAX_FORCE_COLUMN = 3
-    _CONFIGURE_COLUMN = 4
-    _REMOVE_COLUMN = 5
-    _ROW_HEIGHT = 32
-    _GRID_COLUMN_WIDTH = 128
-    _CONFIGURE_COLUMN_MIN_WIDTH = 136
-    _REMOVE_COLUMN_WIDTH = 34
-
-    configure_requested = Signal(object)
-    submit_local_requested = Signal(object)
-    submit_cluster_requested = Signal(object)
-    cancel_requested = Signal(object)
-    inspect_failed_requested = Signal(object)
-    reset_failed_requested = Signal(object)
     remove_grid_requested = Signal(object)
-    examine_requested = Signal()
-    form_state_changed = Signal(dict)
-    simulation_cell_create_requested = Signal()
-    simulation_cell_selection_requested = Signal(object)
-    simulation_cell_use_unit_cell_requested = Signal()
+
+    _CODEC = KPOINT_GRID_CODEC
+    _WORKFLOW_STAGE = "convergence_kpoint"
+    _SWEEP_PARAMETER = "kpoint_mp_grid"
+    _KEYS_STATE_FIELD = "kpoint_grids"
+    _ROWS_STATE_FIELD = "kpoint_parameter_rows"
+    _ROW_KEY_FIELD = "grid"
+    _NAME_PREFIX_DEFAULT = "kpoint_convergence"
+    _DEFAULT_RANGE_STATE = {"spacing": _DEFAULT_KPOINT_SPACING, "replace_existing": False}
+    _REMOVE_SIGNAL = "remove_grid_requested"
+    _KEY_COLUMN_WIDTH = 128
+
+    _TITLE = "K-Point Convergence"
+    _SUBTITLE = "Refine k-point sampling so energies and forces are stable."
+    _SWEEP_GROUP_TITLE = "K-Point Grid Sweep"
+    _KEY_COLUMN_LABEL = "K-Point Grid"
+    _ADD_BUTTON_TEXT = "Add Grid"
+    _GENERATE_BUTTON_TEXT = "Generate From Spacing..."
+    _EXAMINE_BUTTON_TEXT = "Examine K-Point Convergence"
+    _EXAMINE_READY_TOOLTIP = "Analyse completed k-point energy and force trends."
+    _EXAMINE_WAITING_TOOLTIP = (
+        "Need at least two completed grids with both total energy and max-force results."
+    )
+    _LOCKED_KEY_TOOLTIP = (
+        "K-point grid is locked once this row has been queued for execution or has entered "
+        "execution history."
+    )
+    _REMOVE_ROW_TOOLTIP = "Remove this k-point grid"
+    _CONFIGURE_NOUN = "grid"
+    _DIALOG_SUBJECT = "K-Point Parameters"
+    _DIALOG_INTRO_PREFIX = "Included grids: "
+    _INVALID_PARAMETERS_PREFIX = "Grid"
+    _NO_SELECTION_MESSAGE = ("No grids selected", "Select one or more k-point rows first.")
+    _INVALID_KEYS_MESSAGE = ("Invalid grid list", "K-point grids must be integer triplets.")
+    _NO_KEYS_MESSAGE = ("No grids", "Add one or more k-point grids first.")
+    _DUPLICATE_KEYS_MESSAGE = ("Duplicate grids", "K-point grids must be unique.")
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-
-        self._warning_label = QLabel("")
-        self._warning_label.setWordWrap(True)
-        style_warning_text(self._warning_label)
-        self._warning_label.hide()
-
-        self.project_defaults_strip = ProjectDefaultsStrip()
-
-        self._range_state: dict[str, object] = {
-            "spacing": _DEFAULT_KPOINT_SPACING,
-            "replace_existing": False,
-        }
-        self._parameter_species_options: tuple[str, ...] = ()
-
-        self._table = create_workflow_table(
-            (
-                "K-Point Grid",
-                "Status",
-                "Total Energy (eV)",
-                "Max |Force| (eV/Ang)",
-                "Parameters",
-                "",
-            )
-        )
-        # Per-widget settings the shared helper does not cover (or that this
-        # editable table overrides): extended multi-select, in-place editing,
-        # a fixed row height, per-column resize modes, and a non-stretching
-        # last (Remove) column.
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._table.setEditTriggers(
-            QAbstractItemView.EditTrigger.DoubleClicked
-            | QAbstractItemView.EditTrigger.EditKeyPressed
-            | QAbstractItemView.EditTrigger.SelectedClicked
-        )
-        self._table.verticalHeader().setDefaultSectionSize(self._ROW_HEIGHT)
-        header = self._table.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(self._GRID_COLUMN, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(self._STATUS_COLUMN, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(self._TOTAL_ENERGY_COLUMN, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(self._MAX_FORCE_COLUMN, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(self._CONFIGURE_COLUMN, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(self._REMOVE_COLUMN, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(self._GRID_COLUMN, self._GRID_COLUMN_WIDTH)
-        self._table.setColumnWidth(self._CONFIGURE_COLUMN, self._CONFIGURE_COLUMN_MIN_WIDTH)
-        self._table.setColumnWidth(self._REMOVE_COLUMN, self._REMOVE_COLUMN_WIDTH)
-
-        self._add_grid_button = QPushButton("Add Grid")
-        self._generate_button = QPushButton("Generate From Spacing...")
-        self._batch_configure_button = QPushButton("Configure Selected Parameters...")
-        self._batch_configure_button.setEnabled(False)
-        self._remove_selected_button = QPushButton(REMOVE_SELECTED_TEXT)
-        self._selection_count_label = QLabel("")
-        style_hint_text(self._selection_count_label)
-        self._examine_button = QPushButton("Examine K-Point Convergence")
-        self._examine_button.setEnabled(False)
-
-        # SelectionFeedback sets the run buttons' text ("Run All ..." / "Run
-        # Selected ...") from the selection.
-        self._run_local_button = QPushButton()
-        self._run_cluster_button = QPushButton()
-
-        self._name_prefix = QLineEdit("kpoint_convergence")
-        self._simulation_cell_summary = QLabel("Using single unit cell.")
-        self._simulation_cell_summary.setWordWrap(True)
-        self._simulation_cell_combo = QComboBox()
-        self._simulation_cell_create_button = QPushButton("Manage Supercells...")
-        self._simulation_cell_use_unit_button = QPushButton("Use Unit Cell")
-
-        self._runtime_states: dict[tuple[int, int, int], SweepPointRunState] = {}
-        self._parameter_values: dict[tuple[int, int, int], dict[str, Any]] = {}
-        self._added_advanced: dict[tuple[int, int, int], set[str]] = {}
-        self._restoring_form_state = False
-        self._updating_simulation_cell = False
-
+        # The cell the listed grids were generated for, and the cell the
+        # workflow uses now; a mismatch shows the regenerate warning.
         self._generation_cell_id: str | None = None
         self._generation_lattice: list[list[float]] | None = None
         self._current_cell_id: str | None = None
         self._current_lattice: list[list[float]] | None = None
 
-        specs = get_gui_keyword_specs_for_files(
-            files=("param", "cell"),
-            workflow_stage="convergence_kpoint",
-            include_advanced=True,
-        )
-        self._specs = [spec for spec in specs if spec.name not in {"task", "spin_polarised"}]
-        self._specs = _reorder_specs_with_kpoint_anchor(self._specs)
-        self._specs_by_name = {spec.name: spec for spec in self._specs}
-        self._default_params = workflow_default_params(
-            self._specs,
-            workflow_stage="convergence_kpoint",
-            locked_names=set(self._shared_locked_values()),
-        )
-        self._schema_xc_functional = self._default_params.get("xc_functional")
+    # -- Sweep hooks -------------------------------------------------------------
 
-        self._build_layout()
-        self._connect_signals()
-        self._delete_shortcut, self._backspace_shortcut = bind_delete_shortcuts(
-            self, self._remove_selected_or_current_grids
-        )
+    def next_key(self, previous: KPointGrid | None) -> KPointGrid:
+        return _FIRST_GRID if previous is None else previous
 
-    def _build_layout(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+    def prompt_new_key(self) -> KPointGrid | None:
+        dialog = KPointGridDialog(grid=self.next_key(self._last_key()), parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialog.grid()
 
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
-        header_row.setSpacing(10)
-        title_column = QVBoxLayout()
-        title_column.setContentsMargins(0, 0, 0, 0)
-        title_column.setSpacing(3)
-        title = QLabel("K-Point Convergence")
-        style_section_title(title)
-        title_column.addWidget(title)
+    def generate_keys(self) -> tuple[tuple[KPointGrid, ...], bool] | None:
+        if self._current_lattice is None:
+            QMessageBox.warning(self, "No simulation cell", "Select or create a simulation cell first.")
+            return None
 
-        subtitle = QLabel("Refine k-point sampling so energies and forces are stable.")
-        style_section_subtitle(subtitle)
-        subtitle.setWordWrap(True)
-        title_column.addWidget(subtitle)
+        dialog = KPointSpacingDialog(self._range_state, self)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        self._range_state = dialog.defaults_state()
+        if not accepted:
+            return None
+        try:
+            generated = generate_kpoint_grids(self._current_lattice, dialog.spacing())
+        except ValueError as exc:
+            QMessageBox.warning(self, "Grid generation failed", str(exc))
+            return None
 
-        header_row.addLayout(title_column, 1)
-        header_row.addWidget(self.project_defaults_strip, 0, Qt.AlignmentFlag.AlignTop)
-        layout.addLayout(header_row)
+        self._generation_cell_id = self._current_cell_id
+        self._generation_lattice = [list(row) for row in self._current_lattice]
+        self._refresh_generation_warning()
+        return generated, dialog.replace_existing()
 
-        layout.addWidget(self._warning_label)
+    def remove_grids(self, grids: Sequence[KPointGrid]) -> None:
+        """Remove the rows for ``grids`` and forget their parameters."""
 
-        simulation_group = QGroupBox("Simulation Cell")
-        simulation_layout = QVBoxLayout(simulation_group)
-        simulation_layout.setContentsMargins(10, 8, 10, 8)
-        simulation_layout.setSpacing(6)
-        simulation_layout.addWidget(self._simulation_cell_summary)
+        self.remove_keys(grids)
 
-        simulation_row = QHBoxLayout()
-        simulation_row.setSpacing(8)
-        simulation_row.addWidget(QLabel("Saved supercells"))
-        simulation_row.addWidget(self._simulation_cell_combo, 1)
-        simulation_row.addWidget(self._simulation_cell_create_button)
-        simulation_row.addWidget(self._simulation_cell_use_unit_button)
-        simulation_layout.addLayout(simulation_row)
-        layout.addWidget(simulation_group)
-
-        sweep_group = QGroupBox("K-Point Grid Sweep")
-        sweep_layout = QVBoxLayout(sweep_group)
-        sweep_layout.setContentsMargins(10, 8, 10, 8)
-        sweep_layout.setSpacing(6)
-        sweep_layout.addWidget(self._table)
-
-        controls_row = QHBoxLayout()
-        controls_row.setSpacing(6)
-        controls_row.addWidget(self._add_grid_button)
-        controls_row.addWidget(self._generate_button)
-        controls_row.addStretch(1)
-        controls_row.addWidget(self._selection_count_label)
-        controls_row.addWidget(self._remove_selected_button)
-        controls_row.addWidget(self._batch_configure_button)
-        sweep_layout.addLayout(controls_row)
-
-        examine_row = QHBoxLayout()
-        examine_row.addStretch(1)
-        examine_row.addWidget(self._examine_button)
-        sweep_layout.addLayout(examine_row)
-        layout.addWidget(sweep_group, 1)
-
-        run_group = QGroupBox("Run Jobs")
-        run_layout = QVBoxLayout(run_group)
-        run_layout.setContentsMargins(10, 8, 10, 8)
-        run_layout.setSpacing(6)
-
-        run_row = QHBoxLayout()
-        run_row.setSpacing(8)
-        run_row.addWidget(QLabel("Job name prefix"))
-        run_row.addWidget(self._name_prefix, 1)
-        run_row.addWidget(self._run_local_button)
-        run_row.addWidget(self._run_cluster_button)
-        run_layout.addLayout(run_row)
-        layout.addWidget(run_group)
-
-    def _connect_signals(self) -> None:
-        self._add_grid_button.clicked.connect(self._open_add_grid_dialog)
-        self._generate_button.clicked.connect(self._open_spacing_dialog)
-        self._batch_configure_button.clicked.connect(self._configure_selected_grids)
-
-        self._table.itemChanged.connect(self._on_table_changed)
-        self._remove_selected_button.clicked.connect(self._remove_selected_or_current_grids)
-        self._table.setToolTip(
-            "Right-click selected rows to run, cancel, inspect, reset, configure, or remove them."
-        )
-        # A right-click makes the rows under it the selection, so the menu's
-        # run/configure/remove entries reuse the selection-based handlers.
-        leading_actions, trailing_actions = standard_row_actions(
-            status_for_row=self._row_status,
-            run_local=lambda _rows: self._run_local_selected_grids(),
-            run_cluster=lambda _rows: self._run_cluster_selected_grids(),
-            cancel=lambda rows: self.cancel_requested.emit(self._grids_at_rows(rows)),
-            inspect=lambda rows: self.inspect_failed_requested.emit(self._grids_at_rows(rows)),
-            configure=lambda _rows: self._configure_selected_grids(),
-            remove=lambda _rows: self._remove_selected_or_current_grids(),
-            confirm_parent=self,
-        )
-        bind_reset_failed_context_menu(
-            self._table,
-            key_for_row=lambda row: self._grid_value_at_row(row, strict=False),
-            status_for_row=self._row_status,
-            emit_reset=self.reset_failed_requested.emit,
-            leading_actions=leading_actions,
-            additional_actions=trailing_actions,
-        )
-        selection_model = self._table.selectionModel()
-        if selection_model is not None:
-            selection_model.selectionChanged.connect(lambda *_: self._refresh_batch_button_state())
-
-        self._name_prefix.textChanged.connect(self._emit_state)
-        self._examine_button.clicked.connect(self.examine_requested.emit)
-        self._run_local_button.clicked.connect(self._run_local_selected_grids)
-        self._run_cluster_button.clicked.connect(self._run_cluster_selected_grids)
-        self._selection_feedback = SelectionFeedback(
-            self._table,
-            count_label=self._selection_count_label,
-            run_local_button=self._run_local_button,
-            run_cluster_button=self._run_cluster_button,
-            selection_buttons=(self._remove_selected_button,),
-        )
-
-        self._simulation_cell_combo.currentIndexChanged.connect(self._on_simulation_cell_combo_changed)
-        self._simulation_cell_create_button.clicked.connect(self.simulation_cell_create_requested.emit)
-        self._simulation_cell_use_unit_button.clicked.connect(self.simulation_cell_use_unit_cell_requested.emit)
-
-    def _make_item(self, text: str, *, editable: bool) -> QTableWidgetItem:
-        item = QTableWidgetItem(text)
-        flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-        if editable:
-            flags |= Qt.ItemFlag.ItemIsEditable
-        item.setFlags(flags)
-        return item
-
-    @staticmethod
-    def _status_brush(status_value: str):
-        return status_brush(status_value)
-
-    @staticmethod
-    def _format_grid(grid: tuple[int, int, int]) -> str:
-        return f"{grid[0]} x {grid[1]} x {grid[2]}"
-
-    @staticmethod
-    def _parse_grid(text: str) -> tuple[int, int, int]:
-        parts = [part for part in re.split(r"[^0-9]+", text.strip()) if part]
-        if len(parts) != 3:
-            raise ValueError("K-point grid must contain exactly three integers.")
-        grid = (int(parts[0]), int(parts[1]), int(parts[2]))
-        if grid[0] <= 0 or grid[1] <= 0 or grid[2] <= 0:
-            raise ValueError("K-point grid values must be positive integers.")
-        return grid
-
-    def set_xc_functional_default(self, xc_functional: str | None) -> None:
-        """Use the project default XC functional for rows without their own value."""
-        seed_xc_functional_default(
-            self._default_params,
-            xc_functional,
-            schema_default=self._schema_xc_functional,
-        )
+    # -- Project state pushed in -------------------------------------------------
 
     def set_cutoff_default(self, cutoff_energy: float | None) -> None:
         if cutoff_energy is None:
@@ -506,51 +252,6 @@ class KPointConvergenceWidget(QWidget):
         for conflict in spec.mutually_exclusive_with:
             self._default_params.pop(conflict, None)
 
-    def set_simulation_cell_options(
-        self,
-        *,
-        summary: str,
-        assets: list[dict[str, str]],
-        selected_structure_id: str | None,
-        enabled: bool,
-    ) -> None:
-        self._updating_simulation_cell = True
-        try:
-            self._simulation_cell_summary.setText(summary)
-            self._simulation_cell_combo.clear()
-            self._simulation_cell_combo.addItem("Single unit cell", None)
-            for asset in assets:
-                label = str(asset.get("label", "")).strip() or "Saved supercell"
-                structure_id = str(asset.get("structure_id", "")).strip()
-                self._simulation_cell_combo.addItem(label, structure_id)
-
-            selected_index = 0
-            if selected_structure_id:
-                matched = self._simulation_cell_combo.findData(str(selected_structure_id))
-                if matched >= 0:
-                    selected_index = matched
-            self._simulation_cell_combo.setCurrentIndex(selected_index)
-
-            self._simulation_cell_combo.setEnabled(enabled)
-            self._simulation_cell_create_button.setEnabled(enabled)
-            self._simulation_cell_use_unit_button.setEnabled(enabled)
-        finally:
-            self._updating_simulation_cell = False
-
-    def set_parameter_species_options(self, species_options: Sequence[str]) -> None:
-        self._parameter_species_options = tuple(
-            dict.fromkeys(option for item in species_options if (option := str(item).strip()))
-        )
-
-    def _on_simulation_cell_combo_changed(self, index: int) -> None:
-        if self._updating_simulation_cell:
-            return
-        data = self._simulation_cell_combo.itemData(index)
-        if not data:
-            self.simulation_cell_use_unit_cell_requested.emit()
-            return
-        self.simulation_cell_selection_requested.emit(str(data))
-
     def set_generation_context(
         self,
         *,
@@ -574,671 +275,21 @@ class KPointConvergenceWidget(QWidget):
         )
         self._warning_label.show()
 
-    def _shared_locked_values(self) -> dict[str, str]:
-        locked: dict[str, str] = {}
-        for spec in self._specs:
-            if keyword_locked_in_workflow(spec, workflow_stage="convergence_kpoint"):
-                locked[spec.name] = "Variable (set by workflow)"
+    # -- Form state --------------------------------------------------------------
 
-        if "kpoint_mp_grid" in {spec.name for spec in self._specs}:
-            locked["kpoint_mp_grid"] = "Variable (set by sweep)"
-
-        return locked
-
-    def _grid_value_at_row(self, row: int, *, strict: bool) -> tuple[int, int, int] | None:
-        item = self._table.item(row, self._GRID_COLUMN)
-        if item is None:
-            return None
-        text = item.text().strip()
-        if not text:
-            return None
-        try:
-            return self._parse_grid(text)
-        except ValueError:
-            if strict:
-                raise
-            return None
-
-    def _collect_grids(self, *, strict: bool = True) -> tuple[tuple[int, int, int], ...]:
-        values: list[tuple[int, int, int]] = []
-        for row in range(self._table.rowCount()):
-            value = self._grid_value_at_row(row, strict=strict)
-            if value is not None:
-                values.append(value)
-        return tuple(values)
-
-    def _insert_grid_row(self, grid: tuple[int, int, int]) -> None:
-        row = self._table.rowCount()
-        self._table.insertRow(row)
-        self._table.setItem(row, self._GRID_COLUMN, self._make_item(self._format_grid(grid), editable=True))
-        self._table.setItem(row, self._STATUS_COLUMN, self._make_item("not generated", editable=False))
-        self._table.setItem(row, self._TOTAL_ENERGY_COLUMN, self._make_item("", editable=False))
-        self._table.setItem(row, self._MAX_FORCE_COLUMN, self._make_item("", editable=False))
-
-        configure_button = SelectionSnapshotPushButton(self._table)
-        configure_button.selection_snapshot_key = grid
-        self._style_configure_button(configure_button)
-        configure_button.clicked.connect(
-            lambda _checked=False, key=grid, btn=configure_button: self._configure_grid_button_clicked(btn, key)
-        )
-        self._table.setCellWidget(row, self._CONFIGURE_COLUMN, configure_button)
-
-        remove_button = SelectionSnapshotToolButton(self._table)
-        remove_button.selection_snapshot_key = grid
-        remove_button.setText("x")
-        remove_button.setAutoRaise(True)
-        remove_button.setToolTip("Remove this k-point grid")
-        remove_button.clicked.connect(
-            lambda _checked=False, key=grid, btn=remove_button: self._remove_grid_button_clicked(btn, key)
-        )
-        self._table.setCellWidget(row, self._REMOVE_COLUMN, remove_button)
-        self._refresh_row(row)
-
-    def _style_configure_button(self, button: QPushButton) -> None:
-        metrics = button.fontMetrics()
-        label_width = max(
-            metrics.horizontalAdvance("Configure..."),
-            metrics.horizontalAdvance("Configured..."),
-        )
-        button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
-        button.setMinimumWidth(max(self._CONFIGURE_COLUMN_MIN_WIDTH, label_width + 24))
-        button.setMinimumHeight(max(24, metrics.height() + 10))
-
-    def _set_grid_values(self, values: tuple[tuple[int, int, int], ...]) -> None:
-        self._table.blockSignals(True)
-        self._table.setRowCount(0)
-        for value in values:
-            self._insert_grid_row(value)
-        self._table.blockSignals(False)
-        self._prune_configs()
-        self._refresh_all_rows()
-        self._refresh_batch_button_state()
-
-    def _add_grid(self, grid: tuple[int, int, int] | None = None) -> None:
-        target = (1, 1, 1) if grid is None else grid
-        self._table.blockSignals(True)
-        self._insert_grid_row(target)
-        self._table.blockSignals(False)
-        self._refresh_all_rows()
-        self._emit_state()
-
-    def _open_add_grid_dialog(self) -> None:
-        grid = (1, 1, 1)
-        if self._table.rowCount() > 0:
-            last = self._grid_value_at_row(self._table.rowCount() - 1, strict=False)
-            if last is not None:
-                grid = last
-
-        dialog = KPointGridDialog(grid=grid, parent=self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        self._add_grid(dialog.grid())
-
-    def _open_spacing_dialog(self) -> None:
-        if self._current_lattice is None:
-            QMessageBox.warning(self, "No simulation cell", "Select or create a simulation cell first.")
-            return
-
-        dialog = KPointSpacingDialog(self._range_state, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            self._range_state = dialog.defaults_state()
-            return
-
-        self._range_state = dialog.defaults_state()
-        try:
-            generated = generate_kpoint_grids(self._current_lattice, dialog.spacing())
-        except ValueError as exc:
-            QMessageBox.warning(self, "Grid generation failed", str(exc))
-            return
-
-        if dialog.replace_existing():
-            merged = generated
-        else:
-            merged = tuple(dict.fromkeys(self._collect_grids(strict=False) + generated))
-
-        self._set_grid_values(merged)
-        self._generation_cell_id = self._current_cell_id
-        self._generation_lattice = [list(row) for row in self._current_lattice]
-        self._refresh_generation_warning()
-        self._emit_state()
-
-    def _selected_rows(self) -> tuple[int, ...]:
-        selection_model = self._table.selectionModel()
-        if selection_model is None:
-            return ()
-        rows = sorted(index.row() for index in selection_model.selectedRows())
-        return tuple(rows)
-
-    def _row_status(self, row: int) -> str:
-        return workflow_row_status_text(self._table, row, self._STATUS_COLUMN)
-
-    def _selected_grids(self) -> tuple[tuple[int, int, int], ...]:
-        selected: list[tuple[int, int, int]] = []
-        for row in self._selected_rows():
-            grid = self._grid_value_at_row(row, strict=False)
-            if grid is not None:
-                selected.append(grid)
-        return tuple(selected)
-
-    def _selected_or_all_grids(self) -> tuple[tuple[int, int, int], ...]:
-        """Return the grids the run buttons act on: the selection, else every row.
-
-        The buttons read "Run Selected ..." or "Run All ..." to match, so what
-        they run is always stated on the button.
-        """
-
-        selected = self._selected_grids()
-        if selected:
-            return selected
-        return self._collect_grids(strict=False)
-
-    def _grids_at_rows(self, rows: Sequence[int]) -> list[tuple[int, int, int]]:
-        return [
-            grid for row in rows if (grid := self._grid_value_at_row(row, strict=False)) is not None
-        ]
-
-    def _configure_selected_grids(self) -> None:
-        grids = self._selected_grids()
-        if not grids:
-            QMessageBox.information(self, "No grids selected", "Select one or more k-point rows first.")
-            return
-        self._open_grid_parameter_dialog(grids)
-
-    def _configure_grid_button_clicked(
-        self, button: SelectionSnapshotPushButton, clicked_grid: tuple[int, int, int]
-    ) -> None:
-        snapshot_keys = [
-            self._grid_value_at_row(r, strict=False)
-            for r in button.selection_snapshot_rows
-        ]
-        grids = resolve_target_keys(
-            button,
-            clicked_key=clicked_grid,
-            snapshot_keys=[g for g in snapshot_keys if g is not None],
-            eligibility=lambda g: True,
-            parent=self,
-            action="Configure parameters for",
-        )
-        if grids:
-            self._open_grid_parameter_dialog(grids)
-
-    def _open_grid_parameter_dialog(self, grids: tuple[tuple[int, int, int], ...]) -> None:
-        if not grids:
-            return
-
-        result = run_row_parameter_dialog(
-            RowParameterRequest(
-                specs=self._specs,
-                workflow_stage="convergence_kpoint",
-                subject="K-Point Parameters",
-                values=self._common_parameter_values_for_grids(grids),
-                row_values={g: self._effective_params_for_grid(g) for g in grids},
-                row_advanced={g: self._added_advanced.get(g, set()) for g in grids},
-                sanitize=lambda values: sanitize_parameter_mapping(
-                    values,
-                    self._specs_by_name,
-                    keep=("task",),
-                    drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
-                ),
-                locked_values=self._shared_locked_values(),
-                read_only=self._grid_parameters_locked(grids),
-                intro_text="Included grids: " + ", ".join(self._format_grid(grid) for grid in sorted(grids)),
-                species_options=self._parameter_species_options,
-            ),
-            parent=self,
-        )
-        if result is None:
-            return
-        for grid, values in result.row_values.items():
-            self._set_grid_parameter_values(grid, values, result.row_advanced[grid])
-
-        self._refresh_all_rows()
-        self._emit_state()
-
-    def _effective_params_for_grid(self, grid: tuple[int, int, int]) -> dict[str, Any]:
-        values = self._parameter_values.get(grid)
-        if values is None:
-            return dict(self._default_params)
-        return dict(values)
-
-    def _set_grid_parameter_values(
-        self,
-        grid: tuple[int, int, int],
-        values: dict[str, Any],
-        advanced_names: set[str],
-    ) -> None:
-        normalized = sanitize_parameter_mapping(
-            values,
-            self._specs_by_name,
-            keep=("task",),
-            drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
-        )
-        if normalized == self._default_params and not advanced_names:
-            self._parameter_values.pop(grid, None)
-            self._added_advanced.pop(grid, None)
-            return
-
-        self._parameter_values[grid] = dict(normalized)
-        if advanced_names:
-            self._added_advanced[grid] = set(advanced_names)
-        else:
-            self._added_advanced.pop(grid, None)
-
-    def _common_parameter_values_for_grids(
-        self,
-        grids: tuple[tuple[int, int, int], ...],
-    ) -> dict[str, Any]:
-        effective_maps = [self._effective_params_for_grid(grid) for grid in grids]
-        if not effective_maps:
-            return dict(self._default_params)
-
-        common = dict(effective_maps[0])
-        for candidate in effective_maps[1:]:
-            common = {
-                name: value
-                for name, value in common.items()
-                if name in candidate and candidate[name] == value
-            }
-
-        if "task" not in common:
-            common["task"] = infer_task("convergence_kpoint")
-        return common
-
-    def _is_grid_customized(self, grid: tuple[int, int, int]) -> bool:
-        return grid in self._parameter_values or grid in self._added_advanced
-
-    def _grid_parameters_locked(self, grids: tuple[tuple[int, int, int], ...]) -> bool:
-        for grid in grids:
-            runtime = self._runtime_states.get(tuple(grid))
-            status = "" if runtime is None else runtime.status.strip().lower()
-            if workflow_row_is_locked(status):
-                return True
-        return False
-
-    def _remove_grid_button_clicked(
-        self, button: SelectionSnapshotToolButton, clicked_grid: tuple[int, int, int]
-    ) -> None:
-        snapshot_keys = [
-            self._grid_value_at_row(r, strict=False)
-            for r in button.selection_snapshot_rows
-        ]
-        grids = resolve_target_keys(
-            button,
-            clicked_key=clicked_grid,
-            snapshot_keys=[g for g in snapshot_keys if g is not None],
-            eligibility=lambda g: True,
-            parent=self,
-            action="Remove",
-            confirm_unprompted=lambda: self._confirm_grid_removal(
-                tuple(
-                    r
-                    for r in range(self._table.rowCount())
-                    if self._grid_value_at_row(r, strict=False) == clicked_grid
-                )
-            ),
-        )
-        rows = tuple(
-            r
-            for r in range(self._table.rowCount())
-            if self._grid_value_at_row(r, strict=False) in grids
-        )
-        if rows:
-            self._request_grid_removals(rows, confirmed=True)
-
-    def _confirm_grid_removal(self, rows: tuple[int, ...]) -> bool:
-        submitted = sum(1 for row in rows if self._row_status(row) in _PROGRESSED_JOB_STATUSES)
-        return confirm_row_removal(self, len(rows), submitted_count=submitted)
-
-    def _request_grid_removals(self, rows: tuple[int, ...], *, confirmed: bool = False) -> None:
-        if not rows:
-            return
-        if not confirmed and not self._confirm_grid_removal(rows):
-            return
-
-        grids: list[tuple[int, int, int]] = []
-        for row in rows:
-            grid = self._grid_value_at_row(row, strict=False)
-            if grid is not None:
-                grids.append(grid)
-
-        if grids:
-            self.remove_grid_requested.emit(grids)
-
-    def _remove_selected_or_current_grids(self) -> None:
-        if self._table.state() == QAbstractItemView.State.EditingState:
-            return
-        selected_rows = self._selected_rows()
-        if selected_rows:
-            self._request_grid_removals(selected_rows)
-            return
-
-        current_row = self._table.currentRow()
-        if current_row >= 0:
-            self._request_grid_removals((current_row,))
-
-    def remove_grids(self, grids: list[tuple[int, int, int]] | tuple[tuple[int, int, int], ...]) -> None:
-        targets = {tuple(int(component) for component in grid) for grid in grids}
-        if not targets:
-            return
-        for row in reversed(range(self._table.rowCount())):
-            grid = self._grid_value_at_row(row, strict=False)
-            if grid is None or grid not in targets:
-                continue
-            self._parameter_values.pop(grid, None)
-            self._added_advanced.pop(grid, None)
-            self._table.removeRow(row)
-        self._prune_configs()
-        self._refresh_batch_button_state()
-        self._emit_state()
-
-    def set_runtime_states(self, states: Mapping[tuple[int, int, int], SweepPointRunState]) -> None:
-        self._runtime_states = {
-            (int(key[0]), int(key[1]), int(key[2])): value
-            for key, value in states.items()
-        }
-        self._refresh_all_rows()
-        self._refresh_examine_button_state()
-
-    def _refresh_all_rows(self) -> None:
-        self._table.blockSignals(True)
-        for row in range(self._table.rowCount()):
-            self._refresh_row(row)
-        self._table.blockSignals(False)
-
-    def _refresh_row(self, row: int) -> None:
-        grid = self._grid_value_at_row(row, strict=False)
-        runtime = self._runtime_states.get(grid) if grid is not None else None
-
-        status_text = "not generated"
-        energy_text = ""
-        force_text = ""
-        if runtime is not None:
-            if runtime.status:
-                status_text = runtime.status
-            if runtime.total_energy is not None:
-                energy_text = f"{runtime.total_energy:.12g}"
-            if runtime.max_force is not None:
-                force_text = f"{runtime.max_force:.12g}"
-
-        status_normalized = status_text.strip().lower()
-
-        grid_item = self._table.item(row, self._GRID_COLUMN)
-        if grid_item is not None:
-            flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-            if not workflow_row_is_locked(status_normalized):
-                flags |= Qt.ItemFlag.ItemIsEditable
-            grid_item.setFlags(flags)
-
-        status_item = self._table.item(row, self._STATUS_COLUMN)
-        if status_item is None:
-            status_item = self._make_item(status_text, editable=False)
-            self._table.setItem(row, self._STATUS_COLUMN, status_item)
-        else:
-            status_item.setText(status_text)
-        status_item.setForeground(self._status_brush(status_text))
-
-        energy_item = self._table.item(row, self._TOTAL_ENERGY_COLUMN)
-        if energy_item is None:
-            energy_item = self._make_item(energy_text, editable=False)
-            self._table.setItem(row, self._TOTAL_ENERGY_COLUMN, energy_item)
-        else:
-            energy_item.setText(energy_text)
-
-        force_item = self._table.item(row, self._MAX_FORCE_COLUMN)
-        if force_item is None:
-            force_item = self._make_item(force_text, editable=False)
-            self._table.setItem(row, self._MAX_FORCE_COLUMN, force_item)
-        else:
-            force_item.setText(force_text)
-
-        configure_button = self._table.cellWidget(row, self._CONFIGURE_COLUMN)
-        if isinstance(configure_button, QPushButton):
-            customized = grid is not None and self._is_grid_customized(grid)
-            locked = workflow_row_is_locked(status_normalized)
-            style_workflow_configure_button(
-                configure_button,
-                workflow_label="CASTEP",
-                configured=customized,
-                locked=locked,
-                noun="grid",
-                used=True,
-            )
-
-    def _refresh_batch_button_state(self) -> None:
-        self._batch_configure_button.setEnabled(bool(self._selected_grids()))
-
-    def _refresh_examine_button_state(self) -> None:
-        completed_with_results = 0
-        for runtime in self._runtime_states.values():
-            if runtime.status.strip().lower() != "completed":
-                continue
-            if runtime.total_energy is None or runtime.max_force is None:
-                continue
-            completed_with_results += 1
-
-        self._examine_button.setEnabled(completed_with_results >= 2)
-
-    def _prune_configs(self) -> None:
-        available = set(self._collect_grids(strict=False))
-        stale = [grid for grid in self._parameter_values if grid not in available]
-        for grid in stale:
-            self._parameter_values.pop(grid, None)
-            self._added_advanced.pop(grid, None)
-
-        stale_advanced = [grid for grid in self._added_advanced if grid not in available]
-        for grid in stale_advanced:
-            self._added_advanced.pop(grid, None)
-
-    def _on_table_changed(self, item: QTableWidgetItem) -> None:
-        if item.column() != self._GRID_COLUMN:
-            return
-        self._prune_configs()
-        self._refresh_all_rows()
-        self._emit_state()
-
-    def _emit_state(self) -> None:
-        if self._restoring_form_state:
-            return
-        self.form_state_changed.emit(self.collect_state())
-
-    def collect_state(self) -> dict[str, Any]:
+    def _extra_state(self) -> dict[str, Any]:
         return {
-            "mode": "manual",
-            "name_prefix": self._name_prefix.text().strip() or "kpoint_convergence",
-            "range": dict(self._range_state),
-            "kpoint_grids": [list(grid) for grid in self._collect_grids(strict=False)],
-            "kpoint_parameter_rows": [
-                {
-                    "grid": list(grid),
-                    "params": dict(self._parameter_values[grid]),
-                    "added_advanced": sorted(self._added_advanced.get(grid, set())),
-                }
-                for grid in sorted(self._parameter_values)
-            ],
             "generated_for_cell_id": self._generation_cell_id,
             "generated_for_lattice": self._generation_lattice,
         }
 
-    @staticmethod
-    def _coerce_grids(raw_values: object) -> tuple[tuple[int, int, int], ...]:
-        values: list[tuple[int, int, int]] = []
-        if isinstance(raw_values, list):
-            for value in raw_values:
-                if isinstance(value, list) and len(value) == 3:
-                    try:
-                        grid = (int(value[0]), int(value[1]), int(value[2]))
-                    except (TypeError, ValueError):
-                        continue
-                    if grid[0] > 0 and grid[1] > 0 and grid[2] > 0:
-                        values.append(grid)
-        return tuple(values)
+    def _restore_extra_state(self, state: Mapping[str, Any]) -> None:
+        generated_cell = state.get("generated_for_cell_id")
+        self._generation_cell_id = str(generated_cell) if isinstance(generated_cell, str) else None
 
-    def set_form_state(self, state: dict[str, Any]) -> None:
-        self._restoring_form_state = True
-        try:
-            self._range_state = {
-                "spacing": _DEFAULT_KPOINT_SPACING,
-                "replace_existing": False,
-            }
-            self._parameter_values = {}
-            self._added_advanced = {}
-
-            previous_block = self._name_prefix.blockSignals(True)
-            self._name_prefix.setText("kpoint_convergence")
-            self._name_prefix.blockSignals(previous_block)
-
-            grids: tuple[tuple[int, int, int], ...] = ()
-            if state:
-                previous_block = self._name_prefix.blockSignals(True)
-                self._name_prefix.setText(str(state.get("name_prefix", "kpoint_convergence")))
-                self._name_prefix.blockSignals(previous_block)
-
-                range_state = state.get("range", {})
-                if isinstance(range_state, dict):
-                    try:
-                        self._range_state["spacing"] = float(range_state.get("spacing", self._range_state["spacing"]))
-                    except (TypeError, ValueError):
-                        pass
-                    self._range_state["replace_existing"] = bool(
-                        range_state.get("replace_existing", self._range_state["replace_existing"])
-                    )
-
-                grids = self._coerce_grids(state.get("kpoint_grids", []))
-
-                raw_rows = state.get("kpoint_parameter_rows", [])
-                if isinstance(raw_rows, list):
-                    for entry in raw_rows:
-                        if not isinstance(entry, dict):
-                            continue
-                        grid_values = self._coerce_grids([entry.get("grid")])
-                        if not grid_values:
-                            continue
-                        grid = grid_values[0]
-                        params = sanitize_parameter_mapping(
-                            {str(name): raw for name, raw in dict(entry.get("params", {})).items()},
-                            self._specs_by_name,
-                            keep=("task",),
-                            drop=STRUCTURE_CONTROLLED_CELL_KEYWORDS,
-                        )
-                        advanced_names = {
-                            str(name)
-                            for name in entry.get("added_advanced", [])
-                            if isinstance(name, str)
-                        }
-                        self._set_grid_parameter_values(grid, params, advanced_names)
-
-                generated_cell = state.get("generated_for_cell_id")
-                self._generation_cell_id = str(generated_cell) if isinstance(generated_cell, str) else None
-
-                generated_lattice = state.get("generated_for_lattice")
-                if isinstance(generated_lattice, list) and len(generated_lattice) == 3:
-                    self._generation_lattice = [list(row) for row in generated_lattice if isinstance(row, list)]
-                else:
-                    self._generation_lattice = None
-
-            self._set_grid_values(grids)
-            self._refresh_all_rows()
-            self._refresh_batch_button_state()
-            self._refresh_generation_warning()
-        finally:
-            self._restoring_form_state = False
-
-        self._emit_state()
-
-    def build_config(self) -> ConvergenceConfig | None:
-        try:
-            grids = self._collect_grids()
-        except ValueError:
-            QMessageBox.warning(self, "Invalid grid list", "K-point grids must be integer triplets.")
-            return None
-
-        if not grids:
-            QMessageBox.warning(self, "No grids", "Add one or more k-point grids first.")
-            return None
-
-        if len(set(grids)) != len(grids):
-            QMessageBox.warning(self, "Duplicate grids", "K-point grids must be unique.")
-            return None
-
-        effective = {grid: self._effective_params_for_grid(grid) for grid in grids}
-        for grid, values in effective.items():
-            task = str(values.get("task", infer_task("convergence_kpoint")))
-            errors = validate_gui_values(values, self._specs_by_name, task=task)
-            if errors:
-                QMessageBox.warning(
-                    self,
-                    "Invalid parameters",
-                    f"Grid {self._format_grid(grid)}:\n" + "\n".join(errors),
-                )
-                return None
-
-        shared_params = dict(next(iter(effective.values())))
-        for candidate in list(effective.values())[1:]:
-            shared_params = {
-                name: value
-                for name, value in shared_params.items()
-                if name in candidate and candidate[name] == value
-            }
-        if "task" not in shared_params:
-            shared_params["task"] = infer_task("convergence_kpoint")
-
-        grouped: list[tuple[set[tuple[int, int, int]], dict[str, object]]] = []
-        for grid in grids:
-            diff = {
-                name: value
-                for name, value in effective[grid].items()
-                if shared_params.get(name) != value
-            }
-            if not diff:
-                continue
-            for members, payload in grouped:
-                if payload == diff:
-                    members.add(grid)
-                    break
-            else:
-                grouped.append(({grid}, diff))
-
-        overrides = {frozenset(members): payload for members, payload in grouped}
-
-        return ConvergenceConfig(
-            sweep_parameter="kpoint_mp_grid",
-            sweep_values=grids,
-            shared_params=shared_params,
-            overrides=overrides,
-            name_prefix=self._name_prefix.text().strip() or "kpoint_convergence",
-        )
-
-    def _emit_config(self) -> None:
-        config = self.build_config()
-        if config is None:
-            return
-        self.configure_requested.emit(config)
-        self._emit_state()
-
-    def _run_local_selected_grids(self) -> None:
-        config = self.build_config()
-        if config is None:
-            return
-
-        selected = tuple(dict.fromkeys(self._selected_or_all_grids()))
-        if not selected:
-            QMessageBox.information(self, "No grids selected", "Select one or more k-point rows first.")
-            return
-
-        self.configure_requested.emit(config)
-        self.submit_local_requested.emit(list(selected))
-        self._emit_state()
-
-    def _run_cluster_selected_grids(self) -> None:
-        config = self.build_config()
-        if config is None:
-            return
-
-        selected = tuple(dict.fromkeys(self._selected_or_all_grids()))
-        if not selected:
-            QMessageBox.information(self, "No grids selected", "Select one or more k-point rows first.")
-            return
-
-        self.configure_requested.emit(config)
-        self.submit_cluster_requested.emit(list(selected))
-        self._emit_state()
+        generated_lattice = state.get("generated_for_lattice")
+        if isinstance(generated_lattice, list) and len(generated_lattice) == 3:
+            self._generation_lattice = [list(row) for row in generated_lattice if isinstance(row, list)]
+        else:
+            self._generation_lattice = None
+        self._refresh_generation_warning()

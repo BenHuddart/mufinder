@@ -33,6 +33,7 @@ from mufinder.app.workflow_controllers.base import (
     ControllerResult,
     WorkflowControllerContext,
     WorkflowJobController,
+    dedupe_jobs,
     merge_controller_result,
     validate_controller_artifacts,
 )
@@ -826,7 +827,6 @@ def _stub_deps() -> ConvergenceCutoffDeps:
     return ConvergenceCutoffDeps(
         deserialize_convergence_config=lambda _payload: None,
         sync_equivalent_convergence_cutoff_mappings=lambda _definition: None,
-        definition_for_convergence_cutoff=lambda _cutoff: (None, None),
         cutoff_key=lambda value: f"{float(value):.12g}",
         max_stress_for_job=lambda _job_id: None,
     )
@@ -845,14 +845,9 @@ def _cutoff_context_and_deps(
     closely enough to drive materialize/build_states without a MainWindow.
     """
 
-    active_definition = next(iter(document.calculations.values()), None)
-
     def deserialize(payload):
         # The test seeds a ConvergenceConfig directly on the definition.
         return document.ui_state.get("_test_config")
-
-    def definition_for_cutoff(cutoff):
-        return active_definition, document.ui_state.get("_test_config")
 
     context = WorkflowControllerContext(
         document=lambda: document,
@@ -876,7 +871,6 @@ def _cutoff_context_and_deps(
     deps = ConvergenceCutoffDeps(
         deserialize_convergence_config=deserialize,
         sync_equivalent_convergence_cutoff_mappings=lambda _d: None,
-        definition_for_convergence_cutoff=definition_for_cutoff,
         cutoff_key=lambda value: f"{float(value):.12g}",
         max_stress_for_job=lambda _job_id: None,
     )
@@ -1095,8 +1089,12 @@ def test_convergence_controller_handles_only_its_calc_type(tmp_path: Path) -> No
 class _FakeKpointView:
     """Minimal KPointConvergenceWidget stand-in for controller tests."""
 
-    def __init__(self) -> None:
+    def __init__(self, form_state: dict | None = None) -> None:
+        self._form_state = form_state or {}
         self.runtime_states: list[dict] = []
+
+    def collect_state(self) -> dict:
+        return self._form_state
 
     def set_runtime_states(self, states) -> None:
         self.runtime_states.append(dict(states))
@@ -1196,7 +1194,7 @@ def _seed_kpoint_document(service: ProjectService, document: ProjectDocument):
         output_directory=document.project_root / "files" / "convergence_kpoint",
     )
     document.ui_state["_test_config"] = config
-    # Persist the form so _kpoint_form_snapshot agrees with the active definition.
+    # Persist the form so the controller's form_snapshot agrees with the active definition.
     document.ui_state["kpoint_convergence_form"] = {
         "name_prefix": "kconv",
         "kpoint_grids": [[2, 2, 2]],
@@ -1372,6 +1370,84 @@ def test_kpoint_controller_handles_only_its_calc_type(tmp_path: Path) -> None:
     other = make_job("k", service=service, document=document, calc_type="castep_convergence_cutoff")
     assert controller.handles_job(handled) is True
     assert controller.handles_job(other) is False
+
+
+def test_kpoint_controller_form_snapshot_reads_the_live_widget_first(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kconv.mufinder", "KConv")
+    _seed_kpoint_document(service, document)
+    context, deps = _kpoint_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    # The persisted form lists (2, 2, 2) only; the widget has since gained a grid.
+    view = _FakeKpointView(form_state={"name_prefix": "kconv", "kpoint_grids": [[2, 2, 2], [3, 3, 3]]})
+    controller = ConvergenceKpointController(context, deps, view)
+
+    assert controller.form_snapshot() == ("kconv", ((2, 2, 2), (3, 3, 3)))
+    assert set(controller.build_states()) == {(2, 2, 2), (3, 3, 3)}
+
+    # An empty widget falls back to the persisted form.
+    controller = ConvergenceKpointController(context, deps, _FakeKpointView())
+    assert controller.form_snapshot() == ("kconv", ((2, 2, 2),))
+
+
+def test_kpoint_controller_finds_a_legacy_definitions_job_by_label(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "kconv.mufinder", "KConv")
+    definition, _config = _seed_kpoint_document(service, document)
+    context, deps = _kpoint_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceKpointController(context, deps, _FakeKpointView())
+    (job,) = controller.materialize([(2, 2, 2)])
+
+    # A definition written before job_ids_by_grid existed.
+    del definition.parameters["job_ids_by_grid"]
+
+    assert controller.job_for_sweep_key(definition, (2, 2, 2)) is job
+    assert controller.job_for_sweep_key(definition, (3, 3, 3)) is None
+
+
+def test_cutoff_controller_finds_a_legacy_definitions_job_through_job_labels(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "conv.mufinder", "Conv")
+    definition, _config = _seed_convergence_document(service, document)
+    view = _FakeConvergenceView(form_state={"name_prefix": "conv", "cutoff_energies": [300.0]})
+    context, deps = _cutoff_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceCutoffController(context, deps, view)
+    (job,) = controller.materialize([300.0])
+
+    del definition.parameters["job_ids_by_cutoff"]
+    definition.parameters["job_labels"] = [job.label]
+
+    assert controller.job_for_cutoff(definition, 300.0) is job
+    assert controller.job_for_cutoff(definition, 400.0) is None
+    del definition.parameters["job_labels"]
+    assert controller.job_for_cutoff(definition, 300.0) is None
+
+
+def test_sweep_controllers_resolve_each_job_once(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "conv.mufinder", "Conv")
+    _seed_convergence_document(service, document)
+    view = _FakeConvergenceView(form_state={"name_prefix": "conv", "cutoff_energies": [300.0]})
+    context, deps = _cutoff_context_and_deps(
+        service, document, local_backend=_RecordingBackend(), cluster_backend=_RecordingBackend()
+    )
+    controller = ConvergenceCutoffController(context, deps, view)
+    (job,) = controller.materialize([300.0, 300.0])
+
+    assert controller.jobs_for_keys([300.0, "300", 450.0, "not a cutoff"]) == [job]
+
+
+def test_dedupe_jobs_keeps_the_first_of_each_job_in_order() -> None:
+    first = make_job("a")
+    second = make_job("b")
+
+    assert dedupe_jobs([first, second, first, second]) == [first, second]
+    assert dedupe_jobs([]) == []
 
 
 def test_apply_row_parameters_to_form_state_updates_one_row_and_its_alias() -> None:

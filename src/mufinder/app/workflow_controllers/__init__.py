@@ -14,6 +14,7 @@ from mufinder.app.workflow_controllers.base import (
     ControllerResult,
     WorkflowControllerContext,
     WorkflowJobController,
+    dedupe_jobs,
     merge_controller_result,
     validate_controller_artifacts,
 )
@@ -41,6 +42,7 @@ from mufinder.app.workflow_controllers.quantum_corrections import (
     QuantumCorrectionsController,
     QuantumCorrectionsDeps,
 )
+from mufinder.app.workflow_controllers.sweep_convergence import SweepConvergenceController
 from mufinder.app.workflow_controllers.uep import (
     UepController,
     UepDeps,
@@ -60,10 +62,12 @@ __all__ = [
     "PristineRelaxationDeps",
     "QuantumCorrectionsController",
     "QuantumCorrectionsDeps",
+    "SweepConvergenceController",
     "UepController",
     "UepDeps",
     "WorkflowControllerContext",
     "WorkflowJobController",
+    "dedupe_jobs",
     "merge_controller_result",
     "validate_controller_artifacts",
 ]
