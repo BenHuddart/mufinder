@@ -73,7 +73,7 @@ from mufinder.domain.models import (
     next_job_created_at,
     utc_now,
 )
-from mufinder.science.site_generation import lattice_frac_to_cart
+from mufinder.science.lattice import lattice_frac_to_cart, vector_length, wrap_fractional
 from mufinder.services.legacy_import import (
     MUON_SPECIES,
     DetectedRun,
@@ -149,15 +149,9 @@ def _fold_to_host(
     recorded position means the same thing as a natively relaxed one's.
     """
 
-    if matrix is None:
-        return tuple(float(value) % 1.0 for value in position)  # type: ignore[return-value]
-    x, y, z = position
-    folded = (
-        x * matrix[0][0] + y * matrix[1][0] + z * matrix[2][0],
-        x * matrix[0][1] + y * matrix[1][1] + z * matrix[2][1],
-        x * matrix[0][2] + y * matrix[1][2] + z * matrix[2][2],
-    )
-    return tuple(float(value) % 1.0 for value in folded)  # type: ignore[return-value]
+    # A supercell fractional row vector times the supercell matrix is the host fractional position.
+    folded = position if matrix is None else lattice_frac_to_cart(position, matrix)
+    return tuple(wrap_fractional(folded))  # type: ignore[return-value]
 
 
 def _relabelled(species: Sequence[str], muon_label: str | None) -> list[str]:
@@ -690,7 +684,7 @@ def commit_legacy_import(
                 _fold_to_host(final_supercell, run.supercell_matrix)
             )
         lattice_a, lattice_b, lattice_c = (
-            _vector_length(row) for row in relaxed.lattice_vectors
+            vector_length(row) for row in relaxed.lattice_vectors
         )
         payload["lattice_a"] = lattice_a
         payload["lattice_b"] = lattice_b
@@ -810,10 +804,6 @@ def _initial_positions(run: DetectedRun) -> list[list[float]]:
     except Exception:  # noqa: BLE001
         return []
     return [[float(value) for value in row] for row in parsed.fractional_positions]
-
-
-def _vector_length(vector: Sequence[float]) -> float:
-    return float(sum(float(value) ** 2 for value in vector) ** 0.5)
 
 
 __all__ = [

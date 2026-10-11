@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from mufinder.castep_io.types import AtomicPosition, LatticeCart, PositionBlock
+from mufinder.domain.magnetic_properties import atomic_spins_from_structure, has_nonzero_spins
 from mufinder.domain.models import Structure
 
-from ._common import has_nonzero_spins
 from .types import StructureSpec
 
 
@@ -17,32 +17,6 @@ def _as_vector3(values: list[float], *, label: str) -> tuple[float, float, float
     if len(values) != 3:
         raise StructureBridgeError(f"{label} must contain exactly three components.")
     return (float(values[0]), float(values[1]), float(values[2]))
-
-
-def _spins_from_magnetic_structure(structure: Structure) -> list[float] | None:
-    magnetic = structure.properties.get("magnetic_structure")
-    if not isinstance(magnetic, dict):
-        return None
-
-    moments = magnetic.get("moments")
-    if not isinstance(moments, list) or not moments:
-        return None
-
-    spins = [0.0] * len(structure.species)
-    saw_numeric = False
-    for index, moment in enumerate(moments[: len(spins)]):
-        if not isinstance(moment, dict):
-            continue
-        vector = moment.get("vector")
-        if not isinstance(vector, list) or len(vector) < 3:
-            continue
-        try:
-            spins[index] = float(vector[2])
-            saw_numeric = True
-        except (TypeError, ValueError):
-            continue
-
-    return spins if saw_numeric else None
 
 
 def structure_to_spec(structure: Structure) -> StructureSpec:
@@ -80,7 +54,7 @@ def structure_to_spec(structure: Structure) -> StructureSpec:
     raw_spins = structure.properties.get("atomic_spins")
     if raw_spins is None:
         raw_spins = structure.properties.get("initial_magnetic_moments")
-    fallback_spins = _spins_from_magnetic_structure(structure)
+    fallback_spins = atomic_spins_from_structure(structure)
     if raw_spins is None:
         raw_spins = fallback_spins
 

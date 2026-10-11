@@ -1733,14 +1733,6 @@ def test_periodic_resampling_guards_axis_and_target_size() -> None:
         uep_module._periodic_resample_axis(np.zeros((4, 4)), 1, axis=0)
 
 
-def test_coordinate_conversions_guard_point_shapes() -> None:
-    # Private helpers: the public callers always pass (N, 3) point arrays.
-    with pytest.raises(UepError, match="Cartesian 3-vectors"):
-        uep_module._cartesian_to_fractional(_CUBE_LATTICE, np.zeros((2, 2)))
-    with pytest.raises(UepError, match="3-vectors"):
-        uep_module._fractional_to_cartesian(_CUBE_LATTICE, np.zeros((2, 4)))
-
-
 def test_isosurface_polygon_ordering_leaves_collinear_points_alone() -> None:
     # Private helper: a plane cuts a tetrahedron in a triangle or a planar quadrilateral, never a line.
     points = [np.array([float(x), 0.0, 0.0]) for x in range(4)]

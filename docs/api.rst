@@ -16,6 +16,10 @@ Domain
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.domain.magnetic_properties
+   :members:
+   :undoc-members:
+
 CASTEP I/O
 ----------
 
@@ -109,6 +113,18 @@ Services
 
 Science
 -------
+
+.. automodule:: mufinder.science.lattice
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.science.spglib_compat
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.science.ase_bridge
+   :members:
+   :undoc-members:
 
 .. automodule:: mufinder.science.site_generation
    :members:

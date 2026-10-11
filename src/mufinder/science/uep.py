@@ -20,6 +20,8 @@ from scipy.spatial import distance as spdistance
 
 from mufinder.castep_io.output_parser import parse_castep_mulliken_atomic_spins
 from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
+from mufinder.science.ase_bridge import structure_to_ase_atoms
+from mufinder.science.lattice import cartesian_to_fractional, fractional_to_cartesian
 from mufinder.science.spglib_compat import configure_spglib_error_handling
 
 
@@ -914,30 +916,11 @@ def preview_potential_grid(
     )
 
 
-def _cartesian_to_fractional(
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
-    positions_ang: np.ndarray,
-) -> np.ndarray:
+def _slice_lattice(lattice_vectors: object) -> np.ndarray:
     lattice = np.asarray(lattice_vectors, dtype=float)
     if lattice.shape != (3, 3):
         raise UepError("Slice sampling needs three lattice vectors.")
-    cartesian = np.asarray(positions_ang, dtype=float)
-    if cartesian.ndim != 2 or cartesian.shape[1] != 3:
-        raise UepError("Slice sampling points must be Cartesian 3-vectors.")
-    return np.linalg.solve(lattice.T, cartesian.T).T
-
-
-def _fractional_to_cartesian(
-    lattice_vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
-    fractional_positions: np.ndarray,
-) -> np.ndarray:
-    lattice = np.asarray(lattice_vectors, dtype=float)
-    if lattice.shape != (3, 3):
-        raise UepError("Slice sampling needs three lattice vectors.")
-    fractional = np.asarray(fractional_positions, dtype=float)
-    if fractional.ndim != 2 or fractional.shape[1] != 3:
-        raise UepError("Fractional positions must be 3-vectors.")
-    return fractional @ lattice
+    return lattice
 
 
 def fractional_point_to_cartesian(
@@ -949,7 +932,7 @@ def fractional_point_to_cartesian(
     point = np.asarray(fractional_position, dtype=float)
     if point.shape != (3,):
         raise UepError("Fractional positions must be 3-vectors.")
-    cartesian = _fractional_to_cartesian(lattice_vectors, point.reshape(1, 3))[0]
+    cartesian = fractional_to_cartesian(point, _slice_lattice(lattice_vectors))
     return tuple(float(value) for value in cartesian)
 
 
@@ -959,9 +942,7 @@ def miller_indices_to_cartesian_normal(
 ) -> tuple[float, float, float]:
     """Convert Miller indices into the corresponding Cartesian plane normal."""
 
-    lattice = np.asarray(lattice_vectors, dtype=float)
-    if lattice.shape != (3, 3):
-        raise UepError("Slice sampling needs three lattice vectors.")
+    lattice = _slice_lattice(lattice_vectors)
     miller = np.asarray(miller_indices, dtype=float)
     if miller.shape != (3,):
         raise UepError("Miller indices must be 3-vectors.")
@@ -977,9 +958,7 @@ def cartesian_normal_to_lattice_plane_components(
 ) -> tuple[float, float, float]:
     """Convert a Cartesian plane normal into normalized lattice-plane components."""
 
-    lattice = np.asarray(lattice_vectors, dtype=float)
-    if lattice.shape != (3, 3):
-        raise UepError("Slice sampling needs three lattice vectors.")
+    lattice = _slice_lattice(lattice_vectors)
     normal = np.asarray(normalize_plane_normal(normal_ang), dtype=float)
     components = lattice @ normal
     scale = float(np.max(np.abs(components)))
@@ -997,7 +976,7 @@ def _interpolate_periodic_grid_trilinear(
     if values.ndim != 3 or min(values.shape) < 2:
         raise UepError("Slice sampling needs a 3D potential grid with at least two points per axis.")
 
-    fractional = _cartesian_to_fractional(potential.lattice_vectors, np.asarray(positions_ang, dtype=float))
+    fractional = cartesian_to_fractional(positions_ang, _slice_lattice(potential.lattice_vectors), error=UepError)
     wrapped = np.mod(fractional, 1.0)
     grid_shape = np.asarray(values.shape, dtype=float)
     scaled = wrapped * grid_shape.reshape(1, 3)
@@ -1849,22 +1828,6 @@ def _import_soprano_clustering():
     return Gene, PhylogenCluster, AtomsCollection, compute_asymmetric_distmat
 
 
-def _structure_like_to_ase_atoms(source_structure: object) -> Atoms:
-    lattice_vectors = getattr(source_structure, "lattice_vectors", None)
-    species = getattr(source_structure, "species", None)
-    fractional_positions = getattr(source_structure, "fractional_positions", None)
-    if lattice_vectors is None or species is None or fractional_positions is None:
-        raise UepError("source_structure must define lattice_vectors, species, and fractional_positions.")
-    if len(species) != len(fractional_positions):
-        raise UepError("source_structure species and fractional_positions must have matching lengths.")
-    return Atoms(
-        list(str(symbol) for symbol in species),
-        scaled_positions=[tuple(float(value) for value in row) for row in fractional_positions],
-        cell=np.asarray(lattice_vectors, dtype=float),
-        pbc=True,
-    )
-
-
 def _clustering_energy(entry: UepOptimizationResult) -> float:
     if entry.total_energy_ev is not None and not isnan(entry.total_energy_ev):
         return float(entry.total_energy_ev)
@@ -2063,7 +2026,7 @@ def prepare_uep_clustering_dataset(
         )
 
     Gene, PhylogenCluster, AtomsCollection, compute_asymmetric_distmat = _import_soprano_clustering()
-    host_atoms = _structure_like_to_ase_atoms(source_structure)
+    host_atoms = structure_to_ase_atoms(source_structure, error=UepError)
     collection = AtomsCollection(
         [
             _muonated_atoms_for_clustering(host_atoms, optimization, index=index)

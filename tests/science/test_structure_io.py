@@ -852,23 +852,6 @@ def test_parse_cif_triplet(token: str, expected: list[float] | None) -> None:
     assert sio._parse_cif_triplet(token) == (None if expected is None else pytest.approx(expected))
 
 
-def test_spins_from_magnetic_structure_skips_malformed_moments() -> None:
-    magnetic = {
-        "moments": [
-            "not-a-dict",
-            {"atom_index": "x", "vector": [0, 0, 1]},
-            {"atom_index": 99, "vector": [0, 0, 1]},
-            {"atom_index": 0, "vector": [0, 0]},
-            {"atom_index": 0, "vector": "nope"},
-            {"atom_index": 0, "vector": [0, 0, 4.0]},
-        ]
-    }
-
-    assert sio._spins_from_magnetic_structure(magnetic_structure=magnetic, atom_count=1) == pytest.approx([4.0])
-    assert sio._spins_from_magnetic_structure(magnetic_structure={}, atom_count=2) is None
-    assert sio._spins_from_magnetic_structure(magnetic_structure={"moments": []}, atom_count=2) is None
-
-
 # --------------------------------------------------------------------------
 # CIF export with muon sites
 # --------------------------------------------------------------------------

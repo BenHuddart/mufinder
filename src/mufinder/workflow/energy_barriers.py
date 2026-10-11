@@ -8,8 +8,9 @@ from uuid import UUID
 
 from mufinder.castep_io.types import AtomicPosition, BlockSection, KeywordAssignment, PositionBlock, ValueWithUnit
 from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.magnetic_properties import has_nonzero_spins
 
-from ._common import has_nonzero_spins, require_jobs
+from ._common import require_jobs
 from .merge import compose_patch, resolve_job
 from .naming import job_name
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate, StructureSpec

@@ -9,6 +9,7 @@ import pytest
 
 from mufinder.domain.models import Structure
 from mufinder.science import relaxation_analysis
+from mufinder.science.lattice import minimum_image_distance
 from mufinder.science.relaxation_analysis import (
     RelaxedMuonSite,
     RelaxationClusterSummary,
@@ -370,7 +371,7 @@ def test_symmetry_distance_falls_back_to_direct_distance_without_equivalents(mon
 
     matrix = relaxation_analysis.symmetry_distance_matrix(sites, host)
 
-    expected = relaxation_analysis._pbc_distance((0.1, 0.1, 0.1), (0.9, 0.1, 0.1), host.lattice_vectors)
+    expected = minimum_image_distance((0.1, 0.1, 0.1), (0.9, 0.1, 0.1), host.lattice_vectors)
     assert matrix == ((0.0, expected), (expected, 0.0))
 def test_grouped_relative_energies_offsets_each_group_by_its_own_minimum() -> None:
     relative = grouped_relative_energies(

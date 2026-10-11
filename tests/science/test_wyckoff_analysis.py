@@ -15,21 +15,18 @@ import numpy as np
 import pytest
 
 from mufinder.domain.models import Structure
+from mufinder.science import spglib_compat, wyckoff_analysis
+from mufinder.science.lattice import minimum_image_distance
 from mufinder.science.relaxation_analysis import (
     RelaxedMuonSite,
     RelaxationClusterSummary,
-    _pbc_distance,
     _wrap_fractional,
     cluster_connected_components,
 )
 from mufinder.science.site_generation import lattice_frac_to_cart
-from mufinder.science import wyckoff_analysis
-from mufinder.science.spglib_compat import get_crystal_symmetry
+from mufinder.science.spglib_compat import get_crystal_symmetry, spglib_cell, symmetry_orbit
 from mufinder.science.wyckoff_analysis import (
     _deduplicate_positions,
-    _host_cell,
-    _operation_images,
-    _orbit_from_images,
     _project_nearby_special_candidates,
     _project_to_constraints,
     assign_cluster_wyckoff_sites,
@@ -257,7 +254,7 @@ def test_repeated_wyckoff_assignment_returns_identical_results() -> None:
 
 
 def _host_operations(host: Structure) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    symmetry = get_crystal_symmetry(_host_cell(host), symprec=1e-5)
+    symmetry = get_crystal_symmetry(spglib_cell(host), symprec=1e-5)
     assert symmetry is not None
     rotations = [np.asarray(rotation, dtype=float) for rotation in symmetry["rotations"]]
     translations = [np.asarray(translation, dtype=float) for translation in symmetry["translations"]]
@@ -279,7 +276,7 @@ def _brute_force_special_candidates(reference, rotations, translations, lattice,
     nearby = [
         candidate
         for candidate in candidates
-        if candidate is not None and _pbc_distance(candidate, reference, lattice) <= cutoff
+        if candidate is not None and minimum_image_distance(candidate, reference, lattice) <= cutoff
     ]
     return _deduplicate_positions(nearby, lattice, tolerance_ang=1e-4)
 
@@ -318,12 +315,10 @@ def test_symmetry_orbit_matches_greedy_pairwise_deduplication(host_factory) -> N
         for image in images:
             # Wrapped twice, as originally: ``-1e-17 % 1.0`` is ``1.0``, and the second wrap folds it to 0.
             wrapped = _wrap_fractional(_wrap_fractional(image))
-            if not any(_pbc_distance(wrapped, existing, lattice) <= 1e-5 for existing in expected):
+            if not any(minimum_image_distance(wrapped, existing, lattice) <= 1e-5 for existing in expected):
                 expected.append(wrapped)
 
-        orbit = _orbit_from_images(
-            _operation_images(point, rotations, translations), lattice, tolerance_ang=1e-5
-        )
+        orbit = symmetry_orbit(point, (rotations, translations), lattice_vectors=lattice, tolerance=1e-5)
 
         assert len(orbit) == len(expected)
         for actual_position, expected_position in zip(orbit, expected, strict=True):
@@ -335,10 +330,10 @@ def fresh_wyckoff_caches():
     """Keep results computed with monkeypatched helpers out of the module-level caches."""
 
     wyckoff_analysis._match_cluster.cache_clear()
-    wyckoff_analysis._host_symmetry_operations.cache_clear()
+    spglib_compat.clear_symmetry_operations_cache()
     yield
     wyckoff_analysis._match_cluster.cache_clear()
-    wyckoff_analysis._host_symmetry_operations.cache_clear()
+    spglib_compat.clear_symmetry_operations_cache()
 
 
 def _bcc_six_b_cluster():
@@ -400,7 +395,9 @@ def test_wyckoff_assignment_is_unmatched_when_no_candidate_can_be_labelled(monke
 @pytest.mark.usefixtures("fresh_wyckoff_caches")
 def test_wyckoff_assignment_reports_unavailable_symmetry_when_spglib_fails(monkeypatch) -> None:
     host, sites, cluster = _bcc_six_b_cluster()
-    monkeypatch.setattr(wyckoff_analysis, "get_crystal_symmetry", lambda cell, *, symprec: None)
+    monkeypatch.setattr(spglib_compat, "get_crystal_symmetry", lambda cell, *, symprec: None)
+    # Clustering the fixture sites cached the host's real operations; the shared cache must forget them.
+    spglib_compat.clear_symmetry_operations_cache()
 
     assignments = assign_cluster_wyckoff_sites(sites, cluster, host, match_tolerance_ang=0.25)
 
