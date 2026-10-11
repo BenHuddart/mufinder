@@ -64,6 +64,14 @@ Installing a catalog
 - **Use Existing File…** imports a ``castep_keywords.json`` the user already
   has.
 
+The dialog keeps the keyword catalog apart from the optional ``CASTEP on this
+computer`` paths, and states that the local executable and MPI launcher are
+used only for local runs and local keyword generation. It shows which catalog
+is in use and why a configured one was skipped. A line under the generation
+target says which settings that target uses (this computer, or a cluster as a
+scheduler job or on its login node), and a set-up cluster is preselected as the
+target when no local executable is configured.
+
 Either way the result goes through ``install_keyword_catalog``
 (``mufinder.castep_setup``), which validates the file, writes MuFinder's own
 copy into the per-user application-data directory, points the saved setup at
@@ -84,6 +92,11 @@ atomically, to a temporary file that is then moved into place.
 Generation always writes to a scratch directory first, so a failed or partial
 run cannot replace a working catalog.
 
+Local generation wraps the CASTEP executable in the configured MPI launcher
+(``mpirun -np 1``) when one is set. MPI-built binaries such as ``castep.mpi``
+hang when the ``-help`` queries are run directly, so without the launcher the
+progress stalls at 0%.
+
 Cluster generation
 ------------------
 
@@ -93,6 +106,18 @@ calls (567 for CASTEP 26.11). ``mufinder.services.cluster_keyword_generator``
 issues them from a shell loop on the cluster that prints each description
 between marker lines, and parses that output locally. The cluster needs only
 ``bash`` and CASTEP.
+
+The scripts sent to the cluster are shell templates in
+``mufinder/assets/shell/``: ``login_command.sh`` wraps each login-node command,
+``help_loop.sh`` (with ``help_loop_timing.sh``) is the loop itself,
+``job_help_loop.sh`` adapts it to a scheduler job, and ``keyword_job.sh`` with
+one of the ``keyword_job_strategy_*.sh`` fragments is the job script.
+``mufinder.services.cluster_keyword_scripts`` works out the values that go into
+them (the cluster's setup, launcher and executable, shell-quoted, and the
+markers and limits that the parser shares), and
+``mufinder.services.shell_templates`` fills them in. Each template explains its
+own logic in ``##`` comments, which are not sent to the cluster, and the tests
+run ``bash -n`` over every script MuFinder can render.
 
 Each cluster chooses where the loop runs. The choice is offered beside the
 generation target in ``Setup > CASTEP`` (shown once a cluster is selected, and

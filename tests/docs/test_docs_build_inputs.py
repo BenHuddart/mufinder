@@ -89,6 +89,17 @@ def test_every_docs_page_is_reachable_from_the_index_toctree() -> None:
     )
 
 
+def test_docs_pages_are_restructured_text() -> None:
+    # conf.py registers no Markdown parser, so Sphinx silently skips a ``.md``
+    # page: it is never built, indexed or link-checked.
+    markdown = sorted(
+        path.relative_to(DOCS_ROOT).as_posix()
+        for path in DOCS_ROOT.rglob("*.md")
+        if "_build" not in path.relative_to(DOCS_ROOT).parts
+    )
+    assert not markdown, f"Sphinx does not build Markdown; write these as .rst: {markdown}"
+
+
 @pytest.mark.parametrize(
     ("page", "doi"),
     [(page, doi) for page, dois in CITED_DOIS.items() for doi in dois],

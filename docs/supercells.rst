@@ -42,13 +42,17 @@ the supercell is saved, and the status line reports the resulting atom count.
 Give the supercell a clear name, then choose ``Save``. Use ``Save As`` to
 create another saved copy from the current matrix and name.
 
-``Suggest…`` proposes diagonal supercells for the active host. It lists cells
-whose minimum periodic-image distance (the shortest lattice translation of the
-supercell, not simply the shortest edge) is at least 8 Å, each one improving
-on the cheaper options above it, and marks as ``(Recommended)`` the cheapest
-cell that reaches the 10 Å rule of thumb while staying under 200 atoms (the
-dialog warns when no such cell exists). ``Use This Supercell`` loads the
-highlighted matrix into the editor; it is not saved until you choose ``Save``.
+``Suggest…`` proposes diagonal supercells ``(n₁, n₂, n₃)`` for the active
+host. It lists cells whose minimum periodic-image distance is at least 8 Å,
+each one improving on the cheaper options above it, in the columns
+``Scaling``, ``Atoms``, ``Min image (Å)`` and ``≥ 10 Å``. The minimum image
+distance is the shortest non-zero lattice translation of the supercell over all
+``(m₁, m₂, m₃) ∈ {-1, 0, 1}³``, not simply the shortest edge. The dialog marks
+as ``(Recommended)`` the cheapest cell that reaches the 10 Å rule of thumb
+while staying under 200 atoms; when no such cell exists it highlights the best
+cell under 200 atoms and warns. When the primitive cell already has 200 or
+more atoms no search is run. ``Use This Supercell`` loads the highlighted
+matrix into the editor; it is not saved until you choose ``Save``.
 
 Editing saved supercells
 ------------------------
@@ -78,3 +82,64 @@ structure. Selecting a supercell owned by another workflow creates the
 workflow-specific snapshot MuFinder needs internally, while preserving the
 original saved cell as the source. UEP source jobs use the currently selected
 UEP source structure as their supercell context.
+
+Workflow simulation cells
+-------------------------
+
+Each workflow chooses its own simulation cell; there is no project-wide
+selection that calculation inputs read.
+
+- The cutoff and k-point convergence pages have a ``Simulation Cell`` section:
+  a summary of the active cell, a drop-down with ``Single unit cell`` and the
+  saved supercells of the active host, ``Manage Supercells...`` to open the
+  editor, and ``Use Unit Cell`` to return to the host unit cell without
+  deleting any saved supercell.
+- The pristine-relaxation, muon-relaxation and UEP tables have a per-row
+  ``Supercell`` drop-down with ``Unit cell``, the saved supercells and
+  ``Manage Supercells...``.
+- Saved supercells are project-wide and visible to every workflow for the same
+  active host. Selecting one owned by another workflow clones it into the
+  current workflow, reusing an existing current-workflow copy when one with the
+  same host and matrix already exists. Automatic labels combine the workflow
+  stage and the matrix, for example ``convergence_cutoff 2x2x1``.
+
+A convergence definition freezes the cell resolved when it is configured: its
+first input structure is the selected supercell, or the host for unit-cell
+mode, and its parameters record ``simulation_cell_mode`` and
+``supercell_source_workflow``. The ``.cell`` files are rendered from that
+frozen structure, so the expanded lattice, positions and spins are kept even if
+the selection changes later.
+
+How selections are stored
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A saved supercell is an ordinary ``Structure`` entity whose
+``parent_structure_id`` is the active host, with its asset metadata under
+``properties["supercell_asset"]``: ``matrix`` (a 3×3 integer matrix),
+``owner_workflow_stage`` and ``source_asset_structure_id`` (nullable, the clone
+source). Each workflow's selection is stored in ``state.json`` under
+``workflow_supercells``:
+
+.. code-block:: json
+
+   {
+     "workflow_supercells": {
+       "convergence_cutoff": { "mode": "unit_cell" },
+       "muon_relaxation": { "mode": "saved_supercell", "structure_id": "<uuid>" }
+     }
+   }
+
+``unit_cell`` mode resolves to the active host and ``saved_supercell`` mode to
+the selected saved structure. A missing, invalid or other-host selection falls
+back to the host unit cell, and the stored selection can be normalized to
+match. ``Project.supercell_matrix`` only seeds the host preview; it never
+decides a workflow's calculation structure.
+
+Spins follow the host's magnetic data. When a host's scalar spin list is
+missing or invalid, spins are taken from ``magnetic_structure`` moment
+vectors (the ``z`` component), and a host whose scalar spins are all zero while
+its magnetic moments are not is treated as stale and given the moment-derived
+spins. A saved supercell keeps its own explicit spins. A saved supercell whose
+spins are stale zeros is repaired from the host's magnetic data when it is
+selected, resolved or written, so spin-polarized ``.cell`` files keep their
+``SPIN=...`` tokens.

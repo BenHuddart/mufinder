@@ -54,7 +54,7 @@ Compatibility ledger
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that drops task-only rows from ``convergence_form``.
    * - ``relative_energy_eV`` muon-site key
-     - ``ProjectService._site_total_energy_from_payload``
+     - ``mufinder.persistence.project_codec`` (``site_from_dict``)
      - ``MuonSite`` stored the source relaxation's absolute final total energy
        under the misleading name ``relative_energy_eV``. The field is now
        ``total_energy_eV`` and new saves write only that key; a project saved
@@ -142,7 +142,8 @@ Compatibility ledger
      - Persisted creation timestamp that fixes a job's position in the
        dashboard across reloads (``load_project`` sorts jobs by
        ``(created_at, id)``). Job files written before the field existed are
-       backfilled on load by ``ProjectService._legacy_job_created_at``: the
+       backfilled on load by
+       ``mufinder.persistence.project_codec.jobs_in_creation_order``: the
        job's first provenance mention (plus its position within a batch
        record), else its earliest lifecycle timestamp, else the load time so
        it sorts last. Backfilled jobs are left out of the dirty-tracking cache
@@ -182,12 +183,13 @@ Compatibility ledger
        existing users to the starter catalog.
    * - ``candidate`` muon-site status
      - ``MuonSite.status`` / site entity files; read by
-       ``ProjectService._site_status_from_payload`` and
+       ``mufinder.persistence.project_codec.site_from_dict`` and
        ``MuonGenerationWidget._display_site_status``
      - Older projects stored freshly generated sites as ``candidate``. Loading
        maps the value to ``generated``, the display shows it as
-       ``generated``, and ``ProjectService`` still treats ``candidate`` as a
-       generated, stageable status (``_LEGACY_GENERATED_SITE_STATUSES``).
+       ``generated``, and ``mufinder.services.site_generation_service`` still
+       treats ``candidate`` as a generated, stageable status
+       (``LEGACY_GENERATED_SITE_STATUSES``).
      - Keep until the next saved-project schema version bump, whose migration
        can rewrite ``candidate`` to ``generated`` in every site file.
    * - ``converged_cutoff`` key in convergence-examiner result snapshots

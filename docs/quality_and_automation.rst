@@ -98,7 +98,9 @@ its dialogs and the real submission path.
 
 ``tests/docs`` checks the structure of the Sphinx sources and their citations,
 never their wording. ``test_docs_build_inputs.py`` asserts that every page under
-``docs/`` is reachable from a toctree in ``docs/index.rst`` and that each
+``docs/`` is reStructuredText (Sphinx has no Markdown parser configured, so a
+``.md`` page would never be built), that every page is reachable from a toctree
+in ``docs/index.rst``, and that each
 literature DOI the user guides cite stays on its page; a new citation is added
 to its ``CITED_DOIS`` table. Tests do not pin prose phrases, ``conf.py`` lines
 or stylesheet values: whether a page describes the code correctly is checked in

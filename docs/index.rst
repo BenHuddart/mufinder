@@ -31,6 +31,7 @@ and the quality standards that must be maintained as development expands.
    :maxdepth: 2
    :caption: User guide
 
+   host_structure
    supercells
    convergence_testing
    comparison_table
@@ -50,6 +51,9 @@ and the quality standards that must be maintained as development expands.
 
    project_specification
    compatibility_policy
+   castep/cell_syntax
+   castep/param_syntax
+   castep/kpoint_spacing_convention
    api
 
 .. toctree::
@@ -59,3 +63,4 @@ and the quality standards that must be maintained as development expands.
    agent_harness
    architecture
    quality_and_automation
+   branding
