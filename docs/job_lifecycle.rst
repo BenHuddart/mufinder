@@ -707,7 +707,8 @@ allows a few seconds of slack for filesystem mtime granularity and network-mount
 clock offsets, and skips entirely when ``started_at`` is unset — a job the poller
 never observed running fails open rather than failing on no evidence.
 
-The remote one is in ``ClusterJobRunner._retrieve_results``, and it is what makes
+The remote one is in :func:`~mufinder.services.cluster_retrieval.retrieve_job_outputs`,
+and it is what makes
 the local guard meaningful for cluster jobs at all. ``sftp.get`` stamps a
 downloaded file with the *download* time, so an unconditionally retrieved
 ``-out.cell`` always looks newer than ``started_at`` however old the remote file
@@ -1039,29 +1040,38 @@ During polling:
 - Scheduler states are mapped to MuFinder states by the scheduler backend.
 - ``queued`` and ``running`` emit status updates.
 - ``cancelled`` marks the tracked job terminal and emits cancellation.
-- ``stopped`` marks the tracked job terminal and emits ``stopped``.
-- ``failed`` marks the tracked job terminal, retrieves available error files,
-  emits ``job_failed``, and emits ``failed``.
-- ``completed`` triggers retrieval of ``.castep`` plus the optional ``.den_fmt``,
+- ``stopped`` and ``failed`` mark the tracked job terminal and download the
+  available error files and scheduler log
+  (:func:`~mufinder.services.cluster_retrieval.retrieve_error_files`), so a stop
+  can be diagnosed like a failure. ``stopped`` then emits ``stopped``;
+  ``failed`` emits ``job_failed`` and ``failed``.
+- ``completed`` triggers one retrieval pass. The runner emits ``retrieving``,
+  then :func:`~mufinder.services.cluster_retrieval.retrieve_job_outputs`
+  downloads the error files, ``.castep`` and the optional ``.den_fmt``,
   ``-out.cell``, ``.phonon``, or ``.ts`` outputs that the job's retrieval flags
-  request (see Retrieval flags). Retrieval or parsing failure
-  becomes ``failed``. Parsed incomplete CASTEP output becomes ``stopped`` when
-  it looks like walltime; otherwise it becomes ``failed``. Parsed completed
-  output emits ``job_finished`` and ``completed``. The secondary outputs
-  (``-out.cell`` / ``.phonon`` / ``.ts``) are parsed once here on the worker
-  thread via :func:`~mufinder.services.job_artifacts.collect_job_artifacts` and
-  carried to the GUI as the third ``job_finished`` payload, so the completion
-  handler and controllers never re-parse them.
+  request (see Retrieval flags), parses them, and returns a
+  :class:`~mufinder.services.cluster_retrieval.RetrievalResult`. It emits
+  nothing; the runner turns the result into signals. Retrieval or parsing
+  failure becomes ``failed``. Parsed incomplete CASTEP output becomes
+  ``stopped`` when the downloaded scheduler log shows a walltime kill;
+  otherwise it becomes ``failed``. Parsed completed output emits
+  ``job_finished`` and ``completed``. The secondary outputs (``-out.cell`` /
+  ``.phonon`` / ``.ts``) are parsed once here on the worker thread via
+  :func:`~mufinder.services.job_artifacts.collect_job_artifacts` and carried to
+  the GUI as the third ``job_finished`` payload, so the completion handler and
+  controllers never re-parse them.
 - A missing scheduler entry usually means completion, so retrieval is
-  attempted immediately — but with a grace window: if the output cannot be
-  downloaded (SFTP error, missing remote ``.castep``, connection hiccup), the
-  job is *not* failed yet. The runner retries on up to
-  ``MISSING_ENTRY_RETRIEVAL_ATTEMPTS`` (3) consecutive polls, keeping the
+  attempted immediately — but with a grace window. When the output cannot be
+  downloaded (SFTP error, missing remote ``.castep``, a ``.castep`` older than
+  this submission, connection hiccup), the result's
+  :class:`~mufinder.services.cluster_retrieval.RetrievalFailure` is
+  ``retry_eligible`` and the job is *not* failed yet. The runner retries on up
+  to ``MISSING_ENTRY_RETRIEVAL_ATTEMPTS`` (3) consecutive polls, keeping the
   entry non-terminal, and only then emits ``job_failed`` with a diagnostic
   explaining that scheduler history may have expired, the queue command may be
   filtered, or the wrong cluster may be connected. Parse failures of
-  successfully downloaded output fail immediately. The attempt counter resets
-  if the job reappears in the queue.
+  successfully downloaded output are never retry-eligible and fail
+  immediately. The attempt counter resets if the job reappears in the queue.
 - Every poll emits a ``queue_checked`` snapshot carrying ``checked_at``
   (``utc_now()``), per-job elapsed runtimes, and per-job human-readable
   observations (``observations_by_job_id``) describing what the scheduler

@@ -357,3 +357,12 @@ passed one switches to the replacement named.
   last accepted in 0.5.0): pass ``retrieval=RetrievalFlags(...)`` with the
   same keyword names, or ``retrieval=RetrievalFlags.for_calc_type(...)``, from
   ``mufinder.services.job_artifacts``.
+
+The module-level names below live in another module and keep no import alias
+at their former path. That module is not in the API reference and no MuFinder
+code imported these names from it. Code that did imports them from the module
+named.
+
+- ``REMOTE_STALE_OUTPUT_SLACK_SECONDS``
+  (``mufinder.services.cluster_runner``): import it from
+  ``mufinder.services.cluster_retrieval``.

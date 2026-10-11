@@ -642,7 +642,7 @@ def output_predates_run(path: Path | None, started_at: datetime | None) -> bool:
     unconditional download would make every retrieved file look fresh. Skipping
     that download leaves the local copy carrying the *previous* retrieval's
     mtime, which is what this comparison then rejects. The remote-side half of
-    the guard lives in ``ClusterJobRunner._retrieve_results``, which also refuses
+    the guard lives in ``cluster_retrieval.retrieve_job_outputs``, which also refuses
     to parse a ``.castep`` that predates the submission — the case this function
     cannot see, because a run that never started has no ``started_at``.
 

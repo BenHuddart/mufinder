@@ -4,11 +4,8 @@ Covers three layers:
 
 * ``ProjectService.retry_job_retrieval`` primitive behaviour.
 * ``ClusterJobRunner.retrieve_outputs_for`` registering a tracked entry and
-  emitting the poll-loop signal sequence via ``_retrieve_results``.
+  emitting the poll-loop signal sequence.
 * ``JobExecutionController.prepare_retry_retrieval`` run bookkeeping.
-
-The cluster-runner fakes mirror ``tests/services/test_cluster_runner.py`` (copied
-here rather than imported, since that file is owned by another stream this round).
 """
 
 from __future__ import annotations
@@ -18,54 +15,20 @@ from uuid import uuid4
 
 import pytest
 
-import mufinder.services.cluster_runner as cluster_runner_module
+import mufinder.services.cluster_retrieval as cluster_retrieval_module
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import Job
 from mufinder.services.cluster_runner import ClusterJobRunner
 from mufinder.services.job_execution_controller import JobExecutionController
 from mufinder.services.project_service import ProjectDocument, ProjectService
+from tests.support.cluster_ssh import FakeSSH
 from tests.support.jobs import make_job
 
 
 # ---------------------------------------------------------------------------
-# Cluster-runner fakes (copied from test_cluster_runner.py)
+# Cluster-runner scheduler fake
 # ---------------------------------------------------------------------------
-class _FakeSSH:
-    def __init__(self) -> None:
-        self.is_connected = True
-        self.commands: list[tuple[str, object]] = []
-        self.remote_files: dict[str, bytes] = {}
-
-    def mkdir(self, path: str, exist_ok: bool = True) -> None:
-        self.commands.append(("mkdir", (path, exist_ok)))
-
-    def put(self, local_path: Path, remote_path: str) -> None:
-        self.commands.append(("put", remote_path))
-        self.remote_files[remote_path] = Path(local_path).read_bytes()
-
-    def chmod(self, remote_path: str, mode: int) -> None:
-        self.commands.append(("chmod", (remote_path, mode)))
-
-    def get(self, remote_path: str, local_path: Path) -> None:
-        self.commands.append(("get", remote_path))
-        local_path.write_bytes(self.remote_files.get(remote_path, b"ok"))
-
-    def exists(self, remote_path: str) -> bool:
-        return remote_path in self.remote_files
-
-    def listdir(self, remote_path: str) -> list[str]:
-        prefix = remote_path.rstrip("/") + "/"
-        entries: list[str] = []
-        for path in self.remote_files:
-            if path.startswith(prefix):
-                entries.append(path[len(prefix):].split("/", 1)[0])
-        return sorted(set(entries))
-
-    def disconnect(self) -> None:
-        self.is_connected = False
-
-
 class _FakeScheduler:
     def submit(self, _ssh, request) -> str:
         return "12345"
@@ -111,13 +74,13 @@ def test_retrieve_outputs_for_registers_entry_and_completes(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     runner = ClusterJobRunner()
-    ssh = _FakeSSH()
+    ssh = FakeSSH()
     runner._ssh = ssh
     runner._scheduler = _FakeScheduler()
     ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
 
     monkeypatch.setattr(
-        cluster_runner_module,
+        cluster_retrieval_module,
         "parse_castep_output",
         lambda _path: CastepResult(completed=True, total_energy=-1.0),
     )
@@ -148,12 +111,12 @@ def test_retrieve_outputs_for_incomplete_marks_failed(
     qapp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     runner = ClusterJobRunner()
-    runner._ssh = _FakeSSH()
+    runner._ssh = FakeSSH()
     runner._scheduler = _FakeScheduler()
     runner._ssh.remote_files["/remote/job/seed.castep"] = b"castep output"
 
     monkeypatch.setattr(
-        cluster_runner_module,
+        cluster_retrieval_module,
         "parse_castep_output",
         lambda _path: CastepResult(completed=False, error_message="not converged"),
     )
