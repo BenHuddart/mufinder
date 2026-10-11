@@ -342,3 +342,15 @@ migration; code that imported one switches to the replacement named.
   Cluster keyword generation no longer runs Python on the cluster, so the value
   has no meaning. It was never project data; a value left in saved settings is
   ignored and needs no migration.
+
+The keywords below were removed without a deprecation period. They belonged to
+an unpersisted record that is not in the API reference and that only MuFinder
+constructs, so no project data or packaged build depends on them. Code that
+passed one switches to the replacement named.
+
+- ``retrieve_den_fmt`` / ``retrieve_out_cell`` / ``retrieve_phonon`` /
+  ``retrieve_ts`` / ``task_farming_enabled`` / ``num_farms`` keywords of
+  ``ClusterJobSubmission`` (``mufinder.services.job_execution_controller``,
+  last accepted in 0.5.0): pass ``retrieval=RetrievalFlags(...)`` with the
+  same keyword names, or ``retrieval=RetrievalFlags.for_calc_type(...)``, from
+  ``mufinder.services.job_artifacts``.
