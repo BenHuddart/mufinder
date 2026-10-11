@@ -18,6 +18,7 @@ from mufinder.science.relaxation_analysis import (
     cluster_connected_components,
     folded_muon_position_from_structure,
     grouped_relative_energies,
+    muon_fractional_position_from_cell,
     normalize_site_energies,
     scan_connected_component_tolerances,
 )
@@ -145,6 +146,28 @@ def test_folded_muon_position_reads_last_h_mu_species() -> None:
     )
 
     assert folded_muon_position_from_structure(structure) == pytest.approx((0.2, 0.9, 0.5))
+
+
+def test_muon_fractional_position_from_cell_reads_last_h_mu_unfolded() -> None:
+    cell = Structure(
+        label="Relaxed",
+        lattice_vectors=[[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+        species=["H:mu", "Si", " h:MU "],
+        fractional_positions=[[0.1, 0.1, 0.1], [0.0, 0.0, 0.0], [1.2, -0.1, 0.5]],
+    )
+
+    assert muon_fractional_position_from_cell(cell) == pytest.approx((1.2, -0.1, 0.5))
+
+
+def test_muon_fractional_position_from_cell_rejects_missing_or_malformed_muon() -> None:
+    class _Cell:
+        def __init__(self, species, positions):
+            self.species = species
+            self.fractional_positions = positions
+
+    assert muon_fractional_position_from_cell(_Cell(["Si"], [[0.0, 0.0, 0.0]])) is None
+    assert muon_fractional_position_from_cell(_Cell(["H:mu", "H:mu"], [[0.1, 0.2, 0.3], [0.5, 0.5]])) is None
+    assert muon_fractional_position_from_cell(object()) is None
 
 
 def test_displacement_analysis_matches_host_atoms_and_reports_radial_motion() -> None:

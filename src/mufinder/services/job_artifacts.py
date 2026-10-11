@@ -65,8 +65,9 @@ class ParsedJobArtifacts:
 
     A ``*_error`` string is set (and the corresponding parsed field left
     ``None``) when the file was requested but was missing or failed to
-    parse/compute. The GUI handler converts these into the same user-facing
-    failure messages that the former inline guards produced.
+    parse/compute. The owning workflow controller's ``validate_artifacts`` hook
+    reads these flags and error strings and turns them into the job's failure
+    message (see "Result dispatch" in ``docs/architecture.rst``).
     """
 
     #: Relaxed ``-out.cell`` parse (relaxation workflows). ``relaxed_cell`` is

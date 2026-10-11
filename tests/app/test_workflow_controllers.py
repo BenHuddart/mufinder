@@ -2569,20 +2569,6 @@ H:mu 0.3 0.4 0.5
 """
 
 
-def _real_muon_position_from_cell(cell):
-    """Extract the H:mu position exactly as MainWindow._muon_fractional_position_from_cell does."""
-
-    species = getattr(cell, "species", ())
-    positions = getattr(cell, "fractional_positions", ())
-    for atom_species, position in reversed(list(zip(species, positions, strict=False))):
-        if str(atom_species).strip().casefold() != "h:mu":
-            continue
-        if not isinstance(position, (list, tuple)) or len(position) != 3:
-            return None
-        return (float(position[0]), float(position[1]), float(position[2]))
-    return None
-
-
 def _real_coerce_fractional_triplet(value):
     """Coerce exactly as MainWindow._coerce_fractional_triplet does."""
 
@@ -2608,7 +2594,6 @@ def _stub_muon_deps(**overrides) -> MuonRelaxationDeps:
         ),
         handle_site_host_mismatch=lambda _mismatch: False,
         muon_relaxation_definition_and_row_for_job=lambda _job: (None, None),
-        muon_fractional_position_from_cell=_real_muon_position_from_cell,
         coerce_fractional_triplet=_real_coerce_fractional_triplet,
     )
     base.update(overrides)
