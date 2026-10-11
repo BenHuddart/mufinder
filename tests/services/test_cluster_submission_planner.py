@@ -363,11 +363,12 @@ def test_prepare_batch_skips_declined_jobs() -> None:
 
 
 def test_remote_check_failures_name_each_failed_job() -> None:
-    jobs = [make_job("a"), make_job("b")]
+    jobs = [make_job("a"), make_job("b"), make_job("c")]
     plan = _plan(jobs)
 
     assert remote_check_failures(plan, {jobs[1].id: "timeout", jobs[0].id: ""}) == [
-        "- b: Failed to check remote directory (timeout)"
+        "- a: not submitted because its remote directory could not be checked (no error message)",
+        "- b: not submitted because its remote directory could not be checked (timeout)",
     ]
 
 
@@ -478,7 +479,7 @@ def test_driver_reports_failures_in_stage_order_and_skips() -> None:
 
     assert calls["ask"] == [("existing", "/remote/work/seed_existing")]
     assert plan.failed == [
-        "- errored: Failed to check remote directory (boom)",
+        "- errored: not submitted because its remote directory could not be checked (boom)",
         "- uncleared: could not clear its previous output (denied)",
         "- blocked: another job in this submission is continuing in its directory (/remote/c), "
         "so it was not started again",
@@ -486,5 +487,25 @@ def test_driver_reports_failures_in_stage_order_and_skips() -> None:
     assert plan.skipped == [
         "- existing: Submission skipped because remote directory already exists (/remote/work/seed_existing)"
     ]
-    # A job whose directory check errored is still planned for submission.
-    assert [item.submission.job for item in plan.items] == [errored, continuing]
+    assert [item.submission.job for item in plan.items] == [continuing]
+
+
+def test_driver_does_not_submit_or_prompt_for_a_job_whose_check_raised() -> None:
+    unchecked, checked = make_job("unchecked"), make_job("checked")
+
+    plan, calls = _drive(
+        [unchecked, checked],
+        check_remote_directories=lambda targets: {
+            # The unchecked job's target is reported as existing by another
+            # route; it must still not be prompted for or submitted.
+            "existing": ["/remote/work/seed_unchecked"],
+            "errors": {unchecked.id: ""},
+        },
+    )
+
+    assert calls["ask"] == []
+    assert plan.failed == [
+        "- unchecked: not submitted because its remote directory could not be checked (no error message)"
+    ]
+    assert plan.skipped == []
+    assert [item.submission.job for item in plan.items] == [checked]
