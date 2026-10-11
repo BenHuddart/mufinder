@@ -255,16 +255,11 @@ continuous integration and tag-driven publishing:
 - ``Pages`` rebuilds this Sphinx site (with ``-W``) on every push to ``main``
   and deploys it to GitHub Pages.
 
-- ``Claude Code`` (``.github/workflows/claude.yml``) runs the Claude Code agent
-  when an issue, pull-request comment, or review mentions ``@claude``. The job
-  only starts when the author is the repository owner, an organisation member
-  or an invited collaborator; mentions from anyone else are ignored. It is not
-  a quality gate.
-
 The repository's default ``GITHUB_TOKEN`` permission for workflows is
-read-only. A workflow that needs to write (``Pages``, ``Release Publish``,
-``Claude Code``) declares the exact permissions it needs in a ``permissions``
-block; ``CI`` declares ``contents: read``.
+read-only. A workflow that needs to write (``Pages``, ``Release Publish``)
+declares the exact permissions it needs in a ``permissions`` block; ``CI``
+declares ``contents: read``. No workflow runs a coding agent on GitHub; agents
+work locally and open pull requests like any other contributor.
 
 Merges should be blocked when either gate fails.
 
