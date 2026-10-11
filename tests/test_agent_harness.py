@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 from pathlib import Path
 
@@ -179,7 +180,7 @@ def _mufinder_import_layers(path: Path) -> set[str]:
 
 def test_agents_md_is_short_map_to_repository_system_of_record() -> None:
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    assert len(agents.splitlines()) <= 160
+    assert len(agents.splitlines()) <= 140
     for doc in REQUIRED_AGENT_DOCS:
         assert doc in agents
         assert (PROJECT_ROOT / doc).is_file()
@@ -203,6 +204,55 @@ def test_architecture_doc_lists_layer_packages() -> None:
         "mufinder.app",
     ):
         assert layer in architecture
+
+
+_RST_HEADING_UNDERLINE = re.compile(r"^([=\-~^\"'`#*+])\1{3,}$")
+
+
+def _rst_section_body(text: str, title: str) -> str:
+    """Return the text under heading ``title`` up to the next heading of any level."""
+
+    lines = text.splitlines()
+    start = next(
+        index + 2
+        for index in range(len(lines) - 1)
+        if lines[index] == title and _RST_HEADING_UNDERLINE.match(lines[index + 1])
+    )
+    end = next(
+        (
+            index
+            for index in range(start, len(lines) - 1)
+            if lines[index].strip() and _RST_HEADING_UNDERLINE.match(lines[index + 1])
+        ),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def _is_mufinder_module_path(dotted: str) -> bool:
+    path = SOURCE_ROOT.parent.joinpath(*dotted.split("."))
+    return path.with_suffix(".py").is_file() or (path / "__init__.py").is_file()
+
+
+def test_shared_homes_table_names_existing_modules() -> None:
+    """Every shared home in docs/architecture.rst names a real module or package.
+
+    The table under "Shared workflow infrastructure" is the inventory ``AGENTS.md``
+    sends agents to before they add a helper, so a renamed or deleted home must
+    not linger in it. The check reads the file system only; nothing is imported.
+    """
+
+    architecture = (PROJECT_ROOT / "docs" / "architecture.rst").read_text(encoding="utf-8")
+    section = _rst_section_body(architecture, "Shared workflow infrastructure")
+    homes = sorted(set(re.findall(r"``(mufinder(?:\.\w+)+)``", section)))
+    assert homes, "No ``mufinder.*`` homes found under Shared workflow infrastructure."
+    missing = [home for home in homes if not _is_mufinder_module_path(home)]
+    assert not missing, (
+        f"The shared-homes table in docs/architecture.rst (Shared workflow "
+        f"infrastructure) has rotted: {missing} name no module or package under "
+        "src/mufinder. Update the row to the module's current dotted path, or drop "
+        "it if the home is gone."
+    )
 
 
 def test_package_layers_do_not_import_forbidden_higher_layers() -> None:

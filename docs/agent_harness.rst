@@ -15,7 +15,11 @@ The harness has four parts:
 - ``AGENTS.md`` is the single instruction file for every agent, whichever vendor
   provides it. ``CLAUDE.md`` imports it (``@AGENTS.md``) and
   ``.github/copilot-instructions.md`` points to it, so no rule lives only in a
-  vendor-specific file. It states the rules and links to the docs for the rationale.
+  vendor-specific file. It states the rules and links to the docs for the rationale,
+  and stays within 140 lines. Inventories that grow with the code, such as the
+  shared home for each cross-workflow concern, live in ``docs/`` (:doc:`architecture`,
+  Shared workflow infrastructure), where a harness test checks that each listed
+  module still exists.
 - ``docs/`` is the system of record for product behavior, architecture, quality gates,
   and compatibility policy.
 - ``tests/`` contains both feature tests and structural tests that enforce architecture
@@ -72,7 +76,7 @@ MuFinder prefers small, continuous cleanup over large occasional rewrites. Good 
 candidates are:
 
 - per-workflow widget or controller code that duplicates a sibling workflow and belongs
-  in one of the shared homes listed in ``AGENTS.md``
+  in one of the shared homes listed in :doc:`architecture`
 - feature-local styling that belongs in ``mufinder.app.theme``
 - compatibility aliases without an entry in :doc:`compatibility_policy`, or past their
   expiry condition
