@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from PySide6.QtCore import QEvent, Qt, Signal
@@ -18,18 +19,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mufinder.app.selection_snapshot import SelectionSnapshotPushButton, resolve_target_keys
 from mufinder.app.theme import status_brush, style_hint_text, style_section_subtitle, style_section_title
+from mufinder.app.workflow_row_widget import SourceTableWidget
 from mufinder.app.workflow_table_utils import (
     RowMenuAction,
     SelectionFeedback,
-    bind_reset_failed_context_menu,
     create_workflow_table,
-    standard_row_actions,
-    workflow_row_status_text,
     set_workflow_table_item,
-    style_workflow_configure_button,
-    workflow_row_is_locked,
 )
 
 
@@ -62,8 +58,13 @@ class QuantumResultRow:
     status: str
 
 
-class QuantumCorrectionsWidget(QWidget):
-    """Display eligible relaxed muon sources and completed phonon analyses."""
+class QuantumCorrectionsWidget(SourceTableWidget):
+    """Display eligible relaxed muon sources and completed phonon analyses.
+
+    The source table and its targeting come from :class:`SourceTableWidget`;
+    this widget adds the per-row stage and farm columns, the editable site
+    label and the "Reset to Stage 1" action.
+    """
 
     configure_requested = Signal(object)
     source_label_renamed = Signal(str, str)
@@ -74,10 +75,17 @@ class QuantumCorrectionsWidget(QWidget):
     reset_stage_requested = Signal(list)
     analysis_requested = Signal(str)
 
+    _SOURCE_STATUS_COLUMN = 7
+    _SOURCE_CONFIGURE_COLUMN = 8
+    _SOURCE_WORKFLOW_LABEL = "Quantum Corrections"
+    _CONFIGURE_SIGNAL = "configure_requested"
+    _SUBMIT_LOCAL_SIGNAL = "submit_local_requested"
+    _SUBMIT_CLUSTER_SIGNAL = "submit_cluster_requested"
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAccessibleName("Quantum Corrections workflow")
-        self._source_rows: list[QuantumSourceRow] = []
+        self._source_rows: list[QuantumSourceRow]
         # Flush-path guards: cache the last-rendered rows so set_sources /
         # set_results can skip the table rebuild when nothing changed. The rows
         # are frozen dataclasses, so list equality is an exact value compare.
@@ -165,28 +173,12 @@ class QuantumCorrectionsWidget(QWidget):
 
         # Rows here are derived from completed relaxations, so there is no
         # Remove, and the recovery action is "Reset to Stage 1" rather than the
-        # shared failed-job reset. A right-click makes the rows under it the
-        # selection, so the entries reuse the selection-based handlers.
-        leading_actions, trailing_actions = standard_row_actions(
-            status_for_row=self._source_row_status,
-            run_local=lambda _rows: self._emit_submit_local(),
-            run_cluster=lambda _rows: self._emit_submit_cluster(),
-            cancel=lambda rows: self.cancel_requested.emit(self._source_keys_at_rows(rows)),
-            inspect=lambda rows: self.inspect_failed_requested.emit(self._source_keys_at_rows(rows)),
-            configure=lambda _rows: self._emit_batch_configure(),
-            confirm_parent=self,
-        )
+        # shared failed-job reset.
         self._sources_table.setToolTip(
             "Right-click selected rows to run, cancel, inspect, configure, or reset them to stage 1."
         )
-        bind_reset_failed_context_menu(
-            self._sources_table,
-            key_for_row=self._source_key_at_row,
-            status_for_row=self._source_row_status,
-            emit_reset=None,
-            leading_actions=leading_actions,
-            additional_actions=(
-                *trailing_actions,
+        self._bind_source_row_menu(
+            extra_actions=(
                 RowMenuAction(
                     text="Reset to Stage 1",
                     is_enabled=lambda rows: any(
@@ -248,17 +240,13 @@ class QuantumCorrectionsWidget(QWidget):
 
         if self._source_rows_valid and list(rows) == self._source_rows:
             return
-        self._source_rows = list(rows)
         self._source_rows_valid = True
         self._source_label.setText(f"Eligible relaxed sites ({len(rows)})")
         self._updating_sources = True
         try:
-            _fill_source_table(self._sources_table, rows, configure_requested=self.configure_requested.emit)
+            self._set_source_rows(rows)
         finally:
             self._updating_sources = False
-        self._update_actions()
-        # The rebuild replaced every row's cell widgets.
-        self._sources_feedback.refresh()
 
     def set_results(self, rows: list[QuantumResultRow]) -> None:
         """Replace the displayed quantum-result rows.
@@ -314,66 +302,35 @@ class QuantumCorrectionsWidget(QWidget):
             self._reapply_status_colors()
 
     def _reapply_status_colors(self) -> None:
-        for row_index, row in enumerate(self._source_rows):
-            status_item = self._sources_table.item(row_index, 7)
-            if status_item is not None:
-                status_item.setForeground(status_brush(row.status))
+        self._reapply_source_status_colors()
         for row_index, row in enumerate(self._result_rows):
             status_item = self._results_table.item(row_index, 4)
             if status_item is not None:
                 status_item.setForeground(status_brush(row.status))
 
-    def selected_source_keys(self) -> list[str]:
-        """Return selected source keys in table order."""
+    def source_row_values(self, row: QuantumSourceRow) -> tuple[str, ...]:
+        return (
+            row.label,
+            row.charge_state,
+            row.relative_energy,
+            row.displacements,
+            row.source_job,
+            row.stage,
+            row.num_farms_display,
+            row.status,
+        )
 
-        indexes = sorted({index.row() for index in self._sources_table.selectedIndexes()})
-        keys: list[str] = []
-        for row in indexes:
-            if 0 <= row < len(self._source_rows):
-                keys.append(self._source_rows[row].key)
-        return keys
+    def create_source_row_cells(self, row_index: int, row: QuantumSourceRow) -> None:
+        # The site label is renamed in place (``source_label_renamed``).
+        label_item = self._sources_table.item(row_index, 0)
+        if label_item is not None:
+            label_item.setFlags(label_item.flags() | Qt.ItemFlag.ItemIsEditable)
 
-    def _selected_or_all_source_keys(self) -> list[str]:
-        """Return the rows the run buttons act on: the selection, else every row."""
-
-        return self.selected_source_keys() or [row.key for row in self._source_rows if row.key]
-
-    def _source_key_at_row(self, row: int) -> str | None:
-        if not (0 <= row < len(self._source_rows)):
-            return None
-        return self._source_rows[row].key or None
-
-    def _source_keys_at_rows(self, rows) -> list[str]:
-        return [key for row in rows if (key := self._source_key_at_row(row))]
-
-    def _source_row_status(self, row: int) -> str:
-        return workflow_row_status_text(self._sources_table, row, 7)
-
-    def _emit_submit_local(self) -> None:
-        self.submit_local_requested.emit(self._selected_or_all_source_keys())
-
-    def _emit_batch_configure(self) -> None:
-        keys = self.selected_source_keys()
-        if keys:
-            self.configure_requested.emit(keys)
-
-    def _emit_submit_cluster(self) -> None:
-        self.submit_cluster_requested.emit(self._selected_or_all_source_keys())
+    def refresh_source_actions(self, selected_rows: Sequence[QuantumSourceRow]) -> None:
+        self._reset_stage_button.setEnabled(any(row.resettable for row in selected_rows))
 
     def _emit_reset_stage(self) -> None:
         self.reset_stage_requested.emit(self.selected_source_keys())
-
-    def _update_actions(self) -> None:
-        keys = self.selected_source_keys()
-        enabled = bool(keys)
-        # The run buttons follow the selection through SelectionFeedback.
-        self._batch_configure_button.setEnabled(enabled)
-        selected_rows = [
-            self._source_rows[index]
-            for index in sorted({item.row() for item in self._sources_table.selectedIndexes()})
-            if 0 <= index < len(self._source_rows)
-        ]
-        self._reset_stage_button.setEnabled(any(row.resettable for row in selected_rows))
 
     def _on_source_item_changed(self, item: QTableWidgetItem) -> None:
         if self._updating_sources or item.column() != 0:
@@ -383,61 +340,6 @@ class QuantumCorrectionsWidget(QWidget):
             return
         key = self._source_rows[row].key
         self.source_label_renamed.emit(key, item.text())
-
-
-def _fill_source_table(
-    table: QTableWidget,
-    rows: list[QuantumSourceRow],
-    *,
-    configure_requested,
-) -> None:
-    previous = table.blockSignals(True)
-    table.setRowCount(len(rows))
-    key_by_row: dict[int, str] = {i: row.key for i, row in enumerate(rows)}
-    for row_index, row in enumerate(rows):
-        for column, value in enumerate(
-            (
-                row.label,
-                row.charge_state,
-                row.relative_energy,
-                row.displacements,
-                row.source_job,
-                row.stage,
-                row.num_farms_display,
-                row.status,
-            )
-        ):
-            set_workflow_table_item(table, row_index, column, value)
-        status_item = table.item(row_index, 7)
-        if status_item is not None:
-            status_item.setForeground(status_brush(row.status))
-        label_item = table.item(row_index, 0)
-        if label_item is not None:
-            label_item.setFlags(label_item.flags() | Qt.ItemFlag.ItemIsEditable)
-        configure_button = SelectionSnapshotPushButton(table)
-        configure_button.selection_snapshot_key = row.key
-        style_workflow_configure_button(
-            configure_button,
-            workflow_label="Quantum Corrections",
-            configured=row.configured,
-            locked=workflow_row_is_locked(row.status),
-        )
-        def _on_configure_clicked(_checked: bool = False, key=row.key, btn=configure_button) -> None:
-            keys = resolve_target_keys(
-                btn,
-                clicked_key=key,
-                snapshot_keys=[key_by_row[r] for r in btn.selection_snapshot_rows if r in key_by_row],
-                eligibility=lambda k: True,
-                parent=table,
-                action="Configure parameters for",
-            )
-            if keys:
-                configure_requested(list(keys))
-
-        configure_button.clicked.connect(_on_configure_clicked)
-        table.setCellWidget(row_index, 8, configure_button)
-    table.resizeRowsToContents()
-    table.blockSignals(previous)
 
 
 def _fill_table(table: QTableWidget, rows: list[tuple[str, ...]]) -> None:

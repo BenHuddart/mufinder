@@ -1,4 +1,4 @@
-"""Label-keyed row tables for the supercell job-staging workflow widgets.
+"""Row-table widget bases for the job-staging workflow widgets.
 
 Pristine relaxation, muon relaxation and UEP each stage one CASTEP job per
 table row. A row is identified by an integer row id stored in its label item's
@@ -20,6 +20,15 @@ does: :meth:`RowTableWidget.create_row_cells` and
 :meth:`RowTableWidget.refresh_row_cells` for its own columns, and
 :meth:`RowTableWidget.config_for_rows` for its run configuration. It keeps its
 own ``collect_state`` / ``set_form_state``, built from the shared helpers here.
+
+:class:`SourceTableWidget` is the base for quantum corrections and energy
+barriers, whose rows are project sources keyed by a source key rather than
+staged labelled rows. It owns the key lookups, run and Configure targeting,
+the row menu, the table fill with the per-row Configure button and the
+action-state refresh; a subclass adds its own cells and actions through the
+public hooks :meth:`SourceTableWidget.source_row_values`,
+:meth:`SourceTableWidget.create_source_row_cells` and
+:meth:`SourceTableWidget.refresh_source_actions`.
 """
 
 from __future__ import annotations
@@ -1313,3 +1322,203 @@ class RelaxationRowTableWidget(RowTableWidget):
             self._row_parameter_values[row_id] = self._stored_row_values(
                 row_id, self._row_parameter_values.get(row_id, {})
             )
+
+
+class SourceTableWidget(QWidget):
+    """Base for a workflow widget whose table lists sources keyed by a source key.
+
+    Quantum corrections and energy barriers do not stage labelled rows: each
+    row is a source read from the project (a relaxed site, a diffusion path;
+    see ``mufinder.services.source_candidates``), shown in table order from
+    ``_source_rows`` and submitted, configured and tracked under that row's
+    ``key``. A source row is a frozen dataclass with at least ``key``,
+    ``status`` and ``configured``.
+
+    The base owns the key lookups (``selected_source_keys`` and the
+    row-to-key helpers), the run and Configure targeting (the selection, else
+    every row), the source table's row menu, its fill with the status colour
+    and the per-row Configure button, and the action-state refresh.
+
+    Class attributes a subclass sets:
+
+    - ``_SOURCE_STATUS_COLUMN`` and ``_SOURCE_CONFIGURE_COLUMN``;
+    - ``_SOURCE_WORKFLOW_LABEL``, the workflow named on the Configure button;
+    - ``_CONFIGURE_SIGNAL``, ``_SUBMIT_LOCAL_SIGNAL`` and
+      ``_SUBMIT_CLUSTER_SIGNAL``, the names of its own signals.
+
+    The subclass also declares ``cancel_requested`` and
+    ``inspect_failed_requested``, builds ``_sources_table``,
+    ``_batch_configure_button`` and ``_sources_feedback`` in its ``__init__``
+    (connecting the table's ``itemSelectionChanged`` to ``_update_actions``),
+    calls :meth:`_bind_source_row_menu`, and implements the public hooks
+    :meth:`source_row_values`, :meth:`create_source_row_cells` and
+    :meth:`refresh_source_actions` for what only it has.
+    """
+
+    _SOURCE_STATUS_COLUMN: int
+    _SOURCE_CONFIGURE_COLUMN: int
+    _SOURCE_WORKFLOW_LABEL = ""
+    _CONFIGURE_SIGNAL = ""
+    _SUBMIT_LOCAL_SIGNAL = ""
+    _SUBMIT_CLUSTER_SIGNAL = ""
+
+    _sources_table: QTableWidget
+    _batch_configure_button: QPushButton
+    _sources_feedback: SelectionFeedback
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._source_rows: list[Any] = []
+
+    # -- hooks -------------------------------------------------------------
+
+    def source_row_values(self, row: Any) -> Sequence[str]:
+        """Return the text of ``row``'s leading columns, from column 0."""
+
+        raise NotImplementedError
+
+    def create_source_row_cells(self, row_index: int, row: Any) -> None:
+        """Add the workflow's own cells to a filled row (default: none)."""
+
+    def refresh_source_actions(self, selected_rows: Sequence[Any]) -> None:
+        """Enable the workflow's own actions for the selected source rows."""
+
+    # -- keys --------------------------------------------------------------
+
+    def selected_source_keys(self) -> list[str]:
+        """Return selected source keys in table order."""
+
+        return [row.key for row in self._selected_source_rows()]
+
+    def _selected_source_rows(self) -> list[Any]:
+        indexes = sorted({index.row() for index in self._sources_table.selectedIndexes()})
+        return [self._source_rows[row] for row in indexes if 0 <= row < len(self._source_rows)]
+
+    def _selected_or_all_source_keys(self) -> list[str]:
+        """Return the rows the run buttons act on: the selection, else every row."""
+
+        return self.selected_source_keys() or [row.key for row in self._source_rows if row.key]
+
+    def _source_key_at_row(self, row: int) -> str | None:
+        if not (0 <= row < len(self._source_rows)):
+            return None
+        return self._source_rows[row].key or None
+
+    def _source_keys_at_rows(self, rows: Sequence[int]) -> list[str]:
+        return [key for row in rows if (key := self._source_key_at_row(row))]
+
+    def _source_row_status(self, row: int) -> str:
+        return workflow_row_status_text(self._sources_table, row, self._SOURCE_STATUS_COLUMN)
+
+    # -- actions -----------------------------------------------------------
+
+    def _emit_submit_local(self) -> None:
+        getattr(self, self._SUBMIT_LOCAL_SIGNAL).emit(self._selected_or_all_source_keys())
+
+    def _emit_submit_cluster(self) -> None:
+        getattr(self, self._SUBMIT_CLUSTER_SIGNAL).emit(self._selected_or_all_source_keys())
+
+    def _emit_batch_configure(self) -> None:
+        keys = self.selected_source_keys()
+        if keys:
+            getattr(self, self._CONFIGURE_SIGNAL).emit(keys)
+
+    def _update_actions(self) -> None:
+        selected_rows = self._selected_source_rows()
+        # The run buttons follow the selection through SelectionFeedback.
+        self._batch_configure_button.setEnabled(bool(selected_rows))
+        self.refresh_source_actions(selected_rows)
+
+    def _bind_source_row_menu(
+        self,
+        *,
+        remove: Callable[[Sequence[int]], None] | None = None,
+        emit_reset: Callable[[object], None] | None = None,
+        extra_actions: Sequence[RowMenuAction] = (),
+    ) -> None:
+        """Bind the source table's right-click menu.
+
+        A right-click makes the rows under it the selection, so the run,
+        Configure and Remove entries reuse the selection-based handlers.
+        ``extra_actions`` follow the shared entries.
+        """
+
+        leading_actions, trailing_actions = standard_row_actions(
+            status_for_row=self._source_row_status,
+            run_local=lambda _rows: self._emit_submit_local(),
+            run_cluster=lambda _rows: self._emit_submit_cluster(),
+            cancel=lambda rows: self.cancel_requested.emit(self._source_keys_at_rows(rows)),
+            inspect=lambda rows: self.inspect_failed_requested.emit(self._source_keys_at_rows(rows)),
+            configure=lambda _rows: self._emit_batch_configure(),
+            remove=remove,
+            confirm_parent=self,
+        )
+        bind_reset_failed_context_menu(
+            self._sources_table,
+            key_for_row=self._source_key_at_row,
+            status_for_row=self._source_row_status,
+            emit_reset=emit_reset,
+            leading_actions=leading_actions,
+            additional_actions=(*trailing_actions, *extra_actions),
+        )
+
+    # -- table -------------------------------------------------------------
+
+    def _set_source_rows(self, rows: Sequence[Any]) -> None:
+        """Rebuild the source table from ``rows`` and refresh the actions."""
+
+        self._source_rows = list(rows)
+        self._fill_source_table()
+        self._update_actions()
+        # The rebuild replaced every row's cell widgets.
+        self._sources_feedback.refresh()
+
+    def _fill_source_table(self) -> None:
+        table = self._sources_table
+        rows = self._source_rows
+        previous = table.blockSignals(True)
+        try:
+            table.setRowCount(len(rows))
+            for row_index, row in enumerate(rows):
+                for column, value in enumerate(self.source_row_values(row)):
+                    set_workflow_table_item(table, row_index, column, value)
+                self._create_source_configure_button(row_index, row)
+                self.create_source_row_cells(row_index, row)
+            self._reapply_source_status_colors()
+            table.resizeRowsToContents()
+        finally:
+            table.blockSignals(previous)
+
+    def _reapply_source_status_colors(self) -> None:
+        """Colour each Status cell with the project-standard per-status palette."""
+
+        for row_index, row in enumerate(self._source_rows):
+            status_item = self._sources_table.item(row_index, self._SOURCE_STATUS_COLUMN)
+            if status_item is not None:
+                status_item.setForeground(status_brush(row.status))
+
+    def _create_source_configure_button(self, row_index: int, row: Any) -> None:
+        table = self._sources_table
+        button = SelectionSnapshotPushButton(table)
+        button.selection_snapshot_key = row.key
+        style_workflow_configure_button(
+            button,
+            workflow_label=self._SOURCE_WORKFLOW_LABEL,
+            configured=row.configured,
+            locked=workflow_row_is_locked(row.status),
+        )
+
+        def _on_configure_clicked(_checked: bool = False, key: str = row.key) -> None:
+            keys = resolve_target_keys(
+                button,
+                clicked_key=key,
+                snapshot_keys=self._source_keys_at_rows(button.selection_snapshot_rows),
+                eligibility=lambda _key: True,
+                parent=table,
+                action="Configure parameters for",
+            )
+            if keys:
+                getattr(self, self._CONFIGURE_SIGNAL).emit(list(keys))
+
+        button.clicked.connect(_on_configure_clicked)
+        table.setCellWidget(row_index, self._SOURCE_CONFIGURE_COLUMN, button)
