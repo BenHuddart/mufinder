@@ -8145,7 +8145,7 @@ def test_main_window_remove_cutoff_from_definition_updates_lists_and_labels(qapp
     definition.parameters["job_labels"] = ["conv_ecut_300", "conv_ecut_360", "conv_ecut_bad"]
     window._document = doc
 
-    window._remove_cutoff_from_definition(definition, 300.0)
+    window._convergence_controller.remove_cutoff_from_definition(definition, 300.0)
 
     assert definition.parameters["configuration"]["cutoff_energies"] == [360.0, "bad"]
     assert definition.parameters["configuration"]["sweep_values"] == [360.0, "bad"]

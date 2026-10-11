@@ -67,6 +67,24 @@ def parse_kpoint_grid(text: str) -> KPointGrid:
     return normalize_kpoint_grid(parts)
 
 
+def parse_grid_mapping_key(value: str) -> KPointGrid | None:
+    """Return the grid a ``job_ids_by_grid`` key such as ``"2x2x1"`` spells.
+
+    ``None`` when the key is not three ``x``-separated positive integers.
+    """
+
+    parts = value.strip().split("x")
+    if len(parts) != 3:
+        return None
+    try:
+        grid = (int(parts[0]), int(parts[1]), int(parts[2]))
+    except ValueError:
+        return None
+    if grid[0] <= 0 or grid[1] <= 0 or grid[2] <= 0:
+        return None
+    return grid
+
+
 CUTOFF_KEY_CODEC: SweepKeyCodec[float] = SweepKeyCodec(
     normalize=lambda raw: float(raw),  # type: ignore[arg-type]
     parse=float,

@@ -19,6 +19,8 @@ from uuid import UUID
 from mufinder.domain.enums import WorkflowStage
 from mufinder.domain.models import CalculationDefinition, Job
 
+from mufinder.services.definition_mappings import remove_cutoff_from_definition
+
 from mufinder.app.convergence_types import CUTOFF_KEY_CODEC, ConvergenceConfig
 from mufinder.app.convergence_widget import CutoffConvergenceWidget
 from mufinder.app.workflow_controllers.sweep_convergence import SweepConvergenceController
@@ -35,7 +37,6 @@ class ConvergenceCutoffDeps:
     """
 
     deserialize_convergence_config: Callable[[object], ConvergenceConfig | None]
-    sync_equivalent_convergence_cutoff_mappings: Callable[[CalculationDefinition], None]
     cutoff_key: Callable[[float], str]
     max_stress_for_job: Callable[[UUID], float | None]
 
@@ -64,8 +65,48 @@ class ConvergenceCutoffController(SweepConvergenceController):
     def mapping_key(self, key: float) -> str:
         return self._deps.cutoff_key(key)
 
-    def sync_mappings(self, definition: CalculationDefinition) -> None:
-        self._deps.sync_equivalent_convergence_cutoff_mappings(definition)
+    def parse_mapping_key(self, raw: object) -> float | None:
+        try:
+            return float(raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    def sweep_point_signatures(self, config: ConvergenceConfig) -> dict[float, object]:
+        """Map each cutoff to its job-name prefix and its effective parameters.
+
+        A cutoff's effective parameters are the shared parameters updated by
+        every override group listing it.
+        """
+
+        if config.sweep_parameter != self.sweep_parameter:
+            return {}
+        signatures: dict[float, object] = {}
+        for value in config.cutoff_energies:
+            cutoff = float(value)
+            params = dict(config.shared_params)
+            for members, override in config.overrides.items():
+                if cutoff in {float(member) for member in members}:  # type: ignore[arg-type]
+                    params.update(override)
+            signatures[cutoff] = (config.name_prefix, params)
+        return signatures
+
+    def remove_cutoff_from_definition(self, definition: CalculationDefinition, cutoff: float) -> bool:
+        """Drop ``cutoff`` from ``definition``; return whether the definition was deleted.
+
+        See :func:`~mufinder.services.definition_mappings.remove_cutoff_from_definition`.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return False
+        return remove_cutoff_from_definition(
+            document,
+            definition,
+            cutoff,
+            mapping_name=self.mapping_name,
+            mapping_key=self.mapping_key,
+            active_key=self.active_key,
+        )
 
     def legacy_job_for_key(self, definition: CalculationDefinition, key: float) -> Job | None:
         """Return the newest job labelled as the cutoff's entry in ``job_labels``."""

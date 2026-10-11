@@ -6,10 +6,11 @@ its jobs are bound in a ``job_ids_by_<key>`` mapping, and its rows are keyed by
 the sweep value itself. :class:`SweepConvergenceController` implements the
 submit, materialize and refresh cycle once; the concrete controllers declare
 the sweep parameter, the job calc type, the mapping name and the form-state key
-as class attributes and supply three hooks: :meth:`mapping_key` (the key's
-spelling in the job mapping), :meth:`sync_mappings` (copy job bindings from
-equivalent definitions) and :meth:`legacy_job_for_key` (the lookup for a
-definition written before the mapping existed).
+as class attributes and supply four hooks: :meth:`mapping_key` (the key's
+spelling in the job mapping), :meth:`parse_mapping_key` (its inverse),
+:meth:`sweep_point_signatures` (what makes two definitions' sweep points
+equivalent, for :meth:`sync_mappings`) and :meth:`legacy_job_for_key` (the
+lookup for a definition written before the mapping existed).
 """
 
 from __future__ import annotations
@@ -20,6 +21,11 @@ from uuid import UUID
 
 from mufinder.domain.enums import JobStatus
 from mufinder.domain.models import CalculationDefinition, Job
+from mufinder.services.definition_mappings import (
+    convergence_mapping_job_priority,
+    sweep_definition_context_matches,
+    sync_equivalent_mappings,
+)
 from mufinder.workflow import StructureBridgeError, structure_to_spec, write_job_directory
 
 from mufinder.app.convergence_adapter import convergence_job_name, expand_convergence_jobs
@@ -90,10 +96,46 @@ class SweepConvergenceController(WorkflowJobController):
 
         raise NotImplementedError
 
-    def sync_mappings(self, definition: CalculationDefinition) -> None:
-        """Bring ``definition``'s job mapping in line with equivalent definitions."""
+    def parse_mapping_key(self, raw: object) -> Any | None:
+        """Return the sweep key a job-mapping key spells, or ``None``."""
 
         raise NotImplementedError
+
+    def sweep_point_signatures(self, config: ConvergenceConfig) -> dict[Any, object]:
+        """Map each of ``config``'s sweep keys to what a matching point must share.
+
+        Empty when ``config`` sweeps another parameter.
+        """
+
+        raise NotImplementedError
+
+    def sync_mappings(self, definition: CalculationDefinition) -> None:
+        """Copy job bindings into ``definition`` from equivalent sweep definitions.
+
+        A definition is equivalent when it shares ``definition``'s structure,
+        output directory and simulation cell
+        (:func:`~mufinder.services.definition_mappings.sweep_definition_context_matches`);
+        a sweep point carries over when both configurations list it with the
+        same :meth:`sweep_point_signatures` entry. Candidates rank by
+        :func:`~mufinder.services.definition_mappings.convergence_mapping_job_priority`.
+        """
+
+        document = self._context.document()
+        if document is None or not isinstance(definition.parameters.get("configuration"), dict):
+            return
+        sync_equivalent_mappings(
+            document,
+            self.definitions(),
+            definition,
+            deserialize=self._deps.deserialize_convergence_config,
+            signatures=self.sweep_point_signatures,
+            priority=convergence_mapping_job_priority,
+            mapping_name=self.mapping_name,
+            context_matches=sweep_definition_context_matches,
+            parse_key=self.parse_mapping_key,
+            format_key=self.mapping_key,
+            unlisted_keys_match=False,
+        )
 
     def legacy_job_for_key(self, definition: CalculationDefinition, key: Any) -> Job | None:
         """Return the job for ``key`` of a definition with no job mapping."""

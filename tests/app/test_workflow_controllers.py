@@ -19,7 +19,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -59,10 +59,13 @@ from mufinder.app.workflow_controllers.uep import (
     UepDeps,
 )
 from mufinder.app.workflow_config_codecs import (
+    deserialize_convergence_config,
     deserialize_muon_relaxation_config,
     deserialize_pristine_relaxation_config,
+    deserialize_uep_config,
     serialize_muon_relaxation_config,
     serialize_pristine_relaxation_config,
+    serialize_uep_config,
 )
 from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
 from tests.support.jobs import make_job
@@ -730,7 +733,6 @@ def _stub_deps() -> ConvergenceCutoffDeps:
 
     return ConvergenceCutoffDeps(
         deserialize_convergence_config=lambda _payload: None,
-        sync_equivalent_convergence_cutoff_mappings=lambda _definition: None,
         cutoff_key=lambda value: f"{float(value):.12g}",
         max_stress_for_job=lambda _job_id: None,
     )
@@ -774,7 +776,6 @@ def _cutoff_context_and_deps(
     )
     deps = ConvergenceCutoffDeps(
         deserialize_convergence_config=deserialize,
-        sync_equivalent_convergence_cutoff_mappings=lambda _d: None,
         cutoff_key=lambda value: f"{float(value):.12g}",
         max_stress_for_job=lambda _job_id: None,
     )
@@ -1014,7 +1015,6 @@ def _stub_kpoint_deps() -> ConvergenceKpointDeps:
 
     return ConvergenceKpointDeps(
         deserialize_convergence_config=lambda _payload: None,
-        sync_equivalent_convergence_kpoint_mappings=lambda _definition: None,
         grid_key=_grid_key,
         max_stress_for_job=lambda _job_id: None,
     )
@@ -1059,7 +1059,6 @@ def _kpoint_context_and_deps(
     )
     deps = ConvergenceKpointDeps(
         deserialize_convergence_config=deserialize,
-        sync_equivalent_convergence_kpoint_mappings=lambda _d: None,
         grid_key=_grid_key,
         max_stress_for_job=lambda _job_id: None,
     )
@@ -1463,7 +1462,6 @@ def _stub_pristine_deps(**overrides) -> PristineRelaxationDeps:
     base = dict(
         deserialize_pristine_relaxation_config=lambda _payload: None,
         serialize_pristine_relaxation_config=serialize_pristine_relaxation_config,
-        sync_equivalent_pristine_relaxation_mappings=lambda _definition: None,
         pristine_relaxation_form_config=lambda: None,
         pristine_relaxation_row_signature=lambda _row: (),
         expand_pristine_relaxation_jobs=lambda _definition, _config: None,
@@ -2602,7 +2600,6 @@ def _stub_muon_deps(**overrides) -> MuonRelaxationDeps:
     base = dict(
         deserialize_muon_relaxation_config=lambda _payload: None,
         serialize_muon_relaxation_config=serialize_muon_relaxation_config,
-        sync_equivalent_muon_relaxation_mappings=lambda _definition: None,
         sync_active_muon_relaxation_dashboard_jobs=lambda _definition: None,
         muon_relaxation_form_config=lambda: None,
         muon_relaxation_row_signature=lambda row: (row.label, row.charge_state),
@@ -3879,7 +3876,8 @@ class _FakeUepView:
 def _stub_uep_deps(**overrides) -> UepDeps:
     base = dict(
         deserialize_uep_config=lambda _payload: None,
-        sync_equivalent_uep_mappings=lambda _definition: None,
+        serialize_uep_config=serialize_uep_config,
+        uep_row_signature=lambda row: (row.label,),
         uep_potential_grid_result_for_job=lambda _job_id: None,
     )
     base.update(overrides)
@@ -6013,3 +6011,314 @@ def test_energy_barriers_controller_validate_artifacts_checks_ts(
         job, parsed, run, ParsedJobArtifacts(ts_error="truncated band")
     ) == "Failed to parse CASTEP path output: truncated band"
     assert controller.validate_artifacts(job, parsed, run, _no_artifacts()) is None
+
+
+# --------------------------------------------------------------------------- #
+# Definition maintenance: sync_mappings and remove_rows
+# --------------------------------------------------------------------------- #
+#
+# Every controller syncs and removes rows through
+# ``mufinder.services.definition_mappings``; these tests pin what each workflow
+# hands it: row keys and their legacy spellings, row signatures, the priority
+# order, seed names and the active-definition key.
+
+
+def _job_with_status(
+    service: ProjectService,
+    document: ProjectDocument,
+    status: JobStatus,
+    *,
+    stage: WorkflowStage,
+    calc_type: str,
+) -> str:
+    job = service.add_job(document, label="job", workflow_stage=stage, calc_type=calc_type)
+    job.status = status
+    return str(job.id)
+
+
+def _muon_sync_rows(site_id: UUID) -> dict[str, object]:
+    from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow
+
+    rows = tuple(
+        MuonRelaxationRow(
+            site_id=site_id,
+            label=label,
+            initial_fractional_position=(0.25, 0.25, 0.25),
+            charge_state=charge_state,
+        )
+        for label, charge_state in (("Site 1", "positive_muon"), ("Site 2", "muonium"))
+    )
+    return serialize_muon_relaxation_config(MuonRelaxationConfig(rows=rows))
+
+
+def _muon_sync_controller(document: ProjectDocument) -> MuonRelaxationController:
+    return MuonRelaxationController(
+        _make_context(document=document),
+        _stub_muon_deps(deserialize_muon_relaxation_config=deserialize_muon_relaxation_config),
+        _FakeMuonRelaxationView(),
+    )
+
+
+def test_muon_controller_sync_mappings_reads_legacy_keys_and_carries_seed_names(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    site_id = uuid4()
+    output = document.project_root / "files" / "muon_relaxation"
+    source, other_source, target = (
+        service.register_muon_relaxation_definition(
+            document, input_structure_id=host.id, parameters=_muon_sync_rows(site_id), output_directory=output
+        )
+        for _ in range(3)
+    )
+
+    def job(status: JobStatus, calc_type: str) -> str:
+        return _job_with_status(
+            service, document, status, stage=WorkflowStage.MUON_RELAXATION, calc_type=calc_type
+        )
+
+    completed = job(JobStatus.COMPLETED, "castep_positivemuon_relaxation")
+    defined = job(JobStatus.DEFINED, "castep_muonium_relaxation")
+    wrong_charge = job(JobStatus.COMPLETED, "castep_positivemuon_relaxation")
+    source.parameters["job_ids_by_label"] = {
+        # A bare key from before rows were charge-qualified.
+        "Site 1": completed,
+        # A job of the other charge state is not carried over...
+        "muonium:Site 2": wrong_charge,
+    }
+    # ...nor is a job that never left ``defined``.
+    other_source.parameters["job_ids_by_label"] = {"muonium:Site 2": defined}
+    source.parameters["job_seed_names_by_label"] = {"Site 1": "  site1_seed  "}
+
+    _muon_sync_controller(document).sync_mappings(target)
+
+    assert target.parameters["job_ids_by_label"] == {"positivemuon:Site 1": completed}
+    assert target.parameters["job_seed_names_by_label"] == {"positivemuon:Site 1": "site1_seed"}
+
+
+def test_muon_controller_row_key_matcher_crosses_key_spellings() -> None:
+    controller = MuonRelaxationController(_make_context(), _stub_muon_deps(), _FakeMuonRelaxationView())
+
+    matches = controller.row_key_matcher({"Site 1", "muonium:Site 2"})
+
+    assert matches("positivemuon:Site 1")
+    assert matches("Site 1")
+    assert matches("Site 2")
+    assert matches("muonium:Site 2")
+    assert not matches("positivemuon:Site 2")
+    assert not matches(3)
+
+
+def test_muon_controller_remove_rows_drops_job_and_seed_bindings(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    definition = service.register_muon_relaxation_definition(
+        document,
+        input_structure_id=host.id,
+        parameters=_muon_sync_rows(uuid4()),
+        output_directory=document.project_root / "files" / "muon_relaxation",
+        job_ids_by_label={"positivemuon:Site 1": "1", "muonium:Site 2": "2"},
+    )
+    definition.parameters["job_seed_names_by_label"] = {"Site 1": "seed", "muonium:Site 2": "seed2"}
+
+    assert _muon_sync_controller(document).remove_rows(["Site 1"]) == ()
+
+    rows = definition.parameters["configuration"]["rows"]
+    assert [(row["label"], row["charge_state"]) for row in rows] == [("Site 2", "muonium")]
+    assert definition.parameters["job_ids_by_label"] == {"muonium:Site 2": "2"}
+    assert definition.parameters["job_seed_names_by_label"] == {"muonium:Site 2": "seed2"}
+
+
+def _kpoint_sync_definition(service, document, host, *, overrides, job_ids_by_grid=None):
+    return service.register_convergence_kpoint_definition(
+        document,
+        input_structure_id=host.id,
+        parameters={
+            "name_prefix": "kconv",
+            "sweep_parameter": "kpoint_mp_grid",
+            "sweep_values": [[2, 2, 2], [3, 3, 3]],
+            "shared_params": {"task": "SINGLEPOINT"},
+            "overrides": overrides,
+        },
+        output_directory=document.project_root / "files" / "convergence_kpoint",
+        job_ids_by_grid=job_ids_by_grid,
+    )
+
+
+def test_kpoint_controller_sync_mappings_respells_keys_and_compares_effective_params(
+    tmp_path: Path,
+) -> None:
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+
+    def job() -> str:
+        return _job_with_status(
+            service,
+            document,
+            JobStatus.COMPLETED,
+            stage=WorkflowStage.CONVERGENCE_KPOINT,
+            calc_type="castep_convergence_kpoint",
+        )
+
+    completed = job()
+    overridden = job()
+    _kpoint_sync_definition(
+        service,
+        document,
+        host,
+        overrides=[{"sweep_values": [[3, 3, 3]], "params": {"max_scf_cycles": 50}}],
+        job_ids_by_grid={"02x2x2": completed, "3x3x3": overridden, "bad": completed},
+    )
+    target = _kpoint_sync_definition(service, document, host, overrides=[])
+    controller = ConvergenceKpointController(
+        _make_context(document=document),
+        ConvergenceKpointDeps(
+            deserialize_convergence_config=deserialize_convergence_config,
+            grid_key=_grid_key,
+            max_stress_for_job=lambda _job_id: None,
+        ),
+        _FakeKpointView(),
+    )
+
+    controller.sync_mappings(target)
+
+    # The source's 3x3x3 point ran with an override the target does not have.
+    assert target.parameters["job_ids_by_grid"] == {"2x2x2": completed}
+
+
+def test_kpoint_controller_remove_rows_keeps_the_definition(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    definition = _kpoint_sync_definition(
+        service, document, host, overrides=[], job_ids_by_grid={"2x2x2": "1", "3x3x3": "2"}
+    )
+    controller = ConvergenceKpointController(
+        _make_context(document=document), _stub_kpoint_deps(), _FakeKpointView()
+    )
+
+    assert controller.remove_rows(["2x2x2", "3x3x3"]) == ()
+
+    assert definition.parameters["configuration"]["sweep_values"] == []
+    assert definition.parameters["job_ids_by_grid"] == {}
+    assert definition.id in document.calculations
+
+
+def _uep_sync_definition(service, document, host, job_ids_by_label=None):
+    return service.register_uep_definition(
+        document,
+        input_structure_id=host.id,
+        parameters=serialize_uep_config(UepConfig(rows=(UepSourceRow(label="row_1"),))),
+        output_directory=document.project_root / "files" / "uep",
+        job_ids_by_label=job_ids_by_label,
+    )
+
+
+def _pristine_sync_definition(service, document, host, rows=("row_1",), job_ids_by_label=None):
+    from mufinder.app.relaxation_types import PristineRelaxationConfig, PristineRelaxationRow
+
+    return service.register_pristine_relaxation_definition(
+        document,
+        input_structure_id=host.id,
+        parameters=serialize_pristine_relaxation_config(
+            PristineRelaxationConfig(rows=tuple(PristineRelaxationRow(label=label) for label in rows))
+        ),
+        output_directory=document.project_root / "files" / "pristine_relaxation",
+        job_ids_by_label=job_ids_by_label,
+    )
+
+
+def test_uep_and_pristine_sync_rank_a_defined_job_against_a_failed_one(tmp_path: Path) -> None:
+    """UEP keeps the convergence order (failed beats defined); the relaxations prefer defined."""
+
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+
+    def jobs(stage: WorkflowStage, calc_type: str) -> tuple[str, str]:
+        return (
+            _job_with_status(service, document, JobStatus.FAILED, stage=stage, calc_type=calc_type),
+            _job_with_status(service, document, JobStatus.DEFINED, stage=stage, calc_type=calc_type),
+        )
+
+    uep_failed, uep_defined = jobs(WorkflowStage.UEP, "castep_uep_source")
+    _uep_sync_definition(service, document, host, {"row_1": uep_failed})
+    _uep_sync_definition(service, document, host, {"row_1": uep_defined})
+    uep_target = _uep_sync_definition(service, document, host)
+    relax_failed, relax_defined = jobs(WorkflowStage.PRISTINE_RELAXATION, "castep_pristine_relaxation")
+    _pristine_sync_definition(service, document, host, job_ids_by_label={"row_1": relax_failed})
+    _pristine_sync_definition(service, document, host, job_ids_by_label={"row_1": relax_defined})
+    pristine_target = _pristine_sync_definition(service, document, host)
+    context = _make_context(document=document)
+    uep = UepController(
+        context, _stub_uep_deps(deserialize_uep_config=deserialize_uep_config), _FakeUepView()
+    )
+    pristine = PristineRelaxationController(
+        context,
+        _stub_pristine_deps(deserialize_pristine_relaxation_config=deserialize_pristine_relaxation_config),
+        _FakeRelaxationView(),
+    )
+
+    uep.sync_mappings(uep_target)
+    pristine.sync_mappings(pristine_target)
+
+    assert uep_target.parameters["job_ids_by_label"] == {"row_1": uep_failed}
+    assert pristine_target.parameters["job_ids_by_label"] == {"row_1": relax_defined}
+
+
+def test_pristine_controller_remove_rows_reports_deleted_definitions(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    emptied = _pristine_sync_definition(service, document, host, job_ids_by_label={"row_1": "1"})
+    kept = _pristine_sync_definition(
+        service, document, host, rows=("row_1", "row_2"), job_ids_by_label={"row_1": "1", "row_2": "2"}
+    )
+    controller = PristineRelaxationController(
+        _make_context(document=document),
+        _stub_pristine_deps(deserialize_pristine_relaxation_config=deserialize_pristine_relaxation_config),
+        _FakeRelaxationView(),
+    )
+    document.ui_state[controller.active_key] = str(emptied.id)
+
+    assert controller.remove_rows(["row_1"]) == (emptied.id,)
+
+    assert emptied.id not in document.calculations
+    assert controller.active_key not in document.ui_state
+    assert [row["label"] for row in kept.parameters["configuration"]["rows"]] == ["row_2"]
+    assert kept.parameters["job_ids_by_label"] == {"row_2": "2"}
+
+
+def test_uep_controller_remove_rows_drops_the_row_binding(tmp_path: Path) -> None:
+    service = ProjectService()
+    document, host = _muon_host_document(service, tmp_path)
+    definition = _uep_sync_definition(service, document, host, {"row_1": "1"})
+    controller = UepController(
+        _make_context(document=document),
+        _stub_uep_deps(deserialize_uep_config=deserialize_uep_config),
+        _FakeUepView(),
+    )
+
+    assert controller.remove_rows(["row_1"]) == (definition.id,)
+    assert definition.id not in document.calculations
+
+
+def test_remove_rows_without_a_document_removes_nothing() -> None:
+    controller = PristineRelaxationController(
+        _make_context(), _stub_pristine_deps(), _FakeRelaxationView()
+    )
+
+    assert controller.remove_rows(["row_1"]) == ()
+
+
+def test_cutoff_controller_remove_cutoff_deletes_an_emptied_definition(tmp_path: Path) -> None:
+    service = ProjectService()
+    document = service.create_project(tmp_path / "c.mufinder", "C")
+    definition, _config = _seed_convergence_document(service, document)
+    definition.parameters["job_ids_by_cutoff"] = {"300": "1"}
+    controller = ConvergenceCutoffController(
+        _make_context(document=document), _stub_deps(), _FakeConvergenceView()
+    )
+    document.ui_state[controller.active_key] = str(definition.id)
+
+    assert controller.remove_cutoff_from_definition(definition, 300.0) is True
+
+    assert definition.parameters["job_ids_by_cutoff"] == {}
+    assert definition.id not in document.calculations
+    assert controller.active_key not in document.ui_state

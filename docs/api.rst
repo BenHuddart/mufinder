@@ -119,6 +119,10 @@ Services
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.services.definition_mappings
+   :members:
+   :undoc-members:
+
 Science
 -------
 

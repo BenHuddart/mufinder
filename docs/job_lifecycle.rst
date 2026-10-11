@@ -982,6 +982,23 @@ row bound to nothing and let a second submit mint a duplicate).
 The projection is derived at read time, so no persisted state changes and
 projects already stranded by an earlier dismissal heal on load.
 
+Job bindings across definitions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Reconfiguring a workflow registers a new definition with its own job mapping,
+so two definitions can bind the same unchanged row to different jobs. Before a
+controller reads its active definition's bindings it copies them across from
+the equivalent definitions, choosing by job state
+(:mod:`mufinder.services.definition_mappings`; see :doc:`architecture`,
+Definition mappings and row removal). An in-flight job (``submitting``,
+``queued``, ``running``, ``retrieving``) beats a ``completed`` one, which beats
+a ``failed``, ``stopped`` or ``cancelled`` one, which beats a ``defined`` one;
+the two relaxation workflows instead rank a ``defined`` job above a failed,
+stopped or cancelled one, so a re-staged row keeps its fresh job. A muon
+relaxation binding is copied only once its job has left ``defined``. A tie
+keeps the binding the active definition already holds, and dismissal does not
+change a job's rank.
+
 When a project is opened or refreshed, the main window re-registers persisted
 active cluster jobs that have enough metadata to poll with the cluster runner:
 non-local execution target, active status, remote job id, remote directory or an

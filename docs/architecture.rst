@@ -271,6 +271,13 @@ workflow widget modules define, how many define it; the counts may only fall.
        ``max_stress_for_job``) and the payload extractors behind them.
    * - ``mufinder.services.job_artifacts``
      - Job output paths and parsed secondary outputs.
+   * - ``mufinder.services.definition_mappings``
+     - Keeping a workflow's definitions consistent: copying job bindings from
+       equivalent definitions (``sync_equivalent_mappings``, with the two
+       binding priority orders), dropping rows and their bindings
+       (``remove_labels_from_definition``, ``remove_definition_if_no_rows``)
+       and the sweep and source-row equivalents (see Definition mappings and
+       row removal).
    * - ``mufinder.services.source_candidates``
      - Read-only source queries over the project document: the relaxed muon
        sites eligible for quantum corrections, their relative energies,
@@ -558,6 +565,20 @@ overriding these hooks.
    * - ``pre_submit_check(keys)``
      - Refuse the submission before any plan is built (host-mismatch guards).
      - muon relaxation, quantum corrections, energy barriers
+   * - ``sync_mappings(definition)``
+     - Copy job bindings into a definition from its equivalent definitions
+       (see Definition mappings and row removal). The default does nothing.
+     - convergence sweeps, pristine and muon relaxation, UEP
+   * - ``remove_labels_from_definition(definition, labels)``
+     - Drop the named rows and their job bindings from one definition and
+       report whether it was deleted for having no row left. Called by the
+       ``remove_rows(labels)`` template method for each of ``definitions()``.
+     - k-point sweep, pristine and muon relaxation, UEP
+   * - ``row_key_matcher(labels)``
+     - The predicate picking the job-mapping keys of removed rows, which the
+       window's job-file cleanup uses. The default matches a key whose string
+       form is one of the labels.
+     - muon relaxation
    * - ``submission_groups(jobs)``
      - Split the planned jobs into separately dispatched groups.
      - muon relaxation, quantum corrections
@@ -677,23 +698,33 @@ Controller summary
        snapshot (the live widget state first, then the persisted form); the
        concrete controllers declare the key codec, sweep parameter, job calc
        type, mapping name and form-state key, and supply ``mapping_key``,
-       ``sync_mappings`` and ``legacy_job_for_key``. The definition a key
+       ``parse_mapping_key`` (its inverse), ``sweep_point_signatures`` (a
+       point's job-name prefix and effective parameters, which
+       ``sync_mappings`` compares) and ``legacy_job_for_key``. The cutoff
+       sweep removes one cutoff at a time through
+       ``remove_cutoff_from_definition``. The definition a key
        belongs to is the active definition when its configuration sweeps that
        key. No ``build_result``: the convergence metrics come from the primary
        ``.castep`` parse.
    * - ``PristineRelaxationController``
-     - Keyed by row label. ``build_result`` reads the carrier's relaxed cell,
+     - Keyed by row label; rows sync by row signature under the relaxation
+       priority order. ``build_result`` reads the carrier's relaxed cell,
        contributes ``lattice_a`` / ``lattice_b`` / ``lattice_c``, and creates
        or refreshes the derived relaxed structure.
    * - ``MuonRelaxationController``
-     - Keyed by ``"{charge prefix}:{label}"``. ``pre_submit_check`` requires
+     - Keyed by ``"{charge prefix}:{label}"``. ``sync_mappings`` reads a
+       bare-label key as its row's qualified key, carries only jobs that fit
+       the key's charge state and have left ``defined``, and copies each
+       winner's ``job_seed_names_by_label`` entry; row removal also clears
+       seed names. ``pre_submit_check`` requires
        every staged site to match the active host; ``submission_groups``
        dispatches positive-muon jobs and then muonium jobs; ``build_result``
        adds the muon's final fractional position (supercell and folded host
        coordinates) and rewrites the source site's status, run id and total
        energy.
    * - ``UepController``
-     - Keyed by row label. ``build_result`` contributes the
+     - Keyed by row label; rows sync by row signature under the convergence
+       priority order. ``build_result`` contributes the
        ``density_available`` flag only.
    * - ``QuantumCorrectionsController``
      - Two stages per source: singlepoint, then phonon. ``materialize``
@@ -722,6 +753,44 @@ Controller summary
        generated paths, NEB sources and completed NEB results come from
        :mod:`mufinder.services.source_candidates`, reached through
        ``EnergyBarriersDeps``.
+
+Definition mappings and row removal
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Reconfiguring a workflow registers a new definition, so one workflow context
+can hold several definitions, each binding rows to jobs in its own
+``job_ids_by_<key>`` mapping. :mod:`mufinder.services.definition_mappings`
+keeps them consistent; the controllers pass it their configuration codec and
+row helpers, and ``MainWindow`` never edits a mapping or a definition's rows
+itself.
+
+``sync_equivalent_mappings`` runs before a controller reads its active
+definition's bindings. A definition is a source when it shares the target's
+context (stage, calc type, input structures and output directory for the row
+workflows; input structure, output directory, simulation cell mode and
+supercell source for the sweeps) and its configuration deserialises. A
+source's binding is a candidate when its row has the same signature in both
+configurations; for the row workflows a key neither configuration lists also
+matches, for the sweeps both must list it. The highest-priority candidate per
+key wins, and it replaces the target's own binding only when that is missing
+or ranks strictly lower. Two priority orders exist: in flight, then completed,
+then failed, stopped or cancelled, then defined for the sweeps and UEP
+(``convergence_mapping_job_priority``); the relaxations rank a defined job
+above a failed one (``relaxation_mapping_job_priority``). A target with no
+candidate is left untouched.
+
+Removing rows is ``remove_rows(labels)`` on the controller, after the window
+has confirmed the removal and asked what to do with the rows' job files.
+``remove_labels_from_definition`` drops the matching configuration rows
+(rewriting the configuration through the codec only when one is dropped) and
+the matching keys of the named mappings, then ``remove_definition_if_no_rows``
+deletes a definition whose ``rows`` list is empty and clears the workflow's
+``active_key`` when it names it. ``remove_rows`` returns the deleted
+definitions' ids. The k-point sweep drops grids from ``sweep_values`` and
+keeps the definition; the cutoff sweep drops one cutoff at a time from the
+equivalent definitions and deletes a definition with none left; the
+energy-barrier definitions drop sources and their row settings through
+``remove_source_keys_from_definition`` and are deleted with no source left.
 
 In-place row parameter edits
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
