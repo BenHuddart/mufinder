@@ -14,7 +14,6 @@ from uuid import UUID
 import pytest
 
 from mufinder.app.convergence_types import ConvergenceConfig
-from mufinder.app.main_window import MainWindow
 from mufinder.app.relaxation_types import (
     MuonRelaxationConfig,
     MuonRelaxationRow,
@@ -22,6 +21,17 @@ from mufinder.app.relaxation_types import (
     PristineRelaxationRow,
 )
 from mufinder.app.uep_types import UepConfig, UepSourceRow
+from mufinder.app.workflow_config_codecs import (
+    deserialize_convergence_config,
+    deserialize_muon_relaxation_config,
+    deserialize_pristine_relaxation_config,
+    deserialize_uep_config,
+    normalized_supercell_matrix,
+    serialize_convergence_config,
+    serialize_muon_relaxation_config,
+    serialize_pristine_relaxation_config,
+    serialize_uep_config,
+)
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
 
@@ -117,7 +127,7 @@ def _cutoff_config() -> ConvergenceConfig:
 
 
 def test_uep_config_stored_shape_and_round_trip() -> None:
-    payload = MainWindow._serialize_uep_config(None, _uep_config())
+    payload = serialize_uep_config(_uep_config())
 
     assert payload == {
         "name_prefix": "uep",
@@ -132,12 +142,12 @@ def test_uep_config_stored_shape_and_round_trip() -> None:
         ],
     }
     expected = UepConfig(name_prefix="uep", rows=_uep_config().rows)
-    assert MainWindow._deserialize_uep_config(None, payload) == expected
-    assert MainWindow._deserialize_uep_config(None, _through_json(payload)) == expected
+    assert deserialize_uep_config(payload) == expected
+    assert deserialize_uep_config(_through_json(payload)) == expected
 
 
 def test_pristine_relaxation_config_stored_shape_and_round_trip() -> None:
-    payload = MainWindow._serialize_pristine_relaxation_config(None, _pristine_config())
+    payload = serialize_pristine_relaxation_config(_pristine_config())
 
     assert payload == {
         "name_prefix": "relax",
@@ -158,12 +168,12 @@ def test_pristine_relaxation_config_stored_shape_and_round_trip() -> None:
             },
         ],
     }
-    assert MainWindow._deserialize_pristine_relaxation_config(None, payload) == _pristine_config()
-    assert MainWindow._deserialize_pristine_relaxation_config(None, _through_json(payload)) == _pristine_config()
+    assert deserialize_pristine_relaxation_config(payload) == _pristine_config()
+    assert deserialize_pristine_relaxation_config(_through_json(payload)) == _pristine_config()
 
 
 def test_muon_relaxation_config_stored_shape_and_round_trip() -> None:
-    payload = MainWindow._serialize_muon_relaxation_config(None, _muon_config())
+    payload = serialize_muon_relaxation_config(_muon_config())
 
     assert payload == {
         "rows": [
@@ -191,8 +201,8 @@ def test_muon_relaxation_config_stored_shape_and_round_trip() -> None:
             },
         ]
     }
-    assert MainWindow._deserialize_muon_relaxation_config(None, payload) == _muon_config()
-    assert MainWindow._deserialize_muon_relaxation_config(None, _through_json(payload)) == _muon_config()
+    assert deserialize_muon_relaxation_config(payload) == _muon_config()
+    assert deserialize_muon_relaxation_config(_through_json(payload)) == _muon_config()
 
 
 @pytest.mark.parametrize(
@@ -227,8 +237,103 @@ def test_convergence_config_stored_shape_and_round_trip(
     config: ConvergenceConfig,
     expected_payload: dict[str, object],
 ) -> None:
-    payload = MainWindow._serialize_convergence_config(config)
+    payload = serialize_convergence_config(config)
 
     assert payload == expected_payload
-    assert MainWindow._deserialize_convergence_config(None, payload) == config
-    assert MainWindow._deserialize_convergence_config(None, _through_json(payload)) == config
+    assert deserialize_convergence_config(payload) == config
+    assert deserialize_convergence_config(_through_json(payload)) == config
+
+
+def test_deserialize_skips_unreadable_rows_and_matrices() -> None:
+    payload = {
+        "name_prefix": "  ",
+        "rows": [
+            "not a row",
+            {"label": "   "},
+            {"label": "tuple_matrix", "supercell_matrix": ((2, 0, 0), (0, 2, 0), (0, 0, 2))},
+            {"label": "bad_matrix", "supercell_matrix": [[1, 0], [0, 1], [0, 0]]},
+            {"label": "legacy", "params": {"xc_functional": "PBE"}, "added_advanced": "spin"},
+        ],
+    }
+
+    config = deserialize_pristine_relaxation_config(payload)
+
+    assert config == PristineRelaxationConfig(
+        name_prefix="pristine_relax",
+        rows=(
+            PristineRelaxationRow(label="tuple_matrix"),
+            PristineRelaxationRow(label="bad_matrix"),
+            PristineRelaxationRow(label="legacy", parameter_values={"xc_functional": "PBE"}),
+        ),
+    )
+    assert deserialize_uep_config({"rows": "nope"}) is None
+    assert deserialize_muon_relaxation_config([]) is None
+
+
+def test_muon_deserialize_skips_rows_without_site_or_position() -> None:
+    payload = {
+        "rows": [
+            {"site_id": "not-a-uuid", "label": "a", "initial_fractional_position": [0, 0, 0]},
+            {"site_id": str(_SITE_ID), "label": "b", "initial_fractional_position": [0, 0]},
+            {
+                "site_id": str(_SITE_ID),
+                "label": "c",
+                "fractional_position": [0.1, 0.2, 0.3],
+                "params": {"xc_functional": "PBE"},
+                "import_batch_id": "not-a-uuid",
+            },
+        ]
+    }
+
+    config = deserialize_muon_relaxation_config(payload)
+
+    # ``params`` is not read for muon rows, and an unreadable batch id is dropped.
+    assert config == MuonRelaxationConfig(
+        rows=(MuonRelaxationRow(site_id=_SITE_ID, label="c", initial_fractional_position=(0.1, 0.2, 0.3)),)
+    )
+
+
+def test_convergence_deserialize_rejects_unreadable_sweeps() -> None:
+    assert deserialize_convergence_config({"sweep_parameter": "smearing_width"}) is None
+    assert deserialize_convergence_config({"sweep_parameter": "kpoint_mp_grid", "sweep_values": [[1, 2]]}) is None
+    assert deserialize_convergence_config({"cutoff_energies": [300.0], "shared_params": []}) is None
+
+    config = deserialize_convergence_config(
+        {
+            "cutoff_energies": [300.0],
+            "sweep_values": [999.0],
+            "overrides": [{"cutoffs": ["x"], "params": {}}, {"sweep_values": [300.0], "params": {"task": "X"}}],
+        }
+    )
+
+    assert config == ConvergenceConfig(
+        sweep_values=(300.0,),
+        overrides={frozenset({300.0}): {"task": "X"}},
+        name_prefix="cutoff_convergence",
+    )
+
+
+def test_normalized_supercell_matrix() -> None:
+    assert normalized_supercell_matrix(None) is None
+    assert normalized_supercell_matrix(((2.0, 0, 0), (0, 2, 0), (0, 0, 1))) == _MATRIX  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        normalized_supercell_matrix(((1, 0), (0, 1), (0, 0)))  # type: ignore[arg-type]
+
+
+def test_main_window_forwards_to_the_codecs() -> None:
+    from mufinder.app.main_window import MainWindow
+
+    payload = serialize_muon_relaxation_config(_muon_config())
+
+    assert MainWindow._serialize_uep_config(None, _uep_config()) == serialize_uep_config(_uep_config())
+    assert MainWindow._deserialize_uep_config(None, {"rows": []}) == UepConfig()
+    assert MainWindow._serialize_pristine_relaxation_config(None, _pristine_config()) == (
+        serialize_pristine_relaxation_config(_pristine_config())
+    )
+    assert MainWindow._deserialize_pristine_relaxation_config(None, {"rows": []}) == PristineRelaxationConfig()
+    assert MainWindow._serialize_muon_relaxation_config(None, _muon_config()) == payload
+    assert MainWindow._deserialize_muon_relaxation_config(None, payload) == _muon_config()
+    assert MainWindow._serialize_convergence_config(_cutoff_config()) == serialize_convergence_config(_cutoff_config())
+    assert MainWindow._deserialize_convergence_config(None, {"cutoff_energies": [300.0]}) == ConvergenceConfig(
+        sweep_values=(300.0,), name_prefix="cutoff_convergence"
+    )

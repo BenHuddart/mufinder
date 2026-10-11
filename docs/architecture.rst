@@ -227,6 +227,13 @@ workflow widget modules define, how many define it; the counts may only fall.
        ``drop_explicit_conflicts``, ``seed_xc_functional_default``), and
        sanitising and restoring persisted parameter values
        (``sanitize_parameter_mapping``, ``restore_structured_value``).
+   * - ``mufinder.app.workflow_config_codecs``
+     - The persistence codecs for each workflow's stored
+       ``CalculationDefinition.parameters["configuration"]``
+       (``serialize_*_config`` and ``deserialize_*_config`` for UEP, pristine
+       relaxation, muon relaxation and convergence) and
+       ``normalized_supercell_matrix``. It sits in ``app`` because the
+       configuration dataclasses and ``restore_structured_value`` do.
    * - ``mufinder.app.workflow_dialogs`` / ``mufinder.app.param_dialog``
      - The row parameter dialog (``run_row_parameter_dialog``, driven by a
        ``RowParameterRequest`` and returning a ``RowParameterResult``) and the
@@ -250,6 +257,14 @@ workflow widget modules define, how many define it; the counts may only fall.
        defaults surface).
    * - ``mufinder.app.theme`` / ``mufinder.app.plot_canvas``
      - Styling and status brushes; embedded plots (see Plot canvas policy).
+   * - ``mufinder.services.job_paths``
+     - Where a job's files live: ``definition_output_directory``,
+       ``job_output_directory`` (the definition mappings that claim a job, then
+       the ``files/`` fallbacks), ``job_seed_name`` and ``job_output_files``.
+   * - ``mufinder.services.job_results``
+     - Scalar readings from the result of a job's latest run
+       (``total_energy_for_job``, ``max_force_for_job``,
+       ``max_stress_for_job``) and the payload extractors behind them.
    * - ``mufinder.services.job_artifacts``
      - Job output paths and parsed secondary outputs.
    * - ``mufinder.domain.magnetic_properties``

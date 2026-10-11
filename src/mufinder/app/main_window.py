@@ -8,7 +8,6 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 import logging
-from math import isnan
 import os
 from pathlib import Path
 import posixpath
@@ -145,7 +144,6 @@ from mufinder.app.relaxation_types import (
     PristineRelaxationConfig,
     PristineRelaxationRow,
     RelaxationRunState,
-    SupercellMatrix,
 )
 from mufinder.app.relaxation_analysis_widget import (
     CompletedRelaxationAnalysisSource,
@@ -203,6 +201,17 @@ from mufinder.app.theme import (
     style_section_title,
     status_brush,
     use_square_top_table_corners,
+)
+from mufinder.app.workflow_config_codecs import (
+    deserialize_convergence_config,
+    deserialize_muon_relaxation_config,
+    deserialize_pristine_relaxation_config,
+    deserialize_uep_config,
+    normalized_supercell_matrix,
+    serialize_convergence_config,
+    serialize_muon_relaxation_config,
+    serialize_pristine_relaxation_config,
+    serialize_uep_config,
 )
 from mufinder.app.workflow_dialogs import (
     EnergyBarrierPathViewerDialog,
@@ -273,6 +282,13 @@ from mufinder.services.failure_diagnosis import (
     read_log_tail,
 )
 from mufinder.services.job_artifacts import ParsedJobArtifacts, RetrievalFlags, collect_job_artifacts
+from mufinder.services.job_paths import (
+    definition_output_directory,
+    job_output_directory,
+    job_output_files,
+    job_seed_name,
+)
+from mufinder.services.job_results import max_force_for_job, max_stress_for_job, total_energy_for_job
 from mufinder.services.job_monitoring import job_staleness
 from mufinder.services.job_watchdog import StuckJobWatchdog
 from mufinder.services.local_runner import LocalJobRunner
@@ -4564,69 +4580,7 @@ class MainWindow(QMainWindow):
         return f"{float(value):.12g}"
 
     def _deserialize_convergence_config(self, payload: object) -> ConvergenceConfig | None:
-        if not isinstance(payload, dict):
-            return None
-
-        sweep_parameter = str(payload.get("sweep_parameter", "cut_off_energy")).strip() or "cut_off_energy"
-        if sweep_parameter not in {"cut_off_energy", "kpoint_mp_grid"}:
-            return None
-
-        def parse_sweep_value(value: object):
-            if sweep_parameter == "cut_off_energy":
-                return float(value)
-            if isinstance(value, (list, tuple)) and len(value) == 3:
-                return (int(value[0]), int(value[1]), int(value[2]))
-            raise ValueError
-
-        try:
-            raw_sweep_values = payload.get("sweep_values")
-            if sweep_parameter == "cut_off_energy":
-                raw_cutoff_values = payload.get("cutoff_energies")
-                if isinstance(raw_cutoff_values, list):
-                    raw_sweep_values = raw_cutoff_values
-            if not isinstance(raw_sweep_values, list):
-                raw_sweep_values = payload.get("cutoff_energies", [])
-            sweep_values = tuple(parse_sweep_value(value) for value in raw_sweep_values)
-        except (TypeError, ValueError):
-            return None
-
-        shared_params = payload.get("shared_params", {})
-        if not isinstance(shared_params, dict):
-            return None
-
-        shared_clean = {
-            str(name): restore_structured_value(None, str(name), raw_value)
-            for name, raw_value in shared_params.items()
-        }
-
-        overrides: dict[frozenset[object], dict[str, object]] = {}
-        raw_overrides = payload.get("overrides", [])
-        if isinstance(raw_overrides, list):
-            for entry in raw_overrides:
-                if not isinstance(entry, dict):
-                    continue
-                try:
-                    raw_group = entry.get("cutoffs", entry.get("sweep_values", []))
-                    cutoff_group = frozenset(parse_sweep_value(value) for value in raw_group)
-                except (TypeError, ValueError):
-                    continue
-                params = entry.get("params", {})
-                if not cutoff_group or not isinstance(params, dict):
-                    continue
-                overrides[cutoff_group] = {
-                    str(name): restore_structured_value(None, str(name), raw_value)
-                    for name, raw_value in params.items()
-                }
-
-        default_prefix = "kpoint_convergence" if sweep_parameter == "kpoint_mp_grid" else "cutoff_convergence"
-
-        return ConvergenceConfig(
-            sweep_parameter=sweep_parameter,
-            sweep_values=sweep_values,
-            shared_params=shared_clean,
-            overrides=overrides,
-            name_prefix=str(payload.get("name_prefix", default_prefix)).strip() or default_prefix,
-        )
+        return deserialize_convergence_config(payload)
 
     @staticmethod
     def _configuration_mapping(definition) -> dict[str, object]:
@@ -5047,17 +5001,6 @@ class MainWindow(QMainWindow):
             return active_definition, config
         return None, None
 
-    def _definition_output_directory(self, definition) -> Path | None:
-        if self._document is None:
-            return None
-        raw_output_dir = definition.parameters.get("output_directory")
-        if not isinstance(raw_output_dir, str) or not raw_output_dir.strip():
-            return None
-        base = Path(raw_output_dir)
-        if not base.is_absolute():
-            base = self._document.project_root / base
-        return base
-
     def _convergence_cutoff_definition_matches(
         self,
         definition,
@@ -5071,7 +5014,7 @@ class MainWindow(QMainWindow):
         return (
             definition.input_structure_ids == [input_structure_id]
             and definition.parameters.get("configuration") == parameters
-            and self._definition_output_directory(definition) == output_directory
+            and definition_output_directory(self._document, definition) == output_directory
             and str(definition.parameters.get("simulation_cell_mode", "unit_cell")) == simulation_cell_mode
             and definition.parameters.get("supercell_source_workflow") == supercell_source_workflow
         )
@@ -5087,7 +5030,7 @@ class MainWindow(QMainWindow):
     ) -> bool:
         return (
             definition.input_structure_ids == [input_structure_id]
-            and self._definition_output_directory(definition) == output_directory
+            and definition_output_directory(self._document, definition) == output_directory
             and str(definition.parameters.get("simulation_cell_mode", "unit_cell")) == simulation_cell_mode
             and definition.parameters.get("supercell_source_workflow") == supercell_source_workflow
         )
@@ -5204,7 +5147,7 @@ class MainWindow(QMainWindow):
             return
 
         input_structure_id = target_definition.input_structure_ids[0]
-        output_directory = self._definition_output_directory(target_definition)
+        output_directory = definition_output_directory(self._document, target_definition)
         if output_directory is None:
             return
 
@@ -5275,7 +5218,7 @@ class MainWindow(QMainWindow):
             return
 
         input_structure_id = target_definition.input_structure_ids[0]
-        output_directory = self._definition_output_directory(target_definition)
+        output_directory = definition_output_directory(self._document, target_definition)
         if output_directory is None:
             return
 
@@ -5540,7 +5483,7 @@ class MainWindow(QMainWindow):
                 sweep_parameter="cut_off_energy",
             )
 
-        output_root = self._definition_output_directory(definition) if definition is not None else None
+        output_root = definition_output_directory(self._document, definition) if definition is not None else None
         job_dir = output_root / job_label if output_root is not None and job_label else None
 
         if job_dir is not None and job_dir.exists():
@@ -5586,7 +5529,7 @@ class MainWindow(QMainWindow):
             return
 
         input_structure_id = source_definition.input_structure_ids[0]
-        output_directory = self._definition_output_directory(source_definition)
+        output_directory = definition_output_directory(self._document, source_definition)
         if output_directory is None:
             self._remove_cutoff_from_definition(source_definition, cutoff)
             return
@@ -7471,12 +7414,12 @@ class MainWindow(QMainWindow):
             request_dashboard_flush=lambda **kwargs: self._request_dashboard_flush(**kwargs),
             persist_ui_state=lambda **kwargs: self._persist_document_ui_state(**kwargs),
             status_message=lambda message: self.statusBar().showMessage(message),
-            definition_output_directory=lambda definition: self._definition_output_directory(definition),
+            definition_output_directory=lambda definition: definition_output_directory(self._document, definition),
             job_output_directory=lambda job: self._job_output_directory(job),
             job_seed_name=lambda job: self._job_seed_name(job),
             run_for_job=lambda job_id: self._run_for_job(job_id),
-            total_energy_for_job=lambda job_id: self._total_energy_for_job(job_id),
-            max_force_for_job=lambda job_id: self._max_force_for_job(job_id),
+            total_energy_for_job=lambda job_id: total_energy_for_job(self._document, job_id),
+            max_force_for_job=lambda job_id: max_force_for_job(self._document, job_id),
         )
 
     def _build_convergence_cutoff_deps(self) -> ConvergenceCutoffDeps:
@@ -7488,12 +7431,12 @@ class MainWindow(QMainWindow):
         """
 
         return ConvergenceCutoffDeps(
-            deserialize_convergence_config=lambda payload: self._deserialize_convergence_config(payload),
+            deserialize_convergence_config=deserialize_convergence_config,
             sync_equivalent_convergence_cutoff_mappings=(
                 lambda definition: self._sync_equivalent_convergence_cutoff_mappings(definition)
             ),
             cutoff_key=lambda value: self._cutoff_key(value),
-            max_stress_for_job=lambda job_id: self._max_stress_for_job(job_id),
+            max_stress_for_job=lambda job_id: max_stress_for_job(self._document, job_id),
         )
 
     def _build_convergence_kpoint_deps(self) -> ConvergenceKpointDeps:
@@ -7509,12 +7452,12 @@ class MainWindow(QMainWindow):
         """
 
         return ConvergenceKpointDeps(
-            deserialize_convergence_config=lambda payload: self._deserialize_convergence_config(payload),
+            deserialize_convergence_config=deserialize_convergence_config,
             sync_equivalent_convergence_kpoint_mappings=(
                 lambda definition: self._sync_equivalent_convergence_kpoint_mappings(definition)
             ),
             grid_key=lambda grid: self._grid_key(grid),
-            max_stress_for_job=lambda job_id: self._max_stress_for_job(job_id),
+            max_stress_for_job=lambda job_id: max_stress_for_job(self._document, job_id),
         )
 
     def _build_pristine_relaxation_deps(self) -> PristineRelaxationDeps:
@@ -7531,12 +7474,8 @@ class MainWindow(QMainWindow):
         """
 
         return PristineRelaxationDeps(
-            deserialize_pristine_relaxation_config=(
-                lambda payload: self._deserialize_pristine_relaxation_config(payload)
-            ),
-            serialize_pristine_relaxation_config=(
-                lambda config: self._serialize_pristine_relaxation_config(config)
-            ),
+            deserialize_pristine_relaxation_config=deserialize_pristine_relaxation_config,
+            serialize_pristine_relaxation_config=serialize_pristine_relaxation_config,
             sync_equivalent_pristine_relaxation_mappings=(
                 lambda definition: self._sync_equivalent_pristine_relaxation_mappings(definition)
             ),
@@ -7591,12 +7530,8 @@ class MainWindow(QMainWindow):
         """
 
         return MuonRelaxationDeps(
-            deserialize_muon_relaxation_config=(
-                lambda payload: self._deserialize_muon_relaxation_config(payload)
-            ),
-            serialize_muon_relaxation_config=(
-                lambda config: self._serialize_muon_relaxation_config(config)
-            ),
+            deserialize_muon_relaxation_config=deserialize_muon_relaxation_config,
+            serialize_muon_relaxation_config=serialize_muon_relaxation_config,
             sync_equivalent_muon_relaxation_mappings=(
                 lambda definition: self._sync_equivalent_muon_relaxation_mappings(definition)
             ),
@@ -7637,7 +7572,7 @@ class MainWindow(QMainWindow):
         """
 
         return UepDeps(
-            deserialize_uep_config=lambda payload: self._deserialize_uep_config(payload),
+            deserialize_uep_config=deserialize_uep_config,
             sync_equivalent_uep_mappings=(
                 lambda definition: self._sync_equivalent_uep_mappings(definition)
             ),
@@ -8425,147 +8360,10 @@ class MainWindow(QMainWindow):
         return deserialize_potential_grid(result.data)
 
     def _job_output_directory(self, job: Job) -> Path | None:
-        if self._document is None:
-            return None
-
-        for definition in self._document.calculations.values():
-            params = definition.parameters
-            job_ids_by_cutoff = params.get("job_ids_by_cutoff", {})
-            if isinstance(job_ids_by_cutoff, dict) and str(job.id) in {
-                str(value) for value in job_ids_by_cutoff.values()
-            }:
-                base = self._definition_output_directory(definition)
-                if base is not None:
-                    return base / job.label
-
-            if definition.workflow_stage == WorkflowStage.QUANTUM_CORRECTIONS:
-                base = self._definition_output_directory(definition)
-                if base is None:
-                    continue
-                for mapping_name in ("singlepoint_job_ids_by_label", "phonon_job_ids_by_label", "job_ids_by_label"):
-                    mapping = params.get(mapping_name, {})
-                    if not isinstance(mapping, dict):
-                        continue
-                    matching_key = next(
-                        (
-                            str(key)
-                            for key, value in mapping.items()
-                            if str(value) == str(job.id)
-                        ),
-                        "",
-                    )
-                    if matching_key:
-                        return base / self._quantum_seed_name_for_key(definition, matching_key)
-
-            job_ids_by_label = params.get("job_ids_by_label", {})
-            if isinstance(job_ids_by_label, dict) and str(job.id) in {
-                str(value) for value in job_ids_by_label.values()
-            }:
-                base = self._definition_output_directory(definition)
-                if base is not None:
-                    if definition.workflow_stage == WorkflowStage.MUON_RELAXATION and is_muon_relaxation_calc_type(job.calc_type):
-                        matching_key = next(
-                            (
-                                str(key)
-                                for key, value in job_ids_by_label.items()
-                                if str(value) == str(job.id)
-                            ),
-                            "",
-                        )
-                        prefix = (
-                            "positivemuon"
-                            if job.calc_type == MUON_RELAXATION_CALC_TYPES["positive_muon"]
-                            else "muonium"
-                        )
-                        seed_mapping = params.get("job_seed_names_by_label", {})
-                        seed_name = job.label
-                        if isinstance(seed_mapping, dict):
-                            raw_seed = seed_mapping.get(matching_key)
-                            if isinstance(raw_seed, str) and raw_seed.strip():
-                                seed_name = raw_seed.strip()
-                        if seed_name == job.label:
-                            remote_seed = self._remote_directory_seed_name(job)
-                            if remote_seed:
-                                seed_name = remote_seed
-                        if seed_name == job.label:
-                            inferred_seed = job_name(prefix, job.label)
-                            inferred_path = base / prefix / inferred_seed
-                            if inferred_path.exists() and inferred_path.is_dir():
-                                seed_name = inferred_seed
-                        return base / prefix / seed_name
-                    return base / job.label
-
-            labels = params.get("job_labels", [])
-            if not isinstance(labels, list) or job.label not in labels:
-                continue
-
-            raw_output_dir = params.get("output_directory")
-            if not isinstance(raw_output_dir, str) or not raw_output_dir.strip():
-                continue
-            base = Path(raw_output_dir)
-            if not base.is_absolute():
-                base = self._document.project_root / base
-            candidate = base / job.label
-            if candidate.exists() and candidate.is_dir():
-                return candidate
-
-        fallback_candidates = (
-            self._document.project_root / "files" / job.workflow_stage.value / job.label,
-            self._document.project_root / "files" / "convergence_cutoff" / job.label,
-            self._document.project_root / "files" / job.label,
-        )
-        for fallback in fallback_candidates:
-            if fallback.exists() and fallback.is_dir():
-                return fallback
-        return None
+        return job_output_directory(self._document, job, quantum_seed_name=self._quantum_seed_name_for_key)
 
     def _job_seed_name(self, job: Job) -> str:
-        remote_seed = self._remote_directory_seed_name(job)
-        if remote_seed:
-            return remote_seed
-        output_dir = self._job_output_directory(job)
-        if output_dir is not None:
-            return output_dir.name
-        return job.label
-
-    @staticmethod
-    def _remote_directory_seed_name(job: Job) -> str:
-        remote_directory = (job.remote_directory or "").strip()
-        if not remote_directory:
-            return ""
-        seed_name = posixpath.basename(posixpath.normpath(remote_directory)).strip()
-        return seed_name if seed_name not in {"", ".", "/"} else ""
-
-    def _output_files_for_job(self, job: Job) -> list[str]:
-        if self._document is None:
-            return []
-        output_dir = self._job_output_directory(job)
-        if output_dir is None:
-            return []
-        seed_name = self._job_seed_name(job)
-
-        paths = [
-            output_dir / f"{seed_name}.cell",
-            output_dir / f"{seed_name}.param",
-            output_dir / f"{seed_name}.castep",
-            output_dir / f"{seed_name}_farm001.castep",
-            output_dir / f"{seed_name}.den_fmt",
-            output_dir / f"{seed_name}-out.cell",
-            output_dir / f"{seed_name}.phonon",
-            output_dir / f"{seed_name}.ts",
-            # Task farming writes the band to <seed>_farm001.ts; there is no
-            # unfarmed .ts at all for a farmed NEB run.
-            output_dir / f"{seed_name}_farm001.ts",
-        ]
-        files: list[str] = []
-        for path in paths:
-            if not path.exists():
-                continue
-            try:
-                files.append(str(path.relative_to(self._document.project_root)))
-            except ValueError:
-                files.append(str(path))
-        return files
+        return job_seed_name(job, self._job_output_directory)
 
     def _write_quantum_job_directory(self, job_spec, output_root: Path, *, seed_name: str) -> Path:
         job_dir = output_root / seed_name
@@ -8683,7 +8481,11 @@ class MainWindow(QMainWindow):
                 run,
                 artifacts,
                 payload=result_payload,
-                output_files=self._output_files_for_job(job),
+                output_files=job_output_files(
+                    self._document.project_root,
+                    self._job_output_directory(job),
+                    self._job_seed_name(job),
+                ),
                 derived_structure_ids=[],
                 warnings=list(parsed.warnings),
             )
@@ -10837,89 +10639,10 @@ class MainWindow(QMainWindow):
             self._handling_uep_form_state = False
 
     def _serialize_uep_config(self, config: UepConfig) -> dict[str, object]:
-        return {
-            "name_prefix": "uep" if config.name_prefix == "uep_source" else config.name_prefix,
-            "rows": [
-                {
-                    "label": row.label,
-                    "supercell_matrix": (
-                        [list(line) for line in row.supercell_matrix]
-                        if row.supercell_matrix is not None
-                        else None
-                    ),
-                    "parameter_values": dict(row.parameter_values),
-                    "added_advanced": list(row.added_advanced),
-                }
-                for row in config.rows
-            ],
-        }
+        return serialize_uep_config(config)
 
     def _deserialize_uep_config(self, payload: object) -> UepConfig | None:
-        if not isinstance(payload, dict):
-            return None
-        rows_payload = payload.get("rows", [])
-        if not isinstance(rows_payload, list):
-            return None
-
-        rows: list[UepSourceRow] = []
-        for entry in rows_payload:
-            if not isinstance(entry, dict):
-                continue
-            label = str(entry.get("label", "")).strip()
-            if not label:
-                continue
-            matrix_payload = entry.get("supercell_matrix")
-            matrix: tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None = None
-            if isinstance(matrix_payload, list) and len(matrix_payload) == 3:
-                try:
-                    matrix = (
-                        (int(matrix_payload[0][0]), int(matrix_payload[0][1]), int(matrix_payload[0][2])),
-                        (int(matrix_payload[1][0]), int(matrix_payload[1][1]), int(matrix_payload[1][2])),
-                        (int(matrix_payload[2][0]), int(matrix_payload[2][1]), int(matrix_payload[2][2])),
-                    )
-                except (TypeError, ValueError, IndexError):
-                    matrix = None
-            raw_params = entry.get("parameter_values", entry.get("params", {}))
-            params = raw_params if isinstance(raw_params, dict) else {}
-            restored_params = {
-                str(name): restore_structured_value(None, str(name), raw_value)
-                for name, raw_value in params.items()
-            }
-            raw_advanced = entry.get("added_advanced", [])
-            added_advanced = (
-                tuple(str(name) for name in raw_advanced if isinstance(name, str))
-                if isinstance(raw_advanced, list)
-                else ()
-            )
-            rows.append(
-                UepSourceRow(
-                    label=label,
-                    supercell_matrix=matrix,
-                    parameter_values=restored_params,
-                    added_advanced=added_advanced,
-                )
-            )
-
-        return UepConfig(
-            name_prefix=(
-                "uep"
-                if str(payload.get("name_prefix", "uep")).strip() == "uep_source"
-                else str(payload.get("name_prefix", "uep")).strip() or "uep"
-            ),
-            rows=tuple(rows),
-        )
-
-    @staticmethod
-    def _normalized_supercell_matrix(
-        matrix: SupercellMatrix | None,
-    ) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None:
-        if matrix is None:
-            return None
-        return (
-            (int(matrix[0][0]), int(matrix[0][1]), int(matrix[0][2])),
-            (int(matrix[1][0]), int(matrix[1][1]), int(matrix[1][2])),
-            (int(matrix[2][0]), int(matrix[2][1]), int(matrix[2][2])),
-        )
+        return deserialize_uep_config(payload)
 
     @staticmethod
     def _normalized_parameter_values(values: Mapping[str, object]) -> object:
@@ -10928,7 +10651,7 @@ class MainWindow(QMainWindow):
     def _pristine_relaxation_row_signature(self, row: PristineRelaxationRow) -> tuple[object, ...]:
         return (
             bool(row.fix_all_cell),
-            self._normalized_supercell_matrix(row.supercell_matrix),
+            normalized_supercell_matrix(row.supercell_matrix),
             self._normalized_parameter_values(row.parameter_values),
             tuple(str(name) for name in row.added_advanced),
         )
@@ -10939,7 +10662,7 @@ class MainWindow(QMainWindow):
             row.label,
             tuple(float(value) for value in row.initial_fractional_position),
             str(row.charge_state),
-            self._normalized_supercell_matrix(row.supercell_matrix),
+            normalized_supercell_matrix(row.supercell_matrix),
             self._normalized_parameter_values(row.parameter_values),
             tuple(str(name) for name in row.added_advanced),
             # Included deliberately. If the imported marker is ever dropped from
@@ -10952,7 +10675,7 @@ class MainWindow(QMainWindow):
 
     def _uep_row_signature(self, row: UepSourceRow) -> tuple[object, ...]:
         return (
-            self._normalized_supercell_matrix(row.supercell_matrix),
+            normalized_supercell_matrix(row.supercell_matrix),
             self._normalized_parameter_values(row.parameter_values),
             tuple(str(name) for name in row.added_advanced),
         )
@@ -10962,8 +10685,8 @@ class MainWindow(QMainWindow):
             source_definition.workflow_stage == target_definition.workflow_stage
             and source_definition.calc_type == target_definition.calc_type
             and source_definition.input_structure_ids == target_definition.input_structure_ids
-            and self._definition_output_directory(source_definition)
-            == self._definition_output_directory(target_definition)
+            and definition_output_directory(self._document, source_definition)
+            == definition_output_directory(self._document, target_definition)
         )
 
     @staticmethod
@@ -11732,7 +11455,7 @@ class MainWindow(QMainWindow):
             mapping = definition.parameters.get("job_ids_by_label", {})
             if not isinstance(mapping, dict) or str(job.id) not in {str(value) for value in mapping.values()}:
                 continue
-            base = self._definition_output_directory(definition)
+            base = definition_output_directory(self._document, definition)
             if base is None:
                 continue
             if definition.workflow_stage == WorkflowStage.MUON_RELAXATION and job_dir.parent.name in {
@@ -11850,95 +11573,10 @@ class MainWindow(QMainWindow):
             self._document.ui_state.pop(active_key, None)
 
     def _serialize_pristine_relaxation_config(self, config: PristineRelaxationConfig) -> dict[str, object]:
-        return {
-            "name_prefix": config.name_prefix,
-            "rows": [
-                {
-                    "label": row.label,
-                    "fix_all_cell": bool(row.fix_all_cell),
-                    "supercell_matrix": (
-                        [list(line) for line in row.supercell_matrix]
-                        if row.supercell_matrix is not None
-                        else None
-                    ),
-                    "parameter_values": dict(row.parameter_values),
-                    "added_advanced": list(row.added_advanced),
-                }
-                for row in config.rows
-            ],
-        }
+        return serialize_pristine_relaxation_config(config)
 
-    def _deserialize_pristine_relaxation_config(
-        self,
-        payload: object,
-    ) -> PristineRelaxationConfig | None:
-        if not isinstance(payload, dict):
-            return None
-
-        rows_payload = payload.get("rows", [])
-        if not isinstance(rows_payload, list):
-            return None
-
-        rows: list[PristineRelaxationRow] = []
-        for entry in rows_payload:
-            if not isinstance(entry, dict):
-                continue
-            label = str(entry.get("label", "")).strip()
-            if not label:
-                continue
-
-            matrix_payload = entry.get("supercell_matrix")
-            matrix: tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None = None
-            if isinstance(matrix_payload, list) and len(matrix_payload) == 3:
-                try:
-                    matrix = (
-                        (
-                            int(matrix_payload[0][0]),
-                            int(matrix_payload[0][1]),
-                            int(matrix_payload[0][2]),
-                        ),
-                        (
-                            int(matrix_payload[1][0]),
-                            int(matrix_payload[1][1]),
-                            int(matrix_payload[1][2]),
-                        ),
-                        (
-                            int(matrix_payload[2][0]),
-                            int(matrix_payload[2][1]),
-                            int(matrix_payload[2][2]),
-                        ),
-                    )
-                except (TypeError, ValueError, IndexError):
-                    matrix = None
-
-            raw_params = entry.get("parameter_values", entry.get("params", {}))
-            params = raw_params if isinstance(raw_params, dict) else {}
-            restored_params = {
-                str(name): restore_structured_value(None, str(name), raw_value)
-                for name, raw_value in params.items()
-            }
-
-            raw_advanced = entry.get("added_advanced", [])
-            added_advanced = (
-                tuple(str(name) for name in raw_advanced if isinstance(name, str))
-                if isinstance(raw_advanced, list)
-                else ()
-            )
-
-            rows.append(
-                PristineRelaxationRow(
-                    label=label,
-                    fix_all_cell=bool(entry.get("fix_all_cell", False)),
-                    supercell_matrix=matrix,
-                    parameter_values=restored_params,
-                    added_advanced=added_advanced,
-                )
-            )
-
-        return PristineRelaxationConfig(
-            name_prefix=str(payload.get("name_prefix", "pristine_relax")).strip() or "pristine_relax",
-            rows=tuple(rows),
-        )
+    def _deserialize_pristine_relaxation_config(self, payload: object) -> PristineRelaxationConfig | None:
+        return deserialize_pristine_relaxation_config(payload)
 
     def _on_import_legacy_relaxations(self) -> None:
         """Scan a legacy MuFinder folder and import the relaxations chosen from it."""
@@ -12374,97 +12012,10 @@ class MainWindow(QMainWindow):
         return by_site
 
     def _serialize_muon_relaxation_config(self, config: MuonRelaxationConfig) -> dict[str, object]:
-        return {
-            "rows": [
-                {
-                    "site_id": str(row.site_id),
-                    "label": row.label,
-                    "initial_fractional_position": list(row.initial_fractional_position),
-                    "charge_state": row.charge_state,
-                    "supercell_matrix": (
-                        [list(line) for line in row.supercell_matrix]
-                        if row.supercell_matrix is not None
-                        else None
-                    ),
-                    "parameter_values": dict(row.parameter_values),
-                    "added_advanced": list(row.added_advanced),
-                    "imported": bool(row.imported),
-                    "import_batch_id": (
-                        str(row.import_batch_id) if row.import_batch_id is not None else None
-                    ),
-                }
-                for row in config.rows
-            ]
-        }
+        return serialize_muon_relaxation_config(config)
 
     def _deserialize_muon_relaxation_config(self, payload: object) -> MuonRelaxationConfig | None:
-        if not isinstance(payload, dict):
-            return None
-        rows_payload = payload.get("rows", [])
-        if not isinstance(rows_payload, list):
-            return None
-        rows: list[MuonRelaxationRow] = []
-        for entry in rows_payload:
-            if not isinstance(entry, dict):
-                continue
-            try:
-                site_id = UUID(str(entry.get("site_id")))
-            except (TypeError, ValueError):
-                continue
-            label = str(entry.get("label", "")).strip()
-            if not label:
-                continue
-            raw_position = entry.get("initial_fractional_position", entry.get("fractional_position", []))
-            if not isinstance(raw_position, (list, tuple)) or len(raw_position) != 3:
-                continue
-            matrix_payload = entry.get("supercell_matrix")
-            matrix: tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]] | None = None
-            if isinstance(matrix_payload, list) and len(matrix_payload) == 3:
-                try:
-                    matrix = (
-                        (int(matrix_payload[0][0]), int(matrix_payload[0][1]), int(matrix_payload[0][2])),
-                        (int(matrix_payload[1][0]), int(matrix_payload[1][1]), int(matrix_payload[1][2])),
-                        (int(matrix_payload[2][0]), int(matrix_payload[2][1]), int(matrix_payload[2][2])),
-                    )
-                except (TypeError, ValueError, IndexError):
-                    matrix = None
-            raw_params = entry.get("parameter_values", {})
-            params = raw_params if isinstance(raw_params, dict) else {}
-            restored_params = {
-                str(name): restore_structured_value(None, str(name), raw_value)
-                for name, raw_value in params.items()
-            }
-            raw_advanced = entry.get("added_advanced", [])
-            added_advanced = (
-                tuple(str(name) for name in raw_advanced if isinstance(name, str))
-                if isinstance(raw_advanced, list)
-                else ()
-            )
-            import_batch_id: UUID | None = None
-            raw_batch_id = entry.get("import_batch_id")
-            if raw_batch_id is not None:
-                try:
-                    import_batch_id = UUID(str(raw_batch_id))
-                except (TypeError, ValueError):
-                    import_batch_id = None
-            rows.append(
-                MuonRelaxationRow(
-                    site_id=site_id,
-                    label=label,
-                    initial_fractional_position=(
-                        float(raw_position[0]),
-                        float(raw_position[1]),
-                        float(raw_position[2]),
-                    ),
-                    charge_state=str(entry.get("charge_state", "positive_muon")),
-                    supercell_matrix=matrix,
-                    parameter_values=restored_params,
-                    added_advanced=added_advanced,
-                    imported=bool(entry.get("imported", False)),
-                    import_batch_id=import_batch_id,
-                )
-            )
-        return MuonRelaxationConfig(rows=tuple(rows))
+        return deserialize_muon_relaxation_config(payload)
 
     def _definition_for_pristine_relaxation_label(self, label: str):
         definition = self._pristine_relaxation_controller.active_definition()
@@ -12630,7 +12181,7 @@ class MainWindow(QMainWindow):
                     fractional = folded_muon_position_from_structure(structure)
                 if fractional is None:
                     continue
-                total_energy = self._total_energy_for_job(job.id)
+                total_energy = total_energy_for_job(self._document, job.id)
                 sources.append(
                     CompletedRelaxationAnalysisSource(
                         job_id=job.id,
@@ -13463,7 +13014,7 @@ class MainWindow(QMainWindow):
                     if disposition in {"delete", "delete_all"}:
                         self._delete_path(job_dir)
                     else:
-                        self._archive_cutoff_directory(job_dir, self._definition_output_directory(definition))
+                        self._archive_cutoff_directory(job_dir, definition_output_directory(self._document, definition))
                 except OSError as exc:
                     QMessageBox.warning(
                         self,
@@ -14535,25 +14086,8 @@ class MainWindow(QMainWindow):
         self._queue_raise_visible_uep_analysis_dialog(job_id)
 
     @staticmethod
-    def _serialize_convergence_config(config: ConvergenceConfig) -> dict:
-        return {
-            "name_prefix": config.name_prefix,
-            "sweep_parameter": config.sweep_parameter,
-            "sweep_values": [
-                list(value) if isinstance(value, tuple) else value for value in config.sweep_values
-            ],
-            "cutoff_energies": list(config.cutoff_energies),
-            "shared_params": config.shared_params,
-            "overrides": [
-                {
-                    "cutoffs": [
-                        list(value) if isinstance(value, tuple) else value for value in sorted(group)
-                    ],
-                    "params": payload,
-                }
-                for group, payload in config.overrides.items()
-            ],
-        }
+    def _serialize_convergence_config(config: ConvergenceConfig) -> dict[str, object]:
+        return serialize_convergence_config(config)
 
     def _refresh_muon_generation_table(self) -> None:
         if self._document is None:
@@ -14970,144 +14504,3 @@ class MainWindow(QMainWindow):
             stale_keys = [key for key, value in mapping.items() if str(value) == str(job_id)]
             for key in stale_keys:
                 mapping.pop(key, None)
-
-    def _total_energy_for_job(self, job_id: UUID) -> float | None:
-        if self._document is None:
-            return None
-
-        runs = [run for run in self._document.runs.values() if run.job_id == job_id]
-        if not runs:
-            return None
-
-        latest_run = max(runs, key=lambda run: run.run_index)
-        if latest_run.result_id is None:
-            return None
-        result = self._document.results.get(latest_run.result_id)
-        if result is None:
-            return None
-        return self._extract_total_energy(result.data)
-
-    def _max_force_for_job(self, job_id: UUID) -> float | None:
-        if self._document is None:
-            return None
-
-        runs = [run for run in self._document.runs.values() if run.job_id == job_id]
-        if not runs:
-            return None
-
-        latest_run = max(runs, key=lambda run: run.run_index)
-        if latest_run.result_id is None:
-            return None
-        result = self._document.results.get(latest_run.result_id)
-        if result is None:
-            return None
-        return self._extract_max_force(result.data)
-
-    def _max_stress_for_job(self, job_id: UUID) -> float | None:
-        if self._document is None:
-            return None
-
-        runs = [run for run in self._document.runs.values() if run.job_id == job_id]
-        if not runs:
-            return None
-
-        latest_run = max(runs, key=lambda run: run.run_index)
-        if latest_run.result_id is None:
-            return None
-        result = self._document.results.get(latest_run.result_id)
-        if result is None:
-            return None
-        return self._extract_max_stress(result.data)
-
-    @staticmethod
-    def _extract_total_energy(payload: object) -> float | None:
-        def parse_numeric(candidate: object) -> float | None:
-            if isinstance(candidate, bool):
-                return None
-            if isinstance(candidate, (int, float)):
-                numeric = float(candidate)
-                if isnan(numeric):
-                    return None
-                return numeric
-            if isinstance(candidate, dict):
-                return parse_numeric(candidate.get("value"))
-            return None
-
-        if not isinstance(payload, dict):
-            return None
-
-        for key in ("total_energy", "total_energy_ev", "final_energy", "final_energy_ev", "energy", "energy_ev"):
-            value = parse_numeric(payload.get(key))
-            if value is not None:
-                return value
-
-        energies = payload.get("energies")
-        if isinstance(energies, dict):
-            for key in ("total", "total_energy", "final", "final_energy", "energy"):
-                value = parse_numeric(energies.get(key))
-                if value is not None:
-                    return value
-
-        return None
-
-    @staticmethod
-    def _extract_max_force(payload: object) -> float | None:
-        def parse_numeric(candidate: object) -> float | None:
-            if isinstance(candidate, bool):
-                return None
-            if isinstance(candidate, (int, float)):
-                numeric = float(candidate)
-                if isnan(numeric):
-                    return None
-                return numeric
-            if isinstance(candidate, dict):
-                return parse_numeric(candidate.get("value"))
-            return None
-
-        if not isinstance(payload, dict):
-            return None
-
-        for key in ("max_force", "maximum_force", "max_force_eva"):
-            value = parse_numeric(payload.get(key))
-            if value is not None:
-                return value
-
-        forces = payload.get("forces")
-        if isinstance(forces, dict):
-            for key in ("max", "max_force", "maximum"):
-                value = parse_numeric(forces.get(key))
-                if value is not None:
-                    return value
-
-        return None
-
-    @staticmethod
-    def _extract_max_stress(payload: object) -> float | None:
-        def parse_numeric(candidate: object) -> float | None:
-            if isinstance(candidate, bool):
-                return None
-            if isinstance(candidate, (int, float)):
-                numeric = float(candidate)
-                if isnan(numeric):
-                    return None
-                return numeric
-            if isinstance(candidate, dict):
-                return parse_numeric(candidate.get("value"))
-            return None
-
-        if not isinstance(payload, dict):
-            return None
-
-        for key in ("max_stress", "maximum_stress", "max_stress_gpa"):
-            value = parse_numeric(payload.get(key))
-            if value is not None:
-                return value
-
-        stress = payload.get("stress")
-        if isinstance(stress, dict):
-            for key in ("max", "max_stress", "maximum"):
-                value = parse_numeric(stress.get(key))
-                if value is not None:
-                    return value
-
-        return None
