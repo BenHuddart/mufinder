@@ -281,6 +281,21 @@ Compatibility ledger
      - Public import alias. Keep for one minor release (through 0.6.x); then
        move those imports to ``mufinder.science.uep_clustering`` and drop the
        ``__getattr__`` hook.
+   * - ``_serialize_uep_config`` / ``_deserialize_uep_config`` /
+       ``_serialize_pristine_relaxation_config`` /
+       ``_deserialize_pristine_relaxation_config`` /
+       ``_serialize_muon_relaxation_config`` /
+       ``_deserialize_muon_relaxation_config`` /
+       ``_serialize_convergence_config`` /
+       ``_deserialize_convergence_config``
+     - ``MainWindow``
+     - One-line forwarders to the codecs in
+       ``mufinder.app.workflow_config_codecs`` (the same names without the
+       leading underscore), kept because tests and the remaining
+       ``MainWindow`` code reach them by name. The stored configuration shape
+       is unchanged. Not persisted.
+     - Public helper alias. Keep for one minor release (through 0.6.x); then
+       move the callers to the codec functions and drop the forwarders.
 
 Rules for new shims
 -------------------

@@ -34,6 +34,7 @@ from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, ComparisonTable, Job, MuonSite, Result, Structure
 from mufinder.science.site_generation import SiteGenerationError
 from mufinder.science.structure_io import StructureLoadError
+from mufinder.services.job_paths import definition_output_directory
 from mufinder.services.project_service import ProjectService
 from mufinder.services.ssh_client import SSHAuthenticationError, SSHCredentials
 from tests.support.reset_menu import install_fake_menu, open_reset_menu
@@ -1499,7 +1500,7 @@ def test_main_window_convergence_definition_helpers_support_legacy_labels(qapp, 
     resolved_job = window._convergence_controller.job_for_cutoff(definition, 300.0)
 
     assert resolved_job is job
-    assert window._definition_output_directory(definition) == doc.project_root / "files" / "convergence_cutoff"
+    assert definition_output_directory(doc, definition) == doc.project_root / "files" / "convergence_cutoff"
     window.close()
 
 

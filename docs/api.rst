@@ -123,6 +123,14 @@ Services
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.services.job_paths
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.services.job_results
+   :members:
+   :undoc-members:
+
 Science
 -------
 
@@ -277,6 +285,10 @@ UI
    :undoc-members:
 
 .. automodule:: mufinder.app.workflow_parameters
+   :members:
+   :undoc-members:
+
+.. automodule:: mufinder.app.workflow_config_codecs
    :members:
    :undoc-members:
 
