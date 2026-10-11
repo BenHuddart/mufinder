@@ -277,12 +277,11 @@ Compatibility ledger
      - ``mufinder.science.uep``
      - Names that live in ``mufinder.science.uep_clustering``. Because that
        module imports ``mufinder.science.uep``, the module-level
-       ``__getattr__`` in ``uep`` resolves them lazily. Imported by
-       ``mufinder.app.uep_wizard``, ``mufinder.app.uep_clustering_dialog`` and
-       the UEP science tests. Not persisted.
-     - Public import alias. Keep for one minor release (through 0.6.x); then
-       move those imports to ``mufinder.science.uep_clustering`` and drop the
-       ``__getattr__`` hook.
+       ``__getattr__`` in ``uep`` resolves them lazily. No in-repo caller
+       reaches them through ``uep``; MuFinder code and tests import them from
+       ``mufinder.science.uep_clustering``. Not persisted.
+     - Public import alias. Keep the ``__getattr__`` hook for one minor
+       release (through 0.6.x); then drop it.
    * - ``_serialize_uep_config`` / ``_deserialize_uep_config`` /
        ``_serialize_pristine_relaxation_config`` /
        ``_deserialize_pristine_relaxation_config`` /
