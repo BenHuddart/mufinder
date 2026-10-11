@@ -1427,6 +1427,56 @@ def test_main_window_submit_jobs_on_cluster_mixed_batch_checks_only_the_new_job(
     window.close()
 
 
+def test_main_window_submit_jobs_on_cluster_does_not_submit_a_job_whose_directory_check_raised(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "cluster_check_error.mufinder", "ClusterCheckError")
+    window._document = doc
+
+    unchecked = add_cluster_input_job(service, doc, "conv_ecut_300")
+    checked = add_cluster_input_job(service, doc, "conv_ecut_400")
+
+    patch_continuation_cluster_dialog(monkeypatch)
+    recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=False)
+
+    def _directory_exists(path: str) -> bool:
+        if path.endswith("conv_ecut_300"):
+            raise OSError("SFTP stat failed")
+        return False
+
+    monkeypatch.setattr(window._cluster_runner._runner, "remote_directory_exists", _directory_exists)
+    monkeypatch.setattr(
+        window,
+        "_prompt_remote_directory_overwrite",
+        lambda *_args: pytest.fail("no directory is known to exist, so nothing should prompt"),
+    )
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module,
+        "show_detailed_warning",
+        lambda _parent, title, message, **_kwargs: warnings.append((title, message)),
+    )
+
+    window._submit_jobs_on_cluster([unchecked, checked])
+
+    assert [call["remote_directory"] for call in recorded["submitted"]] == ["/remote/work/conv_ecut_400"]
+    assert unchecked.status == JobStatus.DEFINED
+    assert unchecked.remote_directory is None
+    assert checked.status == JobStatus.QUEUED
+    assert warnings == [
+        (
+            "Cluster submission failed",
+            "Some jobs failed to submit:\n- conv_ecut_300: not submitted because its remote directory "
+            "could not be checked (SFTP stat failed)",
+        )
+    ]
+    assert window.statusBar().currentMessage() == "Submitted 1 cluster job(s) on alpha"
+
+    window.close()
+
+
 def test_main_window_submit_jobs_on_cluster_continuation_survives_target_collision(
     main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

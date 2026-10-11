@@ -190,6 +190,10 @@ Remote (HPC) execution
   parsing. Walltime-stopped jobs map to ``stopped`` and are resettable for
   direct resubmission; a successful resubmission updates the row with the
   replacement scheduler id.
+- Before a job is submitted into a new remote directory, the application
+  checks whether that directory exists and asks before overwriting one that
+  does. A job whose directory cannot be checked is not submitted and is
+  reported as a submission failure.
 - Labels used in scheduler commands and remote paths are validated against a
   strict safe character set before submission, and recursive remote deletion
   uses SFTP traversal rather than a shell ``rm -rf``.
