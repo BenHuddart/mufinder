@@ -21,9 +21,9 @@ from mufinder.app.main_window import MainWindow
 from mufinder.domain.enums import FailureReason, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition
 from mufinder.services.project_service import ProjectService
-from tests.app.test_main_window_actions import (
-    _patch_continuation_cluster_dialog,
-    _patch_continuation_cluster_runner,
+from tests.support.main_window import (
+    patch_continuation_cluster_dialog,
+    patch_continuation_cluster_runner,
 )
 
 SEED = "pristine_relax_unit"
@@ -223,8 +223,8 @@ def test_two_fresh_starts_sharing_a_remote_directory_delete_nothing(
     _on_cluster(first)
     _on_cluster(second, remote_job_id="4243")
 
-    _patch_continuation_cluster_dialog(monkeypatch)
-    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    patch_continuation_cluster_dialog(monkeypatch)
+    recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
     monkeypatch.setattr(main_window_module, "show_detailed_warning", lambda *_args, **_kwargs: None)
 
     window._submit_jobs_on_cluster(
@@ -254,8 +254,8 @@ def test_a_fresh_start_into_a_protected_directory_is_dropped(
     # Bypass the ownership check, which would refuse these two first.
     monkeypatch.setattr(window, "_fresh_start_refusals", lambda _jobs: {})
 
-    _patch_continuation_cluster_dialog(monkeypatch)
-    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    patch_continuation_cluster_dialog(monkeypatch)
+    recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
     failures: list[str] = []
     monkeypatch.setattr(
         main_window_module, "show_detailed_warning", lambda _parent, _title, text, **_kw: failures.append(text)
@@ -285,9 +285,9 @@ def test_cancelling_the_cluster_dialog_deletes_nothing(
     directory = _job_directory(doc)
     _on_cluster(job)
 
-    _patch_continuation_cluster_dialog(monkeypatch)
+    patch_continuation_cluster_dialog(monkeypatch)
     monkeypatch.setattr(main_window_module.ClusterSubmissionDialog, "exec", lambda _self: 0)
-    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
 
     window._submit_jobs_on_cluster(
         [job],
@@ -309,8 +309,8 @@ def test_a_failed_cluster_connection_deletes_nothing(
     directory = _job_directory(doc)
     _on_cluster(job)
 
-    _patch_continuation_cluster_dialog(monkeypatch)
-    recorded = _patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
+    patch_continuation_cluster_dialog(monkeypatch)
+    recorded = patch_continuation_cluster_runner(monkeypatch, window, directory_exists=True)
 
     def _refuse(*_args, **_kwargs):
         raise ConnectionError("host unreachable")

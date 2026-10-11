@@ -117,7 +117,11 @@ the call site or binds them once with ``functools.partial``.
   items by route.
 - ``tests/support/main_window.py``: ``open_project_with_host`` and
   ``window_with_host`` open a project with a host structure in a
-  ``MainWindow``.
+  ``MainWindow``; ``select_route`` selects a project-tree route;
+  ``patch_continuation_cluster_dialog``, ``patch_continuation_cluster_runner``
+  and ``add_cluster_input_job`` stand in for the cluster submission dialog and
+  SSH runner; ``stage_quantum_row_with_singlepoint`` stages a Quantum
+  Corrections row whose stage-1 singlepoint has finished.
 - ``tests/conftest.py`` fixtures: ``main_window`` gives a fresh ``MainWindow``
   that the per-test Qt cleanup closes, and ``project_with_host`` gives
   ``(window, service, document)`` with the default host structure loaded.
