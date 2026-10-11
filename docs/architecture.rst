@@ -96,7 +96,8 @@ the structural test in the same change.
 A few top-level modules sit outside the seven layers and are not checked by
 the structural test: ``mufinder.main`` (application entry point),
 ``mufinder.branding`` (Qt icons), ``mufinder.assets`` / ``mufinder.data``
-(packaged resources, including the starter ``keyword_catalog.yaml``),
+(packaged resources, including the starter ``keyword_catalog.yaml`` and the
+shell script templates in ``mufinder/assets/shell/``),
 ``mufinder._version``, ``mufinder.castep_setup`` (saved CASTEP setup and
 keyword-catalog management, used by the app), and ``mufinder.cluster_setup``
 (the built-in cluster presets and the ``QSettings`` persistence of cluster
@@ -317,6 +318,13 @@ no two workflow widgets may define the same private method.
        with the failed, skipped and missing jobs
        (``plan_cluster_submission``). The window keeps the dialog, the
        prompts and the message boxes.
+   * - ``mufinder.services.shell_templates``
+     - Shell scripts MuFinder sends to a cluster, kept as templates in
+       ``mufinder/assets/shell/`` and rendered by ``render_shell_template``:
+       the ``${tpl_name}`` placeholder convention (every other ``$`` is the
+       shell's), ``##`` documentation lines, and dropping a line whose lone
+       placeholder is empty. Callers compute and shell-quote the values; the
+       templates stay plain shell, checked with ``bash -n`` by the tests.
    * - ``mufinder.services.source_candidates``
      - Read-only source queries over the project document: the relaxed muon
        sites eligible for quantum corrections, their relative energies,
