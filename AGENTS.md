@@ -75,7 +75,7 @@ sibling workflow's implementation.
 | Project-default display in workflow headers | `app/project_defaults_widget.py` |
 | Styling, palettes, status brushes | `app/theme.py` |
 | Embedded matplotlib plots | `app/plot_canvas.py` |
-| Job output paths and parsed secondary outputs | `services/job_artifacts.py` |
+| Job directories, seeds and output files; result readers; parsed secondary outputs | `services/job_paths.py`, `services/job_results.py`, `services/job_artifacts.py` |
 | Job state transitions | `services/job_execution_controller.py` |
 | Lattice maths; spglib cells, operations, orbits; ASE `Atoms`; stored spins | `science/lattice.py`, `science/spglib_compat.py`, `science/ase_bridge.py`, `domain/magnetic_properties.py` |
 | CASTEP syntax, keyword metadata, validation | `castep_io/` |

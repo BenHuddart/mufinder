@@ -58,6 +58,12 @@ from mufinder.app.workflow_controllers.uep import (
     UepController,
     UepDeps,
 )
+from mufinder.app.workflow_config_codecs import (
+    deserialize_muon_relaxation_config,
+    deserialize_pristine_relaxation_config,
+    serialize_muon_relaxation_config,
+    serialize_pristine_relaxation_config,
+)
 from mufinder.app.workflow_submission import WorkflowSubmissionCoordinator
 from tests.support.jobs import make_job
 
@@ -81,108 +87,6 @@ class _RecordingBackend:
 
     def __call__(self, jobs: list[Job], **kwargs: object) -> None:
         self.calls.append((list(jobs), dict(kwargs)))
-
-
-# The relaxation controllers serialize/deserialize their definition configuration
-# through required deps. These mirror the shape ``MainWindow`` stores (the real
-# pair is exercised end to end in ``tests/app/test_main_window_actions.py``);
-# structured CASTEP value restoration is not reproduced here.
-
-
-def _serialize_pristine_config(config) -> dict[str, object]:
-    return {
-        "name_prefix": config.name_prefix,
-        "rows": [
-            {
-                "label": row.label,
-                "fix_all_cell": bool(row.fix_all_cell),
-                "supercell_matrix": (
-                    [list(line) for line in row.supercell_matrix]
-                    if row.supercell_matrix is not None
-                    else None
-                ),
-                "parameter_values": dict(row.parameter_values),
-                "added_advanced": list(row.added_advanced),
-            }
-            for row in config.rows
-        ],
-    }
-
-
-def _deserialize_pristine_config(payload: object):
-    from mufinder.app.relaxation_types import (
-        PristineRelaxationConfig,
-        PristineRelaxationRow,
-    )
-
-    if not isinstance(payload, dict):
-        return None
-    rows = [
-        PristineRelaxationRow(
-            label=str(entry.get("label", "")),
-            fix_all_cell=bool(entry.get("fix_all_cell", False)),
-            parameter_values=dict(
-                entry.get("parameter_values", entry.get("params", {}))
-            ),
-            added_advanced=tuple(str(name) for name in entry.get("added_advanced", ())),
-        )
-        for entry in payload.get("rows", [])
-        if isinstance(entry, dict)
-    ]
-    return PristineRelaxationConfig(
-        name_prefix=str(payload.get("name_prefix", "pristine_relax")),
-        rows=tuple(rows),
-    )
-
-
-def _serialize_muon_config(config) -> dict[str, object]:
-    return {
-        "rows": [
-            {
-                "site_id": str(row.site_id),
-                "label": row.label,
-                "initial_fractional_position": list(row.initial_fractional_position),
-                "charge_state": row.charge_state,
-                "supercell_matrix": (
-                    [list(line) for line in row.supercell_matrix]
-                    if row.supercell_matrix is not None
-                    else None
-                ),
-                "parameter_values": dict(row.parameter_values),
-                "added_advanced": list(row.added_advanced),
-            }
-            for row in config.rows
-        ]
-    }
-
-
-def _deserialize_muon_config(payload: object):
-    from mufinder.app.relaxation_types import MuonRelaxationConfig, MuonRelaxationRow
-
-    if not isinstance(payload, dict):
-        return None
-    rows = []
-    for entry in payload.get("rows", []):
-        if not isinstance(entry, dict):
-            continue
-        position = entry.get("initial_fractional_position", (0.0, 0.0, 0.0))
-        rows.append(
-            MuonRelaxationRow(
-                site_id=UUID(str(entry.get("site_id"))),
-                label=str(entry.get("label", "")),
-                initial_fractional_position=(
-                    float(position[0]),
-                    float(position[1]),
-                    float(position[2]),
-                ),
-                charge_state=str(entry.get("charge_state", "positive_muon")),
-                parameter_values=dict(entry.get("parameter_values", {})),
-                added_advanced=tuple(
-                    str(name) for name in entry.get("added_advanced", ())
-                ),
-            )
-        )
-    return MuonRelaxationConfig(rows=tuple(rows))
 
 
 def _make_context(
@@ -1558,7 +1462,7 @@ Si 0.0 0.0 0.0
 def _stub_pristine_deps(**overrides) -> PristineRelaxationDeps:
     base = dict(
         deserialize_pristine_relaxation_config=lambda _payload: None,
-        serialize_pristine_relaxation_config=_serialize_pristine_config,
+        serialize_pristine_relaxation_config=serialize_pristine_relaxation_config,
         sync_equivalent_pristine_relaxation_mappings=lambda _definition: None,
         pristine_relaxation_form_config=lambda: None,
         pristine_relaxation_row_signature=lambda _row: (),
@@ -2110,7 +2014,7 @@ def _pristine_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
     definition = service.register_pristine_relaxation_definition(
         document,
         input_structure_id=host.id,
-        parameters=_serialize_pristine_config(config),
+        parameters=serialize_pristine_relaxation_config(config),
         output_directory=output_root,
     )
     job = _pristine_job(service, document, "pristine_relax_row1")
@@ -2148,8 +2052,8 @@ def _pristine_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
         )
 
     deps = _stub_pristine_deps(
-        deserialize_pristine_relaxation_config=_deserialize_pristine_config,
-        pristine_relaxation_form_config=lambda: _deserialize_pristine_config(
+        deserialize_pristine_relaxation_config=deserialize_pristine_relaxation_config,
+        pristine_relaxation_form_config=lambda: deserialize_pristine_relaxation_config(
             view.collect_state()
         ),
         pristine_relaxation_row_signature=lambda row: (
@@ -2196,7 +2100,7 @@ def test_pristine_controller_update_row_parameters_preserves_row_job_binding(
     assert definition.parameters["job_ids_by_label"] == {"row1": str(job.id)}
     assert controller.jobs_for_keys(["row1"]) == [job]
 
-    config = _deserialize_pristine_config(definition.parameters["configuration"])
+    config = deserialize_pristine_relaxation_config(definition.parameters["configuration"])
     rows = {row.label: row for row in config.rows}
     assert rows["row1"].parameter_values == {"geom_max_iter": 500}
     assert rows["row2"].parameter_values == {"geom_max_iter": 400}
@@ -2251,7 +2155,7 @@ def test_pristine_controller_update_row_parameters_edits_a_later_unbound_row(
 
     assert controller.update_row_parameters("row2", {"geom_max_iter": 700}) is True
 
-    config = _deserialize_pristine_config(definition.parameters["configuration"])
+    config = deserialize_pristine_relaxation_config(definition.parameters["configuration"])
     rows = {row.label: row for row in config.rows}
     assert rows["row1"].parameter_values == {"geom_max_iter": 120}
     assert rows["row2"].parameter_values == {"geom_max_iter": 700}
@@ -2304,7 +2208,7 @@ def test_pristine_controller_update_row_parameters_without_the_row_in_the_form(
 
     assert controller.update_row_parameters("row1", {"geom_max_iter": 500}) is True
 
-    config = _deserialize_pristine_config(definition.parameters["configuration"])
+    config = deserialize_pristine_relaxation_config(definition.parameters["configuration"])
     rows = {row.label: row for row in config.rows}
     assert rows["row1"].parameter_values == {"geom_max_iter": 500}
     assert definition.parameters["job_ids_by_label"] == {"row1": str(job.id)}
@@ -2557,7 +2461,7 @@ def test_pristine_controller_continue_job_returns_none_when_materialize_fails(
     # before the failed materialize) and the job was still moved to DEFINED
     # (prepare_job_continuation ran) -- it stays recoverable -- but the ON-DISK
     # .param is untouched: this is exactly why the caller must not submit.
-    config = _deserialize_pristine_config(definition.parameters["configuration"])
+    config = deserialize_pristine_relaxation_config(definition.parameters["configuration"])
     assert {row.label: row.parameter_values for row in config.rows}["row1"] == {
         "geom_max_iter": 500
     }
@@ -2697,7 +2601,7 @@ def _stub_muon_deps(**overrides) -> MuonRelaxationDeps:
 
     base = dict(
         deserialize_muon_relaxation_config=lambda _payload: None,
-        serialize_muon_relaxation_config=_serialize_muon_config,
+        serialize_muon_relaxation_config=serialize_muon_relaxation_config,
         sync_equivalent_muon_relaxation_mappings=lambda _definition: None,
         sync_active_muon_relaxation_dashboard_jobs=lambda _definition: None,
         muon_relaxation_form_config=lambda: None,
@@ -3110,17 +3014,17 @@ def _muon_parameter_edit_fixture(service: ProjectService, tmp_path: Path):
     definition = service.register_muon_relaxation_definition(
         document,
         input_structure_id=host.id,
-        parameters=_serialize_muon_config(config),
+        parameters=serialize_muon_relaxation_config(config),
         output_directory=output_root,
     )
     job = _muon_job(service, document, "Site 1", "castep_positivemuon_relaxation")
     definition.parameters["job_ids_by_label"] = {"positivemuon:Site 1": str(job.id)}
 
-    view = _FakeMuonRelaxationView(_serialize_muon_config(config))
+    view = _FakeMuonRelaxationView(serialize_muon_relaxation_config(config))
 
     deps = _stub_muon_deps(
-        deserialize_muon_relaxation_config=_deserialize_muon_config,
-        muon_relaxation_form_config=lambda: _deserialize_muon_config(
+        deserialize_muon_relaxation_config=deserialize_muon_relaxation_config,
+        muon_relaxation_form_config=lambda: deserialize_muon_relaxation_config(
             view.collect_state()
         ),
         muon_relaxation_row_signature=lambda row: (
@@ -3170,7 +3074,7 @@ def test_muon_controller_update_row_parameters_touches_only_the_charge_state_row
     }
     assert controller.jobs_for_keys(["positivemuon:Site 1"]) == [job]
 
-    config = _deserialize_muon_config(definition.parameters["configuration"])
+    config = deserialize_muon_relaxation_config(definition.parameters["configuration"])
     by_charge = {row.charge_state: row for row in config.rows}
     assert by_charge["positive_muon"].parameter_values == {"geom_max_iter": 500}
     # The muonium row shares the label and is left untouched.
@@ -3231,7 +3135,7 @@ def test_muon_controller_update_row_parameters_edits_the_second_charge_state_row
         is True
     )
 
-    config = _deserialize_muon_config(definition.parameters["configuration"])
+    config = deserialize_muon_relaxation_config(definition.parameters["configuration"])
     by_charge = {row.charge_state: row for row in config.rows}
     assert by_charge["positive_muon"].parameter_values == {"geom_max_iter": 120}
     assert by_charge["muonium"].parameter_values == {"geom_max_iter": 700}
@@ -3295,7 +3199,7 @@ def test_muon_controller_update_row_parameters_without_the_row_in_the_form(
         is True
     )
 
-    config = _deserialize_muon_config(definition.parameters["configuration"])
+    config = deserialize_muon_relaxation_config(definition.parameters["configuration"])
     by_charge = {row.charge_state: row for row in config.rows}
     assert by_charge["positive_muon"].parameter_values == {"geom_max_iter": 500}
     assert by_charge["muonium"].parameter_values == {"geom_max_iter": 400}
@@ -3554,7 +3458,7 @@ def test_muon_controller_continue_job_returns_none_when_materialize_fails(
     result = controller.continue_job("positivemuon:Site 1", {"geom_max_iter": 500})
 
     assert result is None
-    config = _deserialize_muon_config(definition.parameters["configuration"])
+    config = deserialize_muon_relaxation_config(definition.parameters["configuration"])
     by_charge = {row.charge_state: row for row in config.rows}
     assert by_charge["positive_muon"].parameter_values == {"geom_max_iter": 500}
     assert job.status == JobStatus.DEFINED
