@@ -377,3 +377,19 @@ keyboard Delete key (Backspace on macOS) before relaxation jobs are
 configured; only rows still marked as ``generated`` are deleted.  Press
 Escape to clear the selection.  Older project files that used the legacy
 ``candidate`` status are normalized to ``generated`` when loaded.
+
+Generation stops with an explicit error, shown in the generation tab, when the
+distance constraints cannot be satisfied or the requested element is not in
+the host structure. The random seed used by the generators is internal; the
+generation setup does not expose it.
+
+Related Methods
+---------------
+
+The element-attached method is a deterministic seeding heuristic that gives
+chemically sensible starts near selected species; final site assignment still
+requires structural relaxation and clustering. For broader context on
+interstitial-site generation and defect-style candidate enumeration, see the
+``pymatgen-analysis-defects`` interstitial-generator documentation and the
+``pymuon-suite`` AIRSS and UEP workflow material referenced in
+:doc:`uep_workflow`.

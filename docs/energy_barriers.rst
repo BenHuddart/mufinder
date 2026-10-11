@@ -147,7 +147,8 @@ k-point grid to preserve equivalent reciprocal-space sampling density relative
 to the project's recommended reference lattice. The settings of the reactant
 endpoint's relaxation then override them where its output ``.cell`` and
 ``.param`` are available: its k-point grid, cut-off energy, exchange-correlation
-functional, and spin treatment, so the band is computed on the same numerical
+functional, and spin treatment (read from the source files as for
+:doc:`quantum_corrections`), so the band is computed on the same numerical
 footing as the structures it connects. Row-level configuration remains
 authoritative, so a specific path can still override any of these without
 affecting the rest of the project.

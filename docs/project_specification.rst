@@ -179,8 +179,8 @@ Remote (HPC) execution
   Redwood/Glamdring preset exists; addqueue clusters expose partition,
   memory-per-process and comment runtime controls and allow a blank walltime,
   while script-based SLURM clusters require one.
-- Scheduler command resolution probes the non-interactive SSH shell first and
-  then uses configured absolute command-path overrides.
+- Scheduler command resolution uses a configured absolute command path when
+  one is set and otherwise probes the non-interactive SSH shell.
 - The dashboard tracks cluster name and remote scheduler job id alongside
   status; queue monitoring supports periodic polling and manual refresh;
   connection state is surfaced with a status indicator and last-checked
@@ -315,7 +315,7 @@ Convergence testing
   method metadata used to determine it. Project-level defaults, including the
   cutoff, are visible from the GUI.
 - The k-point spacing and grid mapping follows
-  ``docs/castep/kpoint_spacing_convention.md``.
+  :doc:`castep/kpoint_spacing_convention`.
 
 Project defaults
 ~~~~~~~~~~~~~~~~
