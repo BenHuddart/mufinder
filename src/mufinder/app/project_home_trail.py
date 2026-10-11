@@ -1,24 +1,60 @@
-"""Project home page: the clickable trail map and its workflow landmarks.
+"""Project home page: the expedition chart, its field notes and the cell survey.
 
-``WorkflowDefinition`` describes the workflow tree that the project navigator
-and the home trail are built from, ``ProjectTrailDestination`` one landmark on
-the trail, ``ProjectHomeTrailWidget`` paints the map and emits the route of the
-landmark the user clicks, and ``ConstructionSignWidget`` stands in for a
-workflow page that is not yet available.
+``WorkflowDefinition`` describes the workflow tree the project navigator is
+built from. ``ProjectHomeChartWidget`` draws the workflow stages as waypoints
+joined by their dependencies (solid when required, dashed when recommended,
+dotted when optional), marks each stage's progress and the stage the user last
+worked on, and emits the stage the user picks. ``FieldNotesPanel`` shows that
+stage's facts, what it needs and a link to open it. ``ProjectHomeWidget`` lays
+the three parts out with the cell survey from
+:mod:`mufinder.app.cell_survey_widget`. ``ConstructionSignWidget`` stands in for
+a workflow page that is not yet available.
+
+The stages, dependencies and progress come from
+:mod:`mufinder.services.project_summary`; this module only draws them.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import math
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QKeyEvent, QPainter, QPainterPath, QPen, QPolygonF
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QToolTip,
+    QVBoxLayout,
+    QWidget,
+)
 
-from mufinder.app.theme import THEME_LIGHT, body_font_family, current_palette, heading_font_family, light_palette
-from mufinder.branding import project_home_color_map_path, project_home_map_path
+from mufinder.app.cell_survey_widget import CellSurveyWidget
+from mufinder.app.theme import (
+    body_font_family,
+    current_palette,
+    heading_font_family,
+    style_hint_text,
+    style_section_title,
+    style_warning_text,
+)
+from mufinder.services.project_summary import (
+    STAGE_DEPENDENCIES,
+    STAGE_GROUPS,
+    DependencyKind,
+    ProjectSummary,
+    StageStatus,
+    StageSummary,
+    group_stage_keys,
+    summarize_project,
+)
+from mufinder.services.project_survey import discovered_sites_layer, survey_layers
+from mufinder.services.project_document import active_host_structure
 
 if TYPE_CHECKING:
     from mufinder.services.project_service import ProjectDocument
@@ -37,741 +73,588 @@ class WorkflowDefinition:
     children: tuple["WorkflowDefinition", ...] = ()
 
 
-@dataclass(frozen=True, slots=True)
-class ProjectTrailDestination:
-    """Describe one clickable landmark on the project home trail."""
-
-    title: str
-    route: str
-    theme: str
-    completed: bool = False
-    completion_goal: str | None = None
-    placement: str = "trail"
+_STATUS_TEXT = {
+    StageStatus.COMPLETE: "Complete",
+    StageStatus.IN_PROGRESS: "In progress",
+    StageStatus.NOT_STARTED: "Not started",
+}
 
 
-class ProjectHomeTrailWidget(QWidget):
-    """Paint the clickable project-home trail map."""
+class ProjectHomeChartWidget(QWidget):
+    """Draw the workflow stages as an explorer's chart and let the user pick one.
 
+    A click selects a stage (``stage_selected``); a double-click, Return or
+    Enter opens it (``route_requested``). The arrow keys walk the stages in
+    workflow order.
+    """
+
+    stage_selected = Signal(str)
     route_requested = Signal(str)
 
-    _SOURCE_WIDTH = 1536.0
-    _SOURCE_HEIGHT = 1024.0
-    _ARTWORK_SOURCE_REGION = QRectF(80.0, 44.0, 1421.0, 800.0)
-    _SIGN_REGIONS = {
-        "host_structure": QRectF(114.0, 340.0, 196.0, 46.0),
-        "supercell_editor": QRectF(422.0, 315.0, 262.0, 46.0),
-        "convergence_cutoff": QRectF(356.0, 503.0, 252.0, 46.0),
-        "convergence_kpoint": QRectF(763.0, 311.0, 220.0, 46.0),
-        "pristine_relaxation": QRectF(835.0, 502.0, 250.0, 46.0),
-        "uep": QRectF(1078.0, 276.0, 164.0, 47.0),
-        "muon_candidates": QRectF(1275.0, 382.0, 201.0, 47.0),
-        "magnetic_fields": QRectF(1128.0, 586.0, 196.0, 47.0),
-        "quantum_corrections": QRectF(711.0, 758.0, 225.0, 47.0),
-        "energy_barriers": QRectF(224.0, 747.0, 245.0, 47.0),
+    #: Where each stage sits, as fractions of the chart's drawing area.
+    NODE_POSITIONS: dict[str, tuple[float, float]] = {
+        "host_structure": (0.05, 0.42),
+        "supercell_editor": (0.10, 0.86),
+        "convergence_cutoff": (0.22, 0.22),
+        "convergence_kpoint": (0.22, 0.62),
+        "pristine_relaxation": (0.37, 0.86),
+        "uep": (0.40, 0.12),
+        "muon_candidates": (0.52, 0.42),
+        "muon_relaxations": (0.635, 0.42),
+        "muon_analysis": (0.75, 0.42),
+        "magnetic_fields": (0.93, 0.12),
+        "quantum_corrections": (0.94, 0.42),
+        "energy_barriers": (0.93, 0.80),
     }
-    _SIGN_TEXT_INSETS = {
-        "host_structure": (12.0, 1.0, 14.0, 10.0),
-        "supercell_editor": (14.0, 1.0, 16.0, 10.0),
-        "convergence_cutoff": (12.0, 1.0, 14.0, 10.0),
-        "convergence_kpoint": (12.0, 1.0, 14.0, 10.0),
-        "pristine_relaxation": (14.0, 1.0, 16.0, 10.0),
-        "uep": (14.0, 1.0, 16.0, 10.0),
-        "muon_candidates": (8.0, 1.0, 10.0, 10.0),
-        "magnetic_fields": (6.0, 1.0, 8.0, 10.0),
-        "quantum_corrections": (6.0, 1.0, 8.0, 10.0),
-        "energy_barriers": (14.0, 1.0, 16.0, 10.0),
-    }
-    _SIGN_TEXT_OFFSETS = {
-        "host_structure": (0.0, 6.0),
-        "supercell_editor": (-16.0, 3.0),
-        "convergence_cutoff": (-20.0, 6.0),
-        "convergence_kpoint": (-5.0, 5.0),
-        "pristine_relaxation": (-12.0, 6.0),
-        "muon_candidates": (9.0, -3.0),
-        "magnetic_fields": (0.0, 12.0),
-        "quantum_corrections": (12.0, 3.0),
-    }
-    _SIGN_HIGHLIGHT_OFFSETS = {
-        "supercell_editor": (-14.0, 0.0),
-        "convergence_cutoff": (-14.0, 0.0),
-        "muon_candidates": (8.0, -5.0),
-    }
-    _SIGN_TEXT_MAX_SIZES = {
-        "magnetic_fields": 28,
-        "quantum_corrections": 28,
-    }
-    _LANDMARK_REGIONS = {
-        "host_structure": QRectF(70.0, 100.0, 260.0, 230.0),
-        "supercell_editor": QRectF(385.0, 30.0, 330.0, 275.0),
-        "convergence_cutoff": QRectF(280.0, 370.0, 465.0, 165.0),
-        "convergence_kpoint": QRectF(720.0, 70.0, 260.0, 220.0),
-        "pristine_relaxation": QRectF(780.0, 360.0, 330.0, 150.0),
-        "uep": QRectF(965.0, 35.0, 295.0, 210.0),
-        "muon_candidates": QRectF(1288.0, 130.0, 225.0, 240.0),
-        "magnetic_fields": QRectF(1070.0, 420.0, 290.0, 180.0),
-        "quantum_corrections": QRectF(690.0, 590.0, 285.0, 200.0),
-        "energy_barriers": QRectF(210.0, 585.0, 360.0, 195.0),
-        "provenance_log": QRectF(1080.0, 675.0, 355.0, 170.0),
-    }
-    _CHECK_POINTS = {
-        "host_structure": QPointF(294.0, 331.0),
-        "supercell_editor": QPointF(660.0, 304.0),
-        "convergence_cutoff": QPointF(580.0, 492.0),
-        "convergence_kpoint": QPointF(982.0, 301.0),
-        "pristine_relaxation": QPointF(1062.0, 492.0),
-        "uep": QPointF(1223.0, 274.0),
-        "muon_candidates": QPointF(1468.0, 364.0),
-        "magnetic_fields": QPointF(1320.0, 578.0),
-        "quantum_corrections": QPointF(913.0, 756.0),
-        "energy_barriers": QPointF(450.0, 745.0),
-    }
-    # Banner height (logical px) at a typical window; signpost label sizes are
-    # scaled relative to this so they stay proportionate as the map grows/shrinks.
-    _SIGN_REF_BANNER_HEIGHT = 34.0
+    _CONTOURS = ((0.31, 0.47, 0.07, 0.13), (0.84, 0.62, 0.06, 0.10), (0.56, 0.80, 0.09, 0.08))
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._destinations: list[ProjectTrailDestination] = []
-        self._hit_rects: dict[str, QRectF] = {}
-        self._hovered_route: str | None = None
-        self._map_pixmap = QPixmap(project_home_map_path())
-        self._color_map_pixmap = QPixmap(project_home_color_map_path())
-        self.setObjectName("projectHomeTrail")
-        self.setMinimumSize(720, 480)
+        self._summary: ProjectSummary | None = None
+        self._selected: str | None = None
+        self._hovered: str | None = None
+        self.setObjectName("projectHomeChart")
+        self.setMinimumSize(640, 260)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
-        self.setAccessibleName("Project workflow home trail")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName("Project workflow chart")
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt API naming.
-        return QSize(960, 640)
+        return QSize(960, 340)
 
-    def set_destinations(self, destinations: list[ProjectTrailDestination]) -> None:
-        self._destinations = list(destinations)
-        self.setAccessibleName(
-            "Project workflow home trail: "
-            + ", ".join(destination.title for destination in self._destinations)
-        )
+    # --- state ------------------------------------------------------------------
+
+    def set_summary(self, summary: ProjectSummary | None) -> None:
+        self._summary = summary
+        keys = {stage.key for stage in summary.stages} if summary is not None else set()
+        if self._selected not in keys:
+            self._selected = summary.current_stage if summary is not None else None
+        self._update_accessible_name()
         self.update()
+
+    def summary(self) -> ProjectSummary | None:
+        return self._summary
+
+    def selected_stage(self) -> str | None:
+        return self._selected
+
+    def select_stage(self, key: str) -> None:
+        if self._summary is None or self._summary.stage(key) is None or key == self._selected:
+            return
+        self._selected = key
+        self._update_accessible_name()
+        self.update()
+        self.stage_selected.emit(key)
+
+    def stage_at(self, point: QPointF) -> str | None:
+        radius = self._node_radius() + 6.0
+        for key, center in self._node_centers().items():
+            if math.hypot(point.x() - center.x(), point.y() - center.y()) <= radius:
+                return key
+            if self._label_rect(key, center).contains(point):
+                return key
+        return None
+
+    def node_center(self, key: str) -> QPointF:
+        return self._node_centers()[key]
+
+    # --- events -----------------------------------------------------------------
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         if event.button() == Qt.MouseButton.LeftButton:
-            point = event.position()
-            for route, rect in self._destination_hit_rects().items():
-                if rect.contains(point):
-                    self.route_requested.emit(route)
-                    event.accept()
-                    return
+            key = self.stage_at(event.position())
+            if key is not None:
+                self.select_stage(key)
+                event.accept()
+                return
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        key = self.stage_at(event.position()) if event.button() == Qt.MouseButton.LeftButton else None
+        if key is not None:
+            self.select_stage(key)
+            self.route_requested.emit(key)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        hovered_route = self._route_at(event.position())
-        if hovered_route != self._hovered_route:
-            self._hovered_route = hovered_route
-            self.setCursor(Qt.CursorShape.PointingHandCursor if hovered_route else Qt.CursorShape.ArrowCursor)
+        key = self.stage_at(event.position())
+        if key != self._hovered:
+            self._hovered = key
+            self.setCursor(Qt.CursorShape.PointingHandCursor if key else Qt.CursorShape.ArrowCursor)
             self.update()
+        stage = self._summary.stage(key) if self._summary is not None and key else None
+        if stage is not None:
+            QToolTip.showText(event.globalPosition().toPoint(), f"{stage.title}: {_STATUS_TEXT[stage.status]}", self)
+        else:
+            QToolTip.hideText()
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
-        if self._hovered_route is not None:
-            self._hovered_route = None
+        if self._hovered is not None:
+            self._hovered = None
             self.unsetCursor()
             self.update()
         super().leaveEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt API naming.
+        if self._summary is None or self._selected is None:
+            super().keyPressEvent(event)
+            return
+        keys = [stage.key for stage in self._summary.stages]
+        index = keys.index(self._selected)
+        if event.key() in (Qt.Key.Key_Right, Qt.Key.Key_Down):
+            self.select_stage(keys[min(len(keys) - 1, index + 1)])
+        elif event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Up):
+            self.select_stage(keys[max(0, index - 1)])
+        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.route_requested.emit(self._selected)
+        else:
+            super().keyPressEvent(event)
+            return
+        event.accept()
+
+    # --- geometry ---------------------------------------------------------------
+
+    def _chart_rect(self) -> QRectF:
+        margin_x = max(36.0, self.width() * 0.035)
+        return QRectF(self.rect()).adjusted(margin_x, 30.0, -margin_x, -46.0)
+
+    def _node_radius(self) -> float:
+        return max(9.0, min(15.0, min(self.width(), self.height()) * 0.034))
+
+    def _node_centers(self) -> dict[str, QPointF]:
+        area = self._chart_rect()
+        stages = self._summary.stages if self._summary is not None else ()
+        return {
+            stage.key: QPointF(
+                area.left() + area.width() * self.NODE_POSITIONS[stage.key][0],
+                area.top() + area.height() * self.NODE_POSITIONS[stage.key][1],
+            )
+            for stage in stages
+            if stage.key in self.NODE_POSITIONS
+        }
+
+    def _label_font(self, *, bold: bool = False) -> QFont:
+        font = QFont(body_font_family())
+        font.setPixelSize(round(max(11.0, min(14.0, self.height() * 0.036))))
+        font.setBold(bold)
+        return font
+
+    def _label_rect(self, key: str, center: QPointF) -> QRectF:
+        title = self._summary.stage(key).title if self._summary is not None and self._summary.stage(key) else key
+        metrics = QFontMetricsF(self._label_font(bold=True))
+        width = metrics.horizontalAdvance(title) + 8.0
+        top = center.y() + self._node_radius() + 4.0
+        return QRectF(center.x() - width / 2.0, top, width, metrics.height() + 2.0)
+
+    def _group_rects(self, centers: dict[str, QPointF]) -> dict[str, QRectF]:
+        rects: dict[str, QRectF] = {}
+        for group in STAGE_GROUPS:
+            members = [key for key in group_stage_keys(group.key) if key in centers]
+            if not members:
+                continue
+            rect = QRectF()
+            for key in members:
+                center = centers[key]
+                radius = self._node_radius()
+                node_rect = QRectF(center.x() - radius, center.y() - radius, 2 * radius, 2 * radius)
+                rect = rect.united(node_rect.united(self._label_rect(key, center)))
+            rect = rect.adjusted(-16.0, -26.0, 16.0, 10.0)
+            title_width = QFontMetricsF(self._group_font()).horizontalAdvance(group.title) + 28.0
+            if rect.width() < title_width:
+                rect.adjust(-(title_width - rect.width()) / 2.0, 0.0, (title_width - rect.width()) / 2.0, 0.0)
+            rects[group.key] = rect
+        return rects
+
+    def _group_font(self) -> QFont:
+        font = QFont(heading_font_family())
+        font.setItalic(True)
+        font.setPixelSize(round(max(11.0, min(15.0, self.height() * 0.04))))
+        return font
+
+    def _anchor(self, key: str, centers: dict[str, QPointF], groups: dict[str, QRectF], *, outgoing: bool) -> QPointF | None:
+        if key in centers:
+            return centers[key]
+        rect = groups.get(key)
+        if rect is None:
+            return None
+        return QPointF(rect.right() if outgoing else rect.left(), rect.center().y())
+
+    # --- painting ---------------------------------------------------------------
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
         super().paintEvent(event)
         palette = current_palette()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
         painter.fillRect(self.rect(), QColor(palette.bg_primary))
-        map_rect = self._map_rect()
-        if self._map_pixmap.isNull():
-            self._paint_map_background(painter, palette, map_rect)
-            self._paint_terrain(painter, palette, map_rect)
-            self._paint_trail_path(painter, palette, map_rect)
-            for destination in self._destinations:
-                self._paint_destination(painter, palette, destination, map_rect)
-        else:
-            self._paint_map_artwork(painter, map_rect)
-        self._hit_rects = self._destination_hit_rects(map_rect)
-
-        self._paint_hover_region(painter, palette, map_rect)
-        if not self._map_pixmap.isNull():
-            self._paint_sign_titles(painter, palette, map_rect)
-        self._paint_completion_seals(painter, palette, map_rect)
-
+        self._paint_contours(painter, palette)
+        if self._summary is None:
+            painter.end()
+            return
+        centers = self._node_centers()
+        groups = self._group_rects(centers)
+        self._paint_groups(painter, palette, groups)
+        self._paint_edges(painter, palette, centers, groups)
+        for stage in self._summary.stages:
+            if stage.key in centers:
+                self._paint_node(painter, palette, stage, centers[stage.key])
+        self._paint_compass(painter, palette)
+        self._paint_legend(painter, palette)
         painter.end()
 
-    def _map_rect(self) -> QRectF:
-        available = QRectF(self.rect()).adjusted(8.0, 8.0, -8.0, -8.0)
-        if available.isEmpty():
-            return QRectF()
-        source_region = self._active_source_region()
-        source_ratio = source_region.width() / source_region.height()
-        available_ratio = available.width() / max(1.0, available.height())
-        if available_ratio > source_ratio:
-            height = available.height()
-            width = height * source_ratio
-        else:
-            width = available.width()
-            height = width / source_ratio
-        return QRectF(
-            available.center().x() - width / 2.0,
-            available.center().y() - height / 2.0,
-            width,
-            height,
-        )
-
-    def _active_source_region(self) -> QRectF:
-        if self._map_pixmap.isNull():
-            return QRectF(0.0, 0.0, self._SOURCE_WIDTH, self._SOURCE_HEIGHT)
-        return self._ARTWORK_SOURCE_REGION
-
-    def _map_rect_from_source(self, source_rect: QRectF, map_rect: QRectF | None = None) -> QRectF:
-        target = map_rect if map_rect is not None else self._map_rect()
-        source_region = self._active_source_region()
-        return QRectF(
-            target.left() + target.width() * ((source_rect.left() - source_region.left()) / source_region.width()),
-            target.top() + target.height() * ((source_rect.top() - source_region.top()) / source_region.height()),
-            target.width() * (source_rect.width() / source_region.width()),
-            target.height() * (source_rect.height() / source_region.height()),
-        )
-
-    def _map_point_from_source(self, point: QPointF, map_rect: QRectF | None = None) -> QPointF:
-        target = map_rect if map_rect is not None else self._map_rect()
-        source_region = self._active_source_region()
-        return QPointF(
-            target.left() + target.width() * ((point.x() - source_region.left()) / source_region.width()),
-            target.top() + target.height() * ((point.y() - source_region.top()) / source_region.height()),
-        )
-
-    def _destination_hit_rects(self, map_rect: QRectF | None = None) -> dict[str, QRectF]:
-        hit_rects: dict[str, QRectF] = {}
-        for destination in self._destinations:
-            region = self._LANDMARK_REGIONS.get(destination.route)
-            if region is None:
-                region = self._SIGN_REGIONS.get(destination.route)
-            if region is not None:
-                hit_rects[destination.route] = self._map_rect_from_source(region, map_rect).adjusted(
-                    -8.0,
-                    -8.0,
-                    8.0,
-                    8.0,
-                )
-                sign_region = self._SIGN_REGIONS.get(destination.route)
-                if sign_region is not None:
-                    hit_rects[destination.route] = hit_rects[destination.route].united(
-                        self._map_rect_from_source(sign_region, map_rect).adjusted(-6.0, -6.0, 6.0, 6.0)
+    def _paint_contours(self, painter: QPainter, palette) -> None:
+        colour = QColor(palette.border)
+        colour.setAlpha(70)
+        painter.setPen(QPen(colour, 1.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        width, height = float(self.width()), float(self.height())
+        for cx, cy, rx, ry in self._CONTOURS:
+            for ring in range(3):
+                scale = 1.0 - ring * 0.3
+                path = QPainterPath()
+                for step in range(49):
+                    angle = 2.0 * math.pi * step / 48.0
+                    wobble = 1.0 + 0.08 * math.sin(3.0 * angle + cx * 10.0) + 0.05 * math.cos(5.0 * angle + cy * 7.0)
+                    point = QPointF(
+                        width * (cx + rx * scale * wobble * math.cos(angle)),
+                        height * (cy + ry * scale * wobble * math.sin(angle)),
                     )
-        return hit_rects
+                    if step == 0:
+                        path.moveTo(point)
+                    else:
+                        path.lineTo(point)
+                painter.drawPath(path)
 
-    def _route_at(self, point: QPointF) -> str | None:
-        for route, rect in self._destination_hit_rects().items():
-            if rect.contains(point):
-                return route
-        return None
-
-    def _paint_map_background(self, painter: QPainter, palette, map_rect: QRectF) -> None:
-        if map_rect.isEmpty():
-            return
-
-        painter.setPen(QPen(QColor(palette.border).darker(135), 2.0))
-        painter.setBrush(QColor(palette.bg_surface))
-        painter.drawRoundedRect(map_rect, 18.0, 18.0)
-
-        inner = map_rect.adjusted(10.0, 10.0, -10.0, -10.0)
-        painter.setPen(QPen(QColor(palette.border), 1.0, Qt.PenStyle.DotLine))
-        painter.setBrush(QColor(palette.bg_primary))
-        painter.drawRoundedRect(inner, 12.0, 12.0)
-
-        painter.setPen(QPen(QColor(palette.border), 1.0, Qt.PenStyle.DotLine))
-        for index in range(4):
-            y = map_rect.top() + map_rect.height() * (0.18 + index * 0.14)
-            path = QPainterPath(QPointF(map_rect.left() + 24.0, y))
-            path.cubicTo(
-                QPointF(map_rect.left() + map_rect.width() * 0.28, y - 16.0),
-                QPointF(map_rect.left() + map_rect.width() * 0.58, y + 18.0),
-                QPointF(map_rect.right() - 24.0, y - 6.0),
+    def _paint_groups(self, painter: QPainter, palette, groups: dict[str, QRectF]) -> None:
+        font = self._group_font()
+        for group in STAGE_GROUPS:
+            rect = groups.get(group.key)
+            if rect is None:
+                continue
+            border = QColor(palette.border)
+            painter.setPen(QPen(border, 1.0, Qt.PenStyle.DashLine))
+            fill = QColor(palette.bg_surface)
+            fill.setAlpha(150)
+            painter.setBrush(fill)
+            painter.drawRoundedRect(rect, 14.0, 14.0)
+            painter.setFont(font)
+            painter.setPen(QColor(palette.text_muted))
+            painter.drawText(
+                rect.adjusted(12.0, 4.0, -12.0, 0.0),
+                int(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft),
+                group.title,
             )
+
+    def _paint_edges(self, painter: QPainter, palette, centers: dict[str, QPointF], groups: dict[str, QRectF]) -> None:
+        assert self._summary is not None
+        statuses = {stage.key: stage.status for stage in self._summary.stages}
+        for dependency in STAGE_DEPENDENCIES:
+            start = self._anchor(dependency.source, centers, groups, outgoing=True)
+            end = self._anchor(dependency.target, centers, groups, outgoing=False)
+            if start is None or end is None:
+                continue
+            travelled = statuses.get(dependency.target, StageStatus.NOT_STARTED) != StageStatus.NOT_STARTED
+            colour = QColor(palette.text_muted if travelled else palette.border)
+            width = 2.2 if dependency.kind == DependencyKind.REQUIRED else 1.6
+            pen = QPen(colour, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+            if dependency.kind == DependencyKind.RECOMMENDED:
+                pen.setDashPattern([5.0, 3.5])
+            elif dependency.kind == DependencyKind.OPTIONAL:
+                pen.setDashPattern([0.4, 3.2])
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            mid_x = (start.x() + end.x()) / 2.0
+            path = QPainterPath(start)
+            path.cubicTo(QPointF(mid_x, start.y()), QPointF(mid_x, end.y()), end)
             painter.drawPath(path)
 
-    def _source_rect(self, left: float, top: float, width: float, height: float, map_rect: QRectF) -> QRectF:
-        return self._map_rect_from_source(QRectF(left, top, width, height), map_rect)
+    def _paint_node(self, painter: QPainter, palette, stage: StageSummary, center: QPointF) -> None:
+        radius = self._node_radius()
+        if stage.key in (self._selected, self._hovered):
+            halo = QColor(palette.accent)
+            halo.setAlpha(80 if stage.key == self._selected else 40)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(halo)
+            painter.drawEllipse(center, radius + 6.0, radius + 6.0)
 
-    def _paint_map_artwork(self, painter: QPainter, map_rect: QRectF) -> None:
-        if map_rect.isEmpty():
-            return
-        painter.drawPixmap(map_rect, self._map_pixmap, self._active_source_region())
-
-    def _paint_terrain(self, painter: QPainter, palette, map_rect: QRectF) -> None:
-        water = QColor("#2E7D8A" if palette.mode == THEME_LIGHT else "#2A6472")
-        water.setAlpha(34 if palette.mode == THEME_LIGHT else 48)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(water)
-        painter.drawEllipse(self._source_rect(-166.0, 430.0, 250.0, 190.0, map_rect))
-        painter.drawEllipse(self._source_rect(1460.0, 430.0, 210.0, 212.0, map_rect))
-        painter.drawEllipse(self._source_rect(740.0, 982.0, 430.0, 72.0, map_rect))
-
-        wave_pen = QColor(palette.bg_surface)
-        wave_pen.setAlpha(120)
-        painter.setPen(QPen(wave_pen, 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        for offset in (0.0, 20.0):
-            wave = QPainterPath(self._map_point_from_source(QPointF(22.0, 486.0 + offset), map_rect))
-            wave.cubicTo(
-                self._map_point_from_source(QPointF(64.0, 462.0 + offset), map_rect),
-                self._map_point_from_source(QPointF(96.0, 512.0 + offset), map_rect),
-                self._map_point_from_source(QPointF(132.0, 488.0 + offset), map_rect),
-            )
-            painter.drawPath(wave)
-
-        for source_rect in (
-            QRectF(260.0, 72.0, 112.0, 136.0),
-            QRectF(675.0, 92.0, 96.0, 86.0),
-            QRectF(1298.0, 86.0, 118.0, 92.0),
-            QRectF(280.0, 638.0, 250.0, 188.0),
-            QRectF(1018.0, 508.0, 95.0, 76.0),
-        ):
-            painter.save()
-            painter.setOpacity(0.28)
-            self._draw_mountain_group(painter, palette, self._map_rect_from_source(source_rect, map_rect))
-            painter.restore()
-
-        for point in (
-            QPointF(210.0, 410.0),
-            QPointF(182.0, 556.0),
-            QPointF(258.0, 585.0),
-            QPointF(710.0, 862.0),
-            QPointF(1260.0, 500.0),
-            QPointF(1372.0, 532.0),
-            QPointF(690.0, 230.0),
-            QPointF(1186.0, 164.0),
-        ):
-            painter.save()
-            painter.setOpacity(0.5)
-            self._draw_tree(painter, palette, self._map_point_from_source(point, map_rect), map_rect.width() * 0.018)
-            painter.restore()
-
-    def _paint_trail_path(self, painter: QPainter, palette, map_rect: QRectF) -> None:
-        trail_points = [
-            QPointF(300.0, 370.0),
-            QPointF(378.0, 320.0),
-            QPointF(520.0, 338.0),
-            QPointF(748.0, 338.0),
-            QPointF(842.0, 414.0),
-            QPointF(860.0, 560.0),
-            QPointF(650.0, 730.0),
-            QPointF(480.0, 824.0),
-            QPointF(735.0, 778.0),
-            QPointF(978.0, 636.0),
-            QPointF(1150.0, 628.0),
-            QPointF(1230.0, 518.0),
-            QPointF(1228.0, 378.0),
-            QPointF(1335.0, 392.0),
-        ]
-        if len(trail_points) < 2:
-            return
-
-        path = QPainterPath(self._map_point_from_source(trail_points[0], map_rect))
-        for start, end in zip(trail_points, trail_points[1:]):
-            start_point = self._map_point_from_source(start, map_rect)
-            end_point = self._map_point_from_source(end, map_rect)
-            mid_x = (start_point.x() + end_point.x()) / 2.0
-            path.cubicTo(QPointF(mid_x, start_point.y()), QPointF(mid_x, end_point.y()), end_point)
-
-        painter.setPen(
-            QPen(
-                QColor(palette.text_muted).darker(130),
-                max(2.0, map_rect.width() * 0.008),
-                Qt.PenStyle.DotLine,
-                Qt.PenCapStyle.RoundCap,
-            )
-        )
-        painter.drawPath(path)
-
-    def _draw_mountain_group(self, painter: QPainter, palette, rect: QRectF) -> None:
-        painter.setPen(QPen(QColor(palette.border), 1.1))
-        painter.setBrush(QColor(palette.bg_surface_alt))
-        for x_frac, peak_frac, width_frac in ((0.0, 0.18, 0.48), (0.28, 0.02, 0.52), (0.58, 0.24, 0.42)):
-            left = rect.left() + rect.width() * x_frac
-            width = rect.width() * width_frac
-            peak = QPointF(left + width * 0.5, rect.top() + rect.height() * peak_frac)
-            painter.drawPolygon(
-                QPolygonF(
-                    [
-                        QPointF(left, rect.bottom()),
-                        peak,
-                        QPointF(left + width, rect.bottom()),
-                    ]
-                )
-            )
-            painter.setPen(QPen(QColor(palette.bg_surface), 1.0))
-            painter.drawLine(peak, QPointF(peak.x() - width * 0.12, peak.y() + rect.height() * 0.18))
-            painter.drawLine(peak, QPointF(peak.x() + width * 0.14, peak.y() + rect.height() * 0.22))
+        if stage.status == StageStatus.COMPLETE:
             painter.setPen(QPen(QColor(palette.border), 1.1))
+            painter.setBrush(QColor(palette.seal_gold))
+            painter.drawEllipse(center, radius, radius)
+            tick = QPen(QColor(palette.bg_surface), max(2.0, radius * 0.18), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+            painter.setPen(tick)
+            scale = radius / 14.0
+            painter.drawLine(QPointF(center.x() - 6.0 * scale, center.y()), QPointF(center.x() - 2.0 * scale, center.y() + 5.0 * scale))
+            painter.drawLine(QPointF(center.x() - 2.0 * scale, center.y() + 5.0 * scale), QPointF(center.x() + 7.0 * scale, center.y() - 6.0 * scale))
+        elif stage.status == StageStatus.IN_PROGRESS:
+            painter.setPen(QPen(QColor(palette.accent), 2.2))
+            painter.setBrush(QColor(palette.bg_surface))
+            painter.drawEllipse(center, radius, radius)
+            half = QPainterPath(center)
+            inner = QRectF(center.x() - radius * 0.62, center.y() - radius * 0.62, radius * 1.24, radius * 1.24)
+            half.arcTo(inner, 90.0, -180.0)
+            half.closeSubpath()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(palette.accent))
+            painter.drawPath(half)
+        else:
+            ring = QColor(palette.text_muted)
+            if stage.unmet_requirements:
+                ring.setAlpha(140)
+            pen = QPen(ring, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+            pen.setDashPattern([1.5, 2.5])
+            painter.setPen(pen)
+            painter.setBrush(QColor(palette.bg_primary))
+            painter.drawEllipse(center, radius, radius)
 
-    def _draw_tree(self, painter: QPainter, palette, base: QPointF, size: float) -> None:
-        painter.setPen(QPen(QColor(palette.border).darker(135), 1.0))
-        painter.setBrush(QColor("#5D9A57" if palette.mode == THEME_LIGHT else "#3D7661"))
-        for index in range(3):
-            y = base.y() - size * (0.8 + index * 0.55)
-            half_width = size * (0.75 - index * 0.12)
-            painter.drawPolygon(
-                QPolygonF(
-                    [
-                        QPointF(base.x() - half_width, y + size * 0.7),
-                        QPointF(base.x(), y),
-                        QPointF(base.x() + half_width, y + size * 0.7),
-                    ]
-                )
-            )
-        painter.setPen(QPen(QColor(palette.border).darker(150), 1.4))
-        painter.drawLine(base, QPointF(base.x(), base.y() - size * 0.7))
+        if stage.active_jobs:
+            self._paint_job_badge(painter, palette, center, radius, stage.active_jobs)
+        if self._summary is not None and stage.key == self._summary.current_stage:
+            self._paint_flag(painter, palette, center, radius)
 
-    def _paint_hover_region(self, painter: QPainter, palette, map_rect: QRectF) -> None:
-        if self._hovered_route is None:
-            return
-        rect = self._hit_rects.get(self._hovered_route)
-        if rect is None:
-            return
-        if not self._map_pixmap.isNull() and not self._color_map_pixmap.isNull() and not map_rect.isEmpty():
-            self._paint_colored_destination_artwork(painter, map_rect, self._hovered_route)
+        selected = stage.key == self._selected
+        painter.setFont(self._label_font(bold=selected))
+        label_colour = QColor(palette.text_primary if stage.status != StageStatus.NOT_STARTED else palette.text_muted)
+        painter.setPen(label_colour)
+        painter.drawText(
+            self._label_rect(stage.key, center),
+            int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextSingleLine),
+            stage.title,
+        )
 
-        sign_source = self._SIGN_REGIONS.get(self._hovered_route)
-        if sign_source is None:
-            return
-        rect = self._map_rect_from_source(sign_source, map_rect)
-        highlight_offset = self._SIGN_HIGHLIGHT_OFFSETS.get(self._hovered_route)
-        if highlight_offset is not None:
-            scale = rect.height() / 46.0
-            rect.translate(highlight_offset[0] * scale, highlight_offset[1] * scale)
+    def _paint_job_badge(self, painter: QPainter, palette, center: QPointF, radius: float, count: int) -> None:
+        badge_center = QPointF(center.x() + radius * 0.85, center.y() - radius * 0.85)
+        badge_radius = max(6.5, radius * 0.5)
+        painter.setPen(QPen(QColor(palette.bg_primary), 1.5))
+        painter.setBrush(QColor(palette.status_running))
+        painter.drawEllipse(badge_center, badge_radius, badge_radius)
+        font = QFont(body_font_family())
+        font.setPixelSize(max(9, round(badge_radius * 1.2)))
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor("#FFFFFF"))
+        painter.drawText(
+            QRectF(badge_center.x() - badge_radius, badge_center.y() - badge_radius, 2 * badge_radius, 2 * badge_radius),
+            int(Qt.AlignmentFlag.AlignCenter),
+            str(count) if count < 100 else "99+",
+        )
 
-        painter.save()
-        clip_path = QPainterPath()
-        clip_path.addRoundedRect(rect, 6.0, 6.0)
-        painter.setClipPath(clip_path)
-
-        glow = QColor(palette.seal_gold)
-        glow.setAlpha(70)
+    def _paint_flag(self, painter: QPainter, palette, center: QPointF, radius: float) -> None:
+        base = QPointF(center.x() - radius * 0.7, center.y() - radius * 0.7)
+        top = QPointF(base.x(), base.y() - radius * 1.5)
+        painter.setPen(QPen(QColor(palette.text_primary), 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(base, top)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(glow)
-        painter.drawRoundedRect(rect, 6.0, 6.0)
-
-        wash = QColor("#FFFFFF")
-        wash.setAlpha(46)
-        painter.setBrush(wash)
-        painter.drawRoundedRect(rect.adjusted(3.0, 3.0, -3.0, -3.0), 4.5, 4.5)
-        painter.restore()
-
-    def _paint_colored_destination_artwork(self, painter: QPainter, map_rect: QRectF, route: str) -> None:
-        reveal_path = QPainterPath()
-        landmark_source = self._LANDMARK_REGIONS.get(route)
-        if landmark_source is not None:
-            landmark_rect = self._map_rect_from_source(landmark_source, map_rect).adjusted(-8.0, -8.0, 8.0, 8.0)
-            radius = min(28.0, max(12.0, landmark_rect.height() * 0.18))
-            reveal_path.addRoundedRect(landmark_rect, radius, radius)
-
-        sign_source = self._SIGN_REGIONS.get(route)
-        if sign_source is not None:
-            sign_rect = self._map_rect_from_source(sign_source, map_rect).adjusted(-4.0, -4.0, 4.0, 4.0)
-            reveal_path.addRoundedRect(sign_rect, 8.0, 8.0)
-
-        if reveal_path.isEmpty():
-            return
-
-        painter.save()
-        painter.setClipPath(reveal_path)
-        painter.drawPixmap(map_rect, self._color_map_pixmap, self._active_source_region())
-        painter.restore()
-
-    def _paint_sign_titles(self, painter: QPainter, palette, map_rect: QRectF) -> None:
-        for destination in self._destinations:
-            sign_source = self._SIGN_REGIONS.get(destination.route)
-            if sign_source is None:
-                continue
-            sign_rect = self._map_rect_from_source(sign_source, map_rect)
-            self._draw_sign_title(painter, palette, sign_rect, destination.title, destination.route)
-
-    @staticmethod
-    def _workflow_scroll_label_color() -> QColor:
-        return QColor(light_palette().text_primary)
-
-    @classmethod
-    def _sign_title_pixel_size(cls, route: str, title: str, banner_height: float) -> int:
-        """Pixel size for a signpost label, scaled to the rendered banner.
-
-        A fixed size made labels look generous on small windows but shrink
-        to near-illegible on large or high-DPI displays. Tying the size to the
-        banner height keeps the same proportion at every window size. The
-        reference height matches the banner at a typical window, so the
-        already-tuned default appearance is preserved; the result is floored for
-        legibility and capped so it never overwhelms its banner.
-        """
-
-        base = float(cls._SIGN_TEXT_MAX_SIZES.get(route, 13 if len(title) <= 16 else 11))
-        scale = banner_height / cls._SIGN_REF_BANNER_HEIGHT
-        return round(max(11.0, min(base * scale, base * 2.0)))
-
-    def _draw_sign_title(self, painter: QPainter, palette, rect: QRectF, title: str, route: str) -> None:
-        left, top, right, bottom = self._SIGN_TEXT_INSETS.get(route, (18.0, 5.0, 20.0, 8.0))
-        text_rect = rect.adjusted(left, top, -right, -bottom)
-        offset_x, offset_y = self._SIGN_TEXT_OFFSETS.get(route, (0.0, 0.0))
-        offset_scale = rect.height() / 46.0
-        text_rect.translate(offset_x * offset_scale, offset_y * offset_scale)
-
-        font = QFont(heading_font_family())
-        font.setBold(True)
-        font.setPixelSize(self._sign_title_pixel_size(route, title, rect.height()))
-        while font.pixelSize() > 8 and QFontMetricsF(font).horizontalAdvance(title) > text_rect.width() - 8.0:
-            font.setPixelSize(font.pixelSize() - 1)
-
-        painter.setFont(font)
-        painter.setPen(self._workflow_scroll_label_color())
-        painter.drawText(
-            text_rect,
-            int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine),
-            title,
-        )
-
-    def _paint_completion_seals(self, painter: QPainter, palette, map_rect: QRectF) -> None:
-        completed_routes = {destination.route for destination in self._destinations if destination.completed}
-        for route in completed_routes:
-            source_point = self._CHECK_POINTS.get(route)
-            if source_point is None:
-                continue
-            center = self._map_point_from_source(source_point, map_rect)
-            self._draw_completion_seal(painter, palette, center)
-
-    def _paint_destination(
-        self,
-        painter: QPainter,
-        palette,
-        destination: ProjectTrailDestination,
-        map_rect: QRectF,
-    ) -> None:
-        landmark_source = self._LANDMARK_REGIONS.get(destination.route)
-        sign_source = self._SIGN_REGIONS.get(destination.route)
-        if landmark_source is None or sign_source is None:
-            return
-
-        landmark_rect = self._map_rect_from_source(landmark_source, map_rect)
-        sign_rect = self._map_rect_from_source(sign_source, map_rect)
-
-        self._draw_scaled_landmark(painter, palette, destination.theme, landmark_rect)
-        self._draw_sign(painter, palette, sign_rect, destination.title)
-
-    def _draw_scaled_landmark(self, painter: QPainter, palette, theme: str, rect: QRectF) -> None:
-        if rect.isEmpty():
-            return
-        painter.save()
-        painter.translate(rect.left(), rect.top())
-        painter.scale(rect.width() / 68.0, rect.height() / 54.0)
-        self._draw_landmark(painter, palette, theme, QRectF(0.0, 0.0, 68.0, 54.0))
-        painter.restore()
-
-    def _draw_sign(self, painter: QPainter, palette, rect: QRectF, title: str) -> None:
-        post_x = rect.center().x() - 3.0
-        painter.setPen(QPen(QColor(palette.border).darker(145), 1.0))
-        painter.setBrush(QColor(palette.border).darker(115))
-        painter.drawRoundedRect(QRectF(post_x, rect.bottom() - 2.0, 6.0, 28.0), 2.0, 2.0)
-
-        painter.setPen(QPen(QColor(palette.border).darker(140), 1.1))
-        painter.setBrush(QColor(palette.bg_surface))
-        painter.drawRoundedRect(rect, 6.0, 6.0)
-
-        font = QFont(body_font_family())
-        font.setPixelSize(8 if len(title) > 16 else 9)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(QColor(palette.text_primary))
-        painter.drawText(
-            rect.adjusted(7.0, 3.0, -7.0, -3.0),
-            int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap),
-            title,
-        )
-
-    def _draw_completion_seal(self, painter: QPainter, palette, center: QPointF) -> None:
-        painter.setPen(QPen(QColor(palette.border), 1.1))
-        painter.setBrush(QColor(palette.seal_gold))
-        painter.drawEllipse(center, 14.0, 14.0)
-        painter.setPen(QPen(QColor(palette.bg_surface), 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        painter.drawLine(QPointF(center.x() - 6.0, center.y()), QPointF(center.x() - 2.0, center.y() + 5.0))
-        painter.drawLine(QPointF(center.x() - 2.0, center.y() + 5.0), QPointF(center.x() + 7.0, center.y() - 6.0))
-
-    def _draw_landmark(self, painter: QPainter, palette, theme: str, rect: QRectF) -> None:
-        if theme == "house":
-            self._draw_house(painter, palette, rect)
-        elif theme == "castle":
-            self._draw_castle(painter, palette, rect)
-        elif theme == "ocean":
-            self._draw_ocean(painter, palette, rect)
-        elif theme == "cube":
-            self._draw_cube(painter, palette, rect)
-        elif theme == "hammock":
-            self._draw_hammock(painter, palette, rect)
-        elif theme == "storm":
-            self._draw_storm(painter, palette, rect)
-        elif theme == "muon":
-            self._draw_muon(painter, palette, rect)
-        elif theme == "magnet":
-            self._draw_magnet(painter, palette, rect)
-        elif theme == "cat":
-            self._draw_cat(painter, palette, rect)
-        elif theme == "mountains":
-            self._draw_mountains(painter, palette, rect)
-        elif theme == "journal":
-            self._draw_journal(painter, palette, rect)
-
-    def _draw_house(self, painter: QPainter, palette, rect: QRectF) -> None:
-        body = QRectF(rect.left() + 14, rect.top() + 24, 40, 26)
-        roof = QPolygonF(
-            [
-                QPointF(body.left() - 4, body.top() + 2),
-                QPointF(body.center().x(), rect.top() + 8),
-                QPointF(body.right() + 4, body.top() + 2),
-            ]
-        )
-        painter.setPen(QPen(QColor(palette.border), 1.2))
-        painter.setBrush(QColor(palette.bg_surface))
-        painter.drawRect(body)
         painter.setBrush(QColor(palette.accent))
-        painter.drawPolygon(roof)
-        painter.setBrush(QColor(palette.bg_surface_alt))
-        painter.drawRect(QRectF(body.center().x() - 5, body.bottom() - 15, 10, 15))
-
-    def _draw_castle(self, painter: QPainter, palette, rect: QRectF) -> None:
-        painter.setPen(QPen(QColor(palette.border), 1.2))
-        painter.setBrush(QColor(palette.bg_surface_alt))
-        for x in (rect.left() + 10, rect.center().x() - 10, rect.right() - 30):
-            painter.drawRect(QRectF(x, rect.top() + 14, 20, 36))
-        painter.drawRect(QRectF(rect.left() + 16, rect.top() + 28, 36, 22))
-        painter.setBrush(QColor(palette.seal_gold))
-        for x in (rect.left() + 10, rect.center().x() - 10, rect.right() - 30):
-            painter.drawRect(QRectF(x, rect.top() + 8, 20, 8))
-
-    def _draw_ocean(self, painter: QPainter, palette, rect: QRectF) -> None:
-        painter.setPen(QPen(QColor(palette.accent), 2.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        for index in range(4):
-            y = rect.top() + 16 + index * 8
-            path = QPainterPath(QPointF(rect.left() + 8, y))
-            path.cubicTo(
-                QPointF(rect.left() + 22, y - 10),
-                QPointF(rect.left() + 34, y + 10),
-                QPointF(rect.left() + 52, y),
-            )
-            painter.drawPath(path)
-
-    def _draw_cube(self, painter: QPainter, palette, rect: QRectF) -> None:
-        painter.setPen(QPen(QColor(palette.border), 1.1))
-        colors = (palette.accent, palette.seal_gold, palette.bg_surface_alt)
-        size = 12
-        left = rect.left() + 14
-        top = rect.top() + 10
-        for row in range(3):
-            for col in range(3):
-                painter.setBrush(QColor(colors[(row + col) % len(colors)]))
-                painter.drawRect(QRectF(left + col * size, top + row * size, size, size))
-
-    def _draw_hammock(self, painter: QPainter, palette, rect: QRectF) -> None:
-        painter.setPen(QPen(QColor(palette.border).darker(140), 2.0))
-        painter.drawLine(QPointF(rect.left() + 12, rect.bottom() - 6), QPointF(rect.left() + 20, rect.top() + 6))
-        painter.drawLine(QPointF(rect.right() - 12, rect.bottom() - 6), QPointF(rect.right() - 20, rect.top() + 6))
-        painter.setPen(QPen(QColor(palette.accent), 3.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        path = QPainterPath(QPointF(rect.left() + 19, rect.top() + 17))
-        path.cubicTo(
-            QPointF(rect.left() + 28, rect.top() + 42),
-            QPointF(rect.right() - 28, rect.top() + 42),
-            QPointF(rect.right() - 19, rect.top() + 17),
+        painter.drawPolygon(
+            QPolygonF([top, QPointF(top.x() - radius * 0.95, top.y() + radius * 0.32), QPointF(top.x(), top.y() + radius * 0.64)])
         )
-        painter.drawPath(path)
 
-    def _draw_storm(self, painter: QPainter, palette, rect: QRectF) -> None:
-        cloud = QColor(palette.bg_surface_alt)
-        painter.setPen(QPen(QColor(palette.border), 1.2))
-        painter.setBrush(cloud)
-        painter.drawEllipse(QRectF(rect.left() + 10, rect.top() + 16, 26, 22))
-        painter.drawEllipse(QRectF(rect.left() + 26, rect.top() + 9, 26, 28))
-        painter.drawEllipse(QRectF(rect.left() + 38, rect.top() + 18, 20, 20))
-        painter.setBrush(QColor(palette.seal_gold))
-        bolt = QPolygonF(
-            [
-                QPointF(rect.center().x(), rect.top() + 30),
-                QPointF(rect.center().x() - 8, rect.bottom()),
-                QPointF(rect.center().x() + 2, rect.bottom() - 11),
-                QPointF(rect.center().x() - 2, rect.bottom() - 11),
-                QPointF(rect.center().x() + 8, rect.top() + 30),
-            ]
-        )
-        painter.drawPolygon(bolt)
-
-    def _draw_muon(self, painter: QPainter, palette, rect: QRectF) -> None:
-        font = QFont(body_font_family())
-        font.setPixelSize(34)
-        font.setBold(True)
+    def _paint_compass(self, painter: QPainter, palette) -> None:
+        area = self._chart_rect()
+        center = QPointF(area.left() + area.width() * 0.655, area.top() + area.height() * 0.86)
+        size = max(12.0, min(20.0, self.height() * 0.05))
+        colour = QColor(palette.text_muted)
+        colour.setAlpha(170)
+        painter.setPen(QPen(colour, 1.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(center, size * 0.8, size * 0.8)
+        for dx, dy in ((0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)):
+            tip = QPointF(center.x() + dx * size, center.y() + dy * size)
+            side_a = QPointF(center.x() - dy * size * 0.18, center.y() + dx * size * 0.18)
+            side_b = QPointF(center.x() + dy * size * 0.18, center.y() - dx * size * 0.18)
+            painter.setBrush(QColor(palette.accent) if dy == -1.0 else colour)
+            painter.drawPolygon(QPolygonF([tip, side_a, center, side_b]))
+        font = QFont(heading_font_family())
+        font.setPixelSize(round(size * 0.7))
         painter.setFont(font)
-        painter.setPen(QColor(palette.accent))
-        painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), "mu")
+        painter.setPen(colour)
+        painter.drawText(QRectF(center.x() - size, center.y() - size * 2.2, 2 * size, size), int(Qt.AlignmentFlag.AlignCenter), "N")
 
-    def _draw_magnet(self, painter: QPainter, palette, rect: QRectF) -> None:
-        painter.setPen(QPen(QColor(palette.accent), 8.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        painter.drawArc(QRectF(rect.left() + 14, rect.top() + 10, 40, 42), 0, 180 * 16)
-        painter.setPen(QPen(QColor(palette.border), 5.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        painter.drawLine(QPointF(rect.left() + 15, rect.top() + 30), QPointF(rect.left() + 15, rect.bottom() - 4))
-        painter.drawLine(QPointF(rect.right() - 15, rect.top() + 30), QPointF(rect.right() - 15, rect.bottom() - 4))
+    def _paint_legend(self, painter: QPainter, palette) -> None:
+        font = QFont(body_font_family())
+        font.setPixelSize(11)
+        painter.setFont(font)
+        metrics = QFontMetricsF(font)
+        x = 14.0
+        y = self.height() - 14.0
+        for kind, text in (
+            (DependencyKind.REQUIRED, "required"),
+            (DependencyKind.RECOMMENDED, "recommended"),
+            (DependencyKind.OPTIONAL, "optional route"),
+        ):
+            pen = QPen(QColor(palette.text_muted), 2.0 if kind == DependencyKind.REQUIRED else 1.6)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            if kind == DependencyKind.RECOMMENDED:
+                pen.setDashPattern([5.0, 3.5])
+            elif kind == DependencyKind.OPTIONAL:
+                pen.setDashPattern([0.4, 3.2])
+            painter.setPen(pen)
+            painter.drawLine(QPointF(x, y - 4.0), QPointF(x + 24.0, y - 4.0))
+            painter.setPen(QColor(palette.text_muted))
+            painter.drawText(QPointF(x + 30.0, y), text)
+            x += 30.0 + metrics.horizontalAdvance(text) + 18.0
 
-    def _draw_cat(self, painter: QPainter, palette, rect: QRectF) -> None:
-        painter.setPen(QPen(QColor(palette.border), 1.2))
-        painter.setBrush(QColor(palette.bg_surface_alt))
-        face = QRectF(rect.left() + 16, rect.top() + 16, 36, 30)
-        painter.drawEllipse(face)
-        ears = QPolygonF(
-            [
-                QPointF(face.left() + 4, face.top() + 7),
-                QPointF(face.left() + 10, face.top() - 8),
-                QPointF(face.left() + 17, face.top() + 6),
-                QPointF(face.right() - 17, face.top() + 6),
-                QPointF(face.right() - 10, face.top() - 8),
-                QPointF(face.right() - 4, face.top() + 7),
-            ]
-        )
-        painter.drawPolygon(ears)
-        painter.setBrush(QColor(palette.text_primary))
-        painter.drawEllipse(QPointF(face.left() + 13, face.top() + 14), 2.0, 2.0)
-        painter.drawEllipse(QPointF(face.right() - 13, face.top() + 14), 2.0, 2.0)
+    def _update_accessible_name(self) -> None:
+        stage = self._summary.stage(self._selected) if self._summary is not None and self._selected else None
+        if stage is None:
+            self.setAccessibleName("Project workflow chart")
+            return
+        self.setAccessibleName(f"Project workflow chart: {stage.title}, {_STATUS_TEXT[stage.status].lower()}")
 
-    def _draw_mountains(self, painter: QPainter, palette, rect: QRectF) -> None:
-        painter.setPen(QPen(QColor(palette.border), 1.2))
-        painter.setBrush(QColor(palette.bg_surface_alt))
-        painter.drawPolygon(
-            QPolygonF(
-                [
-                    QPointF(rect.left() + 4, rect.bottom() - 4),
-                    QPointF(rect.left() + 24, rect.top() + 8),
-                    QPointF(rect.left() + 42, rect.bottom() - 4),
-                ]
-            )
-        )
-        painter.setBrush(QColor(palette.bg_surface))
-        painter.drawPolygon(
-            QPolygonF(
-                [
-                    QPointF(rect.left() + 28, rect.bottom() - 4),
-                    QPointF(rect.left() + 48, rect.top() + 14),
-                    QPointF(rect.right() - 4, rect.bottom() - 4),
-                ]
-            )
-        )
 
-    def _draw_journal(self, painter: QPainter, palette, rect: QRectF) -> None:
-        book = QRectF(rect.left() + 16, rect.top() + 8, 36, 42)
-        painter.setPen(QPen(QColor(palette.border), 1.2))
-        painter.setBrush(QColor(palette.bg_surface))
-        painter.drawRoundedRect(book, 4.0, 4.0)
-        painter.setPen(QPen(QColor(palette.accent), 2.0))
-        painter.drawLine(QPointF(book.left() + 8, book.top() + 7), QPointF(book.left() + 8, book.bottom() - 7))
-        painter.setPen(QPen(QColor(palette.text_muted), 1.0))
-        for index in range(3):
-            y = book.top() + 14 + index * 8
-            painter.drawLine(QPointF(book.left() + 15, y), QPointF(book.right() - 7, y))
+class FieldNotesPanel(QFrame):
+    """Show one stage's progress, facts and needs, with a link that opens it."""
+
+    route_requested = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("overviewCard")
+        self._stage: StageSummary | None = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(6)
+
+        caption = QLabel("Field notes", self)
+        style_hint_text(caption)
+        layout.addWidget(caption)
+        self._title = QLabel(self)
+        style_section_title(self._title)
+        layout.addWidget(self._title)
+        self._status = QLabel(self)
+        self._status.setObjectName("fieldNotesStatus")
+        layout.addWidget(self._status)
+        self._facts = QLabel(self)
+        self._facts.setObjectName("cardBody")
+        self._facts.setWordWrap(True)
+        self._facts.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self._facts)
+        self._needs = QLabel(self)
+        style_warning_text(self._needs)
+        self._needs.setWordWrap(True)
+        layout.addWidget(self._needs)
+        self._guidance = QLabel(self)
+        style_hint_text(self._guidance)
+        self._guidance.setWordWrap(True)
+        layout.addWidget(self._guidance)
+        layout.addStretch(1)
+        self._open_button = QPushButton(self)
+        self._open_button.setObjectName("fieldNotesOpenButton")
+        self._open_button.clicked.connect(self._on_open)
+        layout.addWidget(self._open_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self.set_stage(None)
+
+    def set_stage(self, stage: StageSummary | None) -> None:
+        self._stage = stage
+        visible = stage is not None
+        for widget in (self._title, self._status, self._facts, self._guidance, self._open_button):
+            widget.setVisible(visible)
+        if stage is None:
+            self._needs.setVisible(False)
+            return
+        self._title.setText(stage.title)
+        status = _STATUS_TEXT[stage.status]
+        if stage.active_jobs:
+            status += f" · {stage.active_jobs} job{'s' if stage.active_jobs != 1 else ''} active"
+        self._status.setText(status)
+        self._facts.setText("\n".join(stage.facts))
+        self._needs.setText(f"Needs: {', '.join(stage.unmet_requirements)}" if stage.unmet_requirements else "")
+        self._needs.setVisible(bool(stage.unmet_requirements))
+        self._guidance.setText(stage.guidance)
+        self._open_button.setText(f"Open {stage.title}")
+        self._open_button.setToolTip(f"Go to the {stage.title} page")
+
+    def stage(self) -> StageSummary | None:
+        return self._stage
+
+    def _on_open(self) -> None:
+        if self._stage is not None:
+            self.route_requested.emit(self._stage.key)
+
+
+class ProjectHomeWidget(QWidget):
+    """The project home: progress line, workflow chart, field notes and cell survey.
+
+    ``set_document`` records the project; the summary is recomputed when the
+    page is visible, so navigating elsewhere does not pay for it.
+    """
+
+    route_requested = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("projectHome")
+        self._document: ProjectDocument | None = None
+        self._stale = True
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        self._progress = QLabel(self)
+        self._progress.setObjectName("projectHomeProgress")
+        header.addWidget(self._progress, 1)
+        self._journal_button = QPushButton("Open Journal", self)
+        self._journal_button.setObjectName("projectHomeJournalButton")
+        self._journal_button.setToolTip("Read the project's journal of actions and notes")
+        self._journal_button.clicked.connect(lambda: self.route_requested.emit("provenance_log"))
+        header.addWidget(self._journal_button)
+        layout.addLayout(header)
+
+        self.chart = ProjectHomeChartWidget(self)
+        self.chart.stage_selected.connect(self._show_stage)
+        self.chart.route_requested.connect(self.route_requested)
+        layout.addWidget(self.chart, 3)
+
+        lower = QHBoxLayout()
+        lower.setSpacing(12)
+        self.field_notes = FieldNotesPanel(self)
+        self.field_notes.route_requested.connect(self.route_requested)
+        lower.addWidget(self.field_notes, 1)
+        self.survey = CellSurveyWidget(self)
+        lower.addWidget(self.survey, 1)
+        layout.addLayout(lower, 2)
+
+    def set_document(self, document: ProjectDocument | None) -> None:
+        self._document = document
+        self._stale = True
+        if self.isVisible():
+            self.refresh()
+
+    def refresh(self) -> None:
+        self._stale = False
+        summary = summarize_project(self._document) if self._document is not None else None
+        self.chart.set_summary(summary)
+        if summary is None:
+            self._progress.setText("")
+        else:
+            text = f"{summary.completed_count} of {len(summary.stages)} stages complete"
+            if summary.active_jobs:
+                text += f" · {summary.active_jobs} job{'s' if summary.active_jobs != 1 else ''} active"
+            self._progress.setText(text)
+        self._show_stage(self.chart.selected_stage())
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API naming.
+        super().showEvent(event)
+        if self._stale:
+            self.refresh()
+
+    def _show_stage(self, key: str | None) -> None:
+        summary = self.chart.summary()
+        stage = summary.stage(key) if summary is not None and key else None
+        self.field_notes.set_stage(stage)
+        document = self._document
+        host = active_host_structure(document) if document is not None else None
+        if document is None or host is None or stage is None:
+            self.survey.set_survey(host, (), None)
+            return
+        self.survey.set_survey(host, survey_layers(document, stage.key), discovered_sites_layer(document))
 
 
 class ConstructionSignWidget(QWidget):

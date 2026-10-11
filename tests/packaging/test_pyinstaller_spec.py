@@ -16,22 +16,6 @@ BUNDLED_FONT_ASSETS = [
 ]
 
 
-PROJECT_HOME_ASSETS = [
-    "project_home_convergence_cutoff.png",
-    "project_home_convergence_kpoint.png",
-    "project_home_energy_barriers.png",
-    "project_home_host_structure.png",
-    "project_home_magnetic_fields.png",
-    "project_home_map.png",
-    "project_home_map_color.png",
-    "project_home_muon_candidates.png",
-    "project_home_pristine_relaxation.png",
-    "project_home_provenance_log.png",
-    "project_home_quantum_corrections.png",
-    "project_home_supercell_editor.png",
-    "project_home_uep.png",
-]
-
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -54,8 +38,7 @@ def test_pyproject_packages_runtime_assets_and_science_data() -> None:
     assert '"mufinder.data" = ["*.ini"]' in pyproject_text
 
     assets_root = repo_root / "src" / "mufinder" / "assets"
-    for asset_name in PROJECT_HOME_ASSETS:
-        assert (assets_root / asset_name).is_file()
+    assert (assets_root / "mufinder_logo.png").is_file()
 
     # Bundled fonts must ship so typography is identical on every platform.
     fonts_root = assets_root / "fonts"

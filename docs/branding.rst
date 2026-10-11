@@ -93,5 +93,9 @@ The workflow reads as an expedition journal:
 - The project navigator is the journal index. A completed stage shows a gold
   seal with a tick (``workflow_stage_icon``); an incomplete stage shows an
   empty dotted marker.
-- The project home is a map with a trail through the workflow destinations and
-  completion seals on the stages that are done.
+- The project home is a chart drawn in code, with no bitmap artwork: the
+  stages are waypoints on a parchment (or night-sky) ground with faint contour
+  lines and a compass rose, the navigator's sections are named regions,
+  dependencies are inked, dashed or dotted routes, completed stages carry the
+  same gold seal as the navigator, and a red flag marks where the user left
+  off (see :doc:`project_home`).

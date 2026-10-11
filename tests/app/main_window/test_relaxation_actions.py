@@ -20,6 +20,7 @@ from mufinder.app.workflow_config_codecs import (
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, ComparisonTable, Job, Structure
 from mufinder.services.project_service import ProjectService
+from mufinder.services.project_summary import pristine_relaxation_complete
 
 
 def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_parameters(
@@ -275,7 +276,7 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
     completion path.
 
     The pristine-relaxation workflow-trail milestone is table-driven
-    (``_workflow_pristine_relaxation_complete`` reads ``document.comparison_tables``),
+    (``pristine_relaxation_complete`` reads ``document.comparison_tables``),
     **not** job-driven, so it stays complete across the whole cycle — continuing a
     job neither un-completes nor re-completes it. What the cycle really has to
     protect is the reference that milestone stands for: the comparison table's
@@ -311,7 +312,7 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
         dft_labels=[job.label],
     )
     service.add_comparison_table(doc, table)
-    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+    assert pristine_relaxation_complete(doc) is True
 
     # Continue the completed job and start its second run.
     service.prepare_job_continuation(job)
@@ -319,7 +320,7 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
     run_two = _start_pristine_run(window, service, doc, job, run_index=2)
     assert job.status == JobStatus.RUNNING
     # Table-driven, so the milestone does not dip while the continued job runs.
-    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+    assert pristine_relaxation_complete(doc) is True
 
     (output_dir / f"{job.label}-out.cell").write_text(
         _PRISTINE_OUT_CELL_CONTINUED, encoding="utf-8"
@@ -327,7 +328,7 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
     window._on_local_job_finished(job.id, parsed)
 
     assert job.status == JobStatus.COMPLETED
-    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+    assert pristine_relaxation_complete(doc) is True
 
     # One derived structure, same id, refreshed geometry; both Results agree.
     second_result = doc.results[run_two.result_id]
