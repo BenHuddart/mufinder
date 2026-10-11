@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
@@ -13,10 +12,11 @@ from typing import Any
 from ase import Atoms
 from ase.io import read as ase_read
 from ase.io import write as ase_write
-import numpy as np
 
 from mufinder.castep_io.cell_parser import parse_cell_file
+from mufinder.domain.magnetic_properties import atomic_spins_from_magnetic_moments
 from mufinder.domain.models import Structure
+from mufinder.science.lattice import nearest_image_distance
 
 
 class StructureLoadError(ValueError):
@@ -93,9 +93,10 @@ def load_structure_file(path: str | Path) -> LoadedStructure:
             if isinstance(propagation_vector, list) and len(propagation_vector) == 3:
                 properties["propagation_vector"] = [float(value) for value in propagation_vector]
 
-            spins_from_moments = _spins_from_magnetic_structure(
-                magnetic_structure=magnetic_structure,
+            spins_from_moments = atomic_spins_from_magnetic_moments(
+                magnetic_structure,
                 atom_count=len(symbols),
+                honour_atom_index=True,
             )
             if spins_from_moments is not None:
                 properties["atomic_spins"] = spins_from_moments
@@ -125,24 +126,6 @@ class CifMuonSite:
 #: and most CIF viewers will render such an overlap as a single merged,
 #: fractionally-occupied site (e.g. "Sr1/Mu1") rather than two atoms.
 _MIN_PLAUSIBLE_MUON_HOST_DISTANCE_ANG = 0.5
-
-
-def _minimum_periodic_distance_ang(
-    fractional_a: Sequence[float], fractional_b: Sequence[float], lattice_vectors: Sequence[Sequence[float]]
-) -> float:
-    lattice = np.asarray(lattice_vectors, dtype=float)
-    delta = np.asarray(fractional_a, dtype=float) - np.asarray(fractional_b, dtype=float)
-    delta -= np.round(delta)
-    offsets = np.array([-1.0, 0.0, 1.0])
-    best = float("inf")
-    for ox in offsets:
-        for oy in offsets:
-            for oz in offsets:
-                cartesian = (delta + np.array([ox, oy, oz])) @ lattice
-                distance = float(np.linalg.norm(cartesian))
-                if distance < best:
-                    best = distance
-    return best
 
 
 def export_structure_with_muon_sites(
@@ -193,7 +176,7 @@ def export_structure_with_muon_sites(
         for host_index, (host_symbol, host_label, host_fractional) in enumerate(
             zip(host_species, host_labels, host_positions, strict=True)
         ):
-            distance = _minimum_periodic_distance_ang(
+            distance = nearest_image_distance(
                 site.fractional_position, host_fractional, lattice_vectors
             )
             if distance < _MIN_PLAUSIBLE_MUON_HOST_DISTANCE_ANG:
@@ -299,40 +282,6 @@ def _extract_mcif_magnetic_structure(source: Path) -> dict[str, Any] | None:
             if isinstance(moment.get("label"), str) and isinstance(moment.get("vector"), list)
         }
     return payload
-
-
-def _spins_from_magnetic_structure(
-    *,
-    magnetic_structure: dict[str, Any],
-    atom_count: int,
-) -> list[float] | None:
-    moments = magnetic_structure.get("moments")
-    if not isinstance(moments, list) or not moments:
-        return None
-
-    spins = [0.0] * atom_count
-    saw_moment = False
-    for index, moment in enumerate(moments):
-        if not isinstance(moment, dict):
-            continue
-        atom_index = index
-        if "atom_index" in moment:
-            try:
-                atom_index = int(moment["atom_index"])
-            except (TypeError, ValueError):
-                continue
-        if atom_index < 0 or atom_index >= atom_count:
-            continue
-        vector = moment.get("vector")
-        if not isinstance(vector, list) or len(vector) < 3:
-            continue
-        try:
-            spins[atom_index] = float(vector[2])
-            saw_moment = True
-        except (TypeError, ValueError):
-            continue
-
-    return spins if saw_moment else None
 
 
 def _parse_cif_tags_and_loops(text: str) -> tuple[dict[str, str], list[dict[str, Any]]]:

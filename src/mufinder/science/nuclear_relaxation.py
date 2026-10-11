@@ -8,13 +8,13 @@ from dataclasses import dataclass
 from fractions import Fraction
 from functools import lru_cache
 from importlib import resources
-import re
 from typing import Literal
 
 from ase import Atoms
 import numpy as np
 
 from mufinder.domain.models import Structure
+from mufinder.science.ase_bridge import element_symbol, is_muon_label, structure_to_ase_atoms
 from mufinder.science.supercell import build_supercell_structure
 from mufinder.science.supercell_matching import detect_supercell_matrix
 
@@ -39,8 +39,6 @@ _ALLOWED_MODES = {
     "tf_polycrystal",
     "zf_polycrystal",
 }
-_MUON_LABELS = {"x", "h:mu", "mu", "muon"}
-_ELEMENT_RE = re.compile(r"^([A-Z][a-z]?)")
 
 
 class NuclearRelaxationError(ValueError):
@@ -230,7 +228,7 @@ def load_isotopes() -> dict[str, list[Isotope]]:
 def isotopes_for_element(element: str) -> list[Isotope]:
     """Return isotope entries for one element symbol."""
 
-    key = _element_symbol(element)
+    key = element_symbol(element, error=NuclearRelaxationError)
     try:
         return load_isotopes()[key]
     except KeyError as exc:
@@ -421,28 +419,21 @@ def calculate_distortion_correction(
 
 
 def structure_to_atoms(structure: Structure, *, skip_muon: bool = True) -> Atoms:
-    """Convert a MuFinder structure to ASE Atoms with sanitized element labels."""
+    """Convert a MuFinder structure to ASE Atoms with sanitized element labels.
 
-    symbols: list[str] = []
-    positions: list[Sequence[float]] = []
-    for raw_symbol, position in zip(structure.species, structure.fractional_positions, strict=False):
-        if _is_muon_label(raw_symbol) and skip_muon:
-            continue
-        symbols.append(_element_symbol("H" if _is_muon_label(raw_symbol) else raw_symbol))
-        positions.append(position)
-    if not symbols:
-        raise NuclearRelaxationError("Structure does not contain any host atoms.")
-    atoms = Atoms(
-        symbols=symbols,
-        scaled_positions=positions,
-        cell=np.asarray(structure.lattice_vectors, dtype=float),
-        pbc=[True, True, True],
+    Compatibility wrapper over :func:`mufinder.science.ase_bridge.structure_to_ase_atoms`
+    that keeps this module's muon-skipping default and error type.
+    """
+
+    atoms = structure_to_ase_atoms(
+        structure,
+        skip_muon=skip_muon,
+        sanitize_symbols=True,
+        record_species_labels=True,
+        error=NuclearRelaxationError,
     )
-    atoms.info["mufinder_species_labels"] = [
-        str(symbol)
-        for symbol in structure.species
-        if not (skip_muon and _is_muon_label(symbol))
-    ]
+    if len(atoms) == 0:
+        raise NuclearRelaxationError("Structure does not contain any host atoms.")
     return atoms
 
 
@@ -467,7 +458,7 @@ def _calculate_second_moment(
     field_dir = _unit_vector(field_direction, "direction") if mode == "tf_single_crystal" else None
     pol_dir = _unit_vector(polarisation_direction, "direction") if mode == "zf_single_crystal" else None
     muon_cart = _muon_position_cartesian(atoms, muon_position, muon_position_fractional)
-    selected = None if elements is None else {_element_symbol(element) for element in elements}
+    selected = None if elements is None else {element_symbol(element, error=NuclearRelaxationError) for element in elements}
     radii = [float(radius)] if radius is not None else list(_auto_radii_sequence())
 
     prev_sigma2: float | None = None
@@ -527,7 +518,7 @@ def _calculate_second_moment_finite_cell(
     field_dir = _unit_vector(field_direction, "direction") if mode == "tf_single_crystal" else None
     pol_dir = _unit_vector(polarisation_direction, "direction") if mode == "zf_single_crystal" else None
     muon_cart = _muon_position_cartesian(atoms, muon_position, True)
-    selected = None if elements is None else {_element_symbol(element) for element in elements}
+    selected = None if elements is None else {element_symbol(element, error=NuclearRelaxationError) for element in elements}
     vecs_a, dists_a, symbols = _iter_nuclear_vectors_finite_cell(atoms, muon_cart, selected)
     if dists_a.size == 0:
         raise NuclearRelaxationError("No nuclei found in the selected finite cell.")
@@ -752,7 +743,7 @@ def _translation_limits(cell: np.ndarray, radius_a: float) -> np.ndarray:
 
 def _extract_muon_from_atoms(atoms: Atoms) -> tuple[Atoms, np.ndarray]:
     labels = atoms.info.get("mufinder_species_labels", atoms.get_chemical_symbols())
-    muon_indices = [index for index, label in enumerate(labels) if _is_muon_label(str(label))]
+    muon_indices = [index for index, label in enumerate(labels) if is_muon_label(str(label))]
     if not muon_indices:
         raise NuclearRelaxationError("Distorted structure does not contain a muon marker.")
     if len(muon_indices) > 1:
@@ -879,20 +870,6 @@ def _validate_mode(mode: str, *, include_quadrupolar: bool) -> None:
         raise NuclearRelaxationError(f"Unsupported mode '{mode}'.")
     if include_quadrupolar and mode.startswith("tf"):
         raise NuclearRelaxationError("Quadrupolar correction is only supported in ZF modes.")
-
-
-def _is_muon_label(symbol: str) -> bool:
-    return str(symbol).strip().casefold() in _MUON_LABELS
-
-
-def _element_symbol(symbol: str) -> str:
-    raw = str(symbol).strip()
-    if not raw:
-        raise NuclearRelaxationError("Element symbol must not be empty.")
-    match = _ELEMENT_RE.match(raw)
-    if match is None:
-        raise NuclearRelaxationError(f"Could not resolve element symbol from '{symbol}'.")
-    return match.group(1)
 
 
 def _parse_number_token(token: str) -> float:

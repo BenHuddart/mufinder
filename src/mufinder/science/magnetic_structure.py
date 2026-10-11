@@ -6,11 +6,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from ase import Atoms
 import numpy as np
 
+from mufinder.domain.magnetic_properties import propagation_vector_from_structure
 from mufinder.domain.models import Structure
-from mufinder.science.spglib_compat import get_crystal_symmetry_dataset
+from mufinder.science.spglib_compat import get_crystal_symmetry_dataset, spglib_cell
 
 MAGNETIC_STRUCTURE_SCHEMA_VERSION = 2
 
@@ -1046,17 +1046,6 @@ def prune_texture_terms(
     return MagneticTexture(tuple(terms)).combine_terms()
 
 
-def structure_to_ase_atoms(structure: Structure) -> Atoms:
-    """Convert a MuFinder structure entity to an ASE Atoms object."""
-
-    return Atoms(
-        symbols=list(structure.species),
-        scaled_positions=np.asarray(structure.fractional_positions, dtype=float),
-        cell=np.asarray(structure.lattice_vectors, dtype=float),
-        pbc=[True, True, True],
-    )
-
-
 def magnetic_model_from_legacy_structure(structure: Structure) -> MagneticStructureModel:
     """Build a v1 magnetic model from current scalar-spin or MCIF metadata."""
 
@@ -1171,18 +1160,6 @@ def _texture_grid_resolution(resolution: Sequence[int]) -> tuple[int, int, int]:
     return res
 
 
-def _legacy_propagation_vector(structure: Structure) -> tuple[float, float, float]:
-    source: object = structure.properties.get("propagation_vector")
-    if source is None:
-        magnetic = structure.properties.get("magnetic_structure")
-        if isinstance(magnetic, Mapping):
-            source = magnetic.get("propagation_vector")
-    try:
-        return _as_float_tuple(source, "propagation_vector")
-    except MagneticStructureError:
-        return (0.0, 0.0, 0.0)
-
-
 def _legacy_q_basis_rlu(structure: Structure) -> tuple[tuple[float, float, float], ...]:
     """Return up to three legacy/MCIF propagation vectors as a q basis."""
     vectors: list[tuple[float, float, float]] = []
@@ -1197,7 +1174,7 @@ def _legacy_q_basis_rlu(structure: Structure) -> tuple[tuple[float, float, float
                     continue
 
     if not vectors:
-        vectors.append(_legacy_propagation_vector(structure))
+        vectors.append(propagation_vector_from_structure(structure, strict=True))
     while len(vectors) < 3:
         vectors.append((0.0, 0.0, 0.0))
     return tuple(vectors[:3])
@@ -1288,13 +1265,10 @@ def _equivalent_atom_representatives(structure: Structure) -> tuple[int, ...]:
 
 
 def _equivalent_atoms(structure: Structure) -> np.ndarray | None:
-    dataset = get_crystal_symmetry_dataset(
-        (
-            np.asarray(structure.lattice_vectors, dtype=float),
-            np.asarray(structure.fractional_positions, dtype=float),
-            np.asarray(structure_to_ase_atoms(structure).get_atomic_numbers(), dtype=int),
-        )
-    )
+    cell = spglib_cell(structure)
+    if cell is None:
+        return None
+    dataset = get_crystal_symmetry_dataset(cell)
     if dataset is None:
         return None
     if hasattr(dataset, "equivalent_atoms"):

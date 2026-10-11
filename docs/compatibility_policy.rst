@@ -221,6 +221,26 @@ Compatibility ledger
      - Public keyword alias. Keep for one minor release (through 0.6.x); then
        move the remaining test callers to ``retrieval_for_job`` and drop both
        keywords.
+   * - ``lattice_frac_to_cart`` / ``lattice_cart_to_frac``
+     - ``mufinder.science.site_generation``
+     - Public names for the scalar conversions that live in
+       ``mufinder.science.lattice``. The ``site_generation`` versions are thin
+       wrappers that raise ``SiteGenerationError`` for a malformed or singular
+       lattice, which callers in ``mufinder.app``, ``mufinder.services`` and
+       ``mufinder.science`` catch. Not persisted.
+     - Public import path. Keep until the callers that catch
+       ``SiteGenerationError`` around these conversions move to
+       ``mufinder.science.lattice`` and ``LatticeError``; then drop both
+       wrappers.
+   * - ``structure_to_atoms``
+     - ``mufinder.science.nuclear_relaxation``
+     - Thin wrapper over ``mufinder.science.ase_bridge.structure_to_ase_atoms``
+       that keeps the muon-skipping default, sanitised symbols, recorded
+       species labels and ``NuclearRelaxationError``. Imported by the nuclear
+       relaxation tests. Not persisted.
+     - Public helper alias. Keep for one minor release (through 0.6.x); then
+       move the tests to ``structure_to_ase_atoms`` and make the wrapper
+       private.
 
 Rules for new shims
 -------------------

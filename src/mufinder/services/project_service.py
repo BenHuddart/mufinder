@@ -15,6 +15,11 @@ from uuid import UUID
 
 from mufinder._version import current_version
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus, WorkflowStage
+from mufinder.domain.magnetic_properties import (
+    atomic_spins_from_structure,
+    has_nonzero_spins,
+    propagation_vector_from_structure,
+)
 from mufinder.domain.models import (
     CalculationDefinition,
     CalculationRun,
@@ -1030,35 +1035,6 @@ class ProjectService:
         return None
 
     @staticmethod
-    def _has_nonzero_spin(values: Sequence[float], *, tolerance: float = 1e-12) -> bool:
-        return any(abs(float(value)) > tolerance for value in values)
-
-    @staticmethod
-    def _spins_from_magnetic_structure(structure: Structure, *, atom_count: int) -> list[float] | None:
-        magnetic = structure.properties.get("magnetic_structure")
-        if not isinstance(magnetic, dict):
-            return None
-
-        moments = magnetic.get("moments")
-        if not isinstance(moments, list) or not moments:
-            return None
-
-        spins = [0.0] * atom_count
-        saw_numeric = False
-        for index, moment in enumerate(moments[:atom_count]):
-            if not isinstance(moment, dict):
-                continue
-            vector = moment.get("vector")
-            if not isinstance(vector, list) or len(vector) < 3:
-                continue
-            try:
-                spins[index] = float(vector[2])
-                saw_numeric = True
-            except (TypeError, ValueError):
-                continue
-        return spins if saw_numeric else None
-
-    @staticmethod
     def _structure_atomic_spins(structure: Structure) -> list[float]:
         raw = structure.properties.get("atomic_spins")
         if raw is None:
@@ -1074,14 +1050,14 @@ class ProjectService:
                 except (TypeError, ValueError):
                     spins[index] = 0.0
 
-        fallback = ProjectService._spins_from_magnetic_structure(structure, atom_count=len(spins))
+        fallback = atomic_spins_from_structure(structure, atom_count=len(spins))
         if saw_numeric:
             if isinstance(structure.properties.get("supercell_asset"), dict):
                 return spins
             if (
                 fallback is not None
-                and not ProjectService._has_nonzero_spin(spins)
-                and ProjectService._has_nonzero_spin(fallback)
+                and not has_nonzero_spins(spins)
+                and has_nonzero_spins(fallback)
             ):
                 return fallback
             return spins
@@ -1098,7 +1074,7 @@ class ProjectService:
         asset: WorkflowSupercellAsset,
     ) -> bool:
         host_spins = self._structure_atomic_spins(host)
-        if not self._has_nonzero_spin(host_spins):
+        if not has_nonzero_spins(host_spins):
             return False
 
         raw = structure.properties.get("atomic_spins")
@@ -1111,7 +1087,7 @@ class ProjectService:
                     saw_numeric = True
                 except (TypeError, ValueError):
                     raw_spins[index] = 0.0
-        if saw_numeric and self._has_nonzero_spin(raw_spins):
+        if saw_numeric and has_nonzero_spins(raw_spins):
             return False
 
         try:
@@ -1119,12 +1095,12 @@ class ProjectService:
                 host,
                 asset.matrix,
                 atomic_spins=host_spins,
-                propagation_vector=self._structure_propagation_vector(host),
+                propagation_vector=list(propagation_vector_from_structure(host)),
             )
         except ValueError:
             return False
 
-        if not self._has_nonzero_spin(expanded_spins):
+        if not has_nonzero_spins(expanded_spins):
             return False
 
         structure.lattice_vectors = [list(vector) for vector in repaired.lattice_vectors]
@@ -1174,30 +1150,13 @@ class ProjectService:
             return
         self._repair_legacy_supercell_asset_spins(host=host, structure=structure, asset=asset)
 
-    @staticmethod
-    def _structure_propagation_vector(structure: Structure) -> list[float]:
-        source = structure.properties.get("propagation_vector")
-        if source is None:
-            magnetic = structure.properties.get("magnetic_structure")
-            if isinstance(magnetic, dict):
-                source = magnetic.get("propagation_vector")
-
-        vector = [0.0, 0.0, 0.0]
-        if isinstance(source, list):
-            for index, value in enumerate(source[:3]):
-                try:
-                    vector[index] = float(value)
-                except (TypeError, ValueError):
-                    vector[index] = 0.0
-        return vector
-
     def structure_atomic_spins(self, structure: Structure) -> list[float]:
         """Return numeric per-atom spins for a structure, defaulting missing values to zero."""
         return self._structure_atomic_spins(structure)
 
     def structure_propagation_vector(self, structure: Structure) -> list[float]:
         """Return the structure propagation vector, defaulting to [0, 0, 0]."""
-        return self._structure_propagation_vector(structure)
+        return list(propagation_vector_from_structure(structure))
 
     def create_workflow_supercell_asset(
         self,
@@ -1233,7 +1192,7 @@ class ProjectService:
             host,
             parsed_matrix,
             atomic_spins=self._structure_atomic_spins(host),
-            propagation_vector=self._structure_propagation_vector(host),
+            propagation_vector=list(propagation_vector_from_structure(host)),
         )
         structure.label = str(label or "").strip() or self._supercell_asset_label(workflow_stage, parsed_matrix)
         structure.parent_structure_id = host_structure_id
@@ -1331,7 +1290,7 @@ class ProjectService:
             host,
             parsed_matrix,
             atomic_spins=self._structure_atomic_spins(host),
-            propagation_vector=self._structure_propagation_vector(host),
+            propagation_vector=list(propagation_vector_from_structure(host)),
         )
         structure.lattice_vectors = [list(vector) for vector in regenerated.lattice_vectors]
         structure.species = list(regenerated.species)

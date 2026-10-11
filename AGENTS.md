@@ -77,7 +77,7 @@ sibling workflow's implementation.
 | Embedded matplotlib plots | `app/plot_canvas.py` |
 | Job output paths and parsed secondary outputs | `services/job_artifacts.py` |
 | Job state transitions | `services/job_execution_controller.py` |
-| Structure conversion, symmetry, lattice maths | `science/` (one helper per operation) |
+| Lattice maths; spglib cells, operations, orbits; ASE `Atoms`; stored spins | `science/lattice.py`, `science/spglib_compat.py`, `science/ase_bridge.py`, `domain/magnetic_properties.py` |
 | CASTEP syntax, keyword metadata, validation | `castep_io/` |
 
 Rules:

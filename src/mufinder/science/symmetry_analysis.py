@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import numpy as np
-from ase.data import atomic_numbers
 
 from mufinder.domain.models import Structure
 from mufinder.science.atom_matching import AtomMatching
 from mufinder.science.bonding_analysis import connectivity_edges
-from mufinder.science.spglib_compat import get_crystal_symmetry_dataset
+from mufinder.science.spglib_compat import get_crystal_symmetry_dataset, spglib_cell
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,16 +34,10 @@ class TopologyResult:
 def detect_space_group(structure: Structure, *, symprec: float = 1e-2) -> SpaceGroupResult:
     """Detect space group metadata via spglib."""
 
-    try:
-        numbers = [atomic_numbers[str(symbol).capitalize()] for symbol in structure.species]
-    except KeyError:
+    cell = spglib_cell(structure)
+    if cell is None:
         return SpaceGroupResult(number=None, symbol=None, hall_symbol=None, available=False)
 
-    cell = (
-        np.asarray(structure.lattice_vectors, dtype=float),
-        np.asarray(structure.fractional_positions, dtype=float),
-        np.asarray(numbers, dtype=int),
-    )
     dataset = get_crystal_symmetry_dataset(cell, symprec=float(symprec))
     if dataset is None:
         return SpaceGroupResult(number=None, symbol=None, hall_symbol=None, available=True)

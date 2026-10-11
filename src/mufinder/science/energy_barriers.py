@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-import re
 from typing import Sequence
 
 from ase import Atoms
@@ -14,13 +13,12 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 from mufinder.domain.models import Structure
+from mufinder.science.ase_bridge import is_muon_label, structure_to_ase_atoms
 from mufinder.science.spglib_compat import get_crystal_symmetry
 
 
 _LOGGER = logging.getLogger(__name__)
 
-_MUON_LABELS = {"x", "h:mu", "mu", "muon"}
-_ELEMENT_RE = re.compile(r"^([A-Z][a-z]?)")
 
 # Number of images used for the internal IDPP interpolation. Odd so there is an exact
 # central image at reaction coordinate 0.5 -- the only image CASTEP consumes (it places the
@@ -295,33 +293,19 @@ def _wrapped_fractional_delta(start: np.ndarray, end: np.ndarray) -> np.ndarray:
     return ((delta + 0.5) % 1.0) - 0.5
 
 
-def _is_muon_label(symbol: str) -> bool:
-    return str(symbol).strip().casefold() in _MUON_LABELS
-
-
-def _element_symbol(symbol: str) -> str:
-    raw = str(symbol).strip()
-    match = _ELEMENT_RE.match(raw)
-    if match is None:
-        raise EnergyBarrierError(f"Could not resolve element symbol from '{symbol}'.")
-    return match.group(1)
-
-
 def _structure_to_atoms(structure: Structure, *, require_muon: bool) -> Atoms:
-    labels = [str(symbol) for symbol in structure.species]
-    symbols = ["H" if _is_muon_label(symbol) else _element_symbol(symbol) for symbol in labels]
-    atoms = Atoms(
-        symbols=symbols,
-        scaled_positions=[list(position) for position in structure.fractional_positions],
-        cell=np.asarray(structure.lattice_vectors, dtype=float),
-        pbc=[True, True, True],
+    atoms = structure_to_ase_atoms(
+        structure,
+        sanitize_symbols=True,
+        record_species_labels=True,
+        error=EnergyBarrierError,
     )
-    atoms.info["mufinder_species_labels"] = list(labels)
+    labels = atoms.info["mufinder_species_labels"]
     spins = structure.properties.get("atomic_spins")
     if isinstance(spins, list) and len(spins) == len(labels):
         atoms.info["mufinder_atomic_spins"] = [float(value) for value in spins]
         atoms.set_initial_magnetic_moments([float(value) for value in spins])
-    if require_muon and sum(1 for label in labels if _is_muon_label(label)) != 1:
+    if require_muon and sum(1 for label in labels if is_muon_label(label)) != 1:
         raise EnergyBarrierError("Transition-state endpoint structures must contain exactly one muon.")
     return atoms
 
@@ -435,7 +419,7 @@ def _muon_host_clearance(atoms: Atoms) -> float:
 
 def _single_muon_position(atoms: Atoms) -> np.ndarray:
     labels = atoms.info.get("mufinder_species_labels", atoms.get_chemical_symbols())
-    muon_indices = [index for index, label in enumerate(labels) if _is_muon_label(str(label))]
+    muon_indices = [index for index, label in enumerate(labels) if is_muon_label(str(label))]
     if len(muon_indices) != 1:
         raise EnergyBarrierError("Transition-state endpoint structures must contain exactly one muon.")
     return np.asarray(atoms.get_scaled_positions(wrap=True)[muon_indices[0]], dtype=float)
@@ -548,7 +532,7 @@ def _transform_structure_by_symmetry(
 
 def _muon_index(atoms: Atoms) -> int:
     labels = atoms.info.get("mufinder_species_labels", atoms.get_chemical_symbols())
-    matches = [index for index, label in enumerate(labels) if _is_muon_label(str(label))]
+    matches = [index for index, label in enumerate(labels) if is_muon_label(str(label))]
     if len(matches) != 1:
         raise EnergyBarrierError("Transition-state endpoint structures must contain exactly one muon.")
     return int(matches[0])
