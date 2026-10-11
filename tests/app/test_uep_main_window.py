@@ -62,15 +62,6 @@ def test_main_window_on_uep_configured_registers_definition(main_window, tmp_pat
     assert definitions[0].input_structure_ids == [host.id]
 
 
-def test_main_window_deserialize_uep_config_normalizes_legacy_prefix(main_window) -> None:
-    window = main_window
-
-    config = window._deserialize_uep_config({"name_prefix": "uep_source", "rows": []})
-
-    assert config is not None
-    assert config.name_prefix == "uep"
-
-
 def test_main_window_local_finish_uep_source_marks_density_available(main_window, tmp_path: Path) -> None:
     window = main_window
     service = ProjectService()

@@ -19,6 +19,7 @@ from mufinder.services.definition_mappings import (
     remove_definition_if_no_rows,
     remove_grid_keys_from_definition,
     remove_labels_from_definition,
+    remove_generated_sources,
     remove_source_keys_from_definition,
     sweep_definition_context_matches,
     sync_equivalent_mappings,
@@ -519,6 +520,23 @@ def test_remove_source_keys_drops_sources_settings_and_bindings(document: Projec
     definition.parameters["configuration"]["sources"] = [{"key": "p2"}]
     assert remove_source_keys_from_definition(document, definition, {"p2"}) is True
     assert definition.id not in document.calculations
+
+
+def test_remove_generated_sources_drops_paths_from_the_form_state(document: ProjectDocument) -> None:
+    document.ui_state["energy_barriers_form"] = {
+        "selected_reactant_key": "a",
+        "generated_sources": [{"key": "p1"}, {"key": " p2 "}, "unreadable"],
+    }
+
+    remove_generated_sources(document, {"p2"})
+
+    assert document.ui_state["energy_barriers_form"] == {
+        "selected_reactant_key": "a",
+        "generated_sources": [{"key": "p1"}, "unreadable"],
+    }
+    document.ui_state["energy_barriers_form"] = "unreadable"
+    remove_generated_sources(document, {"p1"})
+    assert document.ui_state["energy_barriers_form"] == "unreadable"
 
 
 def test_ensure_job_mapping_replaces_a_broken_mapping() -> None:

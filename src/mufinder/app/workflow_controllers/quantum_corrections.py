@@ -1,83 +1,72 @@
 """Quantum-corrections workflow controller.
 
-Owns the submit → materialize → result → refresh cycle for the two-stage CASTEP
-quantum-corrections workflow. Each relaxed muon source runs as a
-*singlepoint → phonon* pair: a stage-1 singlepoint job, then a stage-2 phonon
-continuation. This is the richest migration onto
-:class:`~mufinder.app.workflow_controllers.base.WorkflowJobController`:
+Owns the quantum-corrections workflow: each relaxed muon source runs as a
+*singlepoint → phonon* pair, a stage-1 singlepoint job and then a stage-2 phonon
+continuation that shares its seed directory.
 
+- **Sources and stages.** Rows are the eligible relaxed muon sites from
+  :mod:`mufinder.services.source_candidates`. :meth:`QuantumCorrectionsController.stage_state`
+  resolves a row's current stage from its two jobs, bound through the
+  definition's ``singlepoint_job_ids_by_label`` / ``phonon_job_ids_by_label``.
 - **Two-stage materialize.** :meth:`QuantumCorrectionsController.materialize`
-  dispatches each selected source to its current stage
-  (:data:`~mufinder.services.source_candidates.QUANTUM_STAGE_SINGLEPOINT` /
-  :data:`~mufinder.services.source_candidates.QUANTUM_STAGE_PHONON`) via the
-  deps-provided ``quantum_stage_state`` helper, builds singlepoint *and* phonon
-  configs, expands them through the workflow-layer
-  ``expand_quantum_singlepoint_jobs`` / ``expand_quantum_phonon_jobs``, and writes
-  the two per-stage job-id mappings (``singlepoint_job_ids_by_label`` /
-  ``phonon_job_ids_by_label``) plus the shared ``job_seed_names_by_label`` — a
-  behavior-preserving move of the former
-  ``MainWindow._materialize_quantum_corrections_jobs``.
-- **Pre-submit host check.**
-  :meth:`~mufinder.app.workflow_controllers.base.WorkflowJobController.pre_submit_check`
-  validates the active definition against the current host structure/sites (the
-  former ``_check_definition_host`` guard, shared with the NEB / energy-barriers
-  workflow and therefore reached via :class:`QuantumCorrectionsDeps`).
-- **Richest result parsing.** :meth:`QuantumCorrectionsController.build_result`
-  parses the completed ``.phonon`` file and contributes the muon ZPE, phonon
-  eigenvalues, mode participations, and the ``w1`` entanglement witness for a
-  quantum-*phonon* job; a quantum-*singlepoint* job contributes nothing (an empty
-  :class:`~mufinder.app.workflow_controllers.base.ControllerResult`, a strict
-  no-op). :meth:`QuantumCorrectionsController.validate_artifacts` fails a phonon
-  job whose ``.phonon`` is missing or unparseable, including any downstream
-  :class:`~mufinder.science.quantum_phonons.PhononParseError` from the ZPE / Gamma
-  / witness computation, before ``build_result`` runs; ``build_result`` then
-  derives the payload from the carried, validated calculation.
+  builds a config per selected row for its current stage, expands them through
+  ``expand_quantum_singlepoint_jobs`` / ``expand_quantum_phonon_jobs`` and writes
+  both stages into the row's shared seed directory.
+- **Submission guards.** :meth:`QuantumCorrectionsController.pre_submit_check`
+  checks the active definition against the active host and refuses a stage-2
+  row whose stage-1 cell omits the muon mass; :meth:`QuantumCorrectionsController.submit`
+  checks each row's phonon method against its pseudopotentials and refuses a
+  stage-2 row sent to a target that does not hold its stage-1 checkpoint.
+- **Result.** :meth:`QuantumCorrectionsController.validate_artifacts` fails a
+  phonon job whose ``.phonon`` is missing or unparseable;
+  :meth:`QuantumCorrectionsController.build_result` contributes the muon ZPE,
+  phonon eigenvalues, mode participations and the ``w1`` entanglement witness.
+- **Configure and reset.** :meth:`QuantumCorrectionsController.configure_request`
+  and :meth:`QuantumCorrectionsController.apply_configuration` back the Configure
+  dialog; :meth:`QuantumCorrectionsController.stage_one_resets` lists the rows
+  "Reset to Stage 1" may rewind.
 
-- **Task farming is NOT this controller's concern.** The stage-2 phonon jobs are
-  task-farmed, but that is applied by ``MainWindow._submit_jobs_locally`` in the
-  shared submit backend (``task_farming_for_job=self._task_farming_for_job``,
-  which filters by job) for *all* workflows. This controller's single-group
-  :meth:`submission_groups` only adds a preselected cluster and does not touch
-  task farming.
-- **Stage-2 target guard.** :meth:`QuantumCorrectionsController.submit` refuses a
-  stage-2 phonon row sent to a target that does not hold its stage-1 checkpoint
-  (local after a cluster singlepoint, a cluster after a local one, or rows whose
-  singlepoints ran on different clusters) and preselects the stage-1 cluster.
-
-Both quantum calc types are registered on :attr:`calc_types` so
-:meth:`handles_job` is coherent across the two-stage pair; the singlepoint branch
-of ``build_result`` returns an empty result, so "handling" a singlepoint job is
-byte-identical to not handling it.
-
-Shared helpers that non-migrating code still calls (the definition/config/stage
-helpers, shared with the configure path, source-label rename, stage reset, and the
-NEB / energy-barriers workflow) remain on ``MainWindow`` and are reached via
-:class:`QuantumCorrectionsDeps`, following the shared-context + per-controller-deps
-+ view pattern documented in :mod:`mufinder.app.workflow_controllers.base`.
+Task farming of the phonon stage is applied by the shared submit backend, which
+reads each row's farm count from its configuration extras.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from mufinder.castep_io.cell_parser import CellParseError, parse_cell_file
 from mufinder.castep_io.output_parser import CastepResult
-from mufinder.domain.enums import JobStatus, WorkflowStage
-from mufinder.domain.models import CalculationDefinition, CalculationRun, Job
+from mufinder.castep_io.schema import KeywordSpec
+from mufinder.castep_io.types import ValueWithUnit
+from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
+from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
 from mufinder.services.job_artifacts import ParsedJobArtifacts
 from mufinder.services.source_candidates import (
     QUANTUM_STAGE_PHONON,
     QUANTUM_STAGE_SINGLEPOINT,
+    QuantumSourceCandidate,
+    QuantumStageState,
+    charge_state_for_job,
+    charge_state_label_for_job,
+    eligible_quantum_source_candidates,
+    quantum_seed_name_for_key,
+    quantum_source_candidate_by_key,
+    quantum_source_label,
+    quantum_source_relative_energies,
+    quantum_stage_state,
+    serialize_quantum_sources,
+    source_relaxation_parameter_values,
 )
 from mufinder.science.quantum_phonons import (
     muon_mass_warning,
     muon_zpe,
     w1_entanglement_witness,
 )
-from mufinder.workflow import StructureBridgeError, structure_to_spec
+from mufinder.workflow import StructureBridgeError, render_job, structure_to_spec
 from mufinder.workflow.quantum import (
     QUANTUM_PHONON_CALC_TYPE,
     QUANTUM_PHONON_SET_CALC_TYPE,
@@ -88,28 +77,82 @@ from mufinder.workflow.quantum import (
     expand_quantum_singlepoint_jobs,
     phonon_method_compatibility,
 )
-from mufinder.workflow.types import InputTemplate, JobSpec
+from mufinder.workflow.types import JobSpec
 
+from mufinder.app.adapter_common import build_workflow_settings_template
 from mufinder.app.quantum_corrections_widget import (
     QuantumCorrectionsWidget,
     QuantumResultRow,
     QuantumSourceRow,
 )
+from mufinder.app.relaxation_types import RelaxationRunState
+from mufinder.app.workflow_config_codecs import (
+    batch_row_payload,
+    num_farms_from_extras,
+    row_settings_payload,
+    store_workflow_row_configuration,
+    workflow_row_configuration,
+    workflow_row_configuration_exists,
+)
 from mufinder.app.workflow_controllers.base import (
     ControllerResult,
     WorkflowControllerContext,
     WorkflowJobController,
+    confirm_active_host,
+    dedupe_jobs,
 )
+from mufinder.app.workflow_dialogs import SourceConfigureRequest, SourceConfigureResult
+from mufinder.app.workflow_parameters import (
+    build_workflow_parameter_surface,
+    merge_species_options,
+    workflow_basic_parameter_names,
+)
+from mufinder.app.workflow_submission import effective_row_status
+from mufinder.app.workflow_table_utils import format_energy_ev
 
+#: Stage-1 singlepoint statuses from which a row may be rewound to stage 1 while
+#: no phonon job exists. ``COMPLETED`` is the "redo stage 1 with different
+#: parameters" case; the three terminal-recoverable statuses are the failure
+#: escape hatch (the set ``reset_failed_job`` accepts, spelled out here because
+#: the reset deletes job records rather than resetting them).
+_STAGE_ONE_RESETTABLE_STATUSES = frozenset(
+    {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
+)
+_CONFIG_KEYWORD_NAMES = workflow_basic_parameter_names()
+_GUI_TO_METHOD = {
+    "FINITEDISPLACEMENT": "finite_displacement",
+    "DFPT": "dfpt",
+    "LINEARRESPONSE": "linear_response",
+}
+_METHOD_TO_GUI = {value: key for key, value in _GUI_TO_METHOD.items()}
+_DEFAULT_ELEC_ENERGY_TOL = ValueWithUnit(1e-9, "eV")
+
+
+def _method_from_gui_value(value: object) -> str:
+    normalized = str(value).strip().upper()
+    try:
+        return _GUI_TO_METHOD[normalized]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported phonon method '{value}'.") from exc
+
+
+def _method_to_gui_value(value: object) -> str:
+    return _METHOD_TO_GUI.get(str(value).strip().lower(), "FINITEDISPLACEMENT")
+
+
+def _write_job_directory(job_spec: JobSpec, output_root: Path, *, seed_name: str) -> Path:
+    """Write a stage's ``.cell`` / ``.param`` into the row's shared seed directory."""
+
+    job_dir = output_root / seed_name
+    job_dir.mkdir(parents=True, exist_ok=True)
+    cell_text, param_text = render_job(job_spec)
+    (job_dir / f"{seed_name}.cell").write_text(cell_text, encoding="utf-8", newline="\n")
+    (job_dir / f"{seed_name}.param").write_text(param_text, encoding="utf-8", newline="\n")
+    return job_dir
 
 
 def _format_phonon_eigenvalues(value: object) -> str:
-    """Format a list of gamma-point eigenvalues as ``"1:v1, 2:v2, ..."``.
-
-    Behavior-preserving move of the former module-level
-    ``main_window._format_phonon_eigenvalues`` (its only caller was the quantum
-    view refresh, which now lives in :meth:`QuantumCorrectionsController.refresh_view`).
-    """
+    """Format a list of gamma-point eigenvalues as ``"1:v1, 2:v2, ..."``."""
 
     if not isinstance(value, list):
         return ""
@@ -196,67 +239,47 @@ def _cell_declares_species_mass(cell_path: Path) -> bool:
 
 @dataclass(frozen=True)
 class QuantumCorrectionsDeps:
-    """Quantum-corrections-specific handles, late-bound to ``MainWindow`` helpers.
+    """The window-side handles the quantum-corrections controller needs.
 
-    These helpers stay on ``MainWindow`` because non-migrating code still calls
-    them: the definition/stage/config helpers are shared with the quantum
-    configure path, source-label rename, and stage-one reset; ``check_definition_host``
-    is shared with the NEB / energy-barriers workflow; the source-candidate and
-    row-configuration helpers are shared across the quantum surface and the energy
-    barriers path; and ``dedupe_jobs`` / ``format_energy`` are shared across
-    workflows. The source-candidate callables are bound to
-    :mod:`mufinder.services.source_candidates` and
-    ``input_template_from_keyword_values`` to
-    :func:`~mufinder.app.adapter_common.build_workflow_settings_template`. The controller reaches
-    them only through these required callables. Workflow-specific dependencies like
-    these never go in the shared
-    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`;
-    cross-workflow job/definition readers (``definition_output_directory``,
-    ``job_output_directory``, ``job_seed_name``) live there instead.
+    Each one shows a dialog: the host-mismatch handlers ask whether to switch
+    the active host (shared with every host-guarded workflow) and ``confirm``
+    asks a yes/no question. Everything else the controller reads from the
+    shared :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
+    or the service layer.
     """
 
-    ensure_quantum_corrections_definition: Callable[
-        [list[str]], CalculationDefinition | None
-    ]
-    eligible_quantum_source_candidates: Callable[[], list[object]]
-    quantum_source_relative_energies: Callable[[], Mapping[str, float | None]]
-    quantum_source_candidate_by_key: Callable[[str], object | None]
-    quantum_stage_state: Callable[[CalculationDefinition | None, object], object]
-    build_quantum_corrections_states: Callable[[], Mapping[str, object]]
-    jobs_for_quantum_source_keys: Callable[[list[str]], list[Job]]
-    singlepoint_job_for_quantum_source_key: Callable[
-        [CalculationDefinition, str], Job | None
-    ]
-    phonon_job_for_quantum_source_key: Callable[
-        [CalculationDefinition, str], Job | None
-    ]
-    quantum_seed_name_for_key: Callable[[CalculationDefinition, str], str]
-    quantum_runtime_configuration: Callable[
-        [CalculationDefinition, str], tuple[dict[str, object], str]
-    ]
-    workflow_row_configuration: Callable[
-        [CalculationDefinition | None, str],
-        tuple[dict[str, object], tuple[str, ...], dict[str, object]],
-    ]
-    workflow_row_configuration_exists: Callable[
-        [CalculationDefinition | None, str], bool
-    ]
-    quantum_num_farms_from_extras: Callable[[Mapping[str, object]], int]
-    quantum_source_label: Callable[[object], str]
-    quantum_method_from_gui_value: Callable[[object], str]
-    charge_state_for_job: Callable[[Job | None], str | None]
-    charge_state_label_for_job: Callable[[Job | None], str]
-    quantum_can_reset_to_stage_one: Callable[
-        [CalculationDefinition | None, object], bool
-    ]
-    input_template_from_keyword_values: Callable[[Mapping[str, object]], InputTemplate]
-    write_quantum_job_directory: Callable[..., Path]
-    dedupe_jobs: Callable[[list[Job]], list[Job]]
-    check_definition_host: Callable[[CalculationDefinition | None], bool]
-    format_energy: Callable[[object], str]
+    handle_structure_host_mismatch: Callable[[object], bool]
+    handle_site_host_mismatch: Callable[[object], bool]
     #: Ask a yes/no question (title, text); ``True`` means proceed. The safe
     #: answer, "no", is the default.
     confirm: Callable[[str, str], bool]
+
+
+@dataclass(frozen=True)
+class QuantumConfigureRequest(SourceConfigureRequest):
+    """The quantum Configure dialog's seed: the shared request plus its stage rules.
+
+    ``fully_editable`` rows are all ready on stage 1; ``farms_only`` rows are all
+    ready on stage 2, where only the farm count may still change. Any other
+    selection opens read-only.
+    """
+
+    pseudopotential_family: str
+    farms_only: bool
+    fully_editable: bool
+
+
+@dataclass(frozen=True)
+class StageOneReset:
+    """A row "Reset to Stage 1" may rewind: its key, label and staged jobs.
+
+    ``jobs`` lists the phonon job (when there is one) before the singlepoint, so
+    ``jobs[0]`` owns the shared seed directory.
+    """
+
+    key: str
+    label: str
+    jobs: tuple[Job, ...]
 
 
 class QuantumCorrectionsController(WorkflowJobController):
@@ -282,12 +305,424 @@ class QuantumCorrectionsController(WorkflowJobController):
         self._view = view
         self._preferred_cluster_name: str | None = None
 
+    # --- sources and stages ---
+
+    def candidates(self) -> list[QuantumSourceCandidate]:
+        """Return the eligible relaxed muon sources, in table order."""
+
+        return eligible_quantum_source_candidates(self._context.document())
+
+    def candidate_by_key(self, key: str) -> QuantumSourceCandidate | None:
+        return quantum_source_candidate_by_key(self._context.document(), key)
+
+    def source_label(self, candidate: QuantumSourceCandidate) -> str:
+        return quantum_source_label(self._context.document(), candidate)
+
+    def seed_name_for_key(self, definition: CalculationDefinition | None, key: str) -> str:
+        return quantum_seed_name_for_key(self._context.document(), definition, key)
+
+    def singlepoint_job_for_key(self, definition: CalculationDefinition | None, key: str) -> Job | None:
+        return self.job_for_key(
+            definition,
+            key,
+            mapping_name="singlepoint_job_ids_by_label",
+            calc_type=QUANTUM_SINGLEPOINT_CALC_TYPE,
+        )
+
+    def phonon_job_for_key(self, definition: CalculationDefinition | None, key: str) -> Job | None:
+        """Return the row's phonon job, falling back to the ``job_ids_by_label`` alias."""
+
+        job = self.job_for_key(
+            definition,
+            key,
+            mapping_name="phonon_job_ids_by_label",
+            calc_type=QUANTUM_PHONON_CALC_TYPE,
+        )
+        if job is not None:
+            return job
+        return self.job_for_key(definition, key, calc_type=QUANTUM_PHONON_CALC_TYPE)
+
+    def stage_state(
+        self, definition: CalculationDefinition | None, candidate: QuantumSourceCandidate
+    ) -> QuantumStageState:
+        return quantum_stage_state(
+            singlepoint_job=self.singlepoint_job_for_key(definition, candidate.key),
+            phonon_job=self.phonon_job_for_key(definition, candidate.key),
+            row_status=effective_row_status,
+        )
+
+    def can_reset_to_stage_one(
+        self, definition: CalculationDefinition | None, candidate: QuantumSourceCandidate
+    ) -> bool:
+        """Return whether a row can be rewound to stage 1.
+
+        Quantum corrections is the one workflow whose recovery is a *stage*
+        reset rather than a job reset: a row stages a singlepoint job and then a
+        phonon job into a shared output directory, so the reset deletes both job
+        records instead of calling ``reset_failed_job``. That makes this
+        predicate the workflow's whole in-table escape hatch.
+
+        A row qualifies once it has progressed past "nothing staged" and has no
+        job still running: either the phonon job exists and is not active, or
+        the row is still on stage 1 with a singlepoint job that has finished,
+        including a failed, stopped or cancelled one, so a stage-1 failure never
+        leaves the row stuck.
+        """
+
+        singlepoint_job = self.singlepoint_job_for_key(definition, candidate.key)
+        if singlepoint_job is None:
+            return False
+        phonon_job = self.phonon_job_for_key(definition, candidate.key)
+        if phonon_job is not None:
+            return phonon_job.status not in ACTIVE_JOB_STATUSES
+        return singlepoint_job.status in _STAGE_ONE_RESETTABLE_STATUSES
+
+    def definition_and_key_for_job(
+        self, job: Job
+    ) -> tuple[CalculationDefinition, str] | tuple[None, None]:
+        """Return the definition and row key whose job mappings bind ``job``."""
+
+        for definition in self.definitions():
+            for mapping_name in ("singlepoint_job_ids_by_label", "phonon_job_ids_by_label", "job_ids_by_label"):
+                mapping = definition.parameters.get(mapping_name, {})
+                if not isinstance(mapping, dict):
+                    continue
+                for key, value in mapping.items():
+                    if str(value) == str(job.id):
+                        return definition, str(key)
+        return None, None
+
+    def _completed_stage_one_job(self, job: Job) -> Job | None:
+        if job.calc_type != QUANTUM_PHONON_CALC_TYPE:
+            return None
+        definition, key = self.definition_and_key_for_job(job)
+        if definition is None or key is None:
+            return None
+        source_job = self.singlepoint_job_for_key(definition, key)
+        if source_job is None or source_job.status != JobStatus.COMPLETED:
+            return None
+        return source_job
+
+    def stage_one_target(self, job: Job) -> str | None:
+        """Return where a phonon job's stage-1 singlepoint ran.
+
+        ``None`` when ``job`` is not a quantum phonon job or its completed
+        singlepoint cannot be found; otherwise the singlepoint's
+        ``execution_target`` (``"local"`` or a cluster name).
+        """
+
+        source_job = self._completed_stage_one_job(job)
+        if source_job is None:
+            return None
+        return (source_job.execution_target or "").strip() or "local"
+
+    def continuation_remote_target(self, job: Job, *, cluster_name: str) -> str:
+        """Return the remote directory a phonon job continues in on ``cluster_name``.
+
+        That is its completed stage-1 singlepoint's remote directory when the
+        singlepoint ran on that cluster, and ``""`` otherwise.
+        """
+
+        source_job = self._completed_stage_one_job(job)
+        if source_job is None:
+            return ""
+        if source_job.execution_target.strip().casefold() != cluster_name.strip().casefold():
+            return ""
+        return (source_job.remote_directory or "").strip()
+
+    # --- configuration ---
+
+    @staticmethod
+    def parameter_specs() -> list[KeywordSpec]:
+        """Return the Configure dialog's parameter surface (tight default ``elec_energy_tol``)."""
+
+        specs = build_workflow_parameter_surface(
+            workflow_stage="quantum_corrections",
+            basic_names=_CONFIG_KEYWORD_NAMES,
+        )
+        return [
+            replace(spec, default_value=_DEFAULT_ELEC_ENERGY_TOL)
+            if spec.name == "elec_energy_tol"
+            else spec
+            for spec in specs
+        ]
+
+    def _row_configuration(
+        self, definition: CalculationDefinition | None, key: str
+    ) -> tuple[dict[str, object], tuple[str, ...], dict[str, object]]:
+        """Return a row's stored configuration over its source relaxation's settings."""
+
+        params, advanced, extras = workflow_row_configuration(definition, key)
+        candidate = self.candidate_by_key(key)
+        values = (
+            source_relaxation_parameter_values(candidate.job, self._context.job_output_directory)
+            if candidate is not None
+            else {}
+        )
+        legacy_method = extras.get("phonon_method")
+        if legacy_method is not None:
+            values.setdefault("phonon_method", _method_to_gui_value(legacy_method))
+        values.update(params)
+        return values, advanced, extras
+
+    def runtime_configuration(
+        self, definition: CalculationDefinition | None, key: str
+    ) -> tuple[dict[str, object], str]:
+        """Return a row's effective parameter values and its pseudopotential family.
+
+        The row's stored values sit over its source relaxation's settings; a
+        definition-level phonon method or pseudopotential family written by an
+        older configuration fills in what the row leaves unset.
+        """
+
+        params, _advanced, extras = self._row_configuration(definition, key)
+        config = definition.parameters.get("configuration", {}) if definition is not None else {}
+        legacy_method = "finite_displacement"
+        legacy_pseudopotential = "unknown"
+        if isinstance(config, dict):
+            legacy_method = str(config.get("method", legacy_method)).strip() or legacy_method
+            legacy_pseudopotential = (
+                str(config.get("pseudopotential_family", legacy_pseudopotential)).strip() or legacy_pseudopotential
+            )
+        values = dict(params)
+        values.setdefault("phonon_method", _method_to_gui_value(legacy_method))
+        values.setdefault("elec_energy_tol", _DEFAULT_ELEC_ENERGY_TOL)
+        pseudopotential_family = str(extras.get("pseudopotential_family", legacy_pseudopotential)).strip() or "unknown"
+        return values, pseudopotential_family
+
+    def ensure_definition(self, source_keys: Sequence[str]) -> CalculationDefinition | None:
+        """Return the active definition with the selected sources added, creating one if needed.
+
+        Returns ``None`` when there is no document or none of ``source_keys`` is
+        an eligible source.
+        """
+
+        document = self._context.document()
+        if document is None:
+            return None
+        candidates = [
+            candidate for key in source_keys if (candidate := self.candidate_by_key(key)) is not None
+        ]
+        if not candidates:
+            return None
+        definition = self.active_definition()
+        if definition is not None:
+            for candidate in candidates:
+                if candidate.structure.id not in definition.input_structure_ids:
+                    definition.input_structure_ids.append(candidate.structure.id)
+                if candidate.site.id not in definition.input_site_ids:
+                    definition.input_site_ids.append(candidate.site.id)
+            config = definition.parameters.setdefault("configuration", {})
+            if isinstance(config, dict):
+                config.setdefault("method", "finite_displacement")
+                config.setdefault("pseudopotential_family", "unknown")
+                config["sources"] = serialize_quantum_sources(document, definition.input_site_ids)
+        else:
+            definition = self._context.project_service.register_quantum_phonon_definition(
+                document,
+                input_structure_ids=list(dict.fromkeys(candidate.structure.id for candidate in candidates)),
+                input_site_ids=list(dict.fromkeys(candidate.site.id for candidate in candidates)),
+                parameters={
+                    "method": "finite_displacement",
+                    "pseudopotential_family": "unknown",
+                    "sources": serialize_quantum_sources(document, [candidate.site.id for candidate in candidates]),
+                    "singlepoint_job_ids_by_label": {},
+                    "phonon_job_ids_by_label": {},
+                    "job_seed_names_by_label": {},
+                },
+                output_directory=document.project_root / "files" / "quantum_corrections",
+            )
+        definition.parameters.setdefault("singlepoint_job_ids_by_label", {})
+        definition.parameters.setdefault("phonon_job_ids_by_label", {})
+        definition.parameters.setdefault("job_seed_names_by_label", {})
+        return definition
+
+    def configure_request(self, keys: Sequence[str]) -> QuantumConfigureRequest | None:
+        """Return what the Configure dialog opens with for the rows ``keys`` name.
+
+        ``None`` when there is no document or no eligible row among ``keys``.
+        """
+
+        if self._context.document() is None:
+            return None
+        candidates = [
+            candidate for key in keys if (candidate := self.candidate_by_key(key)) is not None
+        ]
+        if not candidates:
+            return None
+        definition = self.active_definition()
+        values_by_key: list[dict[str, object]] = []
+        advanced_names: set[str] = set()
+        stage_states: list[QuantumStageState] = []
+        pseudopotential_families: list[str] = []
+        num_farms_values: list[int] = []
+        for candidate in candidates:
+            values, pseudopotential_family = self.runtime_configuration(definition, candidate.key)
+            _params, row_advanced_names, extras = workflow_row_configuration(definition, candidate.key)
+            values_by_key.append(values)
+            advanced_names.update(row_advanced_names)
+            stage_states.append(self.stage_state(definition, candidate))
+            pseudopotential_families.append(pseudopotential_family)
+            num_farms_values.append(num_farms_from_extras(extras))
+        farms_only_values = {
+            state.stage == QUANTUM_STAGE_PHONON and state.status == "ready" and state.current_job is None
+            for state in stage_states
+        }
+        farms_only = farms_only_values == {True}
+        fully_editable = all(
+            state.stage == QUANTUM_STAGE_SINGLEPOINT and state.status == "ready" for state in stage_states
+        )
+        read_only = not fully_editable and not farms_only
+        if read_only:
+            title = "Inspect Quantum Corrections Parameters"
+        elif farms_only:
+            title = "Configure Quantum Corrections Stage 2 Farms"
+        else:
+            title = "Configure Quantum Corrections Parameters"
+        stage_text = stage_states[0].stage if len(candidates) == 1 else "mixed/selected"
+        return QuantumConfigureRequest(
+            keys=tuple(candidate.key for candidate in candidates),
+            row_values=tuple(values_by_key),
+            advanced_names=frozenset(advanced_names),
+            title=title,
+            intro_text=(
+                f"Selected sources: {len(candidates)}\n"
+                f"Current stage: {stage_text}\n"
+                f"Displacements required for the phonon stage: {3 * len(candidates[0].structure.species)}"
+            ),
+            read_only=read_only,
+            num_farms=_agreed(num_farms_values, default=1),
+            species_options=merge_species_options(candidate.structure for candidate in candidates),
+            pseudopotential_family=_agreed(pseudopotential_families, default="") or "unknown",
+            farms_only=farms_only,
+            fully_editable=fully_editable,
+        )
+
+    def apply_configuration(
+        self,
+        keys: Sequence[str],
+        result: SourceConfigureResult,
+        extras: Mapping[str, object],
+    ) -> None:
+        """Store an accepted Configure dialog on every row ``keys`` name.
+
+        ``extras`` are the dialog's workflow values (pseudopotential family and
+        farm count). A mixed parameter the user left alone keeps each row's own
+        stored value.
+        """
+
+        payload = row_settings_payload(result.values, result.advanced_names, extras)
+        definition = self.ensure_definition(keys)
+        if definition is None:
+            return
+        for key in keys:
+            store_workflow_row_configuration(
+                definition, key, batch_row_payload(definition, key, payload, result.untouched_mixed)
+            )
+        self.refresh_view()
+        self._context.persist_ui_state(
+            failure_message="Quantum Corrections configuration was updated, but autosave failed."
+        )
+
+    def rename_source(self, key: str, label: str) -> bool:
+        """Rename a source's muon site from its editable label cell.
+
+        Returns whether the label changed. A blank or unchanged label restores
+        the cell; an unknown key does nothing.
+        """
+
+        candidate = self.candidate_by_key(key)
+        if candidate is None:
+            return False
+        normalized = str(label).strip()
+        if not normalized or normalized == candidate.site.label:
+            self.refresh_view()
+            return False
+        candidate.site.label = normalized
+        self.refresh_view()
+        return True
+
+    def stage_one_resets(self, keys: Iterable[str]) -> list[StageOneReset] | None:
+        """Return the rows among ``keys`` that can be rewound to stage 1.
+
+        ``None`` when there is no active definition (nothing has been staged).
+        """
+
+        definition = self.active_definition()
+        if definition is None:
+            return None
+        resets: list[StageOneReset] = []
+        for key in keys:
+            candidate = self.candidate_by_key(key)
+            if candidate is None or not self.can_reset_to_stage_one(definition, candidate):
+                continue
+            staged = (self.phonon_job_for_key(definition, key), self.singlepoint_job_for_key(definition, key))
+            resets.append(
+                StageOneReset(
+                    key=key,
+                    label=candidate.site.label or candidate.job.label,
+                    jobs=tuple(job for job in staged if job is not None),
+                )
+            )
+        return resets
+
+    def forget_seed_name(self, key: str) -> None:
+        """Drop a reset row's recorded seed name so stage 1 starts from a fresh one."""
+
+        definition = self.active_definition()
+        if definition is None:
+            return
+        seed_mapping = definition.parameters.setdefault("job_seed_names_by_label", {})
+        if not isinstance(seed_mapping, dict):
+            seed_mapping = {}
+            definition.parameters["job_seed_names_by_label"] = seed_mapping
+        seed_mapping.pop(key, None)
+
+    def phonon_result(self, result_id: str) -> Result | None:
+        """Return the completed quantum-phonon result ``result_id`` names, if any."""
+
+        document = self._context.document()
+        if document is None:
+            return None
+        try:
+            parsed_result_id = UUID(str(result_id))
+        except ValueError:
+            return None
+        result = document.results.get(parsed_result_id)
+        if result is None or result.result_type != QUANTUM_PHONON_CALC_TYPE:
+            return None
+        return result
+
+    def phonon_analysis_input(self, result: Result) -> tuple[Path, str]:
+        """Return the ``.phonon`` file and job label the analysis window opens on.
+
+        Raises ``ValueError`` with a user-facing reason when the result names no
+        phonon file or the file is gone. A relative path is read from the
+        project root.
+        """
+
+        document = self._context.document()
+        phonon_file = result.data.get("phonon_file") if isinstance(result.data, dict) else None
+        if not isinstance(phonon_file, str) or not phonon_file.strip():
+            raise ValueError("The completed result does not reference a phonon file.")
+        phonon_path = Path(phonon_file)
+        if not phonon_path.is_absolute() and document is not None:
+            phonon_path = document.project_root / phonon_path
+        if not phonon_path.exists():
+            raise ValueError(f"Could not find phonon file:\n{phonon_path}")
+        job_label = "Quantum phonon"
+        if document is not None:
+            run = document.runs.get(result.calculation_run_id) if result.calculation_run_id is not None else None
+            job = document.jobs.get(run.job_id) if run is not None and run.job_id is not None else None
+            if job is not None:
+                job_label = job.label
+        return phonon_path, job_label
+
     # --- submission contract ---
     #
     # normalize=str and the base-default ``is_ready`` (workflow_row_state_is_ready)
-    # exactly mirror the former ``_on_submit_*_from_quantum_corrections`` handlers.
-    # submission_groups only preselects the stage-1 cluster (see ``submit``); task
-    # farming is applied by the shared submit backend, not here.
+    # apply. submission_groups only preselects the stage-1 cluster (see
+    # ``submit``); task farming is applied by the shared submit backend, not here.
 
     def normalize(self, value: object) -> str:
         return str(value)
@@ -297,17 +732,27 @@ class QuantumCorrectionsController(WorkflowJobController):
 
         Two guards run here:
 
-        - the ``_check_definition_host`` guard the former quantum submit handlers
-          ran before building a submission plan (shared with the NEB /
-          energy-barriers workflow, so it stays on ``MainWindow`` and is reached
-          via the deps). A refusal is silent.
+        - the active definition's structures and sites must belong to the
+          active host (:func:`~mufinder.app.workflow_controllers.base.confirm_active_host`);
+          a mismatch the user does not resolve refuses silently.
         - :meth:`_stage_two_sources_missing_muon_mass`, which refuses a stage-2
           phonon continuation whose stage-1 singlepoint cell has no
           ``SPECIES_MASS`` block. That refusal explains itself via ``show_info``.
         """
 
-        if not self._deps.check_definition_host(
-            self.active_definition()
+        document = self._context.document()
+        definition = self.active_definition()
+        if (
+            document is not None
+            and definition is not None
+            and not confirm_active_host(
+                self._context.project_service,
+                document,
+                structure_ids=definition.input_structure_ids,
+                site_ids=definition.input_site_ids,
+                handle_structure_mismatch=self._deps.handle_structure_host_mismatch,
+                handle_site_mismatch=self._deps.handle_site_host_mismatch,
+            )
         ):
             return False
 
@@ -349,17 +794,17 @@ class QuantumCorrectionsController(WorkflowJobController):
             return []
         missing: list[str] = []
         for key in [str(value) for value in keys]:
-            candidate = self._deps.quantum_source_candidate_by_key(key)
+            candidate = self.candidate_by_key(key)
             if candidate is None:
                 continue
-            stage_state = self._deps.quantum_stage_state(definition, candidate)
-            if getattr(stage_state, "stage", None) != QUANTUM_STAGE_PHONON:
+            stage_state = self.stage_state(definition, candidate)
+            if stage_state.stage != QUANTUM_STAGE_PHONON:
                 continue
-            seed_name = self._deps.quantum_seed_name_for_key(definition, key)
+            seed_name = self.seed_name_for_key(definition, key)
             cell_path = output_root / seed_name / f"{seed_name}.cell"
             if _cell_declares_species_mass(cell_path):
                 continue
-            missing.append(self._deps.quantum_source_label(candidate))
+            missing.append(self.source_label(candidate))
         return missing
 
     def submit(
@@ -429,10 +874,10 @@ class QuantumCorrectionsController(WorkflowJobController):
             return []
         rows: list[tuple[CalculationDefinition, str, object, object]] = []
         for key in [str(value) for value in keys]:
-            candidate = self._deps.quantum_source_candidate_by_key(key)
+            candidate = self.candidate_by_key(key)
             if candidate is None:
                 continue
-            stage_state = self._deps.quantum_stage_state(definition, candidate)
+            stage_state = self.stage_state(definition, candidate)
             current_job = getattr(stage_state, "current_job", None)
             if getattr(stage_state, "status", None) != "ready" and (
                 current_job is None or current_job.status != JobStatus.DEFINED
@@ -456,12 +901,10 @@ class QuantumCorrectionsController(WorkflowJobController):
         incompatible: list[tuple[str, str, str]] = []
         unverified: list[tuple[str, str, str]] = []
         for definition, key, candidate, stage_state in self._submittable_rows(keys):
-            values, pseudopotential_family = self._deps.quantum_runtime_configuration(
-                definition, key
-            )
+            values, pseudopotential_family = self.runtime_configuration(definition, key)
             gui_method = str(values.get("phonon_method", "FINITEDISPLACEMENT")).strip().upper()
             try:
-                method = self._deps.quantum_method_from_gui_value(gui_method)
+                method = _method_from_gui_value(gui_method)
             except ValueError:
                 continue
             compatible, message = phonon_method_compatibility(
@@ -469,7 +912,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                 pseudopotential_family=pseudopotential_family,  # type: ignore[arg-type]
             )
             entry = (
-                self._deps.quantum_source_label(candidate),
+                self.source_label(candidate),
                 gui_method,
                 "stage 2" if getattr(stage_state, "stage", None) == QUANTUM_STAGE_PHONON else "stage 1",
             )
@@ -489,14 +932,12 @@ class QuantumCorrectionsController(WorkflowJobController):
         for definition, key, candidate, stage_state in self._submittable_rows(keys):
             if getattr(stage_state, "stage", None) != QUANTUM_STAGE_PHONON:
                 continue
-            singlepoint = self._deps.singlepoint_job_for_quantum_source_key(
-                definition, key
-            )
+            singlepoint = self.singlepoint_job_for_key(definition, key)
             if singlepoint is None:
                 continue
             rows.append(
                 (
-                    self._deps.quantum_source_label(candidate),
+                    self.source_label(candidate),
                     (singlepoint.execution_target or "").strip(),
                 )
             )
@@ -560,18 +1001,51 @@ class QuantumCorrectionsController(WorkflowJobController):
             "for one cluster at a time.",
         )
 
-    def build_states(self) -> Mapping[str, object]:
-        return self._deps.build_quantum_corrections_states()
+    def build_states(self) -> dict[str, RelaxationRunState]:
+        """Return each eligible row's state on its current stage."""
+
+        states: dict[str, RelaxationRunState] = {}
+        definition = self.active_definition()
+        for candidate in self.candidates():
+            stage_state = self.stage_state(definition, candidate)
+            job = stage_state.current_job
+            if job is None:
+                states[candidate.key] = RelaxationRunState(status=stage_state.status)
+                continue
+            states[candidate.key] = RelaxationRunState(
+                status=stage_state.status,
+                job_id=job.id,
+                job_label=job.label,
+                error_message=job.error_message,
+            )
+        return states
 
     def jobs_for_keys(self, keys: list[object]) -> list[Job]:
-        return self._deps.jobs_for_quantum_source_keys([str(key) for key in keys])
+        """Return each row's current-stage job across every definition, once each."""
+
+        if self._context.document() is None:
+            return []
+        selected: list[Job] = []
+        seen: set[UUID] = set()
+        str_keys = [str(key) for key in keys]
+        for definition in self.definitions():
+            for key in str_keys:
+                candidate = self.candidate_by_key(key)
+                if candidate is None:
+                    continue
+                job = self.stage_state(definition, candidate).current_job
+                if job is None or job.id in seen:
+                    continue
+                selected.append(job)
+                seen.add(job.id)
+        return selected
 
     def materialize(self, keys: list[object]) -> list[Job]:
         document = self._context.document()
         if document is None:
             return []
         str_keys = [str(key) for key in keys]
-        definition = self._deps.ensure_quantum_corrections_definition(str_keys)
+        definition = self.ensure_definition(str_keys)
         if definition is None:
             return []
         output_root = self._context.definition_output_directory(definition)
@@ -581,10 +1055,10 @@ class QuantumCorrectionsController(WorkflowJobController):
         singlepoint_configs: list[QuantumPhononJobConfig] = []
         phonon_configs: list[QuantumPhononJobConfig] = []
         for key in str_keys:
-            candidate = self._deps.quantum_source_candidate_by_key(key)
+            candidate = self.candidate_by_key(key)
             if candidate is None:
                 continue
-            stage_state = self._deps.quantum_stage_state(definition, candidate)
+            stage_state = self.stage_state(definition, candidate)
             if stage_state.status != "ready" and (
                 stage_state.current_job is None
                 or stage_state.current_job.status != JobStatus.DEFINED
@@ -594,32 +1068,28 @@ class QuantumCorrectionsController(WorkflowJobController):
                 structure = structure_to_spec(candidate.structure)
             except StructureBridgeError:
                 continue
-            values, pseudopotential_family = self._deps.quantum_runtime_configuration(
-                definition, key
-            )
-            _params, _advanced, extras = self._deps.workflow_row_configuration(
-                definition, key
-            )
+            values, pseudopotential_family = self.runtime_configuration(definition, key)
+            _params, _advanced, extras = workflow_row_configuration(definition, key)
             values = {name: value for name, value in values.items() if name != "task"}
             method_value = values.pop("phonon_method", "FINITEDISPLACEMENT")
             try:
-                method = self._deps.quantum_method_from_gui_value(method_value)
-                overrides = self._deps.input_template_from_keyword_values(values)
+                method = _method_from_gui_value(method_value)
+                overrides = build_workflow_settings_template(values)
             except ValueError:
                 continue
             config = QuantumPhononJobConfig(
                 source=QuantumPhononSource(
-                    label=self._deps.quantum_source_label(candidate),
+                    label=self.source_label(candidate),
                     structure=structure,
                     source_site_id=candidate.site.id,
                     source_relaxation_run_id=candidate.run.id,
                     source_relaxation_job_id=candidate.job.id,
-                    charge_state=self._deps.charge_state_for_job(candidate.job),
+                    charge_state=charge_state_for_job(candidate.job),
                     total_energy_eV=candidate.site.total_energy_eV,
                 ),
                 method=method,
                 pseudopotential_family=str(pseudopotential_family),
-                num_farms=self._deps.quantum_num_farms_from_extras(extras),
+                num_farms=num_farms_from_extras(extras),
                 cell_overrides=overrides.cell,
                 param_overrides=overrides.param,
             )
@@ -660,8 +1130,8 @@ class QuantumCorrectionsController(WorkflowJobController):
         if not isinstance(seed_mapping, dict):
             seed_mapping = {}
             definition.parameters["job_seed_names_by_label"] = seed_mapping
-        # Load-bearing: ``_phonon_job_for_quantum_source_key`` falls back to
-        # reading ``job_ids_by_label``, so keep the phonon mapping aliased there.
+        # Load-bearing: ``phonon_job_for_key`` falls back to reading
+        # ``job_ids_by_label``, so keep the phonon mapping aliased there.
         definition.parameters["job_ids_by_label"] = phonon_mapping
 
         singlepoint_specs_by_key = {
@@ -674,22 +1144,20 @@ class QuantumCorrectionsController(WorkflowJobController):
         }
         created: list[Job] = []
         for key in str_keys:
-            candidate = self._deps.quantum_source_candidate_by_key(key)
+            candidate = self.candidate_by_key(key)
             if candidate is None:
                 continue
-            stage_state = self._deps.quantum_stage_state(definition, candidate)
-            seed_name = self._deps.quantum_seed_name_for_key(definition, key)
+            stage_state = self.stage_state(definition, candidate)
+            seed_name = self.seed_name_for_key(definition, key)
             seed_mapping[key] = seed_name
             if stage_state.stage == QUANTUM_STAGE_SINGLEPOINT:
                 spec = singlepoint_specs_by_key.get(key)
-                existing = self._deps.singlepoint_job_for_quantum_source_key(
-                    definition, key
-                )
+                existing = self.singlepoint_job_for_key(definition, key)
                 mapping = singlepoint_mapping
                 calc_type = QUANTUM_SINGLEPOINT_CALC_TYPE
             else:
                 spec = phonon_specs_by_key.get(key)
-                existing = self._deps.phonon_job_for_quantum_source_key(definition, key)
+                existing = self.phonon_job_for_key(definition, key)
                 mapping = phonon_mapping
                 calc_type = QUANTUM_PHONON_CALC_TYPE
             if spec is None:
@@ -697,14 +1165,10 @@ class QuantumCorrectionsController(WorkflowJobController):
             if existing is not None:
                 if existing.status == JobStatus.DEFINED:
                     existing.label = spec.name
-                    self._deps.write_quantum_job_directory(
-                        spec, output_root, seed_name=seed_name
-                    )
+                    _write_job_directory(spec, output_root, seed_name=seed_name)
                 created.append(existing)
                 continue
-            self._deps.write_quantum_job_directory(
-                spec, output_root, seed_name=seed_name
-            )
+            _write_job_directory(spec, output_root, seed_name=seed_name)
             job = self._context.project_service.add_job(
                 document,
                 label=spec.name,
@@ -714,7 +1178,7 @@ class QuantumCorrectionsController(WorkflowJobController):
             mapping[key] = str(job.id)
             created.append(job)
 
-        jobs = self._deps.dedupe_jobs(created)
+        jobs = dedupe_jobs(created)
         if jobs:
             self.refresh_view()
             self._context.persist_ui_state(
@@ -760,9 +1224,9 @@ class QuantumCorrectionsController(WorkflowJobController):
 
         A quantum-*singlepoint* job contributes nothing (an empty
         :class:`~mufinder.app.workflow_controllers.base.ControllerResult`, a strict
-        no-op): its result is the base payload only, and stage advancement to the
-        phonon continuation happens in ``quantum_stage_state`` during the next
-        materialize/refresh, not here.
+        no-op): its result is the base payload only, and the row moves on to the
+        phonon stage through :meth:`stage_state` on the next materialize or
+        refresh, not here.
 
         For a quantum-*phonon* job, :meth:`validate_artifacts` has already
         verified the ``.phonon`` file exists and that the full ZPE / Gamma /
@@ -823,12 +1287,11 @@ class QuantumCorrectionsController(WorkflowJobController):
     def refresh_view(self) -> None:
         """Rebuild the quantum-corrections source and result tables.
 
-        Behavior-preserving move of ``MainWindow._refresh_quantum_corrections_view``.
-        Unlike the sibling controllers whose widgets build rows from
+        Unlike the row-table widgets, which build rows from
         ``set_runtime_states``, the quantum widget takes pre-built
         :class:`~mufinder.app.quantum_corrections_widget.QuantumSourceRow` /
         :class:`~mufinder.app.quantum_corrections_widget.QuantumResultRow` lists, so
-        the whole row-building body lives here.
+        the row building lives here.
         """
 
         document = self._context.document()
@@ -838,20 +1301,19 @@ class QuantumCorrectionsController(WorkflowJobController):
             return
 
         source_rows: list[QuantumSourceRow] = []
-        quantum_states = self._deps.build_quantum_corrections_states()
-        relative_energies = self._deps.quantum_source_relative_energies()
+        quantum_states = self.build_states()
+        candidates = self.candidates()
+        relative_energies = quantum_source_relative_energies(candidates)
         definition = self.active_definition()
-        for candidate in self._deps.eligible_quantum_source_candidates():
+        for candidate in candidates:
             state = quantum_states.get(candidate.key)
-            stage_state = self._deps.quantum_stage_state(definition, candidate)
-            _params, _advanced, extras = self._deps.workflow_row_configuration(
-                definition, candidate.key
-            )
+            stage_state = self.stage_state(definition, candidate)
+            _params, _advanced, extras = workflow_row_configuration(definition, candidate.key)
             source_rows.append(
                 QuantumSourceRow(
                     key=candidate.key,
                     label=candidate.site.label or candidate.job.label,
-                    charge_state=self._deps.charge_state_label_for_job(candidate.job),
+                    charge_state=charge_state_label_for_job(candidate.job),
                     relative_energy=_format_relative_energy(
                         relative_energies.get(candidate.key)
                     ),
@@ -859,17 +1321,13 @@ class QuantumCorrectionsController(WorkflowJobController):
                     source_job=candidate.job.label,
                     stage=stage_state.stage,
                     num_farms_display=(
-                        str(self._deps.quantum_num_farms_from_extras(extras))
+                        str(num_farms_from_extras(extras))
                         if stage_state.stage == QUANTUM_STAGE_PHONON
                         else ""
                     ),
                     status=getattr(state, "status", "ready") or "ready",
-                    configured=self._deps.workflow_row_configuration_exists(
-                        definition, candidate.key
-                    ),
-                    resettable=self._deps.quantum_can_reset_to_stage_one(
-                        definition, candidate
-                    ),
+                    configured=workflow_row_configuration_exists(definition, candidate.key),
+                    resettable=self.can_reset_to_stage_one(definition, candidate),
                 )
             )
 
@@ -906,7 +1364,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                 QuantumResultRow(
                     key=str(result.id),
                     label=job_label or "Quantum phonon",
-                    zpe=self._deps.format_energy(
+                    zpe=format_energy_ev(
                         result.data.get("muon_zpe_total_eV")
                         if isinstance(result.data, dict)
                         else None
@@ -926,9 +1384,20 @@ class QuantumCorrectionsController(WorkflowJobController):
         self._view.set_results(result_rows)
 
 
+
+def _agreed(values: Sequence[object], *, default: object) -> object:
+    """Return the value every entry of ``values`` shares, else ``default``."""
+
+    if values and all(value == values[0] for value in values):
+        return values[0]
+    return default
+
+
 __all__ = [
     "QUANTUM_STAGE_PHONON",
     "QUANTUM_STAGE_SINGLEPOINT",
+    "QuantumConfigureRequest",
     "QuantumCorrectionsController",
     "QuantumCorrectionsDeps",
+    "StageOneReset",
 ]

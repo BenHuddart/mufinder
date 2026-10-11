@@ -22,17 +22,25 @@ from mufinder.app.relaxation_types import (
 )
 from mufinder.app.uep_types import UepConfig, UepSourceRow
 from mufinder.app.workflow_config_codecs import (
+    batch_row_payload,
     deserialize_convergence_config,
     deserialize_muon_relaxation_config,
     deserialize_pristine_relaxation_config,
     deserialize_uep_config,
     normalized_supercell_matrix,
+    num_farms_from_extras,
+    row_settings_payload,
     serialize_convergence_config,
     serialize_muon_relaxation_config,
     serialize_pristine_relaxation_config,
     serialize_uep_config,
+    store_workflow_row_configuration,
+    workflow_row_configuration,
+    workflow_row_configuration_exists,
 )
 from mufinder.castep_io.types import ValueWithUnit
+from mufinder.domain.enums import WorkflowStage
+from mufinder.domain.models import CalculationDefinition
 from mufinder.persistence.codec import to_jsonable
 
 _MATRIX = ((2, 0, 0), (0, 2, 0), (0, 0, 1))
@@ -320,20 +328,123 @@ def test_normalized_supercell_matrix() -> None:
         normalized_supercell_matrix(((1, 0), (0, 1), (0, 0)))  # type: ignore[arg-type]
 
 
-def test_main_window_forwards_to_the_codecs() -> None:
-    from mufinder.app.main_window import MainWindow
+def test_uep_config_reads_the_legacy_prefix_as_uep() -> None:
+    config = deserialize_uep_config({"name_prefix": "uep_source", "rows": []})
 
-    payload = serialize_muon_relaxation_config(_muon_config())
+    assert config is not None
+    assert config.name_prefix == "uep"
 
-    assert MainWindow._serialize_uep_config(None, _uep_config()) == serialize_uep_config(_uep_config())
-    assert MainWindow._deserialize_uep_config(None, {"rows": []}) == UepConfig()
-    assert MainWindow._serialize_pristine_relaxation_config(None, _pristine_config()) == (
-        serialize_pristine_relaxation_config(_pristine_config())
+
+def _definition_with_rows(row_settings: object) -> CalculationDefinition:
+    return CalculationDefinition(
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type="castep_quantum_phonon_set",
+        parameters={"configuration": {"row_settings": row_settings}},
     )
-    assert MainWindow._deserialize_pristine_relaxation_config(None, {"rows": []}) == PristineRelaxationConfig()
-    assert MainWindow._serialize_muon_relaxation_config(None, _muon_config()) == payload
-    assert MainWindow._deserialize_muon_relaxation_config(None, payload) == _muon_config()
-    assert MainWindow._serialize_convergence_config(_cutoff_config()) == serialize_convergence_config(_cutoff_config())
-    assert MainWindow._deserialize_convergence_config(None, {"cutoff_energies": [300.0]}) == ConvergenceConfig(
-        sweep_values=(300.0,), name_prefix="cutoff_convergence"
+
+
+def test_workflow_row_configuration_restores_values_and_splits_extras() -> None:
+    definition = _definition_with_rows(
+        {
+            "site": {
+                "parameter_values": {"cut_off_energy": {"value": 500.0, "unit": "eV"}},
+                "added_advanced": ["spin_polarized", 3],
+                "num_farms": 4,
+                "pseudopotential_family": "ultrasoft",
+            },
+            "legacy": {"params": {"xc_functional": "PBE"}},
+        }
     )
+
+    params, advanced, extras = workflow_row_configuration(definition, "site")
+
+    assert params == {"cut_off_energy": ValueWithUnit(500.0, "eV")}
+    assert advanced == ("spin_polarized",)
+    assert extras == {"num_farms": 4, "pseudopotential_family": "ultrasoft"}
+    assert workflow_row_configuration(definition, "legacy")[0] == {"xc_functional": "PBE"}
+    assert workflow_row_configuration(definition, "missing") == ({}, (), {})
+    assert workflow_row_configuration(None, "site") == ({}, (), {})
+    assert workflow_row_configuration(_definition_with_rows([]), "site") == ({}, (), {})
+
+
+def test_workflow_row_configuration_exists_ignores_blank_extras() -> None:
+    definition = _definition_with_rows({"blank": {"pseudopotential_family": " "}, "farmed": {"num_farms": 2}})
+
+    assert workflow_row_configuration_exists(definition, "blank") is False
+    assert workflow_row_configuration_exists(definition, "farmed") is True
+    assert workflow_row_configuration_exists(definition, "missing") is False
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(3, 3), ("2", 2), (0, 1), ("lots", 1), (None, 1)])
+def test_num_farms_from_extras_is_at_least_one(raw: object, expected: int) -> None:
+    assert num_farms_from_extras({"num_farms": raw}) == expected
+    assert num_farms_from_extras({}) == 1
+
+
+def test_row_settings_payload_drops_task_and_sorts_advanced() -> None:
+    payload = row_settings_payload(
+        {"task": "SINGLEPOINT", "cut_off_energy": ValueWithUnit(500.0, "eV")},
+        ("spin_polarized", "basis_precision", "spin_polarized"),
+        {"num_farms": 2},
+    )
+
+    assert payload == {
+        "parameter_values": {"cut_off_energy": to_jsonable(ValueWithUnit(500.0, "eV"))},
+        "added_advanced": ["basis_precision", "spin_polarized"],
+        "num_farms": 2,
+    }
+    assert row_settings_payload({"task": "SINGLEPOINT"}, (), {}) is None
+
+
+def test_batch_row_payload_keeps_a_rows_own_untouched_mixed_values() -> None:
+    definition = _definition_with_rows(
+        {
+            "explicit": {
+                "parameter_values": {"max_scf_cycles": 80, "xc_functional": "LDA"},
+                "added_advanced": ["nextra_bands"],
+            },
+            # "derived" has no stored value for max_scf_cycles: it takes
+            # it from its source defaults and must keep doing so.
+            "derived": {"parameter_values": {"xc_functional": "LDA"}, "added_advanced": []},
+        }
+    )
+    payload = {
+        "parameter_values": {"xc_functional": "PBE"},
+        "added_advanced": ["nextra_bands"],
+        "num_farms": 2,
+    }
+    untouched = {"max_scf_cycles", "nextra_bands"}
+
+    explicit = batch_row_payload(definition, "explicit", payload, untouched)
+    derived = batch_row_payload(definition, "derived", payload, untouched)
+
+    assert explicit == {
+        "parameter_values": {"xc_functional": "PBE", "max_scf_cycles": 80},
+        "added_advanced": ["nextra_bands"],
+        "num_farms": 2,
+    }
+    assert derived == {
+        "parameter_values": {"xc_functional": "PBE"},
+        "added_advanced": [],
+        "num_farms": 2,
+    }
+    # With nothing untouched the dialog's payload is stored as it is.
+    assert batch_row_payload(definition, "explicit", payload, set()) is payload
+    # A row with nothing of its own and an empty dialog stores nothing.
+    assert batch_row_payload(definition, "missing", None, {"xc_functional"}) is None
+
+
+def test_store_workflow_row_configuration_adds_and_removes_rows() -> None:
+    definition = CalculationDefinition(
+        workflow_stage=WorkflowStage.ENERGY_BARRIERS,
+        calc_type="castep_nudged_elastic_band_set",
+        parameters={"configuration": "unreadable"},
+    )
+
+    store_workflow_row_configuration(definition, "path", {"num_farms": 3})
+    assert definition.parameters["configuration"] == {"row_settings": {"path": {"num_farms": 3}}}
+
+    store_workflow_row_configuration(definition, "path", None)
+    assert definition.parameters["configuration"] == {}
+
+

@@ -188,6 +188,10 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
   :func:`~mufinder.app.adapter_common.supercell_label` are the one parser,
   identity test and label for a 3×3 supercell matrix, used by the adapters and
   the workflow widgets alike.
+- :func:`~mufinder.app.adapter_common.project_convergence_parameter_values`
+  turns the project defaults (functional, cut-off energy in eV, k-point grid
+  rescaled to a target cell) into GUI parameter values, the lowest layer of an
+  energy-barrier path's configuration.
 
 ``adapter_common`` must remain free of PySide imports; it depends only on
 ``workflow``, ``castep_io``, ``science``, and ``domain``.
@@ -222,7 +226,8 @@ no two workflow widgets may define the same private method.
        (``SelectionFeedback``, ``selected_table_rows``), delete/backspace binding
        (``bind_delete_shortcuts``) and the locked-row rule
        (``workflow_row_is_locked``: rows with no job yet and ``cancelled``
-       rows are editable, every other status locks the row).
+       rows are editable, every other status locks the row), and energies in
+       a results table (``format_energy_ev``).
    * - ``mufinder.app.selection_snapshot``
      - Targeting for in-row controls (``SelectionSnapshotPushButton``,
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
@@ -246,20 +251,31 @@ no two workflow widgets may define the same private method.
        ``geometry_relaxation_parameter_specs``, ``clone_spec_for_workflow``),
        the shared-row ordering, schema and project defaults
        (``workflow_default_params``, ``drop_default_conflicts``,
-       ``drop_explicit_conflicts``, ``seed_xc_functional_default``), and
+       ``drop_explicit_conflicts``, ``seed_xc_functional_default``),
        sanitising and restoring persisted parameter values
-       (``sanitize_parameter_mapping``, ``restore_structured_value``).
+       (``sanitize_parameter_mapping``, ``restore_structured_value``), the
+       values rows edited together share or differ on
+       (``shared_parameter_values``, ``mixed_parameter_names``) and the
+       species-keyword options of a structure (``structure_species_options``,
+       ``merge_species_options``).
    * - ``mufinder.app.workflow_config_codecs``
      - The persistence codecs for each workflow's stored
        ``CalculationDefinition.parameters["configuration"]``
        (``serialize_*_config`` and ``deserialize_*_config`` for UEP, pristine
-       relaxation, muon relaxation and convergence) and
-       ``normalized_supercell_matrix``. It sits in ``app`` because the
-       configuration dataclasses and ``restore_structured_value`` do.
+       relaxation, muon relaxation and convergence),
+       ``normalized_supercell_matrix``, and the per-row
+       ``configuration["row_settings"]`` entries of the source-keyed workflows
+       (``workflow_row_configuration``, ``workflow_row_configuration_exists``,
+       ``num_farms_from_extras``, ``row_settings_payload``,
+       ``batch_row_payload``, ``store_workflow_row_configuration``). It sits
+       in ``app`` because the configuration dataclasses and
+       ``restore_structured_value`` do.
    * - ``mufinder.app.workflow_dialogs``
      - The row parameter dialog (``run_row_parameter_dialog``, driven by a
-       ``RowParameterRequest`` and returning a ``RowParameterResult``) and the
-       workflow configure dialogs.
+       ``RowParameterRequest`` and returning a ``RowParameterResult``), the
+       source tables' Configure dialog runner (``run_source_configure_dialog``,
+       driven by a ``SourceConfigureRequest`` and returning a
+       ``SourceConfigureResult``) and the workflow configure dialogs.
    * - ``mufinder.app.param_dialog``
      - The CASTEP parameter dialog the configure dialogs build on
        (``ParameterDialog``).
@@ -274,8 +290,9 @@ no two workflow widgets may define the same private method.
    * - ``mufinder.app.workflow_controllers.base``
      - The submit, materialize, result and refresh cycle (see Workflow
        controllers), ``dedupe_jobs`` for the jobs a ``materialize`` or
-       ``jobs_for_keys`` returns, derived-structure upsert and row-parameter
-       mirroring.
+       ``jobs_for_keys`` returns, the active-host guard on a submission's
+       structures and sites (``confirm_active_host``), derived-structure
+       upsert and row-parameter mirroring.
    * - ``mufinder.app.workflow_controllers.sweep_convergence``
      - The cycle the two convergence sweeps share
        (``SweepConvergenceController``).
@@ -304,9 +321,10 @@ no two workflow widgets may define the same private method.
      - Keeping a workflow's definitions consistent: copying job bindings from
        equivalent definitions (``sync_equivalent_mappings``, with the two
        binding priority orders), dropping rows and their bindings
-       (``remove_labels_from_definition``, ``remove_definition_if_no_rows``)
-       and the sweep and source-row equivalents (see Definition mappings and
-       row removal).
+       (``remove_labels_from_definition``, ``remove_definition_if_no_rows``),
+       the sweep and source-row equivalents, and dropping generated paths
+       from the Energy Barriers form state (``remove_generated_sources``; see
+       Definition mappings and row removal).
    * - ``mufinder.services.cluster_submission_planner``
      - The decisions of a cluster submission: stranded quantum phonon jobs,
        connection reuse, each job's remote target (start again, continuation,
@@ -319,9 +337,13 @@ no two workflow widgets may define the same private method.
    * - ``mufinder.services.source_candidates``
      - Read-only source queries over the project document: the relaxed muon
        sites eligible for quantum corrections, their relative energies,
-       labels and two-stage state, the generated diffusion paths and NEB
-       results for energy barriers, and the completed pristine and muon
-       relaxations offered to comparison and relaxation analysis.
+       labels, seed names, stored ``sources`` entries and two-stage state, and
+       the settings a follow-on row inherits from its source relaxation's
+       input files (``source_relaxation_parameter_values``); the generated
+       diffusion paths, their labels, stored form and preview supercell, the
+       Energy Barriers form state they live in and the NEB results for energy
+       barriers; and the completed pristine and muon relaxations offered to
+       comparison and relaxation analysis.
    * - ``mufinder.workflow.naming``
      - Job names (``job_name``) and the remote naming of a cluster
        submission: the workflow directory fragment, the default scheduler
@@ -654,7 +676,7 @@ overriding these hooks.
      - Drop the named rows and their job bindings from one definition and
        report whether it was deleted for having no row left. Called by the
        ``remove_rows(labels)`` template method for each of ``definitions()``.
-     - k-point sweep, pristine and muon relaxation, UEP
+     - k-point sweep, pristine and muon relaxation, UEP, energy barriers
    * - ``row_key_matcher(labels)``
      - The predicate picking the job-mapping keys of removed rows, which the
        window's job-file cleanup uses. The default matches a key whose string
@@ -809,17 +831,19 @@ Controller summary
        ``density_available`` flag only.
    * - ``QuantumCorrectionsController``
      - Two stages per source: singlepoint, then phonon. ``materialize``
-       dispatches each source to its current stage and writes
-       ``singlepoint_job_ids_by_label`` / ``phonon_job_ids_by_label`` plus
-       ``job_seed_names_by_label``; ``pre_submit_check`` runs the host guard
-       shared with energy barriers; ``build_result`` derives the muon ZPE,
+       dispatches each source to its current stage (``stage_state``) and
+       writes ``singlepoint_job_ids_by_label`` / ``phonon_job_ids_by_label``
+       plus ``job_seed_names_by_label``; ``pre_submit_check`` checks the active
+       definition against the active host (``confirm_active_host``) and a
+       stage-2 row's stage-1 muon mass; ``build_result`` derives the muon ZPE,
        gamma-point eigenvalues, mode participations and the ``w1`` witness from
        the carrier's parsed phonon calculation, and a singlepoint job
        contributes an empty result. Both calc types are ``handles_job``-owned.
-       Its source rows and each row's stage come from
-       :mod:`mufinder.services.source_candidates`
-       (``eligible_quantum_source_candidates``, ``quantum_stage_state``),
-       reached through ``QuantumCorrectionsDeps``.
+       Its source rows come from :mod:`mufinder.services.source_candidates`.
+       It also answers, for the cluster submission, where a phonon job's
+       stage 1 ran and which remote directory it continues in
+       (``stage_one_target``, ``continuation_remote_target``), and lists the
+       rows "Reset to Stage 1" may rewind (``stage_one_resets``).
    * - ``EnergyBarriersController``
      - Keyed by diffusion-path source key, stamped on each spec as
        ``provenance={"source_key": key}``. ``materialize`` aligns the endpoints
@@ -832,8 +856,43 @@ Controller summary
        transition-state-search calc types are ``handles_job``-owned. Takes a
        ``view_getter`` because its view is created on first visit. Its
        generated paths, NEB sources and completed NEB results come from
-       :mod:`mufinder.services.source_candidates`, reached through
-       ``EnergyBarriersDeps``.
+       :mod:`mufinder.services.source_candidates`. It generates paths between
+       the selected endpoints into the form state (``generate_paths``), drops
+       them from the form state and from both its NEB definitions and the
+       transition-state-search sets older configurations stored them in
+       (``remove_rows``), and drives the path viewer and NEB preview
+       (``path_preview``, ``show_neb_preview``).
+
+Source table controllers
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The quantum-corrections and energy-barriers controllers back the two
+``SourceTableWidget`` subclasses, so they share a small contract beyond the
+hooks above:
+
+- ``candidates()`` returns the table's sources, ``ensure_definition(keys)``
+  returns the active definition with the given sources recorded (creating it
+  on first use) and ``definition_and_key_for_job(job)`` finds the row a job
+  belongs to, which the submit backends use to read the row's farm count.
+- ``configure_request(keys)`` returns the Configure dialog's seed, a
+  ``SourceConfigureRequest`` (each row's effective parameters, the dialog's
+  title and intro text, whether it opens read-only, the agreed farm count and
+  the species options); the window builds the workflow's dialog, runs it
+  through ``run_source_configure_dialog`` and passes the result to
+  ``apply_configuration(keys, result, extras)``, which stores each row's
+  ``row_settings`` entry (a mixed parameter left untouched keeps each row's
+  own value), refreshes the view and persists.
+- A row's effective parameters layer its stored ``row_settings`` over the
+  settings of its source relaxation
+  (``source_relaxation_parameter_values``); an energy-barrier path also
+  starts from the project defaults and rounds its image count up to an odd
+  number.
+
+Their deps hold only what needs the window: the host-mismatch dialogs
+(``handle_structure_host_mismatch``, ``handle_site_host_mismatch``), and a
+yes/no question (quantum corrections) or a warning (energy barriers). The
+window keeps the dialogs themselves, the job-file cleanup before a path is
+removed or a row is reset to stage 1, and the phonon analysis windows.
 
 Definition mappings and row removal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -871,7 +930,9 @@ definitions' ids. The k-point sweep drops grids from ``sweep_values`` and
 keeps the definition; the cutoff sweep drops one cutoff at a time from the
 equivalent definitions and deletes a definition with none left; the
 energy-barrier definitions drop sources and their row settings through
-``remove_source_keys_from_definition`` and are deleted with no source left.
+``remove_source_keys_from_definition`` and are deleted with no source left,
+and the removed paths also leave the Energy Barriers form state
+(``remove_generated_sources``).
 
 In-place row parameter edits
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

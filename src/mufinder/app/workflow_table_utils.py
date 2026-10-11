@@ -58,6 +58,17 @@ RESET_FAILED_TABLE_TOOLTIP = (
 )
 
 
+def format_energy_ev(value: object) -> str:
+    """Format an energy in eV for a workflow results table; blank when not numeric."""
+
+    if value is None:
+        return ""
+    try:
+        return f"{float(value):.6g} eV"
+    except (TypeError, ValueError):
+        return ""
+
+
 def bind_delete_shortcuts(
     widget: QWidget,
     slot: Callable[[], None],

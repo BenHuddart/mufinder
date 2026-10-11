@@ -13,6 +13,10 @@ import mufinder.services.job_artifacts as job_artifacts_module
 from mufinder.app.workflow_controllers.base import output_predates_run
 from mufinder.castep_io.output_parser import CastepResult
 from mufinder.app.main_window import MainWindow
+from mufinder.app.workflow_config_codecs import (
+    deserialize_pristine_relaxation_config,
+    serialize_pristine_relaxation_config,
+)
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, ComparisonTable, Job, Structure
 from mufinder.services.project_service import ProjectService
@@ -430,7 +434,7 @@ def test_main_window_pristine_form_edit_hides_stale_definition_status(
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(
+        parameters=serialize_pristine_relaxation_config(
             main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
         ),
         output_directory=doc.project_root / "files" / "pristine_relaxation",
@@ -481,7 +485,7 @@ def test_main_window_pristine_form_edit_preserves_matching_row_statuses(
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(
+        parameters=serialize_pristine_relaxation_config(
             main_window_module.PristineRelaxationConfig(
                 name_prefix="pristine_relax",
                 rows=(spinpol_row, nospin_row),
@@ -555,7 +559,7 @@ def test_pristine_relaxation_preserves_running_row_when_adding_job(
     old_definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(old_config),
+        parameters=serialize_pristine_relaxation_config(old_config),
         output_directory=doc.project_root / "files" / "pristine_relaxation",
     )
     running_job = service.add_job(
@@ -571,7 +575,7 @@ def test_pristine_relaxation_preserves_running_row_when_adding_job(
     new_definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(new_config),
+        parameters=serialize_pristine_relaxation_config(new_config),
         output_directory=doc.project_root / "files" / "pristine_relaxation",
     )
     doc.ui_state[window._ACTIVE_PRISTINE_RELAXATION_DEFINITION_KEY] = str(new_definition.id)
@@ -622,7 +626,7 @@ def test_pristine_relaxation_row_parameter_edit_keeps_row_bound_to_its_job(
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(
+        parameters=serialize_pristine_relaxation_config(
             main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
         ),
         output_directory=doc.project_root / "files" / "pristine_relaxation",
@@ -655,7 +659,7 @@ def test_pristine_relaxation_row_parameter_edit_keeps_row_bound_to_its_job(
     assert states["row_1"].job_id == job.id
     assert states["row_1"].status == JobStatus.COMPLETED.value
 
-    config = window._deserialize_pristine_relaxation_config(
+    config = deserialize_pristine_relaxation_config(
         definition.parameters["configuration"]
     )
     assert config.rows[0].parameter_values["geom_max_iter"] == 500
@@ -691,7 +695,7 @@ def test_pristine_relaxation_deleted_row_does_not_reinherit_stale_status(main_wi
     old_definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(
+        parameters=serialize_pristine_relaxation_config(
             main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
         ),
         output_directory=doc.project_root / "files" / "pristine_relaxation",
@@ -710,7 +714,7 @@ def test_pristine_relaxation_deleted_row_does_not_reinherit_stale_status(main_wi
     new_definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(
+        parameters=serialize_pristine_relaxation_config(
             main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
         ),
         output_directory=doc.project_root / "files" / "pristine_relaxation",
@@ -744,7 +748,7 @@ def test_pristine_relaxation_remove_row_deletes_associated_files_and_job(
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(
+        parameters=serialize_pristine_relaxation_config(
             main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
         ),
         output_directory=doc.project_root / "files" / "pristine_relaxation",
@@ -788,7 +792,7 @@ def test_pristine_relaxation_remove_row_cancel_keeps_files_and_restores_form(
     definition = service.register_pristine_relaxation_definition(
         doc,
         input_structure_id=host.id,
-        parameters=window._serialize_pristine_relaxation_config(
+        parameters=serialize_pristine_relaxation_config(
             main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(row,))
         ),
         output_directory=doc.project_root / "files" / "pristine_relaxation",

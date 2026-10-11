@@ -223,7 +223,7 @@ def stage_quantum_row_with_singlepoint(
     site = MuonSite(label="siteA", status="relaxed", relaxation_run_id=run.id, total_energy_eV=-1.0)
     doc.sites[site.id] = site
 
-    definition = window._ensure_quantum_corrections_definition([str(site.id)])
+    definition = window._quantum_corrections_controller.ensure_definition([str(site.id)])
     assert definition is not None
 
     singlepoint_job = service.add_job(
@@ -235,6 +235,6 @@ def stage_quantum_row_with_singlepoint(
     singlepoint_job.status = singlepoint_status
     definition.parameters["singlepoint_job_ids_by_label"] = {str(site.id): str(singlepoint_job.id)}
 
-    candidate = window._quantum_source_candidate_by_key(str(site.id))
+    candidate = window._quantum_corrections_controller.candidate_by_key(str(site.id))
     assert candidate is not None
     return definition, candidate, singlepoint_job

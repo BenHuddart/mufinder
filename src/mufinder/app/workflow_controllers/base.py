@@ -698,6 +698,34 @@ def relaxation_artifact_failure(
     return None
 
 
+def confirm_active_host(
+    project_service: ProjectService,
+    document: ProjectDocument,
+    *,
+    structure_ids: Sequence[UUID],
+    site_ids: Sequence[UUID],
+    handle_structure_mismatch: Callable[[object], bool],
+    handle_site_mismatch: Callable[[object], bool],
+) -> bool:
+    """Return whether jobs built on these structures and sites may be submitted.
+
+    The structures are checked against the active host first, through their
+    ``parent_structure_id`` chain, then the sites. The first mismatch goes to
+    its handler, which asks the user whether to switch hosts and returns
+    whether the submission may proceed. With no mismatch, the answer is yes.
+    """
+
+    if structure_ids:
+        mismatch = project_service.validate_structures_match_active_host(document, structure_ids)
+        if mismatch is not None:
+            return handle_structure_mismatch(mismatch)
+    if site_ids:
+        mismatch = project_service.validate_sites_match_active_host(document, site_ids)
+        if mismatch is not None:
+            return handle_site_mismatch(mismatch)
+    return True
+
+
 def owning_controller(
     controllers: Sequence[WorkflowJobController], job: Job
 ) -> WorkflowJobController | None:
@@ -773,6 +801,7 @@ __all__ = [
     "WorkflowControllerContext",
     "WorkflowJobController",
     "apply_row_parameters_to_form_state",
+    "confirm_active_host",
     "dedupe_jobs",
     "find_job_derived_structure",
     "merge_controller_result",

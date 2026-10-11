@@ -73,6 +73,7 @@ from mufinder.app.workflow_parameters import (
     geometry_relaxation_parameter_specs,
     sanitize_parameter_mapping,
     seed_xc_functional_default,
+    shared_parameter_values,
     workflow_default_params,
 )
 from mufinder.app.workflow_table_utils import (
@@ -894,10 +895,7 @@ class RowTableWidget(QWidget):
     def _common_params_for_rows(self, row_ids: tuple[int, ...]) -> dict[str, object]:
         if not row_ids:
             return dict(self._default_params)
-        maps = [self._effective_params_for_row(row_id) for row_id in row_ids]
-        common = dict(maps[0])
-        for candidate in maps[1:]:
-            common = {name: value for name, value in common.items() if name in candidate and candidate[name] == value}
+        common = shared_parameter_values(self._effective_params_for_row(row_id) for row_id in row_ids)
         common.update(self._pinned_params())
         if any(self._row_is_read_only(row_id) for row_id in row_ids):
             # No pre-fill for a read-only row: the suggested spacing comes from

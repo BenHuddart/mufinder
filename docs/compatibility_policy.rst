@@ -282,21 +282,6 @@ Compatibility ledger
        ``mufinder.science.uep_clustering``. Not persisted.
      - Public import alias. Keep the ``__getattr__`` hook for one minor
        release (through 0.6.x); then drop it.
-   * - ``_serialize_uep_config`` / ``_deserialize_uep_config`` /
-       ``_serialize_pristine_relaxation_config`` /
-       ``_deserialize_pristine_relaxation_config`` /
-       ``_serialize_muon_relaxation_config`` /
-       ``_deserialize_muon_relaxation_config`` /
-       ``_serialize_convergence_config`` /
-       ``_deserialize_convergence_config``
-     - ``MainWindow``
-     - One-line forwarders to the codecs in
-       ``mufinder.app.workflow_config_codecs`` (the same names without the
-       leading underscore), kept because tests and the remaining
-       ``MainWindow`` code reach them by name. The stored configuration shape
-       is unchanged. Not persisted.
-     - Public helper alias. Keep for one minor release (through 0.6.x); then
-       move the callers to the codec functions and drop the forwarders.
 
 Rules for new shims
 -------------------
@@ -343,6 +328,19 @@ migration; code that imported one switches to the replacement named.
   Cluster keyword generation no longer runs Python on the cluster, so the value
   has no meaning. It was never project data; a value left in saved settings is
   ignored and needs no migration.
+
+The private forwarders below were removed without a deprecation period. They
+were one-line ``MainWindow`` methods, not part of any public import path, and
+only MuFinder's own code and tests called them.
+
+- ``_serialize_uep_config`` / ``_deserialize_uep_config`` /
+  ``_serialize_pristine_relaxation_config`` /
+  ``_deserialize_pristine_relaxation_config`` /
+  ``_serialize_muon_relaxation_config`` /
+  ``_deserialize_muon_relaxation_config`` / ``_serialize_convergence_config`` /
+  ``_deserialize_convergence_config``: call the codec of the same name without
+  the leading underscore in ``mufinder.app.workflow_config_codecs``. The stored
+  configuration shape is unchanged.
 
 The keywords below were removed without a deprecation period. They belonged to
 an unpersisted record that is not in the API reference and that only MuFinder
