@@ -5,14 +5,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
-import warnings
 
 import numpy as np
 
 from mufinder.domain.models import MuonSite, Structure
 from mufinder.science.spglib_compat import spglib_cell, symmetry_operations, symmetry_orbit
 from mufinder.science.demagnetization import DemagnetizingSample, demagnetizing_tensor
-from mufinder.science._muesr_compat import patch_numpy_aliases_for_muesr
+from mufinder.science._muesr_compat import muesr_imports
 from mufinder.science.magnetic_structure import (
     AtomSelector,
     MagneticStructureModel,
@@ -720,26 +719,13 @@ def _distribution_calculation_parameters(options: MagneticFieldOptions, radius: 
 
 
 def _load_muesr_engines():
-    patch_numpy_aliases_for_muesr()
     try:
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message="'cgi' is deprecated and slated for removal in Python 3.13",
-                category=DeprecationWarning,
-                module=r"muesr\.core\.prettytable",
-            )
+        with muesr_imports():
             from muesr.engines import find_largest_sphere, locfield
             from muesr.engines.clfc import dipten
     except ImportError:
         try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="'cgi' is deprecated and slated for removal in Python 3.13",
-                    category=DeprecationWarning,
-                    module=r"muesr\.core\.prettytable",
-                )
+            with muesr_imports():
                 from muesr.engines.clfc import dipten, find_largest_sphere, locfield
         except ImportError as exc:
             raise MagneticFieldDependencyError(
@@ -750,15 +736,8 @@ def _load_muesr_engines():
 
 
 def _build_muesr_sample(structure: Structure, muon_positions_frac: Sequence[Sequence[float]]):
-    patch_numpy_aliases_for_muesr()
     try:
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message="'cgi' is deprecated and slated for removal in Python 3.13",
-                category=DeprecationWarning,
-                module=r"muesr\.core\.prettytable",
-            )
+        with muesr_imports():
             from muesr.core.atoms import Atoms as MuesrAtoms
             from muesr.core.sample import Sample as MuesrSample
     except ImportError as exc:
