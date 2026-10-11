@@ -714,7 +714,7 @@ def test_validate_controller_artifacts_asks_the_owning_controller(tmp_path: Path
 
 
 class _FakeConvergenceView:
-    """Minimal ConvergenceWidget stand-in for controller tests."""
+    """Minimal CutoffConvergenceWidget stand-in for controller tests."""
 
     def __init__(self, form_state: dict | None = None) -> None:
         self._form_state = form_state or {}

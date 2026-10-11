@@ -109,7 +109,7 @@ from mufinder.app.convergence_types import (
     convergence_config_xc_functional,
     parse_grid_mapping_key,
 )
-from mufinder.app.convergence_widget import ConvergenceWidget
+from mufinder.app.convergence_widget import CutoffConvergenceWidget
 from mufinder.app.energy_barriers_widget import (
     EnergyBarriersWidget,
     EnergyBarrierEndpointRow,
@@ -705,7 +705,7 @@ class MainWindow(QMainWindow):
         self._convergence_overview_view.open_kpoint_requested.connect(
             lambda: self._set_active_route("convergence_kpoint")
         )
-        self._convergence_view = ConvergenceWidget()
+        self._convergence_view = CutoffConvergenceWidget()
         self._convergence_view.configure_requested.connect(self._on_convergence_configured)
         self._convergence_view.examine_requested.connect(self._on_examine_convergence)
         self._convergence_view.form_state_changed.connect(self._on_convergence_form_state_changed)
