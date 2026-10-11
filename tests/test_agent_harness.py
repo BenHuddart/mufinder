@@ -88,8 +88,8 @@ PINNED_DIRECT_FIGURE_CANVAS_MODULES = frozenset(
 # Modules whose job-staging widgets are expected to share one implementation of
 # each cross-workflow concern (docs/architecture.rst, Shared workflow
 # infrastructure). The ratchet below pins, for every private method name that
-# appears in two or more of them, how many of them define it. A count may only
-# fall and no new shared name may appear: the fix for a missing capability is
+# appears in two or more of them, how many of them define it. The table is
+# empty: no new shared name may appear, and the fix for a missing capability is
 # to extend the helper in the shared home, not to copy a sibling's method.
 WORKFLOW_WIDGET_MODULES = (
     "convergence_widget.py",
@@ -101,13 +101,7 @@ WORKFLOW_WIDGET_MODULES = (
     "energy_barriers_widget.py",
 )
 
-PINNED_DUPLICATED_WIDGET_METHODS: dict[str, int] = {
-        "_selected_or_all_source_keys": 2,
-        "_source_key_at_row": 2,
-        "_source_keys_at_rows": 2,
-        "_source_row_status": 2,
-        "_update_actions": 2,
-}
+PINNED_DUPLICATED_WIDGET_METHODS: dict[str, int] = {}
 
 
 # Qt widget and GUI imports are confined to ``mufinder.app``. The layer packages

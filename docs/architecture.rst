@@ -204,7 +204,8 @@ change that creates a home. ``tests/test_agent_harness.py`` checks that every
 ``mufinder.*`` path in this section names a module or package under
 ``src/mufinder``.
 ``tests/test_agent_harness.py`` pins, for every private method that two or more
-workflow widget modules define, how many define it; the counts may only fall.
+workflow widget modules define, how many define it; the pin table is empty, so
+no two workflow widgets may define the same private method.
 
 .. list-table::
    :header-rows: 1
@@ -231,7 +232,9 @@ workflow widget modules define, how many define it; the counts may only fall.
      - The label-keyed row-table widget base that pristine relaxation, muon
        relaxation and UEP subclass (``RowTableWidget``, and
        ``RelaxationRowTableWidget`` for the two geometry relaxations; see Row
-       table widgets).
+       table widgets), and the source-keyed table base that quantum
+       corrections and energy barriers subclass (``SourceTableWidget``; see
+       Source table widgets).
    * - ``mufinder.app.sweep_convergence_widget``
      - The sweep-keyed widget base that the cutoff and k-point convergence
        widgets subclass (``SweepConvergenceWidget``; see Sweep convergence
@@ -413,6 +416,11 @@ controllers treat every workflow alike:
   ``Configure Selected Parameters...``); and a run row with the job-name prefix
   and the two run buttons.
 
+The quantum-corrections and energy-barriers widgets list project sources
+rather than staged rows, so they follow the run, Configure and row-menu parts
+of this contract through ``SourceTableWidget`` (see Source table widgets) and
+have no form state, supercell column or Add button.
+
 Row table widgets
 ~~~~~~~~~~~~~~~~~
 
@@ -449,6 +457,37 @@ muon relaxation's read-only imported rows (``_row_is_read_only``,
 (``_row_default_overrides``) and its charge-state tables and keys; UEP's
 parameter surface and k-point rule. Never copy a base method into a
 subclass to change it; add the hook.
+
+Source table widgets
+~~~~~~~~~~~~~~~~~~~~
+
+Quantum corrections and energy barriers subclass one base,
+``mufinder.app.workflow_row_widget.SourceTableWidget``. Their rows are not
+staged by the user: each row is a source read from the project through
+``mufinder.services.source_candidates`` (a relaxed muon site, a diffusion
+path), shown in the order the widget's ``set_sources`` receives, and
+submitted, configured and tracked under the row's source key. The source
+rows are frozen dataclasses carrying at least ``key``, ``status`` and
+``configured``.
+
+The base owns the key lookups (``selected_source_keys``, the key at a row,
+the keys at a set of rows), the run targeting (the selection, else every
+row), Configure Selected, the source table's row menu (Run, Cancel, Inspect,
+Configure, an optional Remove and failed-job reset, then the widget's extra
+entries), the table fill with the per-status colour of the Status cell and
+the per-row Configure button with the shared targeting rule, and the
+action-state refresh that enables Configure Selected from the selection.
+
+A subclass declares its status and Configure columns, the workflow named on
+the Configure button and the names of its configure and run signals as class
+attributes, so each widget keeps its own signal names. It implements three
+public hooks: ``source_row_values`` (the text of the leading columns),
+``create_source_row_cells`` (its own cells) and ``refresh_source_actions``
+(its own actions for the selected rows). Quantum corrections adds the stage
+and farm columns, the editable site label and "Reset to Stage 1"; energy
+barriers adds the endpoint pair that generates paths, the View column, path
+removal and the NEB inspector, and its view is created lazily (see
+Construction).
 
 Sweep convergence widgets
 ~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -273,7 +273,7 @@ def test_energy_barriers_widget_batch_configure_emits_selected_source_keys(qapp)
     widget.configure_result_requested.connect(configured.append)
 
     widget._sources_table.selectRow(0)
-    widget._emit_batch_configure_results()
+    widget._emit_batch_configure()
 
     assert configured == [["path-a"]]
 
@@ -959,3 +959,81 @@ def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(
     ]
     menu.action("Inspect Failure").triggered.emit()
     assert inspected == [["path-a", "path-b"]]
+
+
+def _quantum_source(key: str, *, resettable: bool = False) -> QuantumSourceRow:
+    return QuantumSourceRow(
+        key=key,
+        label=key,
+        charge_state="Muonium",
+        relative_energy="0.0 eV",
+        displacements="9",
+        source_job=f"relax_{key}",
+        stage="singlepoint",
+        num_farms_display="",
+        status="ready",
+        resettable=resettable,
+    )
+
+
+def _path_source(key: str) -> EnergyBarrierSourceRow:
+    return EnergyBarrierSourceRow(
+        key=key,
+        reactant="A",
+        product="B",
+        charge_state="Muonium",
+        path_length="1.2 ang",
+        status="ready",
+    )
+
+
+@pytest.mark.parametrize(
+    ("widget_type", "make_row", "configure_signal", "run_signal", "run_button"),
+    [
+        (
+            QuantumCorrectionsWidget,
+            _quantum_source,
+            "configure_requested",
+            "submit_local_requested",
+            "_submit_local_button",
+        ),
+        (
+            EnergyBarriersWidget,
+            _path_source,
+            "configure_result_requested",
+            "submit_neb_local_requested",
+            "_submit_neb_local_button",
+        ),
+    ],
+)
+def test_source_table_widgets_share_targeting_and_action_state(
+    qapp, widget_type, make_row, configure_signal, run_signal, run_button
+) -> None:
+    widget = widget_type()
+    widget.set_sources([make_row("first"), make_row("second")])
+    configured: list[object] = []
+    run: list[object] = []
+    getattr(widget, configure_signal).connect(configured.append)
+    getattr(widget, run_signal).connect(run.append)
+
+    assert widget._batch_configure_button.isEnabled() is False
+    getattr(widget, run_button).click()
+
+    widget._sources_table.selectRow(1)
+    assert widget.selected_source_keys() == ["second"]
+    assert widget._batch_configure_button.isEnabled() is True
+    widget._batch_configure_button.click()
+
+    assert run == [["first", "second"]]
+    assert configured == [["second"]]
+
+
+def test_quantum_reset_stage_button_follows_resettable_selection(qapp) -> None:
+    widget = QuantumCorrectionsWidget()
+    widget.set_sources([_quantum_source("site-a"), _quantum_source("site-b", resettable=True)])
+
+    widget._sources_table.selectRow(0)
+    assert widget._reset_stage_button.isEnabled() is False
+
+    widget._sources_table.selectRow(1)
+    assert widget._reset_stage_button.isEnabled() is True
