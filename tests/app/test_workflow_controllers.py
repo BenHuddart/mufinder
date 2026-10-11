@@ -1427,7 +1427,7 @@ class _FakeRelaxationView:
     ``collect_state``/``set_form_state`` store the form state verbatim: the real
     widget also normalizes it (stripping implicit project defaults), and that
     round trip is pinned against the real widget in
-    ``tests/app/test_main_window_actions.py``.
+    ``tests/app/main_window/test_relaxation_actions.py``.
     """
 
     def __init__(self, form_state: dict | None = None) -> None:
