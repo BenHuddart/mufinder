@@ -9,6 +9,8 @@ the JSON persistence codec unchanged.
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import shutil
 from uuid import UUID
 
 import pytest
@@ -34,6 +36,7 @@ from mufinder.app.workflow_config_codecs import (
 )
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
+from mufinder.services.project_service import ProjectService
 
 _MATRIX = ((2, 0, 0), (0, 2, 0), (0, 0, 1))
 _MATRIX_PAYLOAD = [[2, 0, 0], [0, 2, 0], [0, 0, 1]]
@@ -214,7 +217,6 @@ def test_muon_relaxation_config_stored_shape_and_round_trip() -> None:
                 "name_prefix": "kp_sweep",
                 "sweep_parameter": "kpoint_mp_grid",
                 "sweep_values": [[2, 2, 2], [4, 4, 4]],
-                "cutoff_energies": [],
                 "shared_params": _params(),
                 "overrides": [{"cutoffs": [[4, 4, 4]], "params": {"xc_functional": "LDA"}}],
             },
@@ -225,7 +227,6 @@ def test_muon_relaxation_config_stored_shape_and_round_trip() -> None:
                 "name_prefix": "cutoff_convergence",
                 "sweep_parameter": "cut_off_energy",
                 "sweep_values": [300.0, 400.0],
-                "cutoff_energies": [300.0, 400.0],
                 "shared_params": {"xc_functional": "PBE"},
                 "overrides": [{"cutoffs": [400.0], "params": {"xc_functional": "LDA"}}],
             },
@@ -296,12 +297,17 @@ def test_muon_deserialize_skips_rows_without_site_or_position() -> None:
 def test_convergence_deserialize_rejects_unreadable_sweeps() -> None:
     assert deserialize_convergence_config({"sweep_parameter": "smearing_width"}) is None
     assert deserialize_convergence_config({"sweep_parameter": "kpoint_mp_grid", "sweep_values": [[1, 2]]}) is None
-    assert deserialize_convergence_config({"cutoff_energies": [300.0], "shared_params": []}) is None
+    assert deserialize_convergence_config({"sweep_values": [300.0], "shared_params": []}) is None
+
+    # Schema 2 stores a sweep only in ``sweep_values``; the schema 1 key is
+    # migrated on load and no longer read.
+    assert deserialize_convergence_config({"cutoff_energies": [300.0]}) == ConvergenceConfig(
+        name_prefix="cutoff_convergence"
+    )
 
     config = deserialize_convergence_config(
         {
-            "cutoff_energies": [300.0],
-            "sweep_values": [999.0],
+            "sweep_values": [300.0],
             "overrides": [{"cutoffs": ["x"], "params": {}}, {"sweep_values": [300.0], "params": {"task": "X"}}],
         }
     )
@@ -310,6 +316,29 @@ def test_convergence_deserialize_rejects_unreadable_sweeps() -> None:
         sweep_values=(300.0,),
         overrides={frozenset({300.0}): {"task": "X"}},
         name_prefix="cutoff_convergence",
+    )
+
+
+def test_convergence_configs_of_a_schema_1_project_read_after_migration(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[1] / "fixtures" / "projects" / "schema_v1_cutoff_sweep"
+    root = tmp_path / "schema_v1.mufinder"
+    shutil.copytree(fixture, root)
+
+    calculations = ProjectService().load_project(root).calculations
+    cutoff = calculations[UUID("2a16e0b8-9427-4964-8009-503aa12bd7c1")]
+    kpoint = calculations[UUID("382dc08c-6750-40f1-9967-8758b292d57e")]
+
+    assert deserialize_convergence_config(cutoff.parameters["configuration"]) == ConvergenceConfig(
+        sweep_values=(300.0, 400.0, 500.0),
+        shared_params={"xc_functional": "PBE"},
+        overrides={frozenset({500.0}): {"max_scf_cycles": 120}},
+        name_prefix="cutoff",
+    )
+    assert deserialize_convergence_config(kpoint.parameters["configuration"]) == ConvergenceConfig(
+        sweep_parameter="kpoint_mp_grid",
+        sweep_values=((2, 2, 2), (4, 4, 4)),
+        shared_params={"xc_functional": "PBE"},
+        name_prefix="kpoint",
     )
 
 
@@ -334,6 +363,6 @@ def test_main_window_forwards_to_the_codecs() -> None:
     assert MainWindow._serialize_muon_relaxation_config(None, _muon_config()) == payload
     assert MainWindow._deserialize_muon_relaxation_config(None, payload) == _muon_config()
     assert MainWindow._serialize_convergence_config(_cutoff_config()) == serialize_convergence_config(_cutoff_config())
-    assert MainWindow._deserialize_convergence_config(None, {"cutoff_energies": [300.0]}) == ConvergenceConfig(
+    assert MainWindow._deserialize_convergence_config(None, {"sweep_values": [300.0]}) == ConvergenceConfig(
         sweep_values=(300.0,), name_prefix="cutoff_convergence"
     )

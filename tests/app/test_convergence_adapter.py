@@ -33,7 +33,6 @@ def test_expand_convergence_jobs_shared_defaults_only() -> None:
     config = ConvergenceConfig(
         sweep_parameter="cut_off_energy",
         sweep_values=(300.0, 360.0),
-        cutoff_energies=(300.0, 360.0),
         shared_params={
             "task": "SINGLEPOINT",
             "xc_functional": "PBE",
@@ -65,7 +64,6 @@ def test_expand_convergence_jobs_sets_atomic_spins_only_when_spin_polarized() ->
         config=ConvergenceConfig(
             sweep_parameter="cut_off_energy",
             sweep_values=(300.0,),
-            cutoff_energies=(300.0,),
             shared_params={"task": "SINGLEPOINT", "spin_polarized": True},
         ),
     ).jobs
@@ -74,7 +72,6 @@ def test_expand_convergence_jobs_sets_atomic_spins_only_when_spin_polarized() ->
         config=ConvergenceConfig(
             sweep_parameter="cut_off_energy",
             sweep_values=(300.0,),
-            cutoff_energies=(300.0,),
             shared_params={"task": "SINGLEPOINT"},
         ),
     ).jobs
@@ -87,7 +84,6 @@ def test_expand_convergence_jobs_applies_subset_override() -> None:
     config = ConvergenceConfig(
         sweep_parameter="cut_off_energy",
         sweep_values=(300.0, 360.0),
-        cutoff_energies=(300.0, 360.0),
         shared_params={
             "task": "SINGLEPOINT",
             "xc_functional": "PBE",
@@ -111,7 +107,6 @@ def test_expand_convergence_jobs_rejects_empty_and_duplicate_cutoffs() -> None:
             config=ConvergenceConfig(
                 sweep_parameter="cut_off_energy",
                 sweep_values=(),
-                cutoff_energies=(),
                 shared_params={"task": "SINGLEPOINT"},
             ),
         )
@@ -122,7 +117,6 @@ def test_expand_convergence_jobs_rejects_empty_and_duplicate_cutoffs() -> None:
             config=ConvergenceConfig(
                 sweep_parameter="cut_off_energy",
                 sweep_values=(300.0, 300.0),
-                cutoff_energies=(300.0, 300.0),
                 shared_params={"task": "SINGLEPOINT"},
             ),
         )
@@ -132,7 +126,6 @@ def test_expand_convergence_jobs_rejects_override_outside_sweep() -> None:
     config = ConvergenceConfig(
         sweep_parameter="cut_off_energy",
         sweep_values=(300.0, 360.0),
-        cutoff_energies=(300.0, 360.0),
         shared_params={"task": "SINGLEPOINT"},
         overrides={frozenset({420.0}): {"max_scf_cycles": 120}},
     )
@@ -145,7 +138,6 @@ def test_expand_convergence_jobs_merges_multiple_override_layers_same_cutoff() -
     config = ConvergenceConfig(
         sweep_parameter="cut_off_energy",
         sweep_values=(300.0, 360.0),
-        cutoff_energies=(300.0, 360.0),
         shared_params={"task": "SINGLEPOINT", "max_scf_cycles": 40},
         overrides={
             frozenset({360.0, 300.0}): {"max_scf_cycles": 80},
@@ -191,7 +183,6 @@ def test_expand_convergence_jobs_returns_empty_messages() -> None:
     config = ConvergenceConfig(
         sweep_parameter="cut_off_energy",
         sweep_values=(300.0, 360.0),
-        cutoff_energies=(300.0, 360.0),
         shared_params={"task": "SINGLEPOINT"},
     )
 

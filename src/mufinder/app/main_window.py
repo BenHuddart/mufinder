@@ -2122,7 +2122,13 @@ class MainWindow(QMainWindow):
         if not isinstance(configuration, dict):
             return persisted
 
+        # The definition stores its sweep as ``sweep_values``; the form keeps
+        # its key list under its own field name.
         recovered = dict(configuration)
+        sweep_values = recovered.pop("sweep_values", [])
+        recovered[self._convergence_controller.keys_state_field] = (
+            list(sweep_values) if isinstance(sweep_values, list) else []
+        )
 
         range_state = persisted.get("range")
         if isinstance(range_state, dict):
@@ -7952,7 +7958,7 @@ class MainWindow(QMainWindow):
             self._convergence_controller.refresh_view()
             self._refresh_journal_view()
             self.statusBar().showMessage(
-                f"Using existing cutoff setup with {len(config.cutoff_energies)} cutoff job(s)"
+                f"Using existing cutoff setup with {len(config.sweep_values)} cutoff job(s)"
             )
             return
 
@@ -7978,7 +7984,7 @@ class MainWindow(QMainWindow):
         self._convergence_controller.refresh_view()
         self._refresh_journal_view()
         self.statusBar().showMessage(
-            f"Configured {len(config.cutoff_energies)} cutoff jobs; input files will be generated on submission"
+            f"Configured {len(config.sweep_values)} cutoff jobs; input files will be generated on submission"
         )
 
     def _on_load_structure_requested(self) -> None:

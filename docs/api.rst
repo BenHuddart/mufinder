@@ -88,6 +88,9 @@ Persistence
    :members:
    :undoc-members:
 
+.. automodule:: mufinder.persistence.migrations
+   :members:
+
 Services
 --------
 

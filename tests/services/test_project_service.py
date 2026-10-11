@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import json
 from pathlib import Path
-from uuid import uuid4
+import shutil
+from uuid import UUID, uuid4
 
 import pytest
 from ase import Atoms
@@ -25,6 +26,7 @@ from mufinder.domain.models import (
 from mufinder.castep_io.types import ValueWithUnit
 from mufinder.persistence.codec import to_jsonable
 from mufinder.science.site_generation import SiteGenerationError
+from mufinder.services.journal import build_journal
 from mufinder.services.project_service import (
     ProjectService,
     SiteHostMismatch,
@@ -1540,7 +1542,7 @@ def test_register_convergence_cutoff_definition_persists_snapshot(tmp_path: Path
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0, 360.0],
+            "sweep_values": [300.0, 360.0],
             "shared_params": {"task": "SINGLEPOINT", "xc_functional": "PBE"},
             "overrides": [{"cutoffs": [360.0], "params": {"max_scf_cycles": 120}}],
         },
@@ -1555,7 +1557,7 @@ def test_register_convergence_cutoff_definition_persists_snapshot(tmp_path: Path
     service.save_project(doc)
     loaded = service.load_project(root)
     loaded_definition = loaded.calculations[definition.id]
-    assert loaded_definition.parameters["configuration"]["cutoff_energies"] == [300.0, 360.0]
+    assert loaded_definition.parameters["configuration"]["sweep_values"] == [300.0, 360.0]
     assert loaded_definition.parameters["job_ids_by_cutoff"] == {}
 
 
@@ -1566,9 +1568,62 @@ def test_register_convergence_cutoff_definition_requires_a_known_structure(tmp_p
         service.register_convergence_cutoff_definition(
             doc,
             input_structure_id=uuid4(),
-            parameters={"cutoff_energies": [400.0]},
+            parameters={"sweep_values": [400.0]},
             output_directory=tmp_path / "out",
         )
+
+
+_SCHEMA_1_FIXTURE = Path(__file__).parents[1] / "fixtures" / "projects" / "schema_v1_cutoff_sweep"
+_SCHEMA_1_CUTOFF_ID = UUID("2a16e0b8-9427-4964-8009-503aa12bd7c1")
+_SCHEMA_1_KPOINT_ID = UUID("382dc08c-6750-40f1-9967-8758b292d57e")
+
+
+def _copy_schema_1_fixture(tmp_path: Path) -> Path:
+    root = tmp_path / "schema_v1.mufinder"
+    shutil.copytree(_SCHEMA_1_FIXTURE, root)
+    return root
+
+
+def test_schema_1_project_loads_with_cutoff_energies_migrated_to_sweep_values(tmp_path: Path) -> None:
+    root = _copy_schema_1_fixture(tmp_path)
+
+    loaded = ProjectService().load_project(root)
+
+    assert loaded.project.schema_version == 2
+    cutoff = loaded.calculations[_SCHEMA_1_CUTOFF_ID].parameters["configuration"]
+    assert cutoff["sweep_values"] == [300.0, 400.0, 500.0]
+    assert "cutoff_energies" not in cutoff
+    assert cutoff["overrides"] == [{"cutoffs": [500.0], "params": {"max_scf_cycles": 120}}]
+    kpoint = loaded.calculations[_SCHEMA_1_KPOINT_ID].parameters["configuration"]
+    assert kpoint["sweep_values"] == [[2, 2, 2], [4, 4, 4]]
+    assert "cutoff_energies" not in kpoint
+    # Provenance is history and the form state is not part of the migration.
+    assert loaded.provenance[0].parameters["configuration"]["cutoff_energies"] == [300.0, 400.0, 500.0]
+    assert loaded.ui_state["convergence_form"]["cutoff_energies"] == [300.0, 400.0, 500.0]
+    assert "Prepared a cutoff convergence sweep with 3 cutoff value(s)." in [
+        entry.body for day in build_journal("Schema 1", loaded.provenance).days for entry in day.entries
+    ]
+
+
+def test_schema_1_project_is_persisted_at_schema_2_by_the_next_save(tmp_path: Path) -> None:
+    root = _copy_schema_1_fixture(tmp_path)
+    service = ProjectService()
+
+    service.save_project(service.load_project(root))
+
+    assert json.loads((root / "project.json").read_text())["schema_version"] == 2
+    for definition_id in (_SCHEMA_1_CUTOFF_ID, _SCHEMA_1_KPOINT_ID):
+        stored = json.loads((root / "entities" / "calculations" / f"{definition_id}.json").read_text())
+        assert "cutoff_energies" not in stored["parameters"]["configuration"]
+    assert (root / "provenance.jsonl").read_bytes() == (_SCHEMA_1_FIXTURE / "provenance.jsonl").read_bytes()
+
+    reloaded = ProjectService().load_project(root)
+    assert reloaded.project.schema_version == 2
+    assert reloaded.calculations[_SCHEMA_1_CUTOFF_ID].parameters["configuration"]["sweep_values"] == [
+        300.0,
+        400.0,
+        500.0,
+    ]
 
 
 def test_register_convergence_kpoint_definition_records_the_simulation_cell(tmp_path: Path) -> None:
@@ -1666,7 +1721,7 @@ def test_register_definitions_persist_their_parameters_and_provenance_unchanged(
     definition = service.register_convergence_cutoff_definition(
         doc,
         host_structure_id=host.id,
-        parameters={"cutoff_energies": [300.0, 360.0], "shift": ValueWithUnit(0.5, "eV")},
+        parameters={"sweep_values": [300.0, 360.0], "shift": ValueWithUnit(0.5, "eV")},
         output_directory=doc.project_root / "files" / "cutoff",
         job_ids_by_cutoff={"300": str(job.id)},
         simulation_cell_mode="saved_supercell",
@@ -1747,7 +1802,7 @@ _REGISTRATION_SNAPSHOTS: dict[str, dict] = {
             "calc_type": "castep_convergence_cutoff",
             "parameters": {
                 "configuration": {
-                    "cutoff_energies": [300.0, 360.0],
+                    "sweep_values": [300.0, 360.0],
                     "shift": {"value": 0.5, "unit": "eV"},
                 },
                 "output_directory": "files/cutoff",
@@ -1767,7 +1822,7 @@ _REGISTRATION_SNAPSHOTS: dict[str, dict] = {
             "parameters": {
                 "calculation_definition_id": "<definition>",
                 "configuration": {
-                    "cutoff_energies": [300.0, 360.0],
+                    "sweep_values": [300.0, 360.0],
                     "shift": {"value": 0.5, "unit": "eV"},
                 },
                 "output_directory": "files/cutoff",

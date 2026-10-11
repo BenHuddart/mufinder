@@ -20,7 +20,11 @@ Package layers
 ``mufinder.persistence``
    JSON storage and codec helpers. Persistence may serialize domain objects but
    must not reach into UI, CASTEP I/O, services, workflow expansion, or science
-   modules.
+   modules. Saved projects carry a schema version (``PROJECT_SCHEMA_VERSION``
+   in ``mufinder.domain.models``, currently 2); ``mufinder.persistence.migrations``
+   upgrades the raw payloads of a project saved at an older version when it is
+   loaded, one version-keyed step at a time. See
+   :doc:`compatibility_policy` for each step.
 
 ``mufinder.science``
    Numerical and crystallographic algorithms, including site generation,
@@ -139,7 +143,9 @@ policy, move the reusable part into the appropriate shared layer:
 - shared adapter logic that turns GUI value dicts into workflow templates
   belongs in ``mufinder.app.adapter_common``
 - persisted compatibility behavior belongs in ``mufinder.persistence`` or the
-  owning service, with a ledger entry in :doc:`compatibility_policy`
+  owning service, with a ledger entry in :doc:`compatibility_policy`; a
+  rewrite of saved-project payloads is a step in
+  ``mufinder.persistence.migrations`` behind a schema version bump
 
 The preferred outcome is code that future agents can navigate by package name,
 not by remembering where a previous implementation happened to grow.

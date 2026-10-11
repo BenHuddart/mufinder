@@ -808,7 +808,7 @@ def test_dismissed_convergence_cutoff_job_row_is_resubmittable(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -881,7 +881,7 @@ def test_dismissed_row_submit_aborts_when_cleanup_prompt_cancelled(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
@@ -938,7 +938,7 @@ def test_non_dismissed_failed_row_keeps_failed_status_and_is_not_reset(
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },

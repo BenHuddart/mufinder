@@ -487,7 +487,7 @@ def test_remove_grid_keys_keeps_the_definition_and_unreadable_values(document: P
 
 def test_remove_last_cutoff_deletes_the_definition(document: ProjectDocument) -> None:
     definition = _definition(document, job_ids_by_cutoff={"300": "1"})
-    definition.parameters["configuration"] = {"cutoff_energies": [300.0], "sweep_values": [300.0]}
+    definition.parameters["configuration"] = {"sweep_values": [300.0]}
     document.ui_state["active_cutoff"] = str(definition.id)
 
     deleted = remove_cutoff_from_definition(

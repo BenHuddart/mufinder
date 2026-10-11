@@ -174,6 +174,10 @@ class ProvenanceRecord:
 #: directly rather than adopting from a convergence analysis.
 MANUAL_DEFAULT_METHOD = "manual"
 
+#: Saved-project schema version this code writes. Older projects are upgraded
+#: on load by ``mufinder.persistence.migrations``.
+PROJECT_SCHEMA_VERSION = 2
+
 
 @dataclass(slots=True)
 class Project:
@@ -181,7 +185,7 @@ class Project:
 
     id: UUID = field(default_factory=uuid4)
     name: str = "Untitled Project"
-    schema_version: int = 1
+    schema_version: int = PROJECT_SCHEMA_VERSION
     app_version: str = field(default_factory=current_version)
     created_at: datetime = field(default_factory=utc_now)
     modified_at: datetime = field(default_factory=utc_now)

@@ -800,15 +800,15 @@ def _seed_convergence_document(service: ProjectService, document: ProjectDocumen
         host_structure_id=host.id,
         parameters={
             "name_prefix": "conv",
-            "cutoff_energies": [300.0],
+            "sweep_values": [300.0],
             "shared_params": {"task": "SINGLEPOINT"},
             "overrides": [],
         },
         output_directory=document.project_root / "files" / "convergence_cutoff",
     )
     config = ConvergenceConfig(
+        sweep_values=(300.0,),
         name_prefix="conv",
-        cutoff_energies=(300.0,),
         shared_params={"task": "SINGLEPOINT"},
     )
     document.ui_state["_test_config"] = config

@@ -263,7 +263,6 @@ def serialize_convergence_config(config: ConvergenceConfig) -> dict[str, object]
         "name_prefix": config.name_prefix,
         "sweep_parameter": config.sweep_parameter,
         "sweep_values": [_serialize_sweep_value(value) for value in config.sweep_values],
-        "cutoff_energies": list(config.cutoff_energies),
         "shared_params": config.shared_params,
         "overrides": [
             {
@@ -278,10 +277,9 @@ def serialize_convergence_config(config: ConvergenceConfig) -> dict[str, object]
 def deserialize_convergence_config(payload: object) -> ConvergenceConfig | None:
     """Return the convergence configuration in ``payload``, or ``None``.
 
-    A cutoff sweep reads ``cutoff_energies`` in preference to ``sweep_values``;
-    an override group reads ``cutoffs`` in preference to ``sweep_values``. An
-    unreadable sweep value rejects the configuration, while an unreadable
-    override group is skipped.
+    The sweep is read from ``sweep_values``; an override group reads
+    ``cutoffs`` in preference to ``sweep_values``. An unreadable sweep value
+    rejects the configuration, while an unreadable override group is skipped.
     """
 
     if not isinstance(payload, dict):
@@ -300,12 +298,8 @@ def deserialize_convergence_config(payload: object) -> ConvergenceConfig | None:
 
     try:
         raw_sweep_values = payload.get("sweep_values")
-        if sweep_parameter == "cut_off_energy":
-            raw_cutoff_values = payload.get("cutoff_energies")
-            if isinstance(raw_cutoff_values, list):
-                raw_sweep_values = raw_cutoff_values
         if not isinstance(raw_sweep_values, list):
-            raw_sweep_values = payload.get("cutoff_energies", [])
+            raw_sweep_values = []
         sweep_values = tuple(parse_sweep_value(value) for value in raw_sweep_values)
     except (TypeError, ValueError):
         return None

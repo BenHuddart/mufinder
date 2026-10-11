@@ -35,6 +35,7 @@ from mufinder.domain.models import (
 )
 from mufinder.persistence.codec import parse_datetime, parse_uuid, to_jsonable
 from mufinder.persistence.json_store import ProjectStore
+from mufinder.persistence.migrations import migrate_project_payloads
 from mufinder.services.perf_trace import PerfTrace
 from mufinder.science.site_generation import (
     SiteGenerationError,
@@ -431,31 +432,39 @@ class ProjectService:
         """Load a project from disk into a ProjectDocument."""
         store = ProjectStore(project_root)
         manifest = store.read_json(store.project_manifest_path)
+        payloads = {
+            entity_type: store.load_entities(entity_type)
+            for entity_type in ("structures", "sites", "calculations", "runs", "results", "comparison_tables", "jobs")
+        }
+        # Projects saved at an older schema are upgraded in memory; the entity
+        # files a migration changed are left out of the dirty-tracking cache
+        # below so the next save writes them with the new manifest version.
+        migrated_keys = migrate_project_payloads(manifest, payloads)
 
         project = self._project_from_dict(manifest)
         structures = {
-            entity.id: entity for entity in (self._structure_from_dict(p) for p in store.load_entities("structures"))
+            entity.id: entity for entity in (self._structure_from_dict(p) for p in payloads["structures"])
         }
-        sites = {entity.id: entity for entity in (self._site_from_dict(p) for p in store.load_entities("sites"))}
+        sites = {entity.id: entity for entity in (self._site_from_dict(p) for p in payloads["sites"])}
         calculations = {
             entity.id: entity
-            for entity in (self._calculation_from_dict(p) for p in store.load_entities("calculations"))
+            for entity in (self._calculation_from_dict(p) for p in payloads["calculations"])
         }
-        runs = {entity.id: entity for entity in (self._run_from_dict(p) for p in store.load_entities("runs"))}
+        runs = {entity.id: entity for entity in (self._run_from_dict(p) for p in payloads["runs"])}
         results = {
-            entity.id: entity for entity in (self._result_from_dict(p) for p in store.load_entities("results"))
+            entity.id: entity for entity in (self._result_from_dict(p) for p in payloads["results"])
         }
         comparison_tables = {
             entity.id: entity
-            for entity in (self._comparison_table_from_dict(p) for p in store.load_entities("comparison_tables"))
+            for entity in (self._comparison_table_from_dict(p) for p in payloads["comparison_tables"])
         }
         provenance = [self._provenance_from_dict(p) for p in store.load_provenance()]
-        job_payloads = store.load_entities("jobs")
+        job_payloads = payloads["jobs"]
         jobs = self._jobs_in_creation_order(job_payloads, provenance)
         # Jobs saved before ``created_at`` existed carry a backfilled value that
         # is not on disk yet; leaving them out of the cache makes the next save
         # write it, so later loads use the persisted value.
-        backfilled_job_keys = {
+        unsaved_keys = migrated_keys | {
             ("jobs", payload["id"]) for payload in job_payloads if payload.get("created_at") is None
         }
         ui_state = store.read_json(store.state_path) if store.state_path.exists() else {}
@@ -486,7 +495,7 @@ class ProjectService:
         root_key = self._resolved_root(project_root)
         for entity_type, entities in self._entity_groups(document):
             for entity_id, entity in entities:
-                if (entity_type, entity_id) in backfilled_job_keys:
+                if (entity_type, entity_id) in unsaved_keys:
                     continue
                 self._content_hashes[(root_key, entity_type, entity_id)] = self._payload_hash(
                     to_jsonable(entity)
@@ -1622,7 +1631,7 @@ class ProjectService:
             action="configure_convergence_cutoff",
             description=(
                 "Configured cutoff convergence with "
-                f"{len(snapshot.get('cutoff_energies', []))} cutoff value(s)"
+                f"{len(snapshot.get('sweep_values', []))} cutoff value(s)"
             ),
             configuration=snapshot,
             output_directory=output_directory,
