@@ -101,22 +101,10 @@ WORKFLOW_WIDGET_MODULES = (
 )
 
 PINNED_DUPLICATED_WIDGET_METHODS: dict[str, int] = {
-        "_build_layout": 2,
-        "_connect_signals": 2,
-        "_emit_config": 2,
-        "_emit_state": 2,
-        "_on_simulation_cell_combo_changed": 2,
-        "_refresh_batch_button_state": 2,
-        "_refresh_examine_button_state": 2,
-        "_row_status": 2,
         "_selected_or_all_source_keys": 2,
-        "_selected_rows": 2,
-        "_shared_locked_values": 2,
         "_source_key_at_row": 2,
         "_source_keys_at_rows": 2,
         "_source_row_status": 2,
-        "_status_brush": 2,
-        "_style_configure_button": 2,
         "_update_actions": 2,
 }
 

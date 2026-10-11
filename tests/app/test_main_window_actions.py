@@ -1274,10 +1274,10 @@ def test_main_window_syncs_convergence_row_status_and_energy(qapp, tmp_path: Pat
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    assert window._convergence_view._cutoff_table.item(0, window._convergence_view._STATUS_COLUMN).text() == "completed"
-    assert window._convergence_view._cutoff_table.item(0, window._convergence_view._TOTAL_ENERGY_COLUMN).text() == "-12.3456"
-    assert window._convergence_view._cutoff_table.item(0, window._convergence_view._MAX_FORCE_COLUMN).text() == ""
-    assert window._convergence_view._cutoff_table.item(1, window._convergence_view._STATUS_COLUMN).text() == "ready"
+    assert window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text() == "completed"
+    assert window._convergence_view._table.item(0, window._convergence_view._TOTAL_ENERGY_COLUMN).text() == "-12.3456"
+    assert window._convergence_view._table.item(0, window._convergence_view._MAX_FORCE_COLUMN).text() == ""
+    assert window._convergence_view._table.item(1, window._convergence_view._STATUS_COLUMN).text() == "ready"
     window.close()
 
 
@@ -1334,7 +1334,7 @@ def test_main_window_syncs_convergence_row_max_force(qapp, tmp_path: Path) -> No
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    assert window._convergence_view._cutoff_table.item(0, window._convergence_view._MAX_FORCE_COLUMN).text() == "0.0987"
+    assert window._convergence_view._table.item(0, window._convergence_view._MAX_FORCE_COLUMN).text() == "0.0987"
     window.close()
 
 
@@ -7636,7 +7636,7 @@ def test_main_window_configured_cutoff_shows_ready_and_stays_off_dashboard(
     window._refresh_ui_after_project_change()
 
     assert window._jobs_table.rowCount() == 0
-    assert window._convergence_view._cutoff_table.item(0, window._convergence_view._STATUS_COLUMN).text() == "ready"
+    assert window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text() == "ready"
     window.close()
 
 
@@ -7668,8 +7668,8 @@ def test_main_window_form_cutoff_shows_ready_before_submission(
     window._refresh_ui_after_project_change()
 
     assert window._jobs_table.rowCount() == 0
-    assert window._convergence_view._cutoff_table.item(0, window._convergence_view._STATUS_COLUMN).text() == "ready"
-    assert window._convergence_view._cutoff_table.item(1, window._convergence_view._STATUS_COLUMN).text() == "ready"
+    assert window._convergence_view._table.item(0, window._convergence_view._STATUS_COLUMN).text() == "ready"
+    assert window._convergence_view._table.item(1, window._convergence_view._STATUS_COLUMN).text() == "ready"
     window.close()
 
 
@@ -7706,9 +7706,9 @@ def test_main_window_recovers_convergence_form_rows_from_definition_when_ui_stat
     window._document = doc
     window._refresh_ui_after_project_change()
 
-    assert window._convergence_view._cutoff_table.rowCount() == 2
-    assert window._convergence_view._cutoff_table.item(0, window._convergence_view._CUTOFF_COLUMN).text() == "300"
-    assert window._convergence_view._cutoff_table.item(1, window._convergence_view._CUTOFF_COLUMN).text() == "360"
+    assert window._convergence_view._table.rowCount() == 2
+    assert window._convergence_view._table.item(0, window._convergence_view._KEY_COLUMN).text() == "300"
+    assert window._convergence_view._table.item(1, window._convergence_view._KEY_COLUMN).text() == "360"
     assert doc.ui_state["convergence_form"]["cutoff_energies"] == [300.0, 360.0]
     window.close()
 
@@ -7951,7 +7951,7 @@ def test_main_window_remove_convergence_cutoff_deletes_files_and_entities(
     assert doc.runs == {}
     assert doc.results == {}
     assert doc.calculations == {}
-    assert window._convergence_view._cutoff_table.rowCount() == 0
+    assert window._convergence_view._table.rowCount() == 0
     window.close()
 
 
@@ -8002,7 +8002,7 @@ def test_main_window_remove_convergence_cutoff_archives_files_when_kept(
     assert archived.exists()
     assert not ready_dir.exists()
     assert doc.calculations == {}
-    assert window._convergence_view._cutoff_table.rowCount() == 0
+    assert window._convergence_view._table.rowCount() == 0
     window.close()
 
 
@@ -8051,7 +8051,7 @@ def test_main_window_remove_convergence_cutoff_cancel_keeps_row_and_files(
 
     assert ready_dir.exists()
     assert len(doc.calculations) == 1
-    assert window._convergence_view._cutoff_table.rowCount() == 1
+    assert window._convergence_view._table.rowCount() == 1
     window.close()
 
 
@@ -10350,7 +10350,7 @@ def test_main_window_remove_kpoint_grids_updates_definition_configuration(
     assert configuration["sweep_values"] == [[3, 3, 2]]
     assert definition.parameters["job_ids_by_grid"] == {"3x3x2": "b"}
     assert window._kpoint_convergence_view._table.rowCount() == 1
-    assert window._kpoint_convergence_view._table.item(0, window._kpoint_convergence_view._GRID_COLUMN).text() == "3 x 3 x 2"
+    assert window._kpoint_convergence_view._table.item(0, window._kpoint_convergence_view._KEY_COLUMN).text() == "3 x 3 x 2"
     window.close()
 
 
@@ -11180,12 +11180,12 @@ def test_dismissed_convergence_cutoff_job_row_is_resubmittable(
     service.fail_job(job, "castep exploded")
     window._refresh_ui_after_project_change()
     status_column = window._convergence_view._STATUS_COLUMN
-    assert window._convergence_view._cutoff_table.item(0, status_column).text() == "failed"
+    assert window._convergence_view._table.item(0, status_column).text() == "failed"
 
     window._on_dismiss_from_dashboard([job.id])
     window._refresh_ui_after_project_change()
 
-    assert window._convergence_view._cutoff_table.item(0, status_column).text() == "ready"
+    assert window._convergence_view._table.item(0, status_column).text() == "ready"
     # The cutoff panel's Submit actions are gated on the projected row status,
     # so they become available again for the dismissed row.
     assert not workflow_table_utils.workflow_row_is_locked(
@@ -11309,7 +11309,7 @@ def test_non_dismissed_failed_row_keeps_failed_status_and_is_not_reset(
     window._refresh_ui_after_project_change()
 
     assert (
-        window._convergence_view._cutoff_table.item(
+        window._convergence_view._table.item(
             0, window._convergence_view._STATUS_COLUMN
         ).text()
         == "failed"
@@ -12834,7 +12834,7 @@ def _cutoff_window_with_completed_rows(tmp_path: Path, monkeypatch: pytest.Monke
     window._refresh_ui_after_project_change()
     view = window._convergence_view
     for cutoff in (300.0, 360.0):
-        view._add_cutoff(cutoff)
+        view._add_row(cutoff)
     sent: list[list[str]] = []
     monkeypatch.setattr(
         window,
@@ -12843,7 +12843,7 @@ def _cutoff_window_with_completed_rows(tmp_path: Path, monkeypatch: pytest.Monke
             [job.label for job in jobs if job.status == JobStatus.DEFINED]
         ),
     )
-    view._run_cluster_selected_cutoffs()
+    view._run_cluster_selected()
     for job in doc.jobs.values():
         job.status = JobStatus.COMPLETED
     sent.clear()
@@ -12866,17 +12866,17 @@ def test_cutoff_rows_keep_their_completed_jobs_across_a_refresh_and_a_new_row(
 
     window._refresh_ui_after_project_change()
 
-    assert view._cutoff_parameter_values == {}
+    assert view._parameter_values == {}
     assert sorted(view.build_config().shared_params) == defaults
     status_column = view._STATUS_COLUMN
-    assert [view._cutoff_table.item(row, status_column).text() for row in range(2)] == [
+    assert [view._table.item(row, status_column).text() for row in range(2)] == [
         "completed",
         "completed",
     ]
 
-    view._add_cutoff(420.0)
-    view._cutoff_table.selectAll()
-    view._run_cluster_selected_cutoffs()
+    view._add_row(420.0)
+    view._table.selectAll()
+    view._run_cluster_selected()
 
     # Only the new row is submitted; the completed rows keep their jobs.
     assert sent == [["cutoff_convergence_ecut_420"]]
@@ -12885,7 +12885,7 @@ def test_cutoff_rows_keep_their_completed_jobs_across_a_refresh_and_a_new_row(
         ("cutoff_convergence_ecut_360", JobStatus.COMPLETED),
         ("cutoff_convergence_ecut_420", JobStatus.DEFINED),
     ]
-    assert [view._cutoff_table.item(row, status_column).text() for row in range(2)] == [
+    assert [view._table.item(row, status_column).text() for row in range(2)] == [
         "completed",
         "completed",
     ]
@@ -12908,9 +12908,9 @@ def test_cutoff_rows_saved_with_task_only_parameters_are_read_back_as_defaults(
 
     window._refresh_ui_after_project_change()
 
-    assert view._cutoff_parameter_values == {}
-    view._cutoff_table.selectAll()
-    view._run_cluster_selected_cutoffs()
+    assert view._parameter_values == {}
+    view._table.selectAll()
+    view._run_cluster_selected()
     assert sent in ([], [[]])
     assert len(doc.jobs) == 2
     window.close()

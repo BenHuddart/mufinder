@@ -51,6 +51,7 @@ from mufinder.app.workflow_controllers.base import (
     ControllerResult,
     WorkflowControllerContext,
     WorkflowJobController,
+    dedupe_jobs,
 )
 from mufinder.app.workflow_submission import effective_row_status
 
@@ -236,14 +237,7 @@ class UepController(WorkflowJobController):
             mapping[label] = str(job.id)
             created.append(job)
 
-        deduped: list[Job] = []
-        seen: set[UUID] = set()
-        for job in created:
-            if job.id in seen:
-                continue
-            seen.add(job.id)
-            deduped.append(job)
-        return deduped
+        return dedupe_jobs(created)
 
     # --- result contract ---
 

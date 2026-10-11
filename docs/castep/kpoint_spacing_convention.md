@@ -306,6 +306,7 @@ about these trade-offs in a future session.
 |---|---|
 | `src/mufinder/science/kpoint_grids.py` | `spacing_from_grid`, `grid_from_spacing`, `generate_kpoint_grids`, `kpoint_count_for_spacing`, `equivalent_grid_for_supercell` |
 | `src/mufinder/app/convergence_examiner.py` | `_compute_spacings` (uses `spacing_from_grid`); `recompute_spacings_in_snapshot`; `_regular_spacing_ticks` (uses `kpoint_count_for_spacing`) |
-| `src/mufinder/app/relaxation_widget.py`, `muon_relaxation_widget.py`, `uep_widget.py` | "Use spacing" toggle defaults (use `spacing_from_grid`) |
+| `src/mufinder/app/workflow_row_widget.py`, `workflow_table_utils.py` | "Use spacing" toggle defaults for the relaxation, muon-relaxation and UEP widgets: `RowTableWidget` seeds the dialog from `SupercellColumn.suggested_spacing` (uses `spacing_from_grid`) |
+| `src/mufinder/app/sweep_convergence_widget.py`, `kpoint_convergence_widget.py` | The k-point sweep's "Generate From Spacing..." rows: `KPointConvergenceWidget.generate_keys` calls `generate_kpoint_grids` for the `SweepConvergenceWidget` table |
 | `tests/science/test_kpoint_grids.py` | Unit tests including AlF₃ and LiF sanity checks added with this fix |
 | `E:\CASTEP-22.11\Source\Fundamental\cell.f90` | CASTEP source — `cell_kpoints_spacing_wrapped` ≈ line 20698 |

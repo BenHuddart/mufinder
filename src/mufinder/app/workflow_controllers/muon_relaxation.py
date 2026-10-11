@@ -78,6 +78,7 @@ from mufinder.app.workflow_controllers.base import (
     ControllerResult,
     WorkflowControllerContext,
     WorkflowJobController,
+    dedupe_jobs,
     apply_row_parameters_to_form_state,
     relaxation_artifact_failure,
     upsert_job_derived_structure,
@@ -501,13 +502,7 @@ class MuonRelaxationController(WorkflowJobController):
             mapping[key] = str(job.id)
             seed_mapping[key] = spec.name
             created.append(job)
-        deduped: list[Job] = []
-        seen: set[UUID] = set()
-        for job in created:
-            if job.id in seen:
-                continue
-            seen.add(job.id)
-            deduped.append(job)
+        deduped = dedupe_jobs(created)
         if deduped:
             self._context.persist_ui_state(
                 failure_message="Muon relaxation jobs were generated, but autosave failed."
