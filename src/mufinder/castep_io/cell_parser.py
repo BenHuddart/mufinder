@@ -34,6 +34,10 @@ _CELL_UNITS = {
     "nm": 10.0,
     "pm": 1e-2,
 }
+# A wrapped ``POSITIONS_ABS`` coordinate this close below 1.0 is an atom on a
+# cell face and is placed at 0.0. Far above the round-off of the conversion
+# (~1e-16) and far below any physical displacement (1e-12 of a lattice vector).
+_CELL_FACE_TOLERANCE = 1e-12
 _BLOCK_START_RE = re.compile(r"^\s*%BLOCK\s+([A-Za-z0-9_]+)\s*$", re.IGNORECASE)
 _BLOCK_END_RE = re.compile(r"^\s*%ENDBLOCK\s+([A-Za-z0-9_]+)\s*$", re.IGNORECASE)
 _STRUCTURED_BLOCKS = frozenset(
@@ -210,10 +214,12 @@ def _fractional_from_cartesian(
     except np.linalg.LinAlgError as exc:
         raise CellParseError(f"CELL lattice vectors are singular and cannot be inverted: {exc}") from exc
 
-    # Wrap twice, as ``ase.Atoms.get_scaled_positions`` does: a coordinate a
-    # rounding error below zero (an atom on a cell face of a non-orthogonal
-    # lattice) maps to exactly 1.0 after one ``mod``, and back to 0.0 after two.
-    wrapped = np.mod(np.mod(fractional, 1.0), 1.0)
+    # An atom on a cell face of a non-orthogonal lattice converts to a
+    # coordinate a rounding error below an integer, which wraps to 1.0 or to
+    # just under it. How far below depends on the platform's ``cos`` and LAPACK,
+    # so snap within a tolerance rather than relying on a second ``mod``.
+    wrapped = fractional - np.floor(fractional)
+    wrapped[wrapped > 1.0 - _CELL_FACE_TOLERANCE] = 0.0
     return tuple(tuple(float(value) for value in row) for row in wrapped.tolist())
 
 
