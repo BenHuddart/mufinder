@@ -370,19 +370,27 @@ Si 5.0 -1.0 0.0
     assert loaded.fractional_positions == [pytest.approx([0.25, 0.75, 0.0])]
 
 
-def test_load_cell_positions_abs_on_a_hexagonal_cell_face_wraps_to_zero(tmp_path: Path) -> None:
-    # -b of a hexagonal cell sits a rounding error below fractional zero; it
-    # must land on 0.0 rather than 1.0.
+# -b of a hexagonal cell from ``LATTICE_ABC`` 3 3 5 / 90 90 120. Its x depends
+# on the platform's ``cos(120°)``: the correctly rounded value (glibc) and the
+# one an ulp away (macOS libm). Either converts to a fractional x a rounding
+# error below zero, which must land on 0.0 rather than on or just under 1.0.
+HEXAGONAL_FACE_X = pytest.mark.parametrize(
+    "minus_b_x", ["1.4999999999999993", "1.4999999999999996"], ids=["correctly-rounded-cos", "one-ulp-cos"]
+)
+
+
+@HEXAGONAL_FACE_X
+def test_load_cell_positions_abs_on_a_hexagonal_cell_face_wraps_to_zero(tmp_path: Path, minus_b_x: str) -> None:
     loaded = _load_cell(
         tmp_path,
-        """
+        f"""
 %BLOCK LATTICE_ABC
 3.0 3.0 5.0
 90.0 90.0 120.0
 %ENDBLOCK LATTICE_ABC
 
 %BLOCK POSITIONS_ABS
-Si 1.4999999999999993 -2.598076211353316 0.0
+Si {minus_b_x} -2.598076211353316 0.0
 %ENDBLOCK POSITIONS_ABS
 """,
     )
