@@ -109,6 +109,136 @@ def test_load_cif_without_moments_has_no_spin_properties(tmp_path: Path) -> None
 
 
 # --------------------------------------------------------------------------
+# CIF comments and blank lines in loop headings
+# --------------------------------------------------------------------------
+
+# Synthetic test data: every identifier, element and coordinate is invented.
+SYNTHETIC_LOOP_COMMENTS_CIF = """data_synthetic_loop_comments
+_cell_length_a 5.0
+_cell_length_b 5.0
+_cell_length_c 5.0
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+_space_group_name_H-M_alt 'P 1'
+_space_group_IT_number 1
+
+loop_
+_symmetry_equiv_pos_as_xyz # synthetic symmetry-header comment
+'x,y,z'
+
+loop_
+_atom_site_label
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_U_iso_or_equiv
+_atom_site_occupancy
+_atom_site_adp_type # synthetic atom-header comment
+_atom_site_type_symbol
+C1 0.10 0.20 0.30 0.010 1.0 Uiso C
+C2 0.60 0.70 0.80 0.010 1.0 Uiso C
+"""
+
+_SYMMETRY_HEADING_COMMENT = " # synthetic symmetry-header comment"
+_ATOM_HEADING_COMMENT = " # synthetic atom-header comment"
+
+LINE_ENDINGS = pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+
+
+def _write_cif(tmp_path: Path, text: str, newline: str = "\n", name: str = "sample.cif") -> Path:
+    """Write ``text`` byte for byte with ``newline`` line terminators."""
+    path = tmp_path / name
+    path.write_bytes(text.replace("\n", newline).encode("utf-8"))
+    return path
+
+
+def _assert_synthetic_carbon_pair(loaded) -> None:
+    assert loaded.species == ["C", "C"]
+    assert loaded.properties["atom_count"] == 2
+    assert loaded.lattice_vectors == [pytest.approx(row) for row in ([5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0])]
+    assert loaded.fractional_positions == [pytest.approx(row) for row in ([0.10, 0.20, 0.30], [0.60, 0.70, 0.80])]
+    assert loaded.properties["pbc"] == [True, True, True]
+
+
+@LINE_ENDINGS
+@pytest.mark.parametrize(
+    "removed_comments",
+    [
+        (),
+        (_ATOM_HEADING_COMMENT,),
+        (_SYMMETRY_HEADING_COMMENT,),
+        (_SYMMETRY_HEADING_COMMENT, _ATOM_HEADING_COMMENT),
+    ],
+    ids=["both-heading-comments", "symmetry-heading-comment", "atom-heading-comment", "no-comments"],
+)
+def test_load_cif_accepts_comments_beside_loop_headings(
+    tmp_path: Path, newline: str, removed_comments: tuple[str, ...]
+) -> None:
+    text = SYNTHETIC_LOOP_COMMENTS_CIF
+    for comment in removed_comments:
+        text = text.replace(comment, "")
+    path = _write_cif(tmp_path, text, newline)
+    original = path.read_bytes()
+
+    _assert_synthetic_carbon_pair(load_structure_file(path))
+    assert path.read_bytes() == original
+
+
+@LINE_ENDINGS
+def test_load_cif_accepts_standalone_comments_and_blank_lines_between_loop_headings(
+    tmp_path: Path, newline: str
+) -> None:
+    text = SYNTHETIC_LOOP_COMMENTS_CIF.replace(
+        "_atom_site_fract_y\n",
+        "_atom_site_fract_y\n\n# synthetic standalone comment\n   \n\t# indented comment\n",
+    ).replace("_atom_site_type_symbol\n", "_atom_site_type_symbol\n\n# before the first row\n")
+
+    _assert_synthetic_carbon_pair(load_structure_file(_write_cif(tmp_path, text, newline)))
+
+
+@LINE_ENDINGS
+def test_load_cif_keeps_literal_hashes_in_quoted_values_and_text_fields(tmp_path: Path, newline: str) -> None:
+    # The text field holds lines that look like loop headings with comments;
+    # they are data and must not be read as a loop.
+    text = SYNTHETIC_LOOP_COMMENTS_CIF.replace(
+        "_space_group_IT_number 1\n",
+        """_space_group_IT_number 1
+_chemical_name_common 'synthetic #1 compound'
+_publ_section_comment
+;
+Synthetic note # not a comment
+loop_
+_atom_site_label # also not a comment
+;
+""",
+    ).replace("C1 0.10", "C#1 0.10").replace("C2 0.60", "'C#2' 0.60")
+
+    _assert_synthetic_carbon_pair(load_structure_file(_write_cif(tmp_path, text, newline)))
+
+
+@pytest.mark.parametrize(
+    ("text", "match"),
+    [
+        (
+            SYNTHETIC_LOOP_COMMENTS_CIF.replace("C2 0.60 0.70 0.80 0.010 1.0 Uiso C", "C2 0.60 0.70"),
+            "incomplete row",
+        ),
+        (
+            SYNTHETIC_LOOP_COMMENTS_CIF.replace("_space_group_IT_number 1\n", "_space_group_IT_number 1\nstray_bareword\n"),
+            'Unexpected CIF file entry: "stray_bareword"',
+        ),
+    ],
+    ids=["incomplete-row", "unexpected-entry"],
+)
+def test_load_cif_with_commented_headings_still_reports_malformed_content(
+    tmp_path: Path, text: str, match: str
+) -> None:
+    with pytest.raises(StructureLoadError, match=f"Failed to parse structure file 'sample.cif': .*{match}"):
+        load_structure_file(_write_cif(tmp_path, text))
+
+
+# --------------------------------------------------------------------------
 # CASTEP CELL: geometry
 # --------------------------------------------------------------------------
 
@@ -801,13 +931,83 @@ loop_
     assert all("atom_index" not in moment for moment in moments)
 
 
+@LINE_ENDINGS
+def test_load_mcif_with_commented_loop_headings_keeps_magnetic_metadata(tmp_path: Path, newline: str) -> None:
+    text = """data_synthetic_magnetic
+_cell_length_a 5
+_cell_length_b 5
+_cell_length_c 5
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+_publ_section_comment
+;
+_atom_site_moment.label # a text field, not a loop
+loop_
+;
+loop_
+_atom_site_label # synthetic heading comment
+
+# synthetic standalone comment
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Fe#1 Fe 0.0 0.0 0.0
+'Mn#2' Mn 0.5 0.5 0.5
+loop_
+_magnetic_propagation_vector_kxkykz # synthetic heading comment
+'0, 0, 1/2'
+loop_
+_atom_site_moment.label
+_atom_site_moment.crystalaxis_x # synthetic heading comment
+_atom_site_moment.crystalaxis_y
+_atom_site_moment.crystalaxis_z
+Fe#1 0.0 0.0 1.5 # synthetic row comment
+Mn#2 0.0 0.0 -2.5
+"""
+    loaded = load_structure_file(_write_cif(tmp_path, text, newline, name="sample.mcif"))
+
+    assert loaded.species == ["Fe", "Mn"]
+    assert loaded.lattice_vectors == [pytest.approx(row) for row in ([5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0])]
+    assert loaded.fractional_positions == [pytest.approx(row) for row in ([0.0, 0.0, 0.0], [0.5, 0.5, 0.5])]
+    magnetic = loaded.properties["magnetic_structure"]
+    assert magnetic["atom_labels"] == ["Fe#1", "Mn#2"]
+    assert magnetic["propagation_vectors_rlu"] == [pytest.approx([0.0, 0.0, 0.5])]
+    assert [moment["label"] for moment in magnetic["moments"]] == ["Fe#1", "Mn#2"]
+    assert [moment["atom_index"] for moment in magnetic["moments"]] == [0, 1]
+    assert magnetic["site_moments"]["Mn#2"] == pytest.approx([0.0, 0.0, -2.5])
+    assert loaded.properties["atomic_spins"] == pytest.approx([1.5, -2.5])
+
+
 # --------------------------------------------------------------------------
 # MCIF parser helpers with no public path to their edge cases
 # --------------------------------------------------------------------------
 
 
-def test_tokenize_cif_line_falls_back_on_unbalanced_quotes() -> None:
-    assert sio._tokenize_cif_line("a 'b c") == ["a", "'b", "c"]
+@pytest.mark.parametrize(
+    ("line", "texts", "comment_start"),
+    [
+        ("_tag 'it''s' # note", ["_tag", "it''s"], 13),
+        ("O'1 \"a #b\" C#1", ["O'1", "a #b", "C#1"], None),
+        ("a 'b c", ["a", "b c"], None),
+        ("   # only a comment", [], 3),
+    ],
+)
+def test_lex_cif_line_starts_comments_only_where_a_token_could_start(
+    line: str, texts: list[str], comment_start: int | None
+) -> None:
+    tokens, start = sio._lex_cif_line(line)
+
+    assert [token.text for token in tokens] == texts
+    assert start == comment_start
+
+
+def test_cif_text_for_ase_rewrites_only_loop_headings() -> None:
+    # Data rows and text fields keep their hashes; only the heading list changes.
+    text = "loop_\n_a # x\n\n# y\n_b\n1 'q #2'\n;\n_c # z\n;\n"
+
+    assert sio._cif_text_for_ase(text) == "loop_\n_a\n_b\n1 'q #2'\n;\n_c # z\n;\n"
 
 
 def test_parse_cif_tags_and_loops_skips_headerless_loop_and_keeps_bare_tag() -> None:
@@ -815,6 +1015,13 @@ def test_parse_cif_tags_and_loops_skips_headerless_loop_and_keeps_bare_tag() -> 
 
     assert loops == []
     assert tags == {"_tag": "v", "_lonely": ""}
+
+
+def test_parse_cif_tags_and_loops_reads_text_fields_as_single_values() -> None:
+    tags, loops = sio._parse_cif_tags_and_loops("_note\n;\n_fake # x\n; _next 1\n_open\n;never closed\nloop_\n")
+
+    assert loops == []
+    assert tags == {"_note": "\n_fake # x", "_next": "1", "_open": "never closed\nloop_\n"}
 
 
 def test_extract_atom_labels_dedupes_tag_and_loop_labels() -> None:

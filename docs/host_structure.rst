@@ -20,6 +20,17 @@ which reads only the lattice and position blocks, so a CASTEP ``-out.cell``
 imports whatever calculation keywords it carries. Inline ``SPIN=...`` tokens on
 ``POSITIONS_FRAC`` rows become per-atom spins.
 
+CIF comments follow the CIF syntax rules. A comment beside a loop heading, and
+comment-only or blank lines between loop headings, are accepted: ASE's reader
+takes a loop heading only from a line holding that one tag, so MuFinder hands
+ASE an in-memory copy with those comments and blank lines removed from loop
+heading lists. The source file is never modified. A ``#`` starts a comment only
+where a token could start, so hashes inside quoted strings, inside semicolon
+text fields and within unquoted values (``C#1``) are kept as data; MCIF
+magnetic metadata is read with the same rules. LF, CRLF and CR line endings are
+all accepted. ASE's reader still rejects a quoted loop value that contains a
+space followed by ``#`` (``'C #1'``).
+
 On import MuFinder copies the source file into the project's ``imports/``
 folder, makes the structure the active host by default, and records the import
 in the project provenance. An unsupported extension, invalid content or a
