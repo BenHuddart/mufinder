@@ -1061,17 +1061,21 @@ During polling:
   the GUI as the third ``job_finished`` payload, so the completion handler and
   controllers never re-parse them.
 - A missing scheduler entry usually means completion, so retrieval is
-  attempted immediately — but with a grace window. When the output cannot be
+  attempted immediately. A job still ``submitting`` or ``queued`` can be absent
+  from the scheduler's active queue while it waits in a long queue; it remains
+  pending until a later poll reports its status. For a job already observed
+  running, when the output cannot be
   downloaded (SFTP error, missing remote ``.castep``, a ``.castep`` older than
   this submission, connection hiccup), the result's
   :class:`~mufinder.services.cluster_retrieval.RetrievalFailure` is
   ``retry_eligible`` and the job is *not* failed yet. The runner retries on up
   to ``MISSING_ENTRY_RETRIEVAL_ATTEMPTS`` (3) consecutive polls, keeping the
-  entry non-terminal, and only then emits ``job_failed`` with a diagnostic
-  explaining that scheduler history may have expired, the queue command may be
-  filtered, or the wrong cluster may be connected. Parse failures of
-  successfully downloaded output are never retry-eligible and fail
-  immediately. The attempt counter resets if the job reappears in the queue.
+  entry non-terminal after it has been observed running, and only then emits
+  ``job_failed`` with a diagnostic explaining that scheduler history may have
+  expired, the queue command may be filtered, or the wrong cluster may be
+  connected. Parse failures of successfully downloaded output are never
+  retry-eligible and fail immediately. The attempt counter resets if the job
+  reappears in the queue.
 - Every poll emits a ``queue_checked`` snapshot carrying ``checked_at``
   (``utc_now()``), per-job elapsed runtimes, and per-job human-readable
   observations (``observations_by_job_id``) describing what the scheduler

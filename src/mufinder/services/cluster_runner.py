@@ -624,11 +624,18 @@ class ClusterJobRunner(QObject):
             info = statuses.get(entry.remote_job_id)
 
             if info is None:
-                # Missing scheduler entry: usually completion, so retrieval is
-                # attempted, but output-unavailable errors are retried across a
-                # short grace window instead of failing the job immediately.
+                # A queued job can wait longer than the post-run retrieval
+                # grace window while the scheduler omits it. Still probe for
+                # outputs in case it finished between polls, but keep it queued
+                # until the scheduler reports a state or outputs are available.
+                may_still_be_queued = entry.status in (
+                    JobStatus.SUBMITTING,
+                    JobStatus.QUEUED,
+                )
                 observations_by_job_id[entry.job_id] = self._retrieve_results(
-                    entry, missing_from_queue=True
+                    entry,
+                    missing_from_queue=True,
+                    may_still_be_queued=may_still_be_queued,
                 )
                 continue
 
@@ -683,7 +690,13 @@ class ClusterJobRunner(QObject):
             )
         )
 
-    def _retrieve_results(self, entry: _TrackedClusterJob, *, missing_from_queue: bool = False) -> str:
+    def _retrieve_results(
+        self,
+        entry: _TrackedClusterJob,
+        *,
+        missing_from_queue: bool = False,
+        may_still_be_queued: bool = False,
+    ) -> str:
         """Run one retrieval pass for ``entry``, emit its outcome, and return the observation.
 
         :func:`~mufinder.services.cluster_retrieval.retrieve_job_outputs` decides
@@ -692,7 +705,8 @@ class ClusterJobRunner(QObject):
         """
 
         ssh = self._require_ssh()
-        self.status_changed.emit(entry.job_id, JobStatus.RETRIEVING.value)
+        if not may_still_be_queued:
+            self.status_changed.emit(entry.job_id, JobStatus.RETRIEVING.value)
         result = retrieve_job_outputs(
             ssh,
             remote_job_id=entry.remote_job_id,
@@ -706,6 +720,11 @@ class ClusterJobRunner(QObject):
         if failure is not None and failure.retry_eligible:
             entry.missing_retrieval_attempts += 1
             attempts = entry.missing_retrieval_attempts
+            if may_still_be_queued:
+                return queue_observation(
+                    "queued job is still awaiting scheduler status",
+                    missing_from_queue=True,
+                )
             if attempts < MISSING_ENTRY_RETRIEVAL_ATTEMPTS:
                 detail = f"waiting for output (attempt {attempts} of {MISSING_ENTRY_RETRIEVAL_ATTEMPTS})"
                 return queue_observation(detail, missing_from_queue=True)
