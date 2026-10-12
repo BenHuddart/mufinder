@@ -1369,6 +1369,8 @@ def test_cluster_runner_missing_entry_defers_failure_within_grace_window(
     runner, scheduler, job_id = _submitted_runner(
         tmp_path, "grace_seed", ssh=OutputUnavailableSSH()
     )
+    # The short retrieval grace applies after a job was known to be running.
+    runner._tracked_jobs[job_id].status = JobStatus.RUNNING
     scheduler._states["12345"] = "MISSING"
 
     failed: list[tuple[object, str]] = []
@@ -1409,6 +1411,42 @@ def test_cluster_runner_missing_entry_defers_failure_within_grace_window(
     assert snapshots[-1].observations_by_job_id[job_id] == (
         "missing from scheduler queue; output could not be retrieved after 3 checks"
     )
+
+
+def test_cluster_runner_queued_job_can_outlive_missing_entry_grace_and_start_later(
+    qapp, tmp_path: Path
+) -> None:
+    runner, scheduler, job_id = _submitted_runner(
+        tmp_path, "long_queue_seed", ssh=OutputUnavailableSSH()
+    )
+    scheduler._states["12345"] = "MISSING"
+
+    failed: list[tuple[object, str]] = []
+    status_events: list[tuple[object, object]] = []
+    snapshots: list[object] = []
+    runner.job_failed.connect(lambda jid, message: failed.append((jid, message)))
+    runner.status_changed.connect(lambda jid, status: status_events.append((jid, status)))
+    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
+
+    for _ in range(cluster_runner_module.MISSING_ENTRY_RETRIEVAL_ATTEMPTS + 1):
+        runner._poll_queue()
+
+    entry = runner._tracked_jobs[job_id]
+    assert failed == []
+    assert entry.terminal is False
+    assert entry.status is JobStatus.QUEUED
+    assert status_events == []
+    assert snapshots[-1].observations_by_job_id[job_id] == (
+        "missing from scheduler queue; queued job is still awaiting scheduler status"
+    )
+
+    scheduler._states["12345"] = "R"
+    runner._poll_queue()
+
+    assert failed == []
+    assert entry.status is JobStatus.RUNNING
+    assert (job_id, JobStatus.RUNNING.value) in status_events
+    assert snapshots[-1].observations_by_job_id[job_id] == "scheduler reports RUNNING"
 
 
 def test_cluster_runner_missing_entry_reappearance_resets_counter(
