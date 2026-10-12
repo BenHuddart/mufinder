@@ -445,7 +445,9 @@ Limitations
   adopted grid from the cell it was converged on to each row's cell at
   equivalent k-point density. A unit-cell row uses the grid exactly, unless the
   grid was converged on a supercell of that unit cell, in which case it is
-  rescaled too. Each adjustment is reported when the jobs are generated.
+  rescaled too. When the jobs are generated, one dialog summarises the
+  adjustments: rows sharing a cell and a grid change share one line with a row
+  count, at most five lines are listed, and Show Details lists every row.
 - The k-point examiner places grids by their number of k-points, so two grids
   with the same product ``a x b x c`` (possible with grids entered by hand)
   cannot both be examined. It keeps one, preferring a grid with a completed

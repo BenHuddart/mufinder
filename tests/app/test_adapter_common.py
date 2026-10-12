@@ -2,8 +2,9 @@
 
 These cover the three genuinely-differing parameters that each adapter passes to
 :func:`~mufinder.app.adapter_common.build_input_template` (``context_label``,
-``forbidden``, ``kpoints_list_reset``), plus the k-point rescaling helper's
-message text, the generic ``AdapterExpansion`` shape, the expansion prologue
+``forbidden``, ``kpoints_list_reset``), plus the k-point rescaling helper,
+the k-point adjustment records and their summary, the generic
+``AdapterExpansion`` shape, the expansion prologue
 the supercell workflow adapters share, and the supercell-matrix helpers.
 """
 
@@ -13,6 +14,7 @@ import pytest
 
 from mufinder.app.adapter_common import (
     AdapterExpansion,
+    KpointAdjustment,
     build_input_template,
     build_workflow_settings_template,
     claim_unique_name,
@@ -26,6 +28,7 @@ from mufinder.app.adapter_common import (
     rescale_kpoint_grid,
     row_values_has_keyword,
     seed_workflow_defaults,
+    summarize_kpoint_adjustments,
     supercell_label,
     template_has_explicit_kpoints,
 )
@@ -34,14 +37,78 @@ from mufinder.domain.models import Structure
 from mufinder.workflow.types import CellTemplate, InputTemplate, ParamTemplate
 
 
-def test_adapter_expansion_carries_messages() -> None:
-    expansion = AdapterExpansion(jobs=(), messages=("note",))
-    assert expansion.messages == ("note",)
+def _adjustment(
+    row_label: str,
+    cell_label: str = "2x2x2",
+    adjusted_grid: tuple[int, int, int] = (2, 2, 2),
+) -> KpointAdjustment:
+    return KpointAdjustment(
+        row_label=row_label,
+        cell_label=cell_label,
+        project_grid=(4, 4, 4),
+        adjusted_grid=adjusted_grid,
+    )
 
 
-def test_adapter_expansion_defaults_to_empty_messages() -> None:
+def test_adapter_expansion_carries_kpoint_adjustments() -> None:
+    expansion = AdapterExpansion(jobs=(), kpoint_adjustments=(_adjustment("a"),))
+    assert expansion.kpoint_adjustments == (_adjustment("a"),)
+
+
+def test_adapter_expansion_defaults_to_no_kpoint_adjustments() -> None:
     expansion = AdapterExpansion(jobs=())
-    assert expansion.messages == ()
+    assert expansion.kpoint_adjustments == ()
+
+
+def test_kpoint_adjustment_message_names_the_row_change_and_cell() -> None:
+    assert _adjustment("site_1").message == "site_1: 4x4x4 → 2x2x2 (2x2x2 supercell)"
+    assert _adjustment("bulk", "unit cell", (4, 4, 2)).message == "bulk: 4x4x4 → 4x4x2 (unit cell)"
+
+
+def test_summarize_kpoint_adjustments_is_none_without_adjustments() -> None:
+    assert summarize_kpoint_adjustments(()) is None
+
+
+def test_summarize_kpoint_adjustments_groups_rows_by_cell_and_grid_change() -> None:
+    adjustments = [_adjustment(f"site_{index}") for index in range(40)]
+    adjustments += [_adjustment(f"slab_{index}", "2x2x1", (2, 2, 4)) for index in range(8)]
+    adjustments.append(_adjustment("bulk", "unit cell", (4, 4, 2)))
+
+    summary = summarize_kpoint_adjustments(adjustments)
+
+    assert summary is not None
+    assert summary.headline == "K-point grid rescaled for 49 rows."
+    assert summary.body.splitlines() == [
+        "Each grid keeps the project's reciprocal-space density.",
+        "",
+        "• 2x2x2 supercell: 4x4x4 → 2x2x2 (40 rows)",
+        "• 2x2x1 supercell: 4x4x4 → 2x2x4 (8 rows)",
+        "• unit cell: 4x4x4 → 4x4x2 (1 row)",
+    ]
+    assert summary.details.splitlines() == [adjustment.message for adjustment in adjustments]
+
+
+def test_summarize_kpoint_adjustments_stays_short_for_many_distinct_cells() -> None:
+    adjustments = [_adjustment(f"row_{index}", f"{index + 2}x1x1", (2, 4, 4)) for index in range(200)]
+
+    summary = summarize_kpoint_adjustments(adjustments, max_groups=3)
+
+    assert summary is not None
+    assert summary.body.splitlines()[2:] == [
+        "• 2x1x1 supercell: 4x4x4 → 2x4x4 (1 row)",
+        "• 3x1x1 supercell: 4x4x4 → 2x4x4 (1 row)",
+        "• 4x1x1 supercell: 4x4x4 → 2x4x4 (1 row)",
+        "• and 197 more changes; see Show Details.",
+    ]
+    assert len(summary.details.splitlines()) == 200
+
+
+def test_summarize_kpoint_adjustments_counts_a_single_row_in_the_singular() -> None:
+    summary = summarize_kpoint_adjustments([_adjustment("only")])
+
+    assert summary is not None
+    assert summary.headline == "K-point grid rescaled for 1 row."
+    assert summary.details == _adjustment("only").message
 
 
 def test_build_input_template_parses_param_and_cell() -> None:
@@ -137,78 +204,47 @@ def test_row_values_has_keyword() -> None:
 
 
 def test_rescale_kpoint_grid_no_project_grid_returns_none() -> None:
-    grid, message = rescale_kpoint_grid(
+    grid = rescale_kpoint_grid(
         project_kpoint_grid=None,
         reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
         row_lattice=[[8.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
         is_identity_supercell=False,
-        has_supercell=True,
-        target_description="whatever.",
     )
     assert grid is None
-    assert message is None
 
 
-def test_rescale_kpoint_grid_identity_passes_through_without_message() -> None:
-    grid, message = rescale_kpoint_grid(
+def test_rescale_kpoint_grid_identity_passes_through() -> None:
+    grid = rescale_kpoint_grid(
         project_kpoint_grid=(4, 4, 4),
         reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
         row_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
         is_identity_supercell=True,
-        has_supercell=False,
-        target_description="unit cell.",
     )
     assert grid == (4, 4, 4)
-    assert message is None
 
 
-def test_rescale_kpoint_grid_supercell_builds_message_with_shared_core() -> None:
-    grid, message = rescale_kpoint_grid(
+def test_rescale_kpoint_grid_rescales_a_supercell_row() -> None:
+    grid = rescale_kpoint_grid(
         project_kpoint_grid=(4, 4, 4),
         reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
         row_lattice=[[8.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
         is_identity_supercell=False,
-        has_supercell=True,
-        target_description="2x1x1 (equivalent density).",
     )
     assert grid == (2, 4, 4)
-    assert message == (
-        "K-point grid adjusted from 4x4x4 to 2x4x4 for 2x1x1 (equivalent density)."
-    )
-
-
-def test_rescale_kpoint_grid_target_description_is_verbatim_trailer() -> None:
-    # The trailing target_description is the genuinely-differing fragment for the
-    # message (relaxation "(equivalent density)" vs UEP "row 'x' (equivalent
-    # reciprocal-space density)"). The helper appends it verbatim after the
-    # shared core.
-    _grid, message = rescale_kpoint_grid(
-        project_kpoint_grid=(4, 4, 4),
-        reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
-        row_lattice=[[8.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
-        is_identity_supercell=False,
-        has_supercell=True,
-        target_description="row 'src' (equivalent reciprocal-space density).",
-    )
-    assert message is not None
-    assert message.endswith("row 'src' (equivalent reciprocal-space density).")
 
 
 def test_rescale_kpoint_grid_rescales_unit_cell_rows_for_a_supercell_reference() -> None:
     unit = [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]]
     supercell = [[6.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 5.0]]
 
-    grid, message = rescale_kpoint_grid(
+    grid = rescale_kpoint_grid(
         project_kpoint_grid=(2, 3, 3),
         reference_lattice=supercell,
         row_lattice=unit,
         is_identity_supercell=True,
-        has_supercell=False,
-        target_description="unit cell (equivalent density).",
     )
 
     assert grid == (4, 3, 3)
-    assert message == "K-point grid adjusted from 2x3x3 to 4x3x3 for unit cell (equivalent density)."
 
 
 def test_reference_is_supercell_of_distinguishes_supercells_from_other_unit_cells() -> None:
@@ -319,14 +355,18 @@ def test_prepare_row_drops_and_forces_values_and_rescales_the_project_grid() -> 
         supercell_matrix=((2, 0, 0), (0, 2, 0), (0, 0, 1)),
         project_kpoint_grid=(4, 4, 4),
         reference_lattice=_CUBIC_4,
-        target_description="2x2x1 (equivalent density).",
         drop=("write_cell_structure",),
         force={"task": "SINGLEPOINT"},
     )
 
     assert prepared.values == {"task": "SINGLEPOINT"}
     assert prepared.kpoint_grid == (2, 2, 4)
-    assert prepared.message == "K-point grid adjusted from 4x4x4 to 2x2x4 for 2x2x1 (equivalent density)."
+    assert prepared.kpoint_adjustment == KpointAdjustment(
+        row_label="row_a",
+        cell_label="2x2x1",
+        project_grid=(4, 4, 4),
+        adjusted_grid=(2, 2, 4),
+    )
     assert prepared.structure.lattice_cart.vectors[0] == (8.0, 0.0, 0.0)
     param_values = {keyword.name: keyword.value for keyword in prepared.template.param.keywords}
     assert param_values == {"task": "SINGLEPOINT"}
@@ -341,11 +381,10 @@ def test_prepare_row_keeps_a_row_pinned_kpoint_grid() -> None:
         supercell_matrix=None,
         project_kpoint_grid=(4, 4, 4),
         reference_lattice=_CUBIC_4,
-        target_description="unit cell (equivalent density).",
     )
 
     assert prepared.kpoint_grid is None
-    assert prepared.message is None
+    assert prepared.kpoint_adjustment is None
     assert prepared.template.cell.kpoint_mp_grid == (3, 3, 3)
 
 
@@ -361,7 +400,6 @@ def test_prepare_row_reports_an_unconvertible_structure_by_row_label() -> None:
             supercell_matrix=None,
             project_kpoint_grid=None,
             reference_lattice=_CUBIC_4,
-            target_description="unit cell (equivalent density).",
         )
 
 

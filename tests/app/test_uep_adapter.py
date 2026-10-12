@@ -63,7 +63,7 @@ def test_expand_uep_jobs_uses_exact_project_grid_for_unit_cell_with_reference_la
     )
 
     assert expansion.jobs[0].cell_file.kpoint_mp_grid == (3, 3, 3)
-    assert expansion.messages == ()
+    assert expansion.kpoint_adjustments == ()
 
 
 def test_expand_uep_jobs_forces_formatted_density_even_when_disabled_in_row() -> None:

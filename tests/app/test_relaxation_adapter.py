@@ -58,7 +58,7 @@ def test_expand_pristine_relaxation_jobs_applies_project_defaults() -> None:
     assert "FIX_CELL" not in rendered_cell
     assert job.cell_file.symmetry_generate is True
     assert job.cell_file.kpoint_mp_grid == (4, 4, 4)
-    assert expansion.messages == ()
+    assert expansion.kpoint_adjustments == ()
 
 
 def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_unit_cell_with_reference_lattice() -> None:
@@ -85,7 +85,7 @@ def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_unit_cell_w
     )
 
     assert expansion.jobs[0].cell_file.kpoint_mp_grid == (3, 3, 3)
-    assert expansion.messages == ()
+    assert expansion.kpoint_adjustments == ()
 
 
 def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_anisotropic_unit_cell() -> None:
@@ -112,7 +112,7 @@ def test_expand_pristine_relaxation_jobs_uses_exact_project_grid_for_anisotropic
     )
 
     assert expansion.jobs[0].cell_file.kpoint_mp_grid == (3, 3, 3)
-    assert expansion.messages == ()
+    assert expansion.kpoint_adjustments == ()
 
 
 def test_expand_pristine_relaxation_jobs_forces_write_cell_structure_true() -> None:
@@ -143,7 +143,7 @@ def test_expand_pristine_relaxation_jobs_forces_write_cell_structure_true() -> N
     assert param_values["write_cell_structure"] is True
 
 
-def test_expand_pristine_relaxation_jobs_emits_supercell_kpoint_message() -> None:
+def test_expand_pristine_relaxation_jobs_records_supercell_kpoint_adjustment() -> None:
     config = PristineRelaxationConfig(
         name_prefix="pristine_relax",
         rows=(
@@ -164,8 +164,10 @@ def test_expand_pristine_relaxation_jobs_emits_supercell_kpoint_message() -> Non
         project_kpoint_reference_lattice=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
     )
 
-    assert len(expansion.messages) == 1
-    assert "4x4x4 to 2x4x4" in expansion.messages[0]
+    assert [
+        (adjustment.row_label, adjustment.cell_label, adjustment.adjusted_grid)
+        for adjustment in expansion.kpoint_adjustments
+    ] == [("row_b", "2x1x1", (2, 4, 4))]
 
 
 def test_expand_pristine_relaxation_jobs_honors_explicit_row_kpoint_override() -> None:
@@ -193,7 +195,7 @@ def test_expand_pristine_relaxation_jobs_honors_explicit_row_kpoint_override() -
     )
 
     assert expansion.jobs[0].cell_file.kpoint_mp_grid == (3, 3, 3)
-    assert expansion.messages == ()
+    assert expansion.kpoint_adjustments == ()
 
 
 
