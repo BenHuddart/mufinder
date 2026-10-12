@@ -188,8 +188,8 @@ def test_expand_convergence_jobs_returns_empty_messages() -> None:
 
     expansion = expand_convergence_jobs(structure=_base_structure_spec(), config=config)
 
-    assert expansion.messages == ()
-    assert expansion.messages == ()
+    assert expansion.kpoint_adjustments == ()
+    assert expansion.kpoint_adjustments == ()
     assert len(expansion.jobs) == 2
 
 
