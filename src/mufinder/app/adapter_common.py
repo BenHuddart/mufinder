@@ -56,17 +56,114 @@ STRUCTURE_CONTROLLED_CELL_KEYWORDS = frozenset(
 )
 
 
+def format_grid(grid: tuple[int, int, int]) -> str:
+    """Return a k-point grid as ``AxBxC``."""
+
+    return f"{grid[0]}x{grid[1]}x{grid[2]}"
+
+
+@dataclass(frozen=True, slots=True)
+class KpointAdjustment:
+    """One row whose project k-point grid was rescaled to its own cell.
+
+    ``cell_label`` names the row's cell (``unit cell``, ``2x2x2`` or a
+    spelled-out custom matrix); ``project_grid`` is the project default and
+    ``adjusted_grid`` the grid at equivalent reciprocal-space density.
+    """
+
+    row_label: str
+    cell_label: str
+    project_grid: tuple[int, int, int]
+    adjusted_grid: tuple[int, int, int]
+
+    @property
+    def cell_description(self) -> str:
+        """Return ``unit cell`` or ``<cell_label> supercell``."""
+
+        return self.cell_label if self.cell_label == "unit cell" else f"{self.cell_label} supercell"
+
+    @property
+    def change(self) -> str:
+        """Return the grid change as ``AxBxC → DxExF``."""
+
+        return f"{format_grid(self.project_grid)} → {format_grid(self.adjusted_grid)}"
+
+    @property
+    def message(self) -> str:
+        """Describe this row's adjustment on one short line."""
+
+        return f"{self.row_label}: {self.change} ({self.cell_description})"
+
+
 @dataclass(frozen=True, slots=True)
 class AdapterExpansion:
-    """Expanded workflow jobs plus any UI-facing adjustment messages.
+    """Expanded workflow jobs plus any k-point adjustments made on the way.
 
-    Every app-layer ``expand_*`` function returns this shape. ``messages``
-    carries human-readable notes (currently k-point rescaling adjustments) that
-    the UI can surface; it is empty when nothing needed adjusting.
+    Every app-layer ``expand_*`` function returns this shape.
+    ``kpoint_adjustments`` holds one record per row whose project k-point grid
+    was rescaled; the UI summarises them with
+    :func:`summarize_kpoint_adjustments`. It is empty when nothing changed.
     """
 
     jobs: tuple[JobSpec, ...]
-    messages: tuple[str, ...] = ()
+    kpoint_adjustments: tuple[KpointAdjustment, ...] = ()
+
+
+#: Most distinct adjustments listed in a k-point summary before the rest are
+#: left to the details.
+KPOINT_SUMMARY_MAX_GROUPS = 5
+
+
+@dataclass(frozen=True, slots=True)
+class KpointAdjustmentSummary:
+    """A k-point adjustment report sized for a message box.
+
+    ``headline`` is one short sentence, ``body`` the grouped changes and
+    ``details`` one line per row.
+    """
+
+    headline: str
+    body: str
+    details: str
+
+
+def summarize_kpoint_adjustments(
+    adjustments: Iterable[KpointAdjustment],
+    *,
+    max_groups: int = KPOINT_SUMMARY_MAX_GROUPS,
+) -> KpointAdjustmentSummary | None:
+    """Summarise ``adjustments`` for display, or return ``None`` when there are none.
+
+    Rows with the same cell and the same grid change share one body line with a
+    row count, so the body grows with the number of distinct cells, not the
+    number of rows. At most ``max_groups`` lines are listed, the most common
+    first; a final line counts the rest. ``details`` lists every row.
+    """
+
+    records = list(adjustments)
+    if not records:
+        return None
+    groups: dict[tuple[str, str], int] = {}
+    for record in records:
+        key = (record.cell_description, record.change)
+        groups[key] = groups.get(key, 0) + 1
+    ordered = sorted(groups.items(), key=lambda item: -item[1])
+
+    lines = ["Each grid keeps the project's reciprocal-space density.", ""]
+    for (cell, change), count in ordered[:max_groups]:
+        lines.append(f"• {cell}: {change} ({_rows(count)})")
+    hidden = len(ordered) - max_groups
+    if hidden > 0:
+        lines.append(f"• and {hidden} more {'change' if hidden == 1 else 'changes'}; see Show Details.")
+    return KpointAdjustmentSummary(
+        headline=f"K-point grid rescaled for {_rows(len(records))}.",
+        body="\n".join(lines),
+        details="\n".join(record.message for record in records),
+    )
+
+
+def _rows(count: int) -> str:
+    return f"{count} {'row' if count == 1 else 'rows'}"
 
 
 def find_keyword_spec(name: str):
@@ -345,46 +442,25 @@ def rescale_kpoint_grid(
     reference_lattice: list[list[float]],
     row_lattice: list[list[float]],
     is_identity_supercell: bool,
-    has_supercell: bool,
-    target_description: str,
-) -> tuple[tuple[int, int, int] | None, str | None]:
-    """Return the supercell-adjusted k-point grid and an optional UI message.
+) -> tuple[int, int, int] | None:
+    """Return the project k-point grid rescaled to a row's cell.
 
     With no project default grid there is nothing to return. A supercell row
     rescales the grid from ``reference_lattice`` (the cell it was converged on)
     to its own cell at equivalent reciprocal-space density. A unit-cell row uses
     the grid exactly unless it was converged on a supercell of that unit cell
     (see :func:`reference_is_supercell_of`), in which case it is rescaled too.
-    When the grid changed, a message describing the adjustment is returned.
-
-    The message core (``K-point grid adjusted from AxBxC to DxExF for``) is
-    shared; ``target_description`` supplies the trailing phrase so each adapter
-    keeps its own wording (e.g. ``"2x2x1 (equivalent density)."`` for
-    relaxation vs ``"row 'foo' (equivalent reciprocal-space density)."`` for
-    UEP).
     """
 
     if project_kpoint_grid is None:
-        return None, None
-
+        return None
     if is_identity_supercell and not reference_is_supercell_of(reference_lattice, row_lattice):
-        kpoint_grid = project_kpoint_grid
-    else:
-        kpoint_grid = equivalent_grid_for_supercell(
-            reference_lattice,
-            project_kpoint_grid,
-            row_lattice,
-        )
-
-    message = None
-    if kpoint_grid != project_kpoint_grid:
-        message = (
-            "K-point grid adjusted from "
-            f"{project_kpoint_grid[0]}x{project_kpoint_grid[1]}x{project_kpoint_grid[2]} to "
-            f"{kpoint_grid[0]}x{kpoint_grid[1]}x{kpoint_grid[2]} for "
-            f"{target_description}"
-        )
-    return kpoint_grid, message
+        return project_kpoint_grid
+    return equivalent_grid_for_supercell(
+        reference_lattice,
+        project_kpoint_grid,
+        row_lattice,
+    )
 
 
 IDENTITY_SUPERCELL: SupercellMatrix = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
@@ -529,15 +605,15 @@ class PreparedRow:
     ``values`` are the row's GUI values after the workflow-controlled names
     were dropped or forced; ``template`` is built from them. ``kpoint_grid``
     is the supercell-rescaled project grid, or ``None`` when the row pins its
-    own k-points or the project has no grid. ``message`` describes a k-point
-    rescaling, when one happened.
+    own k-points or the project has no grid. ``kpoint_adjustment`` records the
+    rescaling when the grid differs from the project grid.
     """
 
     structure: StructureSpec
     values: dict[str, object]
     template: InputTemplate
     kpoint_grid: tuple[int, int, int] | None
-    message: str | None
+    kpoint_adjustment: KpointAdjustment | None
 
 
 def prepare_row(
@@ -549,7 +625,6 @@ def prepare_row(
     supercell_matrix: SupercellMatrix | None,
     project_kpoint_grid: tuple[int, int, int] | None,
     reference_lattice: list[list[float]],
-    target_description: str,
     drop: Iterable[str] = (),
     force: Mapping[str, object] | None = None,
 ) -> PreparedRow:
@@ -558,7 +633,8 @@ def prepare_row(
     Converts the row's ``structure`` to a workflow structure spec, removes the
     ``drop`` names the workflow controls and applies the ``force`` values,
     builds the row template, and, unless the row pins its own k-points,
-    rescales the project grid to the row's cell with :func:`rescale_kpoint_grid`.
+    rescales the project grid to the row's cell with :func:`rescale_kpoint_grid`
+    and records a :class:`KpointAdjustment` when the grid changed.
     """
 
     try:
@@ -573,20 +649,25 @@ def prepare_row(
     template = template_from_values(values)
 
     kpoint_grid = None
-    message = None
+    adjustment = None
     if not template_has_explicit_kpoints(template):
-        kpoint_grid, message = rescale_kpoint_grid(
+        kpoint_grid = rescale_kpoint_grid(
             project_kpoint_grid=project_kpoint_grid,
             reference_lattice=reference_lattice,
             row_lattice=structure.lattice_vectors,
             is_identity_supercell=is_identity_supercell(supercell_matrix),
-            has_supercell=supercell_matrix is not None,
-            target_description=target_description,
         )
+        if project_kpoint_grid is not None and kpoint_grid is not None and kpoint_grid != project_kpoint_grid:
+            adjustment = KpointAdjustment(
+                row_label=label,
+                cell_label=supercell_label(supercell_matrix, unit_cell="unit cell", spell_out_custom=True),
+                project_grid=tuple(project_kpoint_grid),  # type: ignore[arg-type]
+                adjusted_grid=tuple(kpoint_grid),  # type: ignore[arg-type]
+            )
     return PreparedRow(
         structure=structure_spec,
         values=values,
         template=template,
         kpoint_grid=kpoint_grid,
-        message=message,
+        kpoint_adjustment=adjustment,
     )

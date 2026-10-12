@@ -172,13 +172,16 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
   rows use: the structure-controlled cell keywords are refused and a scalar
   k-point grid or spacing clears an inherited list.
 - :func:`~mufinder.app.adapter_common.rescale_kpoint_grid` rescales a project
-  k-point grid to an equivalent reciprocal-space density for supercell rows and
-  returns an optional adjustment message. Convergence sweeps a fixed structure
-  and never rescales.
+  k-point grid to an equivalent reciprocal-space density for supercell rows.
+  Convergence sweeps a fixed structure and never rescales.
 - :class:`~mufinder.app.adapter_common.AdapterExpansion` is the uniform return
-  shape (``jobs`` plus UI-facing ``messages``) for every adapter's public
-  ``expand_*`` function. ``main_window`` surfaces non-empty ``messages`` from
-  the configure path.
+  shape for every adapter's public ``expand_*`` function: ``jobs`` plus
+  ``kpoint_adjustments``, one
+  :class:`~mufinder.app.adapter_common.KpointAdjustment` per row whose grid
+  was rescaled. :func:`~mufinder.app.adapter_common.summarize_kpoint_adjustments`
+  groups them by cell and grid change into a short summary plus a per-row
+  detail text; ``main_window`` shows both in one dialog from the configure
+  path, so the dialog's height does not grow with the number of rows.
 - The supercell adapters (pristine relaxation, muon relaxation, UEP) share one
   expansion prologue. :func:`~mufinder.app.adapter_common.seed_workflow_defaults`
   layers the project exchange-correlation functional and cut-off energy over
@@ -190,7 +193,7 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
   duplicate rows, and :func:`~mufinder.app.adapter_common.prepare_row` converts
   the row structure, drops or forces the workflow-controlled values, builds the
   row template and rescales the project grid unless the row pins its own
-  k-points.
+  k-points, recording a ``KpointAdjustment`` when the grid changed.
 - :func:`~mufinder.app.adapter_common.coerce_supercell_matrix`,
   :func:`~mufinder.app.adapter_common.is_identity_supercell` and
   :func:`~mufinder.app.adapter_common.supercell_label` are the one parser,
