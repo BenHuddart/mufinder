@@ -422,17 +422,25 @@ def test_scalar_values_follow_numeric_keyword_types() -> None:
     assert _parse_scalar_assignment("") is None
 
 
-def test_positions_abs_on_a_hexagonal_cell_face_wraps_to_zero() -> None:
-    # -b of a hexagonal cell converts to a fractional x a rounding error below
-    # zero; a single ``mod`` would leave it at exactly 1.0.
-    text = """
+# -b of a hexagonal cell from ``LATTICE_ABC`` 3 3 5 / 90 90 120. Its x depends
+# on the platform's ``cos(120°)``: the correctly rounded value (glibc) and the
+# one an ulp away (macOS libm). Either converts to a fractional x a rounding
+# error below zero, which must land on 0.0 rather than on or just under 1.0.
+HEXAGONAL_FACE_X = pytest.mark.parametrize(
+    "minus_b_x", ["1.4999999999999993", "1.4999999999999996"], ids=["correctly-rounded-cos", "one-ulp-cos"]
+)
+
+
+@HEXAGONAL_FACE_X
+def test_positions_abs_on_a_hexagonal_cell_face_wraps_to_zero(minus_b_x: str) -> None:
+    text = f"""
 %BLOCK LATTICE_ABC
 3.0 3.0 5.0
 90.0 90.0 120.0
 %ENDBLOCK LATTICE_ABC
 
 %BLOCK POSITIONS_ABS
-Si 1.4999999999999993 -2.598076211353316 0.0
+Si {minus_b_x} -2.598076211353316 0.0
 %ENDBLOCK POSITIONS_ABS
 """
 
@@ -440,6 +448,35 @@ Si 1.4999999999999993 -2.598076211353316 0.0
 
     assert all(0.0 <= value < 1.0 for value in parsed.fractional_positions[0])
     assert parsed.fractional_positions[0] == pytest.approx((0.0, 0.0, 0.0), abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("x", "expected_fractional_x"),
+    [
+        # 1e-16 below the face: round-off, more than a second ``mod`` absorbs.
+        ("-4e-16", 0.0),
+        # 1e-9 below the face: a real displacement, kept.
+        ("-4e-9", 1.0 - 1e-9),
+    ],
+    ids=["round-off-below-face", "displacement-below-face"],
+)
+def test_positions_abs_below_a_cubic_cell_face(x: str, expected_fractional_x: float) -> None:
+    text = f"""
+%BLOCK LATTICE_CART
+4.0 0.0 0.0
+0.0 4.0 0.0
+0.0 0.0 4.0
+%ENDBLOCK LATTICE_CART
+
+%BLOCK POSITIONS_ABS
+Si {x} 2.0 0.0
+%ENDBLOCK POSITIONS_ABS
+"""
+
+    parsed = parse_cell_text(text)
+
+    assert all(0.0 <= value < 1.0 for value in parsed.fractional_positions[0])
+    assert parsed.fractional_positions[0] == pytest.approx((expected_fractional_x, 0.5, 0.0), abs=1e-15)
 
 
 @pytest.mark.parametrize(

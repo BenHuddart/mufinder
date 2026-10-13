@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from mufinder.app.adapter_common import (
     AdapterExpansion,
+    KpointAdjustment,
     claim_unique_name,
     kpoint_reference_lattice,
     prepare_row,
@@ -49,7 +50,7 @@ def expand_uep_jobs(
     reference_lattice = kpoint_reference_lattice(project_kpoint_reference_lattice, host_structure)
 
     seen_labels: set[str] = set()
-    messages: list[str] = []
+    kpoint_adjustments: list[KpointAdjustment] = []
     jobs: list[JobSpec] = []
     for row in config.rows:
         label = require_row_label(row.label, workflow="UEP source")
@@ -63,11 +64,10 @@ def expand_uep_jobs(
             supercell_matrix=row.supercell_matrix,
             project_kpoint_grid=project_kpoint_grid,
             reference_lattice=reference_lattice,
-            target_description=f"row '{label}' (equivalent reciprocal-space density).",
             force={"task": "SINGLEPOINT", "write_formatted_density": True},
         )
-        if prepared.message is not None:
-            messages.append(prepared.message)
+        if prepared.kpoint_adjustment is not None:
+            kpoint_adjustments.append(prepared.kpoint_adjustment)
         kpoint_grid = prepared.kpoint_grid
         row_template = prepared.template
         structure_spec = prepared.structure
@@ -106,4 +106,4 @@ def expand_uep_jobs(
             )
         )
 
-    return AdapterExpansion(jobs=tuple(jobs), messages=tuple(messages))
+    return AdapterExpansion(jobs=tuple(jobs), kpoint_adjustments=tuple(kpoint_adjustments))

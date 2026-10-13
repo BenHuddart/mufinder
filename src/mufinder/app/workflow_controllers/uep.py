@@ -246,10 +246,8 @@ class UepController(WorkflowJobController):
         except (ValueError, StructureBridgeError):
             return []
 
-        # NOTE: the former ``_materialize_uep_jobs`` deliberately ignored
-        # ``expansion.messages`` (unlike the configure path, which surfaces the
-        # kpoint-adjustment messages via ``_notify_adapter_messages``). This move
-        # preserves that exactly — the messages are not read here.
+        # The configure path already reported ``expansion.kpoint_adjustments``;
+        # materialising does not report them again.
 
         mapping = definition.parameters.setdefault("job_ids_by_label", {})
         if not isinstance(mapping, dict):

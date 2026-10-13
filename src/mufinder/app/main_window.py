@@ -6,6 +6,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
+import html
 import logging
 import os
 from pathlib import Path
@@ -131,7 +132,7 @@ from mufinder.app.relaxation_adapter import (
     muon_charge_state_prefix,
     muon_relaxation_calc_type,
 )
-from mufinder.app.adapter_common import AdapterExpansion
+from mufinder.app.adapter_common import AdapterExpansion, summarize_kpoint_adjustments
 from mufinder.app.relaxation_types import (
     MuonRelaxationConfig,
     MuonRelaxationRow,
@@ -9711,24 +9712,32 @@ class MainWindow(QMainWindow):
         self._muon_relaxation_view.set_row_supercell(row_id, matrix)
         self.statusBar().showMessage("Selected muon-relaxation simulation cell")
 
-    def _notify_adapter_messages(self, expansion: AdapterExpansion) -> None:
-        """Surface any adapter adjustment messages (e.g. k-point rescaling).
+    def _notify_kpoint_adjustments(self, expansion: AdapterExpansion) -> None:
+        """Summarise the rows whose project k-point grid was rescaled.
 
-        Every workflow adapter reports adjustment notes on
-        :attr:`AdapterExpansion.messages`; convergence has none, while
-        relaxation/UEP report supercell k-point rescaling. Shown as an
-        information dialog so the note is not overwritten by the trailing
-        ``statusBar`` confirmation on the configure path.
+        Rows with the same cell and grid change share one summary line, so the
+        dialog stays short however many rows are submitted; the per-row list
+        sits behind Show Details. Shown as a dialog so the note is not
+        overwritten by the trailing ``statusBar`` confirmation on the
+        configure path.
         """
 
-        messages = expansion.messages
-        if not messages:
+        summary = summarize_kpoint_adjustments(expansion.kpoint_adjustments)
+        if summary is None:
             return
-        QMessageBox.information(
-            self,
-            "K-point grid adjusted",
-            "\n".join(messages),
+        box = make_message_box_resizable(QMessageBox(self))
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("K-point grids adjusted")
+        box.setText(summary.headline)
+        # Keep each grouped line whole: the box widens to fit rather than wrapping.
+        box.setInformativeText(
+            "<br>".join(f"<nobr>{html.escape(line)}</nobr>" for line in summary.body.splitlines())
         )
+        if len(expansion.kpoint_adjustments) > 1:
+            box.setDetailedText(summary.details)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.setDefaultButton(QMessageBox.StandardButton.Ok)
+        box.exec()
 
     def _on_pristine_relaxation_configured(self, config: PristineRelaxationConfig) -> None:
         if self._document is None:
@@ -9756,7 +9765,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "Pristine relaxation setup invalid", str(exc))
             return
-        self._notify_adapter_messages(expansion)
+        self._notify_kpoint_adjustments(expansion)
 
         output_root = self._document.project_root / "files" / "pristine_relaxation"
         definition = self._project_service.register_pristine_relaxation_definition(
@@ -9798,7 +9807,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "Muon relaxation setup invalid", str(exc))
             return
-        self._notify_adapter_messages(expansion)
+        self._notify_kpoint_adjustments(expansion)
         output_root = self._document.project_root / "files" / "muon_relaxation"
         definition = self._project_service.register_muon_relaxation_definition(
             self._document,
@@ -10348,7 +10357,7 @@ class MainWindow(QMainWindow):
         except (ValueError, StructureBridgeError) as exc:
             QMessageBox.warning(self, "UEP setup invalid", str(exc))
             return
-        self._notify_adapter_messages(expansion)
+        self._notify_kpoint_adjustments(expansion)
 
         output_root = self._document.project_root / "files" / "uep"
         definition = self._project_service.register_uep_definition(
