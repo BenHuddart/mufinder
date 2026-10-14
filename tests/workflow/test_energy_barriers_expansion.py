@@ -77,6 +77,34 @@ def test_expand_nudged_elastic_band_jobs_renders_intermediate_blocks() -> None:
     assert any(keyword.name == "tssearch_method" and keyword.value == "NEB" for keyword in job.param_file.keywords)
 
 
+def test_expand_nudged_elastic_band_jobs_sets_task_and_spin_polarisation_from_reactant_spins() -> None:
+    spinless = _structure_spec()
+    spinless = StructureSpec(
+        lattice_cart=spinless.lattice_cart,
+        positions_frac=spinless.positions_frac,
+        species=spinless.species,
+        atomic_spins=(0.0, 0.0, 0.0),
+        label=spinless.label,
+    )
+
+    def _params(reactant: StructureSpec) -> dict[str, object]:
+        source = NudgedElasticBandSource(
+            label="path",
+            reactant_structure=reactant,
+            product_positions_frac=reactant.positions_frac,
+        )
+        (job,) = expand_nudged_elastic_band_jobs(
+            jobs=[NudgedElasticBandJobConfig(source=source)], name_prefix="barrier"
+        )
+        return {keyword.name: keyword.value for keyword in job.param_file.keywords}
+
+    magnetic = _params(_structure_spec())
+    assert magnetic["task"] == "TRANSITIONSTATESEARCH"
+    assert magnetic["tssearch_method"] == "NEB"
+    assert magnetic["spin_polarized"] is True
+    assert "spin_polarized" not in _params(spinless)
+
+
 def test_expand_nudged_elastic_band_jobs_without_intermediate_omits_block() -> None:
     # The renderer faithfully omits the intermediate block when none is supplied. (A real CASTEP
     # NEB run requires the intermediate; the app always supplies the minimum-image midpoint, but
