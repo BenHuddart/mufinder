@@ -656,6 +656,31 @@ def test_distortion_correction_is_zero_without_displacements() -> None:
     )
 
 
+def test_distortion_correction_indexes_moments_past_a_muon_marker_in_the_host() -> None:
+    # A muon marker listed before the Fe must not shift which atom each ion takes its moment from.
+    marked = host_structure(
+        label="Fe+mu", lattice=3.0, species=("H:mu", "Fe"), positions=((0.25, 0.25, 0.25), (0.0, 0.0, 0.0))
+    )
+    model = MagneticStructureModel(
+        q_basis_rlu=((0.5, 0.5, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        components=(
+            MagneticComponent(
+                component_id="fe",
+                label="Fe",
+                kind="custom",
+                selector=AtomSelector.species("Fe"),
+                terms=(FourierTerm((1.0, 0.0, 0.0), ComplexVector.from_vector([0.0, 0.0, 1.0])),),
+            ),
+        ),
+    )
+    relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)})
+    distortion = map_muon_distortion(marked, relaxed, _MU_X)
+
+    assert set(distortion.atom_indices.tolist()) == {1}
+    correction = calculate_distortion_field_correction(marked, model, distortion)
+    assert correction[2] == pytest.approx(_axial_dipole_change(-1.0, 1.5, 1.6))
+
+
 def test_commensurate_fields_add_the_distortion_correction(monkeypatch) -> None:
     _install_fake_muesr(monkeypatch, locfield=_fields_per_muon(Dipolar=(0, 0, 1)))
     relaxed = relaxed_muon_supercell(_structure(), (3, 3, 3), _MU_X, {(1.0, 0.0, 0.0): (0.1, 0.0, 0.0)})

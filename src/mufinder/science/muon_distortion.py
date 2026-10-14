@@ -43,8 +43,9 @@ class MuonDistortion:
     from the muon to the ion in Angstrom, in the pristine host frame: the
     pristine vectors start at the selected site, the distorted vectors at the
     relaxed muon, so a rigid drift of the relaxed cell cancels. ``atom_indices``
-    and ``cell_offsets`` name each ion's pristine site as a host unit-cell atom
-    plus an integer lattice translation of the host cell.
+    and ``cell_offsets`` name each ion's pristine site as an atom of the
+    pristine structure, indexed in its full species list (any muon marker
+    included), plus an integer lattice translation of the host cell.
     """
 
     supercell_matrix: SupercellMatrix
@@ -80,7 +81,7 @@ def map_muon_distortion(
     exactly one muon marker. Every validation failure raises ``error``.
     """
 
-    unit_symbols, unit_frac = _host_sites(pristine_structure, error=error)
+    unit_symbols, unit_frac, unit_rows = _host_sites(pristine_structure, error=error)
     if not unit_symbols:
         raise error("Pristine structure does not contain any host atoms.")
     all_symbols = list(
@@ -128,12 +129,12 @@ def map_muon_distortion(
         )
     displaced_unit = muon_unit + relative_super @ matrix
 
-    atom_indices, cell_offsets = _nearest_pristine_sites(
+    host_indices, cell_offsets = _nearest_pristine_sites(
         displaced_unit, host_symbols, unit_frac, unit_symbols, unit_lattice
     )
-    _check_one_to_one(atom_indices, cell_offsets, matrix, error=error)
+    _check_one_to_one(host_indices, cell_offsets, matrix, error=error)
 
-    pristine_unit = unit_frac[atom_indices] + cell_offsets
+    pristine_unit = unit_frac[host_indices] + cell_offsets
     pristine_vectors = (pristine_unit - site) @ unit_lattice
     distorted_vectors = (displaced_unit - muon_unit) @ unit_lattice
     pristine_relative_super = (pristine_unit - site) @ np.linalg.inv(matrix)
@@ -145,7 +146,7 @@ def map_muon_distortion(
         muon_fractional=(float(site[0]), float(site[1]), float(site[2])),
         muon_offset_ang=muon_offset,
         symbols=tuple(host_symbols),
-        atom_indices=atom_indices,
+        atom_indices=unit_rows[host_indices],
         cell_offsets=cell_offsets,
         pristine_vectors=pristine_vectors,
         distorted_vectors=distorted_vectors,
@@ -205,31 +206,33 @@ def _apply_operation(
     error: type[Exception],
 ) -> MuonDistortion:
     lattice = np.asarray(pristine_structure.lattice_vectors, dtype=float)
-    unit_symbols, unit_frac = _host_sites(pristine_structure, error=error)
+    unit_symbols, unit_frac, unit_rows = _host_sites(pristine_structure, error=error)
     cartesian_rotation = np.linalg.inv(lattice) @ rotation.T @ lattice
 
-    pristine_unit = unit_frac[distortion.atom_indices] + distortion.cell_offsets
+    structure_frac = np.asarray(pristine_structure.fractional_positions, dtype=float)
+    pristine_unit = structure_frac[distortion.atom_indices] + distortion.cell_offsets
     images = pristine_unit @ rotation.T + translation
-    atom_indices, cell_offsets = _nearest_pristine_sites(images, distortion.symbols, unit_frac, unit_symbols, lattice)
-    residual = (images - unit_frac[atom_indices] - cell_offsets) @ lattice
+    host_indices, cell_offsets = _nearest_pristine_sites(images, distortion.symbols, unit_frac, unit_symbols, lattice)
+    residual = (images - unit_frac[host_indices] - cell_offsets) @ lattice
     if np.any(np.linalg.norm(residual, axis=1) > _SYMMETRY_ATOM_TOLERANCE_ANG):
         raise error("A host symmetry operation did not map the pristine host onto itself.")
     return replace(
         distortion,
         muon_fractional=(float(target[0]), float(target[1]), float(target[2])),
-        atom_indices=atom_indices,
+        atom_indices=unit_rows[host_indices],
         cell_offsets=cell_offsets,
         pristine_vectors=distortion.pristine_vectors @ cartesian_rotation,
         distorted_vectors=distortion.distorted_vectors @ cartesian_rotation,
     )
 
 
-def _host_sites(structure: Structure, *, error: type[Exception]) -> tuple[list[str], np.ndarray]:
-    """Return the element symbols and fractional positions of a structure's host atoms."""
+def _host_sites(structure: Structure, *, error: type[Exception]) -> tuple[list[str], np.ndarray, np.ndarray]:
+    """Return the element symbols, fractional positions and structure indices of a structure's host atoms."""
 
     atoms = structure_to_ase_atoms(structure, skip_muon=True, sanitize_symbols=True, error=error)
-    rows = [index for index, label in enumerate(structure.species) if not is_muon_label(label)]
-    return list(atoms.get_chemical_symbols()), np.asarray(structure.fractional_positions, dtype=float)[rows].reshape(-1, 3)
+    rows = np.asarray([index for index, label in enumerate(structure.species) if not is_muon_label(label)], dtype=int)
+    frac = np.asarray(structure.fractional_positions, dtype=float).reshape(-1, 3)[rows].reshape(-1, 3)
+    return list(atoms.get_chemical_symbols()), frac, rows
 
 
 def _check_composition(
