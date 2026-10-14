@@ -204,10 +204,13 @@ distorted-structure reference. The available dialog sources are:
 
 Structural-relaxation cluster representatives can expose a distorted relaxed
 structure. When that structure is available, the dialog enables the
-``Include muon-induced displacements when available`` option. The dipolar-field
-calculation does not yet apply ion-displacement corrections; the distorted
-structure is currently used only by the ``Nuclear Relaxation...`` distortion
-correction (see `Nuclear Relaxation`_).
+``Correct the dipolar field for muon-induced displacements`` option; it is
+disabled and cleared for every other site. The choice is stored with the
+selected site, the site summary on the page notes it, and saved workspaces
+restore it. When it is ticked, ``Calculate Dipolar Field`` applies the
+correction described in `Muon-Induced Distortion Corrections`_. The
+``Nuclear Relaxation...`` dialog has its own distortion option for the same
+relaxed structure (see `Nuclear Relaxation`_).
 
 Calculation
 -----------
@@ -234,6 +237,58 @@ The sampling method affects only incommensurate field distributions. It does not
 simulate muon spectra or time-dependent polarisation functions. ``muesr``/``muLFC``
 environment errors are reported in the page status area rather than during
 application startup.
+
+Muon-Induced Distortion Corrections
+-----------------------------------
+
+A muon displaces the host ions around it, so the dipolar field at the relaxed
+site differs from the field computed for the pristine host. MuFinder corrects
+the converged pristine lattice sum with the finite-cell change from those
+displacements in the representative relaxed supercell:
+
+.. math::
+
+   \mathbf{B}_\mathrm{dip,corrected} =
+   \mathbf{B}_\mathrm{dip}(\mathrm{pristine}) +
+   \sum_{i \in \mathrm{cell}}
+   \left[\mathbf{B}_i(\mathbf{r}_i + \mathbf{u}_i) - \mathbf{B}_i(\mathbf{r}_i)\right],
+
+where :math:`\mathbf{r}_i` runs from the muon to the pristine site of host ion
+:math:`i`, :math:`\mathbf{u}_i` is that ion's displacement relative to the
+muon, and :math:`\mathbf{B}_i` is the point-dipole field of the moment the
+magnetic model assigns to the pristine site. Every ion of the relaxed
+supercell enters the sum; ions with no moment contribute nothing.
+
+MuFinder pairs the relaxed supercell with the pristine host before it sums
+anything, and reports the first check that fails:
+
+- the relaxed lattice must be an integer supercell of the host lattice with a
+  positive determinant, so the correction cell is finite;
+- the relaxed structure must hold exactly one muon marker and, for every
+  element, the host-atom count of that supercell of the pristine host;
+- the selected site must lie within 0.5 Å of the relaxed muon after lattice
+  translations, so the correction belongs to the site being calculated;
+- every displaced ion is paired with the nearest pristine site of its
+  element, and no two ions may share a pristine site.
+
+The supercell is recentred on the muon and expressed in the pristine host
+frame. Ion vectors start at the relaxed muon and pristine vectors at the
+selected site, so a rigid drift of the relaxed cell cancels.
+
+With ``Include equivalent sites``, each symmetry-equivalent site receives the
+correction carried to it by the host symmetry operation that maps the
+representative onto it: the displacement pattern is rotated with the
+operation, and the moments are evaluated at the mapped pristine sites. The
+magnetic order is not part of the host symmetry, so equivalent sites can
+receive different corrections.
+
+The correction is reported as its own component. Corrected rows read
+``field (distortion-corrected)`` in the ``Result`` column, the vector total
+includes the correction, and the saved result stores it as ``distortion_T``
+beside the uncorrected ``dipolar_T``. The Lorentz, contact and demagnetizing
+terms keep their pristine values. The correction applies to commensurate
+structures only: an incommensurate field distribution with the option ticked
+stops with an error, and dipolar tensors always use the pristine host.
 
 Demagnetizing-Field Setup
 -------------------------
@@ -364,9 +419,10 @@ polycrystal results share one normalization.
 
 If the selected muon site comes from a structural-relaxation cluster and the
 representative relaxed structure is still available, the dialog can apply a
-muon-induced distortion correction. MuFinder matches the active host to the
-relaxed supercell, recentres pristine and distorted cells around the muon,
-unwraps host-ion displacements across periodic boundaries, and adds the local
+muon-induced distortion correction. MuFinder pairs the relaxed supercell with
+the active host exactly as for the dipolar field, with the same checks (see
+`Muon-Induced Distortion Corrections`_), places the displaced and pristine ions
+around a muon at the centre of the correction cell, and adds the local
 finite-cell correction to the converged pristine lattice sum:
 
 .. math::
@@ -501,10 +557,12 @@ Beyond the dipolar sum, the field calculation includes:
 - the contact hyperfine term, when a ``Hyperfine coupling`` is entered;
 - the demagnetizing field for commensurate finite-field calculations and
   incommensurate sampled distributions, exposed as none, sphere, infinite plate,
-  advanced ellipsoid, or advanced rectangular prism.
+  advanced ellipsoid, or advanced rectangular prism;
+- the muon-induced distortion correction for commensurate fields, when the
+  selected site requests it (see `Muon-Induced Distortion Corrections`_).
 
-Dipolar tensors from selected magnetic-ion positions and muon-induced distortion
-corrections (nuclear relaxation only) are available through their own dialogs.
+Dipolar tensors from selected magnetic-ion positions and the nuclear-relaxation
+distortion correction are available through their own dialogs.
 
 Dependency Handling
 -------------------
@@ -535,8 +593,8 @@ Current Scope
 
 The implemented workflow covers the propagation-vector data model, the
 magnetic-structure builder and multi-q texture dialogs, commensurate local
-fields, incommensurate field distributions, dipolar tensors, demagnetizing
-corrections, and nuclear dipolar linewidths. It stops at field-level results:
-MuFinder does not simulate muon spectra or polarisation functions, and the
-dipolar-field calculation does not yet apply muon-induced displacement
-corrections.
+fields with optional muon-induced distortion corrections, incommensurate field
+distributions, dipolar tensors, demagnetizing corrections, and nuclear dipolar
+linewidths. It stops at field-level results: MuFinder does not simulate muon
+spectra or polarisation functions. Distortion corrections are not applied to
+incommensurate field distributions or dipolar tensors.

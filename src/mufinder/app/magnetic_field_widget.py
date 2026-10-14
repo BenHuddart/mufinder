@@ -121,6 +121,7 @@ _DIRECTION_TOLERANCE = 1e-6
 _UEP_ANALYSIS_STATES_KEY = "uep_analysis_states"
 _RELAXATION_ANALYSIS_STATE_KEY = "relaxation_analysis_workspaces"
 _SITE_OPTION_ROLE = int(Qt.ItemDataRole.UserRole) + 41
+_DISTORTION_CORRECTED_FIELD = "field (distortion-corrected)"
 _DISTRIBUTION_RESULT_ROLE = int(Qt.ItemDataRole.UserRole) + 42
 MAX_INCOMMENSURATE_PHASE_SAMPLES = 10_000_000
 MAX_INCOMMENSURATE_LOOKUP_ANGLES = 1_000_000
@@ -147,6 +148,7 @@ class MagneticMuonSiteOption:
     source_label: str | None = None
     distortion_structure_id: UUID | None = None
     properties: dict[str, object] | None = None
+    include_distortion: bool = False
 
 
 class MagneticComponentDialog(QDialog):
@@ -2759,10 +2761,14 @@ class MuonSiteSelectionDialog(QDialog):
         self._site_status = QLabel("Muon site: -")
         self._site_status.setWordWrap(True)
         style_hint_text(self._site_status)
-        self._distortion_checkbox = QCheckBox("Include muon-induced displacements when available")
+        self._distortion_checkbox = QCheckBox("Correct the dipolar field for muon-induced displacements")
         self._distortion_checkbox.setToolTip(
-            "Available for structural-relaxation clusters when the representative relaxed structure is present."
+            "Adds the finite-cell change in the dipolar field from the host-ion displacements in the "
+            "representative relaxed structure. Available for structural-relaxation clusters whose relaxed "
+            "structure is present, for commensurate magnetic structures."
         )
+        self._distortion_requested = bool(current_site is not None and current_site.include_distortion)
+        self._distortion_checkbox.toggled.connect(self._on_distortion_toggled)
 
         self._apply_dialog_styles()
         self._build_layout()
@@ -2789,7 +2795,11 @@ class MuonSiteSelectionDialog(QDialog):
                 fractional_position=fractional,  # type: ignore[arg-type]
                 cartesian_position=cartesian,
             )
-        return self._selected_site_option()
+        option = self._selected_site_option()
+        if option is None:
+            return None
+        include = self._distortion_checkbox.isEnabled() and self._distortion_checkbox.isChecked()
+        return replace(option, include_distortion=include)
 
     def accept(self) -> None:
         try:
@@ -2933,8 +2943,12 @@ class MuonSiteSelectionDialog(QDialog):
         option = self._selected_site_option()
         enabled = self._site_source() == "relaxation_clustering" and option is not None and option.distortion_structure_id is not None
         self._distortion_checkbox.setEnabled(enabled)
-        if not enabled:
-            self._distortion_checkbox.setChecked(False)
+        blocked = self._distortion_checkbox.blockSignals(True)
+        self._distortion_checkbox.setChecked(enabled and self._distortion_requested)
+        self._distortion_checkbox.blockSignals(blocked)
+
+    def _on_distortion_toggled(self, checked: bool) -> None:
+        self._distortion_requested = bool(checked)
 
     def _on_site_selection_changed(self) -> None:
         self._sync_distortion_controls()
@@ -5078,10 +5092,11 @@ class MagneticFieldWidget(QWidget):
         site = self._selected_muon_site
         source = site.source_label or _site_source_label(site.source)
         cluster = f" ({site.cluster_label})" if site.cluster_label else ""
+        distortion = " Dipolar field corrected for muon-induced displacements." if site.include_distortion else ""
         self._site_summary.setText(
             f"Muon site: {site.label}{cluster} from {source} at "
             f"({site.fractional_position[0]:.4f}, {site.fractional_position[1]:.4f}, "
-            f"{site.fractional_position[2]:.4f})."
+            f"{site.fractional_position[2]:.4f}).{distortion}"
         )
 
     @staticmethod
@@ -5174,6 +5189,7 @@ class MagneticFieldWidget(QWidget):
 
         options = self._field_options()
         try:
+            distorted_structures = [self._distorted_structure_for_site(site)]
             classification = classify_magnetic_model(self._host_structure, self._model)
             if classification == "commensurate":
                 results = calculate_commensurate_fields(
@@ -5181,9 +5197,13 @@ class MagneticFieldWidget(QWidget):
                     self._model,
                     [site.fractional_position],
                     options=options,
+                    distorted_structures=distorted_structures,
                 )
                 self._populate_commensurate_results(results)
-                self._calculation_status.setText(f"Results: calculated {len(results)} commensurate field value(s).")
+                corrected = " with muon-induced distortion corrections" if site.include_distortion else ""
+                self._calculation_status.setText(
+                    f"Results: calculated {len(results)} commensurate field value(s){corrected}."
+                )
                 self._emit_form_state_changed()
             else:
                 results = calculate_incommensurate_field_distributions(
@@ -5191,6 +5211,7 @@ class MagneticFieldWidget(QWidget):
                     self._model,
                     [site.fractional_position],
                     options=options,
+                    distorted_structures=distorted_structures,
                 )
                 self._populate_distribution_results(results)
                 self._calculation_status.setText(
@@ -5203,6 +5224,17 @@ class MagneticFieldWidget(QWidget):
             self._calculation_status.setText(f"Calculation failed: {exc}")
         except Exception as exc:  # pragma: no cover - defensive UI boundary
             self._calculation_status.setText(f"Calculation failed: {exc}")
+
+    def _distorted_structure_for_site(self, site: MagneticMuonSiteOption) -> Structure | None:
+        if not site.include_distortion:
+            return None
+        structure_id = site.distortion_structure_id
+        distorted = None
+        if self._document is not None and structure_id is not None:
+            distorted = self._document.structures.get(structure_id)
+        if distorted is None:
+            raise MagneticFieldError("the relaxed structure for the muon-induced distortion correction is no longer available")
+        return distorted
 
     def _open_calculation_settings_dialog(self) -> None:
         dialog = MagneticFieldCalculationSettingsDialog(
@@ -5516,6 +5548,7 @@ class MagneticFieldWidget(QWidget):
                 "cluster_label": site.cluster_label,
                 "source_label": site.source_label,
                 "distortion_structure_id": site.distortion_structure_id,
+                "include_distortion": site.include_distortion,
                 "properties": site.properties,
             }
         )
@@ -5549,6 +5582,7 @@ class MagneticFieldWidget(QWidget):
             source_label=str(value["source_label"]) if value.get("source_label") else None,
             distortion_structure_id=distortion_structure_id,
             properties=dict(properties) if isinstance(properties, Mapping) else None,
+            include_distortion=bool(value.get("include_distortion", False)) and distortion_structure_id is not None,
         )
 
     def _clear_results(self, *, clear_state: bool = False) -> None:
@@ -5569,7 +5603,7 @@ class MagneticFieldWidget(QWidget):
                 result.site_label,
                 total,
                 float(result.magnitude),
-                "field",
+                "field" if result.distortion is None else _DISTORTION_CORRECTED_FIELD,
             )
 
     def _populate_distribution_results(self, results: object) -> None:
@@ -5611,7 +5645,8 @@ class MagneticFieldWidget(QWidget):
                 if total.shape != (3,):
                     total = np.zeros(3, dtype=float)
                 magnitude = float(result.get("magnitude_T", np.linalg.norm(total)))
-                self._append_result_row(str(result.get("site_label", "site")), total, magnitude, "field")
+                result_type = _DISTORTION_CORRECTED_FIELD if "distortion_T" in result else "field"
+                self._append_result_row(str(result.get("site_label", "site")), total, magnitude, result_type)
             self._calculation_status.setText(f"Results: restored {len(result_payloads)} commensurate field value(s).")
         elif kind == "distribution":
             self._distribution_results = result_payloads

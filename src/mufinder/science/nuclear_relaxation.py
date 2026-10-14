@@ -14,9 +14,8 @@ from ase import Atoms
 import numpy as np
 
 from mufinder.domain.models import Structure
-from mufinder.science.ase_bridge import element_symbol, is_muon_label, structure_to_ase_atoms
-from mufinder.science.supercell import build_supercell_structure
-from mufinder.science.supercell_matching import detect_supercell_matrix
+from mufinder.science.ase_bridge import element_symbol, structure_to_ase_atoms
+from mufinder.science.muon_distortion import MuonDistortion, map_muon_distortion
 
 MU0_OVER_4PI = 1e-7
 HBAR = 1.054_571_817e-34
@@ -163,12 +162,6 @@ class DistortionCorrectionResult:
             "pristine_supercell_result": self.pristine_supercell_result.to_json(),
             "distorted_supercell_result": self.distorted_supercell_result.to_json(),
         }
-
-
-@dataclass(frozen=True, slots=True)
-class _UnwrapResult:
-    atoms: Atoms
-    n_atoms_unwrapped: int
 
 
 def gyromagnetic_ratio_from_moment(moment_mu_n: float, spin: float) -> float:
@@ -338,29 +331,15 @@ def calculate_distortion_correction(
     """Calculate a finite-supercell correction for muon-induced distortions."""
 
     opts = options or NuclearRelaxationOptions()
-    distorted_atoms_with_muon = structure_to_atoms(distorted_structure, skip_muon=False)
-    distorted_host_atoms, muon_frac_super = _extract_muon_from_atoms(distorted_atoms_with_muon)
-    distorted_host_structure = _structure_from_atoms(
-        distorted_host_atoms,
-        label=f"{distorted_structure.label} host",
-        parent_structure_id=distorted_structure.parent_structure_id,
+    distortion = map_muon_distortion(
+        pristine_structure,
+        distorted_structure,
+        muon_position,
+        error=NuclearRelaxationError,
     )
-
-    detection = detect_supercell_matrix(pristine_structure, distorted_host_structure)
-    if not detection.is_supercell:
-        raise NuclearRelaxationError("Could not identify a matching pristine supercell for the distorted structure.")
-
-    pristine_supercell_structure, _spins = build_supercell_structure(pristine_structure, detection.matrix)
-    pristine_supercell_atoms = structure_to_atoms(pristine_supercell_structure, skip_muon=True)
-
-    matrix = np.asarray(detection.matrix, dtype=float)
-    muon_unit = _canonical_fractional(muon_position)
-    muon_super_pristine = _canonical_fractional(muon_unit @ np.linalg.inv(matrix))
-
-    distorted_recentred = _recentre_atoms_on_muon(distorted_host_atoms, muon_frac_super)
-    pristine_recentred = _recentre_atoms_on_muon(pristine_supercell_atoms, muon_super_pristine)
-    pristine_recentred.set_cell(distorted_recentred.cell, scale_atoms=False)
-    unwrapped = _unwrap_distortions(distorted_recentred, pristine_recentred)
+    muon_unit = distortion.muon_fractional
+    distorted_cell = _finite_cell_atoms(distortion, distortion.distorted_vectors)
+    pristine_cell = _finite_cell_atoms(distortion, distortion.pristine_vectors)
 
     finite_opts = NuclearRelaxationOptions(
         mode=opts.mode,
@@ -372,7 +351,7 @@ def calculate_distortion_correction(
         use_distortion_correction=False,
     )
     distorted_supercell_result = _calculate_second_moment_finite_cell(
-        unwrapped.atoms,
+        distorted_cell,
         (0.5, 0.5, 0.5),
         finite_opts.mode,
         site_label=f"{site_label} distorted supercell",
@@ -382,7 +361,7 @@ def calculate_distortion_correction(
         elements=finite_opts.elements,
     )
     pristine_supercell_result = _calculate_second_moment_finite_cell(
-        pristine_recentred,
+        pristine_cell,
         (0.5, 0.5, 0.5),
         finite_opts.mode,
         site_label=f"{site_label} pristine supercell",
@@ -404,14 +383,14 @@ def calculate_distortion_correction(
 
     return DistortionCorrectionResult(
         mode=opts.mode,
-        supercell_matrix=detection.matrix,
+        supercell_matrix=distortion.supercell_matrix,
         sigma_squared_undistorted=undistorted_result.sigma_squared,
         sigma_squared_pristine_supercell=pristine_supercell_result.sigma_squared,
         sigma_squared_distorted_supercell=distorted_supercell_result.sigma_squared,
         distortion_correction_sigma_squared=correction_sigma2,
         sigma_squared_corrected=corrected_sigma2,
         sigma_corrected=corrected_sigma,
-        n_atoms_unwrapped=unwrapped.n_atoms_unwrapped,
+        n_atoms_unwrapped=distortion.n_atoms_unwrapped,
         undistorted_result=undistorted_result,
         pristine_supercell_result=pristine_supercell_result,
         distorted_supercell_result=distorted_supercell_result,
@@ -741,102 +720,12 @@ def _translation_limits(cell: np.ndarray, radius_a: float) -> np.ndarray:
     return np.array([nmax, nmax, nmax], dtype=int)
 
 
-def _extract_muon_from_atoms(atoms: Atoms) -> tuple[Atoms, np.ndarray]:
-    labels = atoms.info.get("mufinder_species_labels", atoms.get_chemical_symbols())
-    muon_indices = [index for index, label in enumerate(labels) if is_muon_label(str(label))]
-    if not muon_indices:
-        raise NuclearRelaxationError("Distorted structure does not contain a muon marker.")
-    if len(muon_indices) > 1:
-        raise NuclearRelaxationError("Distorted structure contains more than one muon marker.")
-    muon_index = int(muon_indices[0])
-    muon_frac = np.asarray(atoms.get_scaled_positions(wrap=True)[muon_index], dtype=float)
-    host = atoms.copy()
-    del host[muon_index]
-    host.info["mufinder_species_labels"] = [
-        str(label) for index, label in enumerate(labels) if index != muon_index
-    ]
-    return host, muon_frac
+def _finite_cell_atoms(distortion: MuonDistortion, vectors: np.ndarray) -> Atoms:
+    """Place host ions at ``vectors`` from a muon at the centre of the correction cell."""
 
-
-def _recentre_atoms_on_muon(
-    atoms: Atoms,
-    muon_position_fractional: Sequence[float],
-    *,
-    target_fractional: Sequence[float] = (0.5, 0.5, 0.5),
-) -> Atoms:
-    shifted = atoms.copy()
-    frac = np.asarray(shifted.get_scaled_positions(wrap=False), dtype=float)
-    frac += np.asarray(target_fractional, dtype=float) - np.asarray(muon_position_fractional, dtype=float)
-    shifted.set_scaled_positions(np.mod(frac, 1.0))
-    return shifted
-
-
-def _unwrap_distortions(distorted: Atoms, pristine: Atoms) -> _UnwrapResult:
-    mapping = _pair_distorted_to_pristine_indices(distorted, pristine)
-    cell = np.asarray(pristine.cell.array, dtype=float)
-    frac_d = np.asarray(distorted.get_scaled_positions(wrap=False), dtype=float)
-    frac_p = np.asarray(pristine.get_scaled_positions(wrap=False), dtype=float)
-    corrected_frac = np.zeros_like(frac_d)
-    unwrapped = 0
-    for index, pristine_index in enumerate(mapping):
-        raw_delta = frac_d[index] - frac_p[pristine_index]
-        mic_delta = raw_delta - np.round(raw_delta)
-        integer_shift = np.rint(raw_delta - mic_delta).astype(int)
-        corrected_frac[index] = frac_p[pristine_index] + mic_delta
-        if np.any(integer_shift != 0):
-            unwrapped += 1
-    corrected = distorted.copy()
-    corrected.set_positions(np.dot(corrected_frac, cell))
-    return _UnwrapResult(atoms=corrected, n_atoms_unwrapped=unwrapped)
-
-
-def _pair_distorted_to_pristine_indices(distorted: Atoms, pristine: Atoms) -> list[int]:
-    distorted_symbols = list(distorted.get_chemical_symbols())
-    pristine_symbols = list(pristine.get_chemical_symbols())
-    if not np.allclose(np.asarray(distorted.cell.array), np.asarray(pristine.cell.array), atol=1e-6, rtol=0.0):
-        raise NuclearRelaxationError("Distorted and pristine cells must match for unwrapping.")
-    for sym in sorted(set(distorted_symbols)):
-        if sym not in pristine_symbols:
-            raise NuclearRelaxationError(f"Pristine structure has no atoms of species '{sym}' required by the distorted structure.")
-    if len(distorted_symbols) == len(pristine_symbols) and distorted_symbols == pristine_symbols:
-        return list(range(len(distorted_symbols)))
-    cell = np.asarray(pristine.cell.array, dtype=float)
-    frac_d = np.asarray(distorted.get_scaled_positions(wrap=True), dtype=float)
-    frac_p = np.asarray(pristine.get_scaled_positions(wrap=True), dtype=float)
-    mapping = [-1] * len(distorted_symbols)
-    for species in sorted(set(distorted_symbols)):
-        d_indices = [i for i, sym in enumerate(distorted_symbols) if sym == species]
-        p_candidates = [i for i, sym in enumerate(pristine_symbols) if sym == species]
-        for d_index in d_indices:
-            best_j = -1
-            best_d2 = float("inf")
-            for p_index in p_candidates:
-                delta_frac = frac_d[d_index] - frac_p[p_index]
-                delta_cart = np.dot(delta_frac - np.round(delta_frac), cell)
-                d2 = float(np.dot(delta_cart, delta_cart))
-                if d2 < best_d2:
-                    best_d2 = d2
-                    best_j = p_index
-            mapping[d_index] = best_j
-    if any(index < 0 for index in mapping):
-        raise NuclearRelaxationError("Failed to build distorted-to-pristine atom mapping.")
-    return mapping
-
-
-def _structure_from_atoms(
-    atoms: Atoms,
-    *,
-    label: str,
-    parent_structure_id,
-) -> Structure:
-    labels = atoms.info.get("mufinder_species_labels", atoms.get_chemical_symbols())
-    return Structure(
-        label=label,
-        lattice_vectors=np.asarray(atoms.cell.array, dtype=float).tolist(),
-        species=[str(label) for label in labels],
-        fractional_positions=np.asarray(atoms.get_scaled_positions(wrap=True), dtype=float).tolist(),
-        parent_structure_id=parent_structure_id,
-    )
+    cell = np.asarray(distortion.supercell_lattice, dtype=float)
+    centre = np.full(3, 0.5) @ cell
+    return Atoms(symbols=list(distortion.symbols), positions=centre + vectors, cell=cell, pbc=True)
 
 
 def _muon_position_cartesian(atoms: Atoms, muon_position: Sequence[float], fractional: bool) -> np.ndarray:
