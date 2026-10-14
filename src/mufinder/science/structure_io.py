@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from fractions import Fraction
+import io
 from pathlib import Path
 import re
-import shlex
 from typing import Any
 
 from ase import Atoms
@@ -56,7 +57,9 @@ def load_structure_file(path: str | Path) -> LoadedStructure:
         return _load_castep_cell_file(source)
 
     try:
-        atoms = ase_read(str(source), format=read_format)
+        # ASE decodes CIF bytes as Latin-1, so this round trip is lossless.
+        cif_text = _cif_text_for_ase(source.read_bytes().decode("latin-1"))
+        atoms = ase_read(io.BytesIO(cif_text.encode("latin-1")), format=read_format)
     except Exception as exc:  # noqa: BLE001 - normalize parser exceptions.
         raise StructureLoadError(f"Failed to parse structure file '{source.name}': {exc}") from exc
 
@@ -289,81 +292,169 @@ def _parse_cif_tags_and_loops(text: str) -> tuple[dict[str, str], list[dict[str,
 
     This parser intentionally targets the subset needed for magnetic metadata.
     """
-    lines = text.splitlines()
+    tokens = list(_iter_cif_tokens(text))
     tags: dict[str, str] = {}
     loops: list[dict[str, Any]] = []
 
     idx = 0
-    while idx < len(lines):
-        line = _normalize_cif_line(lines[idx])
+    while idx < len(tokens):
+        token = tokens[idx]
         idx += 1
-        if not line:
-            continue
-
-        lower = line.lower()
-        if lower == "loop_":
-            headers: list[str] = []
-            while idx < len(lines):
-                probe = _normalize_cif_line(lines[idx])
-                if not probe:
-                    idx += 1
-                    continue
-                if probe.startswith("_"):
-                    headers.append(probe.split()[0].lower())
-                    idx += 1
-                    continue
-                break
-
-            if not headers:
-                continue
-
-            rows: list[dict[str, str]] = []
-            pending: list[str] = []
-            while idx < len(lines):
-                probe = _normalize_cif_line(lines[idx])
-                if not probe:
-                    idx += 1
-                    continue
-                lower_probe = probe.lower()
-                if lower_probe == "loop_" or lower_probe.startswith("data_") or probe.startswith("_"):
-                    break
-
-                pending.extend(_tokenize_cif_line(probe))
+        if token.is_tag:
+            value = ""
+            if idx < len(tokens) and tokens[idx].is_value:
+                value = tokens[idx].text
                 idx += 1
-
-                while len(pending) >= len(headers):
-                    row_tokens = pending[: len(headers)]
-                    pending = pending[len(headers) :]
-                    rows.append({headers[col]: row_tokens[col] for col in range(len(headers))})
-
-            loops.append({"headers": headers, "rows": rows})
+            tags[token.text.lower()] = value
+            continue
+        if token.quoted or token.text.lower() != "loop_":
             continue
 
-        if line.startswith("_"):
-            parts = _tokenize_cif_line(line)
-            key = parts[0].lower()
-            value = parts[1] if len(parts) > 1 else ""
-            tags[key] = value
+        headers: list[str] = []
+        while idx < len(tokens) and tokens[idx].is_tag:
+            headers.append(tokens[idx].text.lower())
+            idx += 1
+        values: list[str] = []
+        while idx < len(tokens) and tokens[idx].is_value:
+            values.append(tokens[idx].text)
+            idx += 1
+        if not headers:
+            continue
+
+        width = len(headers)
+        rows = [
+            dict(zip(headers, values[start : start + width], strict=True))
+            for start in range(0, len(values) - width + 1, width)
+        ]
+        loops.append({"headers": headers, "rows": rows})
 
     return tags, loops
 
 
-def _normalize_cif_line(line: str) -> str:
-    """Strip comments and surrounding whitespace from CIF line."""
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#"):
-        return ""
-    if "#" in stripped:
-        stripped = stripped.split("#", maxsplit=1)[0].strip()
-    return stripped
+_CIF_WHITESPACE = " \t"
+_CIF_RESERVED_WORDS = frozenset({"loop_", "global_", "stop_"})
+_CIF_RESERVED_PREFIXES = ("data_", "save_")
 
 
-def _tokenize_cif_line(line: str) -> list[str]:
-    """Tokenize one CIF line while preserving quoted strings."""
-    try:
-        return shlex.split(line, posix=True)
-    except ValueError:
-        return line.split()
+@dataclass(frozen=True, slots=True)
+class _CifToken:
+    """One CIF token; ``quoted`` marks quoted strings and text fields, which are always values."""
+
+    text: str
+    quoted: bool = False
+
+    @property
+    def is_tag(self) -> bool:
+        return not self.quoted and self.text.startswith("_")
+
+    @property
+    def is_value(self) -> bool:
+        if self.quoted:
+            return True
+        lower = self.text.lower()
+        return not (
+            self.text.startswith("_")
+            or lower in _CIF_RESERVED_WORDS
+            or lower.startswith(_CIF_RESERVED_PREFIXES)
+        )
+
+
+def _split_cif_lines(text: str) -> list[str]:
+    """Split CIF text into lines, accepting LF, CRLF and CR line terminators."""
+    return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+
+def _lex_cif_line(line: str) -> tuple[list[_CifToken], int | None]:
+    """Split one CIF line outside a text field into tokens.
+
+    Returns the tokens and the column where a comment starts, or ``None``. As
+    in the CIF grammar, ``#`` starts a comment only where a token could start:
+    a hash inside a quoted string or within an unquoted value (``C#1``) is
+    data. A quoted string closes at its delimiter when that is followed by
+    whitespace or the end of the line, so ``'O'1'`` is one value.
+    """
+    tokens: list[_CifToken] = []
+    idx = 0
+    while idx < len(line):
+        char = line[idx]
+        if char in _CIF_WHITESPACE:
+            idx += 1
+        elif char == "#":
+            return tokens, idx
+        elif char in "'\"":
+            end = idx + 1
+            while end < len(line) and not (
+                line[end] == char and (end + 1 == len(line) or line[end + 1] in _CIF_WHITESPACE)
+            ):
+                end += 1
+            tokens.append(_CifToken(line[idx + 1 : end], quoted=True))
+            idx = end + 1
+        else:
+            end = idx
+            while end < len(line) and line[end] not in _CIF_WHITESPACE:
+                end += 1
+            tokens.append(_CifToken(line[idx:end]))
+            idx = end
+    return tokens, None
+
+
+def _iter_cif_tokens(text: str) -> Iterator[_CifToken]:
+    """Yield the tokens of CIF text, with each semicolon text field as one quoted token."""
+    lines = _split_cif_lines(text)
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        idx += 1
+        if line.startswith(";"):
+            field_lines = [line[1:]]
+            while idx < len(lines) and not lines[idx].startswith(";"):
+                field_lines.append(lines[idx])
+                idx += 1
+            yield _CifToken("\n".join(field_lines), quoted=True)
+            if idx >= len(lines):
+                return
+            # Text after the closing semicolon is ordinary CIF.
+            line = lines[idx][1:]
+            idx += 1
+        yield from _lex_cif_line(line)[0]
+
+
+def _cif_text_for_ase(text: str) -> str:
+    """Return CIF text whose loop headings ASE's built-in CIF reader accepts.
+
+    ASE's reader takes a loop heading only from a line holding that one tag
+    and nothing else, so a comment beside a heading, or a comment or blank
+    line between headings, ends the heading list early and the next line is
+    rejected as an unexpected entry. CIF allows all three. Within a loop's
+    heading list this strips trailing comments and drops comment-only and
+    blank lines; every other line, including all text-field content, is kept
+    as written. Line terminators become LF, the only one ASE splits on.
+    """
+    lines: list[str] = []
+    in_text_field = False
+    in_loop_headings = False
+    for line in _split_cif_lines(text):
+        if line.startswith(";"):
+            in_text_field = not in_text_field
+            in_loop_headings = False
+            lines.append(line)
+            continue
+        if in_text_field:
+            lines.append(line)
+            continue
+
+        tokens, comment_start = _lex_cif_line(line)
+        if in_loop_headings:
+            if not tokens:
+                continue
+            if len(tokens) == 1 and tokens[0].is_tag:
+                lines.append(line if comment_start is None else line[:comment_start].rstrip())
+                continue
+            in_loop_headings = False
+        lines.append(line)
+        if len(tokens) == 1 and not tokens[0].quoted and tokens[0].text.lower() == "loop_":
+            in_loop_headings = True
+    return "\n".join(lines)
 
 
 def _extract_atom_labels(tags: dict[str, str], loops: list[dict[str, Any]]) -> list[str]:

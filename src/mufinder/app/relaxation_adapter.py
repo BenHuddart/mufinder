@@ -10,6 +10,7 @@ import numpy as np
 from mufinder.app.adapter_common import (
     STRUCTURE_CONTROLLED_CELL_KEYWORDS,
     AdapterExpansion,
+    KpointAdjustment,
     build_input_template,
     claim_unique_name,
     is_identity_supercell,
@@ -203,7 +204,7 @@ def expand_pristine_relaxation_jobs(
     reference_lattice = kpoint_reference_lattice(project_kpoint_reference_lattice, host_structure)
 
     jobs: list[RelaxationJobConfig] = []
-    messages: list[str] = []
+    kpoint_adjustments: list[KpointAdjustment] = []
     seen_labels: set[str] = set()
     for row in config.rows:
         label = require_row_label(row.label, workflow="pristine-relaxation")
@@ -219,11 +220,10 @@ def expand_pristine_relaxation_jobs(
             supercell_matrix=row.supercell_matrix,
             project_kpoint_grid=project_kpoint_grid,
             reference_lattice=reference_lattice,
-            target_description=f"{_matrix_token(row.supercell_matrix)} (equivalent density).",
             drop=("write_cell_structure",),
         )
-        if prepared.message is not None:
-            messages.append(prepared.message)
+        if prepared.kpoint_adjustment is not None:
+            kpoint_adjustments.append(prepared.kpoint_adjustment)
 
         jobs.append(
             RelaxationJobConfig(
@@ -249,7 +249,7 @@ def expand_pristine_relaxation_jobs(
         workflow_defaults=workflow_defaults,
         tags=("pristine_relaxation",),
     )
-    return AdapterExpansion(jobs=tuple(expanded), messages=tuple(messages))
+    return AdapterExpansion(jobs=tuple(expanded), kpoint_adjustments=tuple(kpoint_adjustments))
 
 
 def expand_muon_relaxation_jobs(
@@ -283,7 +283,7 @@ def expand_muon_relaxation_jobs(
     )
     reference_lattice = kpoint_reference_lattice(project_kpoint_reference_lattice, host_structure)
 
-    messages: list[str] = []
+    kpoint_adjustments: list[KpointAdjustment] = []
     expanded_jobs: list[JobSpec] = []
     seen_names: set[str] = set()
     for row in config.rows:
@@ -305,11 +305,10 @@ def expand_muon_relaxation_jobs(
             supercell_matrix=row.supercell_matrix,
             project_kpoint_grid=project_kpoint_grid,
             reference_lattice=reference_lattice,
-            target_description=f"{_matrix_token(row.supercell_matrix)} (equivalent density).",
             drop=("task", "write_cell_structure", "charge", "fix_all_cell"),
         )
-        if prepared.message is not None:
-            messages.append(prepared.message)
+        if prepared.kpoint_adjustment is not None:
+            kpoint_adjustments.append(prepared.kpoint_adjustment)
 
         param = prepared.template.param
         forced_keywords = [KeywordAssignment("charge", muon_charge_for_state(charge_state))]
@@ -365,7 +364,7 @@ def expand_muon_relaxation_jobs(
             for spec in row_jobs
         )
 
-    return AdapterExpansion(jobs=tuple(expanded_jobs), messages=tuple(messages))
+    return AdapterExpansion(jobs=tuple(expanded_jobs), kpoint_adjustments=tuple(kpoint_adjustments))
 
 
 def suggested_grid_for_row(

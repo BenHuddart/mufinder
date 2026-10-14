@@ -20,6 +20,7 @@ from mufinder.app.workflow_config_codecs import (
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, ComparisonTable, Job, Structure
 from mufinder.services.project_service import ProjectService
+from mufinder.services.project_summary import pristine_relaxation_complete
 
 
 def test_main_window_local_finish_pristine_relaxation_uses_first_three_lattice_parameters(
@@ -275,7 +276,7 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
     completion path.
 
     The pristine-relaxation workflow-trail milestone is table-driven
-    (``_workflow_pristine_relaxation_complete`` reads ``document.comparison_tables``),
+    (``pristine_relaxation_complete`` reads ``document.comparison_tables``),
     **not** job-driven, so it stays complete across the whole cycle — continuing a
     job neither un-completes nor re-completes it. What the cycle really has to
     protect is the reference that milestone stands for: the comparison table's
@@ -311,7 +312,7 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
         dft_labels=[job.label],
     )
     service.add_comparison_table(doc, table)
-    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+    assert pristine_relaxation_complete(doc) is True
 
     # Continue the completed job and start its second run.
     service.prepare_job_continuation(job)
@@ -319,7 +320,7 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
     run_two = _start_pristine_run(window, service, doc, job, run_index=2)
     assert job.status == JobStatus.RUNNING
     # Table-driven, so the milestone does not dip while the continued job runs.
-    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+    assert pristine_relaxation_complete(doc) is True
 
     (output_dir / f"{job.label}-out.cell").write_text(
         _PRISTINE_OUT_CELL_CONTINUED, encoding="utf-8"
@@ -327,7 +328,7 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
     window._on_local_job_finished(job.id, parsed)
 
     assert job.status == JobStatus.COMPLETED
-    assert MainWindow._workflow_pristine_relaxation_complete(doc) is True
+    assert pristine_relaxation_complete(doc) is True
 
     # One derived structure, same id, refreshed geometry; both Results agree.
     second_result = doc.results[run_two.result_id]
@@ -344,15 +345,9 @@ def test_main_window_pristine_relaxation_recompletion_keeps_trail_and_references
     window.close()
 
 
-def test_on_pristine_relaxation_configured_surfaces_kpoint_message(
-    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # A supercell row rescales the project k-point grid; the adjustment message
-    # from AdapterExpansion.messages must be surfaced to the user, not dropped.
-    window = main_window
+def _pristine_kpoint_document(tmp_path: Path, name: str):
     service = ProjectService()
-    doc = service.create_project(tmp_path / "pristine_msg.mufinder", "PristineMsg")
-
+    doc = service.create_project(tmp_path / f"{name}.mufinder", name)
     host = Structure(
         label="Host",
         lattice_vectors=[[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]],
@@ -363,30 +358,77 @@ def test_on_pristine_relaxation_configured_surfaces_kpoint_message(
     doc.project.host_structure_id = host.id
     doc.project.recommended_kpoint_grid = (4, 4, 4)
     doc.project.recommended_kpoint_lattice = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
-    window._document = doc
+    return doc
 
-    infos: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "information",
-        lambda _parent, title, text, *args, **kwargs: infos.append((title, text)),
+
+def _capture_message_boxes(monkeypatch: pytest.MonkeyPatch) -> list:
+    boxes: list = []
+
+    def _exec(box) -> int:
+        boxes.append(box)
+        return int(main_window_module.QMessageBox.StandardButton.Ok.value)
+
+    monkeypatch.setattr(main_window_module.QMessageBox, "exec", _exec)
+    return boxes
+
+
+def _supercell_row(label: str):
+    return main_window_module.PristineRelaxationRow(
+        label=label,
+        fix_all_cell=False,
+        supercell_matrix=((2, 0, 0), (0, 1, 0), (0, 0, 1)),
+        parameter_values={},
     )
+
+
+def test_on_pristine_relaxation_configured_surfaces_kpoint_adjustment(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A supercell row rescales the project k-point grid; the adjustment must be
+    # surfaced to the user, not dropped.
+    window = main_window
+    window._document = _pristine_kpoint_document(tmp_path, "PristineMsg")
+    boxes = _capture_message_boxes(monkeypatch)
 
     window._on_pristine_relaxation_configured(
-        main_window_module.PristineRelaxationConfig(
-            name_prefix="pristine_relax",
-            rows=(
-                main_window_module.PristineRelaxationRow(
-                    label="super",
-                    fix_all_cell=False,
-                    supercell_matrix=((2, 0, 0), (0, 1, 0), (0, 0, 1)),
-                    parameter_values={},
-                ),
-            ),
-        )
+        main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=(_supercell_row("super"),))
     )
 
-    assert any("K-point grid adjusted" in text for _title, text in infos)
+    assert len(boxes) == 1
+    box = boxes[0]
+    assert box.text() == "K-point grid rescaled for 1 row."
+    assert "• 2x1x1 supercell: 4x4x4 → 2x4x4 (1 row)" in box.informativeText()
+    # A single row needs no details: the summary already says everything.
+    assert box.detailedText() == ""
+    assert box.defaultButton() is box.button(main_window_module.QMessageBox.StandardButton.Ok)
+    window.close()
+
+
+def test_on_pristine_relaxation_configured_keeps_the_kpoint_summary_short_for_many_rows(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Many rows in one supercell share one summary line; the per-row list sits
+    # in the scrollable details so the dialog never outgrows the screen.
+    window = main_window
+    window._document = _pristine_kpoint_document(tmp_path, "PristineMany")
+    boxes = _capture_message_boxes(monkeypatch)
+    rows = tuple(_supercell_row(f"site_{index}") for index in range(60))
+
+    window._on_pristine_relaxation_configured(
+        main_window_module.PristineRelaxationConfig(name_prefix="pristine_relax", rows=rows)
+    )
+
+    assert len(boxes) == 1
+    box = boxes[0]
+    assert box.text() == "K-point grid rescaled for 60 rows."
+    assert box.informativeText() == (
+        "<nobr>Each grid keeps the project&#x27;s reciprocal-space density.</nobr><br>"
+        "<nobr></nobr><br>"
+        "<nobr>• 2x1x1 supercell: 4x4x4 → 2x4x4 (60 rows)</nobr>"
+    )
+    details = box.detailedText().splitlines()
+    assert len(details) == 60
+    assert details[0] == "site_0: 4x4x4 → 2x4x4 (2x1x1 supercell)"
     window.close()
 
 

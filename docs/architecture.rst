@@ -172,13 +172,16 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
   rows use: the structure-controlled cell keywords are refused and a scalar
   k-point grid or spacing clears an inherited list.
 - :func:`~mufinder.app.adapter_common.rescale_kpoint_grid` rescales a project
-  k-point grid to an equivalent reciprocal-space density for supercell rows and
-  returns an optional adjustment message. Convergence sweeps a fixed structure
-  and never rescales.
+  k-point grid to an equivalent reciprocal-space density for supercell rows.
+  Convergence sweeps a fixed structure and never rescales.
 - :class:`~mufinder.app.adapter_common.AdapterExpansion` is the uniform return
-  shape (``jobs`` plus UI-facing ``messages``) for every adapter's public
-  ``expand_*`` function. ``main_window`` surfaces non-empty ``messages`` from
-  the configure path.
+  shape for every adapter's public ``expand_*`` function: ``jobs`` plus
+  ``kpoint_adjustments``, one
+  :class:`~mufinder.app.adapter_common.KpointAdjustment` per row whose grid
+  was rescaled. :func:`~mufinder.app.adapter_common.summarize_kpoint_adjustments`
+  groups them by cell and grid change into a short summary plus a per-row
+  detail text; ``main_window`` shows both in one dialog from the configure
+  path, so the dialog's height does not grow with the number of rows.
 - The supercell adapters (pristine relaxation, muon relaxation, UEP) share one
   expansion prologue. :func:`~mufinder.app.adapter_common.seed_workflow_defaults`
   layers the project exchange-correlation functional and cut-off energy over
@@ -190,7 +193,7 @@ into workflow-layer ``expand_*`` calls. Their shared machinery lives in
   duplicate rows, and :func:`~mufinder.app.adapter_common.prepare_row` converts
   the row structure, drops or forces the workflow-controlled values, builds the
   row template and rescales the project grid unless the row pins its own
-  k-points.
+  k-points, recording a ``KpointAdjustment`` when the grid changed.
 - :func:`~mufinder.app.adapter_common.coerce_supercell_matrix`,
   :func:`~mufinder.app.adapter_common.is_identity_supercell` and
   :func:`~mufinder.app.adapter_common.supercell_label` are the one parser,
@@ -397,6 +400,19 @@ no two workflow widgets may define the same private method.
        Energy Barriers form state they live in and the NEB results for energy
        barriers; and the completed pristine and muon relaxations offered to
        comparison and relaxation analysis.
+   * - ``mufinder.services.project_summary``
+     - The workflow-stage catalogue the navigator and the project home are built
+       from (``WORKFLOW_STAGES``, ``STAGE_GROUPS``: titles, completion goals and
+       guidance), the dependency graph between stages (``STAGE_DEPENDENCIES``),
+       each stage's completion rule (``COMPLETION_CHECKS`` and the ``*_complete``
+       functions), the muon-relaxation row and job lookups those rules share
+       (``muon_relaxation_row_jobs``, ``muon_relaxation_job_for_row``) and the
+       per-stage project summary (``summarize_project``; see
+       :doc:`project_home`).
+   * - ``mufinder.services.project_survey``
+     - The positions each stage has found, in the active host's cell, for the
+       project home's cell survey (``survey_layers``,
+       ``discovered_sites_layer``).
    * - ``mufinder.services.project_document``
      - The in-memory project aggregate (``ProjectDocument``), the active host
        (``active_host_structure``) and the read-only definition and job
@@ -432,6 +448,10 @@ no two workflow widgets may define the same private method.
        (``minimum_image_distance``, ``minimum_image_distance_matrix``,
        ``nearest_image_distance``) and periodic deduplication
        (``deduplicate_periodic_positions``).
+   * - ``mufinder.science.cell_projection``
+     - Flat projections of a unit cell down one lattice vector for 2D drawings
+       (``cell_projection``, ``CellProjection``) and the periodic images of an
+       atom on the cell faces (``periodic_boundary_images``).
    * - ``mufinder.science.spglib_compat``
      - spglib access: the ``(lattice, positions, numbers)`` cell
        (``spglib_cell``), cached symmetry operations
@@ -1246,10 +1266,11 @@ each platform's native look:
   operating system's native artwork and accent colour. Checkable rows in tree,
   table and list views get the same treatment, so table checkboxes match form
   checkboxes.
-- The project-home trail map scales with the window: the artwork keeps its
-  aspect ratio and the signpost labels are sized relative to the rendered
-  banner, so they stay proportionate and legible from small laptops to large
-  high-DPI displays.
+- The project home (``mufinder.app.project_home_trail``) is painted from data,
+  not artwork: waypoint positions are fractions of the chart area and label,
+  node and region sizes follow the widget's size within fixed bounds, so the
+  chart stays legible from small laptops to large high-DPI displays. Its
+  summary is recomputed only while the page is visible.
 - Embedded plots keep their labels inside the plot area at every window size
   (see Plot canvas policy). The plots that share a window with other content,
   namely the relaxation clustering and displacement plots, the UEP clustering

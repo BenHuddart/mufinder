@@ -119,7 +119,7 @@ def expand_convergence_jobs(
     """Expand convergence config into resolved JobSpec objects.
 
     Convergence sweeps a single fixed structure, so no supercell k-point
-    rescaling occurs and ``AdapterExpansion.messages`` is always empty. The
+    rescaling occurs and ``AdapterExpansion.kpoint_adjustments`` is always empty. The
     result shape matches the other adapters for a uniform call surface.
     """
 

@@ -63,8 +63,10 @@ the package.
   converts lengths to Angstrom. Any other single non-numeric token in that
   position is rejected as an unsupported length unit.
 - ``POSITIONS_ABS`` rows are converted to fractional coordinates wrapped into
-  ``[0, 1)``; ``POSITIONS_FRAC`` coordinates are kept as written. Species labels
-  such as ``H:mu`` are kept verbatim.
+  ``[0, 1)``; ``POSITIONS_FRAC`` coordinates are kept as written. A wrapped
+  coordinate within ``1e-12`` below 1.0 is an atom on a cell face and is placed
+  at 0.0, so a face atom of a non-orthogonal lattice reads the same on every
+  platform. Species labels such as ``H:mu`` are kept verbatim.
 - ``SPIN=<value>`` tokens are read from ``POSITIONS_FRAC`` rows, including the
   padded ``SPIN=  1.000`` form CASTEP writes. Rows without a token get spin 0,
   an empty ``SPIN=`` marker counts as no token, and ``atomic_spins`` is ``None``

@@ -23,6 +23,9 @@ Application shell
   Dashboard dock tracks every job. Analysis-workspace and saved
   magnetic-field-workspace nodes have a right-click delete action; workflow
   stage nodes have no context menu.
+- The project home charts the workflow stages with their dependencies and
+  progress, opens at the stage last worked on, and surveys the host cell with
+  that stage's muon positions (see :doc:`project_home`).
 - Durable project and job state is autosaved. Analysis layouts and viewer
   choices are kept until ``Save Project``, which MuFinder offers whenever a
   project window is closed.

@@ -62,6 +62,11 @@ stage/workflow panel in the centre, and the global job dashboard in a bottom
 dock. Project-wide views are always available regardless of the selected stage,
 and stage panels surface their prerequisites and dependency gaps.
 
+The project home shows where a project stands: a chart of the workflow stages
+with their dependencies and progress, opened at the stage the user last worked
+on; notes on the selected stage with a link to it; and a survey of the host
+cell with that stage's muon positions (see :doc:`project_home`).
+
 Project model and persistence
 -----------------------------
 
