@@ -57,6 +57,27 @@ Compatibility ledger
        the site.
      - Read-side repair. Keep until a saved-project schema version bump
        includes a migration that renames the key in stored sites.
+   * - ``castep_transition_state_search`` /
+       ``castep_transition_state_search_set`` calc types
+     - ``TRANSITION_STATE_SEARCH_CALC_TYPE`` /
+       ``TRANSITION_STATE_SEARCH_SET_CALC_TYPE``
+       (``mufinder.workflow.energy_barriers``, re-exported from
+       ``mufinder.workflow``) / job, result and calculation entity files
+     - Calc types of the LST/QST transition-state search, which Energy
+       Barriers no longer creates; it expands only NEB jobs. They are read so
+       an older project's records still load:
+       ``EnergyBarriersController`` owns jobs of the search calc type,
+       ``RetrievalFlags.for_calc_type`` retrieves their ``.ts`` output, and the
+       completion rule in ``mufinder.app.main_window`` counts their results.
+       The diffusion-path ``sources`` in a set definition's ``configuration``
+       join the generated paths
+       (``mufinder.services.source_candidates.energy_barrier_generated_sources``)
+       and are removed with them (``EnergyBarriersController.path_definitions``).
+     - Project-file shim. The set calc type can go once a saved-project schema
+       version bump includes a migration that moves each set's ``sources``
+       into the Energy Barriers form state. The search calc type names what
+       CASTEP ran, so a stored job or result keeps it; drop its readers only
+       when projects holding such records are no longer supported.
    * - ``recommended_cutoff_*`` project fields
      - ``Project`` / project manifest
      - Persisted project defaults used by current cutoff, k-point, relaxation,

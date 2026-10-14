@@ -1,4 +1,4 @@
-"""Transition-state-search workflow expansion for Energy Barriers."""
+"""Nudged-elastic-band (NEB) workflow expansion for Energy Barriers."""
 
 from __future__ import annotations
 
@@ -16,7 +16,10 @@ from .naming import job_name
 from .types import CellTemplate, InputTemplate, JobPatch, JobSpec, ParamTemplate, StructureSpec
 
 
-TRANSITION_STATE_SEARCH_CALC_TYPE = "castep_transition_state_search"
+# Read-only calc types of the retired LST/QST transition-state search. Nothing
+# creates them; they remain so the jobs, results and path definitions an older
+# project stored still load. See the ledger in docs/compatibility_policy.rst.
+TRANSITION_STATE_SEARCH_CALC_TYPE ="castep_transition_state_search"
 TRANSITION_STATE_SEARCH_SET_CALC_TYPE = "castep_transition_state_search_set"
 NUDGED_ELASTIC_BAND_CALC_TYPE = "castep_nudged_elastic_band"
 NUDGED_ELASTIC_BAND_SET_CALC_TYPE = "castep_nudged_elastic_band_set"
@@ -253,13 +256,16 @@ def _nudged_elastic_band_param_template(
     atomic_spins: tuple[float, ...] | None,
     num_farms: int = 1,
 ) -> ParamTemplate:
-    # Reuse the shared transition-state template (task + method + spin handling) and
-    # add the climbing-image flag so the central bead lands on the saddle (the barrier).
+    # The climbing-image flag makes the central bead land on the saddle (the barrier).
     # The image count (`tssearch_max_path_points`) and tolerances come from the
     # workflow/UI configuration; CASTEP requires an odd image count when climbing.
-    base = _transition_state_param_template(method=method, atomic_spins=atomic_spins)
     keywords = [
-        *base.keywords,
+        KeywordAssignment("task", "TRANSITIONSTATESEARCH"),
+        KeywordAssignment("tssearch_method", method),
+    ]
+    if has_nonzero_spins(atomic_spins):
+        keywords.append(KeywordAssignment("spin_polarized", True))
+    keywords += [
         KeywordAssignment("tssearch_neb_climbing", True),
         # Odd default so the climbing image sits on the saddle without CASTEP silently
         # bumping the count; 11 gives a smoother, better-resolved band than the minimum.
@@ -270,16 +276,6 @@ def _nudged_elastic_band_param_template(
     # warning) for any other TSSEARCH_METHOD, so emitting it there would be noise.
     if int(num_farms) > 1:
         keywords.append(KeywordAssignment("num_farms", max(1, int(num_farms))))
-    return ParamTemplate(keywords=tuple(keywords))
-
-
-def _transition_state_param_template(*, method: str, atomic_spins: tuple[float, ...] | None) -> ParamTemplate:
-    keywords = [
-        KeywordAssignment("task", "TRANSITIONSTATESEARCH"),
-        KeywordAssignment("tssearch_method", method),
-    ]
-    if has_nonzero_spins(atomic_spins):
-        keywords.append(KeywordAssignment("spin_polarized", True))
     return ParamTemplate(keywords=tuple(keywords))
 
 
