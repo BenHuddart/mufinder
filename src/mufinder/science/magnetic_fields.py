@@ -766,7 +766,7 @@ def _expanded_muon_positions(
     for index, site in enumerate(muon_sites, start=1):
         if isinstance(site, MuonSite):
             label = site.label or f"site {index}"
-            position = _canonical_fractional(site.fractional_position)
+            position = _canonical_fractional(site.current_fractional_position())
         else:
             label = f"site {index}"
             position = _canonical_fractional(site)

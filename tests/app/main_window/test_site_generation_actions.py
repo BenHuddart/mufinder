@@ -75,8 +75,8 @@ def test_cluster_muon_positions_requested_updates_rows(main_window, tmp_path: Pa
         label="Candidate",
         status="generated",
         generation_method="manual",
-        fractional_position=[0.1, 0.2, 0.3],
-        cartesian_position=[0.5, 1.0, 1.5],
+        initial_fractional_position=[0.1, 0.2, 0.3],
+        initial_cartesian_position=[0.5, 1.0, 1.5],
     )
     window._document.sites[site.id] = site
 
@@ -87,7 +87,7 @@ def test_cluster_muon_positions_requested_updates_rows(main_window, tmp_path: Pa
         }
     )
 
-    assert site.fractional_position == pytest.approx([0.9, 0.8, 0.7])
+    assert site.initial_fractional_position == pytest.approx([0.9, 0.8, 0.7])
     assert window._muon_generation_view._site_table.item(0, 3).text() == "0.9000"
     assert window._muon_generation_view._selected_site_ids() == [str(site.id)]
     window.close()

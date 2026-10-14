@@ -5752,8 +5752,8 @@ def _uep_cluster_muon_site_options(
                 label=site.label or "UEP cluster site",
                 source_label="Generated UEP site",
                 cluster_label=_cluster_label_from_properties(site.properties),
-                fractional_position=_tuple3(site.fractional_position),
-                cartesian_position=_tuple3(site.cartesian_position),
+                fractional_position=_tuple3(site.initial_fractional_position),
+                cartesian_position=_tuple3(site.initial_cartesian_position),
                 properties=dict(site.properties),
             )
         )

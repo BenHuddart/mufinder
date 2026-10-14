@@ -85,8 +85,27 @@ def test_site_from_dict_prefers_total_energy_key_and_defaults_blank_status() -> 
     assert site.total_energy_eV == pytest.approx(-3.0)
 
 
+def test_relaxed_site_round_trips_both_positions_under_their_own_keys() -> None:
+    site = MuonSite(
+        label="Site 1",
+        status="relaxed",
+        initial_fractional_position=[0.1, 0.2, 0.3],
+        initial_cartesian_position=[0.4, 0.8, 1.2],
+        relaxed_fractional_position=[0.15, 0.25, 0.35],
+    )
+
+    payload = to_jsonable(site)
+
+    assert payload["initial_fractional_position"] == [0.1, 0.2, 0.3]
+    assert payload["initial_cartesian_position"] == [0.4, 0.8, 1.2]
+    assert payload["relaxed_fractional_position"] == [0.15, 0.25, 0.35]
+    assert "fractional_position" not in payload
+    assert "cartesian_position" not in payload
+    assert project_codec.site_from_dict(payload) == site
+
+
 def test_site_round_trips_through_to_jsonable() -> None:
-    site = MuonSite(label="Site 1", status="staged", fractional_position=[0.1, 0.2, 0.3], total_energy_eV=-1.0)
+    site = MuonSite(label="Site 1", status="staged", initial_fractional_position=[0.1, 0.2, 0.3], total_energy_eV=-1.0)
 
     assert project_codec.site_from_dict(to_jsonable(site)) == site
 

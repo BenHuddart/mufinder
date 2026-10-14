@@ -174,17 +174,17 @@ def cluster_candidate_positions(
         site = document.sites.get(site_id)
         if site is None or site.status not in LEGACY_GENERATED_SITE_STATUSES:
             continue
-        if len(site.fractional_position) != 3:
+        if len(site.initial_fractional_position) != 3:
             raise SiteGenerationError(f"Muon site '{site.label}' is missing a valid fractional position.")
         clustered = closest_symmetry_equivalent_position(
-            site.fractional_position,
+            site.initial_fractional_position,
             anchor_frac=anchor,
             lattice_vectors=lattice,
             host_species=host.species,
             host_positions_frac=host.fractional_positions,
         )
-        site.fractional_position = clustered
-        site.cartesian_position = lattice_frac_to_cart(clustered, lattice)
+        site.initial_fractional_position = clustered
+        site.initial_cartesian_position = lattice_frac_to_cart(clustered, lattice)
         updated.append(site)
 
     if not updated:
@@ -297,8 +297,8 @@ def _generate_manual_site(
     site = MuonSite(
         label=f"{label_prefix} {_next_site_label_number(document, label_prefix)}",
         status=GENERATED_SITE_STATUS,
-        fractional_position=fractional,
-        cartesian_position=cartesian,
+        initial_fractional_position=fractional,
+        initial_cartesian_position=cartesian,
         generation_method="manual",
         source_structure_id=host.structure_id,
         properties={"coordinate_system": coord_system},
@@ -335,8 +335,8 @@ def _generate_random_sites(
         MuonSite(
             label=f"{label_prefix} {start_index + idx - 1}",
             status=GENERATED_SITE_STATUS,
-            fractional_position=point.fractional,
-            cartesian_position=point.cartesian,
+            initial_fractional_position=point.fractional,
+            initial_cartesian_position=point.cartesian,
             generation_method="random",
             source_structure_id=host.structure_id,
             properties={
@@ -474,8 +474,8 @@ def _generate_attached_element_sites(
         MuonSite(
             label=f"{label_prefix} {start_index + idx - 1}",
             status=GENERATED_SITE_STATUS,
-            fractional_position=point.fractional,
-            cartesian_position=point.cartesian,
+            initial_fractional_position=point.fractional,
+            initial_cartesian_position=point.cartesian,
             generation_method="near_element",
             source_structure_id=host.structure_id,
             properties={
@@ -574,8 +574,8 @@ def _uep_cluster_site(
     return MuonSite(
         label=label,
         status=GENERATED_SITE_STATUS,
-        fractional_position=fractional,
-        cartesian_position=cartesian,
+        initial_fractional_position=fractional,
+        initial_cartesian_position=cartesian,
         generation_method=method_name,
         source_structure_id=source_structure_id,
         properties=merged_properties,
@@ -644,9 +644,9 @@ def _has_duplicate_uep_cluster_site(document: ProjectDocument, source_key: str, 
             return True
         if site.generation_method not in {"uep_cluster", "uep_cluster_member", "uep_batch_cluster"}:
             continue
-        if not site.fractional_position or len(site.fractional_position) != 3:
+        if not site.initial_fractional_position or len(site.initial_fractional_position) != 3:
             continue
-        if all(abs((float(a) - float(b) + 0.5) % 1.0 - 0.5) <= 1e-6 for a, b in zip(site.fractional_position, fractional)):
+        if all(abs((float(a) - float(b) + 0.5) % 1.0 - 0.5) <= 1e-6 for a, b in zip(site.initial_fractional_position, fractional)):
             return True
     return False
 
