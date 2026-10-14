@@ -257,6 +257,10 @@ reported barrier is a barrier for that specific hop definition. It should not be
 read as a complete diffusion network unless the relevant competing paths have
 also been generated and compared.
 
+The Energy Barriers stage counts as complete in the workflow navigator and on
+the project home once the project holds at least one NEB result. Until then its
+summary counts the stage's jobs, or reads ``No barrier calculations yet``.
+
 Current scope and limitations
 -----------------------------
 
