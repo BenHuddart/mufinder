@@ -68,7 +68,8 @@ Compatibility ledger
        an older project's records still load:
        ``EnergyBarriersController`` owns jobs of the search calc type,
        ``RetrievalFlags.for_calc_type`` retrieves their ``.ts`` output, and the
-       completion rule in ``mufinder.app.main_window`` counts their results.
+       Energy Barriers completion rule and stage facts in
+       ``mufinder.services.project_summary`` count their results.
        The diffusion-path ``sources`` in a set definition's ``configuration``
        join the generated paths
        (``mufinder.services.source_candidates.energy_barrier_generated_sources``)

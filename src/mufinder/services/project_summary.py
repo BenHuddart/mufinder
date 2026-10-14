@@ -233,7 +233,7 @@ WORKFLOW_STAGES: tuple[WorkflowStageInfo, ...] = (
     WorkflowStageInfo(
         "energy_barriers",
         "Energy Barriers",
-        "Complete at least one transition-state search.",
+        "Complete at least one NEB barrier calculation.",
         "Barriers for a muon hopping between sites. Needs two relaxed sites of the same charge state.",
     ),
 )
@@ -386,8 +386,13 @@ def quantum_corrections_complete(document: ProjectDocument) -> bool:
     return any(result.result_type == QUANTUM_PHONON_CALC_TYPE for result in document.results.values())
 
 
+#: Result types that hold a barrier: NEB results, plus the search results an older
+#: project may still store (see ``docs/compatibility_policy.rst``).
+_BARRIER_RESULT_TYPES = frozenset({NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE})
+
+
 def energy_barriers_complete(document: ProjectDocument) -> bool:
-    return any(result.result_type == TRANSITION_STATE_SEARCH_CALC_TYPE for result in document.results.values())
+    return any(result.result_type in _BARRIER_RESULT_TYPES for result in document.results.values())
 
 
 #: The completion rule of every stage and stage group, by key.
@@ -744,10 +749,8 @@ def _barrier_facts(document: ProjectDocument) -> tuple[str, ...]:
     if heights:
         facts.append(f"{_count(len(heights), 'barrier')}, lowest {min(heights):.2f} eV")
     facts.extend(_job_facts(document, WorkflowStage.ENERGY_BARRIERS, "job", completed=False))
-    return tuple(facts) or ("No transition-state searches yet",)
+    return tuple(facts) or ("No barrier calculations yet",)
 
-
-_BARRIER_RESULT_TYPES = frozenset({NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE})
 
 _FACTS: dict[str, Callable[[ProjectDocument], tuple[str, ...]]] = {
     "host_structure": _host_facts,

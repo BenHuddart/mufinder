@@ -16,12 +16,13 @@ from mufinder.services.project_summary import (
     WORKFLOW_STAGES,
     DependencyKind,
     StageStatus,
+    energy_barriers_complete,
     group_stage_keys,
     muon_relaxations_complete,
     structure_formula,
     summarize_project,
 )
-from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE
+from mufinder.workflow.energy_barriers import NUDGED_ELASTIC_BAND_CALC_TYPE, TRANSITION_STATE_SEARCH_CALC_TYPE
 from tests.support.project_home import muon_project, perovskite_host
 from tests.support.structures import host_structure
 
@@ -165,6 +166,32 @@ def test_barrier_facts_count_neb_results(tmp_path: Path) -> None:
     barriers = summarize_project(document).stage("energy_barriers")
 
     assert barriers.facts[0] == "2 barriers, lowest 0.18 eV"
+
+
+def test_energy_barriers_complete_once_an_neb_result_exists(tmp_path: Path) -> None:
+    document = _empty_project(tmp_path)
+    assert energy_barriers_complete(document) is False
+    assert summarize_project(document).stage("energy_barriers").facts == ("No barrier calculations yet",)
+
+    result = Result(result_type=NUDGED_ELASTIC_BAND_CALC_TYPE, data={"barrier_height_eV": 0.3})
+    document.results[result.id] = result
+
+    assert energy_barriers_complete(document) is True
+    assert summarize_project(document).stage("energy_barriers").status == StageStatus.COMPLETE
+
+
+def test_energy_barriers_still_count_an_older_projects_search_result(tmp_path: Path) -> None:
+    document = _empty_project(tmp_path)
+    result = Result(result_type=TRANSITION_STATE_SEARCH_CALC_TYPE, data={})
+    document.results[result.id] = result
+
+    assert energy_barriers_complete(document) is True
+
+
+def test_energy_barriers_goal_names_neb() -> None:
+    goal = next(info.completion_goal for info in WORKFLOW_STAGES if info.key == "energy_barriers")
+
+    assert goal == "Complete at least one NEB barrier calculation."
 
 
 def test_magnetic_workspace_without_components_is_in_progress(tmp_path: Path) -> None:
