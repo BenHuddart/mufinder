@@ -121,7 +121,7 @@ keywords:
       Fe 0 0 0 SPIN=2
       Fe 2.5 2.5 2.5 SPIN=-2
       %ENDBLOCK POSITIONS_ABS_PRODUCT
-    notes: Product-state Cartesian positions for CASTEP transition-state searches. MuFinder uses this form for NEB jobs generated from completed transition-state searches.
+    notes: Product-state Cartesian positions for CASTEP transition-state searches. MuFinder does not generate this block; NEB jobs use POSITIONS_FRAC_PRODUCT, because CASTEP rejects tagged species such as the muon in the Cartesian form.
 
   - name: POSITIONS_ABS_INTERMEDIATE
     canonical_name: positions_abs_intermediate
@@ -138,7 +138,7 @@ keywords:
       Fe 0 0 0 SPIN=2
       Fe 1.25 2.5 2.5 SPIN=-2
       %ENDBLOCK POSITIONS_ABS_INTERMEDIATE
-    notes: Intermediate Cartesian positions for CASTEP transition-state searches. MuFinder Phase 2 Energy Barriers NEB jobs populate this from the highest-energy image in the completed `.ts` path.
+    notes: Intermediate Cartesian positions for CASTEP transition-state searches. MuFinder does not generate this block; NEB jobs use POSITIONS_FRAC_INTERMEDIATE, because CASTEP rejects tagged species such as the muon in the Cartesian form.
 
   - name: SPECIES_POT
     canonical_name: species_pot
