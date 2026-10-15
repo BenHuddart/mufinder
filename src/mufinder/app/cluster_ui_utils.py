@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
 
+from mufinder.app.blocking_call import BlockingCallCancelled, run_blocking_call
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.services.keychain import (
     KeychainCredentialError,
@@ -95,8 +96,18 @@ def resolve_cluster_credentials(
     """Resolve credentials from the system keyring or manual prompts/fields."""
 
     if config.use_macos_keychain_passwords and is_glamdring_keychain_supported(config):
+        store = credential_store_for_display()
         try:
-            return load_keychain_credentials(config)
+            # A lookup can wait on a keyring unlock prompt, so it runs off the GUI thread.
+            return run_blocking_call(
+                parent,
+                lambda: load_keychain_credentials(config),
+                title=f"{store.sentence_name} passwords",
+                description=f"Reading the Physics and Glamdring passwords from the {store.name}...",
+                cancellable=True,
+            )
+        except BlockingCallCancelled:
+            return None
         except KeychainCredentialError as exc:
             show_keychain_credentials_missing(parent, config, exc)
             return None

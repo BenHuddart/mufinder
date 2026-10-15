@@ -425,7 +425,10 @@ SCARF and Redwood presets.
   <physics_username>`` and ``secret-tool store --label=<label> service
   glamdring account <glamdring_username>``; the keyring must be unlocked in
   the desktop session. The setup dialog's ``?`` button shows the exact
-  commands for the current platform. A lookup that fails, finds an empty
+  commands for the current platform. The lookup runs off the GUI thread, so a
+  keyring waiting on an unlock prompt never freezes the window; if it takes
+  noticeably long, a busy dialog appears whose ``Cancel`` button (or Escape)
+  abandons the lookup without connecting. A lookup that fails, finds an empty
   password or does not finish within 120 seconds stops the connection and
   lists the missing entries with their setup commands. The persisted
   ``use_macos_keychain_passwords`` setting enables the lookup on both
