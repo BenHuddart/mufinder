@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from mufinder.domain.enums import JobStatus
+from mufinder.domain.enums import FailureReason, JobStatus
+from mufinder.domain.models import utc_now
 from mufinder.services.project_service import ProjectService
 from tests.support.jobs import make_job
 
@@ -62,8 +63,13 @@ ALLOWED: dict[JobStatus, set[JobStatus]] = {
         JobStatus.CANCELLED,
     },
     JobStatus.COMPLETED: set(),
+    # FAILED -> QUEUED/RUNNING resumes a job failed for a missing scheduler
+    # entry that the scheduler lists again (FAILED -> RETRIEVING when it lists
+    # the job as completed).
     JobStatus.FAILED: {
         JobStatus.SUBMITTING,
+        JobStatus.QUEUED,
+        JobStatus.RUNNING,
         JobStatus.RETRIEVING,
         JobStatus.CANCELLED,
     },
@@ -128,6 +134,20 @@ _PRIMITIVES = {
     # precondition is enforced by JobExecutionController, not this primitive, so
     # the generic guard test exercises the shared RUNNING -> RETRIEVING edge.
     "retry_job_retrieval": (JobStatus.RETRIEVING, lambda s, j: s.retry_job_retrieval(j)),
+    # resume_reappeared_job drives one of three targets; the missing-entry
+    # precondition is enforced by JobExecutionController.
+    "resume_reappeared_job[queued]": (
+        JobStatus.QUEUED,
+        lambda s, j: s.resume_reappeared_job(j, JobStatus.QUEUED),
+    ),
+    "resume_reappeared_job[running]": (
+        JobStatus.RUNNING,
+        lambda s, j: s.resume_reappeared_job(j, JobStatus.RUNNING),
+    ),
+    "resume_reappeared_job[retrieving]": (
+        JobStatus.RETRIEVING,
+        lambda s, j: s.resume_reappeared_job(j, JobStatus.RETRIEVING),
+    ),
 }
 
 
@@ -149,6 +169,35 @@ def test_primitive_invokes_transition_guard(name: str) -> None:
         call(service, job)
     # The rejected transition must leave the source status untouched.
     assert job.status == disallowed_source
+
+
+@pytest.mark.parametrize("target", [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING])
+def test_resume_reappeared_job_clears_the_failure_and_keeps_remote_metadata(
+    target: JobStatus,
+) -> None:
+    service = _service()
+    job = make_job(status=JobStatus.FAILED, remote_job_id="4242", remote_directory="/remote/job")
+    job.error_message = "missing from the scheduler"
+    job.failure_reason = FailureReason.OUTPUT_UNAVAILABLE
+    job.completed_at = utc_now()
+
+    service.resume_reappeared_job(job, target)
+
+    assert job.status == target
+    assert job.error_message is None
+    assert job.failure_reason is None
+    assert job.completed_at is None
+    assert (job.started_at is not None) is (target == JobStatus.RUNNING)
+    assert (job.remote_job_id, job.remote_directory) == ("4242", "/remote/job")
+
+
+@pytest.mark.parametrize("target", [JobStatus.COMPLETED, JobStatus.SUBMITTING, JobStatus.FAILED])
+def test_resume_reappeared_job_rejects_other_targets(target: JobStatus) -> None:
+    job = make_job(status=JobStatus.FAILED)
+
+    with pytest.raises(ValueError, match="cannot resume"):
+        _service().resume_reappeared_job(job, target)
+    assert job.status == JobStatus.FAILED
 
 
 def test_reset_failed_job_bypasses_assert_transition_and_targets_defined() -> None:

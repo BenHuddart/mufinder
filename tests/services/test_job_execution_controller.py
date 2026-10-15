@@ -11,7 +11,12 @@ from mufinder.domain.models import CalculationRun
 from mufinder.domain.enums import FailureReason, JobStatus
 from mufinder.domain.models import Result, utc_now
 from mufinder.services.job_artifacts import RetrievalFlags
-from mufinder.services.job_execution_controller import ClusterJobSubmission, JobExecutionController
+from mufinder.services.failure_diagnosis import MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE
+from mufinder.services.job_execution_controller import (
+    ClusterJobSubmission,
+    JobExecutionController,
+    awaits_scheduler_reappearance,
+)
 from mufinder.services.project_service import ProjectDocument, ProjectService
 from tests.support.jobs import make_job
 
@@ -1268,3 +1273,109 @@ def test_local_submission_forwards_retrieval_flags_to_the_runner(tmp_path: Path)
     assert RetrievalFlags(
         **{name: runner.submitted[0][name] for name in flags.as_kwargs()}
     ) == flags
+
+
+# ---------------------------------------------------------------------------
+# Resuming a job failed for a missing scheduler entry (issue #183)
+# ---------------------------------------------------------------------------
+
+
+def _queued_cluster_job_failed_as_missing(service, document, controller, label: str):
+    """Return a queued cluster job the runner failed because the scheduler stopped listing it."""
+
+    job = _cluster_running_job(service, document, label)
+    job.status = JobStatus.QUEUED
+    job.remote_job_id = "4242"
+    failed_run = _tracked_run(controller, document, job, JobStatus.QUEUED)
+    controller.fail_job(job.id, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
+    return job, failed_run
+
+
+@pytest.mark.parametrize(
+    ("reported", "resumed"),
+    [
+        (JobStatus.QUEUED.value, JobStatus.QUEUED),
+        (JobStatus.RUNNING.value, JobStatus.RUNNING),
+        (JobStatus.COMPLETED.value, JobStatus.RETRIEVING),
+    ],
+)
+def test_resume_reappeared_cluster_job_resumes_with_a_fresh_run(
+    tmp_path: Path, reported: str, resumed: JobStatus
+) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job, failed_run = _queued_cluster_job_failed_as_missing(service, document, controller, "late")
+    assert job.status == JobStatus.FAILED
+    assert awaits_scheduler_reappearance(job) is True
+
+    update = controller.resume_reappeared_cluster_job(job.id, reported)
+
+    assert update.changed is True
+    assert job.status == resumed
+    assert job.error_message is None
+    assert job.failure_reason is None
+    assert awaits_scheduler_reappearance(job) is False
+    assert job.last_status_source == "scheduler_poll"
+    assert job.last_status_message == f"scheduler reports {reported.upper()} again; tracking resumed"
+    # The failed run keeps its outcome; a new run tracks the resumed job.
+    assert failed_run.status == JobStatus.FAILED
+    run = controller.run_for_job(job.id)
+    assert run is not None and run.id != failed_run.id
+    assert run.status == resumed
+    assert run.run_index == 2
+    assert (run.started_at is not None) is (resumed == JobStatus.RUNNING)
+
+
+def test_resumed_job_completes_on_its_new_run(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job, failed_run = _queued_cluster_job_failed_as_missing(service, document, controller, "finish")
+
+    controller.resume_reappeared_cluster_job(job.id, JobStatus.QUEUED.value)
+    controller.mark_cluster_status_changed(job.id, JobStatus.RUNNING.value)
+    controller.mark_started(job.id)
+    controller.mark_cluster_status_changed(job.id, JobStatus.RETRIEVING.value)
+    result = Result(result_type="castep_cutoff", data={"total_energy": -1.0})
+    controller.complete_job_with_result(job, result=result, warnings=[], convergence_achieved=True)
+
+    assert job.status == JobStatus.COMPLETED
+    assert failed_run.status == JobStatus.FAILED
+    completed_run = next(run for run in document.runs.values() if run.result_id == result.id)
+    assert completed_run.id != failed_run.id
+    assert completed_run.status == JobStatus.COMPLETED
+
+
+@pytest.mark.parametrize(
+    "disqualify",
+    [
+        lambda job: setattr(job, "error_message", "Failed to retrieve or parse remote output: boom"),
+        lambda job: setattr(job, "dismissed_at", utc_now()),
+        lambda job: setattr(job, "execution_target", "local"),
+        lambda job: setattr(job, "remote_job_id", None),
+        lambda job: setattr(job, "status", JobStatus.DEFINED),
+    ],
+    ids=["other-failure", "dismissed", "local", "no-remote-id", "reset"],
+)
+def test_resume_reappeared_cluster_job_ignores_other_jobs(tmp_path: Path, disqualify) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job, _failed_run = _queued_cluster_job_failed_as_missing(service, document, controller, "other")
+    disqualify(job)
+    status = job.status
+    runs = len(document.runs)
+
+    update = controller.resume_reappeared_cluster_job(job.id, JobStatus.RUNNING.value)
+
+    assert update.changed is False
+    assert job.status == status
+    assert len(document.runs) == runs
+
+
+def test_resume_reappeared_cluster_job_ignores_unknown_reports(tmp_path: Path) -> None:
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    job, _failed_run = _queued_cluster_job_failed_as_missing(service, document, controller, "odd")
+
+    assert controller.resume_reappeared_cluster_job(job.id, JobStatus.CANCELLED.value).changed is False
+    assert controller.resume_reappeared_cluster_job(uuid4(), JobStatus.QUEUED.value).changed is False
+    assert job.status == JobStatus.FAILED

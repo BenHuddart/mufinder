@@ -14,6 +14,7 @@ from mufinder.app.main_window import MainWindow
 from mufinder.domain.cluster import ClusterConfig
 from mufinder.domain.enums import JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationRun, Job, MuonSite, Result, Structure
+from mufinder.services.failure_diagnosis import MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE
 from mufinder.services.project_service import ProjectService
 from mufinder.services.ssh_client import SSHCredentials
 from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE, QUANTUM_SINGLEPOINT_CALC_TYPE
@@ -2417,4 +2418,93 @@ def test_main_window_local_submission_refuses_phonon_job_after_a_cluster_singlep
     assert phonon_job.status == JobStatus.DEFINED
     assert len(infos) == 1
     assert "quantum_phonon_siteA (stage 1 ran on alpha)" in infos[0]
+    window.close()
+
+
+def _queued_cluster_job(window: MainWindow, tmp_path: Path) -> Job:
+    service = window._project_service
+    doc = service.create_project(tmp_path / "cluster_recovery.mufinder", "ClusterRecovery")
+    job = service.add_job(
+        doc,
+        label="long_queue_job",
+        workflow_stage=main_window_module.WorkflowStage.CONVERGENCE_CUTOFF,
+        calc_type="castep_convergence_cutoff",
+        execution_target="alpha",
+    )
+    service.submit_job(job)
+    service.mark_job_queued(job, remote_job_id="4242")
+    job.remote_directory = "/remote/work/long_queue_job"
+    run = CalculationRun(job_id=job.id, run_index=1, status=JobStatus.QUEUED)
+    doc.runs[run.id] = run
+    window._document = doc
+    window._job_execution.active_run_by_job[job.id] = run.id
+    return job
+
+
+def test_main_window_reports_a_cluster_job_that_starts_running(main_window, tmp_path: Path) -> None:
+    window = main_window
+    job = _queued_cluster_job(window, tmp_path)
+
+    window._on_cluster_job_status_changed(job.id, JobStatus.RUNNING.value)
+    window._on_cluster_job_started(job.id)
+
+    assert job.status == JobStatus.RUNNING
+    assert window.statusBar().currentMessage() == "Cluster job started running: long_queue_job"
+    window.close()
+
+
+def test_main_window_resumes_a_failed_job_the_scheduler_lists_again(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    job = _queued_cluster_job(window, tmp_path)
+    tracked: list[dict[str, object]] = []
+    monkeypatch.setattr(window._cluster_runner, "track_existing_job", lambda **kwargs: tracked.append(kwargs))
+    monkeypatch.setattr(window, "_job_output_directory", lambda _job: tmp_path / "out")
+    window._on_cluster_job_failed(job.id, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
+    assert job.status == JobStatus.FAILED
+
+    window._on_cluster_job_reappeared(job.id, JobStatus.RUNNING.value)
+
+    assert job.status == JobStatus.RUNNING
+    assert job.error_message is None
+    assert len(tracked) == 1
+    assert tracked[0]["job_id"] == job.id
+    assert tracked[0]["remote_job_id"] == "4242"
+    assert tracked[0]["status"] == JobStatus.RUNNING
+    assert tracked[0]["watch_for_recovery"] is False
+    assert window.statusBar().currentMessage() == (
+        "Cluster job long_queue_job is listed by the scheduler again; tracking resumed"
+    )
+
+    # A second report for a job no longer failed changes nothing.
+    window._on_cluster_job_reappeared(job.id, JobStatus.RUNNING.value)
+    assert len(tracked) == 1
+    window.close()
+
+
+def test_main_window_batch_timeout_stops_the_worker_submitting(
+    main_window, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    cancel_requests: list[bool] = []
+    # The worker never reports progress, so the inactivity watchdog fires.
+    monkeypatch.setattr(window._cluster_runner, "submit_batch", lambda _items: None)
+    monkeypatch.setattr(window._cluster_runner, "cancel_batch", lambda: cancel_requests.append(True))
+
+    class _FastTimer(main_window_module.QTimer):
+        def setInterval(self, _msec: int) -> None:
+            super().setInterval(10)
+
+    monkeypatch.setattr(main_window_module, "QTimer", _FastTimer)
+
+    submitted, failed = window._run_cluster_submit_batch([{"job_id": None}], {})
+
+    assert submitted == []
+    # The watchdog asks the worker to stop before the unseen jobs are
+    # cancelled; closing the progress dialog then repeats the request.
+    assert cancel_requests == [True, True]
+    assert failed == [
+        "- Cluster submission stopped responding after 3 minutes; 1 pending job(s) were cancelled."
+    ]
     window.close()

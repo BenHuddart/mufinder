@@ -29,7 +29,12 @@ from mufinder.services.failure_diagnosis import (
     RETRY_RETRIEVAL_NOT_CONNECTED_MESSAGE,
 )
 from mufinder.services.job_artifacts import RetrievalFlags
-from mufinder.services.scheduler import Scheduler, SchedulerSubmitRequest, create_scheduler
+from mufinder.services.scheduler import (
+    Scheduler,
+    SchedulerJobInfo,
+    SchedulerSubmitRequest,
+    create_scheduler,
+)
 from mufinder.services.script_template import render_job_script
 from mufinder.services.ssh_client import SSHConnection, SSHCredentials
 
@@ -60,6 +65,10 @@ class _TrackedClusterJob:
     #: Consecutive polls where this job was missing from the scheduler queue
     #: and its output could not be downloaded. Reset when the job reappears.
     missing_retrieval_attempts: int = 0
+    #: The job was failed because neither the queue nor accounting listed it.
+    #: It stays terminal but is still polled, so ``job_reappeared`` can report
+    #: it if the scheduler lists it again.
+    watch_for_recovery: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +145,10 @@ class ClusterJobRunner(QObject):
     job_failed = Signal(object, str)
     job_cancelled = Signal(object)
     status_changed = Signal(object, object)
+    #: ``(job_id, status_value)``: a job failed for a missing scheduler entry is
+    #: listed again as queued, running or completed. The runner has stopped
+    #: watching it; the GUI recovers the job and re-tracks it.
+    job_reappeared = Signal(object, object)
 
     connection_status_changed = Signal(bool)
     queue_checked = Signal(object)
@@ -406,12 +419,16 @@ class ClusterJobRunner(QObject):
         local_output_dir: Path,
         cluster_name: str,
         status: JobStatus,
+        watch_for_recovery: bool = False,
         **retrieval: Any,
     ) -> None:
         """Register a persisted cluster job for queue polling and retrieval.
 
-        ``retrieval`` holds the :class:`~mufinder.services.job_artifacts.RetrievalFlags`
-        fields as keywords.
+        ``watch_for_recovery`` registers a job failed for a missing scheduler
+        entry: it is polled only to emit ``job_reappeared`` if the scheduler
+        lists it again. ``retrieval`` holds the
+        :class:`~mufinder.services.job_artifacts.RetrievalFlags` fields as
+        keywords.
         """
 
         if not remote_job_id.strip() or not remote_dir.strip():
@@ -427,12 +444,8 @@ class ClusterJobRunner(QObject):
             status=status,
             retrieval=retrieval,
         )
-        if (
-            self.is_connected
-            and not tracked.terminal
-            and self._tracked_job_matches_connected_cluster(tracked)
-            and not self._poll_timer.isActive()
-        ):
+        tracked.watch_for_recovery = tracked.terminal and watch_for_recovery
+        if self.is_connected and self._is_polled(tracked) and not self._poll_timer.isActive():
             self._poll_timer.start()
 
     def retrieve_outputs_for(
@@ -541,10 +554,14 @@ class ClusterJobRunner(QObject):
         )
 
     def _has_active_jobs_for_connected_cluster(self) -> bool:
-        return any(
-            not entry.terminal and self._tracked_job_matches_connected_cluster(entry)
-            for entry in self._tracked_jobs.values()
-        )
+        return any(self._is_polled(entry) for entry in self._tracked_jobs.values())
+
+    def _is_polled(self, entry: _TrackedClusterJob) -> bool:
+        """Return whether queue polls check ``entry``: active or watched, on this cluster."""
+
+        return (
+            not entry.terminal or entry.watch_for_recovery
+        ) and self._tracked_job_matches_connected_cluster(entry)
 
     @staticmethod
     def remote_job_directory(*, working_directory: str, seed_name: str) -> str:
@@ -584,14 +601,18 @@ class ClusterJobRunner(QObject):
     def scheduler_job_is_active(self, remote_job_id: str) -> bool:
         """Return whether the scheduler still lists ``remote_job_id`` as unfinished.
 
-        A job the scheduler no longer lists, or lists in a terminal state, is
-        finished. Errors propagate: a caller about to delete the job's directory
-        must refuse rather than guess.
+        A job missing from the queue is looked up in scheduler accounting, so a
+        pending job the queue command filters out still counts as unfinished. A
+        job neither lists, or one in a terminal state, is finished. Errors
+        propagate: a caller about to delete the job's directory must refuse
+        rather than guess.
         """
 
         ssh = self._require_ssh()
         scheduler = self._require_scheduler()
         info = scheduler.status(ssh, [remote_job_id]).get(remote_job_id)
+        if info is None:
+            info = scheduler.history(ssh, [remote_job_id]).get(remote_job_id)
         return info is not None and not scheduler.is_terminal(info.state)
 
     def _poll_queue(self) -> None:
@@ -602,79 +623,54 @@ class ClusterJobRunner(QObject):
         ssh = self._require_ssh()
         scheduler = self._require_scheduler()
 
-        active = [
-            entry
-            for entry in self._tracked_jobs.values()
-            if not entry.terminal and self._tracked_job_matches_connected_cluster(entry)
-        ]
-        if not active:
+        polled = [entry for entry in self._tracked_jobs.values() if self._is_polled(entry)]
+        if not polled:
             self.queue_checked.emit(QueueCheckSnapshot(checked_at=utc_now(), elapsed_by_job_id={}))
             return
 
         try:
-            statuses = scheduler.status(ssh, [entry.remote_job_id for entry in active])
+            statuses = scheduler.status(ssh, [entry.remote_job_id for entry in polled])
         except Exception as exc:  # noqa: BLE001
             cluster_name = self._config.name if self._config is not None else "the cluster"
             self.disconnect()
             self.poll_failed.emit(f"Queue polling failed for {cluster_name}: {exc}")
             return
 
+        history = self._scheduler_history(
+            ssh,
+            scheduler,
+            [entry.remote_job_id for entry in polled if entry.remote_job_id not in statuses],
+        )
+
         observations_by_job_id: dict[UUID, str] = {}
-        for entry in active:
+        elapsed_by_job_id: dict[UUID, str] = {}
+        for entry in polled:
             info = statuses.get(entry.remote_job_id)
+            missing_from_queue = info is None
+            if info is None:
+                info = history.get(entry.remote_job_id)
+
+            if entry.watch_for_recovery:
+                observations_by_job_id[entry.job_id] = self._check_reappearance(entry, info, scheduler)
+                continue
+
+            if info is not None and info.elapsed_runtime:
+                elapsed_by_job_id[entry.job_id] = info.elapsed_runtime
 
             if info is None:
-                # Missing scheduler entry: usually completion, so retrieval is
-                # attempted, but output-unavailable errors are retried across a
-                # short grace window instead of failing the job immediately.
+                # Neither the queue nor accounting lists the job: usually
+                # completion with expired history, so retrieval is attempted,
+                # but output-unavailable errors are retried across a short
+                # grace window instead of failing the job immediately.
                 observations_by_job_id[entry.job_id] = self._retrieve_results(
                     entry, missing_from_queue=True
                 )
                 continue
 
-            entry.missing_retrieval_attempts = 0
-            mapped = scheduler.map_to_job_status(info.state)
+            observations_by_job_id[entry.job_id] = self._apply_scheduler_state(
+                entry, info, scheduler, missing_from_queue=missing_from_queue
+            )
 
-            if mapped == JobStatus.COMPLETED:
-                entry.status = mapped
-                observations_by_job_id[entry.job_id] = self._retrieve_results(entry)
-                continue
-
-            observations_by_job_id[entry.job_id] = f"scheduler reports {mapped.value.upper()}"
-            if mapped == entry.status:
-                continue
-
-            entry.status = mapped
-            if mapped in (JobStatus.QUEUED, JobStatus.RUNNING):
-                self.status_changed.emit(entry.job_id, mapped.value)
-                continue
-            if mapped == JobStatus.CANCELLED:
-                entry.terminal = True
-                self.job_cancelled.emit(entry.job_id)
-                self.status_changed.emit(entry.job_id, JobStatus.CANCELLED.value)
-                continue
-            if mapped in (JobStatus.STOPPED, JobStatus.FAILED):
-                entry.terminal = True
-                # Download the error files and scheduler log, so a stop can be
-                # diagnosed and inspected like a failure.
-                retrieve_error_files(
-                    ssh,
-                    remote_job_id=entry.remote_job_id,
-                    remote_dir=entry.remote_dir,
-                    seed_name=entry.seed_name,
-                    local_output_dir=entry.local_output_dir,
-                )
-                if mapped == JobStatus.STOPPED:
-                    self.status_changed.emit(entry.job_id, JobStatus.STOPPED.value)
-                else:
-                    self._fail(entry, f"Scheduler reported the job as {scheduler.state_name(info.state)}.")
-                continue
-
-        elapsed_by_job_id = {
-            entry.job_id: info.elapsed_runtime
-            for entry in active
-            if (info := statuses.get(entry.remote_job_id)) is not None and info.elapsed_runtime
-        }
         self.queue_checked.emit(
             QueueCheckSnapshot(
                 checked_at=utc_now(),
@@ -683,12 +679,127 @@ class ClusterJobRunner(QObject):
             )
         )
 
-    def _retrieve_results(self, entry: _TrackedClusterJob, *, missing_from_queue: bool = False) -> str:
+    @staticmethod
+    def _scheduler_history(ssh, scheduler: Scheduler, job_ids: list[str]) -> dict[str, SchedulerJobInfo]:
+        """Return accounting records for ``job_ids``, or none if the lookup fails.
+
+        The queue poll already succeeded, so a failed accounting lookup leaves
+        the jobs unknown rather than disconnecting.
+        """
+
+        if not job_ids:
+            return {}
+        try:
+            return scheduler.history(ssh, job_ids)
+        except Exception:  # noqa: BLE001 - accounting is a best-effort fallback
+            return {}
+
+    def _apply_scheduler_state(
+        self,
+        entry: _TrackedClusterJob,
+        info: SchedulerJobInfo,
+        scheduler: Scheduler,
+        *,
+        missing_from_queue: bool,
+    ) -> str:
+        """Act on the scheduler state ``info`` reports for ``entry`` and return the observation.
+
+        ``missing_from_queue`` marks a state read from accounting because the
+        queue did not list the job.
+        """
+
+        mapped = scheduler.map_to_job_status(info.state)
+
+        if mapped == JobStatus.COMPLETED:
+            entry.status = mapped
+            return self._retrieve_results(
+                entry, missing_from_queue=missing_from_queue, accounted=missing_from_queue
+            )
+
+        # The job is listed as unfinished, so any earlier grace window restarts.
+        entry.missing_retrieval_attempts = 0
+        source = "scheduler accounting" if missing_from_queue else "scheduler"
+        observation = queue_observation(
+            f"{source} reports {mapped.value.upper()}", missing_from_queue=missing_from_queue
+        )
+        if mapped == entry.status:
+            return observation
+        if mapped == JobStatus.QUEUED and entry.status == JobStatus.RUNNING:
+            # No transition leads back to queued: a running job SLURM suspends
+            # or requeues stays running, and starting again is not a new start.
+            return observation
+
+        previous = entry.status
+        entry.status = mapped
+        if mapped in (JobStatus.QUEUED, JobStatus.RUNNING):
+            self.status_changed.emit(entry.job_id, mapped.value)
+            if mapped == JobStatus.RUNNING and previous in (JobStatus.SUBMITTING, JobStatus.QUEUED):
+                self.job_started.emit(entry.job_id)
+            return observation
+        if mapped == JobStatus.CANCELLED:
+            entry.terminal = True
+            self.job_cancelled.emit(entry.job_id)
+            self.status_changed.emit(entry.job_id, JobStatus.CANCELLED.value)
+            return observation
+        if mapped in (JobStatus.STOPPED, JobStatus.FAILED):
+            entry.terminal = True
+            # Download the error files and scheduler log, so a stop can be
+            # diagnosed and inspected like a failure.
+            retrieve_error_files(
+                self._require_ssh(),
+                remote_job_id=entry.remote_job_id,
+                remote_dir=entry.remote_dir,
+                seed_name=entry.seed_name,
+                local_output_dir=entry.local_output_dir,
+            )
+            if mapped == JobStatus.STOPPED:
+                self.status_changed.emit(entry.job_id, JobStatus.STOPPED.value)
+            else:
+                self._fail(entry, f"Scheduler reported the job as {scheduler.state_name(info.state)}.")
+        return observation
+
+    def _check_reappearance(
+        self,
+        entry: _TrackedClusterJob,
+        info: SchedulerJobInfo | None,
+        scheduler: Scheduler,
+    ) -> str:
+        """Check a watched job against this poll and return the observation.
+
+        Any scheduler record ends the watch. A queued, running or completed job
+        is reported through ``job_reappeared``; any other state leaves the job
+        failed.
+        """
+
+        if info is None:
+            return queue_observation(
+                "not in scheduler accounting; watching for the job to reappear",
+                missing_from_queue=True,
+            )
+
+        entry.watch_for_recovery = False
+        mapped = scheduler.map_to_job_status(info.state)
+        if mapped in (JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.COMPLETED):
+            self.job_reappeared.emit(entry.job_id, mapped.value)
+            return f"scheduler reports {mapped.value.upper()} again; tracking resumed"
+        return f"scheduler reports {scheduler.state_name(info.state)}"
+
+    def _retrieve_results(
+        self,
+        entry: _TrackedClusterJob,
+        *,
+        missing_from_queue: bool = False,
+        accounted: bool = False,
+    ) -> str:
         """Run one retrieval pass for ``entry``, emit its outcome, and return the observation.
 
         :func:`~mufinder.services.cluster_retrieval.retrieve_job_outputs` decides
         the outcome. A retry-eligible failure is retried for up to
         ``MISSING_ENTRY_RETRIEVAL_ATTEMPTS`` polls before the job is failed.
+        ``accounted`` marks a job that scheduler accounting reports as completed:
+        it fails with the retrieval error. Otherwise the scheduler listed the
+        job nowhere, so it fails as a missing scheduler entry and stays watched
+        for the scheduler listing it again.
         """
 
         ssh = self._require_ssh()
@@ -709,7 +820,11 @@ class ClusterJobRunner(QObject):
             if attempts < MISSING_ENTRY_RETRIEVAL_ATTEMPTS:
                 detail = f"waiting for output (attempt {attempts} of {MISSING_ENTRY_RETRIEVAL_ATTEMPTS})"
                 return queue_observation(detail, missing_from_queue=True)
-            self._fail(entry, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
+            if accounted:
+                self._fail(entry, failure.message)
+            else:
+                self._fail(entry, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
+                entry.watch_for_recovery = True
             detail = f"output could not be retrieved after {MISSING_ENTRY_RETRIEVAL_ATTEMPTS} checks"
             return queue_observation(detail, missing_from_queue=True)
         if failure is not None:

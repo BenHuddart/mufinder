@@ -51,6 +51,15 @@ class Scheduler(ABC):
     def status(self, ssh, job_ids: list[str]) -> dict[str, SchedulerJobInfo]:
         """Return current status for requested scheduler job ids."""
 
+    def history(self, ssh, job_ids: list[str]) -> dict[str, SchedulerJobInfo]:
+        """Return accounting records for job ids the queue no longer lists.
+
+        The default backend keeps no accounting history and returns an empty
+        mapping, so a job missing from :meth:`status` stays unknown.
+        """
+
+        return {}
+
     @abstractmethod
     def is_terminal(self, state: str) -> bool:
         """Return true if scheduler state is terminal."""
@@ -68,6 +77,7 @@ class Scheduler(ABC):
 class SlurmScheduler(Scheduler):
     """SLURM scheduler implementation via shell commands over SSH."""
 
+    #: SLURM's long job-state names (``sacct``) and their ``squeue %t`` codes.
     _STATE_ALIAS: dict[str, str] = {
         "PENDING": "PD",
         "RUNNING": "R",
@@ -78,7 +88,28 @@ class SlurmScheduler(Scheduler):
         "TIMEOUT": "TO",
         "NODE_FAIL": "NF",
         "OUT_OF_MEMORY": "OOM",
+        "BOOT_FAIL": "BF",
+        "CONFIGURING": "CF",
+        "DEADLINE": "DL",
+        "PREEMPTED": "PR",
+        "RESV_DEL_HOLD": "RD",
+        "REQUEUE_FED": "RF",
+        "REQUEUE_HOLD": "RH",
+        "REQUEUED": "RQ",
+        "RESIZING": "RS",
+        "REVOKED": "RV",
+        "SIGNALING": "SI",
+        "SPECIAL_EXIT": "SE",
+        "STAGE_OUT": "SO",
+        "STOPPED": "ST",
+        "SUSPENDED": "S",
     }
+    #: States of a job whose allocation is executing or finishing.
+    _RUNNING_STATES = frozenset({"R", "CG", "RS", "SI", "SO"})
+    #: Terminal states that end a job without a successful completion.
+    _FAILED_STATES = frozenset({"F", "NF", "OOM", "BF", "DL", "PR", "RV"})
+    _TERMINAL_STATES = frozenset({"CD", "CA", "TO"}) | _FAILED_STATES
+    _STATUS_FORMAT = '--noheader --format="%i|%t|%M|%j"'
 
     def __init__(
         self,
@@ -124,11 +155,7 @@ class SlurmScheduler(Scheduler):
 
         ids_arg = ",".join(job_ids)
         queue_command = self._resolve_command(ssh, "status", "squeue", self._queue_check_command_path)
-        command = (
-            f"{shlex.quote(queue_command)} "
-            f"--jobs={shlex.quote(ids_arg)} "
-            '--noheader --format="%i|%t|%M|%j"'
-        )
+        command = self._queue_command(queue_command, ids_arg)
         exit_code, stdout, stderr = ssh.exec_command(command, timeout=60)
         if exit_code != 0:
             details = stderr.strip() or "squeue failed"
@@ -151,11 +178,7 @@ class SlurmScheduler(Scheduler):
         """
         results: dict[str, SchedulerJobInfo] = {}
         for job_id in job_ids:
-            command = (
-                f"{shlex.quote(queue_command)} "
-                f"--jobs={shlex.quote(job_id)} "
-                '--noheader --format="%i|%t|%M|%j"'
-            )
+            command = self._queue_command(queue_command, job_id)
             exit_code, stdout, stderr = ssh.exec_command(command, timeout=60)
             if exit_code != 0:
                 details = stderr.strip() or stdout.strip() or "squeue failed"
@@ -164,6 +187,38 @@ class SlurmScheduler(Scheduler):
                 raise RuntimeError(details)
             results.update(self._parse_status_output(stdout))
         return results
+
+    def _queue_command(self, queue_command: str, ids_arg: str) -> str:
+        """Return the ``squeue`` query for ``ids_arg``.
+
+        ``--all`` keeps jobs in hidden or unavailable partitions in the output,
+        which ``squeue`` otherwise leaves out.
+        """
+
+        return f"{shlex.quote(queue_command)} --all --jobs={shlex.quote(ids_arg)} {self._STATUS_FORMAT}"
+
+    def history(self, ssh, job_ids: list[str]) -> dict[str, SchedulerJobInfo]:
+        """Return each job's ``sacct`` allocation record, keyed by job id.
+
+        Accounting still knows a job that ``squeue`` filters out or has already
+        forgotten. A cluster without job accounting (``sacct`` exits non-zero)
+        reports no records rather than an error, because the queue poll itself
+        succeeded.
+        """
+
+        if not job_ids:
+            return {}
+
+        accounting_command = self._resolve_command(ssh, "history", "sacct", "")
+        command = (
+            f"{shlex.quote(accounting_command)} "
+            f"--jobs={shlex.quote(','.join(job_ids))} "
+            "--allocations --noheader --parsable2 --format=JobID,State,Elapsed,JobName"
+        )
+        exit_code, stdout, _stderr = ssh.exec_command(command, timeout=60)
+        if exit_code != 0:
+            return {}
+        return self._parse_status_output(stdout)
 
     @staticmethod
     def _is_invalid_job_id_error(details: str) -> bool:
@@ -198,24 +253,28 @@ class SlurmScheduler(Scheduler):
         return results
 
     def is_terminal(self, state: str) -> bool:
-        normalized = self._normalise_state(state)
-        return normalized in {"CD", "F", "CA", "TO", "NF", "OOM"}
+        return self._normalise_state(state) in self._TERMINAL_STATES
 
     def map_to_job_status(self, state: str) -> JobStatus:
+        """Map a SLURM state to a job status.
+
+        Pending, configuring, held, requeued, suspended and stopped (``SIGSTOP``)
+        jobs are ``queued``, and so is any state this table does not know: only
+        a state SLURM names as executing may report the job as ``running``.
+        """
+
         normalized = self._normalise_state(state)
-        if normalized in {"PD"}:
-            return JobStatus.QUEUED
-        if normalized in {"R", "CG"}:
+        if normalized in self._RUNNING_STATES:
             return JobStatus.RUNNING
-        if normalized in {"CD"}:
+        if normalized == "CD":
             return JobStatus.COMPLETED
-        if normalized in {"CA"}:
+        if normalized == "CA":
             return JobStatus.CANCELLED
-        if normalized in {"TO"}:
+        if normalized == "TO":
             return JobStatus.STOPPED
-        if normalized in {"F", "NF", "OOM"}:
+        if normalized in self._FAILED_STATES:
             return JobStatus.FAILED
-        return JobStatus.RUNNING
+        return JobStatus.QUEUED
 
     def state_name(self, state: str) -> str:
         """Return SLURM's long state name (``OOM`` -> ``OUT_OF_MEMORY``)."""
@@ -224,10 +283,11 @@ class SlurmScheduler(Scheduler):
         return next((name for name, alias in self._STATE_ALIAS.items() if alias == code), code)
 
     def _normalise_state(self, state: str) -> str:
-        key = state.strip().upper()
-        if not key:
+        # ``sacct`` appends detail to some states, as in ``CANCELLED by 1234``.
+        words = state.strip().upper().split()
+        if not words:
             return ""
-        return self._STATE_ALIAS.get(key, key)
+        return self._STATE_ALIAS.get(words[0], words[0])
 
     def _resolve_command(self, ssh, cache_key: str, command_name: str, configured: str) -> str:
         if cache_key in self._resolved_commands:
