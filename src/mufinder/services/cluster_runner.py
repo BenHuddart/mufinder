@@ -51,7 +51,9 @@ def _same_credential_target(previous: ClusterConfig, current: ClusterConfig) -> 
 
     Credentials are reused only when the profile still names the same account on
     the same target and gateway endpoints, so editing a profile's host or port
-    while keeping its name never sends a cached secret to the new host.
+    while keeping its name never sends a cached secret to the new host. Turning
+    the jump host on or off also invalidates the cache, because a direct
+    connection caches its target password as the jump secret too.
     """
 
     def _host(value: str) -> str:
@@ -62,6 +64,7 @@ def _same_credential_target(previous: ClusterConfig, current: ClusterConfig) -> 
         and _host(previous.hostname) == _host(current.hostname)
         and previous.port == current.port
         and previous.username.strip() == current.username.strip()
+        and previous.jump_host_enabled == current.jump_host_enabled
         and _host(previous.jump_hostname) == _host(current.jump_hostname)
         and previous.jump_port == current.jump_port
         and previous.jump_username.strip() == current.jump_username.strip()

@@ -1071,6 +1071,24 @@ def test_cluster_runner_reconnect_does_not_reuse_cached_credentials_after_endpoi
     assert _RecordingJumpSSH.attempts == [("target-pw", "jump-pw"), (None, None)]
 
 
+def test_cluster_runner_reconnect_does_not_reuse_direct_password_after_enabling_jump_host(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = ClusterJobRunner()
+    _RecordingJumpSSH.attempts = []
+    monkeypatch.setattr(cluster_runner_module, "SSHConnection", _RecordingJumpSSH)
+    monkeypatch.setattr(cluster_runner_module, "create_scheduler", lambda _queue, **_kwargs: _FakeScheduler())
+
+    # The jump fields stay saved while the jump host is switched off, so only
+    # ``jump_host_enabled`` changes between the two connections.
+    runner.connect_to_cluster(_jump_host_redwood_config(jump_host_enabled=False), password="target-pw")
+    runner._ssh.is_connected = False
+    runner.connect_to_cluster(_jump_host_redwood_config(), credentials=SSHCredentials())
+
+    assert _RecordingJumpSSH.attempts == [("target-pw", None), (None, None)]
+
+
 def test_cluster_runner_reconnect_reuses_cached_credentials_for_unchanged_endpoints(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
