@@ -468,6 +468,11 @@ Cluster submission and monitoring
   reconnect use the keyring entries instead of password prompts.
 - When a matching cluster connection is already active, submission reuses it
   and does not ask for a password or passphrase again.
+- Reconnecting reuses the password or passphrase cached from the last
+  connection only while the profile keeps the same name, host, port and
+  username for both the target and the jump host, and the jump host stays
+  enabled or disabled; after any of them changes, the cached secret is never
+  offered to the new endpoint.
 - The dashboard shows each job's execution target (``Cluster``, which reads
   ``local`` for local jobs), remote job id, a live ``Runtime`` and the process
   count used at submission, with a connection-state indicator and a manual
