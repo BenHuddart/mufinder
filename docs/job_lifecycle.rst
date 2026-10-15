@@ -1172,6 +1172,13 @@ reappear".
   missing-scheduler-entry message as its ``error_message``, and no
   ``dismissed_at`` stamp. A job the user has since reset, resubmitted, or
   dismissed is left alone.
+- Each ``queue_checked`` snapshot lists the jobs polled only as watches
+  (``watched_job_ids``). ``JobExecutionController.stale_reappearance_watches``
+  picks out those whose job no longer awaits reappearance — reset, dismissed,
+  continued, deleted, or resubmitted under a new scheduler id — and the main
+  window ends their watches with ``ClusterJobRunner.stop_watching``, so they
+  leave the poll after one more cycle. ``mark_queue_checked`` does not stamp a
+  stale watch's observation onto its job.
 - The same predicate selects the failed jobs that the project-open
   re-tracking (and a manual queue refresh) registers with
   ``watch_for_recovery``, so the watch survives closing and reopening

@@ -6447,6 +6447,9 @@ class MainWindow(QMainWindow):
         # either way, so a deferred flush (below) is fine — nothing is lost by
         # not persisting them immediately.
         stamped = self._job_execution.mark_queue_checked(checked_at)
+        stale_watches = self._job_execution.stale_reappearance_watches(checked_at)
+        if stale_watches:
+            self._cluster_runner.stop_watching(stale_watches)
         # A queue poll fires this once after any jobs it retrieved have been
         # applied, so this also drains whatever those completions' own handlers
         # already marked pending. Routed through the debounced/rate-limited

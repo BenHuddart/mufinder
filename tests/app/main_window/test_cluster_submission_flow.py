@@ -2508,3 +2508,27 @@ def test_main_window_batch_timeout_stops_the_worker_submitting(
         "- Cluster submission stopped responding after 3 minutes; 1 pending job(s) were cancelled."
     ]
     window.close()
+
+
+def test_main_window_ends_watches_of_jobs_reset_since_failing(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = main_window
+    job = _queued_cluster_job(window, tmp_path)
+    window._on_cluster_job_failed(job.id, MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE)
+    window._project_service.reset_failed_job(job)
+    stopped: list[list[object]] = []
+    monkeypatch.setattr(window._cluster_runner, "stop_watching", lambda job_ids: stopped.append(list(job_ids)))
+
+    window._on_cluster_queue_checked(
+        SimpleNamespace(
+            checked_at=main_window_module.utc_now(),
+            elapsed_by_job_id={},
+            observations_by_job_id={job.id: "watching for the job to reappear"},
+            watched_job_ids=frozenset({job.id}),
+        )
+    )
+
+    assert stopped == [[job.id]]
+    assert job.last_status_message is None
+    window.close()

@@ -82,6 +82,10 @@ class QueueCheckSnapshot:
     #: ``JobExecutionController.mark_queue_checked`` to stamp per-job monitor
     #: metadata on the document.
     observations_by_job_id: dict[UUID, str] = field(default_factory=dict)
+    #: Jobs this poll checked only as reappearance watches (see
+    #: ``ClusterJobRunner.job_reappeared``), so the GUI can end a watch whose
+    #: job no longer awaits reappearance.
+    watched_job_ids: frozenset[UUID] = frozenset()
 
 
 class CheckpointProbeStatus(StrEnum):
@@ -409,6 +413,18 @@ class ClusterJobRunner(QObject):
 
         self._tracked_jobs.clear()
 
+    def stop_watching(self, job_ids: list[UUID]) -> None:
+        """End the reappearance watch of each of ``job_ids``; other entries are untouched.
+
+        The GUI calls this for a watched job the user has since reset,
+        dismissed, or otherwise moved on from, so it is no longer polled.
+        """
+
+        for job_id in job_ids:
+            tracked = self._tracked_jobs.get(job_id)
+            if tracked is not None:
+                tracked.watch_for_recovery = False
+
     def track_existing_job(
         self,
         *,
@@ -644,6 +660,7 @@ class ClusterJobRunner(QObject):
 
         observations_by_job_id: dict[UUID, str] = {}
         elapsed_by_job_id: dict[UUID, str] = {}
+        watched_job_ids = frozenset(entry.job_id for entry in polled if entry.watch_for_recovery)
         for entry in polled:
             info = statuses.get(entry.remote_job_id)
             missing_from_queue = info is None
@@ -676,6 +693,7 @@ class ClusterJobRunner(QObject):
                 checked_at=utc_now(),
                 elapsed_by_job_id=elapsed_by_job_id,
                 observations_by_job_id=observations_by_job_id,
+                watched_job_ids=watched_job_ids,
             )
         )
 

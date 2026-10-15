@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from mufinder.domain.enums import FailureReason, JobStatus
+from mufinder.domain.enums import ACTIVE_JOB_STATUSES, FailureReason, JobStatus
 from mufinder.domain.models import CalculationRun, Job, Result, utc_now
 from mufinder.services.failure_diagnosis import (
     MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE,
@@ -740,8 +740,10 @@ class JobExecutionController:
         ``checked_at`` datetime and an ``observations_by_job_id`` mapping).
         Every observed job that exists in the document gets
         ``last_checked_at``/``last_status_source``/``last_status_message``
-        stamped with the poll observation. No status transitions and no run
-        mutations happen here — this is bookkeeping only.
+        stamped with the poll observation, except a reappearance watch whose
+        job no longer awaits it (see :meth:`stale_reappearance_watches`). No
+        status transitions and no run mutations happen here — this is
+        bookkeeping only.
 
         :returns: ``True`` when at least one job was stamped.
         """
@@ -754,16 +756,39 @@ class JobExecutionController:
         if not isinstance(checked_at, datetime) or not isinstance(observations, Mapping):
             return False
 
+        stale = set(self.stale_reappearance_watches(snapshot))
         changed = False
         for job_id, observation in observations.items():
             job = document.jobs.get(job_id)
-            if job is None:
+            if job is None or job_id in stale:
                 continue
             job.last_checked_at = checked_at
             job.last_status_source = "scheduler_poll"
             job.last_status_message = str(observation)
             changed = True
         return changed
+
+    def stale_reappearance_watches(self, snapshot: Any) -> list[UUID]:
+        """Return the watched jobs in ``snapshot`` the runner should stop watching.
+
+        A poll's ``watched_job_ids`` are jobs the cluster runner checks only for
+        the scheduler listing them again. One whose job has since been reset,
+        dismissed, deleted, or otherwise no longer satisfies
+        :func:`awaits_scheduler_reappearance` (and has not resumed) is stale.
+        """
+
+        document = self._document_getter()
+        watched = getattr(snapshot, "watched_job_ids", None)
+        if document is None or not watched:
+            return []
+        stale: list[UUID] = []
+        for job_id in watched:
+            job = document.jobs.get(job_id)
+            if job is None or not (
+                job.status in ACTIVE_JOB_STATUSES or awaits_scheduler_reappearance(job)
+            ):
+                stale.append(job_id)
+        return stale
 
     @staticmethod
     def _stamp_monitor_metadata(job: Job, *, source: str, message: str) -> None:

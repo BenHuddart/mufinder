@@ -387,6 +387,9 @@ class ClusterController(QObject):
     def refresh_queue(self) -> None:
         self._async_task.emit(self._runner.refresh_queue)
 
+    def stop_watching(self, job_ids: list[Any]) -> None:
+        self._async_task.emit(lambda: self._runner.stop_watching(job_ids))
+
     def cancel(self, job_id: Any) -> None:
         self._async_task.emit(lambda: self._runner.cancel(job_id))
 

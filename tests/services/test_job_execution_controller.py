@@ -1379,3 +1379,35 @@ def test_resume_reappeared_cluster_job_ignores_unknown_reports(tmp_path: Path) -
     assert controller.resume_reappeared_cluster_job(job.id, JobStatus.CANCELLED.value).changed is False
     assert controller.resume_reappeared_cluster_job(uuid4(), JobStatus.QUEUED.value).changed is False
     assert job.status == JobStatus.FAILED
+
+
+def test_stale_reappearance_watches_and_their_observations(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    service, document = _document(tmp_path)
+    controller = _controller(document=document, service=service, output_dir=tmp_path)
+    waiting, _ = _queued_cluster_job_failed_as_missing(service, document, controller, "waiting")
+    reset, _ = _queued_cluster_job_failed_as_missing(service, document, controller, "reset")
+    service.reset_failed_job(reset)
+    dismissed, _ = _queued_cluster_job_failed_as_missing(service, document, controller, "dismissed")
+    service.dismiss_job(dismissed)
+    resumed, _ = _queued_cluster_job_failed_as_missing(service, document, controller, "resumed")
+    controller.resume_reappeared_cluster_job(resumed.id, JobStatus.RUNNING.value)
+    deleted_id = uuid4()
+    watched = (waiting.id, reset.id, dismissed.id, resumed.id, deleted_id)
+    snapshot = SimpleNamespace(
+        checked_at=utc_now(),
+        observations_by_job_id={job_id: "watching" for job_id in watched},
+        watched_job_ids=frozenset(watched),
+    )
+
+    assert sorted(controller.stale_reappearance_watches(snapshot)) == sorted(
+        [reset.id, dismissed.id, deleted_id]
+    )
+
+    controller.mark_queue_checked(snapshot)
+    # A reset job's cleared monitor metadata is not stamped by its old watch.
+    assert reset.last_status_message is None
+    assert dismissed.last_status_message != "watching"
+    assert waiting.last_status_message == "watching"
+    assert resumed.last_status_message == "watching"

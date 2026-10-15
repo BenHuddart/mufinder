@@ -2011,3 +2011,42 @@ def test_cluster_runner_suspended_running_job_stays_running(qapp, tmp_path: Path
     # Resuming after a suspension is not a second start.
     assert events == [("status", JobStatus.RUNNING.value), ("started", None)]
     assert runner._tracked_jobs[job_id].status == JobStatus.RUNNING
+
+
+def test_cluster_runner_stop_watching_drops_the_job_from_polls(qapp, tmp_path: Path) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = FakeSSH()
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+    watched_id, other_id = uuid4(), uuid4()
+    for job_id, remote_id, status in (
+        (watched_id, "801", JobStatus.FAILED),
+        (other_id, "802", JobStatus.QUEUED),
+    ):
+        runner.track_existing_job(
+            job_id=job_id,
+            remote_job_id=remote_id,
+            remote_dir="/remote/work/job",
+            seed_name="job",
+            local_output_dir=tmp_path,
+            cluster_name="",
+            status=status,
+            watch_for_recovery=True,
+        )
+    scheduler._states["801"] = "MISSING"
+    queried: list[list[str]] = []
+    original_status = scheduler.status
+    scheduler.status = lambda ssh, ids: queried.append(list(ids)) or original_status(ssh, ids)
+    snapshots: list[object] = []
+    runner.queue_checked.connect(lambda snapshot: snapshots.append(snapshot))
+
+    runner._poll_queue()
+    assert snapshots[-1].watched_job_ids == frozenset({watched_id})
+
+    # The user reset the job: the GUI ends its watch, and polls skip it.
+    runner.stop_watching([watched_id, other_id, uuid4()])
+    runner._poll_queue()
+
+    assert queried[-1] == ["802"]
+    assert snapshots[-1].watched_job_ids == frozenset()
+    assert runner._tracked_jobs[other_id].terminal is False
