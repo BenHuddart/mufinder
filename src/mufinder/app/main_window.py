@@ -804,9 +804,12 @@ class MainWindow(QMainWindow):
             )
         )
         self._quantum_corrections_view.reset_stage_requested.connect(
-            self._on_reset_quantum_corrections_to_stage_one
+            self._quantum_corrections_controller.reset_to_stage_one
         )
-        # Quantum rows reset through "Reset to stage 1" instead of a failed-job reset.
+        self._quantum_corrections_view.reset_stage_two_requested.connect(
+            self._quantum_corrections_controller.reset_to_stage_two
+        )
+        # Quantum rows reset through the stage resets instead of a failed-job reset.
         self._connect_workflow_row_actions(
             self._quantum_corrections_view, self._quantum_corrections_controller, reset=False
         )
@@ -5907,7 +5910,7 @@ class MainWindow(QMainWindow):
         )
 
     def _build_quantum_corrections_deps(self) -> QuantumCorrectionsDeps:
-        """Build the quantum-corrections controller's deps: its window dialogs."""
+        """Build the quantum-corrections controller's deps: its window dialogs and reset primitives."""
 
         return QuantumCorrectionsDeps(
             handle_structure_host_mismatch=lambda mismatch: self._handle_structure_host_mismatch(mismatch),
@@ -5922,6 +5925,16 @@ class MainWindow(QMainWindow):
                 )
                 == QMessageBox.StandardButton.Yes
             ),
+            warn=lambda title, text: QMessageBox.warning(self, title, text),
+            directory_refusal=lambda job, shared_with: self._directory_ownership_refusals(
+                [job], shared_with=shared_with, check_remote=False
+            ).get(job.id),
+            delete_path=lambda path: self._delete_path(path),
+            delete_job_records=lambda job_id: self._delete_job_records(job_id),
+            reset_jobs_keeping_files=lambda jobs: self._apply_failed_job_reset(
+                jobs, cleanup_choice=False, detach_convergence=False
+            ),
+            refresh_after_reset=lambda: self._refresh_views_after_job_reset(),
         )
 
     def _build_energy_barriers_deps(self) -> EnergyBarriersDeps:
@@ -10149,76 +10162,6 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dialog.exec()
-
-    def _on_reset_quantum_corrections_to_stage_one(self, keys: list[str]) -> None:
-        if self._document is None:
-            return
-        controller = self._quantum_corrections_controller
-        resets = controller.stage_one_resets(keys)
-        if resets is None:
-            return
-        if not resets:
-            QMessageBox.information(
-                self,
-                "No resettable rows",
-                "Only Quantum Corrections rows that have staged a job, and whose job is no longer "
-                "running, can be reset to stage 1. That includes rows whose stage-1 singlepoint "
-                "failed, was stopped, or was cancelled.",
-            )
-            return
-
-        message = QMessageBox(self)
-        message.setIcon(QMessageBox.Icon.Warning)
-        message.setWindowTitle("Reset Quantum Corrections")
-        message.setText(f"Reset {len(resets)} Quantum Corrections row(s) to stage 1?")
-        message.setInformativeText(
-            "This removes the staged Quantum Corrections job records and clears the shared output directory "
-            "for each selected row so stage 1 can be rerun with updated parameters."
-        )
-        message.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        message.setDefaultButton(QMessageBox.StandardButton.No)
-        if message.exec() != QMessageBox.StandardButton.Yes:
-            return
-
-        cleanup_errors: list[str] = []
-        reset_count = 0
-        for reset in resets:
-            # The phonon job, when there is one, owns the shared seed directory,
-            # which is deleted whole, so it must hold only this row's two stages.
-            owner = reset.jobs[0]
-            refusal = self._directory_ownership_refusals(
-                [owner], shared_with={job.id for job in reset.jobs}, check_remote=False
-            ).get(owner.id)
-            if refusal:
-                cleanup_errors.append(f"{refusal}; the row was not reset")
-                continue
-            output_dir = self._job_output_directory(owner)
-            if output_dir is not None and output_dir.exists() and output_dir.is_dir():
-                try:
-                    self._delete_path(output_dir)
-                except OSError as exc:
-                    cleanup_errors.append(f"- {reset.label}: {exc}")
-                    continue
-            for job in reset.jobs:
-                self._delete_job_records(job.id)
-            controller.forget_seed_name(reset.key)
-            reset_count += 1
-
-        self._refresh_jobs_table()
-        self._refresh_quantum_corrections_view()
-
-        if cleanup_errors:
-            QMessageBox.warning(
-                self,
-                "Directory cleanup issues",
-                "Some Quantum Corrections rows could not be reset cleanly:\n" + "\n".join(cleanup_errors),
-            )
-
-        if reset_count:
-            self._persist_document_ui_state(
-                failure_message="Quantum Corrections stage reset was recorded, but autosave failed.",
-            )
-            self.statusBar().showMessage(f"Reset {reset_count} Quantum Corrections row(s) to stage 1")
 
     def _on_launch_quantum_phonon_analysis(self, result_id: str) -> None:
         controller = self._quantum_corrections_controller

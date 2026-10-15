@@ -23,8 +23,10 @@ continuation that shares its seed directory.
   phonon eigenvalues, mode participations and the ``w1`` entanglement witness.
 - **Configure and reset.** :meth:`QuantumCorrectionsController.configure_request`
   and :meth:`QuantumCorrectionsController.apply_configuration` back the Configure
-  dialog; :meth:`QuantumCorrectionsController.stage_one_resets` lists the rows
-  "Reset to Stage 1" may rewind.
+  dialog, which explains why it opened read-only and which reset unlocks it.
+  :meth:`QuantumCorrectionsController.reset_to_stage_one` rewinds a row to a
+  fresh stage 1; :meth:`QuantumCorrectionsController.reset_to_stage_two` returns
+  a failed, stopped or cancelled phonon job to ``defined`` and keeps stage 1.
 
 Task farming of the phonon stage is applied by the shared submit backend, which
 reads each row's farm count from its configuration extras.
@@ -45,6 +47,7 @@ from mufinder.castep_io.types import ValueWithUnit
 from mufinder.domain.enums import ACTIVE_JOB_STATUSES, JobStatus, WorkflowStage
 from mufinder.domain.models import CalculationDefinition, CalculationRun, Job, Result
 from mufinder.services.job_artifacts import ParsedJobArtifacts
+from mufinder.services.project_service import TERMINAL_RECOVERABLE_JOB_STATUSES
 from mufinder.services.source_candidates import (
     QUANTUM_STAGE_PHONON,
     QUANTUM_STAGE_SINGLEPOINT,
@@ -110,14 +113,6 @@ from mufinder.app.workflow_parameters import (
 from mufinder.app.workflow_submission import effective_row_status
 from mufinder.app.workflow_table_utils import format_energy_ev
 
-#: Stage-1 singlepoint statuses from which a row may be rewound to stage 1 while
-#: no phonon job exists. ``COMPLETED`` is the "redo stage 1 with different
-#: parameters" case; the three terminal-recoverable statuses are the failure
-#: escape hatch (the set ``reset_failed_job`` accepts, spelled out here because
-#: the reset deletes job records rather than resetting them).
-_STAGE_ONE_RESETTABLE_STATUSES = frozenset(
-    {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED}
-)
 _CONFIG_KEYWORD_NAMES = workflow_basic_parameter_names()
 _GUI_TO_METHOD = {
     "FINITEDISPLACEMENT": "finite_displacement",
@@ -220,6 +215,67 @@ def _unverified_method_question(rows: list[tuple[str, str, str]]) -> tuple[str, 
     )
 
 
+def _stage_is_open(state: QuantumStageState) -> bool:
+    """Return whether a row's current stage can still be configured and submitted.
+
+    That is a ready stage (nothing staged yet, or a dismissed terminal job) or
+    a job still ``defined``: submitting either rewrites the stage's inputs from
+    the row's stored configuration.
+    """
+
+    job = state.current_job
+    return state.status == "ready" or (job is not None and job.status == JobStatus.DEFINED)
+
+
+def _locked_reason(states: Sequence[QuantumStageState]) -> str:
+    """Return why the Configure dialog cannot edit every parameter of ``states``.
+
+    The reason names the action that unlocks the rows. It is empty when every
+    row is an open stage-1 row, the only fully editable case.
+    """
+
+    for state in states:
+        job = state.current_job
+        if job is not None and job.status in ACTIVE_JOB_STATUSES:
+            return (
+                f"Parameters are locked while a selected row's job is {job.status.value}. "
+                "Cancel the job first, then use Reset to Stage 1 to change them."
+            )
+    if all(_stage_is_open(state) for state in states):
+        stages = {state.stage for state in states}
+        if stages == {QUANTUM_STAGE_SINGLEPOINT}:
+            return ""
+        if stages == {QUANTUM_STAGE_PHONON}:
+            return (
+                "Stage 1 has completed, so only Stage 2 farms can change. "
+                "Use Reset to Stage 1 to change the other parameters."
+            )
+        return "The selection mixes stage-1 and stage-2 rows. Configure them separately."
+    for state in states:
+        job = state.current_job
+        if (
+            state.stage == QUANTUM_STAGE_PHONON
+            and job is not None
+            and job.status in TERMINAL_RECOVERABLE_JOB_STATUSES
+        ):
+            return (
+                f"A selected row's phonon job is {job.status.value}. Use Reset to Stage 2 to "
+                "change Stage 2 farms and rerun the phonon stage, or Reset to Stage 1 to "
+                "change every parameter."
+            )
+    for state in states:
+        job = state.current_job
+        if state.stage == QUANTUM_STAGE_SINGLEPOINT and job is not None and not _stage_is_open(state):
+            return (
+                f"A selected row's stage-1 singlepoint is {job.status.value}. "
+                "Use Reset to Stage 1 to change the parameters and run it again."
+            )
+    return (
+        "A selected row has completed both stages. "
+        "Use Reset to Stage 1 to rerun it with different parameters."
+    )
+
+
 def _cell_declares_species_mass(cell_path: Path) -> bool:
     """Return whether a written ``.cell`` file carries a ``SPECIES_MASS`` block.
 
@@ -241,10 +297,12 @@ def _cell_declares_species_mass(cell_path: Path) -> bool:
 class QuantumCorrectionsDeps:
     """The window-side handles the quantum-corrections controller needs.
 
-    Each one shows a dialog: the host-mismatch handlers ask whether to switch
-    the active host (shared with every host-guarded workflow) and ``confirm``
-    asks a yes/no question. Everything else the controller reads from the
-    shared :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
+    The dialogs: the host-mismatch handlers ask whether to switch the active
+    host (shared with every host-guarded workflow), ``confirm`` asks a yes/no
+    question and ``warn`` reports a problem. The rest are the window's job and
+    file primitives the two stage resets drive. Everything else the controller
+    reads from the shared
+    :class:`~mufinder.app.workflow_controllers.base.WorkflowControllerContext`
     or the service layer.
     """
 
@@ -253,20 +311,37 @@ class QuantumCorrectionsDeps:
     #: Ask a yes/no question (title, text); ``True`` means proceed. The safe
     #: answer, "no", is the default.
     confirm: Callable[[str, str], bool]
+    #: Show a warning (title, text).
+    warn: Callable[[str, str], None]
+    #: Why a job's output directory may not be deleted along with the jobs
+    #: whose ids are given (another job still uses it), or ``None``.
+    directory_refusal: Callable[[Job, frozenset[UUID]], str | None]
+    #: Delete a file or directory tree; raises ``OSError`` on failure.
+    delete_path: Callable[[Path], None]
+    #: Delete a job with its runs and results, and unbind it from definitions.
+    delete_job_records: Callable[[UUID], None]
+    #: Return terminal jobs to ``defined`` without touching their files, and
+    #: return how many were reset and any problems to report.
+    reset_jobs_keeping_files: Callable[[Sequence[Job]], tuple[int, list[str]]]
+    #: Repaint the jobs dashboard and every workflow table after a reset.
+    refresh_after_reset: Callable[[], None]
 
 
 @dataclass(frozen=True)
 class QuantumConfigureRequest(SourceConfigureRequest):
     """The quantum Configure dialog's seed: the shared request plus its stage rules.
 
-    ``fully_editable`` rows are all ready on stage 1; ``farms_only`` rows are all
-    ready on stage 2, where only the farm count may still change. Any other
-    selection opens read-only.
+    ``fully_editable`` rows are all open on stage 1; ``farms_only`` rows are all
+    open on stage 2, where only the farm count may still change. A stage is open
+    when it is ready or its job is still ``defined``. Any other selection opens
+    read-only. ``locked_reason`` says why the dialog cannot change everything
+    and names the reset that unlocks it; it is empty when ``fully_editable``.
     """
 
     pseudopotential_family: str
     farms_only: bool
     fully_editable: bool
+    locked_reason: str
 
 
 @dataclass(frozen=True)
@@ -362,20 +437,37 @@ class QuantumCorrectionsController(WorkflowJobController):
         records instead of calling ``reset_failed_job``. That makes this
         predicate the workflow's whole in-table escape hatch.
 
-        A row qualifies once it has progressed past "nothing staged" and has no
-        job still running: either the phonon job exists and is not active, or
-        the row is still on stage 1 with a singlepoint job that has finished,
-        including a failed, stopped or cancelled one, so a stage-1 failure never
-        leaves the row stuck.
+        A row qualifies once it has staged a singlepoint job and its current
+        job (the phonon job when there is one, else the singlepoint) is not
+        active. That covers a job still ``defined``, whether never submitted or
+        returned there by the Job Dashboard's Reset, and every finished status,
+        so no inactive row is left without a way back to editable parameters.
+        An active job has to be cancelled first.
         """
 
         singlepoint_job = self.singlepoint_job_for_key(definition, candidate.key)
         if singlepoint_job is None:
             return False
+        current_job = self.phonon_job_for_key(definition, candidate.key) or singlepoint_job
+        return current_job.status not in ACTIVE_JOB_STATUSES
+
+    def can_reset_to_stage_two(
+        self, definition: CalculationDefinition | None, candidate: QuantumSourceCandidate
+    ) -> bool:
+        """Return whether a row's phonon job can be returned to ``defined``.
+
+        Only a failed, stopped or cancelled phonon job whose stage-1 singlepoint
+        completed qualifies: the phonon stage then reruns as a continuation from
+        the stage-1 checkpoint, which this reset keeps. A completed phonon job
+        does not, because its run has rewritten that checkpoint; Reset to
+        Stage 1 reruns both stages instead.
+        """
+
         phonon_job = self.phonon_job_for_key(definition, candidate.key)
-        if phonon_job is not None:
-            return phonon_job.status not in ACTIVE_JOB_STATUSES
-        return singlepoint_job.status in _STAGE_ONE_RESETTABLE_STATUSES
+        if phonon_job is None or phonon_job.status not in TERMINAL_RECOVERABLE_JOB_STATUSES:
+            return False
+        singlepoint_job = self.singlepoint_job_for_key(definition, candidate.key)
+        return singlepoint_job is not None and singlepoint_job.status == JobStatus.COMPLETED
 
     def definition_and_key_for_job(
         self, job: Job
@@ -564,15 +656,14 @@ class QuantumCorrectionsController(WorkflowJobController):
             stage_states.append(self.stage_state(definition, candidate))
             pseudopotential_families.append(pseudopotential_family)
             num_farms_values.append(num_farms_from_extras(extras))
-        farms_only_values = {
-            state.stage == QUANTUM_STAGE_PHONON and state.status == "ready" and state.current_job is None
-            for state in stage_states
-        }
-        farms_only = farms_only_values == {True}
+        farms_only = all(
+            state.stage == QUANTUM_STAGE_PHONON and _stage_is_open(state) for state in stage_states
+        )
         fully_editable = all(
-            state.stage == QUANTUM_STAGE_SINGLEPOINT and state.status == "ready" for state in stage_states
+            state.stage == QUANTUM_STAGE_SINGLEPOINT and _stage_is_open(state) for state in stage_states
         )
         read_only = not fully_editable and not farms_only
+        locked_reason = _locked_reason(stage_states)
         if read_only:
             title = "Inspect Quantum Corrections Parameters"
         elif farms_only:
@@ -589,6 +680,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                 f"Selected sources: {len(candidates)}\n"
                 f"Current stage: {stage_text}\n"
                 f"Displacements required for the phonon stage: {3 * len(candidates[0].structure.species)}"
+                + (f"\n\n{locked_reason}" if locked_reason else "")
             ),
             read_only=read_only,
             num_farms=_agreed(num_farms_values, default=1),
@@ -596,6 +688,7 @@ class QuantumCorrectionsController(WorkflowJobController):
             pseudopotential_family=_agreed(pseudopotential_families, default="") or "unknown",
             farms_only=farms_only,
             fully_editable=fully_editable,
+            locked_reason=locked_reason,
         )
 
     def apply_configuration(
@@ -665,6 +758,125 @@ class QuantumCorrectionsController(WorkflowJobController):
                 )
             )
         return resets
+
+    def reset_to_stage_one(self, keys: Iterable[str]) -> None:
+        """Rewind the rows ``keys`` name to a fresh stage 1, after confirmation.
+
+        Each row's staged job records and its shared seed directory are
+        deleted and its seed name is forgotten; its stored configuration is
+        kept. The row then reads ``singlepoint`` / ``ready`` with editable
+        parameters. A row whose directory another job also uses is left alone
+        and reported.
+        """
+
+        resets = self.stage_one_resets(keys)
+        if resets is None:
+            return
+        if not resets:
+            self._context.show_info(
+                "No resettable rows",
+                "Only Quantum Corrections rows that have staged a job, and whose job is not "
+                "submitting, queued, running or being retrieved, can be reset to stage 1. "
+                "Cancel an active job first.",
+            )
+            return
+        if not self._deps.confirm(
+            "Reset Quantum Corrections",
+            f"Reset {len(resets)} Quantum Corrections row(s) to stage 1?\n\n"
+            "This removes the staged Quantum Corrections job records and clears the shared "
+            "output directory for each selected row so stage 1 can be rerun with updated "
+            "parameters.",
+        ):
+            return
+
+        cleanup_errors: list[str] = []
+        reset_count = 0
+        for reset in resets:
+            # The phonon job, when there is one, owns the shared seed directory,
+            # which is deleted whole, so it must hold only this row's two stages.
+            owner = reset.jobs[0]
+            refusal = self._deps.directory_refusal(owner, frozenset(job.id for job in reset.jobs))
+            if refusal:
+                cleanup_errors.append(f"{refusal}; the row was not reset")
+                continue
+            output_dir = self._context.job_output_directory(owner)
+            if output_dir is not None and output_dir.is_dir():
+                try:
+                    self._deps.delete_path(output_dir)
+                except OSError as exc:
+                    cleanup_errors.append(f"- {reset.label}: {exc}")
+                    continue
+            for job in reset.jobs:
+                self._deps.delete_job_records(job.id)
+            self.forget_seed_name(reset.key)
+            reset_count += 1
+
+        self._deps.refresh_after_reset()
+        if cleanup_errors:
+            self._deps.warn(
+                "Directory cleanup issues",
+                "Some Quantum Corrections rows could not be reset cleanly:\n" + "\n".join(cleanup_errors),
+            )
+        if reset_count:
+            self._context.persist_ui_state(
+                failure_message="Quantum Corrections stage reset was recorded, but autosave failed.",
+            )
+            self._context.status_message(f"Reset {reset_count} Quantum Corrections row(s) to stage 1")
+
+    def stage_two_resets(self, keys: Iterable[str]) -> list[Job]:
+        """Return the phonon jobs of the rows among ``keys`` that can be reset to stage 2."""
+
+        definition = self.active_definition()
+        if definition is None:
+            return []
+        jobs: list[Job] = []
+        for key in keys:
+            candidate = self.candidate_by_key(key)
+            if candidate is None or not self.can_reset_to_stage_two(definition, candidate):
+                continue
+            phonon_job = self.phonon_job_for_key(definition, key)
+            if phonon_job is not None:
+                jobs.append(phonon_job)
+        return dedupe_jobs(jobs)
+
+    def reset_to_stage_two(self, keys: Iterable[str]) -> None:
+        """Return the phonon jobs of the rows ``keys`` name to ``defined``, after confirmation.
+
+        Each job keeps its files: the completed stage-1 singlepoint and the
+        checkpoint the continuation reads stay in place. The row then reads
+        ``phonon`` / ``defined``, so Stage 2 farms can change before it is
+        submitted again.
+        """
+
+        jobs = self.stage_two_resets(keys)
+        if not jobs:
+            self._context.show_info(
+                "No rows to reset to stage 2",
+                "Only Quantum Corrections rows whose stage-1 singlepoint completed and whose "
+                "phonon job failed, was stopped or was cancelled can be reset to stage 2. "
+                "Use Reset to Stage 1 to rerun both stages.",
+            )
+            return
+        if not self._deps.confirm(
+            "Reset Quantum Corrections to stage 2",
+            f"Reset {len(jobs)} Quantum Corrections row(s) to stage 2?\n\n"
+            "Each row's phonon job returns to 'defined' so Stage 2 farms can be changed "
+            "before it is submitted again. The completed stage-1 singlepoint and the shared "
+            "output directory, including its checkpoint, are kept.",
+        ):
+            return
+        reset_count, errors = self._deps.reset_jobs_keeping_files(jobs)
+        self._deps.refresh_after_reset()
+        if errors:
+            self._deps.warn(
+                "Stage 2 reset issues",
+                "Some Quantum Corrections rows could not be reset to stage 2:\n" + "\n".join(errors),
+            )
+        if reset_count:
+            self._context.persist_ui_state(
+                failure_message="Quantum Corrections stage reset was recorded, but autosave failed.",
+            )
+            self._context.status_message(f"Reset {reset_count} Quantum Corrections row(s) to stage 2")
 
     def forget_seed_name(self, key: str) -> None:
         """Drop a reset row's recorded seed name so stage 1 starts from a fresh one."""
@@ -878,10 +1090,7 @@ class QuantumCorrectionsController(WorkflowJobController):
             if candidate is None:
                 continue
             stage_state = self.stage_state(definition, candidate)
-            current_job = getattr(stage_state, "current_job", None)
-            if getattr(stage_state, "status", None) != "ready" and (
-                current_job is None or current_job.status != JobStatus.DEFINED
-            ):
+            if not _stage_is_open(stage_state):
                 continue
             rows.append((definition, key, candidate, stage_state))
         return rows
@@ -1059,10 +1268,7 @@ class QuantumCorrectionsController(WorkflowJobController):
             if candidate is None:
                 continue
             stage_state = self.stage_state(definition, candidate)
-            if stage_state.status != "ready" and (
-                stage_state.current_job is None
-                or stage_state.current_job.status != JobStatus.DEFINED
-            ):
+            if not _stage_is_open(stage_state):
                 continue
             try:
                 structure = structure_to_spec(candidate.structure)
@@ -1328,6 +1534,7 @@ class QuantumCorrectionsController(WorkflowJobController):
                     status=getattr(state, "status", "ready") or "ready",
                     configured=workflow_row_configuration_exists(definition, candidate.key),
                     resettable=self.can_reset_to_stage_one(definition, candidate),
+                    stage_two_resettable=self.can_reset_to_stage_two(definition, candidate),
                 )
             )
 

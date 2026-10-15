@@ -1,4 +1,4 @@
-"""Quantum Corrections actions in the main window: staging rows and resetting them to stage 1."""
+"""Quantum Corrections actions in the main window: staging rows and resetting them to stage 1 or 2."""
 
 from __future__ import annotations
 
@@ -12,6 +12,20 @@ from mufinder.domain.models import CalculationRun, Job, MuonSite, Result, Struct
 from mufinder.services.project_service import ProjectService
 from mufinder.workflow.quantum import QUANTUM_SINGLEPOINT_CALC_TYPE
 from tests.support.main_window import stage_quantum_row_with_singlepoint
+
+
+def _answer_yes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Answer every yes/no question with Yes and return the questions' titles."""
+
+    titles: list[str] = []
+
+    def question(_parent, title, _text, _buttons, default):
+        assert default == main_window_module.QMessageBox.StandardButton.No
+        titles.append(title)
+        return main_window_module.QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(main_window_module.QMessageBox, "question", question)
+    return titles
 
 
 def test_main_window_reset_quantum_corrections_to_stage_one_clears_shared_job_state(
@@ -80,13 +94,9 @@ def test_main_window_reset_quantum_corrections_to_stage_one_clears_shared_job_st
     (output_dir / "quantum_siteA.check").write_text("stale", encoding="utf-8")
     (output_dir / "quantum_siteA.param").write_text("stale", encoding="utf-8")
 
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "exec",
-        lambda self: main_window_module.QMessageBox.StandardButton.Yes,
-    )
+    _answer_yes(monkeypatch)
 
-    window._on_reset_quantum_corrections_to_stage_one([str(site.id)])
+    window._quantum_corrections_view.reset_stage_requested.emit([str(site.id)])
 
     assert singlepoint_job.id not in doc.jobs
     assert definition.parameters["singlepoint_job_ids_by_label"] == {}
@@ -105,14 +115,13 @@ def test_main_window_reset_quantum_corrections_to_stage_one_clears_shared_job_st
 
 @pytest.mark.parametrize(
     "singlepoint_status",
-    [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED],
+    [JobStatus.DEFINED, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELLED],
 )
-def test_quantum_can_reset_to_stage_one_for_finished_bare_singlepoint(
+def test_quantum_can_reset_to_stage_one_for_inactive_bare_singlepoint(
     main_window, tmp_path: Path, singlepoint_status: JobStatus
 ) -> None:
-    # A stage-1 failure with no phonon job used to be refused here, which left
-    # the row permanently stuck: its status read "failed" so Submit was disabled
-    # and Reset said "no resettable rows".
+    # Every inactive stage 1 can be rewound, including one still "defined"
+    # (staged but never submitted, or returned there by the dashboard's Reset).
     window = main_window
     service = ProjectService()
     doc = service.create_project(
@@ -127,12 +136,14 @@ def test_quantum_can_reset_to_stage_one_for_finished_bare_singlepoint(
     window.close()
 
 
-@pytest.mark.parametrize("singlepoint_status", [JobStatus.DEFINED, JobStatus.RUNNING, JobStatus.QUEUED])
-def test_quantum_cannot_reset_to_stage_one_for_unfinished_bare_singlepoint(
+@pytest.mark.parametrize(
+    "singlepoint_status",
+    [JobStatus.SUBMITTING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRIEVING],
+)
+def test_quantum_cannot_reset_to_stage_one_for_active_bare_singlepoint(
     main_window, tmp_path: Path, singlepoint_status: JobStatus
 ) -> None:
-    # A merely-staged or still-running stage 1 has nothing to rewind, and
-    # deleting a live job's records would strand the run.
+    # Deleting a live job's records would strand the run: cancel it first.
     window = main_window
     service = ProjectService()
     doc = service.create_project(
@@ -163,13 +174,9 @@ def test_reset_quantum_corrections_to_stage_one_recovers_a_failed_singlepoint(
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "quantum_siteA.castep").write_text("failed run", encoding="utf-8")
 
-    monkeypatch.setattr(
-        main_window_module.QMessageBox,
-        "exec",
-        lambda self: main_window_module.QMessageBox.StandardButton.Yes,
-    )
+    _answer_yes(monkeypatch)
 
-    window._on_reset_quantum_corrections_to_stage_one([candidate.key])
+    window._quantum_corrections_view.reset_stage_requested.emit([candidate.key])
 
     assert singlepoint_job.id not in doc.jobs
     assert definition.parameters["singlepoint_job_ids_by_label"] == {}
@@ -255,3 +262,120 @@ def test_configuring_a_stage_two_row_edits_only_its_farm_count(
         "pseudopotential_family": "unknown",
         "num_farms": 4,
     }
+
+
+def test_reset_to_stage_one_after_a_dashboard_reset_failed(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed singlepoint the dashboard returned to "defined" is editable and resettable."""
+
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_dashboard_reset.mufinder", "QuantumDashboardReset")
+    window._document = doc
+    definition, candidate, singlepoint_job = stage_quantum_row_with_singlepoint(
+        window, service, doc, singlepoint_status=JobStatus.FAILED
+    )
+    controller = window._quantum_corrections_controller
+
+    window._reset_failed_jobs([singlepoint_job], cleanup_choice=False)
+
+    assert singlepoint_job.status == JobStatus.DEFINED
+    request = controller.configure_request([candidate.key])
+    assert request is not None
+    assert (request.read_only, request.fully_editable) == (False, True)
+    assert controller.can_reset_to_stage_one(definition, candidate) is True
+
+    titles = _answer_yes(monkeypatch)
+    window._quantum_corrections_view.reset_stage_requested.emit([candidate.key])
+
+    assert titles == ["Reset Quantum Corrections"]
+    assert singlepoint_job.id not in doc.jobs
+    assert controller.stage_state(definition, candidate).status == "ready"
+    window.close()
+
+
+def test_changing_stage_two_farms_after_a_phonon_failure(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reset to Stage 2 reopens a failed phonon job without redoing stage 1."""
+
+    from mufinder.app.workflow_config_codecs import workflow_row_configuration
+    from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
+
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_phonon_failure.mufinder", "QuantumPhononFailure")
+    window._document = doc
+    definition, candidate, singlepoint_job = stage_quantum_row_with_singlepoint(
+        window, service, doc, singlepoint_status=JobStatus.COMPLETED
+    )
+    definition.parameters["job_seed_names_by_label"] = {candidate.key: "quantum_siteA"}
+    phonon_job = service.add_job(
+        doc,
+        label="quantum_phonon_siteA",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_PHONON_CALC_TYPE,
+    )
+    phonon_job.status = JobStatus.FAILED
+    definition.parameters["phonon_job_ids_by_label"] = {candidate.key: str(phonon_job.id)}
+    output_dir = doc.project_root / "files" / "quantum_corrections" / "quantum_siteA"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "quantum_siteA.check").write_text("stage-1 checkpoint", encoding="utf-8")
+    opened: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        main_window_module,
+        "QuantumCorrectionsConfigDialog",
+        lambda **kwargs: _FakeConfigDialog(opened, **kwargs),
+    )
+
+    # Locked while the failure stands, and the dialog says what unlocks it.
+    window._quantum_corrections_view.configure_requested.emit([candidate.key])
+    assert opened[-1]["read_only"] is True
+    assert "Use Reset to Stage 2" in str(opened[-1]["intro_text"])
+
+    titles = _answer_yes(monkeypatch)
+    window._quantum_corrections_view.reset_stage_two_requested.emit([candidate.key])
+
+    assert titles == ["Reset Quantum Corrections to stage 2"]
+    assert phonon_job.status == JobStatus.DEFINED
+    assert singlepoint_job.status == JobStatus.COMPLETED
+    assert (output_dir / "quantum_siteA.check").read_text(encoding="utf-8") == "stage-1 checkpoint"
+
+    window._quantum_corrections_view.configure_requested.emit([candidate.key])
+    assert opened[-1]["read_only"] is False
+    assert opened[-1]["num_farms_editable"] is True
+    assert workflow_row_configuration(definition, candidate.key)[2]["num_farms"] == 4
+    window.close()
+
+
+def test_reset_to_stage_two_is_not_applied_when_declined(
+    main_window, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mufinder.workflow.quantum import QUANTUM_PHONON_CALC_TYPE
+
+    window = main_window
+    service = ProjectService()
+    doc = service.create_project(tmp_path / "quantum_stage_two_declined.mufinder", "QuantumDeclined")
+    window._document = doc
+    definition, candidate, _singlepoint = stage_quantum_row_with_singlepoint(
+        window, service, doc, singlepoint_status=JobStatus.COMPLETED
+    )
+    phonon_job = service.add_job(
+        doc,
+        label="quantum_phonon_siteA",
+        workflow_stage=WorkflowStage.QUANTUM_CORRECTIONS,
+        calc_type=QUANTUM_PHONON_CALC_TYPE,
+    )
+    phonon_job.status = JobStatus.FAILED
+    definition.parameters["phonon_job_ids_by_label"] = {candidate.key: str(phonon_job.id)}
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "question",
+        lambda *_args: main_window_module.QMessageBox.StandardButton.No,
+    )
+
+    window._quantum_corrections_view.reset_stage_two_requested.emit([candidate.key])
+
+    assert phonon_job.status == JobStatus.FAILED
+    window.close()

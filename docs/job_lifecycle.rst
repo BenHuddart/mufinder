@@ -320,17 +320,19 @@ inside the rows, so tables stay usable on a small laptop screen:
 - The button row below each table offers the same set: ``Configure Selected
   Parameters...``, ``Remove Selected``, and the two run buttons. Quantum
   Corrections has no ``Remove Selected`` because its rows are derived from
-  completed relaxations, and adds a ``Reset to Stage 1`` button.
+  completed relaxations, and adds ``Reset to Stage 1`` and ``Reset to Stage 2``
+  buttons.
 
 Right-clicking selected rows opens the same menu in every workflow table, in
 this order: ``Run Local``, ``Run on Cluster``, ``Cancel``, ``Inspect Failure``,
 ``Reset Failed Jobs...``, ``Configure...``, ``Remove``, then any table-specific
 entries below a separator (``Continue relaxation…`` in the relaxation tables;
-``Reset to Stage 1`` in Quantum Corrections, which has no failed-job reset or
-``Remove``). Right-clicking a row outside the selection selects it first.
-``Reset Failed Jobs...`` acts on the selected rows that are ``failed``,
-``stopped`` or ``cancelled`` (see :ref:`per-row-reset-affordance`); Quantum
-Corrections uses its stage-1 reset instead.
+``Reset to Stage 1`` and ``Reset to Stage 2`` in Quantum Corrections, which
+has no failed-job reset or ``Remove``). Right-clicking a row outside the
+selection selects it first. ``Reset Failed Jobs...`` acts on the selected rows
+that are ``failed``, ``stopped`` or ``cancelled`` (see
+:ref:`per-row-reset-affordance`); Quantum Corrections uses its stage resets
+instead.
 
 A selection may mix rows an action applies to with rows it does not (a running
 row when resetting, a completed row when running). Every action then acts on
@@ -627,8 +629,8 @@ terms as a reset.
 
 This is a deliberate divergence from the quantum-corrections precedent, where a
 ``completed`` stage-1 job is rewound by *deleting* the job records and clearing
-the directory (the quantum-corrections stage reset, gated by the same four
-statuses).
+the directory (the quantum-corrections stage-1 reset, which accepts any
+inactive job).
 Deleting is right there because the row genuinely starts over. A relaxation
 continuation must instead keep the job's identity: the job id is what binds the
 workflow-table row to the calculation, and the job record is what carries the
@@ -1217,14 +1219,22 @@ barriers and quantum corrections are refreshed through their controllers'
 
 Quantum corrections is the exception to the shape above. Its row stages a
 singlepoint job and then a phonon job into one shared output directory, so its
-recovery is a *stage* reset (which deletes both job records and clears the
-directory) rather than a job reset. Its gate is: the row qualifies once it
-has staged a job and has no job still running — either the phonon job exists and
-is not active, or the row is still on stage 1 with a singlepoint job that has
-finished, which includes a failed, stopped, or cancelled one. That last case is
-the escape hatch; without it a stage-1 failure with no phonon job showed
-``"failed"`` (so it could not be run) *and* was refused by the reset, leaving
-the row permanently stuck.
+recovery is a pair of *stage* resets owned by ``QuantumCorrectionsController``
+rather than a job reset:
+
+- ``Reset to Stage 1`` deletes both job records and clears the directory. A row
+  qualifies once it has staged a singlepoint job and its current job (the
+  phonon job when there is one, else the singlepoint) is not in
+  ``ACTIVE_JOB_STATUSES``. That includes a ``defined`` job, so a row the Job
+  Dashboard's ``Reset`` returned to ``defined`` can still be rewound, and every
+  finished status: no inactive row is left without a way back to editable
+  parameters.
+- ``Reset to Stage 2`` returns a ``failed``, ``stopped`` or ``cancelled`` phonon
+  job to ``defined`` through the same core as the failed-job reset, without
+  cleaning its directory, so the completed singlepoint and its checkpoint stay.
+  It requires the stage-1 singlepoint to be ``completed``.
+
+Both are confirmed first, with ``No`` as the default.
 
 .. _dismissed-rows-stay-resubmittable:
 

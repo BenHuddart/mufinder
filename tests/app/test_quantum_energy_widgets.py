@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import partial
 
 import pytest
@@ -849,7 +850,9 @@ def test_energy_barriers_remove_selected_confirms_with_path_wording(
     )
 
 
-def _quantum_rows(*statuses: str, resettable: bool = False) -> list[QuantumSourceRow]:
+def _quantum_rows(
+    *statuses: str, resettable: bool = False, stage_two_resettable: bool = False
+) -> list[QuantumSourceRow]:
     return [
         QuantumSourceRow(
             key=f"site-{index}",
@@ -862,6 +865,7 @@ def _quantum_rows(*statuses: str, resettable: bool = False) -> list[QuantumSourc
             num_farms_display="",
             status=status,
             resettable=resettable,
+            stage_two_resettable=stage_two_resettable,
         )
         for index, status in enumerate(statuses)
     ]
@@ -895,11 +899,13 @@ def test_quantum_row_menu_has_no_remove_or_failed_reset_and_offers_stage_reset(
     from tests.support.reset_menu import install_fake_menu, open_reset_menu
 
     widget = QuantumCorrectionsWidget()
-    widget.set_sources(_quantum_rows("running", "running", resettable=True))
+    widget.set_sources(_quantum_rows("running", "running", resettable=True, stage_two_resettable=True))
     cancelled: list[object] = []
     reset: list[object] = []
+    reset_stage_two: list[object] = []
     widget.cancel_requested.connect(cancelled.append)
     widget.reset_stage_requested.connect(reset.append)
+    widget.reset_stage_two_requested.connect(reset_stage_two.append)
     install_fake_menu(monkeypatch)
     widget._sources_table.selectAll()
 
@@ -912,12 +918,38 @@ def test_quantum_row_menu_has_no_remove_or_failed_reset_and_offers_stage_reset(
         "Inspect Failure",
         "Configure...",
         "Reset to Stage 1",
+        "Reset to Stage 2",
     ]
     assert menu.separators_before == [5]
     menu.action("Cancel").triggered.emit()
     menu.action("Reset to Stage 1").triggered.emit()
+    menu.action("Reset to Stage 2").triggered.emit()
     assert cancelled == [["site-0", "site-1"]]
     assert reset == [["site-0", "site-1"]]
+    assert reset_stage_two == [["site-0", "site-1"]]
+
+
+def test_quantum_widget_enables_reset_to_stage_two_only_for_reopenable_rows(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.support.reset_menu import install_fake_menu, open_reset_menu
+
+    widget = QuantumCorrectionsWidget()
+    rows = _quantum_rows("failed", "completed", resettable=True)
+    widget.set_sources([replace(rows[0], stage_two_resettable=True), rows[1]])
+    emitted: list[object] = []
+    widget.reset_stage_two_requested.connect(emitted.append)
+    install_fake_menu(monkeypatch)
+
+    widget._sources_table.selectRow(1)
+    assert widget._reset_stage_two_button.isEnabled() is False
+    menu = open_reset_menu(widget._sources_table, row=1)
+    assert menu is not None and menu.action("Reset to Stage 2").enabled is False
+
+    widget._sources_table.selectRow(0)
+    assert widget._reset_stage_two_button.isEnabled() is True
+    widget._reset_stage_two_button.click()
+    assert emitted == [["site-0"]]
 
 
 def test_energy_barriers_run_all_when_nothing_selected_and_shared_menu(

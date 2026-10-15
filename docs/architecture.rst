@@ -610,7 +610,8 @@ attributes, so each widget keeps its own signal names. It implements three
 public hooks: ``source_row_values`` (the text of the leading columns),
 ``create_source_row_cells`` (its own cells) and ``refresh_source_actions``
 (its own actions for the selected rows). Quantum corrections adds the stage
-and farm columns, the editable site label and "Reset to Stage 1"; energy
+and farm columns, the editable site label and "Reset to Stage 1" / "Reset to
+Stage 2"; energy
 barriers adds the endpoint pair that generates paths, the View column, path
 removal and the NEB inspector, and its view is created lazily (see
 Construction).
@@ -946,8 +947,9 @@ Controller summary
        Its source rows come from :mod:`mufinder.services.source_candidates`.
        It also answers, for the cluster submission, where a phonon job's
        stage 1 ran and which remote directory it continues in
-       (``stage_one_target``, ``continuation_remote_target``), and lists the
-       rows "Reset to Stage 1" may rewind (``stage_one_resets``).
+       (``stage_one_target``, ``continuation_remote_target``), and owns the
+       two stage resets (``reset_to_stage_one``, ``reset_to_stage_two``) and
+       the Configure dialog's lock explanation (``configure_request``).
    * - ``EnergyBarriersController``
      - Keyed by diffusion-path source key, stamped on each spec as
        ``provenance={"source_key": key}``. ``materialize`` aligns the endpoints
@@ -993,10 +995,12 @@ hooks above:
   number.
 
 Their deps hold only what needs the window: the host-mismatch dialogs
-(``handle_structure_host_mismatch``, ``handle_site_host_mismatch``), and a
-yes/no question (quantum corrections) or a warning (energy barriers). The
+(``handle_structure_host_mismatch``, ``handle_site_host_mismatch``), a warning,
+and for quantum corrections a yes/no question and the job and file
+primitives its stage resets drive (the directory-ownership check, path and
+job-record deletion, the keep-files job reset and the post-reset repaint). The
 window keeps the dialogs themselves, the job-file cleanup before a path is
-removed or a row is reset to stage 1, and the phonon analysis windows.
+removed, and the phonon analysis windows.
 
 Definition mappings and row removal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
