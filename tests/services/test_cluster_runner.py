@@ -1754,6 +1754,23 @@ def test_scheduler_job_is_active_reads_accounting_for_a_job_the_queue_hides(qapp
     assert runner.scheduler_job_is_active("6") is False
 
 
+def test_scheduler_job_is_active_propagates_an_accounting_failure(qapp) -> None:
+    runner = ClusterJobRunner()
+    runner._ssh = FakeSSH()
+    scheduler = _FakeScheduler()
+    runner._scheduler = scheduler
+    scheduler._states["7"] = "MISSING"
+
+    def _broken_history(_ssh, _job_ids):
+        raise RuntimeError("sacct: Problem talking to the database")
+
+    scheduler.history = _broken_history
+
+    # Unknown state: the caller about to delete the job's directory must refuse.
+    with pytest.raises(RuntimeError, match="Problem talking to the database"):
+        runner.scheduler_job_is_active("7")
+
+
 
 
 # ---------------------------------------------------------------------------

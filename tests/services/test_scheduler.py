@@ -140,6 +140,20 @@ def test_slurm_history_without_accounting_reports_no_records() -> None:
     assert scheduler.history(_FakeSSH([]), []) == {}
 
 
+def test_slurm_history_raises_when_accounting_fails() -> None:
+    scheduler = SlurmScheduler()
+    ssh = _FakeSSH(
+        [
+            (0, "/usr/bin/sacct\n", ""),
+            (1, "", "sacct: error: Problem talking to the database: Connection refused"),
+        ]
+    )
+
+    # The job's state is unknown, not finished: callers decide how to proceed.
+    with pytest.raises(RuntimeError, match="Problem talking to the database"):
+        scheduler.history(ssh, ["123"])
+
+
 def test_addqueue_history_reads_sacct() -> None:
     scheduler = AddqueueScheduler()
     ssh = _FakeSSH([(0, "/usr/bin/sacct\n", ""), (0, "7|RUNNING|00:10:00|job\n", "")])

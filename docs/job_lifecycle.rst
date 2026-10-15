@@ -1062,9 +1062,13 @@ During polling:
   accounting with ``sacct --jobs=<ids> --allocations``
   (``Scheduler.history``), in one call per poll. Accounting still knows a job
   that a site wrapper, a ``SQUEUE_*`` filter, or a multi-cluster setup hides,
-  and one that ``squeue`` has already forgotten. A cluster without accounting
-  (``sacct`` exits non-zero), or a failed lookup, leaves those jobs unknown;
-  it never disconnects the runner.
+  and one that ``squeue`` has already forgotten. On a cluster whose accounting
+  is disabled the lookup finds nothing; if ``sacct`` fails for any other
+  reason, the poll leaves those jobs unknown. Neither disconnects the runner.
+  The same lookup guards the deletion of an old run's directory before a
+  resubmission (``ClusterJobRunner.scheduler_job_is_active``). There, an
+  ``sacct`` failure other than disabled accounting is an error, and the
+  directory is not deleted.
 - Scheduler states are mapped to MuFinder states by the scheduler backend.
   SLURM's pending, configuring, held, requeued, suspended, and stopped
   (``SIGSTOP``) states (``PD``, ``CF``, ``RD``, ``RF``, ``RH``, ``RQ``,
@@ -1159,6 +1163,9 @@ reappear".
   ``"scheduler_poll"`` monitor metadata. The main window then re-registers the
   job with the runner (``track_existing_job`` with the resumed status), and
   the next poll carries on normally, retrieving a completed job's output.
+- ``Refresh Queue`` while disconnected reconnects the clusters of watched jobs
+  as well as those of active ones, so a project whose only cluster jobs await
+  reappearance is still polled.
 - Only a job for which
   ``job_execution_controller.awaits_scheduler_reappearance`` holds is resumed:
   a ``failed`` cluster job with a remote scheduler id, the

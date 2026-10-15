@@ -6606,7 +6606,8 @@ class MainWindow(QMainWindow):
         targets: list[str] = []
         seen: set[str] = set()
         for job in self._document.jobs.values():
-            if job.status not in ACTIVE_JOB_STATUSES:
+            # A job awaiting scheduler reappearance is polled like an active one.
+            if job.status not in ACTIVE_JOB_STATUSES and not awaits_scheduler_reappearance(job):
                 continue
             target = job.execution_target.strip()
             if not target or target.casefold() == "local":

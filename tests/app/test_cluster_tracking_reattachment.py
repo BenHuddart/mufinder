@@ -200,3 +200,21 @@ def test_jobs_failed_for_a_missing_scheduler_entry_are_watched(qapp, tmp_path, m
     assert by_label["missing"]["watch_for_recovery"] is True
     assert by_label["running"]["watch_for_recovery"] is False
     window.close()
+
+
+def test_refresh_reconnects_clusters_of_jobs_awaiting_reappearance(qapp, tmp_path, monkeypatch) -> None:
+    # Refresh Queue while disconnected reconnects the clusters it must poll,
+    # including one whose only job is a failed job awaiting reappearance.
+    service, document, window, _tracked = _prepare_window(qapp, tmp_path, monkeypatch)
+    watched = _add_cluster_job(
+        document, service, label="watched", status=JobStatus.FAILED, execution_target="PSI"
+    )
+    watched.error_message = MISSING_SCHEDULER_ENTRY_FAILURE_MESSAGE
+    other = _add_cluster_job(
+        document, service, label="other", status=JobStatus.FAILED, execution_target="ARCHER"
+    )
+    other.error_message = "Scheduler reported the job as FAILED."
+    _add_cluster_job(document, service, label="running", status=JobStatus.RUNNING)
+
+    assert window._active_dashboard_cluster_targets() == ["PSI", "SCARF"]
+    window.close()

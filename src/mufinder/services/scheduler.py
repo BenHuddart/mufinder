@@ -201,9 +201,10 @@ class SlurmScheduler(Scheduler):
         """Return each job's ``sacct`` allocation record, keyed by job id.
 
         Accounting still knows a job that ``squeue`` filters out or has already
-        forgotten. A cluster without job accounting (``sacct`` exits non-zero)
-        reports no records rather than an error, because the queue poll itself
-        succeeded.
+        forgotten. A cluster whose job accounting is disabled reports no
+        records, since it never has any. Any other ``sacct`` failure raises:
+        the job's state is then unknown, and a caller about to delete its
+        directory must refuse rather than treat it as finished.
         """
 
         if not job_ids:
@@ -215,9 +216,12 @@ class SlurmScheduler(Scheduler):
             f"--jobs={shlex.quote(','.join(job_ids))} "
             "--allocations --noheader --parsable2 --format=JobID,State,Elapsed,JobName"
         )
-        exit_code, stdout, _stderr = ssh.exec_command(command, timeout=60)
+        exit_code, stdout, stderr = ssh.exec_command(command, timeout=60)
         if exit_code != 0:
-            return {}
+            details = stderr.strip() or stdout.strip() or "sacct failed"
+            if "accounting storage is disabled" in details.casefold():
+                return {}
+            raise RuntimeError(details)
         return self._parse_status_output(stdout)
 
     @staticmethod
