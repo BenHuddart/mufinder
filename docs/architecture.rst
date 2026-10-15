@@ -273,6 +273,12 @@ no two workflow widgets may define the same private method.
        ``SelectionSnapshotToolButton``, ``resolve_target_keys``): which rows an
        in-row button acts on when its row is, or is not, part of a multi-row
        selection, and the three-way prompt.
+   * - ``mufinder.app.blocking_call``
+     - Running a blocking call off the GUI thread with the caller's
+       synchronous semantics (``run_blocking_call``): user input is held back,
+       a busy dialog appears once the call takes noticeably long, and a
+       cancellable call raises ``BlockingCallCancelled``. Filesystem retries
+       and keyring password lookups use it.
    * - ``mufinder.app.workflow_row_widget``
      - The label-keyed row-table widget base that pristine relaxation, muon
        relaxation and UEP subclass (``RowTableWidget``, and

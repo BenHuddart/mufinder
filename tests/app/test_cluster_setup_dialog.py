@@ -192,11 +192,38 @@ def test_cluster_setup_dialog_shows_keychain_option_for_macos_redwood(
     dialog.close()
 
 
-def test_cluster_setup_dialog_hides_keychain_option_off_macos(
+def test_cluster_setup_dialog_shows_keyring_option_for_linux_redwood(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(keychain_module.sys, "platform", "linux")
+    dialog = ClusterSetupDialog(settings=_FakeSettings())
+    dialog._cluster_combo.setCurrentText("Redwood")
+
+    assert dialog._keychain_row.isHidden() is False
+    assert dialog._keychain_check.text() == "Use system keyring passwords"
+    assert dialog._keychain_help_button.toolTip() == "Show system keyring setup commands"
+
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        dialog_module.QMessageBox,
+        "information",
+        lambda _parent, title, message: shown.append((title, message)),
+    )
+    dialog._show_keychain_help()
+
+    assert shown[0][0] == "System keyring setup"
+    assert "secret-tool store" in shown[0][1]
+    assert "service bastion account physics_username" in shown[0][1]
+    assert "service glamdring account username" in shown[0][1]
+    dialog.close()
+
+
+def test_cluster_setup_dialog_hides_keychain_option_without_supported_keyring(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(keychain_module.sys, "platform", "win32")
     dialog = ClusterSetupDialog(settings=_FakeSettings())
     dialog._cluster_combo.setCurrentText("Redwood")
     dialog._keychain_check.setChecked(True)
@@ -236,11 +263,13 @@ def test_cluster_setup_dialog_saves_jump_host_configuration(qapp) -> None:
     dialog.close()
 
 
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
 def test_cluster_setup_dialog_saves_keychain_setting_for_eligible_redwood(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
+    platform: str,
 ) -> None:
-    monkeypatch.setattr(keychain_module.sys, "platform", "darwin")
+    monkeypatch.setattr(keychain_module.sys, "platform", platform)
     settings = _FakeSettings()
     dialog = ClusterSetupDialog(settings=settings)
     dialog._cluster_combo.setCurrentText("Redwood")

@@ -36,7 +36,11 @@ from mufinder.app.decimal_input import DecimalLineEdit
 from mufinder.app.theme import style_help_button, style_inline_group
 from mufinder.cluster_setup import load_cluster_configs, save_cluster_configs
 from mufinder.domain.cluster import ClusterConfig
-from mufinder.services.keychain import is_glamdring_keychain_supported, keychain_setup_help
+from mufinder.services.keychain import (
+    credential_store_for_display,
+    is_glamdring_keychain_supported,
+    keychain_setup_help,
+)
 from mufinder.services.ssh_client import SSHConnection
 
 #: Pre-filled default per-CPU memory request for SLURM cluster profiles. Mirrors
@@ -133,12 +137,13 @@ class ClusterSetupDialog(QDialog):
         style_inline_group(self._keychain_row)
         keychain_layout = QHBoxLayout(self._keychain_row)
         keychain_layout.setContentsMargins(0, 0, 0, 0)
-        self._keychain_check = QCheckBox("Use macOS Keychain passwords", self._keychain_row)
+        store = credential_store_for_display()
+        self._keychain_check = QCheckBox(f"Use {store.name} passwords", self._keychain_row)
         style_inline_group(self._keychain_check)
         keychain_layout.addWidget(self._keychain_check, 1)
         self._keychain_help_button = QToolButton(self._keychain_row)
         self._keychain_help_button.setText("?")
-        self._keychain_help_button.setToolTip("Show macOS Keychain setup commands")
+        self._keychain_help_button.setToolTip(f"Show {store.name} setup commands")
         style_help_button(self._keychain_help_button)
         keychain_layout.addWidget(self._keychain_help_button)
 
@@ -535,7 +540,7 @@ class ClusterSetupDialog(QDialog):
     def _show_keychain_help(self) -> None:
         QMessageBox.information(
             self,
-            "macOS Keychain setup",
+            f"{credential_store_for_display().sentence_name} setup",
             keychain_setup_help(self._updated_selected_config() or self._selected_config() or ClusterConfig(name="", hostname="")),
         )
 

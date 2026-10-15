@@ -36,6 +36,8 @@ class ClusterConfig:
     jump_username: str = ""
     jump_auth_method: str = "key"
     jump_key_path: str = ""
+    #: Read Redwood passwords from the system keyring (macOS Keychain or Linux
+    #: Secret Service); the name predates Linux support and is persisted.
     use_macos_keychain_passwords: bool = False
     default_working_directory: str = ""
     queue_system: str = "slurm"

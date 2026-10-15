@@ -158,6 +158,7 @@ def test_cluster_setup_returns_scarf_default_when_empty() -> None:
     assert loaded[1].default_queue_name == "redwood"
     assert loaded[1].default_memory_gb == 7.5
     assert loaded[1].castep_executable == "/mnt/redwoodfs/muon/castep.mpi"
+    assert loaded[1].submit_command_path == "/usr/local/shared/bin/addqueue"
     assert loaded[1].keyword_execution_mode == "direct"
     assert loaded[1].keyword_shell_init == ""
 
