@@ -1,0 +1,72 @@
+name: Bug report
+description: Something in MuFinder does not work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Please search the existing issues
+        first. Pull requests are currently accepted only from repository
+        collaborators (see CONTRIBUTING.md), so describe the problem here
+        rather than sending a fix.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The workflow and the steps that trigger the problem.
+      placeholder: |
+        1. Open a project with ...
+        2. In Structural Relaxation, ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: MuFinder version
+      description: A release number, or a commit SHA if you installed from source.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: execution
+    attributes:
+      label: Where did the jobs run?
+      options:
+        - Not relevant (no jobs involved)
+        - Locally
+        - On a cluster
+    validations:
+      required: true
+  - type: input
+    id: cluster
+    attributes:
+      label: Scheduler and CASTEP version
+      description: For example "SLURM, CASTEP 25.1". Leave blank if not relevant.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and attachments
+      description: >
+        Error messages, tracebacks, CASTEP output or a small project that
+        reproduces the problem. Remove anything you do not want to share
+        publicly.
+      render: text
