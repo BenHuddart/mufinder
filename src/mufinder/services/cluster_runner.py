@@ -46,6 +46,28 @@ _ACTIVE_TRACKED_STATUSES = frozenset(
 )
 
 
+def _same_credential_target(previous: ClusterConfig, current: ClusterConfig) -> bool:
+    """Return whether cached credentials for ``previous`` may be offered to ``current``.
+
+    Credentials are reused only when the profile still names the same account on
+    the same target and gateway endpoints, so editing a profile's host or port
+    while keeping its name never sends a cached secret to the new host.
+    """
+
+    def _host(value: str) -> str:
+        return value.strip().casefold()
+
+    return (
+        _host(previous.name) == _host(current.name)
+        and _host(previous.hostname) == _host(current.hostname)
+        and previous.port == current.port
+        and previous.username.strip() == current.username.strip()
+        and _host(previous.jump_hostname) == _host(current.jump_hostname)
+        and previous.jump_port == current.jump_port
+        and previous.jump_username.strip() == current.jump_username.strip()
+    )
+
+
 @dataclass(slots=True)
 class _TrackedClusterJob:
     job_id: UUID
@@ -188,9 +210,7 @@ class ClusterJobRunner(QObject):
             resolved_credentials.target_secret is None
             and resolved_credentials.jump_secret is None
             and self._config is not None
-            and self._config.name.strip().casefold() == config.name.strip().casefold()
-            and self._config.username.strip() == config.username.strip()
-            and self._config.jump_username.strip() == config.jump_username.strip()
+            and _same_credential_target(self._config, config)
             and self._credential_cache is not None
         ):
             resolved_credentials = self._credential_cache
