@@ -67,6 +67,6 @@ body:
       label: Logs and attachments
       description: >
         Error messages, tracebacks, CASTEP output or a small project that
-        reproduces the problem. Remove anything you do not want to share
-        publicly.
-      render: text
+        reproduces the problem. Drag files or screenshots into this box to
+        attach them, and wrap pasted tracebacks in triple backticks. Remove
+        anything you do not want to share publicly.
